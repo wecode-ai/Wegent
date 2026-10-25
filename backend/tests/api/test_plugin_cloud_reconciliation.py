@@ -1,6 +1,7 @@
 """Cloud registration identities remain usable only on the plugin reconcile path."""
 
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -9,6 +10,7 @@ import pytest
 from app.api.endpoints import installed_plugins as endpoints
 from app.api.ws import device_namespace
 from app.core import security
+from app.core.config import settings
 from app.models.kind import Kind
 from app.models.plugin_marketplace import PluginDeviceInstallation
 from app.models.user import User
@@ -21,6 +23,7 @@ from app.services.device.runtime_route import (
     runtime_route_resolver,
 )
 from app.services.device_service import device_service
+from app.services.plugin_package_storage import plugin_package_storage
 from tests.api.test_plugin_reconciliation_auth import credential, reconcile_request
 from tests.api.test_plugin_write_operations import plugin_requests as plugin_requests
 
@@ -178,6 +181,21 @@ def test_registered_cloud_socket_reconciles_and_persists_logical_plugin_state(
 ):
     context, _ = cloud_reconciliation
     context.seed_update()
+    # Unit HTTP integration must not depend on local object-storage credentials.
+    for field in (
+        "ATTACHMENT_S3_ENDPOINT",
+        "ATTACHMENT_S3_ACCESS_KEY",
+        "ATTACHMENT_S3_SECRET_KEY",
+    ):
+        monkeypatch.setattr(settings, field, "")
+    monkeypatch.setattr(
+        plugin_package_storage,
+        "presign_download",
+        lambda key: (
+            f"https://packages.example/{key}",
+            datetime.now(timezone.utc) + timedelta(hours=1),
+        ),
+    )
 
     @contextmanager
     def sessions():

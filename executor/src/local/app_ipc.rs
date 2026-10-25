@@ -815,6 +815,20 @@ impl AppIpcServer {
         }
 
         if method == "executor.plugins.device_route" {
+            let device_id = params
+                .get("device_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    AppIpcError::new("invalid_params", "Plugin route requires a desktop identity")
+                })?;
+            if device_id != self.device_id {
+                return Err(AppIpcError::new(
+                    "plugin_route_profile_mismatch",
+                    "Plugin Runtime connection does not match the requested profile",
+                ));
+            }
             let handler = self.backend_connection_handler.as_ref().ok_or_else(|| {
                 AppIpcError::new(
                     "plugin_route_unavailable",

@@ -42,7 +42,6 @@ impl LocalBackendConnectionController {
         let profile = state.profile.as_ref().ok_or_else(unavailable)?;
         if profile.connection.backend_url != backend_url
             || profile.connection.auth_token != auth_token
-            || self.base_config.device_id != device_id
         {
             return Err(AppIpcError::new(
                 "plugin_route_profile_mismatch",
@@ -105,6 +104,7 @@ mod tests {
         params: Value,
     ) -> Result<Value, AppIpcError> {
         AppIpcServer::new()
+            .with_device_id("stable-desktop")
             .with_backend_connection_handler(controller.clone())
             .dispatch("executor.plugins.device_route", params)
             .await
@@ -127,6 +127,36 @@ mod tests {
             let error = query(&controller, params).await.unwrap_err();
             assert_eq!(error.code, "plugin_route_profile_mismatch");
             assert!(!error.message.contains(value));
+        }
+    }
+
+    #[tokio::test]
+    async fn plugin_route_accepts_the_ipc_desktop_identity_when_runtime_identity_differs() {
+        let mut controller = registered_controller().await;
+        controller.base_config.device_id = "runtime-uuid".to_owned();
+        let server = AppIpcServer::new()
+            .with_device_id("stable-desktop")
+            .with_backend_connection_handler(controller.clone());
+
+        let response = server
+            .dispatch("executor.plugins.device_route", request())
+            .await
+            .unwrap();
+
+        assert_eq!(response["device_id"], "stable-desktop");
+        assert_eq!(response["device_route_id"], "app-record-70");
+        assert_eq!(controller.base_config.device_id, "runtime-uuid");
+        for rejected_identity in ["runtime-uuid", "another-desktop"] {
+            let mut foreign_desktop = request();
+            foreign_desktop["device_id"] = json!(rejected_identity);
+            assert_eq!(
+                server
+                    .dispatch("executor.plugins.device_route", foreign_desktop)
+                    .await
+                    .unwrap_err()
+                    .code,
+                "plugin_route_profile_mismatch"
+            );
         }
     }
 

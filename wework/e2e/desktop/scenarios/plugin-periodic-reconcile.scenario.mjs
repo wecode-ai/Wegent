@@ -248,22 +248,49 @@ export async function createDesktopScenario({
       cloud.remoteExecutorEnv,
       cloud.remoteExecutorLogPath
     )
-    const registered = await until(
-      () => cloud.devices(),
-      devices => devices.some(device => device.id === original.id && device.status === 'online'),
-      'The cloudConfig-only Device did not register through the real cloud matching path',
+    // The shared devices API currently looks up this legacy cloud shape by its
+    // logical name. Keep that unrelated status path outside this plugin test.
+    // Executor emits its first liveness heartbeat only after a successful
+    // registration ACK, so observing a request alone cannot satisfy readiness.
+    const readiness = await until(
+      () => ({
+        registration: cloudObservation.registrations.at(-1),
+        heartbeat: cloudObservation.heartbeats.at(-1),
+      }),
+      value =>
+        value.registration?.deviceId === CLOUD_DEVICE_ID &&
+        value.registration.runtimeInstanceId === original.runtime_instance_id &&
+        value.heartbeat?.deviceId === CLOUD_DEVICE_ID &&
+        value.heartbeat.at >= value.registration.at,
+      'The cloudConfig-only Runtime did not heartbeat after its real registration ACK',
       workbenchReadyTimeoutMs
-    ).then(devices => devices.find(device => device.id === original.id))
-    assert.equal(registered.device_id, logicalId)
-    assert.equal(registered.runtime_instance_id, original.runtime_instance_id)
+    )
+    assert.ok(cloudProxy.websockets.size > 0, 'The registered cloud Runtime has no real socket')
     const rows = await cloud.queryDatabase(
-      'SELECT name, JSON_CONTAINS_PATH(`json`, %s, %s) AS has_device_id, JSON_UNQUOTE(JSON_EXTRACT(`json`, %s)) AS socket_id FROM kinds WHERE user_id = %s AND namespace = %s AND kind = %s AND id = %s',
-      ['one', '$.spec.deviceId', '$.spec.cloudConfig.deviceId', 1, 'default', 'Device', original.id]
+      'SELECT id, name AS device_id, JSON_CONTAINS_PATH(`json`, %s, %s) AS has_device_id, JSON_UNQUOTE(JSON_EXTRACT(`json`, %s)) AS socket_id, JSON_UNQUOTE(JSON_EXTRACT(`json`, %s)) AS runtime_instance_id FROM kinds WHERE user_id = %s AND namespace = %s AND kind = %s AND is_active = TRUE AND id = %s',
+      [
+        'one',
+        '$.spec.deviceId',
+        '$.spec.cloudConfig.deviceId',
+        '$.spec.runtimeInstanceId',
+        1,
+        'default',
+        'Device',
+        original.id,
+      ]
     )
     assert.equal(rows.length, 1)
+    const [registered] = rows
+    assert.equal(registered.device_id, logicalId)
+    assert.equal(registered.runtime_instance_id, original.runtime_instance_id)
     assert.equal(rows[0].has_device_id, 0)
     assert.equal(rows[0].socket_id, CLOUD_DEVICE_ID)
-    evidence.push({ case: 'real-cloud-registration-uses-only-cloudConfig-identity', rows })
+    evidence.push({
+      case: 'real-cloud-registration-uses-only-cloudConfig-identity',
+      readinessSource: 'registered-socket-heartbeat-and-owned-device-row',
+      readiness,
+      rows,
+    })
     return {
       kind: 'cloudConfig-only',
       device: registered,
@@ -326,6 +353,16 @@ export async function createDesktopScenario({
       const registered = target.observation.registrations.at(-1)
       assert.ok(registered, `${target.kind} registration was not observed`)
       assert.equal(registered.runtimeInstanceId, target.device.runtime_instance_id)
+      assert.equal(
+        registered.deviceId,
+        target.kind === 'app' ? target.device.device_id : CLOUD_DEVICE_ID
+      )
+      await until(
+        () => target.observation.heartbeats.at(-1),
+        value => value?.deviceId === registered.deviceId && value.at >= registered.at,
+        `${target.kind} did not heartbeat after its real registration ACK before baseline`,
+        workbenchReadyTimeoutMs
+      )
       target.before = JSON.parse(
         await readFile(join(target.home, 'capabilities/manifest-v2.json'), 'utf8')
       )
@@ -339,6 +376,7 @@ export async function createDesktopScenario({
       target.retainedSkill = await readFile(target.retainedSkillPath)
       target.baseline = {
         registeredAt: registered.at,
+        registeredDeviceId: registered.deviceId,
         registrationCount: target.observation.registrations.length,
         heartbeatCount: target.observation.heartbeats.length,
         reconciliationCount: target.observation.reconciliations.length,
@@ -455,6 +493,18 @@ export async function createDesktopScenario({
     assert.deepEqual(after.mcps, target.before.mcps)
     assert.equal(recovered.current.version, '1.0.0', 'State recovery changed the plugin release')
     assert.deepEqual(recovered.current.component_states, componentStates)
+    const finalHeartbeat = await until(
+      () => observation.heartbeats.at(-1),
+      value => value?.deviceId === baseline.registeredDeviceId && value.at >= acknowledged.at,
+      `${target.kind} did not heartbeat on its registered socket after plugin reconciliation`,
+      workbenchReadyTimeoutMs
+    )
+    assert.ok(target.proxy.websockets.size > 0, `${target.kind} lost its real registered socket`)
+    assert.equal(
+      observation.registrations.length,
+      baseline.registrationCount,
+      'A reconnect replaced the periodic recovery path'
+    )
     const heartbeats = observation.heartbeats.slice(baseline.heartbeatCount)
     assert.ok(heartbeats.length >= 10, 'Holding one plugin notification blocked Runtime liveness')
     assert.ok(heartbeats.at(-1).at >= recovered.request.at - 60_000)
@@ -466,10 +516,19 @@ export async function createDesktopScenario({
       longestHeartbeatGapMs < 60_000,
       'Missed plugin delivery interrupted Runtime heartbeats'
     )
-    const currentDevice = (await cloud.devices()).find(device => device.id === target.device.id)
-    assert.equal(currentDevice?.status, 'online')
-    assert.equal(currentDevice?.runtime_instance_id, target.device.runtime_instance_id)
-    assert.equal(currentDevice?.device_id, target.device.device_id)
+    const currentDevices = await cloud.queryDatabase(
+      'SELECT name AS device_id, JSON_UNQUOTE(JSON_EXTRACT(`json`, %s)) AS runtime_instance_id FROM kinds WHERE user_id = %s AND namespace = %s AND kind = %s AND is_active = TRUE AND id = %s',
+      ['$.spec.runtimeInstanceId', 1, 'default', 'Device', target.device.id]
+    )
+    assert.equal(currentDevices.length, 1)
+    assert.equal(currentDevices[0].runtime_instance_id, target.device.runtime_instance_id)
+    assert.equal(currentDevices[0].device_id, target.device.device_id)
+    if (target.kind === 'app') {
+      const currentDevice = (await cloud.devices()).find(device => device.id === target.device.id)
+      assert.equal(currentDevice?.status, 'online')
+      assert.equal(currentDevice?.runtime_instance_id, target.device.runtime_instance_id)
+      assert.equal(currentDevice?.device_id, target.device.device_id)
+    }
     evidence.push({
       case: 'production-timer-recovers-missed-plugin-state-without-reconnect-or-refresh',
       target: target.kind,
@@ -482,6 +541,7 @@ export async function createDesktopScenario({
       persisted,
       heartbeats: heartbeats.length,
       longestHeartbeatGapMs,
+      finalHeartbeat,
       unchangedPluginId: retained.installedId,
     })
   }
