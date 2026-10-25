@@ -108,7 +108,7 @@ This field belongs to the provider descriptor. It is implemented by the adapter 
 
 The original `content`, `structuredContent`, `isError` and `_meta` are preserved. Providers must interpret error results before advancing checkpoints. Structured local login failures retain their original identity; never guess accounts or convert remote authorization into local Connector login. Native MCP elicitations are cancelled in background threads and return `connection_interaction_required`; the user must finish authorization through the plugin's existing interactive entry. Network failures do not imply expired authentication.
 
-After thread creation, discovery and invocation share a 45-second deadline. Success, failure and timeout all unsubscribe the thread so Codex can unload it. An IPC caller's cancellation does not abandon cleanup. Disposed providers cannot start new calls or accept in-flight results. The bridge never retries a tool call with an unknown outcome, starts interactive login, changes shared plugin configuration, or exports credentials. Existing checkpoint retention and scheduler backoff remain in force. DingTalk uses the generic CLI transport described below to invoke its existing declared DWS tool; it does not use an MCP technical thread.
+After thread creation, discovery and invocation share a 45-second deadline. Success, failure and timeout all unsubscribe the thread so Codex can unload it. An IPC caller's cancellation does not abandon cleanup. Disposed providers cannot start new calls or accept in-flight results. The bridge never retries a tool call with an unknown outcome, starts interactive login, changes shared plugin configuration, or exports credentials. The scheduler retains checkpoints and source errors until the user retries or updates settings. DingTalk uses the generic CLI transport described below to invoke its existing declared DWS tool; it does not use an MCP technical thread.
 
 ### Existing CLI plugins without MCP servers
 
@@ -128,7 +128,7 @@ Collection requires the connection runtime on the bound device. If it is unavail
 
 Sources are collected once per user, provider, account and resource. Each event reaches every connected role whose enable-time cutoff admits it. Deduplication, quoted-message threading and work grouping are role-local; no model selects recipient roles. Settings versions are checked after collection. Events are persisted before advancing the page checkpoint; interrupted pages replay and deduplicate. External calls and database writes are not a distributed exactly-once transaction.
 
-Existing work organization, execution queues and approval flows remain authoritative. New work uses `connection_work`; historical `dingtalk_work` retains the same external-source restrictions and confirmation rules. Provider identity also separates deduplication and memory scopes. Temporary failures retain progress and retry with backoff without opening login automatically.
+Existing work organization, execution queues and approval flows remain authoritative. New work uses `connection_work`; historical `dingtalk_work` retains the same external-source restrictions and confirmation rules. Provider identity also separates deduplication and memory scopes. Failures retain progress and remain visible as source errors until the user retries or updates settings; login never opens automatically.
 
 ## DingTalk migration
 
