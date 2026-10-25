@@ -27,40 +27,40 @@ The three administrative roles are administrator (`Maintainer`), member (`Develo
 
 The new project, parent-space grant and creator's administrator grant are written in one transaction. Insert the new project's parent grant directly instead of locking an absent grant, avoiding MySQL gap-lock deadlocks when independent spaces create projects concurrently. Resource grants use an atomic insert or update by their unique resource/entity identity before locking the existing record, preserving the grant ID, approval history and outer transaction boundary. The MySQL permission regression suite covers concurrent project creation, concurrent authorization of distinct and identical resources, the unique parent and use permission after creation.
 
-| Space identity   | Inherited project | Restricted project         |
-| ---------------- | ----------------- | -------------------------- |
-| Owner            | Administrator     | Administrator              |
-| Administrator    | Administrator     | Administrator              |
-| Member           | Member            | Direct invitation required |
-| Read-only member | Read-only member  | Direct invitation required |
-| Project guest    | Direct grant      | Direct grant               |
+| Space identity | Inherited project | Restricted project |
+| --- | --- | --- |
+| Owner | Administrator | Administrator |
+| Administrator | Administrator | Administrator |
+| Member | Member | Direct invitation required |
+| Read-only member | Read-only member | Direct invitation required |
+| Project guest | Direct grant | Direct grant |
 
 Space owners and administrators always administer child projects. For other users, a valid direct project role takes precedence over inherited space membership, allowing promotion or demotion within that project. Removing the direct grant restores current inheritance. Updating only a member's project responsibilities neither creates a role override nor approves pending or rejected grants. Public reading does not make visitors eligible project participants.
 
 ## Protected contracts
 
-| ID   | Invariant                                                                                                                                                                                                                                                                                                   |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CP01 | A project has exactly one active parent space; containment is separate from membership.                                                                                                                                                                                                                     |
-| CP02 | Space owners and administrators administer all child projects, including restricted projects, regardless of creator.                                                                                                                                                                                        |
-| CP03 | Ordinary projects inherit members and viewers; restricted projects stop those two sources.                                                                                                                                                                                                                  |
-| CP04 | Project invitations never grant access to parent members, resources or sibling projects.                                                                                                                                                                                                                    |
-| CP05 | Space owners and administrators retain project administration; otherwise valid direct project roles override inherited roles, and removing a direct grant restores inheritance. Pending, rejected, invalid, inactive and archived sources grant nothing.                                                    |
-| CP06 | Creator, assignee, group leader and runner identity do not grant human administration.                                                                                                                                                                                                                      |
-| CP07 | Viewers can read authorized spaces and projects but cannot edit, comment, assign or execute.                                                                                                                                                                                                                |
-| CP08 | Project rosters include inherited and direct members, effective/direct roles and sources. Space inheritance stays read-only; project administrators can set or remove a direct project role for inherited members.                                                                                          |
-| CP09 | Enabled shared agents are visible to project readers; explicit private definitions remain creator-only for visibility and use; readiness problems have explicit states and reasons.                                                                                                                         |
-| CP10 | Resource use never grants source-definition editing or access to private credentials.                                                                                                                                                                                                                       |
+| ID | Invariant |
+| --- | --- |
+| CP01 | A project has exactly one active parent space; containment is separate from membership. |
+| CP02 | Space owners and administrators administer all child projects, including restricted projects, regardless of creator. |
+| CP03 | Ordinary projects inherit members and viewers; restricted projects stop those two sources. |
+| CP04 | Project invitations never grant access to parent members, resources or sibling projects. |
+| CP05 | Space owners and administrators retain project administration; otherwise valid direct project roles override inherited roles, and removing a direct grant restores inheritance. Pending, rejected, invalid, inactive and archived sources grant nothing. |
+| CP06 | Creator, assignee, group leader and runner identity do not grant human administration. |
+| CP07 | Viewers can read authorized spaces and projects but cannot edit, comment, assign or execute. |
+| CP08 | Project rosters include inherited and direct members, effective/direct roles and sources. Space inheritance stays read-only; project administrators can set or remove a direct project role for inherited members. |
+| CP09 | Enabled shared agents are visible to project readers; explicit private definitions remain creator-only for visibility and use; readiness problems have explicit states and reasons. |
+| CP10 | Resource use never grants source-definition editing or access to private credentials. |
 | CP11 | Project dispatch requires valid Agent/device use authority and an enabled project binding; valid legacy installations retain original-project authority without granting catalog or source-definition access. Personal tasks and stand-ins using their own Executor do not require project device bindings. |
-| CP12 | Fixed, pooled and user-selected project dispatch does not bypass project resource authorization; personal tasks and stand-ins use the personal execution path.                                                                                                                                              |
-| CP13 | Lists, details, creation, updates, assignment, comment execution, automation and claims use the same policy.                                                                                                                                                                                                |
-| CP14 | Issue reads check project access before open/related security; project administrators can read all child Issues.                                                                                                                                                                                            |
-| CP15 | Execution checks current Issue access and execution capability. Project dispatch also checks binding and resource grants; personal tasks and stand-ins do not require project device bindings. Snapshots are not durable authority.                                                                         |
-| CP16 | Revocation prevents new dispatch and claims; running work requests cancellation and waits for Runtime confirmation.                                                                                                                                                                                         |
-| CP17 | Removing a space member revokes membership and all direct child-project grants; further guest access needs a new invitation.                                                                                                                                                                                |
-| CP18 | Removing a space resource grant invalidates every child binding while preserving history and exposing the reason.                                                                                                                                                                                           |
-| CP19 | Space ownership can transfer without changing historical creator identity; project administration is independent of creator.                                                                                                                                                                                |
-| CP20 | Authorization exposes sources and denial reasons; the UI cannot grant capabilities rejected by the server.                                                                                                                                                                                                  |
+| CP12 | Fixed, pooled and user-selected project dispatch does not bypass project resource authorization; personal tasks and stand-ins use the personal execution path. |
+| CP13 | Lists, details, creation, updates, assignment, comment execution, automation and claims use the same policy. |
+| CP14 | Issue reads check project access before open/related security; project administrators can read all child Issues. |
+| CP15 | Execution checks current Issue access and execution capability. Project dispatch also checks binding and resource grants; personal tasks and stand-ins do not require project device bindings. Snapshots are not durable authority. |
+| CP16 | Revocation prevents new dispatch and claims; running work requests cancellation and waits for Runtime confirmation. |
+| CP17 | Removing a space member revokes membership and all direct child-project grants; further guest access needs a new invitation. |
+| CP18 | Removing a space resource grant invalidates every child binding while preserving history and exposing the reason. |
+| CP19 | Space ownership can transfer without changing historical creator identity; project administration is independent of creator. |
+| CP20 | Authorization exposes sources and denial reasons; the UI cannot grant capabilities rejected by the server. |
 
 ## Resources and execution
 
@@ -108,12 +108,12 @@ Project Agent creation and reactivation reuse a space grant only when it is appr
 
 Legacy `creator_admin` input remains accepted, while shared bindings follow project visibility. Explicit `private` remains creator-only for visibility and use; another project administrator cannot publish that definition. Credentials are not shared. Ownership transfer captures a missing historical creator only during that operation, without bulk backfill.
 
-| Client / backend         | Boundary                                                                                                                                                                          |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Old client / new backend | Old role and Agent fields are accepted; original containment stays readable; the new backend enforces the unified policy.                                                         |
-| New client / old backend | Missing `owner_user_id` hides transfer; missing `membership_mode` hides mode settings; catalogs require verified space access.                                                    |
-| Old client / old backend | Original tables and APIs remain usable with the original policy.                                                                                                                  |
-| Mixed backend versions   | Storage compatibility does not upgrade old authorization code. Route permission-sensitive APIs to the new backend, or backport the same policy, before relying on new guarantees. |
+| Client / backend | Boundary |
+| --- | --- |
+| Old client / new backend | Old role and Agent fields are accepted; original containment stays readable; the new backend enforces the unified policy. |
+| New client / old backend | Missing `owner_user_id` hides transfer; missing `membership_mode` hides mode settings; catalogs require verified space access. |
+| Old client / old backend | Original tables and APIs remain usable with the original policy. |
+| Mixed backend versions | Storage compatibility does not upgrade old authorization code. Route permission-sensitive APIs to the new backend, or backport the same policy, before relying on new guarantees. |
 
 Local private projects retain owner authority offline. Shared cloud operations use server-side relationships.
 
