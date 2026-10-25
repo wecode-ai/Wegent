@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
 import {
   CODEX_SOURCE_COMMIT,
+  configurePinnedSourceCheckout,
   patchWindowsReadBroker,
+  patchWindowsNoFollow,
   transferWindowsCodex,
   windowsCodexRecipe,
 } from './codex-windows-source.mjs'
@@ -43,6 +46,37 @@ test('rejects unreviewed upstream source before applying a compatibility patch',
   expect(() => patchWindowsReadBroker('let command = self.sandbox_command(sandbox)?;')).toThrow(
     'does not match the reviewed version'
   )
+})
+
+test.each(['mod.rs', 'windows.rs'])('rejects changed upstream no-follow source: %s', kind => {
+  expect(() => patchWindowsNoFollow('unreviewed filesystem implementation', kind)).toThrow(
+    'does not match the reviewed version'
+  )
+})
+
+test('pinned checkout overrides CRLF conversion and enables complete Windows paths', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'codex-checkout-'))
+  roots.push(root)
+  const git = args =>
+    execFileSync('git', args, {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim()
+  git(['init'])
+  git(['config', '--local', 'core.autocrlf', 'true'])
+  const canonical = 'fn main() {\n    println!("fixture");\n}\n'
+  const file = join(root, 'fixture.rs')
+  await writeFile(file, canonical)
+  git(['add', 'fixture.rs'])
+  await rm(file)
+  git(['checkout-index', '--all', '--force'])
+  expect(await readFile(file, 'utf8')).toBe(canonical.replaceAll('\n', '\r\n'))
+  await configurePinnedSourceCheckout(root)
+  await rm(file)
+  git(['checkout-index', '--all', '--force'])
+  expect(await readFile(file, 'utf8')).toBe(canonical)
+  expect(git(['config', '--get', 'core.longpaths'])).toBe('true')
 })
 
 test('same-run artifact preserves both executable identities and the pinned recipe', async () => {

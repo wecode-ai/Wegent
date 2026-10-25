@@ -7,10 +7,24 @@ import { fileURLToPath } from 'node:url'
 import { acquireProcessLock } from './process-lock.mjs'
 
 export const CODEX_SOURCE_COMMIT = 'cf4041fa09238f33cf106e3046801ed23590bae8'
-const brokerSource = fileURLToPath(
-  new URL('../../third_party/codex/windows-read-broker.rs', import.meta.url)
+const NATIVE_TARGET = 'x86_64-pc-windows-msvc'
+const brokerSource = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../third_party/codex/windows-read-broker.rs'
 )
 const upstreamFsHash = '87c12b3f2baff4e9a12e8654c575c5ac5dea533ae44c21431757bb403b271bac'
+
+export function patchWindowsNoFollow(source, kind) {
+  const hashes = {
+    'mod.rs': '5f252ef0d4c82cc7ed1a25c1491a7427a474a2b8828442bca71e636ed747729b',
+    'windows.rs': '521b6d515e4c60c922f615077ffadde90200723fb1793c16c3d02691d5221af7',
+  }
+  if (createHash('sha256').update(source).digest('hex') !== hashes[kind]) {
+    throw new Error('Pinned Codex no-follow source does not match the reviewed version')
+  }
+  if (kind === 'windows.rs') return source.replace('fn open_entry(', 'pub(super) fn open_entry(')
+  return `${source}\n#[cfg(windows)]\npub(crate) fn open_metadata_file(path: &Path) -> io::Result<std::fs::File> {\n    imp::open_entry(path)\n}\n`
+}
 
 export function patchWindowsReadBroker(source) {
   if (createHash('sha256').update(source).digest('hex') !== upstreamFsHash) {
@@ -57,6 +71,16 @@ function run(program, args, cwd, env = process.env) {
   })
 }
 
+export async function configurePinnedSourceCheckout(source) {
+  for (const [key, value] of [
+    ['core.longpaths', 'true'],
+    ['core.autocrlf', 'false'],
+    ['core.eol', 'lf'],
+  ]) {
+    await run('git', ['config', '--local', key, value], source)
+  }
+}
+
 export async function windowsCodexRecipe() {
   const broker = await readFile(brokerSource)
   const recipe = await readFile(fileURLToPath(import.meta.url))
@@ -92,7 +116,7 @@ async function testBroker(root) {
     ['windows_read_broker', '--test-threads=1'],
     root
   )
-  if (!/test result: ok\. 5 passed; 0 failed;/.test(tests)) {
+  if (!/test result: ok\. 5 passed; 0 failed; 0 ignored;/.test(tests)) {
     throw new Error('Windows Codex permission broker requires all five native regression tests')
   }
 }
@@ -130,12 +154,18 @@ export async function buildWindowsCodex(cacheRoot) {
     await rm(source, { recursive: true, force: true })
     await mkdir(source, { recursive: true })
     await run('git', ['init', source], root)
+    await configurePinnedSourceCheckout(source)
     await run('git', ['remote', 'add', 'origin', 'https://github.com/openai/codex.git'], source)
     await run('git', ['fetch', '--depth=1', 'origin', CODEX_SOURCE_COMMIT], source)
     await run('git', ['checkout', '--detach', CODEX_SOURCE_COMMIT], source)
+    await run('git', ['diff', '--exit-code', '--quiet'], source)
     const fsSource = join(source, 'codex-rs/exec-server/src/fs_sandbox.rs')
     await writeFile(fsSource, patchWindowsReadBroker(await readFile(fsSource, 'utf8')))
     await cp(brokerSource, join(dirname(fsSource), 'windows_read_broker.rs'))
+    for (const kind of ['mod.rs', 'windows.rs']) {
+      const path = join(dirname(fsSource), 'no_follow', kind)
+      await writeFile(path, patchWindowsNoFollow(await readFile(path, 'utf8'), kind))
+    }
     const target = join(tmpdir(), 'wegent-codex-source-target')
     const env = {
       ...process.env,
@@ -155,6 +185,8 @@ export async function buildWindowsCodex(cacheRoot) {
         'test',
         '--locked',
         '--release',
+        '--target',
+        NATIVE_TARGET,
         '-p',
         'codex-exec-server',
         '--lib',
@@ -185,11 +217,21 @@ export async function buildWindowsCodex(cacheRoot) {
     await testBroker(root)
     await run(
       'cargo',
-      ['build', '--locked', '--release', '-p', 'codex-cli', '--bin', 'codex'],
+      [
+        'build',
+        '--locked',
+        '--release',
+        '--target',
+        NATIVE_TARGET,
+        '-p',
+        'codex-cli',
+        '--bin',
+        'codex',
+      ],
       rust,
       env
     )
-    await cp(join(target, 'release/codex.exe'), `${binary}.partial`)
+    await cp(join(target, NATIVE_TARGET, 'release/codex.exe'), `${binary}.partial`)
     await rename(`${binary}.partial`, binary)
     const sha256 = await hashFile(binary)
     const testSha256 = await hashFile(join(root, 'permissions.exe'))

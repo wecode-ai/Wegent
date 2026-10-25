@@ -3,12 +3,9 @@
 //! checked against the original managed permission profile.
 
 use std::fs::File;
-use std::fs::OpenOptions;
 use std::io;
 use std::io::Read;
-use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
-use std::os::windows::io::FromRawHandle;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -17,20 +14,12 @@ use std::time::UNIX_EPOCH;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use codex_exec_server_protocol::JSONRPCErrorError;
+use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
+use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::permissions::ReadDenyMatcher;
 use codex_utils_path_uri::PathUri;
-use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
-use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
-use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
-use windows_sys::Win32::Storage::FileSystem::FILE_GENERIC_READ;
-use windows_sys::Win32::Storage::FileSystem::FILE_READ_ATTRIBUTES;
-use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
-use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_WRITE;
-use windows_sys::Win32::Storage::FileSystem::FILE_TYPE_DISK;
-use windows_sys::Win32::Storage::FileSystem::GetFileType;
 use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
-use windows_sys::Win32::Storage::FileSystem::ReOpenFile;
 
 use crate::FileSystemSandboxContext;
 use crate::fs_helper::FsHelperPayload;
@@ -76,30 +65,65 @@ fn execute(
     cwd: &Path,
     request: FsHelperRequest,
 ) -> io::Result<FsHelperPayload> {
-    let (path, follow, read_data) = match &request {
-        FsHelperRequest::ReadFile(params) => {
-            (&params.path, params.follow_symlinks.unwrap_or(true), true)
-        }
-        FsHelperRequest::GetMetadata(params) => {
-            (&params.path, params.follow_symlinks.unwrap_or(true), false)
-        }
+    let (path, read_data) = match &request {
+        FsHelperRequest::ReadFile(params) => (&params.path, true),
+        FsHelperRequest::GetMetadata(params) => (&params.path, false),
         _ => return Err(denied()),
     };
     let path = path.to_abs_path()?;
+    if path.components().any(|component| {
+        matches!(component,
+        std::path::Component::Normal(name) if name.to_string_lossy().contains(':'))
+    }) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Windows read broker does not accept alternate data streams",
+        ));
+    }
+    // Complex policies still require the native backend. In particular, a glob
+    // may contain a DOS short-name alias that a lexical matcher cannot equate
+    // with the opened handle's canonical name. Never approximate that denial.
+    if policy.entries.iter().any(|entry| match &entry.path {
+        FileSystemPath::GlobPattern { .. } => true,
+        FileSystemPath::Special { value } => !matches!(
+            value,
+            FileSystemSpecialPath::Root | FileSystemSpecialPath::Minimal
+        ),
+        FileSystemPath::Path { .. } => false,
+    }) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Windows read broker requires native MXC for this permission profile",
+        ));
+    }
+    let mut canonical_policy = policy.clone();
+    super::normalize_file_system_policy_root_aliases(&mut canonical_policy)
+        .map_err(|_| denied())?;
+    let canonical_matcher = ReadDenyMatcher::try_new_for_local_paths(&canonical_policy, cwd)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     let matcher = ReadDenyMatcher::try_new_for_local_paths(&policy, cwd)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-    check(&policy, matcher.as_ref(), cwd, path.as_path())?;
+    if check(&policy, matcher.as_ref(), cwd, path.as_path()).is_err()
+        && check(
+            &canonical_policy,
+            canonical_matcher.as_ref(),
+            cwd,
+            path.as_path(),
+        )
+        .is_err()
+    {
+        return Err(denied());
+    }
     let mut file = open_checked(
-        &policy,
-        matcher.as_ref(),
+        &canonical_policy,
+        canonical_matcher.as_ref(),
         cwd,
         path.as_path(),
-        follow,
         read_data,
     )?;
     let metadata = file.metadata()?;
     if read_data {
-        if !metadata.is_file() || (!follow && metadata.file_type().is_symlink()) {
+        if !metadata.is_file() {
             return Err(denied());
         }
         let mut bytes = Vec::new();
@@ -124,54 +148,21 @@ fn open_checked(
     matcher: Option<&ReadDenyMatcher>,
     cwd: &Path,
     path: &Path,
-    follow: bool,
     read_data: bool,
 ) -> io::Result<File> {
-    // Probe the canonical target before opening it. The subsequent handle check
-    // also catches a junction or symlink replaced between these operations.
-    if follow {
-        check(policy, matcher, cwd, &std::fs::canonicalize(path)?)?;
-    }
-    let mut options = OpenOptions::new();
-    options
-        .read(true)
-        .access_mode(FILE_READ_ATTRIBUTES)
-        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-        .custom_flags(
-            FILE_FLAG_BACKUP_SEMANTICS
-                | if follow {
-                    0
-                } else {
-                    FILE_FLAG_OPEN_REPARSE_POINT
-                },
-        );
-    // Do not permit replacement of the opened file during validation.
-    let file = options.open(path)?;
-    if unsafe { GetFileType(file.as_raw_handle()) } != FILE_TYPE_DISK {
+    // Never canonicalize an untrusted link here: resolving an outside UNC
+    // target can contact another host before its permissions can be checked.
+    // Native MXC is required for operations that must traverse reparse points.
+    let file = if read_data {
+        crate::no_follow::open_file(path)?
+    } else {
+        crate::no_follow::open_metadata_file(path)?
+    };
+    if !crate::regular_file::is_disk_file(&file) {
         return Err(denied());
     }
     check(policy, matcher, cwd, &handle_path(&file)?)?;
-    if !read_data {
-        return Ok(file);
-    }
-    let metadata = file.metadata()?;
-    if !metadata.is_file() || (!follow && metadata.file_type().is_symlink()) {
-        return Err(denied());
-    }
-    // ReOpenFile binds the data handle to the checked object. Reopening its
-    // pathname here would introduce a check/use race with an untrusted writer.
-    let handle = unsafe {
-        ReOpenFile(
-            file.as_raw_handle(),
-            FILE_GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            0,
-        )
-    };
-    if handle == INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(unsafe { File::from_raw_handle(handle) })
+    Ok(file)
 }
 
 fn handle_path(file: &File) -> io::Result<PathBuf> {
@@ -276,20 +267,18 @@ mod tests {
         }
 
         fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-            let matcher =
-                ReadDenyMatcher::try_new_for_local_paths(&self.policy, &self.project).unwrap();
-            check(&self.policy, matcher.as_ref(), &self.project, path)?;
-            let mut file = open_checked(
-                &self.policy,
-                matcher.as_ref(),
-                &self.project,
-                path,
-                true,
-                true,
-            )?;
-            let mut bytes = Vec::new();
-            file.read_to_end(&mut bytes)?;
-            Ok(bytes)
+            let request: FsHelperRequest = serde_json::from_value(serde_json::json!({
+                "operation": "fs/readFile", "params": {
+                    "path": PathUri::from_host_native_path(path).unwrap()
+                }
+            }))
+            .unwrap();
+            match execute(self.policy.clone(), &self.project, request)? {
+                FsHelperPayload::ReadFile(response) => {
+                    Ok(STANDARD.decode(response.data_base64).unwrap())
+                }
+                _ => panic!("unexpected read response"),
+            }
         }
 
         fn junction(&self, name: &str, target: &Path) -> PathBuf {
@@ -309,9 +298,49 @@ mod tests {
         }
     }
 
+    fn assert_short_alias(fixture: &Fixture) {
+        use std::os::windows::ffi::OsStrExt;
+        use std::os::windows::ffi::OsStringExt;
+        let name = fixture
+            .project
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let mut buffer = vec![0u16; 32768];
+        let length = unsafe {
+            windows_sys::Win32::Storage::FileSystem::GetShortPathNameW(
+                name.as_ptr(),
+                buffer.as_mut_ptr(),
+                buffer.len() as u32,
+            )
+        } as usize;
+        assert!(length > 0 && length < buffer.len());
+        let short = PathBuf::from(std::ffi::OsString::from_wide(&buffer[..length]));
+        let mut policy = fixture.policy.clone();
+        policy.entries[1] = FileSystemSandboxEntry::new(
+            AbsolutePathBuf::from_absolute_path(&short).unwrap().into(),
+            FileSystemAccessMode::Read,
+        );
+        let request: FsHelperRequest = serde_json::from_value(serde_json::json!({
+            "operation": "fs/readFile", "params": {
+                "path": PathUri::from_host_native_path(short.join("AGENTS.md")).unwrap()
+            }
+        }))
+        .unwrap();
+        match execute(policy, &short, request).unwrap() {
+            FsHelperPayload::ReadFile(response) => assert_eq!(
+                STANDARD.decode(response.data_base64).unwrap(),
+                b"Project instructions"
+            ),
+            _ => panic!("unexpected read response"),
+        }
+    }
+
     #[test]
     fn windows_read_broker_keeps_project_instructions_with_root_deny() {
         let fixture = Fixture::new();
+        assert_short_alias(&fixture);
         assert_eq!(
             fixture.read(&fixture.project.join("AGENTS.md")).unwrap(),
             b"Project instructions"
@@ -323,10 +352,29 @@ mod tests {
                 .kind(),
             io::ErrorKind::PermissionDenied
         );
+        let metadata: FsHelperRequest = serde_json::from_value(serde_json::json!({
+            "operation": "fs/getMetadata", "params": {
+                "path": PathUri::from_host_native_path(fixture.private.join("secret.txt")).unwrap()
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            execute(fixture.policy.clone(), &fixture.project, metadata)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(
+            fixture
+                .read(&fixture.project.join("AGENTS.md::$DATA"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
     }
 
     #[test]
-    fn windows_read_broker_denies_junction_escape_and_allows_bound_targets() {
+    fn windows_read_broker_rejects_junctions_before_resolving_any_target() {
         let fixture = Fixture::new();
         let outside = fixture.junction("outside", &fixture.private);
         assert_eq!(
@@ -334,20 +382,45 @@ mod tests {
                 .read(&outside.join("secret.txt"))
                 .unwrap_err()
                 .kind(),
-            io::ErrorKind::PermissionDenied
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            fixture
+                .read(&outside.join("missing.txt"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
         );
         let inside = fixture.junction("inside", &fixture.project);
         assert_eq!(
-            fixture.read(&inside.join("AGENTS.md")).unwrap(),
-            b"Project instructions"
+            fixture.read(&inside.join("AGENTS.md")).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
         );
         std::fs::remove_dir(outside).unwrap();
         std::fs::remove_dir(inside).unwrap();
     }
 
     #[test]
-    fn windows_read_broker_keeps_explicit_and_glob_denials() {
+    fn windows_read_broker_keeps_denials_and_rejects_unsupported_glob_profiles() {
         let mut fixture = Fixture::new();
+        fixture.policy.entries.push(FileSystemSandboxEntry::new(
+            AbsolutePathBuf::from_absolute_path(fixture.project.join("AGENTS.md"))
+                .unwrap()
+                .into(),
+            FileSystemAccessMode::Deny,
+        ));
+        assert_eq!(
+            fixture
+                .read(&fixture.project.join("AGENTS.md"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        std::fs::write(fixture.project.join("public.txt"), "public").unwrap();
+        assert_eq!(
+            fixture.read(&fixture.project.join("public.txt")).unwrap(),
+            b"public"
+        );
         fixture.policy.entries.push(FileSystemSandboxEntry::new(
             FileSystemPath::GlobPattern {
                 pattern: "**/AGENTS.md".to_owned(),
@@ -359,7 +432,14 @@ mod tests {
                 .read(&fixture.project.join("AGENTS.md"))
                 .unwrap_err()
                 .kind(),
-            io::ErrorKind::PermissionDenied
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            fixture
+                .read(&fixture.project.join("public.txt"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
         );
     }
 
@@ -375,13 +455,10 @@ mod tests {
             &fixture.project,
             &path,
             true,
-            true,
         )
         .unwrap();
-        assert!(
-            std::fs::remove_file(&path).is_err(),
-            "checked file must remain pinned"
-        );
+        std::fs::rename(&path, fixture.project.join("opened-instructions.md")).unwrap();
+        std::fs::copy(fixture.private.join("secret.txt"), &path).unwrap();
         let mut text = String::new();
         file.read_to_string(&mut text).unwrap();
         assert_eq!(text, "Project instructions");
@@ -398,6 +475,12 @@ mod tests {
         }))
         .unwrap();
         assert!(!supports(&request));
+        assert!(
+            serde_json::from_value::<FsHelperRequest>(serde_json::json!({
+                "operation": "process/exec", "params": {"command": "anything"}
+            }))
+            .is_err()
+        );
         assert!(execute(fixture.policy.clone(), &fixture.project, request).is_err());
         assert_eq!(
             std::fs::read(fixture.project.join("AGENTS.md")).unwrap(),
