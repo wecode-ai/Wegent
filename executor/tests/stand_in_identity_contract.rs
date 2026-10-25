@@ -117,9 +117,21 @@ fn ingestion_deduplicates_and_corrections_never_replay_sent_messages() {
     let id = work["id"].as_str().unwrap();
     assert_eq!(
         store
-            .ingest_stand_in_message(7, "other", &source(), &first, None)
+            .ingest_stand_in_message(7, "review", &source(), &first, None)
             .unwrap()["id"],
         id
+    );
+    let other = store
+        .ingest_stand_in_message(7, "other", &source(), &first, None)
+        .unwrap();
+    assert_ne!(other["id"], work["id"]);
+    assert_eq!(other["roleId"], "other");
+    assert_eq!(
+        store
+            .stand_in_messages(7, other["id"].as_str().unwrap())
+            .unwrap()
+            .len(),
+        1
     );
     assert_eq!(store.stand_in_messages(7, id).unwrap().len(), 1);
     assert!(store.stand_in_messages(8, id).is_err());

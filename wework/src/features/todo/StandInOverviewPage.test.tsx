@@ -1,8 +1,13 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
-import { newStandInRole, publishPersonalStandIn, type StandInRole } from '@/api/personalStandIn'
+import {
+  newStandInRole,
+  publishPersonalStandIn,
+  type PersonalStandInSettings,
+  type StandInRole,
+} from '@/api/personalStandIn'
 import type { StandInInboxWork } from '@/api/standIn'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
@@ -19,8 +24,17 @@ vi.mock('./StandInConversation', () => ({
 }))
 
 function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
+  let settings: PersonalStandInSettings = {
+    userId: 7,
+    executionDeviceId: 'device',
+    version: 0,
+    roles,
+  }
   const personalAgents = vi.fn(async () => [])
-  const personalSave = vi.fn(async (_user, value) => value)
+  const personalSave = vi.fn(async (_user, value: PersonalStandInSettings) => {
+    settings = value
+    return settings
+  })
   const props = {
     userId: 7,
     api: {} as SharedWorkspaceApi,
@@ -33,13 +47,8 @@ function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
       modelApi: { listModels: async () => ({ data: [] }) },
       standInApi: {
         catalog: async () => ({ models: [] }),
-        personalGet: vi.fn(async () => ({
-          userId: 7,
-          executionDeviceId: 'device',
-          version: 0,
-          autoSelect: false,
-          roles,
-        })),
+        personalGet: vi.fn(async () => settings),
+        memories: vi.fn(async () => []),
         inbox: vi.fn(async () => ({ items: [], sourceErrors: [] })),
         proposal: vi.fn(async () => null),
         personalSave,
@@ -69,7 +78,7 @@ it('lists existing stand-ins without execution history and keeps project names s
   expect(await screen.findByTestId('identity-conversation')).toHaveTextContent('primary')
 })
 
-it('opens the selected stand-in from the overview list', async () => {
+it('opens settings for the selected stand-in and reflects its renamed identity', async () => {
   const first = { ...newStandInRole('device', 'first'), name: 'Coding' }
   const second = { ...newStandInRole('device', 'second'), name: 'Reviewer' }
   const { props } = fixture([first, second])
@@ -80,8 +89,28 @@ it('opens the selected stand-in from the overview list', async () => {
   expect(screen.queryByTestId('stand-in-settings')).not.toBeInTheDocument()
   await user.click(screen.getByTestId('stand-in-role-chat'))
   expect(await screen.findByTestId('identity-conversation')).toHaveTextContent('second')
+  expect(screen.getByTestId('stand-in-settings-open')).toHaveTextContent('设置')
   await user.click(screen.getByTestId('stand-in-settings-open'))
-  expect(await screen.findByRole('combobox', { name: '当前分身' })).toHaveValue('second')
+  expect(screen.getByRole('dialog', { name: '设置' })).toBeInTheDocument()
+  const name = await screen.findByRole('textbox', { name: '分身名称' })
+  expect(name).toHaveValue('Reviewer')
+  expect(screen.queryByTestId('stand-in-role-select')).not.toBeInTheDocument()
+  await user.clear(name)
+  await user.type(name, '代码审查')
+  await user.click(screen.getByTestId('stand-in-save'))
+  await waitFor(() =>
+    expect(screen.getByTestId('stand-in-overview-role-second')).toHaveTextContent('代码审查')
+  )
+  expect(screen.getByTestId('stand-in-overview-role-first')).toHaveTextContent('Coding')
+  expect(screen.getByTestId('identity-conversation')).toHaveTextContent('second')
+  await user.click(screen.getByTestId('stand-in-settings-open'))
+  expect(await screen.findByRole('textbox', { name: '分身名称' })).toHaveValue('代码审查')
+  await user.click(screen.getByTestId('stand-in-close'))
+  await user.click(screen.getByTestId('stand-in-memory-open'))
+  await user.click(await screen.findByTestId('stand-in-memory-add'))
+  expect(screen.getByRole('option', { name: '代码审查（与你聊天时）' })).toHaveValue(
+    JSON.stringify({ kind: 'role', roleId: 'second' })
+  )
 })
 
 it('keeps the active conversation mounted while settings reload', async () => {
@@ -163,6 +192,99 @@ it('starts in the primary conversation and opens its editable profile explicitly
   expect(await screen.findByTestId('stand-in-overview')).toBeInTheDocument()
   expect(personalSave).not.toHaveBeenCalled()
 })
+
+it.each(['primary', 'role', 'memory'] as const)(
+  'closes the unchanged %s drawer when clicking outside',
+  async panel => {
+    const { props } = fixture()
+    const user = userEvent.setup()
+    render(<StandInOverviewPage {...props} />)
+    await screen.findByTestId('stand-in-overview-role-default')
+    if (panel === 'role') await user.click(screen.getByTestId('stand-in-overview-role-default'))
+    await user.click(
+      screen.getByTestId(panel === 'memory' ? 'stand-in-memory-open' : 'stand-in-settings-open')
+    )
+    const content =
+      panel === 'memory'
+        ? 'stand-in-memory-panel'
+        : panel === 'primary'
+          ? 'stand-in-primary-profile'
+          : 'stand-in-settings'
+    await screen.findByTestId(content)
+    fireEvent.click(screen.getByTestId('stand-in-profile-backdrop'))
+    expect(screen.queryByTestId('stand-in-profile-panel')).not.toBeInTheDocument()
+  }
+)
+
+it('keeps the drawer open when a text selection ends outside it', async () => {
+  const { props } = fixture()
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} />)
+  await screen.findByTestId('stand-in-overview-role-default')
+  await user.click(screen.getByTestId('stand-in-settings-open'))
+  fireEvent.mouseDown(await screen.findByTestId('stand-in-primary-profile'))
+  const backdrop = screen.getByTestId('stand-in-profile-backdrop')
+  fireEvent.mouseUp(backdrop)
+  fireEvent.click(backdrop)
+  expect(screen.getByTestId('stand-in-profile-panel')).toBeInTheDocument()
+  await user.click(backdrop)
+  expect(screen.queryByTestId('stand-in-profile-panel')).not.toBeInTheDocument()
+})
+
+it.each(['primary', 'role', 'create', 'memory'] as const)(
+  'uses a modal to protect unsaved %s drawer changes on outside clicks',
+  async panel => {
+    const { props, personalSave } = fixture()
+    const user = userEvent.setup()
+    render(<StandInOverviewPage {...props} />)
+    await screen.findByTestId('stand-in-overview-role-default')
+    if (panel === 'role') await user.click(screen.getByTestId('stand-in-overview-role-default'))
+    await user.click(
+      screen.getByTestId(
+        panel === 'memory'
+          ? 'stand-in-memory-open'
+          : panel === 'create'
+            ? 'stand-in-create-role'
+            : 'stand-in-settings-open'
+      )
+    )
+    if (panel === 'memory') await user.click(await screen.findByTestId('stand-in-memory-add'))
+    const field = await screen.findByTestId(
+      panel === 'primary'
+        ? 'stand-in-preferences'
+        : panel === 'memory'
+          ? 'stand-in-memory-content'
+          : 'stand-in-role-name'
+    )
+    await user.type(field, '保留这些修改')
+    expect(
+      screen.queryByRole('dialog', { name: '有未保存的修改，是否放弃？' })
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-profile-backdrop'))
+    const dialog = screen.getByRole('dialog', { name: '有未保存的修改，是否放弃？' })
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(within(dialog).getByRole('button', { name: '继续编辑' })).toHaveFocus()
+    expect(within(dialog).getByText('放弃后，未保存的修改将丢失。')).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: '继续编辑' }))
+    expect(field).toHaveValue('保留这些修改')
+    expect(screen.getByTestId('stand-in-profile-panel')).toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-profile-backdrop'))
+    await user.keyboard('{Escape}')
+    expect(
+      screen.queryByRole('dialog', { name: '有未保存的修改，是否放弃？' })
+    ).not.toBeInTheDocument()
+    expect(field).toHaveValue('保留这些修改')
+    await user.click(screen.getByTestId('stand-in-profile-backdrop'))
+    await user.click(
+      within(screen.getByRole('dialog', { name: '有未保存的修改，是否放弃？' })).getByRole(
+        'button',
+        { name: '放弃修改' }
+      )
+    )
+    expect(screen.queryByTestId('stand-in-profile-panel')).not.toBeInTheDocument()
+    expect(personalSave).not.toHaveBeenCalled()
+  }
+)
 
 it('groups actual stand-in executions by project, excludes ordinary tasks, and opens the selected execution', async () => {
   const { props } = fixture()

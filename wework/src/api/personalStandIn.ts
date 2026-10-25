@@ -53,8 +53,6 @@ export interface PersonalStandInSettings {
   userId: number
   executionDeviceId: string
   version: number
-  selectionErrors?: { issueId: string; title: string; error: string }[]
-  autoSelect: boolean
   primary?: StandInIdentity
   roles: StandInRole[]
 }
