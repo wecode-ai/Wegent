@@ -267,17 +267,27 @@ class Actor:
 
     def close(self) -> None:
         self.provider.unblock()
+        errors: list[Exception] = []
         try:
-            for path in reversed(self.cleanup_paths):
-                response = self.client.delete(path)
-                assert response.status_code in {
-                    200,
-                    204,
-                }, f"Cleanup failed for {path}: HTTP {response.status_code}"
+            paths = [
+                f"/api/knowledge-documents/{document_id}"
+                for document_id in sorted(self.document_ids)
+            ] + list(reversed(self.cleanup_paths))
+            for path in paths:
+                try:
+                    response = self.client.delete(path)
+                    assert response.status_code in {
+                        200,
+                        204,
+                    }, f"Cleanup failed for {path}: HTTP {response.status_code}"
+                except Exception as error:
+                    errors.append(error)
         finally:
             for browser in self.browsers:
                 browser.close()
             self.client.close()
+        if errors:
+            raise ExceptionGroup("E2E resource cleanup failed", errors)
 
 
 def wait_for_user_lock(actor: Actor, minimum: int = 1) -> None:
