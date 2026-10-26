@@ -28,6 +28,8 @@ jobs:
     outputs:
       platform_e2e: ${{ steps.classify.outputs.platform_e2e }}
       wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
+      backend: ${{ steps.classify.outputs.backend }}
+      backend_rs: ${{ steps.classify.outputs.backend_rs }}
 
     steps:
       - name: Checkout code
@@ -437,6 +439,55 @@ jobs:
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
+
+  backend-container-e2e:
+    name: Backend Container E2E
+    needs: changes
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.backend_rs == 'true'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BACKEND_CONTAINER_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/backend-container
+      DOCKER_PULL_POLICY: missing
+      GIT_TOKEN_AES_KEY: '12345678901234567890123456789012'
+      GIT_TOKEN_AES_IV: '1234567890123456'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Configure isolated service credentials
+        run: |
+          token="$(openssl rand -hex 32)"
+          echo "::add-mask::$token"
+          echo "INTERNAL_SERVICE_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Reserve disk space for native image builds
+        run: bash .github/scripts/free-runner-disk-space-if-needed.sh 30
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run real backend container regression
+        run: |
+          set -o pipefail
+          mkdir -p "$BACKEND_CONTAINER_REPORT_DIR"
+          bash .github/scripts/test-backend-container.sh \
+            2>&1 | tee "$BACKEND_CONTAINER_REPORT_DIR/e2e.log"
+
+      - name: Upload backend container evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-container-e2e
+          path: .ci-artifacts/backend-container/
+          if-no-files-found: error
+          retention-days: 7
 
   # Runs browser and API tests with sharding. Executor-heavy coverage runs separately.
   e2e-tests:
@@ -1616,6 +1667,7 @@ jobs:
       - changes
       - build-frontend-e2e
       - build-executor-e2e-runtime
+      - backend-container-e2e
       - e2e-tests
       - executor-e2e-tests
     if: always() && !cancelled()
@@ -1630,15 +1682,12 @@ jobs:
           EXECUTOR_BUILD_RESULT: ${{ needs.build-executor-e2e-runtime.result }}
           PLATFORM_E2E_RESULT: ${{ needs.e2e-tests.result }}
           EXECUTOR_E2E_RESULT: ${{ needs.executor-e2e-tests.result }}
+          BACKEND_CONTAINER_RESULT: ${{ needs.backend-container-e2e.result }}
+          RUN_BACKEND_CONTAINER: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.backend_rs == 'true')) }}
         run: |
           if [[ "$CHANGES_RESULT" != "success" ]]; then
             echo "Platform E2E change detection completed with: $CHANGES_RESULT"
             exit 1
-          fi
-
-          if [[ "$RUN_E2E" != "true" ]]; then
-            echo "Platform E2E is not required for this pull request"
-            exit 0
           fi
 
           assert_success() {
@@ -1649,6 +1698,15 @@ jobs:
               exit 1
             fi
           }
+
+          if [[ "$RUN_BACKEND_CONTAINER" == "true" ]]; then
+            assert_success "$BACKEND_CONTAINER_RESULT" "Backend container E2E"
+          fi
+
+          if [[ "$RUN_E2E" != "true" ]]; then
+            echo "Platform E2E is not required for this pull request"
+            exit 0
+          fi
 
           assert_success "$FRONTEND_BUILD_RESULT" "Frontend E2E build"
           assert_success "$EXECUTOR_BUILD_RESULT" "Executor E2E build"
