@@ -112,6 +112,7 @@ core_segments=(
   local-harness
   harness-app-development
   harness-app-lifecycle
+  harness-app-models
   embedded-browser
   browser-toolbar-actions
   browser-annotation-core
@@ -207,7 +208,7 @@ cloud_shards=(
 # prebuilt application. Rendering runs apart from terminal/transcript workloads.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  harness-app-development,harness-app-lifecycle,browser-annotation-design
+  harness-app-development,harness-app-lifecycle,harness-app-models,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding,core-task-flow
   temporary-chat,local-file-preview,conversation-state,reply-predictions,archived-worktree-cleanup,reply-prediction-auth,model-settings,codex-native-catalog
   goal-lifecycle,goal-state-sync,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,application-menu,dsh-owner-capture
@@ -431,6 +432,7 @@ classify_wework_path() {
       wework/e2e/desktop/modules/harness-app-*)
       select_target "core:harness-app-development"
       select_target "core:harness-app-lifecycle"
+      select_target "core:harness-app-models"
       return
       ;;
     wework/e2e/desktop/scenarios/streaming-text.scenario.mjs | \

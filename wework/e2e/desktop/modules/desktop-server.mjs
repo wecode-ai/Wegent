@@ -2147,6 +2147,12 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'harness_app_models') {
+      this.recordScenarioRequest('harness_app_models', modelRequest)
+      this.writeLocalAssistantMessage(response, { protocol }, 'HARNESS_APP_MODEL_OK')
+      return
+    }
+
     if (this.scenario === 'vision_sidecar' || isReplyPredictionVisionRequest(body)) {
       const serialized = JSON.stringify(body)
       const modelCase = [LOCAL_VISION_SIDECAR_CASE, CLOUD_VISION_SIDECAR_CASE].find(
