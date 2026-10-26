@@ -86,14 +86,23 @@ export function createDesktopScenario(options) {
       await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
         timeoutMs: UI_TIMEOUT_MS,
       })
-      await control.command('fill', '[data-testid="local-model-context-window-input"]', {
-        value: '300001',
-      })
-      await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
-      await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
-        visible: false,
-        timeoutMs: UI_TIMEOUT_MS,
-      })
+      // A dropped input event leaves the editor dirty without a save, and the
+      // shared runner can lose one click while other checkpoints render.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await control.command('fill', '[data-testid="local-model-context-window-input"]', {
+          value: '300001',
+        })
+        await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
+        try {
+          await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
+            visible: false,
+            timeoutMs: 5_000,
+          })
+          break
+        } catch (error) {
+          if (attempt === 2) throw error
+        }
+      }
       await control.command('waitFor', ROW, { text: '已自定义', timeoutMs: UI_TIMEOUT_MS })
       const persisted = JSON.parse(await readFile(overridePath, 'utf8'))
       assert.deepEqual(persisted, [

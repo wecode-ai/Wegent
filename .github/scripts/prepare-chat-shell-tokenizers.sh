@@ -7,28 +7,46 @@ export TIKTOKEN_CACHE_DIR="$cache_dir"
 
 mkdir -p "$TIKTOKEN_CACHE_DIR"
 python - <<'PY'
-import ssl
-import time
+import hashlib
+import os
+import subprocess
 
 import tiktoken
 
-print(f"Chat Shell tokenizer SSL runtime: {ssl.OPENSSL_VERSION}")
-# The encodings come from a public blob store that occasionally stalls; a
-# single slow response must not fail every E2E shard.
+try:
+    import ssl
+
+    print(f"Chat Shell tokenizer SSL runtime: {ssl.OPENSSL_VERSION}")
+except ImportError as error:  # some runner images ship Python without libssl
+    print(f"Chat Shell tokenizer SSL unavailable: {error!r}", flush=True)
+
+cache_dir = os.environ["TIKTOKEN_CACHE_DIR"]
+encodings_url = "https://openaipublic.blob.core.windows.net/encodings"
+
+# Fetch through curl, which carries its own TLS stack, then let tiktoken read
+# the cached file so the warmup does not depend on the interpreter's ssl module.
 for encoding_name in ("cl100k_base", "o200k_base"):
-    for attempt in range(5):
-        try:
-            tiktoken.get_encoding(encoding_name).encode("warmup")
-            break
-        except Exception as error:  # noqa: BLE001 - download failures vary
-            if attempt == 4:
-                raise
-            delay = 2 * (attempt + 1)
-            print(
-                f"Retrying {encoding_name} download after {error!r} in {delay}s",
-                flush=True,
-            )
-            time.sleep(delay)
+    url = f"{encodings_url}/{encoding_name}.tiktoken"
+    cache_path = os.path.join(cache_dir, hashlib.sha1(url.encode()).hexdigest())
+    if not os.path.exists(cache_path):
+        subprocess.run(
+            [
+                "curl",
+                "--fail",
+                "--location",
+                "--silent",
+                "--show-error",
+                "--retry",
+                "5",
+                "--retry-delay",
+                "2",
+                "--output",
+                cache_path,
+                url,
+            ],
+            check=True,
+        )
+    tiktoken.get_encoding(encoding_name).encode("warmup")
 PY
 
 if [[ -n "${GITHUB_ENV:-}" ]]; then
