@@ -13,6 +13,12 @@ const modelConnectionsUrl = pathToFileURL(
     '../e2e/desktop/modules/model-server-connections.mjs'
   )
 ).href
+const invalidCwdScenarioUrl = pathToFileURL(
+  resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    '../e2e/desktop/scenarios/codex-invalid-launch-cwd.scenario.mjs'
+  )
+).href
 
 function run(script) {
   return spawnSync(
@@ -183,5 +189,74 @@ for (const code of ['ECONNRESET', 'EIO']) {
     assert.equal(result.status, code === 'ECONNRESET' ? 0 : 1, result.stderr)
     if (code === 'ECONNRESET') assert.equal(result.stderr, '')
     else assert.match(result.stderr, /late HTTP socket error/)
+  })
+}
+
+for (const [warmup, code] of [
+  [true, 'ECONNRESET'],
+  [false, 'ECONNRESET'],
+  [false, 'EIO'],
+]) {
+  test(`owns invalid-cwd model WebSocket errors before verification finishes: warmup=${warmup}, ${code}`, () => {
+    const result = run(`
+      import assert from 'node:assert/strict'
+      import { createServer } from 'node:http'
+      import { connect } from 'node:net'
+      import { createDesktopScenario } from ${JSON.stringify(invalidCwdScenarioUrl)}
+      process.env.WEWORK_E2E_MODEL_SERVER_PORT = '0'
+      const scenario = createDesktopScenario({resultDir: '.', workspacePath: '.'})
+      const server = createServer()
+      trackModelServerConnections(server)
+      scenario.attachServer(server)
+      let acceptedSocket
+      server.on('upgrade', (_request, socket) => {
+        acceptedSocket = socket
+        socket.once('close', () => server.close())
+      })
+      server.listen(0, '127.0.0.1', () => {
+        const client = connect(server.address().port, '127.0.0.1', () => {
+          client.write([
+            'GET /v1/responses HTTP/1.1',
+            'Host: localhost',
+            'Upgrade: websocket',
+            'Connection: Upgrade',
+            'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+            'Sec-WebSocket-Version: 13', '', '',
+          ].join('\\r\\n'))
+        })
+        let received = ''
+        let sent = false
+        let finished = false
+        client.on('data', chunk => {
+          received += chunk.toString()
+          if (!sent && received.includes('\\r\\n\\r\\n')) {
+            assert.ok(received.startsWith('HTTP/1.1 101 Switching Protocols'))
+            sent = true
+            const payload = Buffer.from(JSON.stringify({
+              type: 'response.create',
+              generate: ${!warmup},
+              input: 'WEWORK_DESKTOP_E2E_CODEX_INVALID_LAUNCH_CWD',
+            }))
+            assert.ok(payload.length < 126)
+            const mask = Buffer.from([1, 2, 3, 4])
+            const masked = Buffer.from(payload)
+            for (let index = 0; index < masked.length; index++) masked[index] ^= mask[index % 4]
+            client.write(Buffer.concat([Buffer.from([0x81, 0x80 | payload.length]), mask, masked]))
+          }
+          if (!finished && received.includes('response.completed')) {
+            finished = true
+            assert.equal(scenario.diagnostics().requestCount, ${warmup ? 0 : 1})
+            if (!${warmup}) assert.ok(received.includes('WEWORK_DESKTOP_E2E_CODEX_INVALID_LAUNCH_CWD_COMPLETE'))
+            console.log('Model response completed before scenario verification')
+            if (${JSON.stringify(code)} === 'ECONNRESET') client.resetAndDestroy()
+            else acceptedSocket.emit('error', Object.assign(new Error('model WebSocket failure'), {code: ${JSON.stringify(code)}}))
+          }
+        })
+      })
+    `)
+    assert.equal(result.status, code === 'ECONNRESET' ? 0 : 1, result.stderr)
+    assert.match(result.stdout, /Model response completed before scenario verification/)
+    if (code === 'ECONNRESET') assert.equal(result.stderr, '')
+    else assert.match(result.stderr, /model WebSocket failure/)
   })
 }

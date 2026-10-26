@@ -300,6 +300,12 @@ unrelated modules do not make the summary fail.
 
 CI reliability depends on these invariants:
 
+- Model fixtures use `trackModelServerConnections` to own connection errors,
+  including upgraded WebSockets. Scenarios must not forward a model client's
+  `ECONNRESET` as a server error: clients can disconnect after warmup or a completed
+  response while UI assertions or screenshots are still running. Request counts,
+  completion text, and error states still require independent assertions; other
+  connection errors and errors on non-model connections must remain fatal.
 - The platform E2E MySQL service must allow enough startup grace for its first
   initialization. Its health-check `start-period` should cover a cold start on
   a shared runner before the interval and retry count determine failure; reruns

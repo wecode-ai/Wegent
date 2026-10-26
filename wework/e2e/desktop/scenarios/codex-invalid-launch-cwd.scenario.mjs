@@ -236,7 +236,6 @@ export function createDesktopScenario({
   workspacePath,
 }) {
   let requestCount = 0
-  let verificationComplete = false
   const sockets = new Set()
   const executorLogPath = join(resultDir, 'executor.log')
   const launchWorkingDirectory = join(resultDir, 'invalid-launch-cwd')
@@ -272,10 +271,6 @@ export function createDesktopScenario({
       server.on('upgrade', (request, socket, head) => {
         sockets.add(socket)
         socket.once('close', () => sockets.delete(socket))
-        socket.on('error', error => {
-          if (!verificationComplete || error.code !== 'ECONNRESET') server.emit('error', error)
-          socket.destroy()
-        })
         const url = new URL(request.url ?? '/', modelServerUrl)
         if (!['/v1/responses', '/responses'].includes(url.pathname)) {
           socket.destroy()
@@ -378,7 +373,6 @@ export function createDesktopScenario({
         'codex-invalid-launch-cwd-01-completed.png',
         ACTIVE_WORKBENCH_SELECTOR
       )
-      verificationComplete = true
     },
 
     diagnostics() {
