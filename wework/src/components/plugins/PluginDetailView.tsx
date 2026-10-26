@@ -641,7 +641,7 @@ export function PluginDetailView({
             disabled={autoUpdateSaving}
             data-testid={`plugin-auto-update-toggle-${plugin.id}`}
             className={[
-              'relative h-6 w-10 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:cursor-not-allowed disabled:opacity-40',
+              'relative h-6 w-10 shrink-0 rounded-full transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:cursor-not-allowed disabled:opacity-40',
               autoUpdateEnabled ? 'bg-text-primary' : 'bg-border',
             ].join(' ')}
             onClick={() => onAutoUpdateChange(!autoUpdateEnabled)}
@@ -1010,7 +1010,7 @@ export function PluginDetailView({
                       <button
                         type="button"
                         data-testid={`plugin-skill-open-${item.name}`}
-                        className="col-span-2 grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                        className="col-span-2 grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3 rounded-lg text-left focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
                         onClick={() => setSelectedSkill(item)}
                       >
                         {rowBody}
@@ -1028,7 +1028,7 @@ export function PluginDetailView({
                         aria-label={item.name}
                         data-testid={`plugin-component-toggle-${item.componentKey}`}
                         className={[
-                          'relative h-[22px] w-[38px] rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30',
+                          'relative h-[22px] w-[38px] rounded-full transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30',
                           enabled ? 'bg-emerald-500' : 'bg-border',
                         ].join(' ')}
                         onClick={() => onComponentToggle(item.componentKey, !enabled)}
@@ -1085,7 +1085,7 @@ export function PluginDetailView({
                   <button
                     type="button"
                     data-testid="plugin-detail-open-origin-personal"
-                    className="inline-flex items-center gap-1 text-blue-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                    className="inline-flex items-center gap-1 text-blue-600 hover:underline focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
                     onClick={onOpenOriginPersonalPlugin}
                   >
                     {originPersonalActionLabel ||

@@ -120,7 +120,7 @@ export function WeworkCollaborationEmbeddedBrowserHost({
         <span className="text-sm font-medium text-text-primary">{t('workbench.browser')}</span>
         <button
           type="button"
-          className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/70"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70"
           data-testid="collaboration-embedded-browser-close"
           aria-label={t('workbench.close_browser')}
           onClick={close}

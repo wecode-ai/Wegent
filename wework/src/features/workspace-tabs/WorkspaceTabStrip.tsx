@@ -200,7 +200,7 @@ function WorkspaceTabButton({
             tab.id
           )
         }}
-        className="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+        className="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2.5 text-left outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-blue-500"
         title={tabTitle}
       >
         {tabKindIcon(tab, unavailable)}
@@ -221,7 +221,7 @@ function WorkspaceTabButton({
             closeTab(tab.id)
           }}
           className={cn(
-            'mr-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded outline-none transition-[background-color,color,opacity] hover:bg-black/[0.06] focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-white/[0.08]',
+            'mr-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded outline-none transition-[background-color,color,opacity] hover:bg-black/[0.06] keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-blue-500 dark:hover:bg-white/[0.08]',
             active
               ? 'text-text-secondary'
               : 'opacity-0 text-text-muted group-hover:opacity-100 group-hover:text-text-secondary group-focus-within:opacity-100'
@@ -512,7 +512,7 @@ export function WorkspaceTabStrip({
             setContextMenu(null)
             setAddMenuPosition(current => (current ? null : menuPosition(trigger, 220)))
           }}
-          className="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary outline-none transition-colors hover:bg-black/[0.04] hover:text-text-primary focus-visible:ring-2 focus-visible:ring-blue-500"
+          className="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary outline-none transition-colors hover:bg-black/[0.04] hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-blue-500"
           aria-label={t('workbench.workspace_tab_new', '新建标签页')}
           title={t('workbench.workspace_tab_new', '新建标签页')}
         >

@@ -472,7 +472,7 @@ export function CollaborationFilesView({
                   event.key === "Enter" && void createFolder()
                 }
                 placeholder={t("todo.folder_name_placeholder", "文件夹名称")}
-                className="h-8 min-w-0 flex-1 rounded-md border border-border px-3 text-sm outline-none focus:border-focus"
+                className="h-8 min-w-0 flex-1 rounded-md border border-border px-3 text-sm outline-none keyboard:focus:border-focus"
               />
               <button
                 type="button"

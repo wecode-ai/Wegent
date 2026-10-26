@@ -576,7 +576,7 @@ function WorkbenchPaneView({
           <button
             type="button"
             data-testid={`workbench-pane-title-${pane.id}`}
-            className="min-w-0 flex-1 truncate text-left text-sm font-medium text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+            className="min-w-0 flex-1 truncate text-left text-sm font-medium text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/70"
             title={title}
             onClick={() => onFocus(pane.id)}
           >
@@ -597,7 +597,7 @@ function WorkbenchPaneView({
               aria-label={focusedView ? labels.restoreSplit : labels.focusTask}
               aria-pressed={focusedView}
               onClick={() => onToggleFocusedView(pane.id)}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-text-primary/[0.06] hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-text-primary/[0.06] hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/70"
             >
               {focusedView ? <Columns2 className="h-4 w-4" /> : <Focus className="h-4 w-4" />}
             </button>
@@ -615,7 +615,7 @@ function WorkbenchPaneView({
               data-testid={`workbench-close-pane-${pane.id}`}
               aria-label={labels.closePane}
               onClick={() => onClose(pane.id)}
-              className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-text-primary/[0.06] hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+              className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-text-primary/[0.06] hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/70"
             >
               <X className="h-4 w-4" />
             </button>

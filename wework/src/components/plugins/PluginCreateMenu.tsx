@@ -76,7 +76,7 @@ export function PluginCreateMenu({
             <button
               type="button"
               data-testid="plugins-create-plugin-option"
-              className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-base font-normal text-text-primary transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+              className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-base font-normal text-text-primary transition-colors hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
               onClick={onCreatePlugin}
             >
               <Plug className="h-4 w-4 text-text-secondary" aria-hidden="true" />
@@ -87,7 +87,7 @@ export function PluginCreateMenu({
             <button
               type="button"
               data-testid="plugins-import-plugin-option"
-              className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-base font-normal text-text-primary transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+              className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-base font-normal text-text-primary transition-colors hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
               onClick={onImportPlugin}
             >
               <Upload className="h-4 w-4 text-text-secondary" />
@@ -98,7 +98,7 @@ export function PluginCreateMenu({
             <button
               type="button"
               data-testid="plugins-add-market-option"
-              className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-base font-normal text-text-primary transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+              className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-base font-normal text-text-primary transition-colors hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
               onClick={onAddMarket}
             >
               <Plus className="h-4 w-4 text-text-secondary" />
@@ -109,7 +109,7 @@ export function PluginCreateMenu({
             <button
               type="button"
               data-testid="plugins-record-skill-option"
-              className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-base font-normal text-text-primary transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+              className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-base font-normal text-text-primary transition-colors hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
               onClick={onRecordSkill}
             >
               <Circle className="h-4 w-4 text-text-secondary" />

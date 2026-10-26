@@ -58,7 +58,7 @@ export function PluginCreatorResultCard({
           <button
             type="button"
             data-testid="plugin-creator-view-plugin"
-            className="h-8 rounded-lg border border-border/30 px-3 text-sm font-medium text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+            className="h-8 rounded-lg border border-border/30 px-3 text-sm font-medium text-text-primary hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
             onClick={onViewPlugin}
           >
             {t('workbench.plugins_creator_view_plugin', '查看插件')}
@@ -68,7 +68,7 @@ export function PluginCreatorResultCard({
           <button
             type="button"
             data-testid="plugin-creator-publish-plugin"
-            className="h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+            className="h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
             onClick={onPublish}
           >
             {t('workbench.plugins_share_and_publish_title', '分享与发布')}
