@@ -205,6 +205,10 @@ export function createDesktopScenario({
   }
   async function openIssueWorkspace(control) {
     await ensureExperimentalFeaturesEnabled(control)
+    await reloadMainWindow(
+      control,
+      'The workbench did not reload after enabling experimental features'
+    )
     await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
       timeoutMs: workbenchReadyTimeoutMs,
     })
