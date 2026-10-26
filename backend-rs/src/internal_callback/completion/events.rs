@@ -42,7 +42,10 @@ pub(super) async fn resolve_owner_user_id<M: Mysql>(
 pub(crate) async fn publish_task_completed<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
     task_id: i64,
+    subtask_id: i64,
     status: &str,
+    result: Option<&serde_json::Value>,
+    error: Option<&str>,
 ) {
     let Some(user_id) = resolve_owner_user_id(ctx.mysql, ctx.tables, task_id).await else {
         tracing::warn!(task_id, "no task owner; TaskCompletedEvent not published");
@@ -50,8 +53,11 @@ pub(crate) async fn publish_task_completed<M: Mysql, R: Redis>(
     };
     let event = TaskCompletedEvent {
         task_id,
+        subtask_id,
         user_id,
         status,
+        result,
+        error,
     };
     // `main.py:419 register_pet_event_handlers`
     handlers::pet::handle_task_completed_for_pet(ctx, &event).await;

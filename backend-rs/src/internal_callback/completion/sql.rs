@@ -8,7 +8,6 @@
 //! ([`crate::task_store::TableTemplates`]); the `kinds`, `background_executions`
 //! and `wiki_generations` tables are not sharded, so those statements carry
 //! literal table names.
-use crate::admin_subscription_monitor_errors::EXECUTION_COLUMNS;
 use crate::task_store_listing::subtask_context_columns;
 use crate::task_store_statements::{
     assistant_subtasks_by_task_statement, subtask_by_id_statement,
@@ -152,25 +151,6 @@ pub(crate) fn subtasks_not_executor_deleted_by_task(tables: Tables) -> String {
 pub(crate) fn update_subtask_executor_deleted(tables: Tables) -> String {
     let table = tables.subtasks;
     format!("UPDATE {table} SET executor_deleted_at=?, updated_at=? WHERE {table}.id = ?")
-}
-
-/// `_find_execution_by_task_id`'s active-execution read.
-pub(crate) fn background_execution_running() -> String {
-    format!(
-        "SELECT {EXECUTION_COLUMNS} \nFROM background_executions \n\
-         WHERE background_executions.task_id = ? \
-         AND background_executions.status IN ('PENDING', 'RUNNING') \n\
-         ORDER BY background_executions.id DESC \n LIMIT 1"
-    )
-}
-
-/// `_find_execution_by_task_id`'s status-free fallback read.
-pub(crate) fn background_execution_latest() -> String {
-    format!(
-        "SELECT {EXECUTION_COLUMNS} \nFROM background_executions \n\
-         WHERE background_executions.task_id = ? \n\
-         ORDER BY background_executions.id DESC \n LIMIT 1"
-    )
 }
 
 /// The `wiki_generations` column projection `db.query(WikiGeneration)` renders,

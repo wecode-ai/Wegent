@@ -281,6 +281,7 @@ async fn mark_subtask_running(state: &AppState, subtask_id: i64) {
         redis,
         tables: crate::internal_callback::tables(state),
         executor_manager: &state.executor_manager,
+        celery: &state.celery,
     };
     completion::mark_subtask_running(&ctx, subtask_id).await;
 }

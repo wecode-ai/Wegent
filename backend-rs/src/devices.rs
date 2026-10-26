@@ -214,6 +214,17 @@ pub struct RuntimePluginSyncFeatures {
     pub protocol_version: i64,
 }
 
+impl RuntimePluginSyncFeatures {
+    /// Preserve only explicitly advertised positive integer protocol versions.
+    pub fn from_value(value: &serde_json::Value) -> Option<Self> {
+        value
+            .get("protocolVersion")?
+            .as_i64()
+            .filter(|version| *version >= 1)
+            .map(|protocol_version| Self { protocol_version })
+    }
+}
+
 /// The configured cloud device store's contribution to one listing entry:
 /// `CloudDeviceProvider.list_devices` adds this member to its device dict.
 ///
@@ -742,14 +753,7 @@ fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> 
             .plugin_sync
             .as_ref()
             .filter(|_| valid_header)
-            .and_then(|value| {
-                value
-                    .to_value()
-                    .get("protocolVersion")?
-                    .as_i64()
-                    .filter(|version| *version >= 1)
-                    .map(|protocol_version| RuntimePluginSyncFeatures { protocol_version })
-            }),
+            .and_then(|value| RuntimePluginSyncFeatures::from_value(&value.to_value())),
         extensions: serde_json::Map::new(),
     })
 }

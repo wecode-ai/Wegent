@@ -93,6 +93,7 @@ struct Bridge {
     mysql: MysqlService,
     tables: Tables,
     executor_manager: crate::executor_manager::ExecutorManager,
+    celery: crate::CeleryBroker,
     emitter: Option<StatusUpdatingEmitter<RedisService>>,
     cancel_key: String,
     response: Option<brz_http::Response>,
@@ -150,6 +151,7 @@ impl Bridge {
             mysql: state.mysql.clone(),
             tables: crate::internal_callback::tables(state),
             executor_manager: state.executor_manager.clone(),
+            celery: state.celery.clone(),
             emitter,
             cancel_key: format!("{CANCEL_KEY_PREFIX}{}", request.subtask_id),
             response: None,
@@ -465,6 +467,7 @@ impl Bridge {
             redis,
             tables: self.tables,
             executor_manager: &self.executor_manager,
+            celery: &self.celery,
         };
         completion::complete_terminal_event(
             &ctx,

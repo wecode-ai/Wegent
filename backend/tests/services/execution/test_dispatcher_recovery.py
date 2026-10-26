@@ -207,7 +207,7 @@ async def test_dispatch_skips_recovery_for_chat_shell():
 
 @pytest.mark.asyncio
 async def test_dispatch_does_not_scan_historical_deleted_subtasks():
-    """Dispatch should only recover when the current subtask is marked deleted."""
+    """An existing current executor must not recover historical deleted rounds."""
     dispatcher = ExecutionDispatcher()
     request = ExecutionRequest(
         task_id=1385,
@@ -253,6 +253,10 @@ async def test_dispatch_does_not_scan_historical_deleted_subtasks():
             "app.services.execution.dispatcher.subtask_store.get_by_id",
             return_value=subtask,
         ) as get_subtask_mock,
+        patch(
+            "app.services.execution.dispatcher._executor_pod_missing",
+            AsyncMock(return_value=False),
+        ),
         patch.object(dispatcher.router, "route", return_value=target),
         patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
         patch.object(

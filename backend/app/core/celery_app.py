@@ -121,6 +121,7 @@ celery_app = Celery(
     backend=result_backend,
     include=[
         "app.tasks.subscription_tasks",
+        "app.tasks.subscription_completion_tasks",
         "app.tasks.knowledge_tasks",
         "app.tasks.external_document_sync_tasks",
         "app.tasks.dingtalk_auto_sync_tasks",

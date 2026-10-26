@@ -47,6 +47,7 @@ from .polling_dispatcher import dispatch_polling
 from .recovery_service import recovery_service
 from .response_parser import ResponsesAPIEventParser
 from .router import CommunicationMode, ExecutionRouter, ExecutionTarget
+from .schedule_helper import _executor_pod_missing
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +236,7 @@ class ExecutionDispatcher:
                         f"[ExecutionDispatcher] Failed to close emitter: {close_error}"
                     )
 
+    @trace_async("execution.recover_executor_if_needed", "execution.dispatcher")
     async def _recover_executor_if_needed(
         self,
         request: ExecutionRequest,
@@ -258,7 +260,27 @@ class ExecutionDispatcher:
 
             restore_fork_workspace = self._has_fork_workspace_archive(request)
             if not subtask.executor_deleted_at and not restore_fork_workspace:
-                return
+                if (
+                    device_id
+                    or not subtask.executor_name
+                    or subtask.executor_name.startswith("device-")
+                    or not await _executor_pod_missing(
+                        subtask.executor_name, subtask.executor_namespace
+                    )
+                ):
+                    return
+                logger.info(
+                    "[ExecutionDispatcher] Executor confirmed missing: "
+                    "task_id=%s subtask_id=%s executor=%s/%s",
+                    request.task_id,
+                    request.subtask_id,
+                    subtask.executor_namespace,
+                    subtask.executor_name,
+                )
+                subtask_store.update_fields(
+                    db, subtask=subtask, executor_deleted_at=True
+                )
+                db.commit()
 
             task = task_store.get_by_id(db, task_id=request.task_id)
             if not task:

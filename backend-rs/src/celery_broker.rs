@@ -72,11 +72,25 @@ pub(crate) struct CeleryTask<'a> {
 /// (`celery/backends/redis.py:Start` calls `backend.client.pubsub()`); keeping
 /// it separate means `SUBSCRIBE`/`UNSUBSCRIBE` never share the producer
 /// session. `declarations` is kombu's per-channel declaration cache.
+#[derive(Clone)]
 pub struct CeleryBroker {
     origin: String,
     reply_to: String,
     subscriber: Option<brz_redis::RedisService>,
-    declarations: Mutex<BTreeSet<String>>,
+    declarations: std::sync::Arc<Mutex<BTreeSet<String>>>,
+    background: BackgroundPublisher,
+    default_queue: String,
+}
+
+#[derive(Clone, Default)]
+enum BackgroundPublisher {
+    #[default]
+    Shared,
+    Dedicated {
+        config: crate::config::RedisConfig,
+        resource_name: String,
+        publisher: std::sync::Arc<tokio::sync::OnceCell<brz_redis::RedisService>>,
+    },
 }
 
 impl CeleryBroker {
@@ -89,8 +103,21 @@ impl CeleryBroker {
             origin: process_origin(),
             reply_to: process_reply_to(),
             subscriber,
-            declarations: Mutex::new(BTreeSet::new()),
+            declarations: std::sync::Arc::new(Mutex::new(BTreeSet::new())),
+            background: BackgroundPublisher::Shared,
+            default_queue: crate::config::optional_env_or_dotenv("CELERY_TASK_DEFAULT_QUEUE")
+                .unwrap_or_else(|| "wegent_online".to_owned()),
         }
+    }
+
+    /// An explicitly configured broker must never degrade to the cache Redis.
+    pub(crate) fn with_background_broker(mut self, config: crate::config::RedisConfig) -> Self {
+        self.background = BackgroundPublisher::Dedicated {
+            config,
+            resource_name: crate::startup::redis::resource_name(),
+            publisher: std::sync::Arc::new(tokio::sync::OnceCell::new()),
+        };
+        self
     }
 
     /// Publishes one task: registers the result channel, then declares the
@@ -120,6 +147,56 @@ impl CeleryBroker {
             );
         }
         self.publish(publisher, task).await
+    }
+
+    /// Publish work that has no result consumer, using the application's queue.
+    pub(crate) async fn dispatch_background<R: Redis>(
+        &self,
+        publisher: &R,
+        task_name: &str,
+        kwargs: &Map<String, Value>,
+    ) -> RedisResult<()> {
+        let queue = &self.default_queue;
+        let task_id = uuid4();
+        let task = CeleryTask {
+            task_name,
+            queue,
+            task_id: &task_id,
+            kwargs,
+        };
+        let message = self.message_json_with_result(&task, &uuid4(), true);
+        let mut command = cmd("LPUSH");
+        command.arg(queue).arg(message);
+        let result: i64 = match &self.background {
+            BackgroundPublisher::Shared => publisher.command(command).await?,
+            BackgroundPublisher::Dedicated {
+                config,
+                resource_name,
+                publisher,
+            } => {
+                // A failed initialization leaves the cell empty. The next new
+                // notification can reconnect using the same bounded SDK client;
+                // an explicit broker never publishes through cache Redis.
+                // Include waiting behind another initializer in the budget;
+                // concurrent callers must not queue repeated connection timeouts.
+                let publisher = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    publisher.get_or_try_init(|| {
+                        crate::startup::redis::shared_named(config, resource_name.clone())
+                    }),
+                )
+                .await
+                .map_err(|_| {
+                    RedisError::new(
+                        brz_redis::ErrorKind::Timeout,
+                        "timed out connecting the configured Celery broker",
+                    )
+                })??;
+                publisher.command(command).await?
+            }
+        };
+        let _ = result;
+        Ok(())
     }
 
     /// `channel.basic_publish` after `maybe_declare`: the first publish in the
@@ -154,6 +231,15 @@ impl CeleryBroker {
     /// Renders the protocol-v2 envelope exactly like `kombu.utils.json.dumps`
     /// applied to `as_task_v2`'s message dict.
     fn message_json(&self, task: &CeleryTask<'_>, delivery_tag: &str) -> String {
+        self.message_json_with_result(task, delivery_tag, false)
+    }
+
+    fn message_json_with_result(
+        &self,
+        task: &CeleryTask<'_>,
+        delivery_tag: &str,
+        ignore_result: bool,
+    ) -> String {
         let kwargs_value = Value::Object(task.kwargs.clone());
         let kwargsrepr = saferepr(&kwargs_value);
         let mut embed = Map::new();
@@ -184,7 +270,7 @@ impl CeleryBroker {
         headers.insert("argsrepr".to_owned(), Value::from("()"));
         headers.insert("kwargsrepr".to_owned(), Value::from(kwargsrepr));
         headers.insert("origin".to_owned(), Value::from(self.origin.as_str()));
-        headers.insert("ignore_result".to_owned(), Value::from(false));
+        headers.insert("ignore_result".to_owned(), Value::from(ignore_result));
         headers.insert("replaced_task_nesting".to_owned(), Value::from(0));
         headers.insert("stamped_headers".to_owned(), Value::Null);
         headers.insert("stamps".to_owned(), Value::Object(Map::new()));
@@ -387,7 +473,9 @@ mod tests {
             origin: "gen53@example-host".to_owned(),
             reply_to: "22222222-2222-3222-8222-222222222222".to_owned(),
             subscriber: None,
-            declarations: Mutex::new(BTreeSet::new()),
+            declarations: std::sync::Arc::new(Mutex::new(BTreeSet::new())),
+            background: BackgroundPublisher::Shared,
+            default_queue: "wegent_online".to_owned(),
         }
     }
 

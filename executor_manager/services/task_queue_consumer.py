@@ -206,11 +206,15 @@ class TaskQueueConsumer:
 
             # Check if task processing actually succeeded
             task_result = result.get(task_id, {}) if isinstance(result, dict) else {}
-            if isinstance(task_result, dict) and task_result.get("executor_name"):
+            if (
+                isinstance(task_result, dict)
+                and task_result.get("status") == "success"
+                and task_result.get("executor_name")
+            ):
                 # Success - executor was created
                 return
 
-            # No executor_name means submission failed
+            # A failed submission can still include the old executor name.
             error_msg = (
                 task_result.get("error_msg", "Unknown error")
                 if isinstance(task_result, dict)

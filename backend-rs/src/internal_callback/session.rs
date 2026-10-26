@@ -677,12 +677,36 @@ pub(crate) async fn finalize_and_get_blocks<R: Redis>(
     finalize_unresolved_preview_tool_blocks(blocks, termination_reason, terminal_status)
 }
 
-/// `clear_task_streaming_status`: drop the task-level streaming status key.
+const CLEAR_TASK_STREAMING_SCRIPT: &str = r#"
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+end
+return 0
+"#;
+
+/// Delete only this round's task-level streaming status, atomically. A late
+/// terminal callback must not clear the new round's status on a reused Task.
 pub(crate) async fn clear_task_streaming_status<R: Redis>(
     redis: &R,
     task_id: i64,
+    subtask_id: i64,
 ) -> RedisResult<i64> {
-    redis.del(task_streaming_key(task_id)).await
+    let key = task_streaming_key(task_id);
+    let Some(stored) = redis.get::<_, String>(&key).await? else {
+        return Ok(0);
+    };
+    // Decode IDs in Rust so Lua's floating-point JSON decoder cannot round
+    // a large subtask ID. Compare the entire stored value in the atomic delete
+    // so a newer round/activity update between GET and EVAL stays untouched.
+    let owner = serde_json::from_str::<Value>(&stored)
+        .ok()
+        .and_then(|value| value.get("subtask_id").and_then(Value::as_i64));
+    if owner != Some(subtask_id) {
+        return Ok(0);
+    }
+    redis
+        .eval(CLEAR_TASK_STREAMING_SCRIPT, [key], [stored])
+        .await
 }
 
 /// `session_manager.is_cancelled`'s Redis half: the cache stores
@@ -713,7 +737,7 @@ pub(crate) async fn cleanup_streaming_state<R: Redis>(
     keys.extend(extract_block_content_keys(&blocks_raw));
     redis.del_many(keys).await?;
     if let Some(task_id) = task_id {
-        clear_task_streaming_status(redis, task_id).await?;
+        clear_task_streaming_status(redis, task_id, subtask_id).await?;
     }
     Ok(())
 }
