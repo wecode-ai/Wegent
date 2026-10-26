@@ -4123,7 +4123,6 @@
     "runner_catalog_unsupported_method": "此环境的 Executor 不支持读取模型目录，请更新并重启 Executor",
     "runner_catalog_runner_catalog_invalid": "环境返回的模型目录格式不正确，请检查 Executor 日志",
     "runner_catalog_codex_catalog_unavailable": "无法读取 Codex 模型，请检查环境中的 Codex 账号与配置",
-    "runner_catalog_claude_provider_required": "Claude 自定义服务尚未配置提供方标识",
     "runner_catalog_claude_catalog_invalid": "Claude 模型配置格式不正确",
     "runner_catalog_claude_catalog_unreadable": "无法读取环境中的 Claude 模型配置",
     "background_processes": "后台进程",
