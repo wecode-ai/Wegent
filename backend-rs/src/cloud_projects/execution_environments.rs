@@ -338,30 +338,60 @@ async fn owner_user_row<M: Mysql>(
     Ok(row.map(|row| row.user_name))
 }
 
-/// Resolve `owner_values`' `owner_name` for each device owner in order. The
-/// authenticated user's instance is held by the request and therefore already
-/// in the source session's weak identity map (no query), while every other
-/// device issues its own `db.get(User, device.user_id)` — the loaded `User` is
-/// not retained, so a repeated owner is re-read per device.
-async fn device_owner_names<M: Mysql>(
+/// Resolve ownership from the device's own workspace or personal owner.
+async fn device_owners<M: Mysql>(
     mysql: &M,
-    owner_user_ids: &[i32],
+    owners: &[(i32, Option<String>)],
     current_user_id: i32,
     current_user_name: &str,
-) -> Result<Vec<String>, brz_mysql::MysqlError> {
-    let mut names = Vec::with_capacity(owner_user_ids.len());
-    for &owner_user_id in owner_user_ids {
-        if owner_user_id == current_user_id {
-            names.push(current_user_name.to_string());
-        } else {
-            names.push(
-                owner_user_row(mysql, owner_user_id)
-                    .await?
+) -> Result<Vec<(String, bool)>, brz_mysql::MysqlError> {
+    let mut resolved = Vec::with_capacity(owners.len());
+    for (owner_user_id, workspace_id) in owners {
+        if let Some(workspace_id) = workspace_id {
+            let workspace =
+                super::members::workspace_kind(mysql, workspace_id.parse().ok()).await?;
+            let role = if let Some(workspace) = &workspace {
+                super::members::workspace_role_for_kind(mysql, workspace, current_user_id).await?
+            } else {
+                None
+            };
+            resolved.push((
+                workspace
+                    .map(|workspace| workspace.name)
                     .unwrap_or_default(),
-            );
+                owns_device(
+                    *owner_user_id,
+                    current_user_id,
+                    Some(workspace_id),
+                    role.as_deref(),
+                ),
+            ));
+        } else {
+            let owns = owns_device(*owner_user_id, current_user_id, None, None);
+            let name = if owns {
+                current_user_name.to_string()
+            } else {
+                owner_user_row(mysql, *owner_user_id)
+                    .await?
+                    .unwrap_or_default()
+            };
+            resolved.push((name, owns));
         }
     }
-    Ok(names)
+    Ok(resolved)
+}
+
+fn owns_device(
+    device_user_id: i32,
+    current_user_id: i32,
+    workspace_owner_id: Option<&str>,
+    owner_workspace_role: Option<&str>,
+) -> bool {
+    if workspace_owner_id.is_some() {
+        matches!(owner_workspace_role, Some("Owner" | "Maintainer"))
+    } else {
+        device_user_id == current_user_id
+    }
 }
 
 /// Handler body for `GET /api/v1/cloud-projects/{project_id}/execution-environments`.
@@ -410,16 +440,13 @@ async fn execution_environments(
             .collect();
     let status_map = statuses;
 
-    // `owner_values`: `db.get(User, device.user_id)` feeds `owner_name`. The
-    // source session's identity map is weak and `owner_values` does not retain
-    // the loaded `User`, so only the authenticated user's instance stays alive
-    // across devices: a device owned by the current user resolves without a
-    // query, while every other device issues its own lookup (a repeated owner
-    // is re-read for each device).
-    let owner_user_ids: Vec<i32> = rows.iter().map(|row| row.device_user_id).collect();
-    let owner_names = device_owner_names(
+    let device_owner_ids: Vec<_> = rows
+        .iter()
+        .map(|row| (row.device_user_id, row.spec().workspace_owner_id))
+        .collect();
+    let owners = device_owners(
         &state.mysql,
-        &owner_user_ids,
+        &device_owner_ids,
         current_user.id,
         &current_user.user_name,
     )
@@ -427,7 +454,7 @@ async fn execution_environments(
     .map_err(internal_execution_error)?;
 
     let mut items = Vec::with_capacity(rows.len());
-    for (row, owner_name) in rows.iter().zip(owner_names) {
+    for (row, (owner_name, owns_device)) in rows.iter().zip(owners) {
         let spec = row.spec();
         let device_type = execution_device_type(&spec);
         let name = spec
@@ -448,10 +475,6 @@ async fn execution_environments(
             Some("Owner" | "Maintainer" | "Developer")
         );
         let resource_authorized = row.is_active && authorized.contains(&row.id);
-        let owns_device = match spec.workspace_owner_id.as_deref() {
-            Some(id) => id == workspace_id && matches!(access.workspace_priority, Some(0 | 1)),
-            None => row.device_user_id == current_user.id,
-        };
         let can_use =
             resource_authorized && may_execute && use_access.allows(owns_device, current_user.id);
         items.push(ExecutionEnvironmentItem {
@@ -479,11 +502,7 @@ async fn execution_environments(
                 .workspace_owner_id
                 .clone()
                 .unwrap_or_else(|| row.device_user_id.to_string()),
-            owner_name: if spec.workspace_owner_id.as_deref() == Some(&workspace_id) {
-                access.workspace.name.clone()
-            } else {
-                owner_name
-            },
+            owner_name,
             status: if resource_authorized {
                 status_map
                     .get(&row.id)
@@ -549,10 +568,10 @@ mod tests {
         // source's weak identity map does not retain the loaded `User`, so
         // `db.get(User, 86)` runs per device rather than once.
         let mysql = KindQueryCapture::default();
-        let names = device_owner_names(&mysql, &[86, 86], 157, "viewer")
+        let owners = device_owners(&mysql, &[(86, None), (86, None)], 157, "viewer")
             .await
             .unwrap();
-        assert_eq!(names.len(), 2);
+        assert_eq!(owners, vec![(String::new(), false); 2]);
         let user_reads: Vec<_> = mysql
             .queries()
             .into_iter()
@@ -567,14 +586,44 @@ mod tests {
         // The authenticated user's instance is held by the request, so the
         // source identity map satisfies `db.get(User, caller)` with no query.
         let mysql = KindQueryCapture::default();
-        let names = device_owner_names(&mysql, &[157, 157], 157, "viewer")
+        let owners = device_owners(&mysql, &[(157, None), (157, None)], 157, "viewer")
             .await
             .unwrap();
-        assert_eq!(names, vec!["viewer".to_string(), "viewer".to_string()]);
+        assert_eq!(owners, vec![("viewer".to_string(), true); 2]);
         assert!(
             mysql.queries().is_empty(),
             "the identity map holds the caller"
         );
+    }
+
+    #[tokio::test]
+    async fn device_ownership_reads_its_own_workspace_without_using_a_personal_name() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let owners = device_owners(&mysql, &[(157, Some("999".into()))], 157, "device-user")
+            .await
+            .unwrap();
+        assert_eq!(owners, vec![(String::new(), false)]);
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 1);
+        assert!(queries[0].sql.ends_with("WHERE kinds.id = 999"));
+    }
+
+    #[test]
+    fn cross_workspace_consent_uses_the_owning_workspace_role() {
+        let policy = super::super::device_access::DeviceAccess::default();
+        for role in ["Owner", "Maintainer"] {
+            let owns = owns_device(86, 157, Some("999"), Some(role));
+            assert!(owns);
+            assert!(policy.allows(owns, 157));
+        }
+        for role in [None, Some("Developer"), Some("Viewer")] {
+            // Registering a workspace device does not preserve personal ownership.
+            let owns = owns_device(157, 157, Some("999"), role);
+            assert!(!owns);
+            assert!(!policy.allows(owns, 157));
+        }
+        assert!(owns_device(157, 157, None, None));
+        assert!(!owns_device(86, 157, None, Some("Owner")));
     }
 
     #[test]

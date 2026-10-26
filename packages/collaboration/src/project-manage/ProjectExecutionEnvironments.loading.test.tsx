@@ -55,7 +55,10 @@ function apiFor(
       devices: { cloud: vi.fn(async () => []) },
       list: vi.fn(async () => ({ agents: [], execution_environments: [] })),
     },
-    gitRepositories: { list: vi.fn(async () => []), listBranches: vi.fn(async () => []) },
+    gitRepositories: {
+      list: vi.fn(async () => []),
+      listBranches: vi.fn(async () => []),
+    },
   } as unknown as SharedWorkspaceApi
 }
 
@@ -91,6 +94,31 @@ afterEach(() => {
 })
 
 describe('execution environment settings loading', () => {
+  it('keeps a successful device add when the canonical project refresh fails', async () => {
+    const api = apiFor(vi.fn(async () => []))
+    api.resources!.devices!.cloud = vi.fn(async () => [device])
+    api.workspaces!.listExecutionEnvironments = vi.fn(async () => [device])
+    api.projects.get = vi.fn(async () => {
+      throw new Error('Connection lost')
+    })
+    api.projects.addExecutionEnvironment = vi.fn(async () => ({
+      ...device,
+      project_version: 2,
+    }))
+    const onProjectChange = vi.fn()
+    await render(api, project, onProjectChange)
+    await act(async () => element('-add')!.click())
+    await act(async () => element('-candidate-1')!.click())
+
+    expect(api.projects.addExecutionEnvironment).toHaveBeenCalledExactlyOnceWith('project-1', 1)
+    expect(element('-picker')).toBeNull()
+    expect(element('-1')).not.toBeNull()
+    expect(container.textContent).toContain('设备已添加，但刷新项目失败')
+    expect(container.textContent).toContain('Connection lost')
+    expect(container.textContent).not.toContain('添加到项目失败')
+    expect(onProjectChange).not.toHaveBeenCalled()
+  })
+
   it('preserves the project version after adding a device and reopening settings', async () => {
     let currentProject = project
     const assigned: CollaborationExecutionEnvironment[] = []
@@ -103,7 +131,10 @@ describe('execution environment settings loading', () => {
       assigned.push(created)
       return created
     })
-    api.projects.update = vi.fn(async () => ({ ...currentProject, version: 3 }))
+    api.projects.update = vi.fn(async () => ({
+      ...currentProject,
+      version: 3,
+    }))
     await render(api, project, updated => {
       currentProject = updated
     })
@@ -130,7 +161,12 @@ describe('execution environment settings loading', () => {
 
   it('reuses the device page snapshot across scoped APIs without granting local placeholder IDs', async () => {
     const api = apiFor()
-    const registered = { ...device, id: 'registered-22', device_id: 22, device_key: 'runtime-22' }
+    const registered = {
+      ...device,
+      id: 'registered-22',
+      device_id: 22,
+      device_key: 'runtime-22',
+    }
     const cloud = vi.fn(async () => [registered])
     api.resources!.devices = {
       local: vi.fn(async () => [{ ...device, device_key: 'runtime-22' }]),

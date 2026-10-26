@@ -590,9 +590,23 @@ export function ProjectExecutionEnvironments({
       assigned.update(current => [...current.filter(item => item.device_id !== deviceId), created])
       if (created.project_version != null) {
         setConfigVersion(created.project_version)
-        if (onProjectChange) onProjectChange(await api.projects.get(scopeId))
       }
       setPickerOpen(false)
+      if (created.project_version != null && onProjectChange) {
+        try {
+          onProjectChange(await api.projects.get(scopeId))
+        } catch (refreshError) {
+          setError(
+            translate(
+              'todo.execution_environment_added_refresh_failed',
+              '设备已添加，但刷新项目失败，请重新加载项目：{{reason}}',
+              {
+                reason: refreshError instanceof Error ? refreshError.message : String(refreshError),
+              }
+            )
+          )
+        }
+      }
     } catch (saveError) {
       const reason = environmentAuthorizationError(saveError, translate)
       setError(

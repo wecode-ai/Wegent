@@ -97,6 +97,7 @@ pub(crate) struct WorkspaceKindRow {
     pub user_id: i32,
     #[mysql(rename = "kind")]
     pub kind: String,
+    pub name: String,
     #[mysql(rename = "namespace")]
     pub namespace: String,
     #[mysql(rename = "is_active")]
@@ -480,6 +481,14 @@ async fn workspace_role<M: Mysql>(
     let Some(workspace) = workspace_kind(mysql, workspace_id).await? else {
         return Ok(None);
     };
+    workspace_role_for_kind(mysql, &workspace, user_id).await
+}
+
+pub(super) async fn workspace_role_for_kind<M: Mysql>(
+    mysql: &M,
+    workspace: &WorkspaceKindRow,
+    user_id: i32,
+) -> MysqlResult<Option<String>> {
     if workspace.kind != "CollaborationWorkspace" || !workspace.is_active {
         return Ok(None);
     }
