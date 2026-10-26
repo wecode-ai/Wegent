@@ -1,13 +1,18 @@
-import { setExperimentalFeatures, waitForElementCount } from './harness-app-fixture.mjs'
+import {
+  LEGACY_INSTALLATION_ID,
+  setExperimentalFeatures,
+  waitForElementCount,
+} from './harness-app-fixture.mjs'
 import assert from 'node:assert/strict'
 import { telemetryEvents } from './response-protocol.mjs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { verifyDownloadedDshRuntimeCache } from './dsh-runtime-cache.mjs'
 
 export async function prepareHarnessAppUi(
   control,
-  { uiTimeoutMs, captureScreenshot, electronUserDataDirectory, resultDir }
+  { uiTimeoutMs, captureScreenshot, electronUserDataDirectory, resultDir, legacyPackagePath }
 ) {
   await setExperimentalFeatures(control, false, uiTimeoutMs)
   await control.command('navigate', 'body', { value: '/' })
@@ -134,17 +139,13 @@ export async function prepareHarnessAppUi(
   await control.command('waitFor', '[data-testid="app-iframe-harness-market-1"]', {
     timeoutMs: 600_000,
   })
-  const legacyInstallations = JSON.parse(
+  const installations = JSON.parse(
     await readFile(join(electronUserDataDirectory, 'harness-apps', 'installations.json'), 'utf8')
   )
   assert.equal(
-    legacyInstallations.find(item => item.id === 'market-1')?.runtimeVersion,
-    '0.1.0-rc.8',
-    'An existing Smart app must keep its declared compatible runtime'
-  )
-  const legacyRuntimeCache = await verifyDownloadedDshRuntimeCache(
-    join(resultDir, 'harness-runtime'),
-    '0.1.0-rc.8'
+    installations.find(item => item.id === 'market-1')?.runtimeVersion,
+    '0.2.0-rc.2',
+    'A Smart app with desktop capabilities must use the authenticated runtime'
   )
   await control.command('click', `[data-testid="workspace-tab-select-${officialManagementTabId}"]`)
   await control.command(
@@ -175,5 +176,92 @@ export async function prepareHarnessAppUi(
     timeoutMs: uiTimeoutMs,
   })
 
+  await verifyLegacyAppRejection(control, {
+    legacyPackagePath,
+    electronUserDataDirectory,
+    uiTimeoutMs,
+  })
+  const legacyRuntimeCache = await verifyDownloadedDshRuntimeCache(
+    join(resultDir, 'harness-runtime'),
+    '0.1.0-rc.8'
+  )
+
   return { legacyRuntimeCache }
+}
+
+async function verifyLegacyAppRejection(
+  control,
+  { legacyPackagePath, electronUserDataDirectory, uiTimeoutMs }
+) {
+  const id = LEGACY_INSTALLATION_ID
+  await control.command('dropPaths', '[data-testid="smart-apps-owned-page"]', {
+    value: JSON.stringify([
+      {
+        uri: pathToFileURL(legacyPackagePath).href,
+        name: `${id}.zip`,
+        mimeType: 'application/zip',
+      },
+    ]),
+  })
+  await control.command('waitFor', `[data-testid="smart-app-created-item-${id}"]`, {
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('navigate', 'body', { value: '/sites?app_type=smart_app&view=owned' })
+  await control.command('waitFor', `[data-testid="harness-app-start-${id}"]`, {
+    timeoutMs: uiTimeoutMs,
+  })
+  const managementTabId = await control.command(
+    'getAttribute',
+    '[data-workspace-tab-content][aria-hidden="false"]',
+    { value: 'data-workspace-tab-content' }
+  )
+  assert.ok(managementTabId, 'The legacy fixture management tab was not available')
+  await control.command('click', `[data-testid="harness-app-start-${id}"]`)
+  await control.command('waitFor', `[data-testid="harness-app-launch-${id}"]`, {
+    text: 'The trusted Electron host bridge requires DSH 0.2.0-rc.2',
+    timeoutMs: 600_000,
+  })
+  assert.equal(
+    Number(await control.command('getElementCount', `[data-testid="app-iframe-harness-${id}"]`)),
+    0,
+    'A legacy runtime must not expose the privileged Electron host bridge'
+  )
+  const installations = JSON.parse(
+    await readFile(join(electronUserDataDirectory, 'harness-apps', 'installations.json'), 'utf8')
+  )
+  const legacy = installations.find(item => item.id === id)
+  assert.equal(legacy?.state, 'failed')
+  assert.equal(legacy.runtimeVersion, null)
+  assert.equal(legacy.webUrl, null)
+  await removeLegacyAppFixture(control, id, managementTabId, uiTimeoutMs)
+}
+
+async function removeLegacyAppFixture(control, id, managementTabId, uiTimeoutMs) {
+  const failedTabId = await control.command(
+    'getAttribute',
+    '[data-workspace-tab-content][aria-hidden="false"]',
+    { value: 'data-workspace-tab-content' }
+  )
+  assert.ok(failedTabId, 'The rejected Smart app did not expose its workspace tab ID')
+  await control.command('click', `[data-testid="workspace-tab-close-${failedTabId}"]`)
+  await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
+  await control.command('waitFor', `[data-testid="smart-app-actions-${id}"]`, {
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('click', `[data-testid="smart-app-actions-${id}"]`)
+  await control.command('waitFor', `[data-testid="smart-app-remove-local-${id}"]`, {
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('click', `[data-testid="smart-app-remove-local-${id}"]`)
+  await control.command('waitFor', '[data-testid="smart-app-remove-local-confirm"]', {
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('click', '[data-testid="smart-app-remove-local-confirm"]')
+  await waitForElementCount(
+    control,
+    `[data-testid="smart-app-created-item-${id}"]`,
+    0,
+    uiTimeoutMs,
+    'The rejected legacy Smart app fixture was not removed'
+  )
 }
