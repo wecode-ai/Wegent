@@ -1,4 +1,5 @@
 import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
+import { verifyRemoteStandInProjectScope } from '../modules/stand-in-project-connections.mjs'
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
@@ -153,6 +154,12 @@ export function createDesktopScenario({
         const catalog = await rpc('runtime.runner.catalog', {})
         const model = catalog.models.find(row => row.runtime === 'codex' && row.is_default)
         assert.ok(model, 'Remote Executor has no native default Codex model')
+        const localProject = await requestExecutor(
+          control,
+          'projects.create',
+          { name: `${MARKER}-当前电脑项目` },
+          uiTimeoutMs
+        )
         await ensureExperimentalFeaturesEnabled(control)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         await selectCollaborationDomain(control, CONTENT, 'cloud')
@@ -182,7 +189,7 @@ export function createDesktopScenario({
           `Remote device must have an active project authorization: ${JSON.stringify(authorized.items.map(row => ({ device_key: row.device_key, app_device_id: row.app_device_id, can_use: row.can_use, status: row.status })))}`
         )
         const agent = await request(`/v1/cloud-projects/${project.id}/chat-agents`, {
-          name: '云端替身助手',
+          name: '云端分身助手',
           runtime: 'codex',
           system_prompt: `${MARKER}_AGENT`,
           execution_policy: { mode: 'fixed', environment_id: String(remote.id) },
@@ -196,7 +203,7 @@ export function createDesktopScenario({
             },
           },
         })
-        const historical = await createIssue('启用云端替身前已分配')
+        const historical = await createIssue('启用云端分身前已分配')
         // The real inbox must resolve the stored assigner, without additional inbox lookups.
         const beforeStandIn = await request('/v1/wework-notifications?category=collaboration')
         const historicalNotice = beforeStandIn.items.find(
@@ -239,6 +246,7 @@ export function createDesktopScenario({
         await control.command('waitFor', '[data-testid="stand-in-device"]')
         await control.command('click', '[data-testid="stand-in-back"]')
         await control.command('waitFor', '[data-testid="stand-in-auto"][aria-checked="false"]')
+        await verifyRemoteStandInProjectScope(control, localProject.id, String(project.id))
         await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
         const agentValue = JSON.stringify(['cloud', String(project.id), String(agent.id)])
         await control.command(
@@ -246,6 +254,9 @@ export function createDesktopScenario({
           `[data-testid="stand-in-agent"] option[value=${JSON.stringify(agentValue)}]`
         )
         await control.command('select', '[data-testid="stand-in-agent"]', { value: agentValue })
+        await control.command('waitFor', '[data-testid="stand-in-project-agent-scope"]', {
+          text: project.name,
+        })
         await control.command('waitFor', '[data-testid="stand-in-prompt"]')
         await control.command('fill', '[data-testid="stand-in-prompt"]', { value: MARKER })
         await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
@@ -344,7 +355,7 @@ export function createDesktopScenario({
           { text: '处理完毕' }
         )
         assert.equal(await control.command('getElementCount', processing), '1')
-        await control.command('waitFor', processing, { text: '替身处理' })
+        await control.command('waitFor', processing, { text: '分身处理' })
         assert.ok(
           (await control.command('getText', processing)).includes('云端设备自动接手'),
           'Completed stand-in notification must preserve its assignment title'

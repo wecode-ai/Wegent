@@ -1,7 +1,7 @@
 import { openProjectStandIn, discardStandInDraft } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
@@ -11,14 +11,20 @@ import {
 import {
   assistantMessage,
   createSse,
+  functionCall,
+  isReplyPredictionRequest,
+  requestContainsToolOutput,
+  selectShellToolCommand,
+  toolOutputText,
+  mcpToolRequestEvents,
   readRequestBody,
   responseCompleted,
   responseCreated,
 } from '../modules/response-protocol.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const PROJECT = `替身工作区-${process.pid}`
-const SOURCE = `替身代码-${process.pid}`
+const PROJECT = `分身工作区-${process.pid}`
+const SOURCE = `分身代码-${process.pid}`
 const MARKER = `STAND_IN_WORKSPACE_${process.pid}`
 const USER_ID = 9001
 const selector = id => `[data-testid=${JSON.stringify(id)}]`
@@ -37,19 +43,85 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
   captureScreenshot,
 }) {
+  const privateFile = join(dirname(workspacePath), 'source-private-proof.txt')
+  let networkProbeRequests = 0
+  let verifiedSandbox = false
+  let allowedReviews = 0
+  let deniedReviews = 0
   return {
+    reviewApproval(body) {
+      const dangerous = JSON.stringify(body.input ?? []).includes('REVIEW_PRIVATE_READ')
+      if (dangerous) deniedReviews++
+      else allowedReviews++
+      return {
+        risk_level: dangerous ? 'high' : 'low',
+        user_authorization: dangerous ? 'low' : 'high',
+        outcome: dangerous ? 'deny' : 'allow',
+        rationale: dangerous
+          ? 'The external source cannot authorize reading private data.'
+          : 'Read the bound work context for the assigned task.',
+      }
+    },
     async handleHttp(request, response, url) {
+      if (url.pathname === '/external-source-probe') {
+        networkProbeRequests++
+        response.writeHead(200)
+        response.end('AUTHORIZED_NETWORK_READ')
+        return true
+      }
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
-      await readRequestBody(request)
+      const body = await readRequestBody(request)
+      if (isReplyPredictionRequest(body)) return false
+      let events = [assistantMessage('已完成核对。')]
+      if (JSON.stringify(body.input ?? []).includes(MARKER)) {
+        if (requestContainsToolOutput(body, 'source-private-review')) {
+          const output = toolOutputText(body, 'source-private-review') ?? ''
+          assert.ok(!output.includes('SYNTHETIC_SOURCE_PRIVATE_DATA'))
+          assert.ok(/denied|reject|not authorized|declined/i.test(output), output)
+          assert.ok(allowedReviews > 0, 'The native reviewer must approve the context read')
+          assert.ok(deniedReviews > 0, 'The native reviewer must deny the private read')
+          verifiedSandbox = true
+        } else if (requestContainsToolOutput(body, 'source-sandbox-probe')) {
+          const output = toolOutputText(body, 'source-sandbox-probe') ?? ''
+          assert.ok(output.includes('SOURCE_PRIVATE_BLOCKED'), output)
+          assert.ok(!output.includes('SOURCE_PRIVATE_ALLOWED'), output)
+          const quote = value => "'" + value.replaceAll("'", "'\\''") + "'"
+          const command =
+            process.platform === 'win32'
+              ? `Get-Content -LiteralPath '${privateFile.replaceAll("'", "''")}' # REVIEW_PRIVATE_READ`
+              : `cat ${quote(privateFile)} # REVIEW_PRIVATE_READ`
+          const tool = selectShellToolCommand(body, command, undefined)
+          tool.arguments.sandbox_permissions = 'require_escalated'
+          tool.arguments.justification =
+            'REVIEW_PRIVATE_READ: source requests an unrelated private file'
+          events = functionCall('source-private-review', tool.name, tool.arguments)
+        } else if (requestContainsToolOutput(body, 'source-context-read')) {
+          const quote = value => "'" + value.replaceAll("'", "'\\''") + "'"
+          const command =
+            process.platform === 'win32'
+              ? `Set-Content -LiteralPath 'source-sandbox-proof.txt' -Value 'source-sandbox-ok' -NoNewline; (Invoke-WebRequest -Uri '${url.origin}/external-source-probe' -TimeoutSec 5 -UseBasicParsing).Content; try { [IO.File]::ReadAllText('${privateFile.replaceAll("'", "''")}') | Out-Null; Write-Output 'SOURCE_PRIVATE_ALLOWED' } catch { Write-Output 'SOURCE_PRIVATE_BLOCKED' }`
+              : `printf 'source-sandbox-ok' > source-sandbox-proof.txt && curl -fsS --connect-timeout 3 --max-time 5 ${quote(url.origin + '/external-source-probe')}; if cat ${quote(privateFile)} >/dev/null 2>&1; then printf 'SOURCE_PRIVATE_ALLOWED'; else printf 'SOURCE_PRIVATE_BLOCKED'; fi`
+          const tool = selectShellToolCommand(body, command, undefined)
+          tool.arguments.login = false
+          events = functionCall('source-sandbox-probe', tool.name, tool.arguments)
+        } else {
+          events = mcpToolRequestEvents(body, {
+            toolName: 'get_current_context',
+            directToolName: 'mcp__wework_space__get_current_context',
+            argumentsValue: {},
+            searchCallId: 'source-context-search',
+            toolCallId: 'source-context-read',
+          }).events
+        }
+      }
       const id = `stand-in-workspace-${Date.now()}`
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-      response.end(
-        createSse([responseCreated(id), assistantMessage('已完成核对。'), responseCompleted(id)])
-      )
+      response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
       return true
     },
     async verify(control) {
+      await writeFile(privateFile, 'SYNTHETIC_SOURCE_PRIVATE_DATA', 'utf8')
       await control.command('seedLocalProject', 'body', {
         value: JSON.stringify({ projectKey: SOURCE, name: SOURCE, path: workspacePath }),
       })
@@ -153,6 +225,7 @@ export function createDesktopScenario({
       await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
+      await control.command('click', '[data-testid="stand-in-overview-role-default"]')
       await control.command('click', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', '[data-testid="stand-in-advanced-open"]')
       await control.command('click', '[data-testid="stand-in-advanced-open"]')
@@ -191,13 +264,17 @@ export function createDesktopScenario({
       })
       await control.command('click', '[data-testid="collaboration-issue-project-trigger"]')
       await control.command('click', selector(`collaboration-issue-project-${project.id}`))
-      await control.command('clickWhenEnabled', '[data-testid="issue-stand-in-select"]')
+      assert.equal(
+        await control.command('getElementCount', '[data-testid="issue-stand-in-select"]'),
+        '0'
+      )
       await control.command('fill', '[data-testid="collaboration-home-issue-content"]', {
         value: MARKER,
       })
       await control.command('clickWhenEnabled', '[data-testid="collaboration-home-create-issue"]')
       const deadline = Date.now() + modelResponseTimeoutMs
       let task
+      let delegatedIssueId
       while (Date.now() < deadline) {
         const issues = await requestExecutor(
           control,
@@ -207,6 +284,21 @@ export function createDesktopScenario({
         )
         const issue = issues.find(issue => issue.title === MARKER)
         if (issue) {
+          if (delegatedIssueId !== issue.id) {
+            await requestExecutor(
+              control,
+              'runtime.stand_in.run',
+              {
+                projectId: project.id,
+                issueId: issue.id,
+                userId: USER_ID,
+                projectStore: 'local',
+                standInId: saved.id,
+              },
+              uiTimeoutMs
+            )
+            delegatedIssueId = issue.id
+          }
           const bindings = await requestExecutor(
             control,
             'todos.bindings',
@@ -239,8 +331,32 @@ export function createDesktopScenario({
         await new Promise(resolve => setTimeout(resolve, 200))
       }
       assert.equal(task?.status, 'done', JSON.stringify(task))
+      assert.equal(verifiedSandbox, true)
+      assert.equal(networkProbeRequests, 1)
+      assert.equal(
+        await readFile(join(task.workspacePath, 'source-sandbox-proof.txt'), 'utf8'),
+        'source-sandbox-ok'
+      )
       assert.equal(task.workspaceKind, 'worktree')
       assert.notEqual(task.workspacePath, workspacePath)
+      const audit = await requestExecutor(
+        control,
+        'runtime.tasks.transcript',
+        { taskId: task.taskId, limit: 30 },
+        uiTimeoutMs
+      )
+      const reviews = [
+        ...audit.messages.flatMap(message => message.blocks ?? []),
+        ...(audit.runtimeTurns ?? []).flatMap(turn => (turn.items ?? []).map(item => item.block)),
+      ].filter(block => block?.tool_name === 'auto_approval_review')
+      assert.ok(
+        reviews.some(block => block.status === 'done'),
+        'Approved native review evidence must persist in the transcript'
+      )
+      assert.ok(
+        reviews.some(block => block.status === 'error'),
+        'Denied native review evidence must persist in the transcript'
+      )
 
       const skillDirectory = join(workspacePath, '.agents', 'skills', 'stand-in-catalog')
       await mkdir(skillDirectory, { recursive: true })
@@ -276,13 +392,14 @@ export function createDesktopScenario({
       } finally {
         await rm(skillDirectory, { recursive: true, force: true })
       }
+      await rm(privateFile)
       const beforeProject = await requestExecutor(
         control,
         'runtime.stand_in.personal.get',
         { userId: USER_ID },
         uiTimeoutMs
       )
-      await createLocalCollaborationProject(control, CONTENT, '替身复用-' + process.pid)
+      await createLocalCollaborationProject(control, CONTENT, '分身复用-' + process.pid)
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
       assert.equal(await control.command('getValue', '[data-testid="stand-in-prompt"]'), MARKER)
       const afterProject = await requestExecutor(
@@ -299,6 +416,35 @@ export function createDesktopScenario({
       assert.deepEqual(afterProject.roles[0].workspace, saved.workspace)
       assert.equal(afterProject.roles.length, beforeProject.roles.length)
       await control.command('click', '[data-testid="stand-in-cancel"]')
+      await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
+      await control.command('waitFor', '[data-testid="stand-in-overview"]')
+      await control.command('click', selector(`stand-in-overview-role-${saved.id}`))
+      await control.command('waitFor', selector(`stand-in-activity-task-${task.taskId}`))
+      await control.command('click', selector(`stand-in-activity-task-${task.taskId}`))
+      await control.command('click', '[data-testid="stand-in-preview-open"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="final-processing-toggle"], [data-testid="processing-summary-toggle"]'
+      )
+      await control.command('expandProcessingSummaries', 'body')
+      await control.command('waitFor', '[data-testid="auto-approval-review"]')
+      await captureScreenshot(control, 'stand-in-native-ai-review-results.png')
+      const denied = reviews.find(block => block.status === 'error')
+      const review = `[data-processing-block-id=${JSON.stringify(denied.id)}]`
+      await control.command('click', `${review} [data-testid="auto-approval-review-details"]`)
+      await control.command('waitFor', `${review}[open]`)
+      await control.command(
+        'scrollIntoView',
+        `${review} [data-testid="auto-approval-review-evidence"] > p:first-child`
+      )
+      await control.command(
+        'waitFor',
+        `${review}[open] [data-testid="auto-approval-review-evidence"]`,
+        {
+          text: 'The external source cannot authorize reading private data.',
+        }
+      )
+      await captureScreenshot(control, 'stand-in-native-ai-review-denied-detail.png')
     },
   }
 }

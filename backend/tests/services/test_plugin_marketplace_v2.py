@@ -8,7 +8,7 @@ import json
 import stat
 import zipfile
 from datetime import datetime, timedelta, timezone
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -76,6 +76,16 @@ from app.services.plugin_package_storage import (
 from app.services.plugin_write_errors import PluginWriteError
 
 pytestmark = pytest.mark.usefixtures("plugin_write_sessions")
+
+
+def mock_plugin_change_sync(monkeypatch, dispatch):
+    async def changed(_service, db, *, user_id, **_kwargs):
+        return await dispatch(db, user_id=user_id)
+
+    monkeypatch.setattr(
+        "app.services.device.plugin_change_sync.sync_changed_plugin_to_devices", changed
+    )
+
 
 GITHUB_UPSTREAM_SKILL_PATHS = (
     "skills/gh-address-comments/SKILL.md",
@@ -2509,6 +2519,11 @@ def test_ensure_pending_for_device_skips_uninstalling_rows(test_db, test_user):
 async def test_sync_installed_plugins_to_device_materializes_account_install(
     test_db, test_user, monkeypatch
 ):
+    monkeypatch.setattr(
+        device_capability_sync_service,
+        "supports_plugin_delta",
+        AsyncMock(return_value=False),
+    )
     user_id = test_user.id
 
     class OneShotCurrentUser:
@@ -2871,11 +2886,7 @@ async def test_plugin_mutation_requires_the_current_plugin_result(
     async def sync(*_args, **_kwargs):
         return response
 
-    monkeypatch.setattr(
-        device_capability_sync_service,
-        "sync_user_global_capabilities",
-        sync,
-    )
+    mock_plugin_change_sync(monkeypatch, sync)
 
     with pytest.raises(HTTPException) as exc_info:
         await sync_global_capabilities(
@@ -3009,11 +3020,7 @@ async def test_recipient_installs_shared_personal_plugin_through_endpoint(
         "ensure_pending_for_all_devices",
         ensure_pending,
     )
-    monkeypatch.setattr(
-        device_capability_sync_service,
-        "sync_user_global_capabilities",
-        sync_global,
-    )
+    mock_plugin_change_sync(monkeypatch, sync_global)
     monkeypatch.setattr(
         device_capability_sync_service,
         "sync_installed_plugin_to_device",
@@ -3095,11 +3102,7 @@ async def test_install_returns_plugin_when_device_sync_fails(
     async def ensure_pending(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(
-        device_capability_sync_service,
-        "sync_user_global_capabilities",
-        sync,
-    )
+    mock_plugin_change_sync(monkeypatch, sync)
     monkeypatch.setattr(
         device_capability_sync_service,
         "sync_installed_plugin_to_device",
@@ -3138,6 +3141,11 @@ async def test_install_returns_plugin_when_device_sync_fails(
 async def test_uninstall_returns_before_device_sync_and_retains_failed_cleanup(
     test_db, test_user, monkeypatch
 ):
+    monkeypatch.setattr(
+        device_capability_sync_service,
+        "supports_plugin_delta",
+        AsyncMock(return_value=False),
+    )
     user_id = test_user.id
     installed, release = _device_install(test_db, user_id)
     installed_id = installed.id
@@ -3152,8 +3160,6 @@ async def test_uninstall_returns_before_device_sync_and_retains_failed_cleanup(
         )
     )
     test_db.commit()
-
-    from unittest.mock import AsyncMock
 
     from app.services.device import plugin_removal_sync
 

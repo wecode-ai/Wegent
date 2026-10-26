@@ -7,6 +7,54 @@ fn role(id: &str) -> Value {
 }
 
 #[test]
+fn stored_settings_follow_the_owning_executor_after_its_device_identity_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let mut value = store.personal_stand_in(7, "mac").unwrap();
+    value["roles"] = json!([role("development"), role("review")]);
+    let saved = store.save_personal_stand_in(7, "mac", value).unwrap();
+
+    let mut expected = saved.clone();
+    expected["executionDeviceId"] = json!("new-mac");
+    for role in expected["roles"].as_array_mut().unwrap() {
+        role["executionDeviceId"] = json!("new-mac");
+    }
+    let loaded = store.personal_stand_in(7, "new-mac").unwrap();
+    assert_eq!(loaded, expected);
+    assert!(store.save_personal_stand_in(7, "new-mac", saved).is_err());
+    let updated = store.save_personal_stand_in(7, "new-mac", loaded).unwrap();
+    assert_eq!(updated["executionDeviceId"], "new-mac");
+    assert_eq!(
+        updated["roles"][0]["enabledAfter"],
+        expected["roles"][0]["enabledAfter"]
+    );
+}
+
+#[test]
+fn scheduler_rebinds_stored_settings_without_waiting_for_the_settings_page() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let mut value = store.personal_stand_in(7, "mac").unwrap();
+    value["roles"] = json!([role("review")]);
+    let saved = store.save_personal_stand_in(7, "mac", value).unwrap();
+
+    let scheduled = store.all_personal_stand_ins("new-mac").unwrap();
+    assert_eq!(scheduled.len(), 1);
+    assert_eq!(scheduled[0]["executionDeviceId"], "new-mac");
+    assert_eq!(scheduled[0]["roles"][0]["executionDeviceId"], "new-mac");
+    assert_eq!(
+        scheduled[0]["roles"][0]["collaboration"],
+        saved["roles"][0]["collaboration"]
+    );
+    assert_eq!(
+        scheduled[0]["roles"][0]["enabledAfter"],
+        saved["roles"][0]["enabledAfter"]
+    );
+    assert_eq!(store.personal_stand_in(7, "").unwrap(), scheduled[0]);
+    assert_eq!(store.all_personal_stand_ins("new-mac").unwrap(), scheduled);
+}
+
+#[test]
 fn personal_roles_cover_existing_and_future_projects_and_respect_exclusions() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
@@ -41,7 +89,6 @@ fn reorder_and_unrelated_edits_preserve_enable_time_and_failures_are_atomic() {
     let first = store.save_personal_stand_in(7, "mac", value).unwrap();
     let mut reordered = first.clone();
     reordered["roles"].as_array_mut().unwrap().reverse();
-    reordered["autoSelect"] = json!(true);
     let second = store.save_personal_stand_in(7, "mac", reordered).unwrap();
     assert_eq!(second["roles"][0]["id"], "review");
     assert_eq!(
@@ -49,7 +96,7 @@ fn reorder_and_unrelated_edits_preserve_enable_time_and_failures_are_atomic() {
         first["roles"][1]["enabledAfter"]
     );
     for invalid in [
-        json!([]),
+        Value::Null,
         json!([role("duplicate"), role("duplicate")]),
         json!([{"id":"missing-fields"}]),
     ] {
@@ -61,6 +108,29 @@ fn reorder_and_unrelated_edits_preserve_enable_time_and_failures_are_atomic() {
     assert!(store
         .save_personal_stand_in(7, "other-device", second.clone())
         .is_err());
+}
+
+#[test]
+fn deleting_the_last_scene_role_preserves_the_primary_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let mut value = store.personal_stand_in(7, "mac").unwrap();
+    value["roles"] = json!([role("review")]);
+    value["primary"] = json!({"enabled":true,"prompt":"","preferences":"Use concise Chinese replies",
+        "collaboration":{"enabled":true,"allProjects":true,"projects":[],"excludedProjects":[],"tags":[]}});
+    let saved = store.save_personal_stand_in(7, "mac", value).unwrap();
+    let mut deletion = saved.clone();
+    deletion["roles"] = json!([]);
+    let deleted = store.save_personal_stand_in(7, "mac", deletion).unwrap();
+    assert!(deleted["roles"].as_array().unwrap().is_empty());
+    assert_eq!(deleted["primary"], saved["primary"]);
+    assert_eq!(
+        deleted["version"].as_i64(),
+        saved["version"].as_i64().map(|version| version + 1)
+    );
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), deleted);
+    assert!(store.save_personal_stand_in(7, "mac", saved).is_err());
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), deleted);
 }
 
 #[test]
@@ -138,25 +208,17 @@ fn project_agent_selection_cannot_expand_to_another_project() {
 }
 
 #[test]
-fn failed_selection_is_owner_and_version_scoped_and_retry_invalidates_it() {
+fn obsolete_selection_settings_do_not_control_or_survive_a_save() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
-    let settings = store.personal_stand_in(7, "mac").unwrap();
-    store.save_stand_in_decision("decision", &json!({"userId":7,"version":0,"issueId":"issue","title":"Review","error":"invalid output"})).unwrap();
-    assert_eq!(
-        store.stand_in_selection_errors(7, &json!(0)).unwrap().len(),
-        1
-    );
-    assert!(store
-        .stand_in_selection_errors(8, &json!(0))
-        .unwrap()
-        .is_empty());
-    let updated = store.save_personal_stand_in(7, "mac", settings).unwrap();
-    assert!(store
-        .stand_in_selection_errors(7, &updated["version"])
-        .unwrap()
-        .is_empty());
-    assert!(store.stand_in_decision("decision").unwrap().is_some());
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    assert!(settings.get("autoSelect").is_none());
+    settings["autoSelect"] = json!(true);
+    settings["selectionErrors"] = json!([{"error":"obsolete"}]);
+    let saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    assert!(saved.get("autoSelect").is_none());
+    assert!(saved.get("selectionErrors").is_none());
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), saved);
 }
 
 #[test]

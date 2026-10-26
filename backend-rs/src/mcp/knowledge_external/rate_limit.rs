@@ -139,6 +139,56 @@ pub(crate) async fn check_download<R: Redis>(
     .await
 }
 
+/// The transport limiter settings
+/// (`EXTERNAL_KNOWLEDGE_MCP_RATE_LIMIT_ENABLED`, `..._REQUESTS`,
+/// `..._WINDOW_SECONDS`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TransportRateLimits {
+    enabled: bool,
+    budget: Budget,
+}
+
+impl TransportRateLimits {
+    /// Reads the source settings from the process environment or the
+    /// source-compatible dotenv file.
+    #[must_use]
+    pub(crate) fn from_env() -> Self {
+        Self {
+            enabled: env_or_dotenv("EXTERNAL_KNOWLEDGE_MCP_RATE_LIMIT_ENABLED")
+                .as_deref()
+                .is_none_or(parse_bool),
+            budget: Budget::from_env(
+                "EXTERNAL_KNOWLEDGE_MCP_RATE_LIMIT_REQUESTS",
+                "EXTERNAL_KNOWLEDGE_MCP_RATE_LIMIT_WINDOW_SECONDS",
+                Budget {
+                    requests: 120,
+                    window_seconds: 60,
+                },
+            ),
+        }
+    }
+}
+
+/// `_ExternalKnowledgeRateLimitMiddleware` ->
+/// `check_external_mcp_rate_limit(request, namespace="transport", ...)`:
+/// the client-IP dimension plus, when a bearer credential is present, its
+/// hashed token dimension. Any exceeded dimension rejects the request.
+pub(crate) async fn check_transport<R: Redis>(
+    limits: &TransportRateLimits,
+    redis: Option<&R>,
+    client_ip: &str,
+    token: Option<&str>,
+) -> Result<(), FastApiError> {
+    if !limits.enabled {
+        return Ok(());
+    }
+    let mut dimensions = vec![format!("ip:{}", hash_rate_limit_value(client_ip))];
+    if let Some(token) = token.filter(|token| !token.is_empty()) {
+        dimensions.push(format!("token:{}", hash_rate_limit_value(token)));
+    }
+    check_dimensions(redis, "transport", &dimensions, limits.budget).await
+}
+
 /// `check_external_mcp_dimension_rate_limit` for a single dimension.
 async fn check<R: Redis>(
     redis: Option<&R>,
@@ -146,7 +196,18 @@ async fn check<R: Redis>(
     dimension: &str,
     budget: Budget,
 ) -> Result<(), FastApiError> {
-    if budget.requests <= 0 || budget.window_seconds <= 0 {
+    check_dimensions(redis, namespace, &[dimension.to_string()], budget).await
+}
+
+/// `check_external_mcp_dimension_rate_limit`: one `MULTI` transaction that
+/// increments and expires every dimension's window key, then `EXEC`.
+async fn check_dimensions<R: Redis>(
+    redis: Option<&R>,
+    namespace: &str,
+    dimensions: &[String],
+    budget: Budget,
+) -> Result<(), FastApiError> {
+    if dimensions.is_empty() || budget.requests <= 0 || budget.window_seconds <= 0 {
         return Ok(());
     }
     let Some(redis) = redis else {
@@ -157,22 +218,24 @@ async fn check<R: Redis>(
     let window = chrono::Utc::now()
         .timestamp()
         .div_euclid(budget.window_seconds);
-    let key = format!("external_kb_mcp:rate:{namespace}:{dimension}:{window}");
 
     let mut builder = pipe();
     builder
         .command(cmd("MULTI"))
         .map_err(|_| rate_limit_unavailable())?;
-    let mut incr = cmd("INCRBY");
-    incr.arg(key.as_str()).arg(1);
-    builder
-        .command(incr)
-        .map_err(|_| rate_limit_unavailable())?;
-    let mut expire = cmd("EXPIRE");
-    expire.arg(key.as_str()).arg(budget.window_seconds + 1);
-    builder
-        .command(expire)
-        .map_err(|_| rate_limit_unavailable())?;
+    for dimension in dimensions {
+        let key = format!("external_kb_mcp:rate:{namespace}:{dimension}:{window}");
+        let mut incr = cmd("INCRBY");
+        incr.arg(key.as_str()).arg(1);
+        builder
+            .command(incr)
+            .map_err(|_| rate_limit_unavailable())?;
+        let mut expire = cmd("EXPIRE");
+        expire.arg(key.as_str()).arg(budget.window_seconds + 1);
+        builder
+            .command(expire)
+            .map_err(|_| rate_limit_unavailable())?;
+    }
     builder
         .command(cmd("EXEC"))
         .map_err(|_| rate_limit_unavailable())?;
@@ -183,7 +246,7 @@ async fn check<R: Redis>(
         .map_err(|_| rate_limit_unavailable())?;
     // `MULTI` -> `+OK`, `INCRBY`/`EXPIRE` -> `+QUEUED`, `EXEC` -> the result
     // array the source reads through `pipeline().execute()`.
-    for _ in 0..3 {
+    for _ in 0..1 + 2 * dimensions.len() {
         let _: Value = response
             .take_value()
             .await

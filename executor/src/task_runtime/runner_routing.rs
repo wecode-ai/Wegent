@@ -295,6 +295,7 @@ pub(crate) fn resolve_pending(
         model_config
     };
     payload["modelConfig"] = model_config.clone();
+    payload["modelSelection"] = json!({"modelName":payload["modelId"],"modelType":payload["modelType"],"options":payload["modelOptions"]});
     payload["runnerRouting"]["version"] = json!(1);
     if payload.get("executionRequest").is_none() && payload.get("execution_request").is_none() {
         // Automation compiles its native request on the environment, without a desktop session.

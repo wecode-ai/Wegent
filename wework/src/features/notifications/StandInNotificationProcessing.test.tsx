@@ -4,6 +4,9 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { StandInNotificationProcessing } from './StandInNotificationProcessing'
 import { assignment, runtimeItem } from './standInNotifications.fixtures'
 import { mergeStandInNotifications } from './standInNotifications'
+import { useStandInAssignmentNotifications } from './useStandInAssignmentNotifications'
+import type { TaskSource } from './NotificationTaskSourceContext'
+import * as runtimeEnvironment from '@/lib/runtime-environment'
 
 const { send, transcript, run } = vi.hoisted(() => ({
   send: vi.fn(),
@@ -68,6 +71,64 @@ beforeEach(() => {
   run.mockResolvedValue(runtimeItem.address)
 })
 describe('notification inline handling', () => {
+  it('keeps manual delegation available when automatic handling fails before task creation', async () => {
+    const windowLabel = vi
+      .spyOn(runtimeEnvironment, 'getDesktopWindowLabel')
+      .mockReturnValue('main')
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const notifyAssignment = vi.fn().mockRejectedValue(new Error('cloud_unavailable'))
+    const automaticServices = {
+      ...services,
+      standInApi: { ...services.standInApi!, notifyAssignment },
+    }
+    const pending = {
+      ...assignment,
+      payload: { ...assignment.payload, assignmentId: 'active-assignment' },
+    }
+    function PendingAssignment() {
+      useStandInAssignmentNotifications(
+        { items: [pending], unread_count: 1, next_offset: null },
+        { services: automaticServices } as TaskSource,
+        'account',
+        1
+      )
+      return (
+        <StandInNotificationProcessing
+          notification={pending}
+          rowProps={rowProps}
+          services={automaticServices}
+          userId={1}
+          onChanged={onChanged}
+        />
+      )
+    }
+    try {
+      render(<PendingAssignment />)
+      await waitFor(() => expect(log).toHaveBeenCalled())
+      expect(run).not.toHaveBeenCalled()
+      const delegate = screen.getByTestId('notification-stand-in-start-assignment')
+      expect(delegate).toBeEnabled()
+      fireEvent.click(delegate)
+      await waitFor(() =>
+        expect(run).toHaveBeenCalledExactlyOnceWith(
+          '12',
+          'ISSUE-1',
+          1,
+          'cloud',
+          'device',
+          'default'
+        )
+      )
+      expect(notifyAssignment).toHaveBeenCalledOnce()
+      expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+        'notifications.stand_in_running'
+      )
+    } finally {
+      windowLabel.mockRestore()
+      log.mockRestore()
+    }
+  })
+
   it('keeps the completed result under the original title with its handling badge', async () => {
     transcript.mockResolvedValue({
       workspacePath: '/project',
@@ -207,6 +268,36 @@ describe('notification inline handling', () => {
     await waitFor(() =>
       expect(run).toHaveBeenCalledWith('12', 'ISSUE-1', 1, 'cloud', 'device', 'default')
     )
+  })
+
+  it('shows the failed turn error when no model reply was produced', async () => {
+    transcript.mockResolvedValue({
+      workspacePath: '/project',
+      runtime: 'codex',
+      running: false,
+      messages: [{ id: 'prompt', role: 'user', content: 'Review' }],
+      turns: [{ id: 'turn', items: [], status: 'failed', error: 'Workspace config is invalid' }],
+    })
+    render(view('failed'))
+    expect(await screen.findByText('Workspace config is invalid')).toBeVisible()
+    expect(screen.queryByText(/Model reply is ready|模型回复已完成/)).not.toBeInTheDocument()
+    expect(screen.getByTestId('notification-stand-in-retry-assignment')).toBeEnabled()
+  })
+
+  it('leaves the summary empty when a failed execution has neither an error nor a reply', async () => {
+    transcript.mockResolvedValue({
+      workspacePath: '/project',
+      runtime: 'codex',
+      running: false,
+      messages: [{ id: 'prompt', role: 'user', content: 'Review' }],
+      turns: [],
+    })
+    render(view('failed'))
+    await waitFor(() => expect(transcript).toHaveBeenCalledOnce())
+    expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+      'notifications.stand_in_failed'
+    )
+    expect(screen.queryByText(/Model reply is ready|模型回复已完成/)).not.toBeInTheDocument()
   })
   it('answers the actual pending runtime question with its original request identity', async () => {
     transcript.mockResolvedValue({

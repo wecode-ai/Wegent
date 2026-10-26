@@ -11,6 +11,7 @@ import { flushSync } from 'react-dom'
 import {
   isSettingsRoute,
   navigateTo,
+  parseRuntimeTaskRoute,
   replaceTo,
   WORKSPACE_NAVIGATION_EVENT,
   type WorkspaceNavigationDetail,
@@ -42,7 +43,7 @@ import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environm
 import { WORKSPACE_TAB_RETURN_PREFIX } from './workspaceWindow'
 import { getAppPreferences } from '@/desktop/appPreferences'
 import { fixedWorkspaceTabPreference, saveFixedWorkspaceTabs } from './fixedWorkspaceTabs'
-import { navigateWorkspaceTab } from './workspaceNavigation'
+import { findRuntimeTaskTab, navigateWorkspaceTab } from './workspaceNavigation'
 
 interface PersistedWorkspaceTabs {
   activeTabId: string
@@ -530,6 +531,18 @@ export function WorkspaceTabsProvider({
   useEffect(() => {
     const onNavigate = (event: Event) => {
       const { kind, contentRoute } = (event as CustomEvent<WorkspaceNavigationDetail>).detail
+      const activeTab = stateRef.current.tabs.find(tab => tab.id === stateRef.current.activeTabId)
+      const [path, search] = contentRoute.split('?')
+      const target = parseRuntimeTaskRoute(path, search)
+      const matching = target ? findRuntimeTaskTab(stateRef.current.tabs, target) : null
+      const isTaskSurface = (value: WorkspaceTabKind) => value === 'task' || value === 'auxiliary'
+      if (
+        activeTab &&
+        (!matching || matching.id === activeTab.id) &&
+        (activeTab.kind === kind || (isTaskSurface(activeTab.kind) && isTaskSurface(kind)))
+      ) {
+        return
+      }
       event.preventDefault()
       navigateWorkspaceTab({ ...stateRef.current, selectTab, openTab }, kind, contentRoute)
     }

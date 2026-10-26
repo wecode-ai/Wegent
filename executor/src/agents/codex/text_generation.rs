@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) fn configure_text_generation(config: &mut CodexLaunchConfig) {
+    configure_no_execution_tools(config);
     // A text-only auxiliary turn must not inherit workspace or connector capabilities.
     config.user_developer_instructions.clear();
     config
@@ -22,6 +23,12 @@ pub(super) fn configure_text_generation(config: &mut CodexLaunchConfig) {
         .into_iter()
         .map(str::to_owned),
     );
+    if let Some(registration) = config.local_proxy_registration.as_deref() {
+        local_model_proxy::set_text_only(&registration.0);
+    }
+}
+
+pub(super) fn configure_no_execution_tools(config: &mut CodexLaunchConfig) {
     for feature in [
         "shell_tool",
         "unified_exec",
@@ -42,9 +49,6 @@ pub(super) fn configure_text_generation(config: &mut CodexLaunchConfig) {
         config
             .config_overrides
             .push(format!("features.{feature}=false"));
-    }
-    if let Some(registration) = config.local_proxy_registration.as_deref() {
-        local_model_proxy::set_text_only(&registration.0);
     }
 }
 

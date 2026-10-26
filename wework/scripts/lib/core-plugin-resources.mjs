@@ -19,6 +19,8 @@ export const CORE_PLUGIN_DIRECTORIES = [
   'terminal-runtime',
   'transcript-sync',
   'plugin-runtime',
+  'connection-runtime',
+  'connection-dingtalk',
   'conversation-export',
   'ui-core-apps',
   'ui-core-settings',
@@ -31,6 +33,7 @@ export const CORE_PLUGIN_DIRECTORIES = [
   'ui-home-developer',
   'ui-git',
   'ui-outputs',
+  'voice-input',
   ...INTERNAL_CORE_PLUGINS.map(plugin => plugin.source),
 ]
 
@@ -44,6 +47,8 @@ const CORE_PLUGIN_TARGETS = {
   'terminal-runtime': 'wework-terminal-runtime',
   'transcript-sync': 'wework-transcript-sync',
   'plugin-runtime': 'wework-plugin-runtime',
+  'connection-runtime': 'wework-connection-runtime',
+  'connection-dingtalk': 'wework-connection-dingtalk',
   'ui-core-apps': 'wework-ui-core-apps',
   'ui-core-settings': 'wework-ui-core-settings',
   'ui-plugin-center': 'wework-ui-plugin-center',
@@ -55,6 +60,7 @@ const CORE_PLUGIN_TARGETS = {
   'ui-home-developer': 'wework-ui-home-developer',
   'ui-git': 'wework-ui-git',
   'ui-outputs': 'wework-ui-outputs',
+  'voice-input': 'wework-voice-input',
 }
 
 export function corePluginTarget(directory) {

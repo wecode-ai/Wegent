@@ -40,7 +40,7 @@ use crate::config::RedisConfig;
 /// `AsyncRedisManager`'s channel (`socketio_emit::SOCKETIO_CHANNEL`).
 const CHANNEL: &[u8] = b"socketio";
 /// One inbound push frame is bounded before parsing.
-const MAX_FRAME_BYTES: usize = 1024 * 1024;
+const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 /// In-flight callbacks retained per process.
 const MAX_WAITERS: usize = 1024;
 /// Connection and authentication budget.

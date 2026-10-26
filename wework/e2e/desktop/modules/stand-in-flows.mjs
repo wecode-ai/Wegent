@@ -4,6 +4,7 @@ export async function openProjectStandIn(
   entry,
   { connect = false, requirements = true, onConnections } = {}
 ) {
+  // Returning from personal settings remounts the project page asynchronously.
   await control.command('clickWhenEnabled', entry)
   await control.command('waitFor', '[data-testid="stand-in-project-select"]')
   const selected = await control.command('getValue', '[data-testid="stand-in-project-select"]')
@@ -20,6 +21,8 @@ export async function openProjectStandIn(
   await control.command('waitFor', '[data-testid="stand-in-auto"]')
   if (connect) {
     await control.command('click', '[data-testid="stand-in-connections-open"]')
+    await control.command('click', '[data-testid="stand-in-add-connection"]')
+    await control.command('click', '[data-testid="stand-in-add-projects-connection"]')
     await control.command('waitFor', '[data-testid="stand-in-source-collaboration"]')
     const enabled = await control.command(
       'getAttribute',

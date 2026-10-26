@@ -138,7 +138,8 @@ async def archive_sandbox_workspace(
     return ManualArchiveResponse(task_id=task_id, archive=archive_info)
 
 
-@router.post("/{task_id}/restore-sandbox", response_model=SandboxRestoreResponse)
+# MIGRATION-CANDIDATE(api="POST /api/internal/workspace-archives/*/restore-sandbox"): remove after final confirmation.
+# @router.post("/{task_id}/restore-sandbox", response_model=SandboxRestoreResponse)
 async def restore_sandbox_workspace(
     task_id: int,
     request: SandboxArchiveRequest,

@@ -1354,8 +1354,9 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           (await standIn(projectId)).get(projectId, deviceId, id),
         save: async (
           projectId: string,
-          settings: import('@wegent/collaboration').WorkspaceStandInSettings
-        ) => (await standIn(projectId)).save(projectId, settings),
+          settings: import('@wegent/collaboration').WorkspaceStandInSettings,
+          deviceId?: string
+        ) => (await standIn(projectId)).save(projectId, settings, deviceId),
         run: async (projectId: string, issueId: string, deviceId: string, id?: string) =>
           (await standIn(projectId)).run!(projectId, issueId, deviceId, id),
       },
@@ -1550,7 +1551,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
         onReady={handleReady}
         host={{
           renderStandInPage: ({ projects, onClose }) =>
-            personalSettingsTarget ? (
+            personalSettingsTarget && personalSettingsTarget.roleId !== '@primary' ? (
               <StandInSettingsPage
                 api={platformApi}
                 projects={projects}
@@ -1564,28 +1565,35 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               />
             ) : (
               <StandInOverviewPage
+                active={props.workspaceActive ?? true}
+                initialPrimaryProfile={personalSettingsTarget?.roleId === '@primary'}
+                initialDeviceId={personalSettingsTarget?.deviceId}
                 api={platformApi}
                 projects={projects}
                 services={props.services}
                 devices={props.devices ?? []}
                 userId={Number(props.user.id)}
-                onCancel={onClose}
+                onCancel={personalSettingsTarget ? returnFromPersonalSettings : onClose}
                 onOpenTask={props.onOpenRuntimeTask}
               />
             ),
-          renderProjectSidebarBadge: project =>
-            standInProjects.has(
+          renderProjectSidebarBadge: project => {
+            const enabled = standInProjects.has(
               `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
-            ) ? (
+            )
+            if (!enabled) return null
+
+            return (
               <span
                 className="collaboration-project-sidebar-badge flex shrink-0 text-text-secondary"
                 title={t('standIn.project_enabled')}
                 aria-label={t('standIn.project_enabled')}
                 data-testid={`stand-in-project-${project.id}`}
               >
-                <StandInIcon enabled />
+                <StandInIcon enabled className="h-4 w-4" />
               </span>
-            ) : null,
+            )
+          },
           currentUser: {
             id: Number(props.user.id),
             name: collaborationUserName,
@@ -1594,15 +1602,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             authenticated: cloudConnection.isConnected,
             requestLogin: () => setCloudLoginOpen(true),
           },
-          renderIssueComposer: composerProps => (
-            <WeworkIssueHomeComposer
-              {...composerProps}
-              api={platformApi}
-              userId={Number(props.user.id)}
-              services={props.services}
-              devices={props.devices ?? []}
-            />
-          ),
+          renderIssueComposer: composerProps => <WeworkIssueHomeComposer {...composerProps} />,
           loadProjectCollaborationGroupGenerationModels: async () => {
             const response = await props.services.modelApi.listModels()
             const models = response.data.filter(

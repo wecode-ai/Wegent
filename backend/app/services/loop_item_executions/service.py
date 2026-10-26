@@ -4423,6 +4423,7 @@ class LoopItemExecutionService:
                 db,
                 execution_id=row.id,
                 note="Runtime reconciled",
+                content="",
                 expected_status=row.status,
                 expected_version=row.version,
             )

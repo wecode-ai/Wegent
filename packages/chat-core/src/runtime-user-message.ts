@@ -7,6 +7,12 @@ export interface RuntimeUserMessageParts {
   request: string;
 }
 
+export interface RuntimeUserTextProjection {
+  content: string;
+  sourceStart: number;
+  sourceEnd: number;
+}
+
 export function splitRuntimeUserMessage(
   content: string,
 ): RuntimeUserMessageParts | null {
@@ -15,25 +21,39 @@ export function splitRuntimeUserMessage(
 
   return {
     prefix: content.slice(0, requestMarker.index),
-    request: stripLeadingApplicationContext(
-      content.slice(requestMarker.index + requestMarker[0].length),
-    ),
+    request: projectRuntimeUserText(content).content,
   };
 }
 
 export function visibleRuntimeUserMessage(content: string): string {
-  const parts = splitRuntimeUserMessage(content);
-  return parts?.request ?? stripLeadingApplicationContext(content);
+  return projectRuntimeUserText(content).content;
 }
 
-function stripLeadingApplicationContext(content: string): string {
-  const trimmed = content.trimStart();
-  if (!trimmed.startsWith(APPLICATION_CONTEXT_OPEN)) return trimmed.trim();
-
-  const closeIndex = matchingApplicationContextCloseIndex(trimmed);
-  if (closeIndex < 0) return trimmed.trim();
-
-  return trimmed.slice(closeIndex + APPLICATION_CONTEXT_CLOSE.length).trim();
+/** Keep the actual request slice so display and search share its provenance. */
+export function projectRuntimeUserText(
+  content: string,
+): RuntimeUserTextProjection {
+  const marker = content.match(CODEX_REQUEST_MARKER_PATTERN);
+  let sourceStart =
+    marker?.index === undefined ? 0 : marker.index + marker[0].length;
+  sourceStart +=
+    content.slice(sourceStart).length -
+    content.slice(sourceStart).trimStart().length;
+  const remaining = content.slice(sourceStart);
+  if (remaining.startsWith(APPLICATION_CONTEXT_OPEN)) {
+    const closeIndex = matchingApplicationContextCloseIndex(remaining);
+    if (closeIndex >= 0)
+      sourceStart += closeIndex + APPLICATION_CONTEXT_CLOSE.length;
+  }
+  sourceStart +=
+    content.slice(sourceStart).length -
+    content.slice(sourceStart).trimStart().length;
+  const request = content.slice(sourceStart).trimEnd();
+  return {
+    content: request,
+    sourceStart,
+    sourceEnd: sourceStart + request.length,
+  };
 }
 
 function matchingApplicationContextCloseIndex(content: string): number {

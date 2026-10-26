@@ -58,6 +58,8 @@ export interface NormalizedRuntimeMessage {
   completed_at?: string | number | null;
   stoppedNotice?: boolean | null;
   stopped_notice?: boolean | null;
+  runtimeGuidance?: boolean | null;
+  runtime_guidance?: boolean | null;
   runtimeGoalRequest?: boolean | null;
   runtime_goal_request?: boolean | null;
   source?: RuntimeMessageSource | null;
@@ -74,6 +76,7 @@ export interface NormalizedRuntimeMessage {
 
 export interface RuntimeTurnNavigationItem {
   id: string;
+  userMessageId?: string | null;
   turnId?: string | null;
   turnIndex: number;
   messageIndex: number;
@@ -107,9 +110,12 @@ export interface CodexMemoryCitation {
 }
 
 export interface RuntimeTranscriptResponse {
+  runtimeTurns?: RuntimeTranscriptTurn[] | null;
+  supersededTurnIds?: string[];
   origin?: import("./runtime-task-api-types").RuntimeTaskOrigin;
   historyUnavailable?: boolean;
   taskId?: string;
+  threadId?: string | null;
   workspacePath: string;
   runtime: RuntimeName;
   running?: boolean;
@@ -130,6 +136,7 @@ export interface RuntimeTranscriptResponse {
 
 export interface RuntimeTranscriptTurn {
   id: string;
+  position?: number;
   items: RuntimeTranscriptTurnItem[];
   itemMerge?: "prepend";
   messageIndex?: number | null;
@@ -146,7 +153,7 @@ export interface RuntimeTranscriptTurn {
   memoryCitations?: CodexMemoryCitation[] | null;
 }
 
-export type RuntimeTranscriptTurnItem =
+export type RuntimeTranscriptTurnItem = { position?: number | null } & (
   | {
       id: string;
       type: "user_message";
@@ -162,7 +169,8 @@ export type RuntimeTranscriptTurnItem =
       id: string;
       type: "block";
       block: ChatBlock;
-    };
+    }
+);
 
 export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   limit?: number;
@@ -172,6 +180,31 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   includeFullContent?: boolean;
   conversationContextOnly?: boolean;
   navigationOnly?: boolean;
+}
+
+export interface RuntimeTranscriptSearchRequest extends RuntimeTaskAddress {
+  query: string;
+  limit?: number;
+}
+
+export interface RuntimeTranscriptSearchMatch {
+  messageId?: string;
+  itemId?: string;
+  /** Stable identity of the Markdown render region, independent of message projection. */
+  regionId?: string;
+  /** Half-open UTF-16 range in the original visible region text. */
+  range?: { start: number; end: number };
+  turnId?: string;
+  /** Question labels required to resolve this reply's visible occurrences. */
+  replyQuestions?: string[];
+  occurrence: number;
+  cursor: string;
+}
+
+export interface RuntimeTranscriptSearchResponse {
+  matches: RuntimeTranscriptSearchMatch[];
+  totalMatches: number;
+  isCapped: boolean;
 }
 
 export interface RuntimeTokenUsageBreakdown {
@@ -313,6 +346,8 @@ export interface RequestUserInputResponse {
   request_id?: number | string;
   itemId?: string;
   item_id?: string;
+  /** Identifies the turn that owns a reusable runtime request ID. */
+  interactionScope?: string;
   answers: Record<string, RequestUserInputResponseAnswer>;
 }
 
@@ -339,6 +374,10 @@ export interface RequestUserInputPayload {
   itemId?: string;
   interactionKind?: string;
   interaction_kind?: string;
+  interactionScope?: string;
+  interactionStatus?: "pending" | "answered" | "cancelled" | "expired";
+  expiresAtUnixMs?: number;
+  settledAtUnixMs?: number;
   mode?: "url" | "form";
   url?: string;
   elicitationId?: string;

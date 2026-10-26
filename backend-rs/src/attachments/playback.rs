@@ -233,4 +233,30 @@ mod tests {
         assert_eq!(percent_encode("a/b"), "a%2Fb");
         assert_eq!(percent_encode("示例"), "%E7%A4%BA%E4%BE%8B");
     }
+
+    /// Deferred APIs retain Python ownership and registered Rust implementations.
+    #[test]
+    fn deferred_route_keeps_python_ownership_and_handler_registration() {
+        const PATH: &str = "/api/attachments/:attachment_id/playback";
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let config = crate::hybrid::load_routes_config(&file).unwrap();
+        assert!(
+            !config
+                .routes
+                .iter()
+                .any(|rule| rule.path == PATH && rule.methods.iter().any(|method| method == "GET")),
+            "GET {PATH} must remain on Python"
+        );
+        let table = crate::RouteTable::compile(config).unwrap();
+        assert!(!table.matches(&http::Method::GET, "/api/attachments/42/playback"));
+
+        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
+        const GET: u16 = 1 << 1;
+        let registered = brz_http_server::__private::inventory::iter::<
+            crate::__http_registry_http_apis::Entry,
+        >()
+        .flat_map(|entry| (entry.0.routes)())
+        .any(|route| route.path == PATH && route.methods & GET != 0);
+        assert!(registered, "GET {PATH} must be registered by the router");
+    }
 }

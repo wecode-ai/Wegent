@@ -33,18 +33,21 @@ const APPLICATION_CONTEXT_CLOSE: &str = "</application_context>";
 #[derive(Clone, Copy)]
 pub(crate) struct TranscriptBuildOptions {
     truncate_content: bool,
+    materialize_artifacts: bool,
 }
 
 impl TranscriptBuildOptions {
     fn truncated() -> Self {
         Self {
             truncate_content: true,
+            materialize_artifacts: true,
         }
     }
 
     fn full_content() -> Self {
         Self {
             truncate_content: false,
+            materialize_artifacts: true,
         }
     }
 }
@@ -57,14 +60,56 @@ pub(crate) fn full_transcript_messages(thread: &Value, device_id: &str) -> Vec<V
     transcript_messages_with_options(thread, device_id, TranscriptBuildOptions::full_content())
 }
 
+// Search reuses presentation without writing diff or generated-image artifacts.
+pub(super) fn search_transcript_messages(thread: &Value) -> Vec<Value> {
+    transcript_messages_with_options(
+        thread,
+        "",
+        TranscriptBuildOptions {
+            truncate_content: false,
+            materialize_artifacts: false,
+        },
+    )
+}
+
 fn transcript_messages_with_options(
     thread: &Value,
     device_id: &str,
     options: TranscriptBuildOptions,
 ) -> Vec<Value> {
+    project_transcript_with_options(thread, device_id, options).messages
+}
+
+pub(crate) struct TranscriptProjection {
+    pub messages: Vec<Value>,
+    pub turns: Vec<Value>,
+}
+
+pub(crate) fn project_transcript(
+    thread: &Value,
+    device_id: &str,
+    full_content: bool,
+) -> TranscriptProjection {
+    project_transcript_with_options(
+        thread,
+        device_id,
+        if full_content {
+            TranscriptBuildOptions::full_content()
+        } else {
+            TranscriptBuildOptions::truncated()
+        },
+    )
+}
+
+fn project_transcript_with_options(
+    thread: &Value,
+    device_id: &str,
+    options: TranscriptBuildOptions,
+) -> TranscriptProjection {
     let workspace_path = string_field(thread, "cwd").unwrap_or_default();
     let root_thread_id = string_field(thread, "id");
     let mut messages = Vec::new();
+    let mut turns = Vec::new();
     for (turn_index, turn) in thread
         .get("turns")
         .and_then(Value::as_array)
@@ -77,7 +122,8 @@ fn transcript_messages_with_options(
         {
             continue;
         }
-        TurnTranscriptProjector::new(
+        let message_start = messages.len();
+        let items = TurnTranscriptProjector::new(
             &mut messages,
             turn,
             turn_index,
@@ -87,13 +133,43 @@ fn transcript_messages_with_options(
             options,
         )
         .project();
+        let mut normalized = json!({
+            "id": stable_indexed_id(turn, "turn", turn_index),
+            "items": items,
+            "status": turn_assistant_status(turn),
+            "startedAt": turn_started_at(turn),
+            "completedAt": turn_completed_at(turn, turn_started_at(turn)),
+            "error": turn_error_message(turn),
+            "position": turn.get("position"),
+        });
+        for message in &messages[message_start..] {
+            for key in [
+                "fileChanges",
+                "references",
+                "memoryCitations",
+                "stoppedNotice",
+                "errorType",
+                "durationMs",
+            ] {
+                if let Some(value) = message.get(key) {
+                    normalized[key] = if key == "fileChanges" {
+                        merge_file_changes(normalized.get(key).cloned(), value.clone())
+                            .unwrap_or(Value::Null)
+                    } else {
+                        value.clone()
+                    };
+                }
+            }
+        }
+        turns.push(normalized);
     }
     make_transcript_ids_unique(&mut messages);
-    messages
+    TranscriptProjection { messages, turns }
 }
 
 struct TurnTranscriptProjector<'a> {
     messages: &'a mut Vec<Value>,
+    normalized_items: Vec<Value>,
     items: Vec<Value>,
     later_process: Vec<bool>,
     device_id: &'a str,
@@ -105,7 +181,6 @@ struct TurnTranscriptProjector<'a> {
     assistant_status: &'static str,
     assistant_error: Option<String>,
     fold_commentary: bool,
-    turn_cancelled: bool,
     options: TranscriptBuildOptions,
     assistant_segment_index: usize,
     assistant: AssistantTurnAccumulation,
@@ -128,6 +203,7 @@ impl<'a> TurnTranscriptProjector<'a> {
         let created_at = turn_started_at(turn);
         Self {
             messages,
+            normalized_items: Vec::new(),
             items,
             later_process,
             device_id,
@@ -137,7 +213,6 @@ impl<'a> TurnTranscriptProjector<'a> {
             assistant_status: turn_assistant_status(turn),
             assistant_error: turn_error_message(turn),
             fold_commentary: turn_should_fold_commentary(turn),
-            turn_cancelled: turn_interrupted(turn),
             assistant: AssistantTurnAccumulation::new(file_changes(turn)),
             turn_id,
             created_at,
@@ -147,7 +222,9 @@ impl<'a> TurnTranscriptProjector<'a> {
         }
     }
 
-    fn project(mut self) {
+    fn project(mut self) -> Vec<Value> {
+        let message_start = self.messages.len();
+        let mut positions = HashMap::new();
         let items = std::mem::take(&mut self.items);
         for (item_index, item) in items.into_iter().enumerate() {
             let previous_block_count = self.assistant.blocks.len();
@@ -155,8 +232,41 @@ impl<'a> TurnTranscriptProjector<'a> {
             self.project_item(&item, self.later_process[item_index]);
             self.assistant
                 .record_new_items(previous_block_count, previous_assistant_part_count);
+            if let Some(position) = item.get("position").and_then(Value::as_u64) {
+                if let Some(id) = string_field(&item, "id") {
+                    positions.entry(id).or_insert(position);
+                }
+                for normalized in self.assistant.runtime_items() {
+                    if let Some(id) = string_field(&normalized, "id") {
+                        positions.entry(id).or_insert(position);
+                    }
+                }
+            }
         }
         self.emit_assistant(true);
+        for message in &mut self.messages[message_start..] {
+            if let Some(position) = string_field(message, "id").and_then(|id| positions.get(&id)) {
+                message["position"] = json!(position);
+            }
+            if let Some(items) = message
+                .get_mut("runtimeItems")
+                .and_then(Value::as_array_mut)
+            {
+                for item in items {
+                    if let Some(position) =
+                        string_field(item, "id").and_then(|id| positions.get(&id))
+                    {
+                        item["position"] = json!(position);
+                    }
+                }
+            }
+        }
+        for item in &mut self.normalized_items {
+            if let Some(position) = string_field(item, "id").and_then(|id| positions.get(&id)) {
+                item["position"] = json!(position);
+            }
+        }
+        self.normalized_items
     }
 
     fn project_item(&mut self, item: &Value, has_later_process: bool) {
@@ -183,6 +293,14 @@ impl<'a> TurnTranscriptProjector<'a> {
             | "imageview" | "sleep" | "localshellcall" | "shellcall" => {
                 self.push_workbench_block(item)
             }
+            "mcpelicitation" | "userinputrequest" => {
+                self.assistant
+                    .blocks
+                    .push(super::codex_user_input::interaction_block(
+                        item,
+                        self.assistant_status != "streaming",
+                    ))
+            }
             "collabagenttoolcall" => self.project_collab_agent_tool_call(item),
             "subagentactivity" => self.project_subagent_activity(item),
             "functioncalloutput"
@@ -196,6 +314,9 @@ impl<'a> TurnTranscriptProjector<'a> {
                 self.options,
             ),
             "filechange" => {
+                if !self.options.materialize_artifacts {
+                    return;
+                }
                 let summary = file_changes_from_file_change_item(
                     item,
                     &self.turn_id,
@@ -205,6 +326,9 @@ impl<'a> TurnTranscriptProjector<'a> {
                 self.project_file_change(item, summary);
             }
             "patchapplyend" => {
+                if !self.options.materialize_artifacts {
+                    return;
+                }
                 let summary = file_changes_from_patch_apply_end(
                     item,
                     &self.turn_id,
@@ -271,6 +395,16 @@ impl<'a> TurnTranscriptProjector<'a> {
             self.assistant_status,
             &mut self.seen_user_messages,
         );
+        if pushed_user {
+            if let Some(message) = self.messages.last_mut() {
+                if is_guidance {
+                    message["runtimeGuidance"] = json!(true);
+                }
+                self.normalized_items.push(json!({
+                    "id": item_id(item, "user"), "type": "user_message", "message": message,
+                }));
+            }
+        }
         if is_guidance && pushed_user {
             self.assistant.blocks.push(guidance_block(
                 item,
@@ -284,7 +418,6 @@ impl<'a> TurnTranscriptProjector<'a> {
             item,
             self.created_at,
             self.fold_commentary,
-            self.turn_cancelled && self.fold_commentary,
             has_later_process || self.assistant_status == "streaming",
             &mut self.assistant,
             self.options,
@@ -330,6 +463,11 @@ impl<'a> TurnTranscriptProjector<'a> {
     }
 
     fn push_workbench_block(&mut self, item: &Value) {
+        if !self.options.materialize_artifacts
+            && matches!(item_type(item).as_str(), "filechange" | "patchapplyend")
+        {
+            return;
+        }
         if let Some(block) = workbench_block_from_codex_item(
             item,
             &self.turn_id,
@@ -490,7 +628,7 @@ impl<'a> TurnTranscriptProjector<'a> {
     }
 
     fn emit_assistant(&mut self, final_segment: bool) {
-        push_accumulated_assistant(
+        let items = push_accumulated_assistant(
             self.messages,
             &mut self.assistant_segment_index,
             AssistantEmitContext {
@@ -505,6 +643,7 @@ impl<'a> TurnTranscriptProjector<'a> {
             final_segment,
             self.options,
         );
+        self.normalized_items.extend(items);
     }
 }
 
@@ -678,7 +817,10 @@ pub(crate) fn workbench_block_from_codex_item(
     }
     if is_likely_codex_tool_item_type(&item_type) || is_default_tool_item(item) {
         let mut block = tool_block(item, fallback_timestamp, options);
-        if let Some(object) = block.as_object_mut() {
+        if let Some(object) = block
+            .as_object_mut()
+            .filter(|_| options.materialize_artifacts)
+        {
             insert_image_generation_render_payload(
                 object,
                 item,
@@ -1174,7 +1316,7 @@ fn turn_failed(turn: &Value) -> bool {
     })
 }
 
-fn turn_assistant_status(turn: &Value) -> &'static str {
+pub(super) fn turn_assistant_status(turn: &Value) -> &'static str {
     if turn_running(turn) {
         "streaming"
     } else if turn_interrupted(turn) {
@@ -1227,12 +1369,14 @@ fn is_final_assistant_message(item: &Value) -> bool {
 #[path = "transcript/message_projection.rs"]
 mod message_projection;
 
-pub(crate) use message_projection::normalized_user_request_content;
 use message_projection::{
     assistant_message_phase_name, collect_assistant_message, file_changes_block, guidance_block,
     is_internal_turn_abort_message, item_completed_at, item_timestamp, normalized_phase_or_status,
     plan_block, push_accumulated_assistant, push_reasoning_block, push_user_message_once,
     AssistantEmitContext, AssistantTurnAccumulation,
+};
+pub(crate) use message_projection::{
+    normalized_user_request_content, visible_user_request_content,
 };
 
 #[path = "transcript/tool_projection.rs"]

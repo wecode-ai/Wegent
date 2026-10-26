@@ -281,7 +281,8 @@ Executor Manager、Knowledge Engine、Shared 和 CLI 测试；修改
 在 PR 上添加 `ci:all` 标签可以跳过路径分类，强制运行全部模块测试、平台 E2E、
 Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径分类可能遗漏
 影响面的改动。三个测试 workflow 都会响应标签事件；没有 `ci:all` 标签时仍按
-改动路径决定测试范围。`ci:memory` 仍然只触发 Wework macOS 内存门禁。
+改动路径决定测试范围。Wework macOS 内存门禁仅在带有 `ci:memory` 或 `ci:all` 标签的非 Draft PR 中运行；
+普通 PR、定时任务和手动任务均不触发内存 E2E。
 
 功能分支不在普通 `push` 事件中运行重复 CI；创建 PR 后由 `pull_request` 事件验证。
 同一 PR 或 `main` 上有更新提交时，旧的未完成运行会被取消。`test-summary` 和

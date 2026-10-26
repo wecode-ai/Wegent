@@ -153,6 +153,7 @@ pub async fn run_with_shell_environment(
     let plan = startup_plan_for_config(&config)?;
     crate::local::capabilities::initialize_default_manifest()
         .map_err(|error| AppError::Server(error.to_string()))?;
+    recover_plugins_before_startup();
     if plan
         .local_sidecar
         .as_ref()
@@ -175,6 +176,29 @@ pub async fn run_with_shell_environment(
     // stdio.
     crate::agents::terminate_agent_processes().await;
     outcome
+}
+
+fn recover_plugins_before_startup() {
+    match crate::local::plugin_recovery::recover_default_plugin_runtimes() {
+        Ok(report) => {
+            for (key, error) in report.failed {
+                log_executor_event(
+                    "plugin runtime recovery failed",
+                    &[("plugin", key), ("error", error)],
+                );
+            }
+            if !report.restored.is_empty() {
+                log_executor_event(
+                    "plugin runtime recovery completed",
+                    &[("restored_count", report.restored.len().to_string())],
+                );
+            }
+        }
+        Err(error) => log_executor_event(
+            "plugin runtime recovery deferred",
+            &[("error", error.to_string())],
+        ),
+    }
 }
 
 async fn serve_runtime_plan(

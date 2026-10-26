@@ -2655,6 +2655,36 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toBe("page");
   });
 
+  it("passes accessible projects without workspace membership to personal Stand-in settings", async () => {
+    const sharedProject = {
+      ...project,
+      id: "shared-project",
+      name: "Shared review project",
+      workspace_id: "shared-workspace",
+      workspace_context: {
+        id: "shared-workspace",
+        public_id: "shared-public",
+        name: "Shared workspace",
+      },
+    };
+    const { api } = createApi({ initialProjects: [project, sharedProject] });
+    const renderStandInPage = vi.fn(({ projects }) => (
+      <div data-testid="stand-in-settings-page">
+        {projects.map((row) => row.name).join(", ")}
+      </div>
+    ));
+    await render(
+      <PlatformHarness api={api} renderStandInPage={renderStandInPage} />,
+    );
+    await click(byTestId("collaboration-primary-stand-in"));
+    expect(byTestId("stand-in-settings-page").textContent).toContain(
+      project.name,
+    );
+    expect(byTestId("stand-in-settings-page").textContent).toContain(
+      sharedProject.name,
+    );
+  });
+
   it("keeps the personal Stand-in editor mounted while navigation refreshes", async () => {
     const { api } = createApi();
     const renderStandInPage = () => (

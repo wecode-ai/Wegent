@@ -21,9 +21,13 @@ use crate::{config::device::DeviceConfig, protocol::ExecutionRequest};
 use super::personal_marketplace_lock::acquire_personal_marketplace_lock;
 
 mod manifest_migration;
+mod plugin_sync_protocol;
+mod runtime_recovery;
+mod runtime_skill_config;
 mod shared_packages;
 mod support;
 
+pub use runtime_recovery::PluginRuntimeRecoveryReport;
 use support::*;
 
 const MANIFEST_VERSION: i64 = 1;
@@ -375,6 +379,7 @@ pub struct PluginSyncSpec {
     checksum: Option<String>,
     download_path: Option<String>,
     component_states: Value,
+    sync_generation: Option<u64>,
 }
 
 impl PluginSyncSpec {
@@ -423,6 +428,7 @@ impl PluginSyncSpec {
                 .or_else(|| value.get("componentStates"))
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new())),
+            sync_generation: None,
         })
     }
 
@@ -460,6 +466,7 @@ impl PluginSyncSpec {
                 .get("component_states")
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new())),
+            sync_generation: plugin.get("plugin_sync_generation").and_then(Value::as_u64),
         }
     }
 }
@@ -514,6 +521,7 @@ pub struct GlobalCapabilityStore {
     pub store_dir: PathBuf,
     plugin_store_dir_override: Option<PathBuf>,
     shared_packages: bool,
+    codex_only_plugins: bool,
     workbench_root_override: Option<PathBuf>,
 }
 
@@ -532,6 +540,7 @@ impl GlobalCapabilityStore {
             store_dir: base.join(".wegent/workbench/executor/capabilities/store"),
             plugin_store_dir_override: None,
             shared_packages: false,
+            codex_only_plugins: env::var("WEGENT_PLUGIN_RUNTIME_TARGET").as_deref() == Ok("codex"),
             workbench_root_override: None,
         }
     }
@@ -543,6 +552,11 @@ impl GlobalCapabilityStore {
 
     pub fn with_shared_packages(mut self) -> Self {
         self.shared_packages = true;
+        self
+    }
+
+    pub fn with_codex_only_plugins(mut self) -> Self {
+        self.codex_only_plugins = true;
         self
     }
 
@@ -662,6 +676,7 @@ impl GlobalCapabilityStore {
                     .get("component_states")
                     .cloned()
                     .unwrap_or_else(|| Value::Object(Map::new())),
+                sync_generation: plugin.get("plugin_sync_generation").and_then(Value::as_u64),
             };
             let Some(store_path) = value_string(plugin.get("store_path")).map(PathBuf::from) else {
                 continue;
@@ -772,6 +787,9 @@ impl GlobalCapabilityStore {
     }
 
     pub fn reconcile_managed_claude_plugins(&self) -> Result<Vec<String>, CapabilitySyncError> {
+        if self.codex_only_plugins {
+            return Ok(Vec::new());
+        }
         let manifest = self.load_manifest_with_plugin_store_migration()?;
         let mut restored = Vec::new();
         let plugins = object_map(manifest.get("plugins")).unwrap_or_default();
@@ -851,180 +869,19 @@ impl GlobalCapabilityStore {
         Ok(manifest)
     }
 
-    fn install_plugin_runtime_metadata(
+    fn install_claude_plugin_runtime_metadata_at(
         &self,
         spec: &PluginSyncSpec,
         store_path: &Path,
-        manifest: &mut Value,
-    ) -> Result<(), CapabilitySyncError> {
-        let _personal_marketplace_lock = if spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE {
-            Some(
-                acquire_personal_marketplace_lock(&self.personal_marketplace_dir())
-                    .map_err(CapabilitySyncError::invalid_payload)?,
-            )
-        } else {
-            None
-        };
-        if spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE {
-            let personal_plugin_path = self
-                .personal_marketplace_dir()
-                .join("plugins")
-                .join(&spec.name);
-            let existing_is_same_managed_install = manifest
-                .get("plugins")
-                .and_then(|plugins| plugins.get(&spec.key))
-                .is_some_and(|plugin| {
-                    plugin.get("managed").and_then(Value::as_bool) == Some(true)
-                        && plugin.get("installed_plugin_id").and_then(Value::as_i64)
-                            == spec.installed_plugin_id
-                });
-            if (personal_plugin_path.exists() || personal_plugin_path.is_symlink())
-                && !existing_is_same_managed_install
-            {
-                return Err(CapabilitySyncError::invalid_payload(format!(
-                    "Personal marketplace plugin {} is owned by a local or bundled source",
-                    spec.name
-                )));
-            }
-        }
-        let runtime_link = self.plugin_runtime_link(spec);
-        let codex_link = self.plugin_codex_link(spec);
-        let previous_runtime = manifest
-            .get("plugins")
-            .and_then(|plugins| plugins.get(&spec.key))
-            .and_then(|plugin| plugin.get("runtime"));
-        let previous_runtime_link = previous_runtime
-            .and_then(|runtime| value_string(runtime.get("claude_link")))
-            .map(PathBuf::from);
-        let previous_codex_link = previous_runtime
-            .and_then(|runtime| value_string(runtime.get("codex_link")))
-            .map(PathBuf::from);
-        if previous_runtime_link.as_ref().is_some_and(|path| {
-            path != &runtime_link && !shared_packages::managed_descendant(&self.plugins_dir, path)
-        }) {
-            return Err(CapabilitySyncError::invalid_payload(
-                "Managed Claude plugin runtime path is outside the plugin directory",
-            ));
-        }
-        let claude_marketplace_dir = self.claude_marketplace_dir(&spec.marketplace);
-        let codex_marketplace_dir = self.codex_marketplace_dir(&spec.marketplace);
-        let file_paths = [
-            self.plugins_dir.join("known_marketplaces.json"),
-            self.plugins_dir.join("installed_plugins.json"),
-            self.plugins_dir
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join("settings.json"),
-            claude_marketplace_dir.join(".claude-plugin/marketplace.json"),
-            claude_marketplace_dir.join(".agents/plugins/marketplace.json"),
-            codex_marketplace_dir.join(".agents/plugins/marketplace.json"),
-            self.codex_plugins_dir
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join("config.toml"),
-        ];
-        let mut moved_paths = vec![
-            runtime_link.clone(),
-            codex_link.clone(),
-            claude_marketplace_dir
-                .join("plugins")
-                .join(self.marketplace_plugin_name(spec, true)),
-            codex_marketplace_dir
-                .join("plugins")
-                .join(self.marketplace_plugin_name(spec, false)),
-        ];
-        if !self.shared_packages {
-            if let Some(path) = &previous_runtime_link {
-                moved_paths.push(path.clone());
-            }
-            if let Some(path) = &previous_codex_link {
-                if path.starts_with(&self.codex_plugins_dir) {
-                    moved_paths.push(path.clone());
-                }
-            }
-        }
-        let original_manifest = manifest.clone();
-        let mut transaction = LocalPluginStateTransaction::begin(file_paths, moved_paths)?;
-        let result = (|| {
-            self.install_claude_plugin_runtime_metadata(spec, store_path)?;
-            copy_dir_atomic(store_path, &codex_link)?;
-            ensure_dual_plugin_manifests(&codex_link)?;
-            if let Some(previous_runtime_link) = previous_runtime_link {
-                if !self.shared_packages && previous_runtime_link != runtime_link {
-                    self.remove_claude_plugin_runtime_path(&previous_runtime_link)?;
-                }
-            }
-            if let Some(previous_codex_link) = previous_codex_link {
-                if !self.shared_packages
-                    && previous_codex_link != codex_link
-                    && previous_codex_link.starts_with(&self.codex_plugins_dir)
-                {
-                    self.remove_codex_plugin_runtime_path(&previous_codex_link)?;
-                }
-            }
-            self.install_codex_marketplace_metadata(spec, &codex_link)?;
-            let mut entry = plugin_manifest_entry(spec, store_path, &runtime_link, &codex_link);
-            if self.shared_packages {
-                let previous = original_manifest
-                    .get("plugins")
-                    .and_then(|plugins| plugins.get(&spec.key));
-                entry["previous"] = shared_packages::previous_for_hash(
-                    previous,
-                    "checksum",
-                    spec.checksum.as_deref(),
-                );
-                shared_packages::remember_plugin_runtime_owner(manifest, &spec.key, &entry);
-            }
-            ensure_object_field(manifest, "plugins").insert(spec.key.clone(), entry);
-            if self.shared_packages {
-                self.manifest.save_with_revision_bump(manifest.clone())?;
-            }
-            Ok(())
-        })();
-        match result {
-            Ok(()) => {
-                transaction.commit();
-                Ok(())
-            }
-            Err(error) => {
-                *manifest = original_manifest;
-                Err(transaction.add_rollback_context(error))
-            }
-        }
-    }
-
-    fn install_claude_plugin_runtime_metadata(
-        &self,
-        spec: &PluginSyncSpec,
-        store_path: &Path,
+        timestamp: &str,
     ) -> Result<(), CapabilitySyncError> {
         let runtime_path = self.plugin_runtime_link(spec);
         copy_dir_atomic(store_path, &runtime_path)?;
         ensure_dual_plugin_manifests(&runtime_path)?;
         ensure_plugin_hook_permissions(&runtime_path)?;
-        self.install_marketplace_metadata(spec, &runtime_path)?;
-        upsert_installed_plugin(&self.plugins_dir, spec, &runtime_path)?;
+        self.install_marketplace_metadata_at(spec, &runtime_path, timestamp)?;
+        upsert_installed_plugin_at(&self.plugins_dir, spec, &runtime_path, timestamp)?;
         set_plugin_enabled(&self.plugins_dir, &spec.key, spec.enabled)
-    }
-
-    fn remove_claude_plugin_runtime_path(&self, path: &Path) -> Result<(), CapabilitySyncError> {
-        if !path.starts_with(&self.plugins_dir) {
-            return Err(CapabilitySyncError::invalid_payload(format!(
-                "Managed Claude plugin path is outside the plugin directory: {}",
-                path.display()
-            )));
-        }
-        remove_existing_path(path)
-    }
-
-    fn remove_codex_plugin_runtime_path(&self, path: &Path) -> Result<(), CapabilitySyncError> {
-        if !path.starts_with(&self.codex_plugins_dir) {
-            return Err(CapabilitySyncError::invalid_payload(format!(
-                "Managed Codex plugin path is outside the plugin directory: {}",
-                path.display()
-            )));
-        }
-        remove_existing_path(path)
     }
 
     fn install_codex_marketplace_metadata(
@@ -1081,6 +938,7 @@ impl GlobalCapabilityStore {
         document["marketplaces"][&spec.marketplace]["source"] =
             value(marketplace_dir.display().to_string());
         document["plugins"][&spec.key]["enabled"] = value(spec.enabled);
+        runtime_skill_config::relocate_plugin_skill_config(&mut document, spec, store_path)?;
         let next_content = document.to_string();
         if next_content != content {
             replace_codex_config(&config_path, &next_content)?;
@@ -1099,6 +957,8 @@ impl GlobalCapabilityStore {
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .join("settings.json");
+        // Removal also cleans Claude enablement left by earlier dual-runtime
+        // installations; installation paths stay Codex-only.
         if claude_settings_path.is_file() {
             let mut settings = read_json_or_default(&claude_settings_path, || json!({}))?;
             let mut changed = false;
@@ -1159,6 +1019,15 @@ impl GlobalCapabilityStore {
         spec: &PluginSyncSpec,
         store_path: &Path,
     ) -> Result<(), CapabilitySyncError> {
+        self.install_marketplace_metadata_at(spec, store_path, &now_rfc3339_like())
+    }
+
+    fn install_marketplace_metadata_at(
+        &self,
+        spec: &PluginSyncSpec,
+        store_path: &Path,
+        timestamp: &str,
+    ) -> Result<(), CapabilitySyncError> {
         let marketplace_dir = self.claude_marketplace_dir(&spec.marketplace);
         let marketplace_plugins_dir = marketplace_dir.join("plugins");
         let marketplace_plugin_name = self.marketplace_plugin_name(spec, true);
@@ -1178,7 +1047,8 @@ impl GlobalCapabilityStore {
             json!({
                 "source": marketplace_source,
                 "installLocation": marketplace_dir.display().to_string(),
-                "lastUpdated": chrono::Utc::now()
+                "lastUpdated": timestamp.parse::<i64>().ok().and_then(chrono::DateTime::from_timestamp_millis)
+                    .ok_or_else(||CapabilitySyncError::invalid_payload("Invalid plugin publication time"))?
                     .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             }),
         );
@@ -1398,6 +1268,8 @@ where
     store: GlobalCapabilityStore,
     package_provider: P,
     sync_lock: AsyncMutex<()>,
+    plugin_sync_inflight: plugin_sync_protocol::InFlightRequests,
+    plugin_sync_binding: plugin_sync_protocol::ConnectionBinding,
 }
 
 impl CapabilitySyncHandler<NoopPackageProvider> {
@@ -1419,11 +1291,16 @@ where
         store: GlobalCapabilityStore,
         package_provider: P,
     ) -> Self {
+        let auth_token = auth_token.into();
+        let plugin_sync_binding =
+            plugin_sync_protocol::ConnectionBinding::new(&store.manifest.path, &auth_token);
         Self {
-            auth_token: auth_token.into(),
+            auth_token,
             store,
             package_provider,
             sync_lock: AsyncMutex::new(()),
+            plugin_sync_inflight: Default::default(),
+            plugin_sync_binding,
         }
     }
 
@@ -1432,8 +1309,19 @@ where
     }
 
     pub async fn apply_sync(&self, payload: Value) -> Result<Value, CapabilitySyncError> {
+        self.plugin_sync_binding.check()?;
+        let protocol = plugin_sync_protocol::PluginSyncRequest::parse(&payload)?;
+        if let Some(request) = protocol {
+            return self.apply_plugin_sync_request(payload, request).await;
+        }
+        self.apply_legacy_sync(payload).await
+    }
+
+    async fn apply_legacy_sync(&self, payload: Value) -> Result<Value, CapabilitySyncError> {
+        let started = std::time::Instant::now();
         let _sync_guard = self.sync_lock.lock().await;
         let _activation = crate::services::capability_activation::activate().await;
+        let queued_ms = started.elapsed().as_millis();
         let _changed = shared_packages::ActivationRevision;
         let _publication_lock = self.store.lock_shared_manifest()?;
         let plugins_only = payload.get("scope").and_then(Value::as_str) == Some("plugins");
@@ -1459,25 +1347,31 @@ where
             .into_iter()
             .map(|value| PluginSyncSpec::from_value(&value))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut manifest = if plugin_specs.is_empty() {
-            self.store.manifest.load()?
-        } else {
-            self.store.load_manifest_with_plugin_store_migration()?
+        let mut manifest = {
+            let _binding = self.plugin_sync_binding.lock_active()?;
+            if plugin_specs.is_empty() || self.store.shared_packages {
+                self.store.manifest.load()?
+            } else {
+                self.store.load_manifest_with_plugin_store_migration()?
+            }
         };
 
-        if mode == "replace" || plugins_only {
-            let desired_skills = skill_specs
-                .iter()
-                .map(|spec| spec.name.clone())
-                .collect::<BTreeSet<_>>();
-            let desired_plugins = plugin_specs
-                .iter()
-                .map(|spec| spec.key.clone())
-                .collect::<BTreeSet<_>>();
-            if !plugins_only {
-                self.remove_stale_managed_skills(&desired_skills, &mut manifest)?;
+        {
+            let _binding = self.plugin_sync_binding.lock_active()?;
+            if mode == "replace" || plugins_only {
+                let desired_skills = skill_specs
+                    .iter()
+                    .map(|spec| spec.name.clone())
+                    .collect::<BTreeSet<_>>();
+                let desired_plugins = plugin_specs
+                    .iter()
+                    .map(|spec| spec.key.clone())
+                    .collect::<BTreeSet<_>>();
+                if !plugins_only {
+                    self.remove_stale_managed_skills(&desired_skills, &mut manifest)?;
+                }
+                self.remove_stale_managed_plugins(&desired_plugins, &mut manifest, plugins_only)?;
             }
-            self.remove_stale_managed_plugins(&desired_plugins, &mut manifest, plugins_only)?;
         }
 
         let mut skill_results = Vec::with_capacity(skill_specs.len());
@@ -1488,6 +1382,7 @@ where
         for spec in &plugin_specs {
             plugin_results.push(self.sync_plugin(spec, &mut manifest).await);
         }
+        let _binding = self.plugin_sync_binding.lock_active()?;
         if !plugins_only {
             self.record_mcps(payload.get("mcps"), mode, &mut manifest)?;
         }
@@ -1498,6 +1393,14 @@ where
             .iter()
             .chain(plugin_results.iter())
             .all(|result| result.get("status").and_then(Value::as_str) != Some("failed"));
+        crate::logging::log_executor_event(
+            "capability_sync_completed",
+            &[
+                ("queue_ms", queued_ms.to_string()),
+                ("total_ms", started.elapsed().as_millis().to_string()),
+                ("plugin_count", plugin_specs.len().to_string()),
+            ],
+        );
 
         Ok(json!({
             "success": success,
@@ -1547,9 +1450,21 @@ where
             ));
         }
 
-        if !is_installed_skill_current(spec, &store_path, manifest) {
+        let staging = if !is_installed_skill_current(spec, &store_path, manifest) {
+            let parent = store_path.parent().expect("skill store parent");
+            fs::create_dir_all(parent)?;
+            let staging = tempfile::tempdir_in(parent)?;
+            self.package_provider
+                .stage_skill(spec, &staging.path().join("package"))
+                .await?;
+            Some(staging)
+        } else {
+            None
+        };
+        let _binding = self.plugin_sync_binding.lock_active()?;
+        if let Some(staging) = staging {
             remove_existing_path(&store_path)?;
-            self.package_provider.stage_skill(spec, &store_path).await?;
+            fs::rename(staging.path().join("package"), &store_path)?;
         }
         link_or_copy_dir(&store_path, &runtime_link)?;
         link_or_copy_dir(&store_path, &codex_link)?;
@@ -1610,6 +1525,10 @@ where
             return self.try_sync_shared_plugin(spec, manifest).await;
         }
         let Some(store_path) = self.store.plugin_store_path(spec) else {
+            let _binding = self
+                .plugin_sync_binding
+                .lock_active()
+                .map_err(PluginSyncFailure::runtime_metadata)?;
             ensure_object_field(manifest, "plugins").insert(
                 spec.key.clone(),
                 json!({
@@ -1656,6 +1575,10 @@ where
                 .map_err(|error| {
                     PluginSyncFailure::new("download", "PLUGIN_DOWNLOAD_FAILED", true, error)
                 })?;
+            let _binding = self
+                .plugin_sync_binding
+                .lock_active()
+                .map_err(PluginSyncFailure::runtime_metadata)?;
             if let Some(expected) = &spec.checksum {
                 let actual = sha256_digest(&package);
                 if &actual != expected {
@@ -1719,6 +1642,10 @@ where
             ));
         }
 
+        let _binding = self
+            .plugin_sync_binding
+            .lock_active()
+            .map_err(PluginSyncFailure::runtime_metadata)?;
         self.store
             .install_plugin_runtime_metadata(spec, &store_path, manifest)
             .map_err(PluginSyncFailure::runtime_metadata)?;
@@ -1777,6 +1704,15 @@ where
             return Ok(());
         }
 
+        self.remove_managed_plugins(stale, desired, manifest)
+    }
+
+    fn remove_managed_plugins(
+        &self,
+        stale: Vec<(String, Value)>,
+        desired: &BTreeSet<String>,
+        manifest: &mut Value,
+    ) -> Result<(), CapabilitySyncError> {
         let _personal_marketplace_lock = if stale.iter().any(|(key, plugin)| {
             PluginSyncSpec::from_manifest_entry(key, plugin).marketplace
                 == PERSONAL_SHARED_PLUGIN_MARKETPLACE
@@ -1815,40 +1751,33 @@ where
             })
             .collect::<BTreeSet<_>>();
 
+        self.store.ensure_state_path(
+            &self
+                .store
+                .codex_plugins_dir
+                .parent()
+                .unwrap_or(&self.store.codex_plugins_dir)
+                .join("config.toml"),
+            false,
+        )?;
+        // Codex-only mode never creates Claude state, but it still cleans
+        // registrations left by earlier dual-runtime installations.
+        let claude_installed_path = self.store.plugins_dir.join("installed_plugins.json");
+        self.store
+            .ensure_state_path(&claude_installed_path, false)?;
+        let claude_installed_exists = claude_installed_path.is_file();
         let mut installed = read_installed_plugins(&self.store.plugins_dir)?;
         let mut moved_paths = Vec::new();
-        for (_, plugin) in &stale {
-            if let Some(runtime) = plugin.get("runtime") {
-                if let Some(path) = value_string(runtime.get("claude_link")).map(PathBuf::from) {
-                    if !shared_packages::managed_descendant(&self.store.plugins_dir, &path) {
-                        return Err(CapabilitySyncError::invalid_payload(format!(
-                            "Managed Claude plugin path is outside the plugin directory: {}",
-                            path.display()
-                        )));
-                    }
-                    if !self.store.shared_packages {
-                        moved_paths.push(path);
-                    }
-                }
-                if let Some(path) = value_string(runtime.get("codex_link")).map(PathBuf::from) {
-                    if !shared_packages::managed_descendant(&self.store.codex_plugins_dir, &path) {
-                        return Err(CapabilitySyncError::invalid_payload(format!(
-                            "Managed Codex plugin path is outside the plugin directory: {}",
-                            path.display()
-                        )));
-                    }
-                    if !self.store.shared_packages {
-                        moved_paths.push(path);
-                    }
-                }
-            }
-            if let Some(store_path) = value_string(plugin.get("store_path")).map(PathBuf::from) {
-                if !self.store.shared_packages {
-                    moved_paths.push(store_path);
+        if !self.store.shared_packages {
+            for (key, plugin) in &stale {
+                moved_paths.extend(self.store.current_recorded_runtime_paths(key, plugin)?);
+                if let Some(path) = self.store.current_recorded_store_path(plugin)? {
+                    moved_paths.push(path);
                 }
             }
         }
         let mut file_paths = vec![
+            self.store.manifest.path.clone(),
             self.store.plugins_dir.join("installed_plugins.json"),
             self.store
                 .plugins_dir
@@ -1861,12 +1790,31 @@ where
                 .unwrap_or_else(|| Path::new("."))
                 .join("config.toml"),
         ];
+        let owned_personal = stale
+            .iter()
+            .filter(|(key, plugin)| {
+                self.store
+                    .can_remove_personal_marketplace_plugin(key, plugin)
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<BTreeSet<_>>();
         for (key, plugin) in &stale {
             let spec = PluginSyncSpec::from_manifest_entry(key, plugin);
-            if spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE {
+            if spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE
+                && owned_personal.contains(key)
+            {
                 file_paths.extend(self.personal_shared_marketplace_manifest_paths());
                 moved_paths.extend(self.personal_shared_marketplace_plugin_paths(&spec));
             }
+        }
+        for path in &file_paths {
+            // The store manifest lives outside the managed plugin roots; the
+            // transaction still snapshots it, but the managed-path guard only
+            // applies to runtime and registration files.
+            if path == &self.store.manifest.path {
+                continue;
+            }
+            self.store.ensure_state_path(path, false)?;
         }
         let original_manifest = manifest.clone();
         let mut transaction = LocalPluginStateTransaction::begin(file_paths, moved_paths)?;
@@ -1874,25 +1822,9 @@ where
             for (key, plugin) in stale {
                 let spec = PluginSyncSpec::from_manifest_entry(&key, &plugin);
                 ensure_object_field(&mut installed, "plugins").remove(&key);
-                if let Some(runtime) = plugin.get("runtime") {
-                    if let Some(path) = value_string(runtime.get("claude_link")) {
-                        if !self.store.shared_packages {
-                            remove_existing_path(Path::new(&path))?;
-                        }
-                    }
-                    if let Some(path) = value_string(runtime.get("codex_link")) {
-                        if !self.store.shared_packages {
-                            remove_existing_path(Path::new(&path))?;
-                        }
-                    }
-                }
-                if let Some(store_path) = value_string(plugin.get("store_path")).map(PathBuf::from)
+                if spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE
+                    && owned_personal.contains(&key)
                 {
-                    if !self.store.shared_packages {
-                        remove_existing_path(&store_path)?;
-                    }
-                }
-                if spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE {
                     self.remove_personal_shared_marketplace_plugin(&spec)?;
                 }
                 if self.store.shared_packages {
@@ -1901,15 +1833,22 @@ where
                 }
                 ensure_object_field(manifest, "plugins").remove(&key);
             }
-            write_json(
-                &self.store.plugins_dir.join("installed_plugins.json"),
-                &installed,
-            )?;
+            if !self.store.codex_only_plugins || claude_installed_exists {
+                write_json(
+                    &self.store.plugins_dir.join("installed_plugins.json"),
+                    &installed,
+                )?;
+            }
             self.store.remove_plugin_runtime_configuration(
                 &stale_keys,
                 &stale_marketplaces,
                 &desired_marketplaces,
             )?;
+            if self.store.shared_packages || manifest.get("plugin_sync").is_some() {
+                self.store
+                    .manifest
+                    .save_with_revision_bump(manifest.clone())?;
+            }
             Ok(())
         })();
         match result {
