@@ -52,6 +52,7 @@ classify_path() {
       .github/scripts/resolve-executor-e2e-runtime.sh | \
       .github/scripts/restore-executor-e2e-runtime.sh | \
       .github/scripts/restore-frontend-e2e-build.sh | \
+      .github/scripts/setup-dingtalk-oauth-e2e.sh | \
       .github/scripts/start-frontend-e2e-server.sh)
       changed[platform_e2e]=true
       ;;
