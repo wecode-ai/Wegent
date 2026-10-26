@@ -223,8 +223,8 @@ async function verifyLegacyAppRejection(
   await control.command('clickWhenEnabled', `[data-testid="harness-app-start-${id}"]`, {
     timeoutMs: uiTimeoutMs,
   })
-  await control.command('waitFor', `[data-testid="harness-app-launch-${id}"]`, {
-    text: 'The trusted Electron host bridge requires DSH 0.2.0-rc.2',
+  await control.command('waitFor', `[data-testid="harness-app-launch-retry-${id}"]`, {
+    visible: true,
     timeoutMs: 600_000,
   })
   assert.equal(
@@ -237,6 +237,7 @@ async function verifyLegacyAppRejection(
   )
   const legacy = installations.find(item => item.id === id)
   assert.equal(legacy?.state, 'failed')
+  assert.equal(legacy.error, 'The trusted Electron host bridge requires DSH 0.2.0-rc.2')
   assert.equal(legacy.runtimeVersion, null)
   assert.equal(legacy.webUrl, null)
   await removeLegacyAppFixture(control, id, managementTabId, uiTimeoutMs)
