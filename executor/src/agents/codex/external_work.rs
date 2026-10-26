@@ -75,7 +75,13 @@ fn grant_runtime_files(filesystem: &mut Value, binary: &Path) {
 
 pub(super) fn permission_config(request: &ExecutionRequest) -> Map<String, Value> {
     let mut config = Map::new();
-    if !applies(request) || cfg!(windows) {
+    let Some(default_profile) = profile(request) else {
+        return config;
+    };
+    // Codex rebuilds session config without the thread/start permission override.
+    // Keep the catalog valid and select the same boundary during those reloads.
+    config.insert("default_permissions".into(), json!(default_profile));
+    if cfg!(windows) {
         return config;
     }
     // An explicit deny keeps native approvals from dropping the filesystem boundary.
@@ -344,5 +350,51 @@ mod tests {
         assert!(thread_start_params(&ExecutionRequest::default(), &launch)
             .get("approvalsReviewer")
             .is_none());
+    }
+
+    #[test]
+    fn source_permission_catalog_keeps_the_selected_boundary_on_config_reload() {
+        for (kind, ask) in [
+            ("dingtalk_work", false),
+            ("dingtalk_work", true),
+            ("issue_dispatch", false),
+            ("issue_dispatch", true),
+        ] {
+            let mut request = request(ask);
+            request.extra.get_mut("origin").unwrap()["type"] = json!(kind);
+            let catalog = permission_config(&request);
+            let selected = codex_runtime_permission_profile(&request);
+            assert_eq!(catalog["default_permissions"], selected);
+            if cfg!(windows) {
+                assert_eq!(selected, CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE);
+                assert_eq!(catalog.len(), 1);
+            } else {
+                assert_eq!(
+                    catalog[&format!("permissions.{selected}.filesystem")][":project_roots"],
+                    if ask { "read" } else { "write" }
+                );
+                assert_eq!(
+                    catalog[&format!("permissions.{selected}.filesystem")][":root"],
+                    "deny"
+                );
+                assert_eq!(
+                    catalog[&format!("permissions.{selected}.network.enabled")],
+                    true
+                );
+            }
+            let mut launch = CodexLaunchConfig::default();
+            launch.thread_config.extend(catalog);
+            for params in [
+                thread_start_params(&request, &launch),
+                thread_resume_params("thread", &request, &launch),
+                thread_fork_params("thread", None, &request, &launch),
+            ] {
+                assert_eq!(
+                    params["config"]["default_permissions"],
+                    params["permissions"]
+                );
+            }
+        }
+        assert!(permission_config(&ExecutionRequest::default()).is_empty());
     }
 }

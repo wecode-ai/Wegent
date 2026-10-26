@@ -58,6 +58,41 @@ function transcript(overrides: Partial<RuntimePaneTranscript> = {}): RuntimePane
 }
 
 describe('RuntimeTaskLifecycleStore', () => {
+  test.each(['done', 'failed', 'cancelled'])(
+    'settles a recovered %s historical turn with the latest transcript outcome',
+    historicalStatus => {
+      const store = new RuntimeTaskLifecycleStore('cold-history-settlement')
+      const completedWork = runtimeWork(
+        task({
+          status: 'done',
+          completedAt: 2000,
+          runtimeHandle: { lastTurnId: 'turn-2' },
+        })
+      )
+      store.syncRuntimeWork(completedWork)
+      const alias = { ...address, deviceId: 'app-record-70' }
+      store.turnStarted(alias, 'turn-1')
+      completedWork.projects[0].deviceWorkspaces[0].remoteHostId = alias.deviceId
+      store.syncRuntimeWork(completedWork)
+      expect(store.getTask(address)?.turn.id).toBe('turn-1')
+
+      store.syncTranscript(
+        address,
+        transcript({
+          running: false,
+          turns: [
+            { id: 'turn-1', status: historicalStatus, completedAt: 1000, items: [] },
+            { id: 'turn-2', status: 'done', completedAt: 2000, items: [] },
+          ],
+        })
+      )
+
+      expect(store.getTask(address)?.derived.isBusy).toBe(false)
+      expect(store.getTask(address)?.turn.latestId).toBe('turn-2')
+      expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
+    }
+  )
+
   test('retains the latest turn identity after a terminal task snapshot clears the active turn', () => {
     const store = new RuntimeTaskLifecycleStore('latest-turn')
     store.syncRuntimeWork(runtimeWork(task({ running: true, status: 'running' })))

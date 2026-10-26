@@ -5,16 +5,19 @@ import { roleIncludesProject, standInPolicy } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TagEditor } from '@wegent/collaboration'
 import { StandInHandlingSelect } from './StandInHandlingSelect'
+import { findStandInProject } from './standInProjects'
 
 export function StandInConnections({
   role,
   projects,
+  allowLocalProjects,
   onChange,
   disabled,
   focusedProjectId,
 }: {
   role: StandInRole
   projects: CollaborationProject[]
+  allowLocalProjects: boolean
   onChange(role: StandInRole): void
   disabled: boolean
   focusedProjectId?: string
@@ -85,8 +88,7 @@ export function StandInConnections({
             <p className="text-xs text-text-muted">
               {t('standIn.personal.project_agent_scope', {
                 project:
-                  projects.find(project => project.id === role.agentProject?.id)?.name ??
-                  role.agentProject.id,
+                  findStandInProject(projects, role.agentProject)?.name ?? role.agentProject.id,
               })}
             </p>
           )}
@@ -94,7 +96,14 @@ export function StandInConnections({
             className="max-h-64 overflow-y-auto divide-y divide-border/50"
             data-testid="stand-in-source-projects"
           >
+            {/* Remote all-project scope uses that Executor's catalog, not this computer's. */}
             {projects
+              .filter(
+                project =>
+                  allowLocalProjects ||
+                  project.project_store !== 'local' ||
+                  source.projects.some(row => row.store === 'local' && row.id === project.id)
+              )
               .filter(
                 project =>
                   !role.agentProject ||
@@ -116,7 +125,9 @@ export function StandInConnections({
                       checked={roleIncludesProject(role, ref(project))}
                       disabled={
                         disabled ||
-                        Boolean(role.agentProject && role.agentProject.id !== project.id)
+                        (!allowLocalProjects &&
+                          project.project_store === 'local' &&
+                          !roleIncludesProject(role, ref(project)))
                       }
                       onChange={event => toggleProject(project, event.target.checked)}
                     />
