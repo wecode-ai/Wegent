@@ -422,6 +422,17 @@ platform_e2e_expected="${all_false/platform_e2e=false/platform_e2e=true}"
 assert_case "docker changes run platform E2E" "$platform_e2e_expected" \
   "docker/docker-compose.yml"
 
+backend_container_expected="${platform_e2e_expected/backend=false/backend=true}"
+for path in docker/backend/Dockerfile docker-compose.yml docker-compose.build.yml \
+  .dockerignore .github/workflows/e2e-tests.yml .github/scripts/test-backend-container.sh \
+  .github/fixtures/backend-container-e2e.yml; do
+  assert_case "Backend container changes run unit and image regressions: $path" \
+    "$backend_container_expected" "$path"
+done
+hybrid_launcher_expected="${backend_rs_expected/backend=false/backend=true}"
+assert_case "Hybrid launcher changes also run process supervision tests" \
+  "$hybrid_launcher_expected" "backend-rs/scripts/start-hybrid-backend.sh"
+
 executor_dependency_expected="${platform_e2e_expected/executor=false/executor=true}"
 assert_case "executor dependency setup changes run executor and platform E2E" \
   "$executor_dependency_expected" \

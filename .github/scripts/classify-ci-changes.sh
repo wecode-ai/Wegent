@@ -45,8 +45,7 @@ classify_path() {
       mark_all
       return
       ;;
-    .github/workflows/e2e-tests.yml | \
-      .github/scripts/archive-executor-e2e-runtime.sh | \
+    .github/scripts/archive-executor-e2e-runtime.sh | \
       .github/scripts/archive-frontend-e2e-build.sh | \
       .github/scripts/free-runner-disk-space-if-needed.sh | \
       .github/scripts/resolve-executor-e2e-runtime.sh | \
@@ -69,6 +68,18 @@ classify_path() {
     package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       changed[frontend]=true
       changed[wework]=true
+      changed[platform_e2e]=true
+      changed[wework_e2e]=true
+      ;;
+    docker/backend/* | docker-compose.yml | docker-compose.build.yml | .dockerignore | \
+      .github/workflows/e2e-tests.yml | .github/scripts/test-backend-container.sh | \
+      .github/fixtures/backend-container-e2e.yml)
+      changed[backend]=true
+      changed[platform_e2e]=true
+      ;;
+    backend-rs/scripts/start-hybrid-backend.sh)
+      changed[backend]=true
+      changed[backend_rs]=true
       changed[platform_e2e]=true
       changed[wework_e2e]=true
       ;;

@@ -1,0 +1,5 @@
+# Enable the launcher's existing process-state evidence only for container E2E.
+services:
+  backend:
+    environment:
+      WEGENT_HYBRID_STATE_FILE: /tmp/wegent-backend.state
