@@ -518,6 +518,20 @@ fi
 wework_workflow="$workflow_dir/wework-e2e.yml"
 wework_browser_image="$script_dir/../../docker/wework-e2e/browser.Dockerfile"
 wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
+if ! grep -Fq 'UV_PYTHON=3.11' "$wework_browser_image" ||
+  ! grep -Fq 'UV_PYTHON_PREFERENCE=only-managed' "$wework_browser_image" ||
+  ! grep -Fq 'uv python install "$UV_PYTHON"' "$wework_browser_image" ||
+  ! grep -Fq 'import ssl' "$wework_browser_image"; then
+  fail "The platform E2E image must own and validate its Python TLS runtime"
+fi
+ruby -r yaml - "$platform_e2e_workflow" <<'RUBY'
+workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+steps = workflow.fetch("jobs").fetch("e2e-tests").fetch("steps")
+setup = steps.find { |step| step["uses"] == "./.github/actions/setup-python-uv-cache" }
+unless setup && setup.fetch("with").fetch("setup-python", "true") == "false"
+  abort "Container E2E must not use the host runner's Python tool cache"
+end
+RUBY
 if ! grep -Fq 'ARG UV_VERSION=0.11.17' "$wework_browser_image" ||
   ! grep -Fq '"https://astral.sh/uv/${UV_VERSION}/install.sh"' \
     "$wework_browser_image" ||

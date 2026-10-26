@@ -326,6 +326,9 @@ CI 稳定性依赖以下约束：
   Dockerfile 的内容哈希决定；工作流只在该标签不存在时构建并发布镜像，后续任务
   直接在镜像容器中运行，不再逐任务安装 Node、pnpm、uv、Rust、Playwright 浏览器
   或桌面系统包。本地调试命令不会构建这些 CI 镜像。
+- 平台 E2E 浏览器镜像内由 uv 安装 Python 3.11，并在构建时导入 `ssl` 验证 TLS
+  支持。容器分片只恢复 uv 下载缓存，不使用宿主机工具缓存中的 Python，避免 runner
+  系统升级后解释器与容器系统库不兼容。
 - uv 只缓存下载和构建结果，不缓存项目 `.venv`。缓存 key 包含对应 `uv.lock`，
   按 Python 3.10、3.11、3.12 各维护一份共享缓存，保存前执行 CI prune。
 - Playwright browser、Next.js build cache、本地 harness CLI 和桌面 Cargo target

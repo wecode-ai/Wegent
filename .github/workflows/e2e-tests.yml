@@ -566,6 +566,7 @@ jobs:
         uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: "3.11"
+          setup-python: "false"
           setup-uv: "false"
 
       - name: Install shared module
