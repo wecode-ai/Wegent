@@ -4132,7 +4132,6 @@
     "runner_catalog_unsupported_method": "This Executor cannot read model catalogs. Update and restart it.",
     "runner_catalog_runner_catalog_invalid": "The environment returned an invalid model catalog. Check its Executor logs.",
     "runner_catalog_codex_catalog_unavailable": "Unable to read Codex models. Check the environment’s Codex account and configuration.",
-    "runner_catalog_claude_provider_required": "The custom Claude service needs a provider ID.",
     "runner_catalog_claude_catalog_invalid": "The Claude model configuration is invalid.",
     "runner_catalog_claude_catalog_unreadable": "Unable to read the environment’s Claude model configuration.",
     "background_processes": "Background processes",
