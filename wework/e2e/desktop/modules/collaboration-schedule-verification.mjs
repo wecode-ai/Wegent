@@ -64,6 +64,7 @@ export async function verifyCollaborationScheduleViews({
   control,
   issueTitle,
   now = new Date(),
+  // Tests inject stable date keys so unrelated fake clocks cannot shift the schedule.
   scheduleKeys,
   scoped,
   timeoutMs,
