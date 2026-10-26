@@ -247,6 +247,16 @@ export async function verifyNewTaskBoardAssociation(control, projectName, issueT
     for (const fixture of layoutFixtures) {
       await requestExecutor(
         control,
+        'todos.update',
+        {
+          project_id: project.id,
+          task_id: fixture.id,
+          todo: { version: fixture.version, status: 'completed' },
+        },
+        DEFAULT_STEP_TIMEOUT_MS
+      )
+      await requestExecutor(
+        control,
         'todos.archive',
         { project_id: project.id, task_id: fixture.id },
         DEFAULT_STEP_TIMEOUT_MS
