@@ -1263,7 +1263,7 @@ classify_wework_path() {
       select_target "core:codex-notification-isolation"
       return
       ;;
-    wework/e2e/desktop/scenarios/executor-stream-recovery.scenario.mjs)
+    wework/e2e/desktop/scenarios/executor-stream-recovery.scenario.mjs|wework/e2e/desktop/scenarios/executor-retry-status.scenario.mjs)
       select_target "core:executor-stream-recovery"
       return
       ;;

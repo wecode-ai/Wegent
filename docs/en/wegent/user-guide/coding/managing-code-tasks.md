@@ -189,6 +189,14 @@ graph LR
 | **FAILED**    | Execution failed    | Can retry                   |
 | **CANCELLED** | Was cancelled       | Can recreate                |
 
+### Wework Model Rate-limit Waiting
+
+When the local model proxy receives HTTP 429 or Codex reports a model rate limit and retries automatically, the conversation immediately shows “Model rate limited. Waiting to retry…”. Desktop and mobile sidebars replace the running spinner with a waiting clock and the label “Rate limited, waiting to retry”. The current response is waiting for the model service, not finished or frozen.
+
+You can still stop the response. Follow-up messages keep their existing queue behavior and are not sent early because of the waiting display. The indicator clears when model output resumes; an exhausted retry becomes a failure. Ordinary network reconnection is not labeled as rate limiting, and rate limiting does not offer network proxy configuration.
+
+The UI does not invent a countdown when the model protocol provides no precise retry time.
+
 ### Stopping a Task
 
 If you need to stop a running task:

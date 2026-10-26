@@ -1969,6 +1969,10 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
+        let _retry_subscription = local_model_proxy::retry_notifications::subscribe(
+            &thread_id,
+            notifications.as_ref(),
+        );
         let mut notification_rx = match early_notification_rx {
             Some(notification_rx) => notification_rx,
             None => {
@@ -2327,6 +2331,8 @@ pub async fn run_codex_app_server_turn_with_cancel(
         };
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
+        let _retry_subscription =
+            local_model_proxy::retry_notifications::subscribe(&thread_id, notifications.as_ref());
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
         }
