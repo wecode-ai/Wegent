@@ -150,7 +150,10 @@ class DingTalkChannelConfig(BaseModel):
     chat_card: Optional[DingTalkChatCardConfig] = None
     notification_card: Optional[DingTalkNotificationCardConfig] = Field(
         default=None,
-        description="Render task notifications as AI cards; omitted keeps markdown",
+        description=(
+            "Receive Wework task notifications as AI cards; a channel without "
+            "this block receives no IM push"
+        ),
     )
     client_id: str = Field(..., description="DingTalk application Client ID")
     client_secret: str = Field(..., description="DingTalk application Client secret")
