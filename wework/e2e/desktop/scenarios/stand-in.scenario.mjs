@@ -1,5 +1,7 @@
 import { openProjectStandIn, discardStandInDraft } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
@@ -66,11 +68,30 @@ async function waitForExecution(control, issueId, timeoutMs, roleIds = ['default
   assert.fail(`Stand-in tasks did not complete: ${JSON.stringify(latest)}`)
 }
 
-export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, captureScreenshot }) {
+export async function createDesktopScenario({
+  executorHome,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  captureScreenshot,
+}) {
+  const claudeHome = join(executorHome, 'claude')
+  await mkdir(claudeHome, { recursive: true })
+  await writeFile(
+    join(claudeHome, 'settings.json'),
+    JSON.stringify({
+      model: 'claude-catalog-e2e',
+      env: {
+        ANTHROPIC_BASE_URL: 'https://claude-gateway.example.invalid',
+        ANTHROPIC_AUTH_TOKEN: 'synthetic-claude-token',
+      },
+    }),
+    { flag: 'wx' }
+  )
   let requests = 0
   let agentRequests = 0
   const tagRequests = { review: 0, docs: 0 }
   return {
+    appEnvironment: { WEGENT_CLAUDE_HOME: claudeHome },
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -100,6 +121,23 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       return true
     },
     async verify(control) {
+      const claudeCatalog = await requestExecutor(
+        control,
+        'runtime.runner.catalog',
+        {},
+        uiTimeoutMs
+      )
+      assert.ok(!claudeCatalog.errors.includes('claude_provider_required'))
+      assert.ok(!claudeCatalog.errors.includes('claude_catalog_invalid'))
+      assert.ok(claudeCatalog.runtimes.includes('claude_code'))
+      const claude = claudeCatalog.models.find(model => model.model_id === 'claude-catalog-e2e')
+      assert.ok(claude, 'Custom Claude models must load without a manually configured provider')
+      assert.equal(claude.runtime, 'claude_code')
+      assert.notEqual(claude.provider, 'anthropic')
+      assert.equal(claude.account_label, 'Claude')
+      assert.equal(claude.is_default, true)
+      assert.ok(!JSON.stringify(claudeCatalog).includes('synthetic-claude-token'))
+      assert.ok(!JSON.stringify(claudeCatalog).includes('claude-gateway.example.invalid'))
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
