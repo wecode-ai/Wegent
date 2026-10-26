@@ -515,6 +515,22 @@ if ! grep -Fq 'ARG UV_VERSION=0.11.17' "$wework_browser_image" ||
   fail "The platform E2E image must provide the pinned uv toolchain"
 fi
 
+ruby - "$platform_e2e_workflow" <<'RUBY'
+require 'yaml'
+
+YAML.load_file(ARGV.fetch(0)).fetch('jobs').each do |name, job|
+  next unless job['container']
+
+  job.fetch('steps', []).each do |step|
+    next unless step['uses'] == './.github/actions/setup-python-uv-cache'
+
+    unless step.fetch('with', {})['setup-python'] == 'false'
+      abort "#{name}: container jobs must use image Python, not the host toolcache"
+    end
+  end
+end
+RUBY
+
 if ! grep -Fq 'file: docker/wework-e2e/browser.Dockerfile' "$wework_workflow" ||
   ! grep -Fq 'file: docker/wework-e2e/desktop.Dockerfile' "$wework_workflow" ||
   [[ "$(grep -c 'push: true' "$wework_workflow")" -ne 2 ]] ||
