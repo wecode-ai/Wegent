@@ -19,6 +19,14 @@ pub(super) fn reviewer(request: &ExecutionRequest) -> &'static str {
     }
 }
 
+pub(super) fn approval_policy(request: &ExecutionRequest, windows: bool) -> Value {
+    // UnlessTrusted routes to human approval, even with an automatic reviewer.
+    if windows && applies(request) && crate::runtime_work::stand_in_requires_confirmation(request) {
+        return json!("untrusted");
+    }
+    json!({"granular":{"sandbox_approval":true,"rules":false,"skill_approval":false,"request_permissions":false,"mcp_elicitations":true}})
+}
+
 /// Persist native review evidence through the same lifecycle as other activities.
 pub(super) fn project_review_notification(mut message: Value) -> Value {
     super::elicitation::prepare(&mut message);
@@ -52,27 +60,6 @@ pub(super) fn project_review_notification(mut message: Value) -> Value {
         "params":{"threadId":params["threadId"],"turnId":params["turnId"],"item":item}})
 }
 
-fn grant_runtime_files(filesystem: &mut Value, binary: &Path) {
-    if !binary.is_absolute() || !binary.is_file() {
-        return;
-    }
-    let host = binary.with_file_name(if cfg!(windows) {
-        "codex-code-mode-host.exe"
-    } else {
-        "codex-code-mode-host"
-    });
-    // Native Linux command execution re-enters Codex inside the filesystem sandbox.
-    // Grant executable files only, never the containing directory or CODEX_HOME.
-    for file in [binary, host.as_path()] {
-        if file.is_file() {
-            filesystem[file.to_string_lossy().as_ref()] = json!("read");
-            if let Ok(canonical) = fs::canonicalize(file) {
-                filesystem[canonical.to_string_lossy().as_ref()] = json!("read");
-            }
-        }
-    }
-}
-
 pub(super) fn permission_config(request: &ExecutionRequest) -> Map<String, Value> {
     let mut config = Map::new();
     let Some(default_profile) = profile(request) else {
@@ -84,30 +71,12 @@ pub(super) fn permission_config(request: &ExecutionRequest) -> Map<String, Value
     if cfg!(windows) {
         return config;
     }
-    // An explicit deny keeps native approvals from dropping the filesystem boundary.
-    for (name, access) in [
-        (SOURCE_READ_PROFILE, "read"),
-        (SOURCE_PROJECT_PROFILE, "write"),
+    // Reuse native baselines so an approved escalation can take effect.
+    for (name, baseline) in [
+        (SOURCE_READ_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE),
+        (SOURCE_PROJECT_PROFILE, CODEX_WORKSPACE_PERMISSION_PROFILE),
     ] {
-        let mut filesystem = json!({":root":"deny",":minimal":"read",":project_roots":access});
-        let binary =
-            crate::agents::resolve_codex_binary_path(&crate::agents::resolve_codex_binary());
-        grant_runtime_files(&mut filesystem, Path::new(&binary));
-        // Installed tool binaries and their shared libraries are runtime resources,
-        // not user data. Keep custom shells usable without a sandbox retry.
-        for prefix in if cfg!(unix) {
-            &["/usr/local", "/opt/homebrew"][..]
-        } else {
-            &[]
-        } {
-            for directory in ["bin", "sbin", "lib", "share", "Cellar", "opt"] {
-                let path = Path::new(prefix).join(directory);
-                if path.is_dir() {
-                    filesystem[path.to_string_lossy().as_ref()] = json!("read");
-                }
-            }
-        }
-        config.insert(format!("permissions.{name}.filesystem"), filesystem);
+        config.insert(format!("permissions.{name}.extends"), json!(baseline));
         config.insert(format!("permissions.{name}.network.enabled"), json!(true));
     }
     config
@@ -164,32 +133,30 @@ pub(super) fn configure(
 mod tests {
     use super::*;
 
-    #[test]
-    fn runtime_bootstrap_reads_only_executables_not_their_private_siblings() {
-        let root = tempfile::tempdir().unwrap();
-        let binary = root.path().join("codex");
-        let host = root.path().join(if cfg!(windows) {
-            "codex-code-mode-host.exe"
-        } else {
-            "codex-code-mode-host"
-        });
-        let private = root.path().join("private.txt");
-        for file in [&binary, &host, &private] {
-            fs::write(file, "fixture").unwrap();
-        }
-        let mut filesystem = json!({":root":"deny"});
-        grant_runtime_files(&mut filesystem, &binary);
-        assert_eq!(filesystem[binary.to_string_lossy().as_ref()], "read");
-        assert_eq!(filesystem[host.to_string_lossy().as_ref()], "read");
-        assert!(filesystem
-            .get(root.path().to_string_lossy().as_ref())
-            .is_none());
-        assert!(filesystem.get(private.to_string_lossy().as_ref()).is_none());
-        assert_eq!(filesystem[":root"], "deny");
-    }
-
     fn request(ask: bool) -> ExecutionRequest {
         serde_json::from_value(json!({"origin":{"type":"dingtalk_work","initiatedBy":"stand_in","askBeforeAct":ask},"runtime_permission_profile":":danger-full-access"})).unwrap()
+    }
+
+    #[test]
+    fn automatic_source_approval_routes_to_native_review_on_every_platform() {
+        for windows in [false, true] {
+            for kind in ["connection_work", "dingtalk_work", "issue_dispatch"] {
+                let mut automatic = request(false);
+                automatic.extra.get_mut("origin").unwrap()["type"] = json!(kind);
+                assert_eq!(reviewer(&automatic), "auto_review");
+                let policy = approval_policy(&automatic, windows);
+                assert_eq!(policy["granular"]["sandbox_approval"], true);
+                assert_eq!(policy["granular"]["mcp_elicitations"], true);
+                assert_ne!(
+                    policy, "untrusted",
+                    "UnlessTrusted bypasses automatic review"
+                );
+
+                automatic.extra.get_mut("origin").unwrap()["askBeforeAct"] = json!(true);
+                assert_eq!(reviewer(&automatic), "user");
+                assert_eq!(approval_policy(&automatic, windows) == "untrusted", windows);
+            }
+        }
     }
 
     #[test]
@@ -245,9 +212,12 @@ mod tests {
         assert!(params["config"].get("windows.sandbox").is_none());
         if cfg!(windows) {
             assert!(params["config"]
-                .get("permissions.wework-source-project.filesystem")
+                .get("permissions.wework-source-project.extends")
                 .is_none());
-            assert_eq!(codex_runtime_approval_policy(&request(false)), "untrusted");
+            assert_eq!(
+                codex_runtime_approval_policy(&request(false))["granular"]["sandbox_approval"],
+                true
+            );
         } else {
             assert_eq!(
                 params["config"]["permissions.wework-source-project.network.enabled"],
@@ -258,8 +228,8 @@ mod tests {
                 true
             );
             assert_eq!(
-                params["config"]["permissions.wework-source-project.filesystem"][":root"],
-                "deny"
+                params["config"]["permissions.wework-source-project.extends"],
+                CODEX_WORKSPACE_PERMISSION_PROFILE
             );
         }
         assert_eq!(
@@ -307,7 +277,15 @@ mod tests {
                     if cfg!(windows) {
                         assert!(params["config"].get(&key).is_none());
                     } else {
-                        assert_eq!(params["config"][&key][":root"], "deny");
+                        assert!(params["config"].get(&key).is_none());
+                        assert_eq!(
+                            params["config"][format!("permissions.{profile}.extends")],
+                            if profile == SOURCE_READ_PROFILE {
+                                CODEX_READ_ONLY_PERMISSION_PROFILE
+                            } else {
+                                CODEX_WORKSPACE_PERMISSION_PROFILE
+                            }
+                        );
                     }
                 }
                 assert_eq!(
@@ -315,8 +293,17 @@ mod tests {
                     cfg!(windows)
                 );
                 assert!(!codex_auto_approve_mcp_tool_calls(&request));
-                if cfg!(windows) {
+                if cfg!(windows) && crate::runtime_work::stand_in_requires_confirmation(&request) {
                     assert_eq!(params["approvalPolicy"], "untrusted");
+                } else {
+                    assert_eq!(
+                        params["approvalPolicy"]["granular"]["sandbox_approval"],
+                        true
+                    );
+                    assert_eq!(
+                        params["approvalPolicy"]["granular"]["mcp_elicitations"],
+                        true
+                    );
                 }
             }
         }
@@ -342,8 +329,17 @@ mod tests {
                     cfg!(windows)
                 );
                 assert!(!codex_auto_approve_mcp_tool_calls(&request));
-                if cfg!(windows) {
+                if cfg!(windows) && crate::runtime_work::stand_in_requires_confirmation(&request) {
                     assert_eq!(params["approvalPolicy"], "untrusted");
+                } else {
+                    assert_eq!(
+                        params["approvalPolicy"]["granular"]["sandbox_approval"],
+                        true
+                    );
+                    assert_eq!(
+                        params["approvalPolicy"]["granular"]["mcp_elicitations"],
+                        true
+                    );
                 }
             }
         }
@@ -355,6 +351,8 @@ mod tests {
     #[test]
     fn source_permission_catalog_keeps_the_selected_boundary_on_config_reload() {
         for (kind, ask) in [
+            ("connection_work", false),
+            ("connection_work", true),
             ("dingtalk_work", false),
             ("dingtalk_work", true),
             ("issue_dispatch", false),
@@ -370,12 +368,16 @@ mod tests {
                 assert_eq!(catalog.len(), 1);
             } else {
                 assert_eq!(
-                    catalog[&format!("permissions.{selected}.filesystem")][":project_roots"],
-                    if ask { "read" } else { "write" }
+                    catalog[&format!("permissions.{selected}.extends")],
+                    if ask {
+                        CODEX_READ_ONLY_PERMISSION_PROFILE
+                    } else {
+                        CODEX_WORKSPACE_PERMISSION_PROFILE
+                    }
                 );
-                assert_eq!(
-                    catalog[&format!("permissions.{selected}.filesystem")][":root"],
-                    "deny"
+                assert!(
+                    catalog.keys().all(|key| !key.ends_with(".filesystem")),
+                    "Native baselines must not be shadowed by non-escalatable deny rules"
                 );
                 assert_eq!(
                     catalog[&format!("permissions.{selected}.network.enabled")],

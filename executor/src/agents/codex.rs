@@ -5999,12 +5999,7 @@ pub(crate) fn codex_runtime_approval_policy(request: &ExecutionRequest) -> Value
     if external_work::applies(request)
         || crate::runtime_work::stand_in_requires_confirmation(request)
     {
-        // Windows source work runs without OS isolation. Keep command and patch
-        // approval independent of the unrestricted filesystem permission profile.
-        if cfg!(windows) && external_work::applies(request) {
-            return json!("untrusted");
-        }
-        return json!({"granular":{"sandbox_approval":true,"rules":false,"skill_approval":false,"request_permissions":false,"mcp_elicitations":true}});
+        return external_work::approval_policy(request, cfg!(windows));
     }
     match codex_runtime_permission_profile(request) {
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE => json!({

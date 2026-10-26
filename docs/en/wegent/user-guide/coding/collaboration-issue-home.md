@@ -40,6 +40,10 @@ The `collaboration-issue-assignment-activity` desktop regression verifies first-
 
 ## Work on an Issue assigned to me
 
+On the project board, choose **Assignee** as the grouping field, then select yourself in the adjacent filter to see your assigned Issues. Clear the filter to show all assignees again. Grouping is a personal preference for the current account and project and persists across reloads. Members and viewers can use it without changing the shared board configuration. Shared status columns and card display settings remain managed by project administrators.
+
+When grouped by tag, an Issue can appear in multiple columns. Dropping within the same column leaves tags unchanged. Moving between columns replaces only the source tag and preserves other tags; moving into the untagged column clears all tags.
+
 Open an assigned native cloud Issue from Inbox or its project board. Wework sends a desktop notification when another member assigns it.
 
 Users with editing permission can start, complete, or restart an Issue directly through the detail status selector or board dragging. Status changes require no additional information or submission form. Communicate progress, results, and feedback through comments, replies, and attachments. Status history records each change.
@@ -71,6 +75,7 @@ Archiving a parent Issue also archives its child Issues so the active task tree 
 3. Issue-only `#` suggestions, distinct reference icons, and saved references.
 4. Manual ownership changes and clearing without native selects; no task slash menu.
 5. Seeding a local project through the real Tasks project API, reloading twice, and verifying one imported project with a working collaboration entry.
+6. Filtering a member's assigned Issues, combining search, and clearing the filter; retaining personal grouping after reload and isolating preferences between projects. Viewer and administrator grouping changes also leave the shared board configuration and version unchanged.
 
 Cloud fixtures are archived by the checkpoint cleanup. Local fixtures live only in the test Executor home. Failures retain runner logs; tests do not skip or retry to hide failures.
 

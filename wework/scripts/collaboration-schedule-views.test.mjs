@@ -31,7 +31,7 @@ test.each([
         case 'select':
           return ''
         case 'click':
-          if (selector.includes('collaboration-schedule-next')) {
+          if (selector.includes('collaboration-schedule-next') || selector.includes('下一个月')) {
             nextClicks += 1
             month = new Date(month.getFullYear(), month.getMonth() + 1, 1)
           }
