@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { verifyIssueTranscriptTransfer } from '../modules/issue-transcript-transfer.mjs'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
@@ -32,12 +33,14 @@ export function createDesktopScenario({
   codexSqliteHome,
 }) {
   let cloud
+  let proxy
   let environment
   let workspace
   let currentApp
   let localProjectCreated = false
   const fixtures = []
   const modelRequests = []
+  const appEnvironment = {}
   const request = async (path, values, method = values ? 'POST' : 'GET') => {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
       method,
@@ -223,8 +226,11 @@ export function createDesktopScenario({
   }
   return {
     requiresCloudEnvironment: true,
+    appEnvironment,
     async prepareCloud(value) {
       cloud = value
+      proxy = await new TransportFaultProxy(cloud.backendUrl).start()
+      appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = proxy.url
       await request('/api/admin/setup-complete', {})
       workspace = await request('/api/v1/workspaces', { name: TITLE })
     },
@@ -263,6 +269,7 @@ export function createDesktopScenario({
         codexSqliteHome,
         timeoutMs: workbenchReadyTimeoutMs,
         scope: scoped,
+        proxy,
       })
       console.log(
         '[executor-identity] Local task completed; registering a conflicting installation'
@@ -303,7 +310,11 @@ export function createDesktopScenario({
           executionTarget: device.execution_target_id,
         })),
         modelRequestCount: modelRequests.length,
+        transportRequests: proxy?.requests,
       }
+    },
+    async cleanup() {
+      await proxy?.stop()
     },
   }
 }

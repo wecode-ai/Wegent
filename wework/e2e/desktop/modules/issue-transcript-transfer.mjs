@@ -7,6 +7,7 @@ import { requestExecutor } from './executor-rpc.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
 
 const RESTORED = 'ISSUE_LARGE_TRANSCRIPT_RESTORED'
+const RECOVERED = 'ISSUE_LARGE_TRANSCRIPT_RETRY_RECOVERED'
 const OUTPUT = Array.from({ length: 56_000 }, (_, index) =>
   createHash('sha256').update(String(index)).digest('hex')
 ).join('\n')
@@ -87,6 +88,66 @@ function seedLargeOutput(sqliteHome, threadId, workspacePath) {
   }
 }
 
+function updateFixtureReply(sqliteHome, threadId) {
+  const database = new DatabaseSync(join(sqliteHome, 'thread_history_1.sqlite'))
+  try {
+    database.exec('PRAGMA busy_timeout = 10000')
+    const itemId = 'issue-large-history-turn-assistant'
+    const row = database
+      .prepare('SELECT item_json FROM thread_items WHERE thread_id = ? AND item_id = ?')
+      .get(threadId, itemId)
+    assert.ok(row, 'The large history reply must exist before testing recovery')
+    database
+      .prepare('UPDATE thread_items SET item_json = ? WHERE thread_id = ? AND item_id = ?')
+      .run(JSON.stringify({ ...JSON.parse(row.item_json), text: RECOVERED }), threadId, itemId)
+  } finally {
+    database.close()
+  }
+}
+
+async function verifyCachedInitialRecovery({
+  control,
+  proxy,
+  scope,
+  binding,
+  sqliteHome,
+  threadId,
+}) {
+  const modal = scope('[data-testid="ai-chat-modal"]')
+  const start = proxy.requests.length
+  await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
+  proxy.rule = entry =>
+    entry.method === 'POST' && entry.path === '/api/runtime-work/transcript'
+      ? 'drop-response'
+      : null
+  try {
+    await control.command(
+      'click',
+      scope(`[data-testid="cloud-todo-open-task-conversation-${binding.id}"]`)
+    )
+    await control.command('waitFor', `${modal} [data-testid="runtime-transcript-error"]`)
+    assert.match(await control.command('getText', modal), new RegExp(RESTORED))
+    assert.ok(
+      proxy.requests.slice(start).some(entry => entry.dropped && entry.status === 200),
+      'The real successful transcript response must be interrupted after reaching the backend'
+    )
+    updateFixtureReply(sqliteHome, threadId)
+  } finally {
+    proxy.rule = () => null
+  }
+  await control.command('clickWhenEnabled', `${modal} [data-testid="runtime-transcript-retry"]`)
+  await control.command('waitFor', `${modal} [data-testid="message-assistant"]`, {
+    text: RECOVERED,
+  })
+  assert.equal(
+    Number(
+      await control.command('getElementCount', `${modal} [data-testid="runtime-transcript-error"]`)
+    ),
+    0,
+    'The recovered initial history request must clear its error'
+  )
+}
+
 export async function verifyIssueTranscriptTransfer({
   control,
   request,
@@ -95,6 +156,7 @@ export async function verifyIssueTranscriptTransfer({
   codexSqliteHome,
   timeoutMs,
   scope,
+  proxy,
 }) {
   const address = {
     deviceId: binding.device_id ?? binding.deviceId,
@@ -189,6 +251,14 @@ export async function verifyIssueTranscriptTransfer({
     await control.command('getText', scope('[data-testid="ai-chat-modal"]')),
     /Response exceeded the transport payload limit|暂时无法加载会话/
   )
+  await verifyCachedInitialRecovery({
+    control,
+    proxy,
+    scope,
+    binding,
+    sqliteHome: codexSqliteHome,
+    threadId: task.threadId,
+  })
   await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
   await control.command('click', scope('[data-testid="cloud-todo-detail-close"]'))
 }

@@ -69,34 +69,19 @@ import { createAppliedRuntimeGuidanceMessage } from '@/features/workbench/runtim
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
-  Attachment,
   ModelOptions,
-  ModelType,
   ProjectWithTasks,
   RequestUserInputResponse,
   RuntimeSendRequest,
-  RuntimeGoalCreateInput,
   RuntimeTaskAddress,
   UnifiedModel,
 } from '@/types/api'
 import type {
   RuntimeConversationTurn,
   RuntimePaneQueuedMessage,
+  RuntimeTaskComposerCreateOptions,
   WorkbenchMessage,
 } from '@/types/workbench'
-
-export interface RuntimeTaskComposerCreateOptions {
-  attachments: Attachment[]
-  initialGoal?: RuntimeGoalCreateInput
-  executionModel: {
-    modelId?: string
-    modelType?: ModelType | null
-    modelOptions?: ModelOptions
-  }
-  optimisticUserMessage: WorkbenchMessage & { role: 'user' }
-  onError: (message: string) => void
-  onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
-}
 
 interface TemporaryChatPanelProps {
   currentProject: ProjectWithTasks | null
@@ -382,7 +367,7 @@ export function TemporaryChatPanel({
         if (nextMessages.length > 0) setMessages(nextMessages)
       })
       .catch(caughtError => {
-        if (!cancelled && getRuntimeConversationMessages(address).length === 0) {
+        if (!cancelled) {
           setHistoryError(caughtError instanceof Error ? caughtError.message : String(caughtError))
         }
       })
@@ -427,6 +412,11 @@ export function TemporaryChatPanel({
       }
     }
   }, [address, historyBeforeCursor, loadRuntimeTranscriptForPane])
+
+  const retryHistory = useCallback(() => {
+    if (historyBeforeCursor) void loadMoreHistory()
+    else setHistoryRevision(value => value + 1)
+  }, [historyBeforeCursor, loadMoreHistory])
 
   useEffect(() => {
     if (!address) return
@@ -883,7 +873,7 @@ export function TemporaryChatPanel({
       messageCount={messages.length}
       loading={historyLoading}
       loadError={historyError}
-      onRetry={() => setHistoryRevision(value => value + 1)}
+      onRetry={retryHistory}
       testId={testId}
       emptyStateText={emptyStateText}
       expanded={expanded}
@@ -956,7 +946,7 @@ export function TemporaryChatPanel({
         loadingMoreBefore={historyLoadingMoreBefore}
         onLoadMoreBefore={loadMoreHistory}
         transcriptError={messages.length ? historyError : null}
-        onRetryTranscript={loadMoreHistory}
+        onRetryTranscript={retryHistory}
         isWaitingForAssistant={busy}
         devices={state.devices}
         conversationKey={address?.taskId ?? instanceId}

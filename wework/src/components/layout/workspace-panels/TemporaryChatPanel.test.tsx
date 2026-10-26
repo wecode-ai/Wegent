@@ -662,6 +662,40 @@ describe('TemporaryChatPanel', () => {
     ])
   })
 
+  it('retains cached messages and retries an initial load failure without a page cursor', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'cached',
+        role: 'assistant',
+        content: 'Cached reply',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    mocks.loadRuntimeTranscriptForPane
+      .mockRejectedValueOnce(new Error('Initial transfer interrupted'))
+      .mockResolvedValueOnce({ messages: [], turns: [], beforeCursor: 'older-page' })
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="cached-history"
+        sendEphemeral={false}
+      />
+    )
+    expect(await screen.findByTestId('mock-retry-history')).toHaveTextContent(
+      'Initial transfer interrupted'
+    )
+    expect(screen.getByText('Cached reply')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-load-older')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('mock-retry-history'))
+    expect(await screen.findByTestId('mock-load-older')).toBeInTheDocument()
+    expect(screen.getByText('Cached reply')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-retry-history')).not.toBeInTheDocument()
+    expect(mocks.loadRuntimeTranscriptForPane.mock.calls).toEqual([[address], [address]])
+  })
+
   it('shows a history error instead of an empty conversation and retries the bound address', async () => {
     const address = {
       deviceId: 'admin-cloud',
