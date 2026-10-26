@@ -18,7 +18,8 @@ export async function verifyProjectDeviceAccess(
     return row
   }
   assert.deepEqual((await load()).use_access, { scope: 'owner', member_ids: [] })
-  for (const scope of ['project', 'owner']) {
+  // Later shared-session checks need project members to use this runner.
+  for (const scope of ['project', 'owner', 'project']) {
     await control.command('click', target('edit'))
     await control.command('select', target('scope'), { value: scope })
     await control.command('clickWhenEnabled', target('save'), { timeoutMs })
