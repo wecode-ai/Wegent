@@ -835,7 +835,7 @@ done
 
 personal_board_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-22","name":"Core / shard 22","segments":"collaboration-shared-core"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}'
 for personal_board_path in \
