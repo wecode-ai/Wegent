@@ -15,7 +15,7 @@ import {
   type ProjectBoardSortRule,
 } from './projectBoardSorting'
 
-const focusStyle = 'outline-none focus-visible:ring-2 focus-visible:ring-focus/30'
+const focusStyle = 'outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30'
 const iconButtonStyle = `flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary disabled:opacity-30 md:h-7 md:w-7 ${focusStyle}`
 
 function RulePicker({

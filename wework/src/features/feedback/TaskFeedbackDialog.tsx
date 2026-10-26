@@ -573,7 +573,7 @@ function TaskFeedbackDialogContent({
                   required
                   aria-required="true"
                   rows={5}
-                  className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-blue-500"
+                  className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none keyboard:focus:border-blue-500"
                 />
               </label>
               <div>

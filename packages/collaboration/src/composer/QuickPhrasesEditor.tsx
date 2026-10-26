@@ -211,7 +211,7 @@ export function QuickPhrasesEditor({
                 data-testid={testId('quick-phrase-title-input')}
                 value={editing.title}
                 onChange={event => setEditing({ ...editing, title: event.target.value })}
-                className="mt-1 h-10 max-md:min-h-11 w-full rounded-lg border border-border bg-background px-3 outline-none focus:border-blue-500"
+                className="mt-1 h-10 max-md:min-h-11 w-full rounded-lg border border-border bg-background px-3 outline-none keyboard:focus:border-blue-500"
               />
             </label>
             <label className="mt-3 block text-sm">
@@ -222,7 +222,7 @@ export function QuickPhrasesEditor({
                 value={editing.content}
                 onChange={event => setEditing({ ...editing, content: event.target.value })}
                 rows={5}
-                className="mt-1 w-full resize-y rounded-lg border border-border bg-background p-3 outline-none focus:border-blue-500"
+                className="mt-1 w-full resize-y rounded-lg border border-border bg-background p-3 outline-none keyboard:focus:border-blue-500"
               />
             </label>
             <fieldset className="mt-3">
