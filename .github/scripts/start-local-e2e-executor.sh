@@ -81,7 +81,7 @@ for _ in {1..60}; do
   if curl -sf \
     -H "Authorization: Bearer $token" \
     "$backend_url/api/devices" |
-    DEVICE_ID="$device_id" python -c '
+    DEVICE_ID="$device_id" uv run --project backend --no-sync python -c '
 import json
 import os
 import sys
