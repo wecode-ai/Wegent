@@ -525,7 +525,7 @@ YAML.load_file(ARGV.fetch(0)).fetch('jobs').each do |name, job|
     next unless step['uses'] == './.github/actions/setup-python-uv-cache'
 
     unless step.fetch('with', {})['setup-python'] == 'false'
-      abort "#{name}: container jobs must use image Python, not the host toolcache"
+      abort "#{name}: container jobs must use container-managed Python, not the host toolcache"
     end
   end
 end

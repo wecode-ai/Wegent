@@ -569,6 +569,14 @@ jobs:
           setup-python: "false"
           setup-uv: "false"
 
+      - name: Prepare container Python
+        run: |
+          uv python install 3.11
+          container_python="$(uv python find --managed-python 3.11)"
+          echo "UV_PYTHON=$container_python" >> "$GITHUB_ENV"
+          uv run --no-project --python "$container_python" python -c \
+            'import ssl; ssl.create_default_context(); print(ssl.OPENSSL_VERSION)'
+
       - name: Install shared module
         working-directory: ./shared
         run: |
