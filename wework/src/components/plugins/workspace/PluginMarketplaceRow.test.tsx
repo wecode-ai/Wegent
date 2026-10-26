@@ -39,6 +39,7 @@ describe('PluginMarketplaceRow', () => {
     const props = {
       item,
       isLoggedIn: true,
+      isReconciling: false,
       isInstalling: false,
       isUninstalling: false,
       allowPendingRetry: true,
@@ -52,6 +53,7 @@ describe('PluginMarketplaceRow', () => {
         isInstalling: true,
       })
     ).toBe(false)
+    expect(arePluginMarketplaceRowPropsEqual(props, { ...props, isReconciling: true })).toBe(false)
   })
 
   test('does not commit a new render when parent re-renders with the same props', () => {
@@ -69,6 +71,7 @@ describe('PluginMarketplaceRow', () => {
           <PluginMarketplaceRow
             item={item}
             isLoggedIn
+            isReconciling={false}
             isInstalling={false}
             isUninstalling={false}
             allowPendingRetry
