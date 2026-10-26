@@ -508,6 +508,17 @@ fi
 wework_workflow="$workflow_dir/wework-e2e.yml"
 wework_browser_image="$script_dir/../../docker/wework-e2e/browser.Dockerfile"
 wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
+if ! ruby -ryaml - "$platform_e2e_workflow" "$wework_browser_image" <<'RUBY'
+platform = YAML.load_file(ARGV[0])['jobs']['e2e-tests']
+image = File.read(ARGV[1]).lines.find { |line| line.start_with?('FROM ') }.split[1]
+# setup-python consumes the host tool cache inside this container.
+abort 'The platform Python tool cache and container must both use Ubuntu 24.04' unless
+  image.end_with?('-noble') && platform['runs-on'] == 'ubuntu-24.04'
+RUBY
+then
+  fail "Platform E2E must align the host Python runtime with its container OS"
+fi
+
 if ! grep -Fq 'ARG UV_VERSION=0.11.17' "$wework_browser_image" ||
   ! grep -Fq '"https://astral.sh/uv/${UV_VERSION}/install.sh"' \
     "$wework_browser_image" ||
