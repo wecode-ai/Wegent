@@ -29,6 +29,8 @@
 //! (`backend.rs`); `overwrite_attachment_id` overwrites an existing owned row
 //! instead of inserting one.
 pub mod backend;
+#[cfg(test)]
+mod consistency_tests;
 pub(crate) mod document;
 mod jpeg_metadata;
 pub(crate) mod model_image;
