@@ -55,16 +55,39 @@ fs.writeFileSync(p.join(r,'outputs/report.md'),Buffer.from('${Buffer.from(conten
 for(const name of ['missing.txt','symlink.txt','large.bin'])fs.writeFileSync(p.join(r,'outputs',name),'fixture');
 fs.truncateSync(p.join(r,'outputs/large.bin'),50*1024*1024+1);
 fs.writeFileSync(p.join(r,'../outside-${marker}'),'OUTSIDE_MUST_NOT_LEAK');`
+  const rejectForgedRoot = `(async()=>{const fs=require('fs'),p=require('path'),crypto=require('crypto'),r=process.env.WEGENT_TASK_WORKSPACE;
+const base=process.env.WEGENT_RUNTIME_BACKEND_URL||process.env.WEGENT_BACKEND_URL||process.env.TASK_API_DOMAIN;
+if(!base||!process.env.AUTH_TOKEN)throw Error('Missing real Task authentication');
+const root=fs.realpathSync(p.dirname(r)),file='outside-${marker}',bytes=fs.readFileSync(p.join(root,file));
+const response=await fetch(base.replace(/\\/$/,'')+'/api/tasks/'+process.env.WEGENT_BACKEND_TASK_ID+'/remote-workspace/artifacts',{
+method:'POST',headers:{Authorization:'Bearer '+process.env.AUTH_TOKEN,'Content-Type':'application/json'},
+body:JSON.stringify({workspace_root:root,relative_path:file,name:file,file_size:bytes.length,sha256:crypto.createHash('sha256').update(bytes).digest('hex')})});
+if(response.status!==403)throw Error('Forged existing workspace root returned HTTP '+response.status);
+console.log('ARTIFACT_FORGED_ROOT_REJECTED');})().catch(error=>{console.error(error.message);process.exitCode=1});`
   const mutate = `const fs=require('fs'),p=require('path'),r=process.env.WEGENT_TASK_WORKSPACE;
 fs.unlinkSync(p.join(r,'outputs/missing.txt'));fs.unlinkSync(p.join(r,'outputs/symlink.txt'));
 fs.symlinkSync(p.join(r,'../outside-${marker}'),p.join(r,'outputs/symlink.txt'));`
   return (
     `set -eu\nnode <<'ARTIFACT_SEED'\n${seed}\nARTIFACT_SEED\n` +
+    `node <<'ARTIFACT_FORGED_ROOT'\n${rejectForgedRoot}\nARTIFACT_FORGED_ROOT\n` +
     `for file in report.md missing.txt symlink.txt large.bin; do "$WEGENT_EXECUTOR_BINARY" artifact declare --path "outputs/$file"; done\n` +
     `"$WEGENT_EXECUTOR_BINARY" artifact declare --path outputs/report.md & first=$!\n` +
     `"$WEGENT_EXECUTOR_BINARY" artifact declare --path outputs/report.md & second=$!\nwait "$first"\nwait "$second"\n` +
     `node <<'ARTIFACT_MUTATE'\n${mutate}\nARTIFACT_MUTATE`
   )
+}
+
+function containsToolOutput(value: unknown, marker: string): boolean {
+  if (Array.isArray(value)) return value.some(item => containsToolOutput(item, marker))
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  const output = ['function_call_output', 'custom_tool_call_output'].includes(String(record.type))
+    ? record.output
+    : record.type === 'tool_result' || record.role === 'tool'
+      ? record.content
+      : undefined
+  if (output !== undefined && JSON.stringify(output).includes(marker)) return true
+  return Object.values(record).some(item => containsToolOutput(item, marker))
 }
 
 async function download(page: Page, context: Artifact, expected: string): Promise<void> {
@@ -203,6 +226,9 @@ for (const shell of ['ClaudeCode', 'Codex'] as const satisfies readonly Artifact
       expect(modelText).toContain('computer://path/to/file')
       expect(modelText).toContain('artifact declare --path')
       expect(modelText).toContain('The command sends metadata only')
+      expect(
+        modelBodies.some(body => containsToolOutput(body, 'ARTIFACT_FORGED_ROOT_REJECTED'))
+      ).toBe(true)
       const storedBot = await request.get(`${artifactApiUrl}/api/bots/${bot.id}`, { headers })
       expect(storedBot.status()).toBe(200)
       expect((await storedBot.json()).system_prompt).toBe(legacyPrompt)

@@ -13,6 +13,16 @@ The automatic prompt update for the public `Ghost/default/wegent-wework` is with
 - Files remain on the execution device. Declarations persist metadata; completed messages display artifact cards that download from the original source.
 - Do not run the former prompt preflight or replacement scripts. The obsolete preflight script is removed.
 
+## Execution workspace authorization
+
+Before starting Claude Code or Codex, the executor captures the prepared native cwd in an immutable Task/turn workspace binding in its own state directory. A SHA-256 fingerprint of the Task Token distinguishes execution contexts; the raw token is never persisted.
+
+Declaration resolves the canonical workspace through the original executor's authenticated channel, rejects a different requested `workspace_root`, and persists only that verified source. Device RPC and HTTP downloads revalidate the original binding, Task/turn, and captured root before applying the existing symlink and size checks. Reassigning a Task never redirects its artifact reads to another executor.
+
+A resumed execution may refresh its credentials through a new verified native binding, but the executor, namespace, and canonical root must match the original declaration. Credential refresh cannot change the artifact's physical source.
+
+Upgrade Backend and executors together. Older declarations without a binding fail explicitly and must be regenerated and declared in a new upgraded execution turn. Their stored root is never accepted as authorization, and no data migration backfills bindings.
+
 ## Why retain a no-op revision
 
 An earlier PR version published `a9c4e7b2d610`. Local or test databases may already have executed it or been stamped to it during fresh initialization. Deleting that revision would cause `Can't locate revision identified by 'a9c4e7b2d610'` in those environments.

@@ -202,7 +202,7 @@ fn sha256_revision(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
-fn read_file_chunk(root: &Path, args: &[String]) -> Result<Value, String> {
+pub(crate) fn read_file_chunk(root: &Path, args: &[String]) -> Result<Value, String> {
     if args.len() != 2 || args[0].trim().is_empty() {
         return Err("File name and offset are required".to_owned());
     }

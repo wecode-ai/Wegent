@@ -110,6 +110,73 @@ fn workspace_root_must_be_absolute_non_root_and_without_traversal() {
 }
 
 #[test]
+fn declaration_roots_must_match_native_workspace_for_device_and_http_sources() {
+    for executor in ["device-native", "executor-original"] {
+        let source = models::Source {
+            executor_name: executor.into(),
+            executor_namespace: "original-namespace".into(),
+            workspace_root: "/native/custom-worktree".into(),
+            workspace_binding_id: "a".repeat(64),
+        };
+        let mut payload = request();
+        payload["workspace_root"] = json!("/existing/unrelated-directory");
+        let forged = models::DeclareRequest::validated(payload).unwrap();
+        assert_eq!(
+            source::validate_declared_root(&source.workspace_root, &forged.workspace_root)
+                .unwrap_err()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        source::validate_declared_root(&source.workspace_root, "/native/custom-worktree").unwrap();
+        let query = serde_json::to_value(models::ArtifactQuery::new(&source, 42, 7)).unwrap();
+        assert_eq!(
+            query,
+            json!({"task_id":"42","subtask_id":"7","binding_id":"a".repeat(64)})
+        );
+        assert!(
+            query.get("root_path").is_none(),
+            "Root discovery must not send the untrusted declaration root"
+        );
+    }
+}
+
+#[test]
+fn credential_refresh_keeps_the_original_location_without_rebinding_permissions() {
+    let original = models::Source {
+        executor_name: "device-original".into(),
+        executor_namespace: "original-namespace".into(),
+        workspace_root: "/native/custom-worktree".into(),
+        workspace_binding_id: "a".repeat(64),
+    };
+    let mut refreshed = original.clone();
+    refreshed.workspace_binding_id = "b".repeat(64);
+    source::validate_declared_root(&refreshed.workspace_root, &original.workspace_root).unwrap();
+    repository::validate_original_source(Some(&original), &refreshed).unwrap();
+    for changed in [
+        models::Source {
+            executor_name: "device-rebound".into(),
+            ..refreshed.clone()
+        },
+        models::Source {
+            executor_namespace: "other-namespace".into(),
+            ..refreshed.clone()
+        },
+        models::Source {
+            workspace_root: "/existing/unrelated".into(),
+            ..refreshed.clone()
+        },
+    ] {
+        assert_eq!(
+            repository::validate_original_source(Some(&original), &changed)
+                .unwrap_err()
+                .status(),
+            StatusCode::CONFLICT
+        );
+    }
+    assert!(repository::validate_original_source(None, &refreshed).is_err());
+}
+
+#[test]
 fn relative_paths_reject_absolute_traversal_and_unsafe_separators() {
     for path in [
         "",

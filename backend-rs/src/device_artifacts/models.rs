@@ -15,6 +15,34 @@ pub(super) struct Source {
     #[serde(default)]
     pub executor_namespace: String,
     pub workspace_root: String,
+    #[serde(default)]
+    pub workspace_binding_id: String,
+}
+
+#[derive(Serialize)]
+pub(super) struct ArtifactQuery {
+    pub binding_id: String,
+    pub task_id: String,
+    pub subtask_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
+}
+
+impl ArtifactQuery {
+    pub fn new(source: &Source, task_id: i64, subtask_id: i64) -> Self {
+        Self {
+            binding_id: source.workspace_binding_id.clone(),
+            task_id: task_id.to_string(),
+            subtask_id: subtask_id.to_string(),
+            root_path: None,
+            path: None,
+            offset: None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

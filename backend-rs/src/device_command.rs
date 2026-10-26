@@ -112,22 +112,22 @@ async fn execute_command(
 
 /// Internal artifact delivery is a bounded, read-only owner operation. It does
 /// not enable the public remote-control command API for App devices.
-pub(crate) async fn read_artifact_chunk(
+/// The Rust-owned artifact APIs use this internally; the public command route
+/// keeps its existing configured implementation and ownership.
+pub(crate) async fn task_artifact(
     state: &AppState,
     user_id: i64,
     device_id: &str,
-    root: &str,
-    path: &str,
-    offset: usize,
+    query: Value,
 ) -> Result<DeviceCommandResponse, FastApiError> {
     execute_owned_command(
         state,
         user_id,
         device_id,
         DeviceCommandRequest {
-            command_key: "workspace_read_file_chunk".to_owned(),
-            path: Some(root.to_owned()),
-            args: vec![path.to_owned(), offset.to_string()],
+            command_key: "task_artifact".to_owned(),
+            path: None,
+            args: vec![serde_json::to_string(&query).map_err(|_| unhandled())?],
             cwd: None,
             env: vec![],
             timeout_seconds: 60,
@@ -317,7 +317,7 @@ async fn resolve_dispatch_device_id(
 }
 
 fn app_artifact_read_allowed(artifact_read: bool, command_key: &str) -> bool {
-    artifact_read && command_key == "workspace_read_file_chunk"
+    artifact_read && command_key == "task_artifact"
 }
 
 /// The `sio.call` round trip for one command: register the callback waiter,
@@ -535,10 +535,12 @@ mod tests {
             true,
             "environment_prepare"
         ));
-        assert!(super::app_artifact_read_allowed(
+        assert!(!super::app_artifact_read_allowed(
             true,
             "workspace_read_file_chunk"
         ));
+        assert!(!super::app_artifact_read_allowed(false, "task_artifact"));
+        assert!(super::app_artifact_read_allowed(true, "task_artifact"));
     }
     use super::*;
     use serde_json::json;

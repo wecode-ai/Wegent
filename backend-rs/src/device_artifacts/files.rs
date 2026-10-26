@@ -7,7 +7,7 @@ use serde::Deserialize;
 use std::time::Duration;
 
 use super::models::{
-    MAX_FILE_BYTES, Metadata, Source, normalize_relative_path, valid_workspace_root,
+    ArtifactQuery, MAX_FILE_BYTES, Metadata, Source, normalize_relative_path, valid_workspace_root,
 };
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
@@ -15,6 +15,7 @@ use crate::state::AppState;
 pub(super) async fn download(
     state: &AppState,
     metadata: &Metadata,
+    subtask_id: i64,
     user_id: i64,
     disposition: &str,
 ) -> Result<HttpResponse<Binary>, FastApiError> {
@@ -22,14 +23,29 @@ pub(super) async fn download(
         .source
         .as_ref()
         .filter(|source| {
-            !source.executor_name.is_empty() && valid_workspace_root(&source.workspace_root)
+            !source.executor_name.is_empty()
+                && valid_workspace_root(&source.workspace_root)
+                && source.workspace_binding_id.len() == 64
+                && source
+                    .workspace_binding_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
         })
         .ok_or_else(super::repository::source_unavailable)?;
     let path = normalize_relative_path(&metadata.relative_path)?;
     let bytes = if let Some(device_id) = source.executor_name.strip_prefix("device-") {
-        device_file(state, user_id, device_id, source, &path).await?
+        device_file(
+            state,
+            user_id,
+            device_id,
+            source,
+            metadata.task_id,
+            subtask_id,
+            &path,
+        )
+        .await?
     } else {
-        executor_file(state, source, &path).await?
+        executor_file(state, source, metadata.task_id, subtask_id, &path).await?
     };
     let filename = path.rsplit('/').next().unwrap_or(&path);
     let disposition = crate::attachments::handler::build_content_disposition(disposition, filename);
@@ -85,18 +101,22 @@ async fn device_file(
     user_id: i64,
     device_id: &str,
     source: &Source,
+    task_id: i64,
+    subtask_id: i64,
     path: &str,
 ) -> Result<Vec<u8>, FastApiError> {
     let mut content = Vec::new();
     let mut size = None;
     loop {
-        let response = crate::device_command::read_artifact_chunk(
+        let mut query = ArtifactQuery::new(source, task_id, subtask_id);
+        query.root_path = Some(source.workspace_root.clone());
+        query.path = Some(path.to_owned());
+        query.offset = Some(content.len());
+        let response = crate::device_command::task_artifact(
             state,
             user_id,
             device_id,
-            &source.workspace_root,
-            path,
-            content.len(),
+            serde_json::to_value(&query).map_err(super::internal)?,
         )
         .await
         .map_err(|error| {
@@ -118,46 +138,17 @@ async fn device_file(
     }
 }
 
-#[derive(Deserialize)]
-struct Address {
-    status: String,
-    base_url: Option<String>,
-}
-
 async fn executor_file(
     state: &AppState,
     source: &Source,
+    task_id: i64,
+    subtask_id: i64,
     path: &str,
 ) -> Result<Vec<u8>, FastApiError> {
-    let manager = std::env::var("EXECUTOR_MANAGER_URL")
-        .unwrap_or_else(|_| crate::executor_manager::DEFAULT_EXECUTOR_MANAGER_URL.to_owned());
-    let response = state
-        .attachment_http
-        .get(format!(
-            "{}/executor-manager/executor/address",
-            manager.trim_end_matches('/')
-        ))
-        .map_err(|_| super::repository::source_unavailable())?
-        .query(&[
-            ("executor_name", &source.executor_name),
-            ("executor_namespace", &source.executor_namespace),
-        ])
-        .timeout(Duration::from_secs(5))
-        .send()
-        .await
-        .map_err(|_| super::repository::source_unavailable())?;
-    if !response.status().is_success() {
-        return Err(super::repository::source_unavailable());
-    }
-    let address: Address = response
-        .json()
-        .await
-        .map_err(|_| super::repository::source_unavailable())?;
-    let base = address
-        .base_url
-        .filter(|value| !value.is_empty())
-        .filter(|_| address.status.eq_ignore_ascii_case("success"))
-        .ok_or_else(super::repository::source_unavailable)?;
+    let base = super::source::executor_base(state, source).await?;
+    let mut query = ArtifactQuery::new(source, task_id, subtask_id);
+    query.root_path = Some(source.workspace_root.clone());
+    query.path = Some(path.to_owned());
     let response = state
         .attachment_http
         .get(format!(
@@ -165,10 +156,7 @@ async fn executor_file(
             base.trim_end_matches('/')
         ))
         .map_err(|_| unavailable())?
-        .query(&[
-            ("root_path", source.workspace_root.as_str()),
-            ("path", path),
-        ])
+        .query(&query)
         .timeout(Duration::from_secs(130))
         .send()
         .await

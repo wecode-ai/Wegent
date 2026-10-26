@@ -5,6 +5,7 @@
 mod files;
 mod models;
 mod repository;
+mod source;
 #[cfg(test)]
 mod tests;
 
@@ -68,7 +69,13 @@ async fn declare_artifact(
     if subtask.role != "ASSISTANT" {
         return Err(FastApiError::forbidden("Artifact subtask is invalid"));
     }
-    repository::declare(&state.mysql, subtask_id, task_id, user.id, subtask, request).await
+    use sha2::{Digest, Sha256};
+    let token = extract_authorization_token(authorization);
+    let mut source = subtask.source(format!("{:x}", Sha256::digest(token.as_bytes())))?;
+    source.workspace_root =
+        source::workspace_root(state, user.id, &source, task_id, subtask_id).await?;
+    source::validate_declared_root(&source.workspace_root, &request.workspace_root)?;
+    repository::declare(&state.mysql, subtask_id, task_id, user.id, source, request).await
 }
 
 #[brz_http_server::get("/api/tasks/:task_id/remote-workspace/artifacts/:context_id/file")]
@@ -92,7 +99,14 @@ async fn download_artifact(
     {
         return Err(not_found());
     }
-    files::download(state, &context.type_data.0, i64::from(user.id), disposition).await
+    files::download(
+        state,
+        &context.type_data.0,
+        context.subtask_id,
+        i64::from(user.id),
+        disposition,
+    )
+    .await
 }
 
 fn not_found() -> FastApiError {

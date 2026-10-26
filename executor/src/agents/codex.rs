@@ -4083,10 +4083,10 @@ fn build_codex_launch_config_with_route_scope(
 fn build_codex_launch_config_for_prepared_request(
     prepared: &PreparedCodexExecutionRequest,
 ) -> Result<CodexLaunchConfig, String> {
-    cleanup_generated_files_on_error(
-        &prepared.generated_files,
-        build_codex_launch_config(&prepared.request),
-    )
+    let config =
+        crate::artifact_workspace::bind(&prepared.request, prepared.request.cwd().map(Path::new))
+            .and_then(|()| build_codex_launch_config(&prepared.request));
+    cleanup_generated_files_on_error(&prepared.generated_files, config)
 }
 
 fn cleanup_generated_files_on_error<T>(

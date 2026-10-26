@@ -15,6 +15,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(test)]
+mod artifact_tests;
 pub(crate) mod codex_model_catalog;
 mod codex_responses_proxy_transform;
 mod config;
@@ -514,21 +516,21 @@ async fn download_workspace_file(
 }
 
 async fn download_workspace_artifact(
-    Query(query): Query<WorkspacePathQuery>,
+    Query(query): Query<crate::artifact_workspace::ArtifactQuery>,
 ) -> Result<Response, HttpError> {
-    let root_path = query.root_path.as_deref().ok_or_else(|| HttpError {
-        status: StatusCode::BAD_REQUEST,
-        detail: "missing workspace root".to_owned(),
+    let root = crate::artifact_workspace::resolve(&query).map_err(|detail| HttpError {
+        status: StatusCode::FORBIDDEN,
+        detail,
     })?;
-    let raw_path = query.path.as_deref().ok_or_else(|| HttpError {
-        status: StatusCode::BAD_REQUEST,
-        detail: "missing path".to_owned(),
-    })?;
-    let root = crate::local::workspace_files::resolve_workspace_directory(Some(root_path))
-        .map_err(|detail| HttpError {
-            status: StatusCode::NOT_FOUND,
-            detail,
-        })?;
+    let Some(raw_path) = query.path.as_deref() else {
+        return Ok(Json(json!({"workspace_root": root})).into_response());
+    };
+    if query.root_path.is_none() {
+        return Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: "missing captured workspace root".into(),
+        });
+    }
     let path = crate::local::workspace_files::resolve_workspace_file(&root, raw_path).map_err(
         |detail| HttpError {
             status: if detail.contains("outside workspace") {
@@ -1203,7 +1205,6 @@ struct RuntimeBindResponse {
 #[derive(Debug, Deserialize)]
 struct WorkspacePathQuery {
     path: Option<String>,
-    root_path: Option<String>,
     username: Option<String>,
     signature: Option<String>,
     signature_expiration: Option<i64>,
@@ -2205,48 +2206,6 @@ impl IntoResponse for HttpError {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[cfg(unix)]
-    #[test]
-    fn artifact_download_rejects_a_file_replaced_with_an_outside_symlink() {
-        let _lock = crate::test_env::lock();
-        let temp = tempfile::tempdir().unwrap();
-        let workspace = temp.path().join("task-a");
-        fs::create_dir(&workspace).unwrap();
-        let artifact = workspace.join("report.txt");
-        let outside = temp.path().join("other-task-secret.txt");
-        fs::write(&artifact, "original bytes").unwrap();
-        fs::write(&outside, "private bytes").unwrap();
-        let previous_root = env::var_os("WORKSPACE_ROOT");
-        env::set_var("WORKSPACE_ROOT", temp.path());
-        let query = || {
-            Query(
-                serde_json::from_value(json!({
-                    "path": artifact,
-                    "root_path": workspace,
-                }))
-                .unwrap(),
-            )
-        };
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let original = runtime.block_on(download_workspace_artifact(query()));
-        fs::remove_file(&artifact).unwrap();
-        std::os::unix::fs::symlink(&outside, &artifact).unwrap();
-        let replaced = runtime.block_on(download_workspace_artifact(query()));
-        match previous_root {
-            Some(value) => env::set_var("WORKSPACE_ROOT", value),
-            None => env::remove_var("WORKSPACE_ROOT"),
-        }
-
-        assert!(original.is_ok());
-        match replaced {
-            Err(error) => assert_eq!(error.status, StatusCode::FORBIDDEN),
-            Ok(_) => panic!("artifact download followed a symlink outside its original workspace"),
-        }
-    }
 
     #[test]
     fn sandbox_home_remains_the_user_workspace() {

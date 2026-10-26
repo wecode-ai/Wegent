@@ -14,6 +14,20 @@ pub(super) struct Subtask {
     executor_namespace: Option<String>,
 }
 
+impl Subtask {
+    pub(super) fn source(self, workspace_binding_id: String) -> Result<Source, FastApiError> {
+        Ok(Source {
+            executor_name: self
+                .executor_name
+                .filter(|name| !name.is_empty())
+                .ok_or_else(source_unavailable)?,
+            executor_namespace: self.executor_namespace.unwrap_or_default(),
+            workspace_root: String::new(),
+            workspace_binding_id,
+        })
+    }
+}
+
 fn subtask_column<T: FromMysqlCol>(row: &MysqlRow, name: &str) -> Result<T, FastApiError> {
     let index = crate::task_store::subtask_column_index(name)
         .ok_or_else(|| super::internal(format!("Unknown subtask column: {name}")))?;
@@ -70,23 +84,33 @@ pub(super) async fn context<M: Mysql>(
         .map_err(super::internal)
 }
 
+pub(super) fn validate_original_source(
+    previous: Option<&Source>,
+    authoritative: &Source,
+) -> Result<(), FastApiError> {
+    // A resumed execution can renew its verified Task Token and native proof.
+    // Refresh that proof without allowing the original physical source to move.
+    if !previous.is_some_and(|original| {
+        original.executor_name == authoritative.executor_name
+            && original.executor_namespace == authoritative.executor_namespace
+            && original.workspace_root == authoritative.workspace_root
+    }) {
+        return Err(FastApiError::detail(
+            StatusCode::CONFLICT,
+            "Artifact execution source cannot change",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) async fn declare<M: Mysql>(
     mysql: &M,
     subtask_id: i64,
     task_id: i64,
     user_id: i64,
-    subtask: Subtask,
+    source: Source,
     request: DeclareRequest,
 ) -> Result<ArtifactResponse, FastApiError> {
-    let executor_name = subtask
-        .executor_name
-        .filter(|name| !name.is_empty())
-        .ok_or_else(source_unavailable)?;
-    let source = Source {
-        executor_name,
-        executor_namespace: subtask.executor_namespace.unwrap_or_default(),
-        workspace_root: request.workspace_root.clone(),
-    };
     // The stable owner row serializes metadata-only declarations across backend
     // replicas, including the first declaration before a context row exists.
     // File reads and device RPC never run while this short lock is held.
@@ -108,14 +132,11 @@ pub(super) async fn declare<M: Mysql>(
             let existing = contexts
                 .into_iter()
                 .find(|context| context.type_data.0.relative_path == request.relative_path);
-            if existing
-                .as_ref()
-                .is_some_and(|context| context.type_data.0.source.as_ref() != Some(&source))
+            if let Some(context) = existing.as_ref()
+                && let Err(error) =
+                    validate_original_source(context.type_data.0.source.as_ref(), &source)
             {
-                return Ok(Err(FastApiError::detail(
-                    StatusCode::CONFLICT,
-                    "Artifact execution source cannot change",
-                )));
+                return Ok(Err(error));
             }
             let extension = std::path::Path::new(&request.relative_path)
                 .extension()
