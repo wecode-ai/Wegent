@@ -575,7 +575,6 @@ jobs:
           # Host tool-cache Python may depend on libraries absent in this image.
           uv python install 3.11
           container_python="$(uv python find --managed-python 3.11)"
-          echo "UV_PYTHON=$container_python" >> "$GITHUB_ENV"
           dirname "$container_python" >> "$GITHUB_PATH"
           uv run --no-project --python "$container_python" python -c 'import ssl; print(ssl.OPENSSL_VERSION)'
 
