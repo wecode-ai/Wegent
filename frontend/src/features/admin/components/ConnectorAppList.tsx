@@ -215,6 +215,7 @@ export default function ConnectorAppList() {
   const [authorizingAppId, setAuthorizingAppId] = useState<number | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [connectionStatusBySlug, setConnectionStatusBySlug] = useState<Record<string, string>>({})
+  const [connectionStatusKnown, setConnectionStatusKnown] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<AdminConnectorApp | null>(null)
   const [form, setForm] = useState<ConnectorForm>(EMPTY_FORM)
@@ -233,8 +234,11 @@ export default function ConnectorAppList() {
         setConnectionStatusBySlug(
           Object.fromEntries(userApps.map(app => [app.slug, app.connection.status]))
         )
+        setConnectionStatusKnown(true)
       } catch {
-        // Keep the last known connection statuses.
+        // Keep the last known connection statuses. Without a projection the
+        // status is unknown, so the authorize action stays hidden instead of
+        // claiming every app is unauthorized.
       }
     } catch (error) {
       toast({
@@ -612,6 +616,7 @@ export default function ConnectorAppList() {
                   <div className="mt-3 flex flex-wrap gap-2">
                     {app.enabled &&
                     app.auth_type === 'oauth2' &&
+                    connectionStatusKnown &&
                     connectionStatusBySlug[app.slug] !== 'connected' ? (
                       <Button
                         variant="outline"

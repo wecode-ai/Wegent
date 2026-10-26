@@ -614,4 +614,40 @@ describe('ConnectorAppList', () => {
     })
     openSpy.mockRestore()
   })
+
+  test('hides the authorize action while connection status is unknown', async () => {
+    mockedAdminApis.getConnectorApps.mockResolvedValue([
+      {
+        id: 9,
+        slug: 'design-collab',
+        name: 'Design Collab',
+        description: '',
+        icon_url: null,
+        enabled: true,
+        visibility: 'all',
+        allowed_roles: [],
+        auth_type: 'oauth2',
+        tool_loading_mode: 'static',
+        keywords: [],
+        oauth_scope: 'mcp',
+        oauth_client_registered: true,
+        transport: 'streamable-http',
+        mcp_url: 'https://mcp.example.test/design',
+        provider_header_names: [],
+        provider_headers_configured: false,
+        forward_user_context_headers: false,
+        tool_allowlist: [],
+        http_tools: [],
+        connection_count: 0,
+        created_at: '2026-01-01T00:00:00',
+        updated_at: '2026-01-01T00:00:00',
+      },
+    ])
+    mockedAdminApis.getUserConnectorApps.mockRejectedValue(new Error('projection unavailable'))
+
+    render(<ConnectorAppList />)
+
+    expect(await screen.findByText('Design Collab')).toBeInTheDocument()
+    expect(screen.queryByTestId('authorize-connector-app-9')).not.toBeInTheDocument()
+  })
 })
