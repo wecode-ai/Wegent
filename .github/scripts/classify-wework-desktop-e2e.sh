@@ -43,6 +43,7 @@ core_segments=(
   running-conversation-history
   running-plan-history
   codex-notification-isolation
+  notification-task-tab-navigation
   executor-stream-recovery
   transcript-sync
   context-compaction
@@ -156,7 +157,7 @@ core_shards=(
   rendering-extensions
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,running-plan-history,native-window-chrome
-  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
+  codex-notification-isolation,notification-task-tab-navigation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
   model-routing,fork-provider-preservation,computer-use,codex-account-login,cloud-login-proxy
 )
 
@@ -800,6 +801,15 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs)
       select_target "core:codex-notification-isolation"
+      return
+      ;;
+    # Notification actions must open work in the task tab without replacing the
+    # current tab or creating duplicate task tabs.
+    wework/src/features/notifications/* | \
+      wework/src/features/workspace-tabs/* | \
+      wework/e2e/desktop/scenarios/notification-task-tab-navigation.scenario.mjs)
+      select_target "core:notification-task-tab-navigation"
+      select_target "core:workspace-tabs"
       return
       ;;
     wework/e2e/desktop/scenarios/executor-stream-recovery.scenario.mjs)

@@ -53,6 +53,7 @@ export const DESKTOP_CHECKPOINTS = [
   'running-conversation-history',
   'running-plan-history',
   'codex-notification-isolation',
+  'notification-task-tab-navigation',
   'split-workbench',
   'release-package-startup',
   'app-update-differential',

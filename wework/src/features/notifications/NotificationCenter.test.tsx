@@ -9,6 +9,11 @@ import {
   NotificationTaskSourceBridge,
   NotificationTaskSourceProvider,
 } from './NotificationTaskSource'
+import {
+  WorkspaceTabsContext,
+  type WorkspaceTabsContextValue,
+} from '@/features/workspace-tabs/workspaceTabsContextValue'
+import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 
 const api = vi.hoisted(() => ({ list: vi.fn(), read: vi.fn(), readAll: vi.fn() }))
 const navigation = vi.hoisted(() => ({ navigateTo: vi.fn() }))
@@ -39,9 +44,44 @@ const connection = {
   apiBaseUrl: 'http://backend/api',
   user: { id: 1 },
 } as CloudConnectionContextValue
+const taskTab: WorkspaceTab = {
+  id: 'task-existing',
+  kind: 'task',
+  title: '任务',
+  contentRoute: '/',
+  fixed: true,
+}
+const boardTab: WorkspaceTab = {
+  id: 'board-existing',
+  kind: 'board',
+  title: '协作 (Beta)',
+  contentRoute: '/todo',
+  fixed: true,
+}
+let workspaceTabs: WorkspaceTabsContextValue
+
+function createWorkspaceTabs(
+  tabs: WorkspaceTab[] = [taskTab, boardTab]
+): WorkspaceTabsContextValue {
+  const activeTab = tabs.find(tab => tab.kind === 'board') ?? tabs[0]
+  return {
+    tabs,
+    activeTabId: activeTab.id,
+    activeTab,
+    openTab: vi.fn(),
+    selectTab: vi.fn(),
+    closeTab: vi.fn(),
+    closeOtherTabs: vi.fn(),
+    restoreClosedTab: vi.fn(),
+    moveTab: vi.fn(),
+    updateActiveTab: vi.fn(),
+  }
+}
 const view = (value = connection) => (
   <CloudConnectionContext.Provider value={value}>
-    <NotificationCenter />
+    <WorkspaceTabsContext.Provider value={workspaceTabs}>
+      <NotificationCenter />
+    </WorkspaceTabsContext.Provider>
   </CloudConnectionContext.Provider>
 )
 const task = {
@@ -67,6 +107,7 @@ const viewWithTask = (value = connection) => (
 
 beforeEach(() => {
   vi.clearAllMocks()
+  workspaceTabs = createWorkspaceTabs()
   api.list.mockImplementation((_offset, category) =>
     Promise.resolve(
       category === 'general'
@@ -158,10 +199,27 @@ describe('notification center', () => {
     fireEvent.click(screen.getByTestId('wework-notifications-category-tasks'))
     fireEvent.click(screen.getByTestId('wework-notification-task-task-1'))
     expect(markRuntimeTaskRead).toHaveBeenCalledWith(task.address)
-    expect(navigation.navigateTo).toHaveBeenCalledWith(
-      '/runtime-tasks?deviceId=device-1&taskId=task-1'
-    )
+    expect(workspaceTabs.selectTab).toHaveBeenCalledWith(taskTab.id, {
+      contentRoute: '/runtime-tasks?deviceId=device-1&taskId=task-1',
+    })
+    expect(workspaceTabs.openTab).not.toHaveBeenCalled()
+    expect(navigation.navigateTo).not.toHaveBeenCalled()
+    expect(workspaceTabs.tabs).toEqual([taskTab, boardTab])
     expect(api.list).not.toHaveBeenCalled()
+  })
+
+  it('creates a task tab when the workbench has none', async () => {
+    workspaceTabs = createWorkspaceTabs([boardTab])
+    render(viewWithTask())
+    expect(await screen.findByTestId('wework-notifications-unread')).toHaveTextContent('2')
+    fireEvent.click(screen.getByTestId('wework-notifications-button'))
+    fireEvent.click(screen.getByTestId('wework-notifications-category-tasks'))
+    fireEvent.click(screen.getByTestId('wework-notification-task-task-1'))
+    expect(workspaceTabs.openTab).toHaveBeenCalledWith('task', {
+      contentRoute: '/runtime-tasks?deviceId=device-1&taskId=task-1',
+    })
+    expect(workspaceTabs.selectTab).not.toHaveBeenCalled()
+    expect(workspaceTabs.tabs).toEqual([boardTab])
   })
 
   it('counts tasks and cloud records together and marks both sources read', async () => {
@@ -215,7 +273,7 @@ describe('notification center', () => {
   })
 
   it('does not request a private inbox when there is no cloud connection', () => {
-    render(<NotificationCenter />)
+    render(view({ ...connection, token: null, apiBaseUrl: null }))
     expect(screen.getByTestId('wework-notifications-button')).toBeEnabled()
     expect(api.list).not.toHaveBeenCalled()
   })

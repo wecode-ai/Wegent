@@ -13,9 +13,10 @@ import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
 import { Tooltip } from '@/components/ui/tooltip'
 import { AnchorPopover } from '@/features/todo/AnchorPopover'
 import { syncNotificationUnreadCount } from '@/desktop/trayNavigation'
-import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
+import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { openRuntimeTaskWorkspaceTab } from '@/features/workspace-tabs/runtimeTaskWorkspaceTab'
 import { cn } from '@/lib/utils'
 import { useNotificationTaskSource } from './NotificationTaskSourceContext'
 import { openWeworkScheme } from './schemeEvents'
@@ -155,6 +156,7 @@ function ConnectedNotificationCenter({
 }) {
   const { t } = useTranslation('common')
   const taskSource = useNotificationTaskSource()
+  const workspaceTabs = useWorkspaceTabs()
   const api = useMemo(
     () =>
       baseUrl && token
@@ -276,7 +278,7 @@ function ConnectedNotificationCenter({
     })
   const openTask = (item: RuntimeTaskReminderItem) => {
     taskSource?.markRuntimeTaskRead(item.address)
-    navigateTo(buildRuntimeTaskRoute(item.address))
+    openRuntimeTaskWorkspaceTab(workspaceTabs, item.address)
     close()
   }
   const readAll = () =>

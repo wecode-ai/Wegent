@@ -1,5 +1,5 @@
 import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
-import { buildRuntimeTaskRoute } from '@/lib/navigation'
+import { openRuntimeTaskWorkspaceTab } from '@/features/workspace-tabs/runtimeTaskWorkspaceTab'
 import type { RuntimeTaskAddress } from '@/types/api'
 
 export async function openProjectSpaceRuntimeTaskInTab(
@@ -8,13 +8,7 @@ export async function openProjectSpaceRuntimeTaskInTab(
   openRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
 ) {
   if (workspaceTabs) {
-    const contentRoute = buildRuntimeTaskRoute(address)
-    const taskTab = workspaceTabs.tabs.find(tab => tab.kind === 'task')
-    if (taskTab) {
-      workspaceTabs.selectTab(taskTab.id, { contentRoute })
-    } else {
-      workspaceTabs.openTab('task', { contentRoute })
-    }
+    openRuntimeTaskWorkspaceTab(workspaceTabs, address)
   }
   await openRuntimeTask(address)
 }
