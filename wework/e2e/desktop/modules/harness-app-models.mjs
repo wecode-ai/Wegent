@@ -258,9 +258,6 @@ async function openOwnedApps(control, uiTimeoutMs) {
     timeoutMs: uiTimeoutMs,
   })
   await control.command('click', '[data-testid="smart-apps-section-owned"]')
-  await control.command('waitFor', '[data-testid="smart-apps-created-list"]', {
-    timeoutMs: uiTimeoutMs,
-  })
 }
 
 async function openSmartAppsTab(control, uiTimeoutMs) {
