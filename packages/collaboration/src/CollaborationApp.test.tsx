@@ -65,7 +65,7 @@ import { CollaborationFilesAdapter } from "./web-adapter/CollaborationFilesAdapt
 import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
 import { ProjectBoardAdapter } from "./web-adapter/ProjectBoardAdapter";
 import { ProjectIssueTable } from "./platform";
-import { ProjectBoardBody } from "./project-board";
+import { BoardViewNavigation, ProjectBoardBody } from "./project-board";
 import { WorkspaceProjectsHomeAdapter } from "./web-adapter/WorkspaceProjectsHomeAdapter";
 import {
   CollaborationProjectViewShell,
@@ -774,7 +774,15 @@ describe("CollaborationApp API boundary", () => {
     });
     renderBoardIssueCard.mock.calls[0][0].onMarkRead();
     expect(controller.commands.markIssueRead).toHaveBeenCalledWith(issue);
-    expect(board?.props.onOpenBoardSettings).toEqual(expect.any(Function));
+    expect(board?.props.onSaveViews).toEqual(expect.any(Function));
+    const viewNavigation = findByType(
+      boardBody?.props.viewNavigation,
+      BoardViewNavigation,
+    );
+    expect(viewNavigation?.props.canManage).toBe(true);
+    expect(viewNavigation?.props.controller.saveView).toEqual(
+      expect.any(Function),
+    );
   });
 
   it("passes the selected Issue task bindings to a custom detail renderer", () => {
