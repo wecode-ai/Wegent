@@ -21,6 +21,7 @@ import asyncio
 import json
 import uuid
 from typing import Any
+from unittest.mock import patch
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -74,7 +75,9 @@ from tests.e2e._dingtalk_card_server import (
 from tests.utils.collaboration import authorize_project, authorize_project_agent
 
 CHANNEL_ID = 770002
+OTHER_CHANNEL_ID = 770003
 CUSTOM_TEMPLATE_ID = "wegent-ci-e2e-notification-card"
+OTHER_CLIENT_ID = "card-e2e-other-client"
 PROJECT_NAME = "通知卡片 E2E 看板"
 EXTERNAL_PROJECT_NAME = "外部 Issue 通知看板"
 REVIEW_STATUS = "待人工验收"
@@ -181,50 +184,79 @@ def _make_issue(
     return item
 
 
-def _ensure_channel(db: Session) -> None:
-    """Replace this test's dedicated channel so every run starts from scratch."""
-
-    db.query(Kind).filter_by(id=CHANNEL_ID, user_id=0, kind="Messager").delete()
-    db.add(
-        Kind(
-            id=CHANNEL_ID,
-            user_id=0,
-            kind="Messager",
-            name=f"dingtalk-{CHANNEL_ID}",
-            namespace="system",
-            json={
-                "apiVersion": "agent.wecode.io/v1",
-                "kind": "Messager",
-                "metadata": {
-                    "name": f"dingtalk-{CHANNEL_ID}",
-                    "namespace": "system",
-                },
-                "spec": {
-                    "channelType": "dingtalk",
-                    "isEnabled": True,
-                    "config": {
-                        "client_id": "card-e2e-client",
-                        "client_secret": encrypt_sensitive_data(
-                            "card-e2e-client-Secret"
-                        ),
-                        "notification_card": {"template_id": CUSTOM_TEMPLATE_ID},
-                    },
-                },
+def _messager_channel(
+    *,
+    channel_id: int,
+    name: str,
+    client_id: str,
+    notification_card: dict[str, str] | None,
+) -> Kind:
+    config: dict[str, Any] = {
+        "client_id": client_id,
+        "client_secret": encrypt_sensitive_data(f"{client_id}-Secret"),
+    }
+    if notification_card is not None:
+        config["notification_card"] = notification_card
+    return Kind(
+        id=channel_id,
+        user_id=0,
+        kind="Messager",
+        name=name,
+        namespace="system",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Messager",
+            "metadata": {"name": name, "namespace": "system"},
+            "spec": {
+                "channelType": "dingtalk",
+                "isEnabled": True,
+                "config": config,
             },
-            is_active=True,
+        },
+        is_active=True,
+    )
+
+
+def _ensure_channels(db: Session) -> None:
+    """Replace this test's dedicated channels so every run starts from scratch."""
+
+    db.query(Kind).filter(
+        Kind.id.in_([CHANNEL_ID, OTHER_CHANNEL_ID]),
+        Kind.user_id == 0,
+        Kind.kind == "Messager",
+    ).delete(synchronize_session=False)
+    db.add(
+        _messager_channel(
+            channel_id=CHANNEL_ID,
+            name="WegentBot",
+            client_id="card-e2e-client",
+            notification_card={"template_id": CUSTOM_TEMPLATE_ID},
+        )
+    )
+    db.add(
+        _messager_channel(
+            channel_id=OTHER_CHANNEL_ID,
+            name="other-dingtalk-bot",
+            client_id=OTHER_CLIENT_ID,
+            notification_card=None,
         )
     )
     db.commit()
 
 
-async def _connect_dingtalk(db: Session, user: User) -> IMPrivateSession:
+async def _connect_dingtalk(
+    db: Session,
+    user: User,
+    *,
+    channel_id: int = CHANNEL_ID,
+) -> IMPrivateSession:
     """Register a real Redis session so delivery must discover the recipient."""
 
     session = await im_session_service.get_or_create_private_session(
         db,
         user_id=user.id,
         channel_type="dingtalk",
-        channel_id=CHANNEL_ID,
+        channel_id=channel_id,
         conversation_id=f"card-e2e-{uuid.uuid4().hex}",
         sender_id=f"card-e2e-sender-{user.id}",
         proactive_recipient_id=f"staff-{user.id}",
@@ -454,7 +486,11 @@ def _cleanup(
         user = db.get(User, user_id)
         if user is not None:
             db.delete(user)
-    db.query(Kind).filter_by(id=CHANNEL_ID, user_id=0, kind="Messager").delete()
+    db.query(Kind).filter(
+        Kind.id.in_([CHANNEL_ID, OTHER_CHANNEL_ID]),
+        Kind.user_id == 0,
+        Kind.kind == "Messager",
+    ).delete(synchronize_session=False)
     db.commit()
 
 
@@ -485,6 +521,8 @@ async def run() -> None:
         collaboration_member = _make_user(db, "collaboration")
         external_assignee = _make_user(db, "external")
         outsider = _make_user(db, "outsider")
+        multi_channel_assignee = _make_user(db, "multi-channel")
+        no_card_assignee = _make_user(db, "no-card")
         created_user_ids.extend(
             [
                 owner.id,
@@ -493,6 +531,8 @@ async def run() -> None:
                 collaboration_member.id,
                 external_assignee.id,
                 outsider.id,
+                multi_channel_assignee.id,
+                no_card_assignee.id,
             ]
         )
 
@@ -502,14 +542,120 @@ async def run() -> None:
             direct_assignee,
             project_recipient,
             collaboration_member,
+            multi_channel_assignee,
+            no_card_assignee,
         ):
             _add_member(db, project, user, BaseRole.Developer)
         db.commit()
-        _ensure_channel(db)
+        _ensure_channels(db)
         for user in (direct_assignee, project_recipient, collaboration_member):
             sessions.append(await _connect_dingtalk(db, user))
+        sessions.append(await _connect_dingtalk(db, multi_channel_assignee))
+        sessions.append(
+            await _connect_dingtalk(
+                db,
+                multi_channel_assignee,
+                channel_id=OTHER_CHANNEL_ID,
+            )
+        )
+        sessions.append(
+            await _connect_dingtalk(
+                db,
+                no_card_assignee,
+                channel_id=OTHER_CHANNEL_ID,
+            )
+        )
 
-        # 1. Direct human assignment.
+        # 0. Only the channel with a notification card receives the push.
+        multi_issue = _make_issue(
+            db,
+            project,
+            owner,
+            title="只从通知渠道发出",
+            key="CARDE2E-10",
+            status="in_review",
+        )
+        requests_before = len(server.requests)
+        scheduled: list[tuple[Any, tuple[Any, ...], dict[str, Any]]] = []
+        with patch(
+            "app.core.async_utils.schedule_async_task",
+            side_effect=lambda task, *args, **kwargs: scheduled.append(
+                (task, args, kwargs)
+            ),
+        ):
+            loop_item_service.assign(
+                db,
+                project_id=int(project.id),
+                item_id=multi_issue.id,
+                user_id=owner.id,
+                values=LoopItemAssign(
+                    version=multi_issue.version,
+                    assignee_type="user",
+                    assignee_id=str(multi_channel_assignee.id),
+                ),
+            )
+        assert len(scheduled) == 1
+        task, args, kwargs = scheduled[0]
+        await task(*args, **kwargs)
+        multi_requests = server.requests[requests_before:]
+        assert [request["path"] for request in multi_requests].count(
+            "/v1.0/card/instances/createAndDeliver"
+        ) == 1
+        multi_card = next(
+            request["body"]
+            for request in multi_requests
+            if request["path"] == "/v1.0/card/instances/createAndDeliver"
+        )
+        assert multi_card["cardTemplateId"] == CUSTOM_TEMPLATE_ID
+        assert all(
+            request["body"].get("appKey") != OTHER_CLIENT_ID
+            for request in multi_requests
+        )
+        assert not any(
+            request["path"] == "/v1.0/robot/oToMessages/batchSend"
+            for request in multi_requests
+        )
+
+        # 1. A recipient without a card channel keeps the notification in-app.
+        no_card_issue = _make_issue(
+            db,
+            project,
+            owner,
+            title="没有通知卡片",
+            key="CARDE2E-11",
+            status="in_review",
+        )
+        requests_before = len(server.requests)
+        scheduled = []
+        with patch(
+            "app.core.async_utils.schedule_async_task",
+            side_effect=lambda task, *args, **kwargs: scheduled.append(
+                (task, args, kwargs)
+            ),
+        ):
+            loop_item_service.assign(
+                db,
+                project_id=int(project.id),
+                item_id=no_card_issue.id,
+                user_id=owner.id,
+                values=LoopItemAssign(
+                    version=no_card_issue.version,
+                    assignee_type="user",
+                    assignee_id=str(no_card_assignee.id),
+                ),
+            )
+        no_card_notification = _notification(
+            db,
+            user_id=no_card_assignee.id,
+            kind="issue_dispatch_assignment",
+        )
+        assert no_card_notification.payload["itemTitle"] == no_card_issue.title
+        assert len(scheduled) == 1
+        task, args, kwargs = scheduled[0]
+        await task(*args, **kwargs)
+        assert server.requests[requests_before:] == []
+
+        # 2. Direct human assignment.
         direct_issue = _make_issue(
             db,
             project,
@@ -555,7 +701,7 @@ async def run() -> None:
         assert direct_notification.payload["itemTitle"] == direct_issue.title
         assert direct_notification.payload["assigneeName"] == direct_assignee.user_name
 
-        # 2. Project-sourced message.
+        # 3. Project-sourced message.
         project_issue = _make_issue(
             db,
             project,
@@ -596,7 +742,7 @@ async def run() -> None:
         )
         assert message.payload["itemKey"] == "CARDE2E-13"
 
-        # 3. Human-led collaboration coordination.
+        # 4. Human-led collaboration coordination.
         sessions.append(await _connect_dingtalk(db, owner))
         group = workspace_service.create_project_collaboration_group(
             db,
@@ -661,7 +807,7 @@ async def run() -> None:
         )
         assert leader_notification.payload["collaborationGroupId"] == str(group["id"])
 
-        # 4. Collaboration member dispatch through the production batch endpoint.
+        # 5. Collaboration member dispatch through the production batch endpoint.
         manager = _make_manager_agent(db, project, owner)
         device_name = f"manager-device-{uuid.uuid4().hex}"
         device_names.append(device_name)
@@ -761,7 +907,7 @@ async def run() -> None:
         )
         assert member_notification.payload["roundId"] == "round-card-e2e"
 
-        # 5. An external Issue uses the provider's title and localized status
+        # 6. An external Issue uses the provider's title and localized status
         #    instead of the sparse local index row.
         external_project = _make_project(
             db,
@@ -829,7 +975,7 @@ async def run() -> None:
             ("PUT", "/api/v4/projects/wegent%2Fcard-e2e/issues/1"),
         ]
 
-        # 6. A non-member cannot send a project notification, and the rejected
+        # 7. A non-member cannot send a project notification, and the rejected
         #    request must not create an inbox row or a card.
         cards_before = len(server.cards())
         notifications_before = (

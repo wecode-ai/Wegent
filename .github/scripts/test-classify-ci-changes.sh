@@ -1853,18 +1853,110 @@ for workflow in test.yml lint.yml; do
     printf '%s must publish its required summary in merge groups\n' "$workflow" >&2
     exit 1
   fi
-  if ! grep -Fq "if: github.event_name != 'merge_group'" "$workflow_path" ||
-    ! grep -Fq "if: github.event_name == 'merge_group'" "$workflow_path" ||
-    ! grep -Fq "name: Confirm E2E-only merge queue" "$workflow_path"; then
-    printf '%s must replace module checks with one summary in merge groups\n' \
-      "$workflow" >&2
-    exit 1
+  if [[ "$workflow" == "lint.yml" ]]; then
+    if ! grep -Fq "if: github.event_name != 'merge_group'" "$workflow_path" ||
+      ! grep -Fq "if: github.event_name == 'merge_group'" "$workflow_path" ||
+      ! grep -Fq "name: Confirm E2E-only merge queue" "$workflow_path"; then
+      printf '%s must replace module checks with one summary in merge groups\n' \
+        "$workflow" >&2
+      exit 1
+    fi
+  else
+    unit_changes_job="$(sed -n '/^  changes:/,/^  test-backend:/p' "$workflow_path")"
+    unit_summary_job="$(sed -n '/^  test-summary:/,$p' "$workflow_path")"
+    if grep -Fq "if: github.event_name != 'merge_group'" \
+      <<<"$unit_changes_job$unit_summary_job" ||
+      grep -Fq '  merge-queue-summary:' "$workflow_path" ||
+      grep -Fq 'name: Confirm E2E-only merge queue' "$workflow_path"; then
+      printf 'test.yml must run real module checks and their summary in merge groups\n' >&2
+      exit 1
+    fi
+    for job in test-backend test-backend-rs; do
+      unit_test_job="$(awk -v target="  $job:" '
+        $0 == target { found = 1; next }
+        found && /^  [[:alnum:]-]+:/ { exit }
+        found { print }
+      ' "$workflow_path")"
+      if grep -Fq "github.event_name != 'merge_group'" <<<"$unit_test_job" ||
+        ! grep -Fq 'ref: ${{ github.event.pull_request.head.sha || github.sha }}' \
+          <<<"$unit_test_job"; then
+        printf '%s must test PR heads and queued merge commits\n' "$job" >&2
+        exit 1
+      fi
+    done
   fi
   if ! grep -Fq "ci:all" "$workflow_path"; then
     printf '%s must keep full regression available through ci:all\n' "$workflow" >&2
     exit 1
   fi
 done
+
+# Exercise the workflow's real shell bodies instead of matching policy labels.
+unit_test_workflow="$script_dir/../workflows/test.yml"
+unit_classifier_script="$(
+  extract_named_workflow_step_from_job \
+    "$unit_test_workflow" "  changes:" "  test-backend:" \
+    "Classify changed paths" |
+    awk '/^        run: \|$/ { found = 1; next }
+         found && /^          / { sub(/^          /, ""); print }'
+)"
+if [[ -z "$unit_classifier_script" ]]; then
+  printf 'The unit-test classifier shell body must exist\n' >&2
+  exit 1
+fi
+merge_outputs="$(
+  EVENT_NAME=merge_group FORCE_ALL=false GITHUB_OUTPUT=/dev/stdout \
+    bash -euo pipefail -c "$unit_classifier_script"
+)"
+if [[ "$merge_outputs" != $'backend=true\nbackend_rs=true' ]]; then
+  printf 'Merge groups must require Backend and Rust without enabling unrelated modules\n' >&2
+  exit 1
+fi
+
+unit_summary_script="$(
+  extract_named_workflow_step "$unit_test_workflow" "Check test results" |
+    awk '/^        run: \|$/ { found = 1; next }
+         found && /^          / { sub(/^          /, ""); print }'
+)"
+if [[ -z "$unit_summary_script" ]]; then
+  printf 'The unit-test summary shell body must exist\n' >&2
+  exit 1
+fi
+
+assert_merge_summary_case() {
+  local name="$1" expected="$2" backend_result="$3" rust_result="$4"
+  local changes_result="${5-success}" backend_required="${6-true}"
+  local rust_required="${7-true}" mysql_result="${8-success}"
+  local rendered="$unit_summary_script" actual="failure"
+  rendered="${rendered//'${{ needs.changes.result }}'/$changes_result}"
+  rendered="${rendered//'${{ needs.changes.outputs.backend }}'/$backend_required}"
+  rendered="${rendered//'${{ needs.changes.outputs.backend_rs }}'/$rust_required}"
+  rendered="${rendered//'${{ needs.test-backend.result }}'/$backend_result}"
+  rendered="${rendered//'${{ needs.test-backend-rs.result }}'/$rust_result}"
+  rendered="${rendered//'${{ needs.test-plugin-auth-mysql.result }}'/$mysql_result}"
+  rendered="$(sed -E \
+    -e 's/\$\{\{ needs\.changes\.outputs\.[^ ]+ \}\}/false/g' \
+    -e 's/\$\{\{ needs\.[^ ]+\.result \}\}/skipped/g' \
+    <<<"$rendered")"
+  if EVENT_NAME=merge_group bash -euo pipefail -c "$rendered" >/dev/null 2>&1; then
+    actual="success"
+  fi
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'Merge summary case "%s": expected %s, got %s\n' \
+      "$name" "$expected" "$actual" >&2
+    exit 1
+  fi
+}
+
+assert_merge_summary_case "all required jobs succeed" success success success
+assert_merge_summary_case "Backend fails" failure failure success
+assert_merge_summary_case "Backend is skipped" failure skipped success
+assert_merge_summary_case "Rust fails" failure success failure
+assert_merge_summary_case "Rust is skipped" failure success skipped
+assert_merge_summary_case "classification fails" failure success success failure
+assert_merge_summary_case "Backend output is missing" failure success success success ""
+assert_merge_summary_case "Rust output is missing" failure success success success true ""
+assert_merge_summary_case "MySQL is skipped" failure success success success true true skipped
 
 plugin_auth_workflow="$script_dir/../workflows/plugin-auth-sdk.yml"
 if workflow_has_top_level_trigger "$plugin_auth_workflow" "push"; then
