@@ -156,6 +156,7 @@ export const DESKTOP_CHECKPOINTS = [
   'git-commit-generation',
   'claude-runtime',
   'local-file-preview',
+  'office-file-preview',
   'local-harness',
   'harness-apps',
   'harness-app-development',

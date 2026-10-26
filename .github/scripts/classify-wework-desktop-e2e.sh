@@ -122,6 +122,7 @@ core_segments=(
   git-commit-generation
   claude-runtime
   local-file-preview
+  office-file-preview
   local-harness
   harness-app-development
   harness-app-lifecycle
@@ -216,7 +217,7 @@ core_shards=(
   window-lifecycle,model-routing,collaboration-app-queue-identity,stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,permission-modes,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
   collaboration-board-sorting,component-update,environment-panel-scroll,running-conversation-history,workspace-tabs,collaboration-board-move-recovery,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy
   claude-runtime,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery
-  harness-app-lifecycle,task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import
+  harness-app-lifecycle,task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,office-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference
   conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome
   split-workbench
@@ -1232,8 +1233,7 @@ classify_wework_path() {
       return
       ;;
 
-    # Local file browsing, preview, editing, and review share one desktop
-    # checkpoint so theme and loading regressions are covered together.
+    # File editing and Office previews have independently bootstrapped checkpoints.
     wework/electron/src/host/local-workspace-files* | \
       wework/src/desktop/localWorkspaceFiles* | \
       wework/src/components/layout/workspace-panels/FileWorkspacePanel* | \
@@ -1243,6 +1243,13 @@ classify_wework_path() {
       wework/src/components/chat/FileChangesReviewPanel* | \
       wework/e2e/desktop/scenarios/local-file-preview.scenario.mjs)
       select_target "core:local-file-preview"
+      select_target "core:office-file-preview"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/office-file-preview.scenario.mjs | \
+      wework/e2e/desktop/modules/office-preview-fixtures.mjs | \
+      wework/src/e2e/desktop-control-wheel*)
+      select_target "core:office-file-preview"
       return
       ;;
 
