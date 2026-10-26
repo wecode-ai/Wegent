@@ -17,6 +17,7 @@ import {
   until,
 } from '../modules/plugin-regression-fixture.mjs'
 import { observePluginSyncTransport } from '../modules/plugin-sync-observer.mjs'
+import { createPluginComposerRouteMessaging } from '../modules/plugin-composer-route-messaging.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import { createSingleRootLocalProject } from '../modules/shared.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
@@ -32,6 +33,10 @@ export async function createDesktopScenario({
 }) {
   const appEnvironment = {}
   const evidence = []
+  const composerMessaging = createPluginComposerRouteMessaging({
+    executorHome,
+    timeoutMs: workbenchReadyTimeoutMs,
+  })
   const objectStorage = await startRealObjectStorage(resultDir, workbenchReadyTimeoutMs)
   let cloud
   let appProxy
@@ -495,6 +500,7 @@ export async function createDesktopScenario({
     setCloudEnvironment(value) {
       cloud = value
     },
+    handleHttp: composerMessaging.handleHttp,
     async verify(control) {
       try {
         await cloud.waitForConnectedAppDevice()
@@ -503,17 +509,37 @@ export async function createDesktopScenario({
         const { current, stableDeviceId } = await refreshRoute(control)
         await installOnCurrentRuntime(control, current, stableDeviceId, fixture)
         await toggleInManager(control, current, stableDeviceId, fixture)
+        await composerMessaging.verify(control, fixture, {
+          proxy: appProxy,
+          transport,
+          routeId: current.execution_target_id,
+          stableDeviceId,
+        })
         await pendingProfileMustNotReuseRoute(control, current, stableDeviceId, fixture)
         await captureScreenshot(control, 'plugin-runtime-route-refresh.png', 'body')
       } finally {
         appProxy.disconnectWebSockets(false)
         await writeFile(
           join(resultDir, 'plugin-runtime-route-refresh-evidence.json'),
-          JSON.stringify({ evidence, transport, restoredTransport }, null, 2)
+          JSON.stringify(
+            {
+              evidence,
+              transport,
+              restoredTransport,
+              composerMessaging: composerMessaging.diagnostics(),
+            },
+            null,
+            2
+          )
         )
       }
     },
-    diagnostics: () => ({ evidence, transport, restoredTransport }),
+    diagnostics: () => ({
+      evidence,
+      transport,
+      restoredTransport,
+      composerMessaging: composerMessaging.diagnostics(),
+    }),
     cleanup,
   }
 }

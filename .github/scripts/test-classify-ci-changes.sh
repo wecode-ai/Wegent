@@ -644,6 +644,16 @@ wework_desktop_other_e2e_matrix={\"include\":[]}" \
     "wework/e2e/desktop/scenarios/$plugin_sync_checkpoint.scenario.mjs"
 done
 
+assert_desktop_case "plugin composer route messaging runs with its scenario" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-7","name":"Cloud / shard 7","segments":"plugin-runtime-route-refresh"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/plugin-composer-route-messaging.mjs"
+
 assert_desktop_case "shared plugin sync observer selects every consumer" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false

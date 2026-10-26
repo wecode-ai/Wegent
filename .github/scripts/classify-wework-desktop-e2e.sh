@@ -1369,7 +1369,8 @@ classify_path() {
   local path="$1"
 
   case "$path" in
-    wework/e2e/desktop/scenarios/plugin-runtime-route-refresh.scenario.mjs)
+    wework/e2e/desktop/scenarios/plugin-runtime-route-refresh.scenario.mjs | \
+      wework/e2e/desktop/modules/plugin-composer-route-messaging.mjs)
       select_target "cloud:plugin-runtime-route-refresh"
       return
       ;;
