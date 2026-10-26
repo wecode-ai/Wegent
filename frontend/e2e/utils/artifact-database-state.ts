@@ -18,7 +18,7 @@ type ArtifactDatabaseRequest = {
 }
 type ArtifactDatabaseResult = {
   executor_name: string
-  source: { executor_name: string }
+  source: { executor_name: string; workspace_root: string }
   binary_size: number
   image_base64: string
   extracted_text: string

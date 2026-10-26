@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
 import {
@@ -47,7 +47,7 @@ function completionFrames(page: Page): Done[] {
   return frames
 }
 
-function generationCommand(content: string, marker: string): string {
+function generationCommand(content: string, marker: string, releaseGate?: string): string {
   const seed = `const fs=require('fs'),p=require('path'),r=process.env.WEGENT_TASK_WORKSPACE;
 if(!r)throw new Error('Missing real Task workspace');
 fs.mkdirSync(p.join(r,'outputs'),{recursive:true});
@@ -67,14 +67,62 @@ console.log('ARTIFACT_FORGED_ROOT_REJECTED');})().catch(error=>{console.error(er
   const mutate = `const fs=require('fs'),p=require('path'),r=process.env.WEGENT_TASK_WORKSPACE;
 fs.unlinkSync(p.join(r,'outputs/missing.txt'));fs.unlinkSync(p.join(r,'outputs/symlink.txt'));
 fs.symlinkSync(p.join(r,'../outside-${marker}'),p.join(r,'outputs/symlink.txt'));`
+  const gate = releaseGate
+    ? `\nnode <<'ARTIFACT_RELEASE_GATE'\nconst fs=require('fs'),p=require('path'),file=p.join(process.env.WEGENT_TASK_WORKSPACE,'outputs','${releaseGate}'),deadline=Date.now()+30000;
+(async()=>{while(!fs.existsSync(file)){if(Date.now()>deadline)throw Error('Recovery fixture was not released');await new Promise(resolve=>setTimeout(resolve,100));}})().catch(error=>{console.error(error.message);process.exitCode=1});\nARTIFACT_RELEASE_GATE`
+    : ''
   return (
     `set -eu\nnode <<'ARTIFACT_SEED'\n${seed}\nARTIFACT_SEED\n` +
     `node <<'ARTIFACT_FORGED_ROOT'\n${rejectForgedRoot}\nARTIFACT_FORGED_ROOT\n` +
     `for file in report.md missing.txt symlink.txt large.bin; do "$WEGENT_EXECUTOR_BINARY" artifact declare --path "outputs/$file"; done\n` +
     `"$WEGENT_EXECUTOR_BINARY" artifact declare --path outputs/report.md & first=$!\n` +
     `"$WEGENT_EXECUTOR_BINARY" artifact declare --path outputs/report.md & second=$!\nwait "$first"\nwait "$second"\n` +
-    `node <<'ARTIFACT_MUTATE'\n${mutate}\nARTIFACT_MUTATE`
+    `node <<'ARTIFACT_MUTATE'\n${mutate}\nARTIFACT_MUTATE` +
+    gate
   )
+}
+
+async function finishThroughRecovery(
+  page: Page,
+  request: APIRequestContext,
+  token: string,
+  taskId: number,
+  userId: number,
+  primary: ArtifactDevice,
+  releaseGate: string,
+  done: Done[]
+): Promise<Artifact[]> {
+  const readArtifacts = async () => {
+    const snapshot = (await getTask(request, token, taskId)) as {
+      subtasks: Array<{ contexts?: Artifact[] }>
+    }
+    return snapshot.subtasks
+      .flatMap(subtask => subtask.contexts ?? [])
+      .filter(context => context.context_type === 'remote_workspace_artifact')
+  }
+  await expect.poll(async () => (await readArtifacts()).length).toBe(4)
+  const artifacts = await readArtifacts()
+  const report = artifacts.find(context => context.name === 'report.md')!
+  const stored = await artifactDatabaseState({
+    operation: 'inspect',
+    task_id: taskId,
+    context_id: report.id,
+    user_id: userId,
+    expected_device_id: primary.id,
+  })
+  await expect(page.getByTestId('ai-message-icon')).toBeVisible()
+  await expect(page.getByTestId(`remote-workspace-artifact-download-${report.id}`)).toHaveCount(0)
+  await page.context().setOffline(true)
+  try {
+    expect(await page.evaluate(() => navigator.onLine)).toBe(false)
+    await writeFile(resolve(stored.source.workspace_root, 'outputs', releaseGate), 'release')
+    await waitForTaskTerminal(token, taskId)
+    expect(done.some(event => event.task_id === taskId)).toBe(false)
+  } finally {
+    await page.context().setOffline(false)
+    await page.evaluate(() => window.dispatchEvent(new Event('online')))
+  }
+  return artifacts
 }
 
 function containsToolOutput(value: unknown, marker: string): boolean {
@@ -99,8 +147,12 @@ async function download(page: Page, context: Artifact, expected: string): Promis
   expect(await readFile((await file.path())!, 'utf8')).toBe(expected)
 }
 
-for (const shell of ['ClaudeCode', 'Codex'] as const satisfies readonly ArtifactShell[]) {
-  test(`${shell}: legacy Ghost delivers files without a prompt migration`, async ({
+for (const { shell, recovery } of [
+  { shell: 'ClaudeCode', recovery: false },
+  { shell: 'Codex', recovery: false },
+  { shell: 'ClaudeCode', recovery: true },
+] satisfies Array<{ shell: ArtifactShell; recovery: boolean }>) {
+  test(`${shell}: legacy Ghost delivers files ${recovery ? 'after network recovery' : 'without a prompt migration'}`, async ({
     page,
     request,
   }, testInfo) => {
@@ -113,6 +165,7 @@ for (const shell of ['ClaudeCode', 'Codex'] as const satisfies readonly Artifact
     expect(user.status()).toBe(200)
     const { id: userId } = (await user.json()) as { id: number }
     const marker = crypto.randomUUID().replaceAll('-', '')
+    const releaseGate = recovery ? `.e2e-release-${marker}` : undefined
     const modelName = `artifact-${shell.toLowerCase()}-${marker}`
     const prompt = `ARTIFACT_${marker}: generate the requested Markdown file.`
     const legacyPrompt = await readFile(
@@ -168,7 +221,7 @@ for (const shell of ['ClaudeCode', 'Codex'] as const satisfies readonly Artifact
         requires_workspace: false,
       })
       resources.unshift(`/api/v1/namespaces/default/teams/${modelName}-team`)
-      const command = generationCommand(content, marker)
+      const command = generationCommand(content, marker, releaseGate)
       await configureToolScenario(request, prompt, [
         {
           toolCalls: [
@@ -201,19 +254,34 @@ for (const shell of ['ClaudeCode', 'Codex'] as const satisfies readonly Artifact
       await page.getByTestId('send-button').click()
       await expect.poll(() => new URL(page.url()).searchParams.get('taskId')).not.toBeNull()
       taskId = Number(new URL(page.url()).searchParams.get('taskId'))
-      await waitForTaskTerminal(token, taskId)
-      await expect
-        .poll(
-          () =>
-            done
-              .find(event => event.task_id === taskId)
-              ?.contexts?.filter(context => context.context_type === 'remote_workspace_artifact')
-              .length
+      const documentOrigin = await page.evaluate(() => performance.timeOrigin)
+      let contexts: Artifact[]
+      if (releaseGate) {
+        contexts = await finishThroughRecovery(
+          page,
+          request,
+          token,
+          taskId,
+          userId,
+          primary,
+          releaseGate,
+          done
         )
-        .toBe(4)
-      const contexts = done
-        .find(event => event.task_id === taskId)!
-        .contexts.filter(context => context.context_type === 'remote_workspace_artifact')
+      } else {
+        await waitForTaskTerminal(token, taskId)
+        await expect
+          .poll(
+            () =>
+              done
+                .find(event => event.task_id === taskId)
+                ?.contexts?.filter(context => context.context_type === 'remote_workspace_artifact')
+                .length
+          )
+          .toBe(4)
+        contexts = done
+          .find(event => event.task_id === taskId)!
+          .contexts.filter(context => context.context_type === 'remote_workspace_artifact')
+      }
       const completed = (await getTask(request, token, taskId)) as {
         subtasks: Array<{ bots?: Array<{ shell_type: string }> }>
       }
@@ -236,6 +304,7 @@ for (const shell of ['ClaudeCode', 'Codex'] as const satisfies readonly Artifact
         await expect(
           page.getByTestId(`remote-workspace-artifact-download-${context.id}`)
         ).toBeVisible()
+      expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentOrigin)
       const report = contexts.find(context => context.name === 'report.md')!
       expect(report).toBeTruthy()
       const identity = {

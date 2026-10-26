@@ -13,6 +13,8 @@ The automatic prompt update for the public `Ghost/default/wegent-wework` is with
 - Files remain on the execution device. Declarations persist metadata; completed messages display artifact cards that download from the original source.
 - Do not run the former prompt preflight or replacement scripts. The obsolete preflight script is removed.
 
+Web completion events and recovery snapshots both update artifact contexts on the corresponding assistant message. Omitted contexts preserve known values; an explicit empty list clears them. Files completed while the browser is offline also appear after recovery in the same document without reloading.
+
 ## Execution workspace authorization
 
 Before starting Claude Code or Codex, the executor captures the prepared native cwd in an immutable Task/turn workspace binding in its own state directory. A SHA-256 fingerprint of the Task Token distinguishes execution contexts; the raw token is never persisted.

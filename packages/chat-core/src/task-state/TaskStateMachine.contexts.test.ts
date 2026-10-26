@@ -4,6 +4,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { TaskStateMachine } from '..'
+import type { TaskDetailSubtask } from '../api-types'
 
 const artifact = {
   id: 9,
@@ -15,9 +16,9 @@ const artifact = {
   file_size: 32,
 }
 
-function createMachine(): TaskStateMachine {
+function createMachine(subtasks: TaskDetailSubtask[] = []): TaskStateMachine {
   return new TaskStateMachine(42, {
-    joinTask: vi.fn().mockResolvedValue({ subtasks: [] }),
+    joinTask: vi.fn().mockResolvedValue({ subtasks }),
     isConnected: () => true,
   })
 }
@@ -61,5 +62,64 @@ describe('TaskStateMachine completion contexts', () => {
     expect(machine.getState().messages.get('ai-7')?.contexts).toEqual([artifact])
     expect(machine.getState().messages.get('ai-8')?.contexts).toBeUndefined()
     expect(machine.getState().runtime.activeStreamSubtaskId).toBe(8)
+  })
+})
+
+describe('TaskStateMachine recovery contexts', () => {
+  it.each(['RUNNING', 'COMPLETED'])(
+    'merges snapshots into an existing %s message',
+    async status => {
+      const snapshot: TaskDetailSubtask = {
+        id: 7,
+        role: 'ASSISTANT',
+        status,
+        created_at: '2026-10-26T08:00:00Z',
+        result: { value: 'Working' },
+        contexts: [artifact],
+      }
+      const machine = createMachine([snapshot])
+      machine.handleChatStart(7)
+
+      await machine.recover({ force: true, reason: 'websocket-reconnect' })
+      expect(machine.getState().messages.get('ai-7')?.contexts).toEqual([artifact])
+
+      const updated = { ...artifact, file_size: 64 }
+      snapshot.contexts = [updated]
+      await machine.recover({ force: true, reason: 'websocket-reconnect' })
+      expect(machine.getState().messages.get('ai-7')?.contexts).toEqual([updated])
+
+      delete snapshot.contexts
+      await machine.recover({ force: true, reason: 'websocket-reconnect' })
+      expect(machine.getState().messages.get('ai-7')?.contexts).toEqual([updated])
+
+      snapshot.contexts = []
+      await machine.recover({ force: true, reason: 'websocket-reconnect' })
+      expect(machine.getState().messages.get('ai-7')?.contexts).toEqual([])
+    }
+  )
+
+  it('keeps recovered artifact contexts on their original assistant subtask', async () => {
+    const machine = createMachine([
+      {
+        id: 7,
+        role: 'ASSISTANT',
+        status: 'COMPLETED',
+        created_at: '2026-10-26T08:00:00Z',
+        contexts: [artifact],
+      },
+      {
+        id: 8,
+        role: 'ASSISTANT',
+        status: 'RUNNING',
+        created_at: '2026-10-26T08:00:01Z',
+      },
+    ])
+    machine.handleChatStart(7)
+    machine.handleChatStart(8)
+
+    await machine.recover({ force: true, reason: 'websocket-reconnect' })
+
+    expect(machine.getState().messages.get('ai-7')?.contexts).toEqual([artifact])
+    expect(machine.getState().messages.get('ai-8')?.contexts).toBeUndefined()
   })
 })
