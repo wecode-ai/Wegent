@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { verifyCollaborationScheduleViews } from '../../e2e/desktop/modules/collaboration-schedule-views.mjs'
+import { verifyCollaborationScheduleViews } from '../../e2e/desktop/modules/collaboration-schedule-verification.mjs'
 
 test.each([
   {
