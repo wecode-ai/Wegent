@@ -137,15 +137,6 @@ export async function verifyCollaborationScheduleViews({
     visible: true,
     timeoutMs,
   })
-  const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
-  // A month grid renders 42 days, so the target can fall into the next month.
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const count = Number(await control.command('getElementCount', calendarTarget))
-    if (count > 0) break
-    await control.command('click', scoped('[data-testid="collaboration-schedule-next"]'))
-    await new Promise(resolve => setTimeout(resolve, 250))
-  }
-  await control.command('waitFor', calendarTarget, { visible: true, timeoutMs })
   await waitForAttributeIncludes(
     control,
     calendarBar,
