@@ -290,7 +290,7 @@ export function PopupMenu({
           setOpen(current => !current)
         }}
         className={cn(
-          'rounded-full outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50',
+          'rounded-full outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50',
           fullWidth && 'w-full',
           triggerClassName
         )}

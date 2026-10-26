@@ -81,7 +81,7 @@ function FontSizeControl({
           event.preventDefault()
           commit(event.currentTarget)
         }}
-        className="h-8 w-16 rounded-lg border border-border bg-background px-2 text-right text-sm text-text-primary shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+        className="h-8 w-16 rounded-lg border border-border bg-background px-2 text-right text-sm text-text-primary shadow-sm outline-none keyboard:focus:border-blue-500 keyboard:focus:ring-2 keyboard:focus:ring-blue-500/20"
       />
       <span className="text-sm text-text-secondary">px</span>
     </div>

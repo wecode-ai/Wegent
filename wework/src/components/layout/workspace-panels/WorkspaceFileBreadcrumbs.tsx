@@ -70,7 +70,7 @@ export function WorkspaceFileBreadcrumbs({
                       const rect = event.currentTarget.getBoundingClientRect()
                       onPathContextMenu(crumb.path, !file, { left: rect.left, top: rect.bottom })
                     }}
-                    className="flex h-7 shrink-0 items-center whitespace-nowrap rounded px-1 text-sm hover:bg-muted data-[state=open]:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                    className="flex h-7 shrink-0 items-center whitespace-nowrap rounded px-1 text-sm hover:bg-muted data-[state=open]:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-primary"
                   >
                     <span
                       className={

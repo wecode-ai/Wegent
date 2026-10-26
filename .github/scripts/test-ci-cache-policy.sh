@@ -508,36 +508,19 @@ fi
 wework_workflow="$workflow_dir/wework-e2e.yml"
 wework_browser_image="$script_dir/../../docker/wework-e2e/browser.Dockerfile"
 wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
+if ! grep -Eq '^FROM mcr.microsoft.com/playwright:v[0-9.]+-noble$' \
+    "$wework_browser_image" ||
+  ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
+    "$workflow_dir/e2e-tests.yml" | grep -F 'runs-on: ubuntu-24.04' >/dev/null; then
+  fail "Platform E2E Python tool-cache binaries must match the noble container ABI"
+fi
+
 if ! grep -Fq 'ARG UV_VERSION=0.11.17' "$wework_browser_image" ||
   ! grep -Fq '"https://astral.sh/uv/${UV_VERSION}/install.sh"' \
     "$wework_browser_image" ||
   ! grep -Fq 'uv --version' "$wework_browser_image"; then
   fail "The platform E2E image must provide the pinned uv toolchain"
 fi
-
-ruby - "$platform_e2e_workflow" <<'RUBY'
-require 'yaml'
-
-YAML.load_file(ARGV.fetch(0)).fetch('jobs').each do |name, job|
-  next unless job['container']
-
-  if job.fetch('env', {}).key?('UV_PYTHON')
-    abort "#{name}: UV_PYTHON overrides activated virtual environments"
-  end
-
-  job.fetch('steps', []).each do |step|
-    if step.fetch('env', {}).key?('UV_PYTHON') || step.fetch('run', '').match?(/\bUV_PYTHON=/)
-      abort "#{name}: select Python when creating environments, not when installing packages"
-    end
-
-    next unless step['uses'] == './.github/actions/setup-python-uv-cache'
-
-    unless step.fetch('with', {})['setup-python'] == 'false'
-      abort "#{name}: container jobs must use container-managed Python, not the host toolcache"
-    end
-  end
-end
-RUBY
 
 if ! grep -Fq 'file: docker/wework-e2e/browser.Dockerfile' "$wework_workflow" ||
   ! grep -Fq 'file: docker/wework-e2e/desktop.Dockerfile' "$wework_workflow" ||

@@ -189,7 +189,7 @@ export function KanbanColumn<TColumn, TItem>({
               type="button"
               data-testid={`${testIdPrefix}-column-empty-add-${columnKey}`}
               onClick={emptyState.action.onClick}
-              className="flex min-h-24 w-full flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-border px-4 text-center text-text-muted transition hover:border-text-muted hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+              className="flex min-h-24 w-full flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-border px-4 text-center text-text-muted transition hover:border-text-muted hover:bg-background hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
               aria-label={emptyState.action.ariaLabel}
             >
               {renderAddIcon()}
