@@ -533,7 +533,7 @@ export function TaskBoardView({
                     setBatchConfirmError(null)
                     setBatchConfirmItems([...columnItems])
                   }}
-                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-50 group-hover:opacity-100"
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-50 group-hover:opacity-100"
                   aria-label={t('todo.batch_confirm_review_tasks', '批量确认完成待确认任务')}
                 >
                   <CheckCheck className="h-3.5 w-3.5" />
@@ -556,7 +556,7 @@ export function TaskBoardView({
                     setBatchArchiveError(null)
                     setBatchArchiveItems([...columnItems])
                   }}
-                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-50 group-hover:opacity-100"
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-50 group-hover:opacity-100"
                   aria-label={t('todo.archive_completed_tasks', '批量归档已完成任务')}
                 >
                   <Archive className="h-3.5 w-3.5" />

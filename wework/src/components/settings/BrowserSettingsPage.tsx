@@ -48,7 +48,7 @@ function LinkTargetSelect({
       value={value}
       disabled={disabled}
       onChange={event => onChange(event.target.value as BrowserLinkTarget)}
-      className="h-8 min-w-[156px] rounded-md border border-border bg-background px-2.5 text-sm text-text-primary outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
+      className="h-8 min-w-[156px] rounded-md border border-border bg-background px-2.5 text-sm text-text-primary outline-none keyboard:focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
     >
       <option value="system">{t('workbench.browser_settings_target_system')}</option>
       <option value="wework">{t('workbench.browser_settings_target_wework')}</option>

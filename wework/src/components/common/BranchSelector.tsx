@@ -305,7 +305,7 @@ export function BranchSelector({
         className={cn(
           variant === 'environment'
             ? 'flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover'
-            : 'flex h-9 w-full min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-normal leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+            : 'flex h-9 w-full min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-normal leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
           useMobileSheet && 'font-medium',
           open &&
             variant === 'workbar' &&
@@ -449,7 +449,7 @@ export function BranchSelector({
                     onChange={event => setNewBranchName(event.target.value)}
                     disabled={action === 'generating'}
                     aria-busy={action === 'generating'}
-                    className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-primary disabled:cursor-wait disabled:bg-surface disabled:text-text-muted"
+                    className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm outline-none keyboard:focus:border-primary disabled:cursor-wait disabled:bg-surface disabled:text-text-muted"
                     placeholder={
                       action === 'generating'
                         ? t('workbench.environment_branch_generating', 'AI 正在生成分支名…')

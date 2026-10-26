@@ -42,7 +42,7 @@ export function ApplicationContextToolbar({
           data-testid={searchTestId}
           value={value}
           placeholder={searchPlaceholder}
-          className="h-11 w-full rounded-lg border border-border/50 bg-background pl-9 pr-3 text-base text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus focus:ring-2 focus:ring-focus/15 md:h-9 md:text-sm"
+          className="h-11 w-full rounded-lg border border-border/50 bg-background pl-9 pr-3 text-base text-text-primary outline-none transition-colors placeholder:text-text-muted keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15 md:h-9 md:text-sm"
           onChange={event => onValueChange(event.target.value)}
         />
       </label>

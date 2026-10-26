@@ -130,7 +130,7 @@ export function ProjectTagsSection({
                   testId: `cloud-project-tag-menu-${tag}`,
                   placement: 'bottom-end',
                   triggerClassName:
-                    'flex h-8 w-full items-center justify-center rounded-lg text-text-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30',
+                    'flex h-8 w-full items-center justify-center rounded-lg text-text-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30',
                   items: [
                     {
                       label: host.translate('todo.rename', '重命名'),

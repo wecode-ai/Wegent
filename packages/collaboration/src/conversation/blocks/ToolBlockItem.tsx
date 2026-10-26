@@ -125,7 +125,7 @@ export function ToolBlockItem({
         }}
       >
         <summary
-          className="cursor-pointer rounded focus-visible:outline focus-visible:outline-2"
+          className="cursor-pointer rounded keyboard:focus-visible:outline keyboard:focus-visible:outline-2"
           data-testid="auto-approval-review-details"
           aria-expanded={forceExpanded || userExpanded}
         >

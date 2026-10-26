@@ -96,6 +96,21 @@ export async function verifyCollaborationScheduleViews({
     visible: true,
     timeoutMs,
   })
+  const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
+  // Future schedule dates can fall outside the current month's six-week grid,
+  // so page forward until the drop target renders instead of assuming a month.
+  for (let page = 0; page < 2; page += 1) {
+    const rendered = Number(await control.command('getElementCount', calendarTarget))
+    if (rendered > 0) break
+    await control.command('click', scoped('[data-testid="collaboration-schedule-next"]'))
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  for (const key of [keys.initialStart, keys.calendarStart]) {
+    await control.command('waitFor', scoped(`[data-testid="collaboration-calendar-day-${key}"]`), {
+      visible: true,
+      timeoutMs,
+    })
+  }
   await control.command('select', scoped('[data-testid="collaboration-calendar-status-filter"]'), {
     value: 'inbox',
   })
@@ -123,17 +138,6 @@ export async function verifyCollaborationScheduleViews({
       timeoutMs,
     }
   )
-
-  const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
-  // The task range can start in the next month, which is outside today's grid.
-  // Page forward until the drop target renders instead of assuming a month.
-  for (let page = 0; page < 2; page += 1) {
-    const rendered = Number(await control.command('getElementCount', calendarTarget))
-    if (rendered > 0) break
-    await control.command('click', scoped('[data-testid="collaboration-schedule-next"]'))
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  await control.command('waitFor', calendarTarget, { visible: true, timeoutMs })
 
   const calendarBar = scoped('[data-testid^="collaboration-calendar-issue-"]')
   await control.command('waitFor', calendarBar, {

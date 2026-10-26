@@ -491,7 +491,7 @@ export function BrowserHistoryPage() {
             aria-label={t('workbench.browser_history_search')}
             placeholder={t('workbench.browser_history_search')}
             onChange={event => setSearchInput(event.target.value)}
-            className="h-9 w-full rounded-md border border-border bg-surface pl-9 pr-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:bg-background"
+            className="h-9 w-full rounded-md border border-border bg-surface pl-9 pr-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted keyboard:focus:border-primary focus:bg-background"
           />
         </div>
       </div>
