@@ -21,7 +21,7 @@ const PROMPT = 'WEWORK_CATALOG_CONTEXT_500K'
 
 function catalogRestartCompleted(log) {
   const write =
-    /app IPC request finished .* method=runtime\.codex\.catalog\.overrides\.write[^\n]* ok=true/.exec(
+    /app IPC request finished .* method=runtime\.codex\.catalog\.overrides\.(?:write|delete)[^\n]* ok=true/.exec(
       log
     )
   if (!write) return false
@@ -48,7 +48,7 @@ function catalogRestartCompleted(log) {
   return false
 }
 
-async function waitForCatalogRestart(control, executorLogPath, fromOffset) {
+export async function waitForCatalogRestart(control, executorLogPath, fromOffset) {
   const startedAt = Date.now()
   let confirmed = false
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {

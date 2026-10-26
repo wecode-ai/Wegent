@@ -2,7 +2,10 @@ import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
-import { saveCatalogAndWaitForRestart } from '../e2e/desktop/scenarios/codex-catalog-context.mjs'
+import {
+  saveCatalogAndWaitForRestart,
+  waitForCatalogRestart,
+} from '../e2e/desktop/scenarios/codex-catalog-context.mjs'
 
 const roots = []
 const persisted =
@@ -92,4 +95,29 @@ test('propagates a failed save without waiting for restart or dismissing its edi
   expect(calls).toEqual([
     { action: 'clickWhenEnabled', selector: '[data-testid="codex-catalog-editor-save"]' },
   ])
+})
+
+test('restoring a Catalog requires a fresh restart after its delete IPC', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-catalog-restore-'))
+  roots.push(root)
+  const log = join(root, 'executor.log')
+  const previous = persisted + restarted
+  await writeFile(log, previous)
+  let snapshots = 0
+  await waitForCatalogRestart(
+    {
+      async command(action, selector) {
+        expect({ action, selector }).toEqual({ action: 'snapshot', selector: 'body' })
+        snapshots++
+        await appendFile(
+          log,
+          snapshots === 1 ? persisted.replace('overrides.write', 'overrides.delete') : restarted
+        )
+        return JSON.stringify({ testIds: [], text: 'Catalog restored' })
+      },
+    },
+    log,
+    previous.length
+  )
+  expect(snapshots).toBe(2)
 })

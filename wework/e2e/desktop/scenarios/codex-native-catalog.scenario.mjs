@@ -8,6 +8,7 @@ import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 import {
   createCatalogContextVerification,
   saveCatalogAndWaitForRestart,
+  waitForCatalogRestart,
 } from './codex-catalog-context.mjs'
 
 const MODEL_ID = 'gpt-5.5'
@@ -87,7 +88,8 @@ export function createDesktopScenario(options) {
       await control.command('fill', '[data-testid="local-model-context-window-input"]', {
         value: '300001',
       })
-      await saveCatalogAndWaitForRestart(control, join(options.resultDir, 'executor.log'))
+      const executorLogPath = join(options.resultDir, 'executor.log')
+      await saveCatalogAndWaitForRestart(control, executorLogPath)
       await control.command('waitFor', ROW, { text: '已自定义' })
       const persisted = JSON.parse(await readFile(overridePath, 'utf8'))
       assert.deepEqual(persisted, [
@@ -111,7 +113,9 @@ export function createDesktopScenario(options) {
         '[data-testid="codex-model-provider-toggle-openai"]'
       )
       await control.command('waitFor', ROW, { text: '已自定义' })
+      const restoreLogOffset = (await readFile(executorLogPath, 'utf8')).length
       await control.command('clickWhenEnabled', RESTORE)
+      await waitForCatalogRestart(control, executorLogPath, restoreLogOffset)
       await waitForSnapshot(
         control,
         snapshot =>
