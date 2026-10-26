@@ -113,7 +113,8 @@ export async function configureIssueDispatchModelScenario(
 export async function createProjectFixture(
   page: Page,
   suffix: string,
-  issueTitle: string
+  issueTitle: string,
+  deviceId?: number
 ): Promise<IssueDispatchProjectFixture> {
   await page.goto('/collaboration', { waitUntil: 'domcontentloaded' })
   await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
@@ -144,7 +145,7 @@ export async function createProjectFixture(
     projectId
   )}`
 
-  await initializeProjectExecutionEnvironment(page)
+  await initializeProjectExecutionEnvironment(page, deviceId)
   await page.getByTestId('collaboration-issue-create').click()
   await page.getByTestId('cloud-todo-title').fill(issueTitle)
   await page.getByTestId('cloud-todo-detail-description').fill(ISSUE_DESCRIPTION)
@@ -156,17 +157,24 @@ export async function createProjectFixture(
   return { issueId, projectId, projectPath, workspaceId }
 }
 
-export async function initializeProjectExecutionEnvironment(page: Page): Promise<void> {
+export async function initializeProjectExecutionEnvironment(
+  page: Page,
+  deviceId?: number
+): Promise<void> {
   await selectCollaborationProjectView(page, 'manage')
   await page.getByTestId('collaboration-project-settings-environments').click()
-  const initialize = page.locator(
-    '[data-testid^="collaboration-project-execution-environment-initialize-"]'
-  )
+  const initialize =
+    deviceId == null
+      ? page.locator('[data-testid^="collaboration-project-execution-environment-initialize-"]')
+      : page.getByTestId(`collaboration-project-execution-environment-initialize-${deviceId}`)
   if ((await initialize.count()) === 0) {
     await page.getByTestId('collaboration-project-execution-environment-add').click()
-    const candidate = page
-      .locator('[data-testid^="collaboration-project-execution-environment-candidate-"]')
-      .first()
+    const candidate =
+      deviceId == null
+        ? page
+            .locator('[data-testid^="collaboration-project-execution-environment-candidate-"]')
+            .first()
+        : page.getByTestId(`collaboration-project-execution-environment-candidate-${deviceId}`)
     await expect(candidate).toBeVisible()
     await candidate.click()
   }
