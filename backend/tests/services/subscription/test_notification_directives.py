@@ -131,6 +131,25 @@ def test_parse_notification_directives_normalizes_mention_display_names() -> Non
 @pytest.mark.parametrize(
     "message",
     [
+        "Nothing changed today.\n\n【@列表：】",
+        "Nothing changed today.\n\n[@列表:]",
+        "Nothing changed today.\n\n【@列表：张三】",
+        "Nothing changed today.\n\n【mention:】",
+    ],
+)
+def test_parse_notification_directives_drops_empty_or_non_staff_mentions(
+    message: str,
+) -> None:
+    """Empty or malformed mention controls must not create bogus staff IDs."""
+    directives = parse_notification_directives(message)
+
+    assert directives.content == "Nothing changed today."
+    assert directives.mention_staff_ids == ()
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
         "Nothing changed today.\n静默",
         "Nothing changed today. (静默)",
         "Please ask @41068 to review.",

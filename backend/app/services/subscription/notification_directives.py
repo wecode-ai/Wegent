@@ -27,9 +27,9 @@ _SILENT_SUFFIX_PATTERN = re.compile(
 )
 _MENTION_SUFFIX_PATTERN = re.compile(
     r"\s*(?:\[\s*(?:@\s*列表\s*[:：]\s*|mention\s*[:：]?\s*|@\s*)"
-    r"([^\]\n]+?)\s*\]|"
+    r"([^\]\n]*?)\s*\]|"
     r"【\s*(?:@\s*列表\s*[:：]\s*|mention\s*[:：]?\s*|@\s*)"
-    r"([^】\n]+?)\s*】)\s*$",
+    r"([^】\n]*?)\s*】)\s*$",
     re.IGNORECASE,
 )
 _MENTION_ID_SPLIT_PATTERN = re.compile(r"[,，;；\s]+")
@@ -46,7 +46,11 @@ class NotificationDirectives:
 
 
 def _normalize_mention_ids(raw: str) -> list[str]:
-    """Normalize one comma-separated mention payload."""
+    """Normalize one comma-separated mention payload.
+
+    Only numeric staff IDs are kept so an empty or malformed control such as
+    ``【@列表：】`` cannot turn its marker text into a bogus mention target.
+    """
     result: list[str] = []
     for part in _MENTION_ID_SPLIT_PATTERN.split(raw):
         user_id = part.strip(_MENTION_ID_EDGE_PUNCTUATION)
@@ -54,7 +58,7 @@ def _normalize_mention_ids(raw: str) -> list[str]:
             continue
         head, separator, display_name = user_id.replace("：", ":").partition(":")
         head = head.strip(_MENTION_ID_EDGE_PUNCTUATION)
-        if not head:
+        if not head or not head.isdigit():
             continue
         if separator and display_name.strip():
             result.append(f"{head}:{display_name.strip(_MENTION_ID_EDGE_PUNCTUATION)}")
@@ -63,21 +67,24 @@ def _normalize_mention_ids(raw: str) -> list[str]:
     return result
 
 
-def _consume_trailing_controls(line: str) -> tuple[str, bool, list[str]]:
+def _consume_trailing_controls(line: str) -> tuple[str, bool, list[str], bool]:
     """Remove control tokens at the end of one line."""
     remaining = line.rstrip()
     silent = False
     mention_ids: list[str] = []
+    matched = False
 
     while remaining:
         silent_match = _SILENT_SUFFIX_PATTERN.search(remaining)
         if silent_match:
+            matched = True
             silent = True
             remaining = remaining[: silent_match.start()].rstrip()
             continue
 
         mention_match = _MENTION_SUFFIX_PATTERN.search(remaining)
         if mention_match:
+            matched = True
             mention_ids.extend(
                 _normalize_mention_ids(
                     mention_match.group(1) or mention_match.group(2) or ""
@@ -88,7 +95,7 @@ def _consume_trailing_controls(line: str) -> tuple[str, bool, list[str]]:
 
         break
 
-    return remaining, silent, mention_ids
+    return remaining, silent, mention_ids, matched
 
 
 def _dedupe(values: list[str]) -> tuple[str, ...]:
@@ -123,8 +130,10 @@ def parse_notification_directives(message: str | None) -> NotificationDirectives
                 continue
             break
 
-        remainder, line_silent, line_mentions = _consume_trailing_controls(line)
-        if not line_silent and not line_mentions:
+        remainder, line_silent, line_mentions, matched = _consume_trailing_controls(
+            line
+        )
+        if not matched:
             break
 
         silent = silent or line_silent
