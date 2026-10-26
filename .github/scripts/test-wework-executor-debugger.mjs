@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,7 +14,9 @@ const directory = mkdtempSync(join(tmpdir(), "wework-executor-debugger-"));
 try {
   const executor = join(directory, "executor");
   const wrapper = `${executor}.gdb`;
-  symlinkSync("/usr/bin/printf", executor);
+  // Multicall utilities can reject an unrelated executable name.
+  writeFileSync(executor, '#!/usr/bin/env bash\nprintf "$@"\n');
+  chmodSync(executor, 0o755);
   copyFileSync(
     new URL("./run-wework-executor-with-gdb.sh", import.meta.url),
     wrapper,
