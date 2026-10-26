@@ -448,7 +448,8 @@ jobs:
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
       ]
-    runs-on: ubuntu-latest
+    # setup-python uses the runner tool cache; match the noble container's ABI.
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
       HOME: /root
