@@ -12,6 +12,16 @@ Wework 文件面板使用 Markdown 渲染器预览 Markdown 文档，将其他�
 
 HTML 必须继续使用沙箱预览，不得允许预览内容访问 Wework 主页面的同源状态。
 
+## Office 文档滚动
+
+PowerPoint 以连续幻灯片列表显示，文件查看器必须提供受面板高度约束的滚动容器，不能只裁剪超出区域。支持滚动和 PageDown/PageUp 查看后续幻灯片；Word 的文档滚动区和 Excel 的表格滚动区仍由各自渲染器管理。Excel 支持纵向、横向滚动及工作表切换。
+
+切换到其他文件标签后，再回到最初的文件标签，必须重新显示该标签保存的文件。初始选择不能在第一次打开后永久丢弃；当前已选中同一文件时也不应重复读取。
+
+桌面 CI 的 `office-file-preview` 检查点会生成真实的 8 页 PPTX、180 段 DOCX 和含两个工作表的 XLSX，验证末页可达、返回顶部、Excel 双向滚动、工作表切换，以及返回原 PPT 标签。运行 `pnpm --filter wework e2e:desktop --segment office-file-preview` 可单独验证，测试数据与截图保留在本地测试结果中。
+
+隔离桌面验证支持 `ai:verify wheel --session <session-path> --selector '<selector>' --value '{"deltaX":800,"deltaY":1200}'`。该命令只向目标派发像素单位的滚轮输入，用于验证渲染器自行管理的滚动；它不会强行设置 DOM 滚动位置，不能替代原生键盘翻页和实际可见内容断言。
+
 ## 图片预览
 
 PNG、JPEG、WebP、GIF、BMP、AVIF、TIFF 和 SVG 图片使用 Flyfish Viewer 的图片渲染器。查看器容器必须显式接收 Wework 当前的明暗主题，图片周围的画布使用 Wework 语义背景色。渲染器不得为图片元素强制填充白色背景；带透明通道的图片应直接显示在当前主题背景上，全屏图片预览遵循相同规则。
