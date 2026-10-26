@@ -1,32 +1,56 @@
-// SPDX-FileCopyrightText: 2026 Weibo, Inc.
-//
-// SPDX-License-Identifier: Apache-2.0
+import { describe, expect, it } from 'vitest'
+import type { DragEndEvent } from '@dnd-kit/core'
+import { projectBoardDragItemId, projectBoardDrop } from './projectBoardDnd'
 
-import { describe, expect, it } from "vitest";
-import { boardCardIdFromDropId, projectBoardDrop } from "./projectBoardDnd";
+function event(over: DragEndEvent['over']): Pick<DragEndEvent, 'active' | 'over'> {
+  return {
+    active: {
+      id: JSON.stringify(['tag', 'tag-red', 'moving']),
+      data: { current: { itemId: 'moving', columnKey: 'tag-red', groupBy: 'tag' } },
+    } as DragEndEvent['active'],
+    over,
+  }
+}
 
-describe("project board drop identity", () => {
-  it("retains both the Issue and target lane when a card appears under multiple tags", () => {
-    const event = {
-      active: {
-        id: JSON.stringify(["tag-backend", "source"]),
-        data: { current: { itemId: "source" } },
-      },
-      over: {
-        id: `todo-card:${JSON.stringify(["tag-shared", "target"])}`,
-        data: { current: { columnKey: "tag-shared" } },
-      },
-    } as unknown as Parameters<typeof projectBoardDrop>[0];
-    expect(projectBoardDrop(event)).toEqual({
-      activeItemId: "source",
-      beforeItemId: "target",
-      columnDropKey: "tag-shared",
-    });
+describe('project board drop identity', () => {
+  it('retains the source and actual target column for multi-tag cards', () => {
+    const drop = event({
+      id: 'todo-card:rendered-copy',
+      data: { current: { itemId: 'target', columnKey: 'tag-blue', groupBy: 'tag' } },
+    } as DragEndEvent['over'])
+    expect(projectBoardDragItemId(drop.active)).toBe('moving')
+    expect(projectBoardDrop(drop)).toEqual({
+      activeItemId: 'moving',
+      beforeItemId: 'target',
+      columnDropKey: 'tag-blue',
+      sourceColumnKey: 'tag-red',
+      groupBy: 'tag',
+    })
+  })
+
+  it('supports empty-column targets and cancellation without inferring a card column', () => {
     expect(
-      boardCardIdFromDropId(
-        `todo-card:${JSON.stringify(["tag-backend", "target"])}`,
-      ),
-    ).toBe("target");
-    expect(boardCardIdFromDropId("todo-column:tag-shared")).toBeNull();
-  });
-});
+      projectBoardDrop(
+        event({
+          id: 'todo-column:tag-untagged',
+          data: { current: undefined },
+        } as DragEndEvent['over'])
+      )
+    ).toMatchObject({
+      beforeItemId: null,
+      columnDropKey: 'tag-untagged',
+      sourceColumnKey: 'tag-red',
+    })
+    expect(projectBoardDrop(event(null))).toMatchObject({ beforeItemId: null, columnDropKey: null })
+  })
+
+  it('requires explicit Issue metadata instead of parsing a rendered card identity', () => {
+    const drop = event({
+      id: `todo-card:${JSON.stringify(['tag', 'tag-blue', 'target'])}`,
+      data: { current: { columnKey: 'tag-blue', groupBy: 'tag' } },
+    } as DragEndEvent['over'])
+    drop.active.data.current = undefined
+    expect(projectBoardDragItemId(drop.active)).toBeNull()
+    expect(projectBoardDrop(drop)).toMatchObject({ activeItemId: null, beforeItemId: null })
+  })
+})

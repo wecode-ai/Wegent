@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test'
+import type { DeviceInfo, DeviceListResponse } from '../../../src/apis/devices'
 import {
   configureIssueDispatchModelScenario,
   createCollaborationGroup,
@@ -25,13 +26,6 @@ import {
 const suiteSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 const DEVICE_ID = process.env.E2E_DEVICE_ID || 'e2e-claudecode-device'
 
-interface AppDevice {
-  id: number
-  device_id: string
-  device_type: string
-  execution_target_id: string
-  status: string
-}
 interface CollaborationIssue {
   id: string
   status: string
@@ -53,7 +47,7 @@ interface CollaborationExecution {
   runtimeDeviceId: string | null
 }
 
-function expectCanonicalAppRoute(execution: CollaborationExecution, device: AppDevice): void {
+function expectCanonicalAppRoute(execution: CollaborationExecution, device: DeviceInfo): void {
   expect(execution.executionDeviceId).toMatch(/^app-record-\d+$/)
   expect(execution.executionDeviceId).toBe(device.execution_target_id)
   expect(execution.runtimeDeviceId).toBe(execution.executionDeviceId)
@@ -63,7 +57,7 @@ test.describe.configure({ mode: 'serial' })
 
 test.describe('Collaboration group Executor coordination', () => {
   let model: IssueDispatchMockModel | undefined
-  let appDevice: AppDevice
+  let appDevice: DeviceInfo
 
   test.beforeAll(async ({ request }) => {
     model = await createIssueDispatchMockModel(request, suiteSuffix)
@@ -71,7 +65,7 @@ test.describe('Collaboration group Executor coordination', () => {
       headers: authHeaders(model.token),
     })
     expect(response.status(), await response.text()).toBe(200)
-    const devices = (await response.json()) as { items: AppDevice[] }
+    const devices = (await response.json()) as DeviceListResponse
     const device = devices.items.find(item => item.device_id === DEVICE_ID)
     expect(device, `Configured Executor device ${DEVICE_ID} must be registered`).toBeDefined()
     expect(device).toMatchObject({ device_type: 'app', status: 'online' })
@@ -93,7 +87,7 @@ test.describe('Collaboration group Executor coordination', () => {
     const suffix = `${Date.now()}`
     const issueTitle = `Direct agent dispatch ${suffix}`
     const result = `DIRECT_AGENT_RESULT_${suffix}`
-    const fixture = await createProjectFixture(page, suffix, issueTitle, appDevice.id)
+    const fixture = await createProjectFixture(page, suffix, issueTitle)
     const agent = await createProjectAgent(page, `Direct Agent ${suffix}`, model.modelName)
     const scenarioMatch = `task_id: ${fixture.issueId}`
     const clearScenario = await configureIssueDispatchModelScenario(request, scenarioMatch, [
@@ -184,7 +178,7 @@ test.describe('Collaboration group Executor coordination', () => {
     const synthesisEvidence = `SYNTHESIS_EVIDENCE_${suffix}`
     const finalComment =
       'The manager reviewed both collaboration rounds and submitted the Issue for confirmation.'
-    const fixture = await createProjectFixture(page, suffix, issueTitle, appDevice.id)
+    const fixture = await createProjectFixture(page, suffix, issueTitle)
     const leader = await createProjectAgent(page, `Coordinate Leader ${suffix}`, model.modelName)
     const collector = await createProjectAgent(
       page,
