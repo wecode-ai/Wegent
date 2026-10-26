@@ -105,25 +105,56 @@ async function materializeRuntime(
   validateDescriptor(runtime)
   const target = join(cacheRoot, runtime.sourceFingerprint)
   if (await runtimeMatches(target, runtime)) return
+  const startedAt = performance.now()
+  const report = (phase: string, entries = 0) =>
+    console.info('[runtime-materialize]', {
+      role: runtime.role,
+      phase,
+      elapsedMs: Math.round(performance.now() - startedAt),
+      entries,
+    })
   await publishImmutableDirectory(
     target,
     async content => {
+      report('archive-resolve-started')
       const archive = await resolveRuntimeArchive(resourceRoot, cacheRoot, runtime, fetchImpl)
-      await extractArchive(archive, content)
+      report('archive-resolve-completed')
+      await extractArchive(archive, content, report)
       if (!(await runtimeMatches(content, runtime))) {
         throw new Error(`Bundled DSH runtime identity is invalid: ${runtime.assetName}`)
       }
+      report('identity-validated')
     },
     path => runtimeMatches(path, runtime)
   )
+  report('published')
 }
 
-async function extractArchive(archive: string, destination: string): Promise<void> {
+async function extractArchive(
+  archive: string,
+  destination: string,
+  report: (phase: string, entries?: number) => void
+): Promise<void> {
+  let entries = 0
+  report('extract-started')
+  const progress = setInterval(() => report('extract-progress', entries), 15_000)
+  progress.unref()
   try {
-    await extract({ cwd: destination, file: archive, strict: true })
+    await extract({
+      cwd: destination,
+      file: archive,
+      strict: true,
+      onReadEntry: () => {
+        entries += 1
+      },
+    })
+    report('extract-completed', entries)
   } catch (error) {
+    report('extract-failed', entries)
     const detail = error instanceof Error ? error.message : String(error)
     throw new Error(`Bundled DSH runtime extraction failed: ${detail}`, { cause: error })
+  } finally {
+    clearInterval(progress)
   }
 }
 

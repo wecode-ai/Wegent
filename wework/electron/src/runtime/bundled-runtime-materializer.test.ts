@@ -15,6 +15,7 @@ const roots: string[] = []
 
 afterEach(async () => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
@@ -31,6 +32,7 @@ describe('materializeBundledRuntimes', () => {
       join(resources, 'runtimes.json'),
       JSON.stringify({ runtimes: [core, workbench] })
     )
+    const progress = vi.spyOn(console, 'info').mockImplementation(() => {})
 
     await materializeBundledRuntimes(resources, cache, ['core'])
     const identityPath = join(cache, core.sourceFingerprint, 'runtime.json')
@@ -46,6 +48,27 @@ describe('materializeBundledRuntimes', () => {
       core,
       workbench,
     ])
+    expect(progress.mock.calls.map(([, event]) => event.phase)).toEqual([
+      'archive-resolve-started',
+      'archive-resolve-completed',
+      'extract-started',
+      'extract-completed',
+      'identity-validated',
+      'published',
+    ])
+    for (const [label, event] of progress.mock.calls) {
+      expect(label).toBe('[runtime-materialize]')
+      expect(event).toEqual({
+        role: 'core',
+        phase: expect.any(String),
+        elapsedMs: expect.any(Number),
+        entries: expect.any(Number),
+      })
+      expect(event.elapsedMs).toBeGreaterThanOrEqual(0)
+    }
+    expect(progress.mock.calls[3][1].entries).toBeGreaterThan(0)
+    expect(JSON.stringify(progress.mock.calls)).not.toContain(root)
+    expect(JSON.stringify(progress.mock.calls)).not.toContain(core.assetName)
   })
 
   test('rejects an archive that does not declare the requested role', async () => {
