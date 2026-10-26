@@ -5595,6 +5595,62 @@ describe("CollaborationPlatformApp real component flow", () => {
       byTestId(`collaboration-issue-table-row-${issue.id}`).textContent,
     ).toContain("表格真实智能体");
   });
+
+  it("refreshes the current assignee name when returning to the table", async () => {
+    const { api, assignments } = createApi();
+    const humanAssignment: CollaborationAssignment = {
+      id: "table-human",
+      issue_id: issue.id,
+      target_type: "human",
+      target_id: "1",
+      target_name: "当前负责人",
+      workflow_step: "需求确认",
+      comment_id: null,
+      created_by_user_id: 1,
+      created_by_user_name: "项目经理",
+      status: "active",
+      created_at: "2026-09-12T02:00:00Z",
+      updated_at: "2026-09-12T02:00:00Z",
+    };
+    assignments.push(humanAssignment);
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          projectId: project.id,
+        }}
+      />,
+    );
+    expect(api.assignments?.list).not.toHaveBeenCalled();
+
+    await click(byTestId("collaboration-tab-table"));
+    expect(
+      byTestId(`collaboration-issue-table-row-${issue.id}`).textContent,
+    ).toContain(humanAssignment.target_name);
+    expect(api.assignments?.list).toHaveBeenCalledExactlyOnceWith(issue.id);
+
+    await click(byTestId("collaboration-tab-board"));
+    assignments.push({
+      ...humanAssignment,
+      id: "table-agent",
+      target_type: "agent",
+      target_id: agent.id,
+      target_name: agent.name,
+      workflow_step: "实现",
+      created_at: "2026-09-12T03:00:00Z",
+      updated_at: "2026-09-12T03:00:00Z",
+    });
+    await click(byTestId("collaboration-tab-table"));
+
+    const rowText = byTestId(
+      `collaboration-issue-table-row-${issue.id}`,
+    ).textContent;
+    expect(rowText).toContain(agent.name);
+    expect(rowText).not.toContain(humanAssignment.target_name);
+    expect(api.assignments?.list).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("Issue permission separation in the real shared editor", () => {
