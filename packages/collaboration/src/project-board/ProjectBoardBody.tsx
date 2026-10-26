@@ -526,19 +526,26 @@ export function ProjectBoardBody<TItem>({
                 </>
               )}
               getItemKey={getItemKey}
-              renderItem={(item, column) =>
-                dropFeedback?.itemId === getItemKey(item) &&
-                dropFeedback.columnKey === column.key ? (
+              renderItem={(item, column) => {
+                const highlighted =
+                  dropFeedback?.itemId === getItemKey(item) &&
+                  dropFeedback.columnKey === column.key;
+                // Preserve the card's drag registration when feedback changes.
+                return (
                   <div
-                    data-testid="board-drop-highlight"
-                    className="rounded-xl ring-2 ring-focus/50"
+                    data-testid={
+                      highlighted ? "board-drop-highlight" : undefined
+                    }
+                    className={
+                      highlighted
+                        ? "rounded-xl ring-2 ring-focus/50"
+                        : undefined
+                    }
                   >
                     {renderItem(item, column, state)}
                   </div>
-                ) : (
-                  renderItem(item, column, state)
-                )
-              }
+                );
+              }}
               renderItemsFooter={renderItemsFooter}
               getColumnEmptyState={getColumnEmptyState}
               renderAddIcon={() => <Plus className="h-5 w-5" />}
