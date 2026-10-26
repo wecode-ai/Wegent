@@ -223,6 +223,9 @@ export async function verifyIssueTranscriptTransfer({
 
   // Reload clears the renderer cache so the drawer must use its HTTP read path.
   await reloadMainWindow(control, 'The large Issue history did not reload')
+  await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+    visible: true,
+  })
   await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
   await control.command(
     'waitFor',
