@@ -205,10 +205,11 @@ export function createDesktopScenario({
   }
   async function openIssueWorkspace(control) {
     await ensureExperimentalFeaturesEnabled(control)
-    await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+    // Wait and click in one command: the tab strip re-renders while the
+    // workbench boots, so a separate click can miss the element.
+    await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]', {
       timeoutMs: workbenchReadyTimeoutMs,
     })
-    await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
     await selectCollaborationDomain(control, CONTENT, 'cloud')
     await control.command(
       'waitFor',
