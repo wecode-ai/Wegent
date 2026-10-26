@@ -300,6 +300,12 @@ unrelated modules do not make the summary fail.
 
 CI reliability depends on these invariants:
 
+- Scenarios holding a streaming model response must capture failures before
+  releasing it: release completes the native turn and changes the messages seen
+  by later diagnostics. The conversation-switching scenario records model batch
+  writes, flushes, UI wait timestamps, and messages before release, and temporarily
+  enables native stream diagnostics to correlate item identities and phases.
+  Diagnostics must preserve assertions and timeouts and never record credentials.
 - Model fixtures use `trackModelServerConnections` to own connection errors,
   including upgraded WebSockets. Scenarios must not forward a model client's
   `ECONNRESET` as a server error: clients can disconnect after warmup or a completed

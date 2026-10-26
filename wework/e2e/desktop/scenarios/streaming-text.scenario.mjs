@@ -916,7 +916,10 @@ export function createDesktopScenario({
     },
 
     diagnostics() {
-      return { receivedTargetRequest: Boolean(targetRequest) }
+      return {
+        receivedTargetRequest: Boolean(targetRequest),
+        conversationSwitching: conversationSwitching.diagnostics(),
+      }
     },
   }
 }

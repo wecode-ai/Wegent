@@ -22,6 +22,9 @@ const PREFIX = 'TASK_SWITCH_RUNNING'
 const SUFFIX = '\n\nTASK_SWITCH_BACKGROUND_UPDATE'
 
 export function createConversationSwitchingChecks({ uiTimeoutMs }) {
+  const timeline = []
+  let failureSnapshot
+  const record = (stage, details = {}) => timeline.push({ stage, at: Date.now(), ...details })
   let releaseTail
   let releaseDone
   const tail = new Promise(resolve => {
@@ -60,8 +63,14 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
       )
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.flushHeaders()
-      response.write(sse(events))
+      const batch = sse(events)
+      record('prefix-batch-write', { bytes: Buffer.byteLength(batch), events: events.length })
+      const writable = response.write(batch, error =>
+        record(error ? 'prefix-batch-write-failed' : 'prefix-batch-flushed', { code: error?.code })
+      )
+      record('prefix-batch-queued', { writable })
       await tail
+      record('tail-released')
       response.write(sse(textDeltaEvents(final.itemId, SUFFIX, PREFIX.length, 520)))
       await done
       output.push(final.finish.find(event => event.type === 'response.output_item.done').item)
@@ -75,11 +84,25 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
     },
 
     async verify(control) {
+      const previousDebug = await requestExecutor(
+        control,
+        'runtime.codex.stream_debug.get',
+        {},
+        uiTimeoutMs
+      )
+      await requestExecutor(
+        control,
+        'runtime.codex.stream_debug.set',
+        { enabled: true },
+        uiTimeoutMs
+      )
       try {
         await openNewChatWithE2EModel(control, uiTimeoutMs)
         await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+        record('prefix-wait-started')
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: PREFIX })
+        record('prefix-visible')
         const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         const address = debug.workbench?.currentRuntimeTask
         assert.ok(address?.taskId, 'The long running task has no address')
@@ -154,11 +177,39 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
           1,
           'Restoration duplicated a background update'
         )
+      } catch (error) {
+        record('verification-failed')
+        // Capture the held turn before cleanup completes the response and changes its state.
+        try {
+          failureSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+          const address = failureSnapshot.workbench?.currentRuntimeTask
+          if (address?.taskId) {
+            failureSnapshot.messages = JSON.parse(
+              await control.command('getRuntimeConversationMessages', 'body', {
+                value: JSON.stringify(address),
+              })
+            )
+          }
+        } catch (diagnosticError) {
+          record('failure-snapshot-error', { error: String(diagnosticError) })
+        }
+        throw error
       } finally {
         releaseTail?.()
         releaseDone?.()
+        await requestExecutor(
+          control,
+          'runtime.codex.stream_debug.set',
+          { enabled: previousDebug.enabled },
+          uiTimeoutMs
+        )
+        console.log('[desktop-e2e] conversation-switching timeline', JSON.stringify(timeline))
       }
       await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
+    },
+
+    diagnostics() {
+      return { timeline, failureSnapshot }
     },
   }
 }
