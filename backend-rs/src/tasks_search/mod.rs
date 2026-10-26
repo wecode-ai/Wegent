@@ -6,12 +6,10 @@
 //! (`app/api/endpoints/adapter/tasks.py:search_tasks_by_title` ->
 //! `task_kinds_service.get_user_tasks_by_title_with_pagination`).
 //!
-//! Source pipeline: `task_store.list_owned_task_ids` (the current page's owned
-//! active non-system tasks), `task_store.list_by_ids`, the title filter
-//! (`filter_tasks_with_title_match`), `restore_task_order`,
-//! `get_tasks_related_data_batch` (workspaces, teams, the user cache and the
-//! group-chat member counts) and `convert_to_task_dict_optimized` restricted to
-//! the `TaskInDB` response fields.
+//! The source filters titles before pagination. Because a deployment's task
+//! store may span multiple physical tables, this handler scans bounded
+//! owned-task pages, counts every title match, and only then restores the
+//! requested page before running the shared related-data projection.
 //!
 //! This route is a literal sibling of `GET /api/tasks/{task_id}`. FastAPI
 //! matches the literal `/search` first (declaration order), so the target
@@ -21,13 +19,16 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use brz_http_server::Query;
+use brz_mysql::{FromMysqlRow as _, MysqlResult};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::crd::CrdDocument;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
+use crate::task_store::TaskStore;
 use crate::tasks_db_projection::{
     TaskListResponse, TaskListRow, assemble_items, is_non_interacted_subscription, query_error,
     validate_page_limit,
@@ -35,8 +36,60 @@ use crate::tasks_db_projection::{
 
 pub mod statements;
 
-/// `search_tasks_by_title`'s `extra_limit` for the owned-task page.
-const EXTRA_LIMIT: i64 = 100;
+/// Bound each owned-task read while scanning for title matches.
+const SEARCH_SCAN_BATCH_SIZE: i64 = 200;
+
+struct TaskSearchCandidate {
+    id: i64,
+    json: Value,
+}
+
+struct OwnedTaskSearchBatch {
+    total: i64,
+    tasks: Vec<TaskSearchCandidate>,
+}
+
+struct OwnedTaskSearchResult {
+    total: i64,
+    ids: Vec<i64>,
+}
+
+#[async_trait]
+trait OwnedTaskSearchSource: Sync {
+    async fn batch(&self, user_id: i64, skip: i64, limit: i64)
+    -> MysqlResult<OwnedTaskSearchBatch>;
+}
+
+struct StoreOwnedTaskSearchSource<'a> {
+    store: &'a dyn TaskStore,
+}
+
+#[async_trait]
+impl OwnedTaskSearchSource for StoreOwnedTaskSearchSource<'_> {
+    async fn batch(
+        &self,
+        user_id: i64,
+        skip: i64,
+        limit: i64,
+    ) -> MysqlResult<OwnedTaskSearchBatch> {
+        let page = self.store.list_owned_task_ids(user_id, skip, limit).await?;
+        let raw = self.store.list_tasks_by_ids(&page.ids).await?;
+        let tasks = raw
+            .into_iter()
+            .map(TaskListRow::from_mysql_row)
+            .collect::<MysqlResult<Vec<_>>>()?
+            .into_iter()
+            .map(|row| TaskSearchCandidate {
+                id: row.id,
+                json: row.json,
+            })
+            .collect();
+        Ok(OwnedTaskSearchBatch {
+            total: page.total,
+            tasks,
+        })
+    }
+}
 
 /// `Query(..., min_length=1)`, `Query(1, ge=1)`, `Query(10, ge=1, le=100)`.
 #[derive(Debug, Deserialize)]
@@ -110,77 +163,140 @@ async fn search_tasks(
     user_id: i64,
     params: &ValidatedParams,
 ) -> brz_mysql::MysqlResult<TaskListResponse> {
-    use brz_mysql::FromMysqlRow as _;
+    let source = StoreOwnedTaskSearchSource {
+        store: state.task_store.as_ref(),
+    };
+    let matched =
+        search_owned_task_ids(&source, user_id, &params.title, params.skip, params.limit).await?;
 
-    // `get_owned_task_ids_and_total`: the page's owned task ids plus the total.
-    let page = state
-        .task_store
-        .list_owned_task_ids(user_id, params.skip, params.limit + EXTRA_LIMIT)
-        .await?;
-
-    // `load_tasks_by_ids`: the full rows of the page's ids.
-    let raw = state.task_store.list_tasks_by_ids(&page.ids).await?;
+    let raw = state.task_store.list_tasks_by_ids(&matched.ids).await?;
     let rows = raw
         .into_iter()
         .map(TaskListRow::from_mysql_row)
         .collect::<brz_mysql::MysqlResult<Vec<_>>>()?;
 
-    // `filter_tasks_with_title_match` keeps the rows whose CRD title contains
-    // the lowercased query. The source reports the matched-row count, not the
-    // store total, so `total` is counted here.
-    let title_lower = params.title.to_lowercase();
-    let mut total = 0i64;
-    let mut matched: std::collections::HashMap<i64, TaskListRow> = std::collections::HashMap::new();
-    for row in rows {
-        let crd = CrdDocument::project(&row.json);
-        let status = crd
-            .status
-            .as_ref()
-            .and_then(|status| status.status.as_deref())
-            .unwrap_or("PENDING");
-        if status == "DELETE" {
-            continue;
-        }
-        let task_title = crd
-            .spec
-            .as_ref()
-            .and_then(|spec| spec.title.as_ref())
-            .map(|title| {
-                title
-                    .to_value()
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
-        if !task_title.to_lowercase().contains(&title_lower) {
-            continue;
-        }
-        if is_non_interacted_subscription(&crd, &row.json) {
-            continue;
-        }
-        total += 1;
-        matched.insert(row.id, row);
-    }
-
-    // `restore_task_order(task_ids, id_to_task, limit)`.
+    let mut by_id: std::collections::HashMap<i64, TaskListRow> =
+        rows.into_iter().map(|row| (row.id, row)).collect();
     let mut ordered: Vec<TaskListRow> = Vec::new();
-    for id in &page.ids {
-        if let Some(row) = matched.remove(id) {
+    for id in &matched.ids {
+        if let Some(row) = by_id.remove(id) {
             ordered.push(row);
-            if ordered.len() as i64 >= params.limit {
-                break;
-            }
         }
     }
 
-    // `get_tasks_related_data_batch` + `convert_to_task_dict_optimized`.
-    assemble_items(state, user_id, &ordered, total).await
+    assemble_items(state, user_id, &ordered, matched.total).await
+}
+
+/// Match titles across the user's complete owned-task history before applying
+/// the requested page. Stores may own multiple physical task tables, so scan
+/// through their stable owned-task pages rather than applying a fixed window.
+async fn search_owned_task_ids<S: OwnedTaskSearchSource + ?Sized>(
+    source: &S,
+    user_id: i64,
+    title: &str,
+    skip: i64,
+    limit: i64,
+) -> MysqlResult<OwnedTaskSearchResult> {
+    let title_lower = title.to_lowercase();
+    let selected_end = skip.saturating_add(limit);
+    let mut matched_total = 0i64;
+    let mut ids = Vec::new();
+    let mut offset = 0i64;
+
+    loop {
+        let batch = source
+            .batch(user_id, offset, SEARCH_SCAN_BATCH_SIZE)
+            .await?;
+        let batch_len = batch.tasks.len() as i64;
+        if batch_len == 0 {
+            break;
+        }
+        for task in &batch.tasks {
+            if !task_matches_title(task, &title_lower) {
+                continue;
+            }
+            if matched_total >= skip && matched_total < selected_end {
+                ids.push(task.id);
+            }
+            matched_total += 1;
+        }
+        offset += batch_len;
+        if offset >= batch.total {
+            break;
+        }
+    }
+
+    Ok(OwnedTaskSearchResult {
+        total: matched_total,
+        ids,
+    })
+}
+
+fn task_matches_title(task: &TaskSearchCandidate, title_lower: &str) -> bool {
+    let crd = CrdDocument::project(&task.json);
+    let status = crd
+        .status
+        .as_ref()
+        .and_then(|status| status.status.as_deref())
+        .unwrap_or("PENDING");
+    if status == "DELETE" || is_non_interacted_subscription(&crd, &task.json) {
+        return false;
+    }
+    crd.spec
+        .as_ref()
+        .and_then(|spec| spec.title.as_ref())
+        .and_then(|title| title.to_value().as_str().map(str::to_owned))
+        .is_some_and(|title| title.to_lowercase().contains(title_lower))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FakeOwnedTaskSearchSource {
+        tasks: Vec<TaskSearchCandidate>,
+    }
+
+    #[async_trait]
+    impl OwnedTaskSearchSource for FakeOwnedTaskSearchSource {
+        async fn batch(
+            &self,
+            _user_id: i64,
+            skip: i64,
+            limit: i64,
+        ) -> MysqlResult<OwnedTaskSearchBatch> {
+            let start = usize::try_from(skip).unwrap().min(self.tasks.len());
+            let end = start
+                .saturating_add(usize::try_from(limit).unwrap())
+                .min(self.tasks.len());
+            Ok(OwnedTaskSearchBatch {
+                total: self.tasks.len() as i64,
+                tasks: self.tasks[start..end]
+                    .iter()
+                    .map(|task| TaskSearchCandidate {
+                        id: task.id,
+                        json: task.json.clone(),
+                    })
+                    .collect(),
+            })
+        }
+    }
+
+    fn search_candidate(id: i64, title: &str) -> TaskSearchCandidate {
+        TaskSearchCandidate {
+            id,
+            json: json!({
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Task",
+                "metadata": {
+                    "name": format!("task-{id}"),
+                    "namespace": "default"
+                },
+                "spec": { "title": title },
+                "status": { "status": "COMPLETED" }
+            }),
+        }
+    }
 
     #[test]
     fn params_validate_like_the_source_query_constraints() {
@@ -231,6 +347,41 @@ mod tests {
             .validated()
             .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn title_matches_are_found_beyond_the_first_scan_batch() {
+        let mut tasks = (0..451)
+            .map(|index| search_candidate(1_000 + index, &format!("recent task {index}")))
+            .collect::<Vec<_>>();
+        tasks[405] = search_candidate(1_405, "云主机安装embedding");
+        tasks[430] = search_candidate(1_430, "云主机 CPU 验证");
+        let source = FakeOwnedTaskSearchSource { tasks };
+
+        let first = search_owned_task_ids(&source, 1555, "云主机", 0, 1)
+            .await
+            .unwrap();
+        assert_eq!(first.total, 2);
+        assert_eq!(first.ids, vec![1_405]);
+
+        let second = search_owned_task_ids(&source, 1555, "云主机", 1, 1)
+            .await
+            .unwrap();
+        assert_eq!(second.total, 2);
+        assert_eq!(second.ids, vec![1_430]);
+    }
+
+    #[tokio::test]
+    async fn title_matching_is_case_insensitive() {
+        let source = FakeOwnedTaskSearchSource {
+            tasks: vec![search_candidate(7, "Cloud Host Embedding Setup")],
+        };
+
+        let result = search_owned_task_ids(&source, 1555, "embedding", 0, 20)
+            .await
+            .unwrap();
+        assert_eq!(result.total, 1);
+        assert_eq!(result.ids, vec![7]);
     }
 }
 

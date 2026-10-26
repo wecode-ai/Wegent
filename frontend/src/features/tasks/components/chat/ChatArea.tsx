@@ -61,6 +61,7 @@ import { useUser } from '@/features/common/UserContext'
 import { QueueMessageHandler } from '@/features/inbox'
 import type { ChatAreaExtension } from './types'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
+import { mergeTaskMentionTasks } from './taskMentionTasks'
 import { useChatStatusIndicator } from '@/features/tasks/hooks/useChatStatusIndicator'
 import {
   buildInteractiveFormCancellation,
@@ -1121,7 +1122,26 @@ function ChatAreaContent({
 
   // Get project info when in project context
   const projectIdFromUrl = getSearchParam(searchParams, 'projectId')
-  const { projects } = useProjectContext()
+  const { projects, projectTaskPages, loadProjectTasks } = useProjectContext()
+  const enableTaskMentions =
+    effectiveTaskType === 'chat' || effectiveTaskType === 'code' || effectiveTaskType === 'task'
+  const mentionTasks = useMemo(
+    () =>
+      mergeTaskMentionTasks(
+        tasks,
+        projects.map(project => project.tasks)
+      ),
+    [projects, tasks]
+  )
+  const loadMentionProjectTasks = useCallback(() => {
+    projects.forEach(project => {
+      const page = projectTaskPages[project.id]
+      if (project.task_count > 0 && !page?.loaded && !page?.loading && !page?.error) {
+        void loadProjectTasks(project.id)
+      }
+    })
+  }, [loadProjectTasks, projectTaskPages, projects])
+
   const activeProject = useMemo(() => {
     if (!projectIdFromUrl) return null
     const project = projects.find(p => p.id === Number(projectIdFromUrl))
@@ -2489,10 +2509,10 @@ function ChatAreaContent({
     teamModeFilter,
     tipText: chatState.randomTip,
     isGroupChat: selectedTaskDetail?.is_group_chat || false,
-    mentionTasks: tasks,
+    mentionTasks,
     currentTaskId: selectedTaskDetail?.id ?? selectedTask?.id,
-    enableTaskMentions:
-      effectiveTaskType === 'chat' || effectiveTaskType === 'code' || effectiveTaskType === 'task',
+    enableTaskMentions,
+    onMentionMenuOpen: loadMentionProjectTasks,
     onSelectConversation: handleSelectConversation,
     isDragging: chatState.isDragging,
     onDragEnter: handleDragEnter,
@@ -2743,13 +2763,9 @@ function ChatAreaContent({
               onReEdit={handleReEdit}
               waitingMessage={compactingWaitMessage}
               defaultSaveKnowledgeBaseId={taskType === 'knowledge' ? knowledgeBaseId : undefined}
-              mentionTasks={tasks}
+              mentionTasks={mentionTasks}
               currentTaskId={selectedTaskDetail?.id ?? selectedTask?.id}
-              enableTaskMentions={
-                effectiveTaskType === 'chat' ||
-                effectiveTaskType === 'code' ||
-                effectiveTaskType === 'task'
-              }
+              enableTaskMentions={enableTaskMentions}
             />
           </div>
         </div>

@@ -12,8 +12,9 @@ import {
   default as MentionAutocomplete,
   taskMentionName,
 } from '@/features/tasks/components/chat/MentionAutocomplete'
+import { mergeTaskMentionTasks } from '@/features/tasks/components/chat/taskMentionTasks'
 import { taskApis } from '@/apis/tasks'
-import type { Task, Team } from '@/types/api'
+import type { ProjectTask, Task, Team } from '@/types/api'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -102,6 +103,26 @@ describe('task conversation mentions', () => {
     expect(buildTaskMentionCandidates(tasks, '', 2).map(task => task.id)).toEqual([3, 1])
   })
 
+  it('includes project conversations in the empty mention candidates', () => {
+    const directTask = makeTask(1, 'Standalone conversation', '2026-04-01T00:00:00Z')
+    const projectTask = {
+      task_id: 7,
+      task_title: '云主机安装embedding',
+      task_status: 'COMPLETED',
+      device_id: 'cloud-device',
+      is_group_chat: false,
+      project_id: 2561,
+      updated_at: '2026-04-02T00:00:00Z',
+    } satisfies ProjectTask
+
+    const merged = mergeTaskMentionTasks([directTask], [[projectTask]])
+
+    expect(buildTaskMentionCandidates(merged, '', null).map(task => task.title)).toEqual([
+      '云主机安装embedding',
+      'Standalone conversation',
+    ])
+  })
+
   it('renders task rows in recency order', () => {
     const tasks = [
       makeTask(1, 'Older task', '2026-01-01T00:00:00Z'),
@@ -125,6 +146,24 @@ describe('task conversation mentions', () => {
       'mention-task-option-2',
       'mention-task-option-1',
     ])
+  })
+
+  it('requests project task candidates when the task mention menu opens', () => {
+    const onOpen = jest.fn()
+
+    render(
+      <MentionAutocomplete
+        team={null}
+        enableTaskMentions
+        onOpen={onOpen}
+        onSelect={jest.fn()}
+        onSelectTask={jest.fn()}
+        onClose={jest.fn()}
+        position={{ top: 100, bottom: 126, left: 0 }}
+      />
+    )
+
+    expect(onOpen).toHaveBeenCalledTimes(1)
   })
 
   it('keeps the group agent as the default @ selection', () => {
