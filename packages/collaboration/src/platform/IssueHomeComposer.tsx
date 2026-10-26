@@ -257,7 +257,7 @@ export function IssueHomeComposer({
   };
   const projectSelector = (
     <div className="flex min-h-10 items-center justify-center rounded-t-[26px] bg-surface px-4">
-      <label className="relative inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-text-secondary hover:bg-background/70 hover:text-text-primary focus-within:ring-2 focus-within:ring-primary/30">
+      <label className="relative inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-text-secondary hover:bg-background/70 hover:text-text-primary keyboard:focus-within:ring-2 keyboard:focus-within:ring-primary/30">
         <span className="sr-only">{projectLabel}</span>
         <span
           data-testid="collaboration-issue-project-label"

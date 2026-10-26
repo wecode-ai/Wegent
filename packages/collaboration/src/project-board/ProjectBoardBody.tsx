@@ -258,7 +258,7 @@ export function ProjectBoardBody<TItem>({
               ))}
             </select>
           </span>
-          <label className="flex h-8 min-w-52 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted focus-within:border-focus">
+          <label className="flex h-8 min-w-52 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted keyboard:focus-within:border-focus">
             <Search className="h-3.5 w-3.5" />
             <input
               data-testid="dingtalk-board-search"
@@ -336,7 +336,7 @@ export function ProjectBoardBody<TItem>({
               ))}
             </select>
           </label>
-          <label className="flex h-8 min-w-52 shrink-0 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted focus-within:border-focus">
+          <label className="flex h-8 min-w-52 shrink-0 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted keyboard:focus-within:border-focus">
             <Search className="h-3.5 w-3.5" />
             <input
               data-testid="cloud-board-search"
@@ -370,7 +370,7 @@ export function ProjectBoardBody<TItem>({
                   }
                   onClick={state.toggleFocusExecutionColumns}
                   className={classNames(
-                    "inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30",
+                    "inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-medium transition focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30",
                     state.focusExecutionColumns
                       ? "border-text-primary/20 bg-text-primary text-background hover:bg-text-primary/90"
                       : "border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary",

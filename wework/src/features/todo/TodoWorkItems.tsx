@@ -511,7 +511,7 @@ function TodoColumn({
             type="button"
             data-testid={`todo-column-add-${state}`}
             onClick={() => setQuickCreateOpen(true)}
-            className="flex h-6 w-6 items-center justify-center rounded hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+            className="flex h-6 w-6 items-center justify-center rounded hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
             aria-label={t('todo.create_action', '新建任务')}
           >
             <Plus className="h-3.5 w-3.5" />

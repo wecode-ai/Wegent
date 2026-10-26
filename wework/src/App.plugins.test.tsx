@@ -345,6 +345,7 @@ const workbenchValue: WorkbenchContextValue = {
     setSelectedModelOption: vi.fn(),
     setInput: vi.fn(),
     setInputForScope: vi.fn(),
+    getInputRevisionForScope: vi.fn().mockReturnValue(0),
     setSelectedSkills: vi.fn(),
     toggleSkill: vi.fn(),
     handleFileSelect: vi.fn(),

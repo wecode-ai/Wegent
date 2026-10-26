@@ -631,7 +631,7 @@ function ProjectCreateDialogContent({
                 setProjectName(event.target.value)
                 setProjectCreateError(null)
               }}
-              className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60"
+              className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-60"
             />
           </label>
         ) : primaryDraft ? (
@@ -642,7 +642,7 @@ function ProjectCreateDialogContent({
                 value={projectName}
                 disabled={submitting}
                 onChange={event => setProjectName(event.target.value)}
-                className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20"
+                className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20"
               />
             ) : (
               <div className="flex items-center justify-between gap-3">
