@@ -733,8 +733,8 @@ export function FileWorkspacePanel({
       !stableTarget ||
       openFileRequest?.path ||
       !initialSelection?.path ||
-      (initialSelection.isDirectory ? activeDirectoryPath : selectedFilePath) ===
-        initialSelection.path
+      selectedFilePath === initialSelection.path ||
+      (initialSelection.isDirectory && activeDirectoryPath === initialSelection.path)
     ) {
       return
     }

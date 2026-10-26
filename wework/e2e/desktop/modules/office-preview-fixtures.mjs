@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createZipFixture } from './zip-fixtures.mjs'
 
@@ -110,6 +111,12 @@ async function createWorkbook(path) {
 }
 
 export async function createOfficePreviewFixtures(directory) {
+  await mkdir(join(directory, 'folders', 'nested'), { recursive: true })
+  await writeFile(join(directory, 'folders', 'readme.txt'), 'Restored directory fixture')
+  await writeFile(
+    join(directory, 'folders', 'nested', 'already-listed.txt'),
+    'Initial directory listing'
+  )
   await createPresentation(join(directory, 'slides.pptx'))
   await createPresentation(join(directory, 'long-slides.pptx'), 32)
   await createDocument(join(directory, 'document.docx'))

@@ -1,3 +1,5 @@
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import { createOfficePreviewFixtures } from '../modules/office-preview-fixtures.mjs'
 import { createLocalProject } from '../modules/streaming-text-fixture.mjs'
@@ -178,6 +180,35 @@ async function verifyTaskSwitch(control, originalTaskId, captureScreenshot, time
   await captureScreenshot(control, 'office-preview-ppt-after-task-switch.png')
 }
 
+async function verifyRestoredDirectory(
+  control,
+  taskId,
+  otherTaskId,
+  workspacePath,
+  captureScreenshot
+) {
+  await control.command('click', `[data-testid="runtime-local-task-row-${taskId}"]`)
+  await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 32' })
+  await control.command('click', '[data-testid="assistant-markdown-link"][aria-label$="/folders"]')
+  const directoryToolbar = '[data-testid="workspace-file-path"][title$="/folders"]'
+  await control.command('waitFor', directoryToolbar)
+  await control.command('click', `[data-testid="runtime-local-task-row-${otherTaskId}"]`)
+  await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 8' })
+  await control.command('click', `[data-testid="runtime-local-task-row-${taskId}"]`)
+  await control.command('waitFor', directoryToolbar)
+  const nested = 'button[data-type="item"][aria-label="nested"]'
+  await control.command('waitFor', nested)
+  await control.command('click', nested)
+  await control.command('waitFor', 'button[data-type="item"][aria-label="already-listed.txt"]')
+  await writeFile(
+    join(workspacePath, 'folders', 'nested', 'refresh-visible.txt'),
+    'Directory refresh regression'
+  )
+  await control.command('click', '[data-testid="workspace-file-refresh-button"]')
+  await control.command('waitFor', 'button[data-type="item"][aria-label="refresh-visible.txt"]')
+  await captureScreenshot(control, 'office-preview-restored-directory-browsing.png')
+}
+
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   let runningResponse
   return {
@@ -210,7 +241,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         createSse([
           responseCreated(id),
           assistantMessage(
-            `${TASK_PROMPT}${task}_READY\n\n[Office presentation](${workspacePath}/slides.pptx)`
+            `${TASK_PROMPT}${task}_READY\n\n[Office presentation](${workspacePath}/slides.pptx)\n\n[Office folder](${workspacePath}/folders)`
           ),
           responseCompleted(id),
         ])
@@ -221,7 +252,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await createOfficePreviewFixtures(workspacePath)
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       const originalTaskId = await createTask(control, 'A', uiTimeoutMs)
-      await control.command('click', '[data-testid="assistant-markdown-link"]')
+      await control.command(
+        'click',
+        '[data-testid="assistant-markdown-link"][aria-label$="/slides.pptx"]'
+      )
       await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 8' })
       await verifyPresentation(control, captureScreenshot, uiTimeoutMs)
       await verifyDocument(control, captureScreenshot, uiTimeoutMs)
@@ -234,7 +268,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       assert.equal(runningDebug.workbench.lifecycleCurrentTaskRunning, true)
       const runningPath = runningDebug.workbench.currentRuntimeTask.workspacePath
       assert.ok(runningPath, 'A standalone task must own a workspace')
-      await control.command('click', '[data-testid="assistant-markdown-link"]')
+      await control.command(
+        'click',
+        '[data-testid="assistant-markdown-link"][aria-label$="/slides.pptx"]'
+      )
       await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 8' })
       await verifyPresentation(control, captureScreenshot, uiTimeoutMs)
       await control.command('click', `[data-testid="runtime-local-task-row-${originalTaskId}"]`)
@@ -244,6 +281,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 8' })
       await verifyPresentation(control, captureScreenshot, uiTimeoutMs)
       await captureScreenshot(control, 'office-preview-running-task-restored.png')
+      await verifyRestoredDirectory(
+        control,
+        originalTaskId,
+        runningTaskId,
+        workspacePath,
+        captureScreenshot
+      )
       assert.ok(runningResponse, 'The standalone task response must remain active')
       runningResponse.response.end(createSse([responseCompleted(runningResponse.id)]))
     },

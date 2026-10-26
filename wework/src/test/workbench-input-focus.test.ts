@@ -323,6 +323,8 @@ test('pointer suppression preserves focus backgrounds instead of disabling every
   const markup = field('bg-[#ffffff] focus:bg-[#eeeeee]')
   const baseline = computed(markup, 'pointer', { focus: false })
   const pointer = computed(markup, 'pointer')
+  expect(baseline.background).toMatch(/255[ ,]+255[ ,]+255/)
+  expect(pointer.background).toMatch(/238[ ,]+238[ ,]+238/)
   expect(pointer.background).not.toBe(baseline.background)
   expect(pointer.background).toBe(computed(markup, 'keyboard').background)
   expect(pointer.borderWidth).toBe(baseline.borderWidth)

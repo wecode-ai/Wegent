@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import { RightWorkspacePanel } from './RightWorkspacePanel'
@@ -321,6 +321,46 @@ describe('RightWorkspacePanel file tab loading', () => {
       expect(api.readWorkspaceTextFile.mock.calls.map(([, path]) => path)).toEqual([latest])
     }
   )
+
+  test('keeps browsing a new directory after restoring a saved directory', async () => {
+    const target: WorkspaceTarget = {
+      deviceId: 'fixture-device',
+      path: '/fixture/repo',
+      source: 'project',
+      workspaceSource: 'local',
+    }
+    const directory = { name: 'a', path: '/fixture/repo/a', isDirectory: true, size: 0 }
+    const child = { ...directory, name: 'b', path: '/fixture/repo/a/b' }
+    const api = {
+      listWorkspaceEntries: vi.fn(async (_deviceId: string, path: string) => ({
+        path,
+        entries: path === target.path ? [directory] : path === directory.path ? [child] : [],
+      })),
+      readWorkspaceTextFile: vi.fn(),
+    }
+    render(
+      <FileWorkspacePanel
+        target={target}
+        workspaceFileApi={api}
+        initialSelection={{ path: directory.path, isDirectory: true }}
+      />
+    )
+    const tree = await screen.findByTestId('workspace-file-tree-pierre')
+    const row = await waitFor(() => {
+      const element = tree.shadowRoot?.querySelector<HTMLElement>('[data-item-path="a/b/"]')
+      expect(element).not.toBeNull()
+      return element!
+    })
+    await act(async () => {
+      fireEvent.click(row)
+    })
+    expect(api.listWorkspaceEntries).toHaveBeenCalledWith(target.deviceId, child.path, target.path)
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('workspace-file-refresh-button'))
+    })
+    expect(api.listWorkspaceEntries.mock.calls.at(-1)?.[1]).toBe(child.path)
+    expect(api.readWorkspaceTextFile).not.toHaveBeenCalled()
+  })
 
   test('restores the original file after returning from an additional file tab', async () => {
     const target: WorkspaceTarget = {
