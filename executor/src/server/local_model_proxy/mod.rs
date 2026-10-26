@@ -4418,7 +4418,6 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(request_count.load(Ordering::SeqCst), 3);
         assert_eq!(retry_rx.try_recv().unwrap()["params"]["waiting"], true);
-        assert_eq!(retry_rx.try_recv().unwrap()["params"]["waiting"], true);
         assert_eq!(retry_rx.try_recv().unwrap()["params"]["waiting"], false);
 
         unregister(&token);

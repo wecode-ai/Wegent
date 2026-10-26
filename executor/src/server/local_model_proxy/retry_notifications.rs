@@ -55,6 +55,7 @@ impl Drop for RetryNotificationSubscription {
 /// A request owns its wait lifetime, including errors and cancellation.
 pub(super) struct RetryWait {
     thread_id: String,
+    wait_id: String,
     sender: RetrySender,
     waiting: bool,
 }
@@ -76,12 +77,16 @@ impl RetryWait {
             .clone();
         Some(Self {
             thread_id: identity.thread_id,
+            wait_id: uuid::Uuid::new_v4().to_string(),
             sender,
             waiting: false,
         })
     }
 
     pub(super) fn waiting(&mut self) {
+        if self.waiting {
+            return;
+        }
         self.waiting = true;
         self.send(true);
     }
@@ -95,6 +100,7 @@ impl RetryWait {
                 "method": METHOD,
                 "params": {
                     "threadId": self.thread_id,
+                    "waitId": self.wait_id,
                     "waiting": waiting,
                     "error": { "codexErrorInfo": "rateLimitExceeded" },
                 },
@@ -116,6 +122,37 @@ impl Drop for RetryWait {
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
+
+    #[test]
+    fn overlapping_requests_have_distinct_stable_wait_ids() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let _subscription = subscribe("overlapping-retry-owner", Some(&sender)).unwrap();
+        let body = br#"{"client_metadata":{"thread_id":"overlapping-retry-owner"}}"#;
+        let mut first = RetryWait::for_request(body).unwrap();
+        let mut second = RetryWait::for_request(body).unwrap();
+        first.waiting();
+        first.waiting();
+        let first_event = receiver.try_recv().unwrap();
+        assert!(
+            receiver.try_recv().is_err(),
+            "Repeated retry emitted a new wait"
+        );
+        second.waiting();
+        let second_event = receiver.try_recv().unwrap();
+        assert_ne!(
+            first_event["params"]["waitId"],
+            second_event["params"]["waitId"]
+        );
+        drop(first);
+        let ended = receiver.try_recv().unwrap();
+        assert_eq!(ended["params"]["waitId"], first_event["params"]["waitId"]);
+        assert_eq!(ended["params"]["waiting"], false);
+        drop(second);
+        let ended = receiver.try_recv().unwrap();
+        assert_eq!(ended["params"]["waitId"], second_event["params"]["waitId"]);
+        assert_eq!(ended["params"]["waiting"], false);
+        assert!(receiver.try_recv().is_err());
+    }
 
     #[test]
     fn retry_wait_is_scoped_and_cleared_on_request_drop() {

@@ -281,7 +281,8 @@ pub(crate) struct CodexNotificationEventMapper {
     tool_output_deltas: BTreeMap<String, String>,
     goal_status: Option<String>,
     reconnecting_block_id: Option<String>,
-    proxy_retry_wait_threads: BTreeSet<String>,
+    proxy_retry_wait_ids: BTreeSet<String>,
+    native_retry_waits: BTreeMap<String, Value>,
     completed_context_compaction_ids: BTreeSet<String>,
 }
 
@@ -318,10 +319,13 @@ impl CodexNotificationEventMapper {
             request,
         };
         let notification = codex_notification(&message);
-        if self.proxy_retry_wait_threads.is_empty()
-            && codex_notification_resumes_turn(&notification.method)
+        if codex_notification_resumes_turn(&notification.method)
+            || (notification.method == "error" && !codex_error_will_retry(notification.params))
         {
-            self.clear_reconnecting(&emit_context);
+            let thread_id = stream_thread_id(notification.params).unwrap_or_default();
+            if self.native_retry_waits.remove(&thread_id).is_some() {
+                self.refresh_reconnecting(&emit_context);
+            }
         }
         if codex_stream_debug_enabled()
             && notification.method == "item/agentMessage/delta"
@@ -691,21 +695,21 @@ impl CodexNotificationEventMapper {
                 );
             }
             "error" if codex_error_will_retry(notification.params) => {
-                self.emit_reconnecting(&emit_context, notification.params);
+                let thread_id = stream_thread_id(notification.params).unwrap_or_default();
+                self.native_retry_waits
+                    .insert(thread_id, notification.params.clone());
+                self.refresh_reconnecting(&emit_context);
             }
             crate::server::local_model_proxy::retry_notifications::METHOD => {
-                let Some(thread_id) = string_field(notification.params, "threadId") else {
+                let Some(wait_id) = string_field(notification.params, "waitId") else {
                     return;
                 };
                 if notification.params["waiting"] == true {
-                    self.proxy_retry_wait_threads.insert(thread_id);
-                    self.emit_reconnecting(&emit_context, notification.params);
+                    self.proxy_retry_wait_ids.insert(wait_id);
                 } else {
-                    self.proxy_retry_wait_threads.remove(&thread_id);
-                    if self.proxy_retry_wait_threads.is_empty() {
-                        self.clear_reconnecting(&emit_context);
-                    }
+                    self.proxy_retry_wait_ids.remove(&wait_id);
                 }
+                self.refresh_reconnecting(&emit_context);
             }
             _ => {
                 log_unhandled_codex_raw_message(

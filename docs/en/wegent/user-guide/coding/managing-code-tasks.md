@@ -199,6 +199,8 @@ The UI does not invent a countdown when the model protocol provides no precise r
 
 Subagent model rate limits also appear in their owning task. When multiple subagents are waiting, the indicator remains until all of them stop waiting; progress from the parent task does not clear it early.
 
+Concurrent model requests in the same thread have independent wait lifetimes; one recovering request does not clear another request's wait. Proxy waits and native Codex retries are also tracked independently, retaining the rate-limit indicator while any request remains rate limited.
+
 ### Stopping a Task
 
 If you need to stop a running task:

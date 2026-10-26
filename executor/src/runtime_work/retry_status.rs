@@ -34,6 +34,23 @@ fn retry_reason(params: &Value) -> &'static str {
 }
 
 impl CodexNotificationEventMapper {
+    pub(super) fn refresh_reconnecting(&mut self, context: &EventEmitContext<'_>) {
+        let params = if !self.proxy_retry_wait_ids.is_empty() {
+            Some(json!({"error": {"codexErrorInfo": "rateLimitExceeded"}}))
+        } else {
+            self.native_retry_waits
+                .values()
+                .find(|params| retry_reason(params) == "rate_limit")
+                .or_else(|| self.native_retry_waits.values().next())
+                .cloned()
+        };
+        if let Some(params) = params {
+            self.emit_reconnecting(context, &params);
+        } else {
+            self.clear_reconnecting(context);
+        }
+    }
+
     pub(super) fn emit_reconnecting(&mut self, context: &EventEmitContext<'_>, params: &Value) {
         let tool_input = json!({
             "message": params.pointer("/error/message").or_else(|| params.get("message"))
@@ -199,6 +216,7 @@ mod tests {
                     "method": crate::server::local_model_proxy::retry_notifications::METHOD,
                     "params": {
                         "threadId": "thread",
+                        "waitId": "request-1",
                         "waiting": waiting,
                         "error": { "codexErrorInfo": "rateLimitExceeded" },
                     },
@@ -228,6 +246,7 @@ mod tests {
                     "method": crate::server::local_model_proxy::retry_notifications::METHOD,
                     "params": {
                         "threadId": thread,
+                        "waitId": thread,
                         "waiting": waiting,
                         "error": { "codexErrorInfo": "rateLimitExceeded" },
                     },
@@ -242,6 +261,12 @@ mod tests {
             event_rx.try_recv().unwrap()["event"],
             "response.block.updated"
         );
+        let still_waiting = event_rx.try_recv().unwrap();
+        assert_eq!(
+            still_waiting["payload"]["data"]["updates"]["tool_input"]["retry_reason"],
+            "rate_limit"
+        );
+        assert!(still_waiting["payload"]["data"]["updates"]["status"].is_null());
         mapper.map(
             &Some(event_tx.clone()),
             "device",
@@ -260,12 +285,124 @@ mod tests {
             &ExecutionRequest::default(),
             json!({
                 "method": crate::server::local_model_proxy::retry_notifications::METHOD,
-                "params": {"threadId": "child-b", "waiting": false},
+                "params": {"threadId": "child-b", "waitId": "child-b", "waiting": false},
             }),
         );
         assert_eq!(
             event_rx.try_recv().unwrap()["payload"]["data"]["updates"]["status"],
             "done"
         );
+    }
+
+    fn proxy_wait(wait_id: &str, waiting: bool) -> Value {
+        json!({
+            "method": crate::server::local_model_proxy::retry_notifications::METHOD,
+            "params": {"threadId": "thread", "waitId": wait_id, "waiting": waiting},
+        })
+    }
+
+    #[test]
+    fn concurrent_requests_in_one_thread_keep_independent_wait_lifetimes() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
+        let mut mapper = CodexNotificationEventMapper::default();
+        for message in [
+            proxy_wait("first", true),
+            proxy_wait("second", true),
+            proxy_wait("first", false),
+            proxy_wait("second", false),
+        ] {
+            mapper.map(
+                &Some(event_tx.clone()),
+                "device",
+                "task",
+                &ExecutionRequest::default(),
+                message,
+            );
+        }
+        for _ in 0..3 {
+            let event = event_rx.try_recv().unwrap();
+            assert!(event["payload"]["data"]["updates"]["status"].is_null());
+        }
+        assert_eq!(
+            event_rx.try_recv().unwrap()["payload"]["data"]["updates"]["status"],
+            "done"
+        );
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn native_and_proxy_waits_resume_independently_in_either_order() {
+        for proxy_resumes_first in [true, false] {
+            let (event_tx, mut event_rx) = broadcast::channel(8);
+            let mut mapper = CodexNotificationEventMapper::default();
+            let native = json!({"method": "error", "params": {
+                "threadId": "native", "willRetry": true,
+                "error": {"codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 503}}}
+            }});
+            let progress = json!({"method": "turn/diff/updated", "params": {"threadId": "native"}});
+            let (first, last, remaining_reason) = if proxy_resumes_first {
+                (proxy_wait("proxy", false), progress, "connection")
+            } else {
+                (progress, proxy_wait("proxy", false), "rate_limit")
+            };
+            for message in [native, proxy_wait("proxy", true), first, last] {
+                mapper.map(
+                    &Some(event_tx.clone()),
+                    "device",
+                    "task",
+                    &ExecutionRequest::default(),
+                    message,
+                );
+            }
+            assert_eq!(
+                event_rx.try_recv().unwrap()["payload"]["data"]["block"]["tool_input"]
+                    ["retry_reason"],
+                "connection"
+            );
+            assert_eq!(
+                event_rx.try_recv().unwrap()["payload"]["data"]["updates"]["tool_input"]
+                    ["retry_reason"],
+                "rate_limit"
+            );
+            let remaining = event_rx.try_recv().unwrap();
+            assert_eq!(
+                remaining["payload"]["data"]["updates"]["tool_input"]["retry_reason"],
+                remaining_reason
+            );
+            assert!(remaining["payload"]["data"]["updates"]["status"].is_null());
+            assert_eq!(
+                event_rx.try_recv().unwrap()["payload"]["data"]["updates"]["status"],
+                "done"
+            );
+        }
+    }
+
+    #[test]
+    fn only_matching_thread_progress_or_terminal_error_clears_native_waits() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
+        let mut mapper = CodexNotificationEventMapper::default();
+        for message in [
+            json!({"method": "error", "params": {"threadId": "child", "willRetry": true,
+                "error": {"codexErrorInfo": "rateLimitExceeded"}}}),
+            json!({"method": "turn/diff/updated", "params": {"threadId": "parent"}}),
+            json!({"method": "error", "params": {"threadId": "child", "willRetry": false}}),
+        ] {
+            mapper.map(
+                &Some(event_tx.clone()),
+                "device",
+                "task",
+                &ExecutionRequest::default(),
+                message,
+            );
+        }
+        assert_eq!(
+            event_rx.try_recv().unwrap()["event"],
+            "response.block.created"
+        );
+        assert_eq!(
+            event_rx.try_recv().unwrap()["payload"]["data"]["updates"]["status"],
+            "done"
+        );
+        assert!(event_rx.try_recv().is_err());
     }
 }
