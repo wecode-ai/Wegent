@@ -46,6 +46,34 @@ async function waitForAttributeIncludes(
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
 }
 
+function monthIndex(year, month) {
+  return Number(year) * 12 + Number(month)
+}
+
+function visibleMonthIndex(title) {
+  const match = /(\d{4})年(\d{1,2})月/.exec(title ?? '')
+  return match ? monthIndex(match[1], match[2]) : null
+}
+
+// The month grid only renders the six weeks around one month, so a day a week
+// past the first task can sit outside it. Follow the month title instead of
+// clicking blindly, so an overshooting navigation is corrected as well.
+async function revealCalendarDay(control, scoped, day, timeoutMs) {
+  const selector = scoped(`[data-testid="collaboration-calendar-day-${day}"]`)
+  const title = scoped('[data-testid="collaboration-calendar"] h1')
+  const target = monthIndex(day.slice(0, 4), day.slice(5, 7))
+  const deadline = Date.now() + timeoutMs
+  let visible = null
+  while (Date.now() < deadline) {
+    if (Number(await control.command('getElementCount', selector)) > 0) return selector
+    visible = visibleMonthIndex(await control.command('getText', title))
+    const direction = visible === null || target >= visible ? 'next' : 'previous'
+    await control.command('click', scoped(`[data-testid="collaboration-schedule-${direction}"]`))
+    await new Promise(resolve => setTimeout(resolve, 400))
+  }
+  assert.fail(`The calendar never rendered ${day} (visible month index ${visible})`)
+}
+
 export async function verifyCollaborationScheduleViews({
   capture,
   control,
@@ -132,11 +160,7 @@ export async function verifyCollaborationScheduleViews({
     }
   )
 
-  const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
-  // The next Monday plus one week can fall beyond the current month's grid.
-  if (Number(await control.command('getElementCount', calendarTarget)) === 0) {
-    await control.command('click', scoped('[data-testid="collaboration-schedule-next"]'))
-  }
+  const calendarTarget = await revealCalendarDay(control, scoped, keys.calendarStart, timeoutMs)
   await control.command('waitFor', calendarTarget, { visible: true, timeoutMs })
 
   const calendarBar = scoped('[data-testid^="collaboration-calendar-issue-"]')
