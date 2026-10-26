@@ -4033,8 +4033,40 @@ fn legacy_ghost_keeps_stored_rules_in_all_thread_launches_with_runtime_declarati
         assert!(instructions.starts_with(legacy));
         assert!(instructions.ends_with(crate::artifact_cli::AGENT_INSTRUCTIONS));
         assert!(instructions.contains("artifact declare --path"));
+        assert_eq!(
+            instructions
+                .matches(external_work::SOURCE_CONTENT_INSTRUCTIONS)
+                .count(),
+            1
+        );
+        let runtime_suffix = format!(
+            "{}\n\n{}",
+            external_work::SOURCE_CONTENT_INSTRUCTIONS,
+            crate::artifact_cli::AGENT_INSTRUCTIONS
+        );
+        assert!(instructions.ends_with(runtime_suffix.as_str()));
     }
     assert_eq!(request.system_prompt, legacy);
+}
+
+#[test]
+fn text_only_thread_launches_do_not_inject_tool_or_artifact_instructions() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert("enable_tools".into(), json!(false));
+    let launch_config = CodexLaunchConfig::default();
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+    ] {
+        let instructions = params["developerInstructions"]
+            .as_str()
+            .expect("text-only instructions must reach the real SDK");
+        assert!(instructions.contains("Do not execute actions or call tools."));
+        assert!(!instructions.contains(external_work::SOURCE_CONTENT_INSTRUCTIONS));
+        assert!(!instructions.contains(crate::artifact_cli::AGENT_INSTRUCTIONS));
+    }
 }
 
 #[test]
