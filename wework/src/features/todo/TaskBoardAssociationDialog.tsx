@@ -86,9 +86,9 @@ export function TaskBoardAssociationDialog({
           aria-labelledby="task-board-association-title"
           aria-describedby="task-board-association-description"
           data-testid="task-board-association-dialog"
-          className="flex h-[min(640px,calc(100dvh-48px))] w-full max-w-[600px] flex-col overflow-hidden rounded-[20px] border border-border bg-popover text-text-primary shadow-lg"
+          className="grid h-[min(640px,calc(100dvh-48px))] w-full max-w-[600px] grid-rows-[auto_auto_minmax(6rem,1fr)_auto] overflow-x-hidden overflow-y-auto overscroll-contain rounded-[20px] border border-border bg-popover text-text-primary shadow-lg"
         >
-          <header className="relative shrink-0 px-5 pb-5 pt-5">
+          <header className="relative px-5 pb-5 pt-5">
             <div className="flex items-center gap-2 pr-12 md:pr-9">
               <LayoutDashboard className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
               <h2 id="task-board-association-title" className="heading-sm min-w-0 truncate">
@@ -115,7 +115,7 @@ export function TaskBoardAssociationDialog({
             </Button>
           </header>
 
-          <div className="shrink-0 px-5 pb-3">
+          <div className="px-5 pb-3">
             <div className="mb-2 flex items-center justify-between gap-3 text-xs text-text-muted">
               <label htmlFor="task-board-association-search">
                 {t('workbench.task_board_association_existing', '关联已有看板任务')}
@@ -139,7 +139,7 @@ export function TaskBoardAssociationDialog({
           <div
             data-testid="task-board-association-list"
             aria-busy={loading}
-            className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3 [scrollbar-gutter:stable]"
+            className="min-h-0 overflow-y-auto overscroll-contain px-3 pb-3 [scrollbar-gutter:stable]"
           >
             {loading ? (
               <div
@@ -197,7 +197,7 @@ export function TaskBoardAssociationDialog({
             )}
           </div>
 
-          <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-5 py-4">
+          <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-5 py-4">
             <p className="min-w-0 flex-1 text-xs text-text-muted">
               {t('workbench.task_board_association_create_description')}
             </p>
