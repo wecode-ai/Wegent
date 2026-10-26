@@ -448,7 +448,7 @@ jobs:
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
       ]
-    # setup-python reuses the host tool cache inside the Noble container.
+    # setup-python uses the runner tool cache; match the noble container's ABI.
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
