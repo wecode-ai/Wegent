@@ -153,6 +153,7 @@ use stand_in_approval::stand_in_mcp_approval_overrides;
 mod overload_recovery;
 #[path = "codex/plugin_skills.rs"]
 mod plugin_skills;
+mod startup;
 #[path = "codex/thread_action.rs"]
 mod thread_action;
 
@@ -2031,26 +2032,17 @@ async fn run_codex_app_server_turn_on_shared_client(
             let turn_input = turn_input(&request.prompt);
             turn_fields.push(("input_items", turn_input.len().to_string()));
             log_executor_event("codex shared turn request started", &turn_fields);
-            let turn_start_response = match timeout_at(
+            let turn_start_response = startup::wait_for_shared_startup(
+                client,
+                &thread_id,
                 startup_deadline,
+                startup_timeout_seconds,
                 client.request(
                     "turn/start",
                     turn_start_params(&thread_id, request, &launch_config, turn_input),
                 ),
             )
-            .await
-            {
-                Ok(Ok(response)) => response,
-                Ok(Err(error)) => return Err(error),
-                Err(_) => {
-                    return Err(recover_stalled_shared_turn(
-                        client,
-                        &thread_id,
-                        startup_timeout_seconds,
-                    )
-                    .await);
-                }
-            };
+            .await?;
             turn_start_response_id(&turn_start_response)
         };
         if let Some(turn_id) = active_turn_id.as_ref() {
@@ -2503,12 +2495,16 @@ async fn read_shared_turn_notifications(
             match timeout_at(startup_deadline, receive_notification).await {
                 Ok(received) => received?,
                 Err(_) => {
-                    return Err(recover_stalled_shared_turn(
+                    startup::recover_stalled_shared_turn(
                         client,
                         thread_id,
                         startup_timeout_seconds,
                     )
-                    .await);
+                    .await?;
+                    // The shared process is still executing this turn. Keep its
+                    // subscription and cancellation handler until it settles.
+                    waiting_for_initial_progress = false;
+                    continue;
                 }
             }
         } else if let Some(deadline) = goal_continuation_deadline {
@@ -2713,7 +2709,13 @@ async fn read_shared_turn_notifications(
                                 .map(|response| (response, true))
                         }
                     };
-                    let start = timeout_at(startup_deadline, continuation);
+                    let start = startup::wait_for_shared_startup(
+                        client,
+                        thread_id,
+                        startup_deadline,
+                        startup_timeout_seconds,
+                        continuation,
+                    );
                     let response = if let Some(cancel_rx) = options.cancellation.as_mut() {
                         tokio::select! {
                             biased;
@@ -2726,17 +2728,7 @@ async fn read_shared_turn_notifications(
                     } else {
                         start.await
                     };
-                    let (response, restarted) = match response {
-                        Ok(response) => response?,
-                        Err(_) => {
-                            return Err(recover_stalled_shared_turn(
-                                client,
-                                thread_id,
-                                startup_timeout_seconds,
-                            )
-                            .await)
-                        }
-                    };
+                    let (response, restarted) = response?;
                     if restoring_goal {
                         overload_recovery::sync_goal_snapshot(
                             state,
@@ -2965,31 +2957,6 @@ fn should_wait_for_goal_continuation(
     goal_was_active_at_turn_start
         && matches!(outcome, ExecutionOutcome::Completed { .. })
         && state.goal_is_active()
-}
-
-async fn recover_stalled_shared_turn(
-    client: &CodexAppServerClient,
-    thread_id: &str,
-    timeout_seconds: u64,
-) -> String {
-    let restarted = client.restart_stalled_turn_process(thread_id).await;
-    log_executor_event(
-        "codex shared turn startup stalled",
-        &[
-            ("thread_id", thread_id.to_owned()),
-            ("timeout_seconds", timeout_seconds.to_string()),
-            ("app_server_restarted", restarted.to_string()),
-        ],
-    );
-    if restarted {
-        format!(
-            "codex app-server turn made no model or tool progress for {timeout_seconds}s; the shared app-server was restarted"
-        )
-    } else {
-        format!(
-            "codex app-server turn made no model or tool progress for {timeout_seconds}s; restart was skipped to preserve other active turns"
-        )
-    }
 }
 
 fn codex_notification_has_initial_progress(message: &Value, state: &CodexRunState) -> bool {

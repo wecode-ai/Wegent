@@ -827,7 +827,8 @@ function shouldIgnoreStaleRunningTranscript(current: RuntimeTaskLifecycleSnapsho
   return Boolean(
     current &&
     !current.derived.isRunning &&
-    (current.turn.outcome !== null ||
+    (current.task?.goalExecutionStatus === 'needsAttention' ||
+      current.turn.outcome !== null ||
       (current.goalStatus !== 'active' &&
         current.task !== null &&
         isRuntimeTaskAuthoritativeCompletion(current.task)))
