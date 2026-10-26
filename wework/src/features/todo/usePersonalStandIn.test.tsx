@@ -10,7 +10,6 @@ function fixture() {
     userId: 7,
     executionDeviceId: 'old-device',
     version: 1,
-    autoSelect: false,
     roles: [newStandInRole('old-device', 'default')],
   }
   const personalGet = vi.fn(async () => settings)

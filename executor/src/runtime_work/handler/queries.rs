@@ -360,6 +360,10 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "before_cursor"));
         let after_cursor = string_field(&payload, "afterCursor")
             .or_else(|| string_field(&payload, "after_cursor"));
+        let search_match_requested = before_cursor
+            .as_deref()
+            .or(after_cursor.as_deref())
+            .is_some_and(crate::runtime_work::codex_transcript_search::is_search_cursor);
         if before_cursor.is_some() && after_cursor.is_some() {
             return Err(AppIpcError::new(
                 "bad_request",
@@ -369,7 +373,8 @@ impl RuntimeWorkRpcHandler {
         let include_full_content = bool_field(&payload, "includeFullContent")
             .or_else(|| bool_field(&payload, "include_full_content"))
             .unwrap_or(false);
-        let full_item_content = include_full_content
+        let full_item_content = search_match_requested
+            || include_full_content
             || payload
                 .get("transcriptProtocolVersion")
                 .and_then(Value::as_u64)
@@ -406,6 +411,20 @@ impl RuntimeWorkRpcHandler {
         let session_id = requested_session_id.or(linked_session_id);
         let running_hint = local_link.as_ref().is_some_and(|link| link.running);
         let local_execution_running = self.is_active_local_task(&local_task_id);
+        if let (Some(link), Some(cursor)) = (
+            local_link.as_ref(),
+            before_cursor.as_deref().or(after_cursor.as_deref()),
+        ) {
+            if let Some(response) = super::transcript_search::cached_search_match_response(
+                link,
+                cursor,
+                limit,
+                local_execution_running,
+                after_cursor.is_some(),
+            )? {
+                return Ok(response);
+            }
+        }
         if navigation_only {
             if !direct_thread_override
                 && local_link
@@ -764,7 +783,7 @@ impl RuntimeWorkRpcHandler {
             let superseded = superseded_transcript_turn_ids(&link.runtime_handle);
             if let Some(turns) = thread.get_mut("turns").and_then(Value::as_array_mut) {
                 turns.retain(|turn| {
-                    string_field(turn, "id").map_or(true, |id| !superseded.contains(&id.as_str()))
+                    string_field(turn, "id").map_or(true, |id| !superseded.contains(id.as_str()))
                 });
             }
         }
@@ -785,7 +804,7 @@ impl RuntimeWorkRpcHandler {
                     transcript_messages(&thread, &self.device_id)
                 }
             });
-        if !direct_thread_override {
+        if !direct_thread_override && !search_match_requested {
             self.merge_active_codex_transcript(&local_task_id, &mut thread);
             self.repair_legacy_task_activity_time(&local_task_id, &thread);
         }
@@ -811,8 +830,15 @@ impl RuntimeWorkRpcHandler {
                     after_cursor.as_deref(),
                 );
             }
-            let presentations =
+            let mut presentations =
                 native_page_user_presentations(user_message_presentations(link), &thread);
+            if search_match_requested {
+                // Search slices restore metadata only for items in their bounded
+                // neighborhood; unrelated prompts stay in the original page.
+                for presentation in &mut presentations {
+                    presentation["ensureVisible"] = json!(false);
+                }
+            }
             if thread["timeline"] == true {
                 bind_native_user_presentations(&mut messages, &presentations);
             }
@@ -826,7 +852,9 @@ impl RuntimeWorkRpcHandler {
             );
             remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
         }
-        attach_legacy_thread_preview(&mut messages, &thread, page_before_cursor.is_some());
+        if !search_match_requested {
+            attach_legacy_thread_preview(&mut messages, &thread, page_before_cursor.is_some());
+        }
         if before_cursor.is_none()
             && after_cursor.is_none()
             && !include_full_content

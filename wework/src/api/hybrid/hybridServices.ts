@@ -76,6 +76,7 @@ import type {
   RuntimeTaskForkRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTranscriptRequest,
+  RuntimeTranscriptSearchRequest,
   RuntimeWorkspaceOpenRequest,
   RuntimeWorkspaceRemoveRequest,
   RuntimeWorkspaceRenameRequest,
@@ -1066,6 +1067,11 @@ export function createHybridWorkbenchServices(
         throw error
       }
     },
+    searchRuntimeTranscript(data: RuntimeTranscriptSearchRequest) {
+      return (
+        data.projectSession ? cloudServices.runtimeWorkApi! : routeByAddress(data)
+      ).searchRuntimeTranscript(data)
+    },
     async searchRuntimeWork(data: RuntimeWorkSearchRequest) {
       if (data.source === 'cloud') {
         return searchCloudRuntimeWork(data)
@@ -1721,8 +1727,24 @@ export function createHybridWorkbenchServices(
       async retrySource(userId, deviceId, source) {
         return (await standInApiForDevice(deviceId)).retrySource(userId, deviceId, source)
       },
-      async searchDingTalk(deviceId, kind, query, cursor) {
-        return (await standInApiForDevice(deviceId)).searchDingTalk(deviceId, kind, query, cursor)
+      async connectionProviders(deviceId) {
+        return (await standInApiForDevice(deviceId)).connectionProviders(deviceId)
+      },
+      async installConnectionDependencies(deviceId, providerId, aliases) {
+        return (await standInApiForDevice(deviceId)).installConnectionDependencies(
+          deviceId,
+          providerId,
+          aliases
+        )
+      },
+      async searchConnectionResources(deviceId, providerId, kind, query, cursor) {
+        return (await standInApiForDevice(deviceId)).searchConnectionResources(
+          deviceId,
+          providerId,
+          kind,
+          query,
+          cursor
+        )
       },
       async conversation(userId, deviceId, message, roleId, options) {
         return (await standInApiForDevice(deviceId)).conversation(

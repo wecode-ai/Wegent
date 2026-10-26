@@ -3,7 +3,9 @@
     "label": "在对话中查找",
     "placeholder": "搜索对话…",
     "loading": "正在搜索历史消息…",
-    "history_failed": "历史加载失败 · 重试"
+    "request_failed": "搜索失败 · 重试",
+    "load_failed": "历史加载失败 · 重试",
+    "locate_failed": "无法定位结果 · 重新搜索"
   },
   "history": {
     "load_failed": "会话历史加载失败",

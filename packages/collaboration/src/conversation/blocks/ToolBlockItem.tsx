@@ -333,6 +333,7 @@ function ProcessTextBlockItem({
     <div
       className={`min-w-0 overflow-x-hidden text-chat ${block.type === 'thinking' ? 'text-text-secondary' : 'text-text-primary'}`}
       data-processing-block-id={block.id}
+      data-search-region-id={block.id}
       data-message-selectable-text
       role={isRunning ? 'status' : undefined}
       aria-live={isRunning ? 'polite' : undefined}

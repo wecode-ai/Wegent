@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import { runnerModelKey } from '@wegent/collaboration'
+import type { CollaborationProject } from '@wegent/collaboration'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeWorkListResponse } from '@/types/api'
@@ -29,14 +30,14 @@ function fixture() {
       userId: 7,
       executionDeviceId: 'mac',
       version: 0,
-      autoSelect: false,
       roles: [],
       primary: {
         enabled: true,
         prompt: 'Review my work',
         preferences: 'Keep replies concise',
-        dingtalk: [
+        connections: [
           {
+            providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
             id: 'group',
             name: 'Design team',
             kind: 'group' as const,
@@ -117,6 +118,39 @@ it('persists real project and model selections and protects unsaved changes when
       primary: expect.objectContaining({
         workspace: expect.objectContaining({ workspacePath: '/repo' }),
         model: expect.objectContaining({ model_id: 'profile-model' }),
+      }),
+    })
+  )
+})
+
+it('shows existing local connection names on a remote device while limiting new selections', async () => {
+  const props = fixture()
+  props.settings.executionDeviceId = 'remote'
+  props.settings.primary!.collaboration = {
+    enabled: true,
+    allProjects: false,
+    projects: [{ id: 'local-project', store: 'local' }],
+    excludedProjects: [],
+    tags: [],
+  }
+  const projects = [
+    { id: 'local-project', name: 'Local review project', project_store: 'local' },
+    { id: 'cloud-project', name: 'Cloud review project', project_store: 'backend' },
+  ] as CollaborationProject[]
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} projects={projects} />)
+  const row = screen.getByTestId('stand-in-connection-project-local-local-project')
+  expect(row).toHaveTextContent('Local review project')
+  await user.click(row)
+  expect(screen.getByRole('checkbox', { name: 'Local review project' })).toBeChecked()
+  expect(screen.getByRole('checkbox', { name: 'Cloud review project' })).not.toBeChecked()
+  await user.click(screen.getByRole('checkbox', { name: 'Local review project' }))
+  expect(screen.queryByRole('checkbox', { name: 'Local review project' })).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('stand-in-primary-save'))
+  expect(props.onSave).toHaveBeenCalledWith(
+    expect.objectContaining({
+      primary: expect.objectContaining({
+        collaboration: expect.objectContaining({ projects: [] }),
       }),
     })
   )

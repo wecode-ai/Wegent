@@ -12,7 +12,9 @@ async function fixture(t) {
   const server = createServer((request, response) => {
     received.push({ method: request.method, url: request.url })
     request.resume()
-    response.writeHead(request.method === 'DELETE' ? 204 : 200)
+    response.writeHead(request.method === 'DELETE' ? 204 : 200, {
+      'Content-Type': 'text/plain',
+    })
     response.end(request.method === 'DELETE' ? undefined : 'real-upstream-body')
   })
   const sockets = new Set()
@@ -100,6 +102,38 @@ test(
 )
 
 test(
+  'dropped POST response commits once and permits an explicit retry without retaining credentials',
+  { timeout: 5000 },
+  async t => {
+    const { proxy, received } = await fixture(t)
+    proxy.rule = request => (request.method === 'POST' ? 'drop-response' : null)
+    const post = () =>
+      fetch(`${proxy.url}/api/plugins/installed?device_id=private`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer secret' },
+        body: 'credential-body',
+      })
+    const dropped = await post()
+    assert.equal(dropped.status, 200)
+    assert.equal(dropped.headers.get('content-type'), 'text/plain')
+    await assert.rejects(dropped.text())
+    assert.equal(received.length, 1)
+    assert.equal(received[0].method, 'POST')
+    assert.equal(proxy.requests.length, 1)
+    assert.equal(proxy.requests[0].status, 200)
+    assert.equal(proxy.requests[0].committedResponseDropped, true)
+    proxy.rule = () => null
+    const response = await post()
+    assert.equal(response.status, 200)
+    assert.equal(await response.text(), 'real-upstream-body')
+    assert.equal(received.filter(request => request.method === 'POST').length, 2)
+    assert.equal(proxy.requests[1].status, 200)
+    assert.equal(proxy.requests[1].committedResponseDropped, undefined)
+    assert.ok(!/secret|private|credential-body/.test(JSON.stringify(proxy.requests)))
+  }
+)
+
+test(
   'releases the first real response after a later response without changing either body',
   { timeout: 5000 },
   async t => {
@@ -127,9 +161,12 @@ test(
 test('drops a real response after upstream completion', { timeout: 5000 }, async t => {
   const { proxy, received } = await fixture(t)
   proxy.rule = () => 'drop-response'
-  await assert.rejects(fetch(`${proxy.url}/snapshot`))
+  const response = await fetch(`${proxy.url}/snapshot`)
+  assert.equal(response.status, 200)
+  await assert.rejects(response.text())
   assert.equal(proxy.requests[0].status, 200)
   assert.equal(proxy.requests[0].dropped, true)
+  assert.equal(proxy.requests[0].committedResponseDropped, true)
   assert.equal(received.length, 1)
 })
 
@@ -223,7 +260,9 @@ for (const fault of ['drop-response', 'hold-response']) {
     const start = proxy.requests.length
     const controller = new AbortController()
     const pending = assert.rejects(
-      fetch(`${proxy.url}${path}?project_id=project`, { signal: controller.signal })
+      fetch(`${proxy.url}${path}?project_id=project`, { signal: controller.signal }).then(
+        response => response.text()
+      )
     )
     await until(
       () => proxy.requests.slice(start),

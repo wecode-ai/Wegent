@@ -48,6 +48,8 @@ export interface RuntimePaneTranscriptLoadOptions {
   includeFullContent?: boolean
   conversationContextOnly?: boolean
   navigationOnly?: boolean
+  /** Read full search context without adopting or hydrating the live conversation. */
+  isolated?: boolean
 }
 
 export type RuntimeTranscriptLoader = (

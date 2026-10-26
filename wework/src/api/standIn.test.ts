@@ -117,7 +117,6 @@ it('routes personal saves to the selected Executor independently of stored devic
     userId: 7,
     executionDeviceId: 'current-device',
     version: 1,
-    autoSelect: false,
     roles: [],
   }
   const request = vi.fn().mockResolvedValue(saved)

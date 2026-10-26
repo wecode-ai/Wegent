@@ -82,7 +82,7 @@ pub(super) async fn load_timeline_page(
             .clone();
         let target_found = target.is_some_and(|target| {
             page_entries.iter().any(|entry| {
-                entry["turnId"].as_str() == Some(target)
+                timeline_entry_turn_id(entry).as_deref() == Some(target)
                     && (entry["type"] == "turnStarted" || entry["item"]["type"] == "userMessage")
             })
         });
@@ -134,6 +134,13 @@ pub(super) async fn load_timeline_page(
     })
 }
 
+fn timeline_entry_turn_id(entry: &Value) -> Option<String> {
+    match entry["type"].as_str() {
+        Some("item" | "turnStarted" | "turnCompleted") => string_field(entry, "turnId"),
+        _ => None,
+    }
+}
+
 fn timeline_turns(page: &Value, metadata: Vec<Value>) -> Result<Vec<Value>, String> {
     let metadata: HashMap<_, _> = metadata
         .into_iter()
@@ -151,7 +158,7 @@ fn timeline_turns(page: &Value, metadata: Vec<Value>) -> Result<Vec<Value>, Stri
             return Err("timeline page is not in canonical order".to_owned());
         }
         previous_position = Some(position);
-        let Some(turn_id) = string_field(entry, "turnId") else {
+        let Some(turn_id) = timeline_entry_turn_id(entry) else {
             continue;
         };
         let index = *indexes.entry(turn_id.clone()).or_insert_with(|| {
@@ -187,6 +194,7 @@ fn timeline_turns(page: &Value, metadata: Vec<Value>) -> Result<Vec<Value>, Stri
                 if entry["type"] == "turnStarted" {
                     turn["ownsUserPresentation"] = json!(true);
                 }
+                // Native JSON-RPC responses use camelCase for lifecycle boundaries.
                 for field in ["startedAt", "completedAt", "durationMs", "status", "error"] {
                     if let Some(value) = entry.get(field).filter(|value| !value.is_null()) {
                         turn[field] = value.clone();
@@ -210,6 +218,87 @@ mod tests {
             {"type":"item","position":11,"turnId":"new","item":{"id":"stream","type":"agentMessage","text":"Still running"}}
         ]}), vec![]).unwrap();
         assert_eq!(turns[0]["status"], "inProgress");
+        assert_eq!(turns[0]["startedAt"], 123);
+    }
+
+    #[test]
+    fn native_terminal_boundaries_determine_old_turn_search_visibility() {
+        use crate::runtime_work::transcript_search_text::{
+            codex_turn_search_regions, AsyncReplySearchProjection,
+        };
+
+        for (status, narrative, content, error, expected_status, expected_text) in [
+            (
+                "interrupted",
+                Some("interrupted"),
+                "aborted",
+                None,
+                "cancelled",
+                vec!["interrupted"],
+            ),
+            (
+                "failed",
+                None,
+                "API error: needle",
+                Some("API error: needle"),
+                "failed",
+                vec![],
+            ),
+            (
+                "interrupted",
+                None,
+                "Useful partial needle",
+                None,
+                "cancelled",
+                vec!["Useful partial needle"],
+            ),
+            ("completed", None, "aborted", None, "done", vec!["aborted"]),
+        ] {
+            let mut entries =
+                vec![json!({"type":"turnStarted","position":1,"turnId":"old","startedAt":123})];
+            if let Some(text) = narrative {
+                entries.push(json!({"type":"item","position":2,"turnId":"old","item":{
+                    "id":"narrative","type":"agentMessage","phase":"commentary","text":text
+                }}));
+            }
+            entries.push(json!({"type":"item","position":3,"turnId":"old","item":{
+                "id":"answer","type":"agentMessage","phase":"final_answer","text":content
+            }}));
+            entries.push(json!({"type":"turnCompleted","position":4,"turnId":"old",
+                "status":status,"startedAt":123,"completedAt":124,"durationMs":1000,
+                "error":error.map(|message| json!({"message":message}))
+            }));
+            // The recent turn metadata page does not contain this older turn.
+            let turns = timeline_turns(
+                &json!({"data":entries}),
+                vec![json!({"id":"recent","status":"completed"})],
+            )
+            .unwrap();
+            let turn = &turns[0];
+            assert_eq!(turn["timelineCompleted"], true);
+            assert_eq!(turn["startedAt"], 123);
+            assert_eq!(turn["completedAt"], 124);
+            assert_eq!(turn["durationMs"], 1000);
+            assert_eq!(
+                super::super::transcript::turn_assistant_status(turn),
+                expected_status
+            );
+            let regions = codex_turn_search_regions(
+                turn,
+                &HashMap::new(),
+                None,
+                &mut AsyncReplySearchProjection::default(),
+            );
+            assert_eq!(
+                regions
+                    .iter()
+                    .map(|region| region.text.as_str())
+                    .collect::<Vec<_>>(),
+                expected_text,
+                "{status}"
+            );
+            assert_eq!(turn["error"]["message"].as_str(), error);
+        }
     }
 
     #[test]

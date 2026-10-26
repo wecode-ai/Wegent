@@ -15,6 +15,8 @@ import {
 } from './runtimeConversationCache'
 
 type Reader = (request: RuntimeTranscriptRequest) => Promise<RuntimeTranscriptResponse>
+type ReadOptions = Omit<RuntimeTranscriptRequest, keyof RuntimeTaskAddress>
+type SynchronizationOptions = ReadOptions & { isolated?: boolean }
 interface Writer {
   threadId?: string | null
   generation: number
@@ -24,12 +26,25 @@ const requests = new Map<string, Promise<RuntimePaneTranscript>>()
 const conversations = new Map<string, Writer>()
 export class SupersededConversationRead extends Error {}
 
+/** Canonical page projection is shared by snapshot writers and isolated viewers. */
+async function readRuntimeConversation(
+  read: Reader,
+  address: RuntimeTaskAddress,
+  options: ReadOptions
+): Promise<RuntimePaneTranscript> {
+  const response = await read({ ...address, ...options })
+  if (!Array.isArray(response.turns))
+    throw new Error('Runtime transcript response is missing canonical turns')
+  return projectRuntimePaneTranscript(response)
+}
+
 /** All viewers and recovery triggers share one serial snapshot writer per conversation. */
 export function synchronizeRuntimeConversation(
   read: Reader,
   address: RuntimeTaskAddress,
-  options: Omit<RuntimeTranscriptRequest, keyof RuntimeTaskAddress> = {}
+  { isolated, ...options }: SynchronizationOptions = {}
 ): Promise<RuntimePaneTranscript> {
+  if (isolated) return readRuntimeConversation(read, address, options)
   const conversationKey = runtimeConversationKey(address)
   const writer: Writer = conversations.get(conversationKey) ?? { generation: 0 }
   if (address.threadId && writer.threadId && address.threadId !== writer.threadId)
@@ -60,11 +75,8 @@ export function synchronizeRuntimeConversation(
     if (!options.navigationOnly) adoptRuntimeConversationThread(address, address.threadId)
     const token = options.navigationOnly ? null : beginRuntimeConversationHydration(address)
     try {
-      const response = await read({ ...address, ...options })
+      const transcript = await readRuntimeConversation(read, address, options)
       if (writer.generation !== generation) throw new SupersededConversationRead()
-      if (!Array.isArray(response.turns))
-        throw new Error('Runtime transcript response is missing canonical turns')
-      const transcript = projectRuntimePaneTranscript(response)
       if (token && operation.isCurrent()) {
         completeRuntimeConversationHydration(
           address,
@@ -95,11 +107,11 @@ export function synchronizeRuntimeConversation(
 export async function readRuntimeThreadConversation(
   read: Reader,
   address: RuntimeTaskAddress,
-  options: Omit<RuntimeTranscriptRequest, keyof RuntimeTaskAddress> = {}
+  options: ReadOptions = {}
 ): Promise<RuntimePaneTranscript> {
   if (!address.threadId) throw new Error('A thread view requires an explicit thread identity')
-  const response = await read({ ...address, ...options })
-  if (response.threadId !== address.threadId)
+  const transcript = await readRuntimeConversation(read, address, options)
+  if (transcript.threadId !== address.threadId)
     throw new Error('Runtime returned a different thread for the requested view')
-  return projectRuntimePaneTranscript(response)
+  return transcript
 }

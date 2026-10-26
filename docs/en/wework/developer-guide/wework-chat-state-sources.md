@@ -385,6 +385,36 @@ The pane may therefore skip restoration only when both the loaded key and the di
 
 Cover this path with both a component race test and a real desktop scenario: keep one task running, switch rapidly between it and a completed task, then verify that every historical turn in the completed task remains visible after switching back.
 
+## Visible Text for Conversation Find
+
+Find uses a shared display-region contract: each region provides visible prose,
+the stable ID of its first native item, and source spans back to the original
+items. Continuous prose is joined before Markdown parsing; user, guidance and
+actual tool boundaries determine segmentation. Hidden failure or cancellation
+placeholders, valid plugin-result markers and annotation controls are excluded;
+meaningful partial output remains searchable. Cache, native-page and legacy
+adapters use the same contract and regression cases.
+
+The index and DOM highlighter use identical Unicode-scalar case matching. Hit
+ranges are half-open UTF-16 offsets into the visible original text, and case
+expansions cannot produce a partial-character match. The server returns the
+region ID and range for validation against the current projection; the client
+must not reparse individual items to guess their position. Source mappings do
+not invent original positions for virtual separators. Request, history-read and
+visible-location failures use distinct messages in the existing status control.
+A location failure starts a fresh search instead of reloading the stale anchor.
+
+Cached match and context pages first select a message window using `limit`, then
+expand it to the complete contiguous interval of every included canonical turn.
+Interleaved turns expand the interval until its boundaries stabilize; cursors use
+the final first and last messages. Failure, cancellation, guidance segments and
+text deduplication therefore use complete projections, so pagination preserves
+existing match identities and visibility. Isolated context reads do not change
+the original conversation identity, cache or concurrent hydration generation.
+Context pages merge in their requested direction, and closing find restores the
+original reading state. Performance diagnostics are not a functional highlight
+acceptance signal.
+
 ## Long Output Memory Boundary
 
 The Wework chat UI must not keep complete long-running output in React state. `WorkbenchMessage.content`, thinking/text/plan block `content`, and tool block `toolOutput` must enter `messages` through the shared preview-window path:
