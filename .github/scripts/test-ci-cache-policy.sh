@@ -416,6 +416,14 @@ if ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
   fail "Platform E2E shards must consume the immutable toolchain image without runtime installs"
 fi
 
+# setup-python uses the runner's mounted tool cache inside the Noble container.
+if ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
+  "$workflow_dir/e2e-tests.yml" | grep -F 'runs-on: ubuntu-24.04' >/dev/null ||
+  ! grep -Eq '^FROM mcr.microsoft.com/playwright:v[0-9.]+-noble$' \
+    "$script_dir/../../docker/wework-e2e/browser.Dockerfile"; then
+  fail "Platform E2E runner and browser container must use compatible Ubuntu 24.04 Python libraries"
+fi
+
 local_executor_start="$script_dir/start-local-e2e-executor.sh"
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
