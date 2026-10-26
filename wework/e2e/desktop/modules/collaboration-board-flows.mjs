@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict'
 
+export async function waitForVisibleBoardCard(control, selector) {
+  await control.command('waitFor', selector)
+  await control.command('scrollIntoView', selector)
+  await control.command('waitFor', selector, { visible: true })
+}
+
 export async function waitForBoardValue(load, expected, message, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   let actual

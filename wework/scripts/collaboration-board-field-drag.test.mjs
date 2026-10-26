@@ -14,6 +14,30 @@ import {
   assertLaneOrder,
   verifyReadOnlyBoardDrag,
 } from '../e2e/desktop/modules/collaboration-board-field-drag.mjs'
+import { assertIssueColumns } from '../e2e/desktop/modules/collaboration-board-tag-drag.mjs'
+
+test.each([{ tags: ['drag-A', 'drag-B'] }, { tags: [] }])(
+  'reveals offscreen tag cards for $tags',
+  async ({ tags }) => {
+    let visible = null
+    const asserted = []
+    const control = {
+      async command(action, selector, options = {}) {
+        if (action === 'scrollIntoView') visible = selector
+        if (action === 'waitFor' && options.visible !== undefined) {
+          const key = selector.match(/cloud-todo-column-(tag-[^"]+)/)[1]
+          const present = key === 'tag-untagged' ? tags.length === 0 : tags.includes(key.slice(4))
+          assert.equal(options.visible, present)
+          if (present) assert.equal(visible, selector, 'The tag card is outside the viewport')
+          asserted.push(key)
+        }
+        return ''
+      },
+    }
+    await assertIssueColumns(control, selector => selector, 'moving', tags)
+    assert.deepEqual(asserted, ['tag-drag-A', 'tag-drag-B', 'tag-drag-C', 'tag-untagged'])
+  }
+)
 
 test('checks manual lane order after bringing each card into the viewport', async () => {
   let visible = null
