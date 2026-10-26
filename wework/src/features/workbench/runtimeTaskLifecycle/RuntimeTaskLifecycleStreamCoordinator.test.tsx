@@ -864,6 +864,64 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     }
   )
 
+  test.each(['unchanged', 'new-send', 'new-stream'])(
+    'reconciles a superseded recovered identity without overriding %s state',
+    async newerState => {
+      const store = new RuntimeTaskLifecycleStore('superseded-recovered-turn')
+      const address = runtimeTaskAddress()
+      const work = runtimeWork(true)
+      work.chats[0].tasks[0].runtimeHandle = {
+        lastTurnId: 'native-turn',
+      }
+      store.syncRuntimeWork(work)
+      store.turnStarted(address, 'recovered-turn')
+      let streamHandlers: ChatStreamHandlers = {}
+      let resolveTranscript!: (value: RuntimeTranscriptResponse) => void
+      const getRuntimeTranscript = vi.fn(
+        () =>
+          new Promise<RuntimeTranscriptResponse>(resolve => {
+            resolveTranscript = resolve
+          })
+      )
+      const services = {
+        chatStream: {
+          subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+            streamHandlers = handlers
+            return vi.fn()
+          }),
+        },
+        executorClient: { runtime: { listRuntimeWork: vi.fn(), getRuntimeTranscript } },
+      } as unknown as WorkbenchServices
+      render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+      await act(async () =>
+        streamHandlers.onChatDone?.({
+          taskId: address.taskId,
+          deviceId: address.deviceId,
+          subtaskId: 'native-turn',
+          result: {},
+        })
+      )
+      await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledOnce())
+      if (newerState === 'new-send') store.sendRequested(address)
+      if (newerState === 'new-stream') store.turnStarted(address, 'next-native-turn')
+      const beforeResolution = store.getTask(address)
+      await act(async () =>
+        resolveTranscript({
+          ...runtimeTranscript(false),
+          supersededTurnIds: ['recovered-turn'],
+          turns: [{ id: 'native-turn', status: 'completed', completedAt: 2000, items: [] }],
+        })
+      )
+      if (newerState === 'unchanged') {
+        expect(store.getTask(address)?.derived.isBusy).toBe(false)
+        expect(store.getTask(address)?.turn.latestId).toBe('native-turn')
+      } else {
+        expect(store.getTask(address)).toEqual(beforeResolution)
+        expect(store.getTask(address)?.derived.isBusy).toBe(true)
+      }
+    }
+  )
+
   test('settles a terminal turn recovered by an older transcript request', async () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()
