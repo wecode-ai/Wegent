@@ -238,7 +238,11 @@ raise "Container must use the image's uv" unless inputs["setup-uv"] == "false"
 prepare = steps.index { |step| step["run"].to_s.match?(/^\s*uv python install\b/) }
 dependencies = steps.index { |step| step["run"].to_s.match?(/\buv (?:venv|sync)\b/) }
 raise "Container Python must be prepared before dependency environments" unless prepare && dependencies && prepare < dependencies
-raise "Container Python must verify SSL before network use" unless steps.fetch(prepare).fetch("run").include?("import ssl")
+command = steps.fetch(prepare).fetch("run")
+raise "Container Python must verify SSL before network use" unless command.include?("import ssl")
+raise "Container Python must install its unversioned commands" unless command.match?(/uv python install\s+--default\b/)
+raise "Container Python must be exported for later steps" unless command.include?("GITHUB_PATH") && command.include?("uv python dir --bin")
+raise "Container Python must verify command discovery" unless command.include?("command -v python")
 RUBY
 then
   fail "Platform E2E Python must be owned and verified by the container"
