@@ -160,6 +160,7 @@ pub struct LocalBackendRunner<
     runtime_event_forwarder: Option<JoinHandle<()>>,
     runtime_event_hub: Option<ExecutorEventHub>,
     connection_status: Arc<AtomicBool>,
+    backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     connection_epoch: Arc<Mutex<u64>>,
     runtime_pull_lock: Arc<AsyncMutex<()>>,
     runtime_pull_pending: Arc<AtomicBool>,
@@ -203,6 +204,34 @@ where
         transport: T,
         session_gateway_profile: SessionGatewayProfile,
     ) -> Self {
+        let connection = Arc::new(Mutex::new(connection_snapshot_from_config(&config)));
+        Self::new_with_default_runtime_work_handler_and_connection(
+            config,
+            transport,
+            session_gateway_profile,
+            connection,
+        )
+    }
+
+    pub(crate) fn new_for_app_sidecar_with_connection(
+        config: LocalBackendConfig,
+        transport: T,
+        connection: Arc<Mutex<Option<ConnectionConfig>>>,
+    ) -> Self {
+        Self::new_with_default_runtime_work_handler_and_connection(
+            config,
+            transport,
+            SessionGatewayProfile::AppSidecar,
+            connection,
+        )
+    }
+
+    fn new_with_default_runtime_work_handler_and_connection(
+        config: LocalBackendConfig,
+        transport: T,
+        session_gateway_profile: SessionGatewayProfile,
+        connection: Arc<Mutex<Option<ConnectionConfig>>>,
+    ) -> Self {
         let (runtime_event_tx, _) = broadcast::channel(super::RUNTIME_EVENT_BUFFER_CAPACITY);
         let event_hub = ExecutorEventHub::new(runtime_event_tx.clone());
         event_hub.ensure_started();
@@ -212,9 +241,7 @@ where
                 resolve_codex_binary(),
                 runtime_event_tx,
             )
-            .with_backend_connection(Arc::new(Mutex::new(
-                connection_snapshot_from_config(&config),
-            ))),
+            .with_backend_connection(Arc::clone(&connection)),
         );
         Self::new_with_runtime_work_handler(
             config,
@@ -223,6 +250,7 @@ where
             event_hub,
             session_gateway_profile,
         )
+        .with_backend_connection(connection)
     }
 
     pub fn new_for_app_sidecar_with_shared_runtime_work_handler(
@@ -312,7 +340,10 @@ where
     }
 
     pub fn from_client_and_runner(client: LocalBackendClient<T>, runner: R) -> Self {
+        let backend_connection =
+            Arc::new(Mutex::new(connection_snapshot_from_config(&client.config)));
         Self {
+            backend_connection,
             client,
             runner,
             command_handler: Arc::new(CommandHandler),
@@ -332,6 +363,14 @@ where
             runtime_pull_lock: Arc::new(AsyncMutex::new(())),
             runtime_pull_pending: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub(crate) fn with_backend_connection(
+        mut self,
+        connection: Arc<Mutex<Option<ConnectionConfig>>>,
+    ) -> Self {
+        self.backend_connection = connection;
+        self
     }
 
     pub fn with_connection_status(mut self, connection_status: Arc<AtomicBool>) -> Self {
@@ -886,7 +925,12 @@ fn connection_snapshot_from_config(config: &LocalBackendConfig) -> Option<Connec
     })
 }
 
-fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBackendConfig) {
+fn normalize_local_task_request(
+    request: &mut ExecutionRequest,
+    config: &LocalBackendConfig,
+    connection: Option<&ConnectionConfig>,
+) {
+    let connection = connection.cloned().unwrap_or_default();
     if request.is_local_project() {
         request.clear_backend_credentials();
         if request.device_id.as_deref().unwrap_or("").trim().is_empty() {
@@ -901,7 +945,7 @@ fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBa
         .trim()
         .is_empty()
     {
-        request.backend_url = Some(config.backend_url.clone());
+        request.backend_url = Some(connection.backend_url.clone());
     }
     if request
         .auth_token
@@ -910,7 +954,7 @@ fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBa
         .trim()
         .is_empty()
     {
-        request.auth_token = Some(config.auth_token.clone());
+        request.auth_token = Some(connection.auth_token.clone());
     }
     if request
         .runtime_auth_token
@@ -918,14 +962,14 @@ fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBa
         .unwrap_or("")
         .trim()
         .is_empty()
-        && !config.runtime_auth_token.trim().is_empty()
+        && !connection.runtime_auth_token.trim().is_empty()
     {
-        request.runtime_auth_token = Some(config.runtime_auth_token.clone());
+        request.runtime_auth_token = Some(connection.runtime_auth_token.clone());
     }
     if request.device_id.as_deref().unwrap_or("").trim().is_empty() {
         request.device_id = Some(config.device_id.clone());
     }
-    crate::agents::bind_backend_model_gateway(request, &config.backend_url);
+    crate::agents::bind_backend_model_gateway(request, &connection.backend_url);
 }
 
 fn runtime_error_response(error: AppIpcError) -> Value {

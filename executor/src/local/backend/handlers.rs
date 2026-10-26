@@ -25,10 +25,12 @@ where
     pub(super) fn task_handler(&self) -> EventHandler {
         let runner = self.runner.clone();
         let config = Arc::clone(&self.client.config);
+        let backend_connection = Arc::clone(&self.backend_connection);
         let cancellations = self.cancellations.clone();
         Arc::new(move |payload| {
             let runner = runner.clone();
             let config = Arc::clone(&config);
+            let backend_connection = Arc::clone(&backend_connection);
             let cancellations = cancellations.clone();
             Box::pin(async move {
                 write_executor_log_line(&format_executor_log(
@@ -60,7 +62,10 @@ where
                         ("cwd", request.cwd().unwrap_or("<missing>").to_owned()),
                     ],
                 ));
-                normalize_local_task_request(&mut request, &config);
+                {
+                    let connection = backend_connection.lock().expect("backend connection lock");
+                    normalize_local_task_request(&mut request, &config, connection.as_ref());
+                }
                 cancellations.register_task(&request);
                 let result = runner.submit(request).await;
                 write_executor_log_line(&format_executor_log(
