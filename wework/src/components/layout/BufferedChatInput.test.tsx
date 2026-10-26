@@ -97,6 +97,7 @@ describe('BufferedChatInput', () => {
   })
 
   test('does not replace newer input when two parent acknowledgements are delayed', async () => {
+    vi.useFakeTimers()
     const acknowledgeDrafts: Array<() => void> = []
 
     function Harness() {
@@ -114,11 +115,17 @@ describe('BufferedChatInput', () => {
     }
 
     render(<Harness />)
-    const input = screen.getByTestId('chat-message-input')
-    await userEvent.type(input, 'a')
-    await waitFor(() => expect(acknowledgeDrafts).toHaveLength(1), { timeout: 500 })
-    await userEvent.type(input, 'b')
-    await waitFor(() => expect(acknowledgeDrafts).toHaveLength(2), { timeout: 500 })
+    const input = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      input.value = 'a'
+      vi.advanceTimersByTime(300)
+    })
+    expect(acknowledgeDrafts).toHaveLength(1)
+    act(() => {
+      input.value = 'ab'
+      vi.advanceTimersByTime(300)
+    })
+    expect(acknowledgeDrafts).toHaveLength(2)
 
     act(() => acknowledgeDrafts[0]?.())
     expect(input).toHaveValue('ab')
