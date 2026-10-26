@@ -291,6 +291,32 @@ def test_lazy_pending_app_is_listed_when_keywords_match(
     assert unmatched == ""
 
 
+def test_lazy_pending_app_is_listed_when_a_provider_selects_its_skill(
+    test_db: Session, test_admin_user: User, test_user: User
+) -> None:
+    """A provider-native selection activates the app without a keyword match."""
+    _create_app(
+        test_db,
+        test_admin_user,
+        slug="dingtalk_sheet",
+        tool_loading_mode="lazy",
+        keywords=["spreadsheet"],
+    )
+
+    without_selection = connector_guidance.build_connector_guidance_section(
+        test_db, test_user, mention="帮我导出本周数据"
+    )
+    with_selection = connector_guidance.build_connector_guidance_section(
+        test_db,
+        test_user,
+        mention="帮我导出本周数据",
+        provider_skills={"dingtalk-table"},
+    )
+
+    assert without_selection == ""
+    assert "wegent://modal/connector-oauth?slug=dingtalk_sheet" in with_selection
+
+
 def test_apps_sharing_an_endpoint_are_listed_once(
     test_db: Session, test_admin_user: User, test_user: User
 ) -> None:
