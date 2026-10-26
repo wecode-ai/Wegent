@@ -195,7 +195,7 @@ function MemoryCitationEntryRow({
   return (
     <button
       type="button"
-      className="group/memory-entry relative block w-full min-w-0 rounded-lg px-2 py-1 text-left text-sm leading-6 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-default disabled:hover:bg-transparent"
+      className="group/memory-entry relative block w-full min-w-0 rounded-lg px-2 py-1 text-left text-sm leading-6 transition-colors hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30 disabled:cursor-default disabled:hover:bg-transparent"
       data-testid="codex-memory-citation-entry"
       onClick={() =>
         openFileWithOptionalLocation(onOpenFile, entry.path, lineStart, lineEnd)

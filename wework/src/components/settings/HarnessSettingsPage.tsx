@@ -340,7 +340,7 @@ export function HarnessSettingsPage() {
                               },
                             }))
                           }
-                          className="h-8 rounded-lg border border-border bg-background px-2.5 text-sm text-text-primary outline-none focus:border-focus"
+                          className="h-8 rounded-lg border border-border bg-background px-2.5 text-sm text-text-primary outline-none keyboard:focus:border-focus"
                         >
                           <option value="default">
                             {t('workbench.harness_permission_default', '默认')}
@@ -376,7 +376,7 @@ export function HarnessSettingsPage() {
                           updateDraft(id, current => ({ ...current, argsText: event.target.value }))
                         }
                         rows={3}
-                        className="w-72 resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-code text-text-primary outline-none focus:border-focus max-sm:w-full"
+                        className="w-72 resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-code text-text-primary outline-none keyboard:focus:border-focus max-sm:w-full"
                       />
                     }
                   />
@@ -395,7 +395,7 @@ export function HarnessSettingsPage() {
                           updateDraft(id, current => ({ ...current, envText: event.target.value }))
                         }
                         rows={3}
-                        className="w-72 resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-code text-text-primary outline-none focus:border-focus max-sm:w-full"
+                        className="w-72 resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-code text-text-primary outline-none keyboard:focus:border-focus max-sm:w-full"
                       />
                     }
                   />

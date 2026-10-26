@@ -79,7 +79,7 @@ export function WorkspaceTerminalWindow({
                     type="button"
                     data-testid={testId('workspace-terminal-close-button')}
                     onClick={() => onCloseTerminalSession(session.session_id)}
-                    className="pointer-events-none absolute right-1 top-1/2 flex h-[18px] w-[18px] -translate-y-1/2 items-center justify-center rounded-full text-text-secondary opacity-0 transition-colors hover:bg-black/70 hover:text-white focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:pointer-events-auto group-hover:opacity-100"
+                    className="pointer-events-none absolute right-1 top-1/2 flex h-[18px] w-[18px] -translate-y-1/2 items-center justify-center rounded-full text-text-secondary opacity-0 transition-colors hover:bg-black/70 hover:text-white focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40 group-hover:pointer-events-auto group-hover:opacity-100"
                     aria-label={t('workbench.close_terminal', '关闭终端')}
                   >
                     <X className="h-3 w-3" />

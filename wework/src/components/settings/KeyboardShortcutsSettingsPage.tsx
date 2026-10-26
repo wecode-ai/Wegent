@@ -249,7 +249,7 @@ export function KeyboardShortcutsSettingsPage() {
           value={query}
           onChange={event => setQuery(event.target.value)}
           placeholder={t('workbench.keyboard_shortcuts_search', '搜索快捷键')}
-          className="h-8 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm leading-[18px] outline-none focus:border-primary"
+          className="h-8 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm leading-[18px] outline-none keyboard:focus:border-primary"
         />
       </div>
       <div>

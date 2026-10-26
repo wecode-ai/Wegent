@@ -216,7 +216,7 @@ export function ContextSettingsPage() {
                   if (event.key === 'Enter') event.currentTarget.blur()
                 }}
                 disabled={loading || saving}
-                className="w-20 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none [appearance:textfield] focus:border-primary disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                className="w-20 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none [appearance:textfield] keyboard:focus:border-primary disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
               />
               <span className="text-sm text-text-secondary">%</span>
             </div>
@@ -254,7 +254,7 @@ export function ContextSettingsPage() {
               value={supervisorPrinciples}
               onChange={event => setSupervisorPrinciples(event.target.value)}
               placeholder={t('workbench.context_settings_supervisor_placeholder')}
-              className="min-h-32 w-full resize-y rounded-lg border border-border bg-background p-3 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted focus:border-primary"
+              className="min-h-32 w-full resize-y rounded-lg border border-border bg-background p-3 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted keyboard:focus:border-primary"
             />
             <p className="mt-3 text-xs leading-5 text-text-secondary">
               {t('workbench.context_settings_supervisor_hint')}
@@ -311,7 +311,7 @@ export function ContextSettingsPage() {
                 setInstructionsSaved(false)
               }}
               placeholder={t('workbench.context_settings_wework_instructions_placeholder')}
-              className="min-h-40 w-full resize-y rounded-lg border border-border bg-background p-3 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted focus:border-primary"
+              className="min-h-40 w-full resize-y rounded-lg border border-border bg-background p-3 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted keyboard:focus:border-primary"
             />
           )}
           {instructionsError ? (

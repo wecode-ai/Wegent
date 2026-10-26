@@ -252,7 +252,8 @@
   opacity: 0.8;
 }
 
-.task-detail-assignment-save:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-assignment-save:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
 }
@@ -676,9 +677,12 @@
   background: rgb(var(--color-bg-muted));
 }
 
-.task-detail-state-assignee:has(select:focus-visible),
-.task-detail-state-due:has(input:focus-visible),
-.task-detail-state-security:has(select:focus-visible) {
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-state-assignee:has(select:focus-visible),
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-state-due:has(input:focus-visible),
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-state-security:has(select:focus-visible) {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
 }
@@ -751,7 +755,8 @@
   background: rgb(var(--color-bg-muted));
 }
 
-.task-detail-state-primary:has(select:focus-visible) {
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-state-primary:has(select:focus-visible) {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
 }
@@ -791,7 +796,8 @@
   background: rgb(var(--color-bg-muted));
 }
 
-.task-detail-state-action:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-state-action:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
 }
@@ -885,7 +891,9 @@
   background: rgb(var(--color-bg-muted));
 }
 
-.task-detail-personal-task > button:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-personal-task
+  > button:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
 }
@@ -1270,6 +1278,11 @@
 
 .task-detail-tag-editor input:focus-visible {
   border-radius: 4px;
+}
+
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-tag-editor
+  input:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
 }
@@ -1627,7 +1640,8 @@
   flex-shrink: 0;
 }
 
-.task-detail-flat-task-list:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-flat-task-list:focus-visible {
   outline: 2px solid rgb(var(--color-focus));
   outline-offset: 2px;
 }
@@ -1890,6 +1904,9 @@
 
 .task-detail-title:focus {
   background: rgb(var(--color-bg-muted));
+}
+
+:where(html:not([data-input-modality="pointer"])) .task-detail-title:focus {
   box-shadow: 0 0 0 2px rgba(35, 121, 232, 0.25);
 }
 
@@ -2403,7 +2420,8 @@
   color: rgb(var(--color-text-primary));
 }
 
-.task-activity-content-toggle:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .task-activity-content-toggle:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
 }
@@ -2519,7 +2537,8 @@
     box-shadow 120ms ease;
 }
 
-.task-detail-new-comment:focus-within {
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-new-comment:focus-within {
   border-color: rgb(var(--color-focus) / 70%);
   box-shadow: 0 0 0 2px rgb(var(--color-focus) / 10%);
 }
@@ -2580,10 +2599,18 @@
   border-top: 1px solid rgb(var(--color-border));
 }
 
-.task-detail-thread-execution summary:focus-visible,
-.task-detail-run-events > summary:focus-visible,
-.task-detail-comment-inline-composer button:focus-visible,
-.task-detail-new-comment-actions > button:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-thread-execution
+  summary:focus-visible,
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-run-events
+  > summary:focus-visible,
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-comment-inline-composer
+  button:focus-visible,
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-new-comment-actions
+  > button:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
 }
@@ -2679,6 +2706,10 @@
 
 .task-detail-ai-run-open-task:focus-visible {
   border-radius: 4px;
+}
+
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-ai-run-open-task:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
 }
@@ -2743,6 +2774,11 @@
 
 .task-detail-workspace-panel .task-detail-title:focus {
   background: transparent;
+}
+
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-workspace-panel
+  .task-detail-title:focus {
   box-shadow: 0 1px 0 rgb(var(--color-focus));
 }
 
@@ -2854,7 +2890,8 @@
   color: rgb(var(--color-text-primary));
 }
 
-.task-detail-workspace-panel
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-workspace-panel
   .task-detail-thread-actions
   > button:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
@@ -3303,7 +3340,8 @@
   padding-right: 0;
 }
 
-.task-detail-rail-download:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .task-detail-rail-download:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 55%);
   outline-offset: -2px;
 }
