@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 
 import {
   calendarDays,
+  localDateKey,
   startOfScheduleWeek,
 } from '../../packages/collaboration/src/project-schedule/model'
 import {
@@ -69,10 +70,23 @@ const monthEndSchedule = {
   ],
 }
 
+const yearEndSchedule = {
+  today: '2026-12-28T12:00:00',
+  target: '2027-01-04',
+  navigationCount: 0,
+  ranges: [
+    '2026-12-28 → 2026-12-30',
+    '2027-01-04 → 2027-01-06',
+    '2027-01-04 → 2027-01-07',
+    '2027-01-06 → 2027-01-09',
+  ],
+}
+
 test.each([
+  { ...monthEndSchedule, today: '2026-10-19T12:00:00' },
   monthEndSchedule,
   // A restored calendar can start one month behind the task date.
-  { ...monthEndSchedule, navigationCount: 1 },
+  { ...monthEndSchedule, navigationCount: 1, displayedMonthOffset: -1 },
   {
     today: '2026-10-05T12:00:00',
     target: '2026-10-19',
@@ -84,22 +98,37 @@ test.each([
       '2026-10-21 → 2026-10-24',
     ],
   },
+  yearEndSchedule,
+  { ...yearEndSchedule, navigationCount: 1, displayedMonthOffset: -1 },
 ])(
   'keeps the target date visible from $today after $navigationCount month advances',
   async fixture => {
     vi.useFakeTimers({ toFake: ['Date'] })
-    vi.setSystemTime(new Date(fixture.today))
+    const today = new Date(fixture.today)
+    vi.setSystemTime(today)
     let navigations = 0
     let rangeIndex = 0
-    const target = `collaboration-calendar-day-${fixture.target}`
+    const dayVisible = date => {
+      const displayedMonth = new Date(today.getFullYear(), today.getMonth(), 1, 12)
+      displayedMonth.setMonth(
+        displayedMonth.getMonth() + (fixture.displayedMonthOffset ?? 0) + navigations
+      )
+      return calendarDays(displayedMonth, true).some(day => localDateKey(day) === date)
+    }
     const control = {
       async command(action, selector, options) {
-        if (action === 'getElementCount' && selector.includes(target))
-          return String(navigations === fixture.navigationCount ? 1 : 0)
+        const date = selector.match(/collaboration-calendar-day-(\d{4}-\d{2}-\d{2})/)?.[1]
+        if (action === 'getElementCount' && date) return String(dayVisible(date) ? 1 : 0)
         if (action === 'click' && /collaboration-schedule-next|下一个月/.test(selector))
           navigations++
-        if (action === 'waitFor' && selector.includes(target))
+        if (action === 'waitFor' && date) {
+          expect([fixture.ranges[0].split(' → ')[0], fixture.target]).toContain(date)
+          assert.ok(
+            dayVisible(date),
+            'The requested day must remain in the displayed calendar grid'
+          )
           assert.equal(navigations, fixture.navigationCount, 'The target month was overshot')
+        }
         if (action === 'getAttribute')
           return options.value === 'aria-sort' ? 'ascending' : fixture.ranges[rangeIndex]
         if (action === 'drag' || action === 'dragBy') rangeIndex++
@@ -109,7 +138,6 @@ test.each([
         return ''
       },
     }
-
     await verifyCollaborationScheduleViews({
       capture: async () => {},
       control,
@@ -117,7 +145,6 @@ test.each([
       scoped: selector => selector,
       timeoutMs: 100,
     })
-
     expect(navigations).toBe(fixture.navigationCount)
     expect(rangeIndex).toBe(3)
   }
