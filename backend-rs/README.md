@@ -135,3 +135,16 @@ CORS to match FastAPI's outer exception handler; ordinary business errors,
 including other 500 responses, retain the public CORS policy. The gateway
 consumes the internal metadata before public delivery. Python fallback origins
 cannot choose this policy through response metadata.
+
+## 网关测试依赖
+
+知识接口回迁测试通过真实本地 Python HTTP 上游验证网关转发，并检查正常结束和启动超时后的进程清理。运行这些常规 Cargo 测试前，需要安装 `uv`、Python 3.11 或符合 Backend 项目要求的 Python，并准备 Backend 虚拟环境：
+
+```bash
+# Run from the repository root; an existing Backend environment can be reused.
+uv venv --python 3.11 backend/.venv
+cd backend-rs
+cargo test --locked --test knowledge_python_rollback
+```
+
+测试上游只使用 Python 标准库；不需要安装 Backend 业务依赖，不连接生产服务。测试通过 `uv run --no-sync --offline` 启动上游，因此环境应在测试前准备好。Rust CI 使用现有 Python/uv 安装 action 创建该环境。上述命令属于本地网关集成测试，不是产品 E2E 或 `ai:verify`。

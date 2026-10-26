@@ -124,6 +124,13 @@ export async function verifyCollaborationScheduleViews({
     }
   )
 
+  const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
+  // The next Monday plus one week can fall beyond the current month's grid.
+  if (Number(await control.command('getElementCount', calendarTarget)) === 0) {
+    await control.command('click', scoped('[data-testid="collaboration-schedule-next"]'))
+  }
+  await control.command('waitFor', calendarTarget, { visible: true, timeoutMs })
+
   const calendarBar = scoped('[data-testid^="collaboration-calendar-issue-"]')
   await control.command('waitFor', calendarBar, {
     text: issueTitle,
@@ -139,19 +146,8 @@ export async function verifyCollaborationScheduleViews({
     timeoutMs
   )
   await capture(control, 'offline-local-project-space-02-calendar-schedule.png')
-  // The month grid starts on the current month. A range that starts in the
-  // following month needs one page step before it can be a drag target.
-  const calendarStartSelector = scoped(
-    `[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`
-  )
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (Number(await control.command('getElementCount', calendarStartSelector)) > 0) break
-    await control.command('click', scoped('[data-testid="collaboration-schedule-next"]'))
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
-  }
-  await control.command('waitFor', calendarStartSelector, { visible: true, timeoutMs })
   await control.command('drag', `${calendarBar} > button:not([data-testid])`, {
-    target: calendarStartSelector,
+    target: calendarTarget,
     timeoutMs,
   })
   await waitForAttributeIncludes(

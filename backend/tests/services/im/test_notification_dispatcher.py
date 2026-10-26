@@ -663,6 +663,72 @@ async def test_dingtalk_notification_card_uses_the_selected_template(
 
 
 @pytest.mark.asyncio
+async def test_notification_without_links_still_uses_the_card(
+    test_db: Session,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Card channels keep their shape even when the notification has no link."""
+
+    _create_channel(
+        test_db,
+        channel_id=9426,
+        channel_type="dingtalk",
+        config={
+            "client_id": "ding-client-id",
+            "client_secret": encrypt_sensitive_data("ding-client-secret"),
+            "notification_card": {},
+        },
+    )
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9426,
+        channel_type="dingtalk",
+        sender_id="sender-union-1",
+        proactive_recipient_id="staff-1",
+    )
+    test_db.commit()
+    calls: list[dict[str, Any]] = []
+
+    class FakeDingTalkRobotSender:
+        def __init__(self, client_id: str, client_secret: str):
+            pass
+
+        async def send_card(
+            self,
+            user_id: str,
+            card_template_id: str,
+            card_param_map: dict[str, str],
+            preview: str = "",
+        ):
+            calls.append(
+                {
+                    "card_template_id": card_template_id,
+                    "card_param_map": card_param_map,
+                }
+            )
+            return {"success": True, "outTrackId": "track-1"}
+
+        async def send_text_message(self, user_ids, content):
+            raise AssertionError("a delivered card must replace the text push")
+
+    monkeypatch.setattr(
+        "app.services.channels.dingtalk.sender.DingTalkRobotSender",
+        FakeDingTalkRobotSender,
+    )
+
+    result = await im_notification_dispatcher.send_notification(
+        test_db,
+        session,
+        PushNotification(headline="Hello", card_headline="Hello", facts=()),
+    )
+
+    assert result["success"] is True
+    assert calls[0]["card_template_id"] == BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID
+    assert "sys_full_json_obj" not in calls[0]["card_param_map"]
+
+
+@pytest.mark.asyncio
 async def test_dingtalk_notification_card_failure_falls_back_to_markdown(
     test_db: Session,
     test_user,
