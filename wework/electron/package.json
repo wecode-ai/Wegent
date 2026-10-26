@@ -2,7 +2,7 @@
   "name": "@wegent/wework-electron",
   "private": true,
   "packageManager": "pnpm@11.7.0",
-  "version": "0.5.13-beta.4",
+  "version": "0.5.13-beta.5",
   "description": "Wework desktop workbench",
   "author": "Wecode",
   "type": "module",
