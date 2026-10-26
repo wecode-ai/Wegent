@@ -14,6 +14,9 @@ from app.db.session import SessionLocal  # noqa: E402
 from app.services.official_plugin_publisher import (  # noqa: E402
     official_plugin_publisher,
 )
+from app.services.plugin_write_coordination import (  # noqa: E402
+    configure_plugin_session,
+)
 
 
 def main() -> int:
@@ -73,6 +76,7 @@ def main() -> int:
             if value
         }
         with SessionLocal() as db:
+            configure_plugin_session(db)
             result = official_plugin_publisher.publish_package(
                 db,
                 built=built,
