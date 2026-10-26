@@ -297,11 +297,17 @@ impl RawClient {
             callback: Callback::<SocketCallback>::new(callback),
         };
 
-        // add the ack to the tuple of outstanding acks
-        self.outstanding_acks.lock()?.push(ack);
+        {
+            let mut outstanding = self.outstanding_acks.lock()?;
+            outstanding.retain(|ack| ack.time_started.elapsed() < ack.timeout);
+            outstanding.push(ack);
+        }
 
-        self.socket.send(socket_packet)?;
-        Ok(())
+        let result = self.socket.send(socket_packet);
+        if result.is_err() {
+            self.outstanding_acks.lock()?.retain(|ack| ack.id != id);
+        }
+        result
     }
 
     pub(crate) fn poll(&self) -> Result<Option<Packet>> {

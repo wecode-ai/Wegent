@@ -13,3 +13,7 @@ No registry credentials, generated outputs, or local configuration are included.
 
 Original crates.io SHA-256: a0ea53b568f32be34b573db31e16afad8b2613b2d3134ebdec505776fde5b59e
 One upstream documentation line also has trailing whitespace removed.
+
+ACK registration also prunes expired callbacks and releases failed sends in
+both clients. The asynchronous binary reader returns IncompletePacket at EOF.
+Executor transport tests cover captured-state release and transport-close delivery.

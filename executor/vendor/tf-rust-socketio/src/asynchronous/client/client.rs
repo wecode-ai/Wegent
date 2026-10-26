@@ -573,10 +573,17 @@ impl Client {
             callback: Callback::<DynAsyncCallback>::new(callback),
         };
 
-        // add the ack to the tuple of outstanding acks
-        self.outstanding_acks.write().await.push(ack);
+        {
+            let mut outstanding = self.outstanding_acks.write().await;
+            outstanding.retain(|ack| ack.time_started.elapsed() < ack.timeout);
+            outstanding.push(ack);
+        }
 
-        self.socket.read().await.send(socket_packet).await
+        let result = self.socket.read().await.send(socket_packet).await;
+        if result.is_err() {
+            self.outstanding_acks.write().await.retain(|ack| ack.id != id);
+        }
+        result
     }
 
     /// Spawns a per-packet dispatch task and tracks it so it can be aborted on

@@ -146,7 +146,7 @@ impl Socket {
             let mut attachments = Vec::new();
             while attachments_left > 0 {
                 // TODO: This is not nice! Find a different way to peek the next element while mapping the stream
-                let next = client.next().await.unwrap();
+                let next = client.next().await.ok_or(Error::IncompletePacket())?;
                 match next {
                     Err(err) => return Err(err.into()),
                     Ok(packet) => match packet.packet_id {
