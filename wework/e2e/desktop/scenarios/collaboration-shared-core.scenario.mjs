@@ -41,6 +41,27 @@ const TERMINAL_STATUS_ISSUE_TITLE = '验证终态任务不再显示执行中'
 const FIXED_TASK_TAB_CONTENT = '[data-testid="workspace-tab-content-fixed-task"]'
 const FIXED_TASK_TAB_SELECT = '[data-testid="workspace-tab-select-fixed-task"]'
 
+async function verifyCurrentTableAssignment(control, scoped, issueId, workflowStep, timeoutMs) {
+  await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+  await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+    visible: false,
+    timeoutMs,
+  })
+  await control.command('click', scoped('[data-testid="collaboration-tab-table"]'))
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="collaboration-issue-table-row-${issueId}"]`),
+    { text: workflowStep, timeoutMs }
+  )
+  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await control.command('clickWhenEnabled', scoped(`[data-testid="cloud-todo-card-${issueId}"]`), {
+    timeoutMs,
+  })
+  await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+    timeoutMs,
+  })
+}
+
 async function requestJson(baseUrl, token, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     ...options,
@@ -657,6 +678,13 @@ export function createDesktopScenario({
             notify_target: false,
           }),
         })
+        await verifyCurrentTableAssignment(
+          control,
+          scoped,
+          issue.id,
+          HUMAN_WORKFLOW_STEP,
+          uiTimeoutMs
+        )
         await request(`/api/v1/loop-items/${issue.id}/assignments`, {
           method: 'POST',
           body: JSON.stringify({
@@ -687,26 +715,12 @@ export function createDesktopScenario({
           'The real backend did not persist the Agent workflow-step assignment'
         )
         await capture(control, 'collaboration-shared-core-06-issue-activity.png')
-        await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
-        await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
-          visible: false,
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command('click', scoped('[data-testid="collaboration-tab-table"]'))
-        const tableRow = scoped(`[data-testid="collaboration-issue-table-row-${issue.id}"]`)
-        await control.command('waitFor', tableRow, {
-          text: HUMAN_WORKFLOW_STEP,
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command('waitFor', tableRow, {
-          text: AGENT_WORKFLOW_STEP,
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
-        await control.command(
-          'clickWhenEnabled',
-          scoped(`[data-testid="cloud-todo-card-${issue.id}"]`),
-          { timeoutMs: uiTimeoutMs }
+        await verifyCurrentTableAssignment(
+          control,
+          scoped,
+          issue.id,
+          AGENT_WORKFLOW_STEP,
+          uiTimeoutMs
         )
         await control.command('waitFor', activitySelector, { timeoutMs: uiTimeoutMs })
         await boardReplyModel.verify(control, issue, scoped, {
