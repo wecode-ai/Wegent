@@ -17,7 +17,7 @@ done
 curl -sf "$backend_url/api/docs" >/dev/null
 
 token="$(
-  uv run --project backend python - <<'PY'
+  uv run --project backend --no-sync python - <<'PY'
 import json
 import os
 import urllib.error
@@ -81,7 +81,7 @@ for _ in {1..60}; do
   if curl -sf \
     -H "Authorization: Bearer $token" \
     "$backend_url/api/devices" |
-    DEVICE_ID="$device_id" python -c '
+    DEVICE_ID="$device_id" uv run --project backend --no-sync python -c '
 import json
 import os
 import sys
