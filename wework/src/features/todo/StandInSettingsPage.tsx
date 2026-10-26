@@ -37,6 +37,7 @@ import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInComposer } from './StandInComposer'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import { findStandInProject } from './standInProjects'
 
 type View = 'project' | 'main' | 'connections' | 'advanced' | 'create'
 export interface StandInSettingsHandle {
@@ -395,8 +396,7 @@ export function StandInSettingsPage({
           <p data-testid="stand-in-project-agent-scope" className="mt-2 text-xs text-text-muted">
             {t('standIn.personal.project_agent_scope', {
               project:
-                projects.find(project => project.id === role.agentProject?.id)?.name ??
-                role.agentProject.id,
+                findStandInProject(projects, role.agentProject)?.name ?? role.agentProject.id,
             })}
           </p>
         )}
@@ -609,7 +609,7 @@ export function StandInSettingsPage({
                         <ChevronRight className="h-4 w-4" />
                       </button>
                     </div>
-                    {role.collaboration.enabled || role.dingtalk?.length ? (
+                    {role.collaboration.enabled || role.connections?.length ? (
                       <div
                         className="flex items-start gap-3 rounded-lg border border-border bg-muted/40 p-4"
                         data-testid="stand-in-source-summary"
@@ -629,10 +629,10 @@ export function StandInSettingsPage({
                               </p>
                             </>
                           )}
-                          {!!role.dingtalk?.length && (
+                          {!!role.connections?.length && (
                             <p className="mt-1 text-xs text-text-muted">
-                              {t('standIn.workspace.dingtalk_connections', {
-                                count: role.dingtalk.length,
+                              {t('standIn.workspace.source_connections', {
+                                count: role.connections.length,
                               })}
                             </p>
                           )}
@@ -701,7 +701,7 @@ export function StandInSettingsPage({
               {view === 'connections' && (
                 <StandInConnectionSettings
                   role={role}
-                  projects={availableProjects}
+                  projects={projects}
                   focusedProjectId={initialProject?.id}
                   disabled={saving}
                   onChange={changeRole}

@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
-import { CLOUD_DEVICE_ID } from './shared.mjs'
+import { CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID } from './shared.mjs'
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const fixture = join(repository, 'wework/e2e/desktop/fixtures/dws-account-auth.py')
@@ -129,9 +129,12 @@ export async function verifyDwsCloudAccount({
   assert.equal(JSON.parse((await store('check')).stdout).verified, true)
   await waitForValue(
     () => api('/plugin-connections'),
-    list => list.find(item => item.id === connection.id).device_ids.includes(CLOUD_DEVICE_ID),
+    list => {
+      const devices = list.find(item => item.id === connection.id).device_ids
+      return [CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID].every(device => devices.includes(device))
+    },
     timeoutMs,
-    'DWS cloud grant was not saved'
+    'DWS automatic grants for both cloud and remote executors were not saved'
   )
   await invoke(command, 'synthetic-corp:synthetic-user')
   const latest = (await api('/plugin-connections')).find(item => item.id === connection.id)

@@ -81,7 +81,10 @@ export function StandInNotificationProcessing({
         setLoaded({
           signature,
           question: pending?.renderPayload ?? null,
-          summary: notificationTextFromMessages(response.messages)?.body ?? '',
+          summary:
+            (status === 'failed' ? transcript.turns.at(-1)?.error : '') ||
+            notificationTextFromMessages(response.messages)?.body ||
+            '',
         })
       })
       .catch(cause => {

@@ -17,6 +17,8 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
   ['@wegent/dsh-transcript-sync', 'wework-transcript-sync'],
   ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
+  ['@wegent/dsh-connection-runtime', 'wework-connection-runtime'],
+  ['@wegent/dsh-connection-dingtalk', 'wework-connection-dingtalk'],
   ['@wegent/dsh-conversation-export', 'wework-conversation-export'],
   ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
   ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
@@ -31,7 +33,6 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-ui-outputs', 'wework-ui-outputs'],
   ['@wegent/dsh-voice-input', 'wework-voice-input'],
 ] as const
-const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(8).map(([packageName]) => packageName)
 const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example'] as const
 const CORE_HOST_BUNDLES = [
   '@wework/dsh-browser-auth',
@@ -41,6 +42,8 @@ const CORE_HOST_BUNDLES = [
   '@wegent/dsh-secure-storage',
   '@wegent/dsh-terminal-runtime',
   '@wegent/dsh-plugin-runtime',
+  '@wegent/dsh-connection-runtime',
+  '@wegent/dsh-connection-dingtalk',
   '@wegent/dsh-app-wework',
   '@deepseek-ai/dsh-web-app',
   '@wegent/dsh-executor-runtime',
@@ -63,6 +66,8 @@ const CORE_UI_BUNDLES = [
   '@wegent/dsh-voice-input',
 ] as const
 const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
+const CORE_UI_DEPENDENCIES: readonly string[] = CORE_UI_BUNDLES
+const OPTIONAL_CORE_BUNDLES = new Set(['@wegent/dsh-connection-dingtalk'])
 
 // User plugin packages and their manifests must survive a runtime-only reset.
 export async function resetCoreDshRuntime(dataDirectory: string): Promise<void> {
@@ -291,9 +296,15 @@ async function prepareProfile(options: {
 }): Promise<void> {
   const profileRoot = join(options.dshHome, 'profiles', PROFILE_NAME)
   const workspacePath = join(profileRoot, 'pnpm-workspace.yaml')
-  const managedBundles: string[] = options.managedUiPlugins
-    ? [...CORE_BUNDLES, ...(options.runtime.internalUiBundles ?? [])]
-    : [...CORE_HOST_BUNDLES]
+  const pluginState = objectRecord(
+    await readJsonFile(join(profileRoot, '.wework-core-plugins.json'))
+  )
+  const disabled = new Set(stringArray(pluginState.disabled))
+  const managedBundles: string[] = (
+    options.managedUiPlugins
+      ? [...CORE_BUNDLES, ...(options.runtime.internalUiBundles ?? [])]
+      : [...CORE_HOST_BUNDLES]
+  ).filter(name => !OPTIONAL_CORE_BUNDLES.has(name) || !disabled.has(name))
   const expectedStamp: ProfileStamp = {
     managedPluginCopyVersion: 1,
     dshVersion: options.runtime.version,
@@ -365,7 +376,10 @@ async function prepareProfile(options: {
     )
   )
   const userBundles = recoveredUserPlugins.bundles.filter(
-    bundle => !managedBundles.includes(bundle as never) && !removedDependencies.has(bundle)
+    bundle =>
+      !managedBundles.includes(bundle) &&
+      !managedDependencyNames.includes(bundle) &&
+      !removedDependencies.has(bundle)
   )
   await writeFile(
     join(profileRoot, 'package.json'),
@@ -554,7 +568,7 @@ function managedCoreDependencies(
       .filter(
         ([packageName]) =>
           includeUiPlugins ||
-          (!CORE_UI_DEPENDENCIES.includes(packageName as never) &&
+          (!CORE_UI_DEPENDENCIES.includes(packageName) &&
             !(runtime.internalUiPackages ?? []).includes(packageName))
       )
       .map(([packageName, root]) => [packageName, `file:${root}`])

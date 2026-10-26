@@ -1,0 +1,26 @@
+{
+  "name": "@wegent/dsh-connection-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "semver": "7.8.5"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@wegent/dsh-plugin-runtime": "0.1.0",
+    "@wegent/dsh-executor-runtime": "0.1.0"
+  }
+}
