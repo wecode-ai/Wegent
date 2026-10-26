@@ -20,14 +20,6 @@ function nextMonday() {
   return addDays(today, daysUntilMonday)
 }
 
-function monthGridContains(month, target) {
-  const first = new Date(month.getFullYear(), month.getMonth(), 1)
-  const leadingDays = (first.getDay() + 6) % 7
-  const gridStart = addDays(first, -leadingDays)
-  const gridEnd = addDays(gridStart, 41)
-  return target >= gridStart && target <= gridEnd
-}
-
 async function waitForAttributeIncludes(
   control,
   selector,
@@ -133,8 +125,11 @@ export async function verifyCollaborationScheduleViews({
   )
 
   const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
-  // The next Monday plus one week can fall beyond the current month's grid.
-  if (Number(await control.command('getElementCount', calendarTarget)) === 0) {
+  await control.command('click', scoped('[data-testid="collaboration-calendar-scale-month"]'))
+  await control.command('click', scoped('[data-testid="collaboration-schedule-today"]'))
+  // The next Monday plus one week can cross one month boundary.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (Number(await control.command('getElementCount', calendarTarget)) > 0) break
     await control.command('click', scoped('[data-testid="collaboration-schedule-next"]'))
   }
   await control.command('waitFor', calendarTarget, { visible: true, timeoutMs })
@@ -153,14 +148,6 @@ export async function verifyCollaborationScheduleViews({
     'The calendar did not render the saved start-to-end range',
     timeoutMs
   )
-  if (!monthGridContains(new Date(), calendarStart)) {
-    await control.command('click', scoped('[aria-label="下一个月"]'))
-    await control.command(
-      'waitFor',
-      scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`),
-      { visible: true, timeoutMs }
-    )
-  }
   await capture(control, 'offline-local-project-space-02-calendar-schedule.png')
   await control.command('drag', `${calendarBar} > button:not([data-testid])`, {
     target: calendarTarget,
