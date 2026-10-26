@@ -2,7 +2,7 @@ import { act, render, screen } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { StandInExecutorApi } from '@/api/standIn'
-import type { RuntimeTaskComposerCreateOptions } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import type { RuntimeTaskComposerCreateOptions } from '@/types/workbench'
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import { StandInConversation } from './StandInConversation'
 
