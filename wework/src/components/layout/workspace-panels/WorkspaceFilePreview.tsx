@@ -231,7 +231,7 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
     <section
       data-testid="workspace-binary-file-preview"
       ref={containerRef}
-      className="wework-diagram-preview relative min-w-0 flex-1 overflow-hidden bg-background"
+      className="wework-diagram-preview relative min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
       <Profiler id="workspace-file-viewer" onRender={handleFileViewerRender}>
         <FileViewer
@@ -241,7 +241,7 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
           type={viewerType}
           size={file.size}
           data-viewer-theme={themeType}
-          className="wework-workspace-file-viewer h-full w-full"
+          className="wework-workspace-file-viewer scrollbar-soft h-full w-full overflow-auto"
           options={viewerOptions}
         />
       </Profiler>

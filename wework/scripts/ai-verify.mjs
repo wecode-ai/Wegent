@@ -73,6 +73,7 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   'get-attribute': 'getAttribute',
   hover: 'hover',
   metrics: 'getElementMetrics',
+  wheel: 'wheel',
   navigate: 'navigate',
   'paste-paths': 'pastePaths',
   'paste-text': 'pasteText',
