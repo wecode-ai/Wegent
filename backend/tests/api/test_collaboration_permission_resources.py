@@ -828,3 +828,12 @@ def test_cp11_cp12_cp15_personal_issue_task_needs_no_project_device_binding(
         json={"deviceId": "personal-executor", "taskId": "personal-task"},
     )
     assert response.status_code == expected, response.text
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(test_client, ("project_members",)) as client:
+        yield client

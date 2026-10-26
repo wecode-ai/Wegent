@@ -39,10 +39,10 @@ chmod 0755 \
   "$staging_dir/electron-app/resources/bin/wegent-executor" \
   "$staging_dir/backend-rs/wegent-backend-rs"
 
+# Managed component bytes must remain identical to the finalized component manifest.
 if [[ "$(uname -s)" == "Linux" ]]; then
   strip --strip-debug \
     "$staging_dir/electron-app/WeWork" \
-    "$staging_dir/electron-app/resources/bin/wegent-executor" \
     "$staging_dir/backend-rs/wegent-backend-rs"
 fi
 

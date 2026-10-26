@@ -635,7 +635,14 @@ async fn bundled_catalog() -> Result<&'static Value, String> {
 }
 
 async fn export_bundled_catalog(binary: &str, home: &Path) -> Result<Value, String> {
-    let output = Command::new(binary)
+    export_bundled_catalog_command(Command::new(binary), home).await
+}
+
+async fn export_bundled_catalog_command(
+    mut command: Command,
+    home: &Path,
+) -> Result<Value, String> {
+    let output = command
         .args(["debug", "models", "--bundled"])
         .env("CODEX_HOME", home)
         .stdin(Stdio::null())

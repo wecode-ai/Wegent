@@ -588,7 +588,8 @@ def _validate_share_token_access(
     return True
 
 
-@router.post("/upload", response_model=AttachmentResponse)
+# MIGRATION-CANDIDATE(api="POST /api/attachments/upload"): remove after final confirmation.
+# @router.post("/upload", response_model=AttachmentResponse)
 async def upload_attachment(
     file: UploadFile = File(...),
     overwrite_attachment_id: Optional[int] = None,
@@ -705,7 +706,8 @@ class AttachmentPlaybackResponse(BaseModel):
     cover_url: Optional[str] = None
 
 
-@router.get("/{attachment_id}", response_model=AttachmentDetailResponse)
+# MIGRATION-CANDIDATE(api="GET /api/attachments/*"): remove after final confirmation.
+# @router.get("/{attachment_id}", response_model=AttachmentDetailResponse)
 async def get_attachment(
     attachment_id: int,
     share_token: Optional[str] = Query(
@@ -886,7 +888,8 @@ async def get_attachment_preview(
     )
 
 
-@router.get("/{attachment_id}/download")
+# MIGRATION-CANDIDATE(api="GET /api/attachments/*/download"): remove after final confirmation.
+# @router.get("/{attachment_id}/download")
 async def download_attachment(
     attachment_id: int,
     request: Request,

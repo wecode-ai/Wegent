@@ -74,6 +74,25 @@ function createPaneSnapshot(taskId: string): PaneSnapshotInput {
 }
 
 describe('runtime pane debug snapshot', () => {
+  it.each(['threadId', 'thread_id'])('resolves the pane identity from runtimeHandle.%s', key => {
+    const snapshot = createPaneSnapshot('loaded-task')
+    snapshot.currentRuntimeTask!.runtimeHandle = { [key]: 'loaded-thread' }
+
+    updateRuntimePaneDebugSnapshot(snapshot)
+
+    expect(getWorkbenchDebugSnapshot().pane?.currentRuntimeTask?.threadId).toBe('loaded-thread')
+  })
+
+  it('keeps the explicit pane thread identity ahead of a retained runtime handle', () => {
+    const snapshot = createPaneSnapshot('loaded-task')
+    snapshot.currentRuntimeTask!.threadId = 'current-thread'
+    snapshot.currentRuntimeTask!.runtimeHandle = { threadId: 'retained-thread' }
+
+    updateRuntimePaneDebugSnapshot(snapshot)
+
+    expect(getWorkbenchDebugSnapshot().pane?.currentRuntimeTask?.threadId).toBe('current-thread')
+  })
+
   it('captures lifecycle execution fields without model options or runtime credentials', () => {
     const address = { deviceId: 'device-1', taskId: 'active-task' }
     const store = new RuntimeTaskLifecycleStore('debug-snapshot-test')

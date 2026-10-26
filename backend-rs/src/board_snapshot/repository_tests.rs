@@ -13,9 +13,10 @@ fn normalize(sql: &str) -> String {
 
 /// `require_cloud_project_role` issues the source's single
 /// `project_access_query` statement with every value inlined, so it binds
-/// no parameters. The recorded source renders the union with the creator
-/// grant: direct, workspace-inherited, public, and owned branches with the
-/// project id pushed into each one.
+/// no parameters. The source renders the unified permission union: the
+/// direct, workspace-inherited, and public branches with the project id
+/// pushed into each one, the parent workspace id column property, and the
+/// caller-activity `EXISTS` guard. Creators are not implicit administrators.
 #[tokio::test]
 async fn require_cloud_project_role_runs_the_source_access_query() {
     let mysql = crate::sql_test_support::KindQueryCapture::default();
@@ -32,18 +33,21 @@ async fn require_cloud_project_role_runs_the_source_access_query() {
     assert!(sql.contains("resource_members.entity_id = '3060'"));
     assert!(sql.contains("AND resource_members.resource_id = 1712605396200092385"));
     assert!(sql.contains("AND loop_items.id = '1712605396200092385'"));
-    assert!(sql.contains("UNION ALL SELECT loop_items.id AS project_id, 0 AS priority"));
-    assert!(sql.contains("loop_items.created_by_user_id = 3060"));
+    assert!(sql.contains("UNION ALL SELECT loop_items.id AS project_id"));
+    assert!(!sql.contains("loop_items.created_by_user_id = 3060"));
     assert!(sql.contains("kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true"));
     assert!(sql.contains(
         "resource_members.entity_type = 'authenticated_users' \
          AND resource_members.entity_id = '*'"
     ));
-    assert!(sql.contains("anon_1.priority AS anon_1_priority"));
-    assert!(sql.contains("GROUP BY anon_2.project_id"));
-    assert!(sql.contains(
-        "WHERE loop_items.status = 'active' AND loop_items.resource_type IN ('project')"
-    ));
+    assert!(sql.contains("anon_3.priority AS anon_3_priority"));
+    assert!(sql.contains("GROUP BY anon_4.project_id"));
+    assert!(sql.contains("EXISTS (SELECT users.id"));
+    assert!(
+        sql.contains(
+            "WHERE loop_items.status = 'active' AND kinds.kind = 'CollaborationWorkspace'"
+        )
+    );
     assert!(sql.ends_with("LIMIT 1"));
     // The point read is the inline-literal union, not the later CTE form.
     assert!(!sql.contains("WITH parents"));
@@ -93,14 +97,31 @@ fn agent_visibility_defaults_to_creator_admin() {
         version: Some(1),
         metadata: to_agent_metadata(metadata),
     };
-    assert_eq!(agent(json!({})).visibility(), "creator_admin");
+    assert_eq!(agent(json!({})).bot_config().visibility(), "creator_admin");
     assert_eq!(
-        agent(json!({"visibility": "public"})).visibility(),
+        agent(json!({"visibility": "public"}))
+            .bot_config()
+            .visibility(),
         "public"
     );
     assert_eq!(
-        agent(json!({"visibility": "weird"})).visibility(),
+        agent(json!({"visibility": "weird"}))
+            .bot_config()
+            .visibility(),
         "creator_admin"
+    );
+    // `project_agent_visible` compares the raw value, so only `private`
+    // restricts visibility.
+    assert!(agent(json!({})).bot_config().not_private());
+    assert!(
+        !agent(json!({"visibility": "private"}))
+            .bot_config()
+            .not_private()
+    );
+    assert!(
+        agent(json!({"visibility": "weird"}))
+            .bot_config()
+            .not_private()
     );
 }
 
@@ -130,81 +151,6 @@ async fn list_project_task_bindings_matches_the_recorded_query() {
              AND loop_items.resource_type IN ('execution') \
              ORDER BY loop_items.loop_item_id ASC, loop_items.linked_at DESC, loop_items.id DESC",
         ))
-    );
-}
-
-/// `list_members` joins the full labeled `users` projection and inlines the
-/// numeric project id.
-#[tokio::test]
-async fn list_members_matches_the_recorded_query() {
-    let mysql = crate::sql_test_support::KindQueryCapture::default();
-    let repository = BoardSnapshotRepository::new(&mysql);
-    let _ = repository
-        .list_members("8308220868516891581")
-        .await
-        .expect("members query is captured");
-
-    let queries = mysql.queries();
-    assert_eq!(queries.len(), 1);
-    assert_eq!(queries[0].args, 0);
-    assert_eq!(
-        queries[0].sql,
-        normalize(&format!(
-            "SELECT resource_members.id AS resource_members_id, \
-             resource_members.resource_type AS resource_members_resource_type, \
-             resource_members.resource_id AS resource_members_resource_id, \
-             resource_members.entity_type AS resource_members_entity_type, \
-             resource_members.entity_id AS resource_members_entity_id, \
-             resource_members.entity_display_name AS resource_members_entity_display_name, \
-             resource_members.user_id AS resource_members_user_id, \
-             resource_members.`role` AS resource_members_role, \
-             resource_members.status AS resource_members_status, \
-             resource_members.invited_by_user_id AS resource_members_invited_by_user_id, \
-             resource_members.share_link_id AS resource_members_share_link_id, \
-             resource_members.reviewed_by_user_id AS resource_members_reviewed_by_user_id, \
-             resource_members.reviewed_at AS resource_members_reviewed_at, \
-             resource_members.copied_resource_id AS resource_members_copied_resource_id, \
-             resource_members.requested_at AS resource_members_requested_at, \
-             resource_members.created_at AS resource_members_created_at, \
-             resource_members.updated_at AS resource_members_updated_at, \
-             {} \
-             FROM resource_members INNER JOIN users \
-             ON users.id = resource_members.user_id \
-             WHERE resource_members.resource_type = 'CloudProject' \
-             AND resource_members.resource_id = 8308220868516891581 \
-             AND resource_members.entity_type = 'user' \
-             AND resource_members.status = 'approved' \
-             ORDER BY resource_members.id",
-            crate::user_reader::users_projection(),
-        ))
-    );
-}
-
-/// `explicit_member_ids` inlines the project id as the source's string
-/// primary key, matching the recorded grant read.
-#[tokio::test]
-async fn explicit_member_ids_matches_the_recorded_query() {
-    let mysql = crate::sql_test_support::KindQueryCapture::default();
-    let repository = BoardSnapshotRepository::new(&mysql);
-    let _ = repository
-        .explicit_member_ids("8308220868516891581")
-        .await
-        .expect("member id query is captured");
-
-    let queries = mysql.queries();
-    assert_eq!(queries.len(), 1);
-    assert_eq!(queries[0].args, 0);
-    assert_eq!(
-        queries[0].sql,
-        normalize(
-            "SELECT resource_members.entity_id AS resource_members_entity_id \n\
-             FROM resource_members \n\
-             WHERE resource_members.resource_type = 'CloudProject' \
-             AND resource_members.resource_id = '8308220868516891581' \
-             AND resource_members.entity_type = 'user' \
-             AND resource_members.status = 'approved' \
-             AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer')",
-        )
     );
 }
 
@@ -266,4 +212,201 @@ WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(loop_items.metadata, \\
         "AND loop_items.resource_type IN ('execution')) OR loop_items.id IN (SELECT loop_items.loop_item_id"
     ));
     assert!(sql.contains("AND loop_items.resource_type IN ('chat_agent'))"));
+}
+
+/// `check` resolves `project_sources` after the role query: the parent
+/// workspace row, the workspace membership for a non-owner, and the approved
+/// direct project grant. The authenticated caller is already in the ORM
+/// identity map, so their subject skips the `users` entity read.
+#[tokio::test]
+async fn record_project_sources_reads_the_parent_workspace_and_direct_grant() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    record_project_sources(&mysql, 4712514671486395195, 86, Some(353932), 86)
+        .await
+        .expect("source reads are captured");
+
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 2);
+    assert_eq!(
+        queries[0].sql,
+        normalize(
+            "SELECT kinds.id, kinds.user_id, kinds.kind, kinds.name, kinds.namespace, \
+             kinds.json, kinds.is_active, kinds.created_at, kinds.updated_at \n\
+             FROM kinds \n\
+             WHERE kinds.id = 353932",
+        )
+    );
+    assert!(queries[1].sql.contains(
+        "WHERE resource_members.resource_type = 'CloudProject' \
+         AND resource_members.resource_id = 4712514671486395195 \
+         AND resource_members.entity_type = 'user' \
+         AND resource_members.entity_id = '86' \
+         AND resource_members.status = 'approved'"
+    ));
+    assert!(queries[1].sql.ends_with("LIMIT 1"));
+}
+
+/// A non-caller subject (the direct-human reviewer check) is read through
+/// `db.get(User, user_id)` before the workspace role. The captured user row is
+/// absent, so `workspace_role` returns before the parent kind and workspace
+/// membership; the direct grant read remains.
+#[tokio::test]
+async fn record_project_sources_reads_a_non_caller_subject() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    record_project_sources(&mysql, 4712514671486395195, 52, Some(353932), 86)
+        .await
+        .expect("source reads are captured");
+
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 2);
+    assert_eq!(
+        queries[0].sql,
+        normalize(
+            "SELECT users.id, users.user_name, users.password_hash, users.email, \
+             users.git_info, users.is_active, users.`role`, users.auth_source, \
+             users.preferences, users.created_at, users.updated_at \n\
+             FROM users \n\
+             WHERE users.id = ?",
+        )
+    );
+    assert_eq!(queries[0].args, 1);
+    assert!(
+        queries[1]
+            .sql
+            .contains("resource_members.resource_type = 'CloudProject'")
+    );
+}
+
+/// `db.get(CloudProject, str(project_id))`: one unlabeled entity read with the
+/// `workspace_id` column property, keyed by the inline string id.
+#[tokio::test]
+async fn project_entity_matches_the_recorded_query() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    let entity = project_entity(&mysql, 4712514671486395195)
+        .await
+        .expect("project entity is captured");
+    assert!(entity.is_none());
+
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 1);
+    let sql = normalize(&queries[0].sql);
+    assert!(
+        sql.starts_with(
+            "SELECT (SELECT CASE WHEN (count(distinct(resource_members.entity_id)) = 1)"
+        )
+    );
+    assert!(sql.contains(
+        "WHERE loop_items.id = '4712514671486395195' AND loop_items.resource_type IN ('project')"
+    ));
+    assert!(!sql.contains(" AS loop_items_"));
+    assert!(!sql.ends_with("LIMIT 1"));
+}
+
+/// `require_project_agent`'s workspace `project_agent` grant: any status,
+/// `LIMIT 1`, keyed by the agent id.
+#[tokio::test]
+async fn project_agent_grant_matches_the_recorded_query() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    let grant = project_agent_grant(&mysql, 353932, "2029740299856048026")
+        .await
+        .expect("grant query is captured");
+    assert!(grant.is_none());
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 1);
+    let sql = normalize(&queries[0].sql);
+    assert!(sql.contains(
+        "WHERE resource_members.resource_type = 'Workspace' \
+         AND resource_members.resource_id = 353932 \
+         AND resource_members.entity_type = 'project_agent' \
+         AND resource_members.entity_id = '2029740299856048026'"
+    ));
+    assert!(!sql.contains("resource_members.status = 'approved'"));
+    assert!(sql.ends_with("LIMIT 1"));
+}
+
+/// `require_project_team`'s `Team` grant on the parent workspace.
+#[tokio::test]
+async fn team_grant_matches_the_recorded_query() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    let grant = team_grant(&mysql, 2002909, 353932)
+        .await
+        .expect("team grant query is captured");
+    assert!(grant.is_none());
+    let sql = normalize(&mysql.queries()[0].sql);
+    assert!(sql.contains(
+        "WHERE resource_members.resource_type = 'Team' \
+         AND resource_members.resource_id = 2002909 \
+         AND resource_members.entity_type = 'workspace' \
+         AND resource_members.entity_id = '353932'"
+    ));
+    assert!(sql.ends_with("LIMIT 1"));
+}
+
+/// The legacy-binding scan reads every active agent bound to the team with
+/// the full labeled projection and no `LIMIT`.
+#[tokio::test]
+async fn team_bound_agents_matches_the_recorded_query() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    let agents = team_bound_agents(&mysql, "8308220868516891581", 1769995)
+        .await
+        .expect("legacy binding query is captured");
+    assert!(agents.is_empty());
+    let sql = normalize(&mysql.queries()[0].sql);
+    assert!(sql.contains(
+        "CAST(CASE JSON_EXTRACT(loop_items.metadata, '$.\"wegent_team_id\"') \
+         WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(loop_items.metadata, \
+         '$.\"wegent_team_id\"')) END AS SIGNED INTEGER) = 1769995"
+    ));
+    assert!(!sql.ends_with("LIMIT 1"));
+}
+
+/// `require_project_team(require_binding=True)`'s presence probe.
+#[tokio::test]
+async fn team_binding_exists_matches_the_recorded_query() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    let exists = team_binding_exists(&mysql, "8308220868516891581", 1769995)
+        .await
+        .expect("binding probe is captured");
+    assert!(!exists);
+    let sql = normalize(&mysql.queries()[0].sql);
+    assert!(sql.starts_with("SELECT loop_items.id AS loop_items_id"));
+    assert!(sql.contains("CAST(CASE JSON_EXTRACT(loop_items.metadata"));
+    assert!(sql.ends_with("LIMIT 1"));
+}
+
+/// `project_chat_service.list_agents` selects only active chat-agent rows by
+/// default, matching the recorded `GET .../chat-agents` exchange.
+#[tokio::test]
+async fn list_agents_matches_the_recorded_chat_agent_query() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    let agents = BoardSnapshotRepository::new(&mysql)
+        .list_agents("2753648597973755964", false)
+        .await
+        .expect("chat-agent query is captured");
+    assert!(agents.is_empty());
+    let sql = normalize(&mysql.queries()[0].sql);
+    assert!(sql.starts_with("SELECT loop_items.id AS loop_items_id"));
+    assert!(sql.contains(
+        "WHERE loop_items.cloud_project_id = '2753648597973755964' \
+         AND loop_items.status IN ('active') \
+         AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
+             ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
+         AND loop_items.resource_type IN ('chat_agent') \
+         ORDER BY loop_items.created_at ASC"
+    ));
+}
+
+/// `include_archived=True` renders `status IN ('active', 'archived')`, the
+/// SQLAlchemy `in_` list the source builds for the archived scan.
+#[tokio::test]
+async fn list_agents_includes_archived_when_requested() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    let agents = BoardSnapshotRepository::new(&mysql)
+        .list_agents("2753648597973755964", true)
+        .await
+        .expect("chat-agent query is captured");
+    assert!(agents.is_empty());
+    let sql = normalize(&mysql.queries()[0].sql);
+    assert!(sql.contains("AND loop_items.status IN ('active', 'archived')"));
+    assert!(!sql.contains("AND loop_items.status IN ('active') AND"));
 }

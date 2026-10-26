@@ -4,19 +4,16 @@ Reports contain identities and outcomes only, never conversation contents.
 They repair execution state without replaying business workflow callbacks.
 """
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
-from sqlalchemy import String, cast
-from sqlalchemy.orm import Query, Session
+from sqlalchemy.orm import Session
 
 from app.db.timezone import database_datetime_timezone
 from app.models.delivery import LoopItem, loop_datetime_is_unset
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
-from app.schemas.project_chat import ProjectChatMessageView
 from app.schemas.runtime_execution_snapshot import (
     RuntimeExecutionSnapshot,
     RuntimeExecutionTurnSnapshot,
@@ -30,119 +27,73 @@ from app.services.project_chat.service import project_chat_service
 TERMINAL_STATUSES = {"done": "completed", "failed": "failed", "cancelled": "cancelled"}
 
 
-@dataclass(frozen=True)
-class CompletedTurnContentProjection:
-    handled: bool
-    projection: tuple[ProjectChatMessageView, str] | None = None
-
-
-def restore_completed_turn_content(
+def completed_activity_for_turn(
     db: Session,
     *,
     device_ids: list[str],
     task_id: str,
-    payload: dict,
-    owner_user_id: int | None = None,
-    execution_id: int | None = None,
-) -> CompletedTurnContentProjection:
-    """Consume an exact completed turn without replaying business workflow."""
-    turn_id = payload.get("subtaskId") or payload.get("subtask_id")
+    turn_id: object,
+) -> ProjectChatMessage | None:
+    """Match final content to an outcome-only reconciliation of the same turn."""
     if not isinstance(turn_id, str) or not turn_id:
-        return CompletedTurnContentProjection(False)
-    execution = None
-    if execution_id is not None:
-        # The event may have read an active root before a concurrent snapshot
-        # committed. Use current reads after locking that known aggregate.
-        execution = _lock_content_execution(db, execution_id)
-    else:
-        candidate = _completed_activity_query(
-            db, device_ids, task_id, turn_id
-        ).one_or_none()
-        if candidate is None:
-            return CompletedTurnContentProjection(False)
-        execution_id = (candidate.metadata_json or {}).get("execution_id")
-        if execution_id:
-            execution = _lock_content_execution(db, execution_id)
-    query = _completed_activity_query(db, device_ids, task_id, turn_id)
-    if execution_id:
-        query = query.filter(
-            cast(ProjectChatMessage.metadata_json["execution_id"].as_string(), String)
-            == str(execution_id)
-        )
-    row = query.populate_existing().with_for_update().one_or_none()
-    if row is None:
-        return CompletedTurnContentProjection(execution_id is not None)
-    data = payload.get("data")
-    data = data if isinstance(data, dict) else {}
-    content = project_chat_service._project_chat_final_text(data, payload)
-    sequence = _completed_content_sequence(payload)
-    if content is None or (
-        execution_id
-        and not _accept_completed_content(execution, row, sequence, owner_user_id)
-    ):
-        return CompletedTurnContentProjection(True)
-    row.content = content
-    project_chat_service._index_activity_change_requests(db, row)
-    if execution is not None:
-        execution.last_event_seq = sequence
-    project_chat_service._commit(db)
-    db.refresh(row)
-    return CompletedTurnContentProjection(
-        True, (project_chat_service.to_view(row, db=db), "snapshot")
-    )
-
-
-def _completed_activity_query(
-    db: Session, device_ids: list[str], task_id: str, turn_id: str
-) -> Query[ProjectChatMessage]:
-    return db.query(ProjectChatMessage).filter(
-        ProjectChatMessage.runtime_device_id.in_(device_ids),
-        ProjectChatMessage.runtime_task_id == task_id,
-        ProjectChatMessage.sender_type == "agent",
-        ProjectChatMessage.status == "completed",
-        ProjectChatMessage.metadata_json["runtime_turn_id"].as_string() == turn_id,
-        loop_datetime_is_unset(ProjectChatMessage.deleted_at),
-    )
-
-
-def _lock_content_execution(
-    db: Session, execution_id: int | str
-) -> LoopItemExecution | None:
+        return None
     return (
-        db.query(LoopItemExecution)
-        .filter(LoopItemExecution.id == execution_id)
-        .populate_existing()
+        db.query(ProjectChatMessage)
+        .filter(
+            ProjectChatMessage.runtime_device_id.in_(device_ids),
+            ProjectChatMessage.runtime_task_id == task_id,
+            ProjectChatMessage.sender_type == "agent",
+            ProjectChatMessage.status == "completed",
+            ProjectChatMessage.metadata_json["runtime_turn_id"].as_string() == turn_id,
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
         .with_for_update()
         .one_or_none()
     )
 
 
-def _completed_content_sequence(payload: dict) -> int:
+def runtime_event_sequence(payload: dict) -> int | None:
+    """Return a positive Runtime event sequence, or None when it is unusable."""
     raw_sequence = payload.get("eventSeq", payload.get("event_seq"))
     if isinstance(raw_sequence, bool):
-        return 0
+        return None
     try:
-        return int(raw_sequence)
+        sequence = int(raw_sequence)
     except (TypeError, ValueError):
-        return 0
+        return None
+    return sequence if sequence > 0 else None
 
 
-def _accept_completed_content(
-    execution: LoopItemExecution | None,
-    row: ProjectChatMessage,
-    sequence: int,
-    owner_user_id: int | None,
+def can_restore_reconciled_completion(
+    db: Session,
+    *,
+    execution: LoopItemExecution,
+    event_name: str,
+    payload: dict,
+    activity: ProjectChatMessage | None = None,
 ) -> bool:
-    return bool(
-        execution is not None
-        and execution.status == "completed"
-        and str((row.metadata_json or {}).get("execution_id")) == str(execution.id)
-        and sequence > execution.last_event_seq
-        and execution.runtime_task_id == row.runtime_task_id
-        and execution.runtime_device_id == row.runtime_device_id
-        and execution.cloud_project_id == row.project_id
-        and execution.loop_item_id == row.task_id
-        and (owner_user_id is None or execution.executor_owner_user_id == owner_user_id)
+    """Allow final text repair after a snapshot won the terminal-state race."""
+    if event_name != "response.completed":
+        return False
+    sequence = runtime_event_sequence(payload)
+    if sequence is None:
+        return False
+    # Keep the aggregate -> activity lock order and read the concurrent winner.
+    db.refresh(execution, with_for_update=True)
+    if execution.status != "completed" or sequence <= execution.last_event_seq:
+        return False
+    if activity is None:
+        activity = completed_activity_for_turn(
+            db,
+            device_ids=[execution.runtime_device_id],
+            task_id=execution.runtime_task_id,
+            turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
+        )
+    return activity is not None and (
+        str((activity.metadata_json or {}).get("execution_id")) == str(execution.id)
+        and "runtime_completed_at" in (activity.metadata_json or {})
+        and activity.project_id == execution.cloud_project_id
+        and activity.task_id == execution.loop_item_id
     )
 
 
@@ -260,7 +211,10 @@ def _persist_outcome(
     user_id: int,
     device_ids: list[str],
 ) -> bool:
-    from app.services.loop_item_executions.service import loop_item_execution_service
+    from app.services.loop_item_executions.service import (
+        CAPACITY_STATUSES,
+        loop_item_execution_service,
+    )
 
     status = TERMINAL_STATUSES[turn.status]
     metadata = dict(row.metadata_json or {})
@@ -303,21 +257,19 @@ def _persist_outcome(
         return False
     metadata = dict(row.metadata_json or {})
     if execution is not None:
-        # Managed runs have their own aggregate root. Never update a different
-        # attempt merely because it reused the same Runtime conversation.
-        if (
-            execution.status in TERMINAL_STATUSES.values()
-            and execution.status != status
-        ):
+        if execution.status != status and execution.status not in CAPACITY_STATUSES:
             return False
-        # Reconciliation commits the elected outcome. Bind its verified turn
-        # in that same commit so a final event can already address its text.
+        # Reconciliation commits the terminal root and activity. Persist their
+        # turn binding in that same commit so a final event can recover text
+        # even when it arrives before this outcome-only report returns.
         row.metadata_json = {
             **metadata,
             "runtime_turn_id": turn.id,
             "runtime_completed_at": turn.completed_at,
         }
         db.flush()
+        # Managed runs have their own aggregate root. Never update a different
+        # attempt merely because it reused the same Runtime conversation.
         execution = loop_item_execution_service.reconcile_runtime_snapshot(
             db, execution_id=execution.id, runtime_status=status, running=False
         )

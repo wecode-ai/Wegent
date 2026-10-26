@@ -139,8 +139,9 @@ pub fn build_workspace(repository: &Value, branch: &str, path: Option<&str>) -> 
 }
 
 /// The `metadata.git_*` fields from the workspace repository:
-/// `(git_repo, git_url, git_domain, git_repo_id, branch_name)`. A missing
-/// `gitDomain` renders null.
+/// `(git_repo, git_url, git_domain, git_repo_id, branch_name)`.
+/// `git_domain = repo.get("gitDomain") or extract_git_domain(git_url)`, so an
+/// empty `gitDomain` renders null unless the URL names a host.
 pub fn git_fields(repository: &Value) -> (String, String, Option<String>, i64, String) {
     let text = |key: &str| {
         repository
@@ -149,13 +150,16 @@ pub fn git_fields(repository: &Value) -> (String, String, Option<String>, i64, S
             .unwrap_or_default()
             .to_string()
     };
+    let git_url = text("gitUrl");
+    let configured_domain = repository
+        .get("gitDomain")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     (
         text("gitRepo"),
-        text("gitUrl"),
-        repository
-            .get("gitDomain")
-            .and_then(Value::as_str)
-            .map(str::to_string),
+        git_url.clone(),
+        configured_domain.or_else(|| extract_git_domain(&git_url)),
         repository
             .get("gitRepoId")
             .and_then(Value::as_i64)
@@ -164,45 +168,35 @@ pub fn git_fields(repository: &Value) -> (String, String, Option<String>, i64, S
     )
 }
 
+/// `extract_git_domain`: the repository host without credentials.
+fn extract_git_domain(git_url: &str) -> Option<String> {
+    let value = git_url.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if let Ok(parsed) = url::Url::parse(value)
+        && let Some(host) = parsed.host_str()
+    {
+        return Some(host.to_string());
+    }
+    if let Some((_, rest)) = value.split_once('@') {
+        let host = rest
+            .split([':', '/'])
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        return (!host.is_empty()).then_some(host);
+    }
+    None
+}
+
 /// `settings.BACKEND_INTERNAL_URL` (env `BACKEND_INTERNAL_URL`, source default
 /// `http://localhost:8000/api`).
 pub fn backend_url() -> String {
     crate::config::env_or_dotenv("BACKEND_INTERNAL_URL")
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "http://localhost:8000/api".to_string())
-}
-
-/// One `metadata.skill_configs` entry's resolved Skill fields
-/// (`request_builder._build_skill_data`).
-pub struct SkillConfigInput<'a> {
-    pub name: &'a str,
-    pub description: &'a str,
-    pub prompt: &'a str,
-    pub display_name: &'a str,
-    /// The Skill Kind id.
-    pub skill_id: i64,
-    /// The Skill owner (0 for a public skill).
-    pub skill_user_id: i64,
-    /// The Skill's MCP server descriptors.
-    pub mcp_servers: Value,
-}
-
-/// One `metadata.skill_configs` entry, in the recorded key order
-/// (`name, description, prompt, displayName, skill_id, skill_user_id,
-/// mcpServers`).
-pub fn build_skill_config(input: &SkillConfigInput<'_>) -> Value {
-    let mut config = Map::new();
-    config.insert("name".into(), serde_json::json!(input.name));
-    config.insert("description".into(), serde_json::json!(input.description));
-    config.insert("prompt".into(), serde_json::json!(input.prompt));
-    config.insert("displayName".into(), serde_json::json!(input.display_name));
-    config.insert("skill_id".into(), serde_json::json!(input.skill_id));
-    config.insert(
-        "skill_user_id".into(),
-        serde_json::json!(input.skill_user_id),
-    );
-    config.insert("mcpServers".into(), input.mcp_servers.clone());
-    Value::Object(config)
 }
 
 /// The `metadata` knowledge fields the recorded dispatch carries. The concrete
@@ -303,41 +297,6 @@ mod tests {
             (String::new(), String::new(), None, None)
         );
         assert_eq!(callback_url(), None);
-    }
-
-    #[test]
-    fn skill_config_matches_the_recorded_key_order() {
-        let input = SkillConfigInput {
-            name: "wegent-knowledge",
-            description: "Knowledge base management",
-            prompt: "# Wegent Knowledge Base Skill",
-            display_name: "知识库工具",
-            skill_id: 128_913,
-            skill_user_id: 0,
-            mcp_servers: json!({"wegent-knowledge": {"type": "streamable-http"}}),
-        };
-        let config = build_skill_config(&input);
-        let keys: Vec<&str> = config
-            .as_object()
-            .expect("object")
-            .keys()
-            .map(String::as_str)
-            .collect();
-        assert_eq!(
-            keys,
-            [
-                "name",
-                "description",
-                "prompt",
-                "displayName",
-                "skill_id",
-                "skill_user_id",
-                "mcpServers"
-            ]
-        );
-        assert_eq!(config["displayName"], json!("知识库工具"));
-        assert_eq!(config["skill_id"], json!(128_913));
-        assert_eq!(config["skill_user_id"], json!(0));
     }
 
     #[test]

@@ -22,8 +22,24 @@ from app.services.plugin_write_operations import run_plugin_operation
 from tests.services.test_plugin_marketplace_v2 import _device_install
 
 
+@pytest.fixture(autouse=True)
+def legacy_plugin_runtime(monkeypatch):
+    """Exercise the legacy reconciliation contract without external routing."""
+    monkeypatch.setattr(
+        module.device_capability_sync_service,
+        "supports_plugin_delta",
+        AsyncMock(return_value=False),
+    )
+
+
 @pytest.fixture
 def reconciliation(monkeypatch):
+    monkeypatch.setattr(
+        module.device_capability_sync_service,
+        "supports_plugin_delta",
+        AsyncMock(return_value=False),
+    )
+
     @contextmanager
     def session():
         yield Mock()
@@ -416,11 +432,22 @@ async def test_uninstall_committed_before_ack_lease_replaces_stale_snapshot(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("versioned", [False, True])
 async def test_final_snapshot_and_ack_share_one_owned_lease_until_commit(
-    installed_reconciliation, monkeypatch
+    installed_reconciliation, monkeypatch, versioned
 ):
     user_id, installed_id, _, _ = installed_reconciliation
     payload = await asyncio.to_thread(module.desired_plugins, user_id, "desktop")
+    if versioned:
+        payload = await asyncio.to_thread(
+            module.load_versioned_plugin_payload,
+            module.get_db_session,
+            user_id=user_id,
+            complete=True,
+            load_payload=lambda db: module.device_capability_sync_service.build_desired_plugins(
+                db, user_id=user_id, device_id="desktop"
+            ),
+        )
     observed = []
     original_build = module.device_capability_sync_service.build_desired_plugins
     original_record = (
@@ -464,6 +491,7 @@ async def test_final_snapshot_and_ack_share_one_owned_lease_until_commit(
             acknowledged=True,
             scope="plugins",
             plugins=[{"id": installed_id, "status": "synced"}],
+            desired_plugin_snapshot=payload if versioned else None,
         ),
     )
 

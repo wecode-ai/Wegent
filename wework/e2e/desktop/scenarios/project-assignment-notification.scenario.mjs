@@ -741,12 +741,35 @@ export function createDesktopScenario({
           timeoutMs: modelResponseTimeoutMs,
         }
       )
-      await waitForValue(
+      const issueAfterAiDraft = await waitForValue(
         () => ownerRequest(`/api/v1/loop-items/${issue.id}`),
-        value => value.status === 'in_progress' && value.current_delivery_id === delivery.id,
-        'AI 草稿不应替处理人提交原 Issue',
+        value => value.current_delivery_id === delivery.id && value.status === 'in_progress',
+        '个人任务应启动原 Issue，AI 交付应关联该 Issue 并保留进行中状态',
         modelResponseTimeoutMs
       )
+      // Task creation and delivery stay concurrent; only the task-start transition is allowed.
+      assert.deepEqual(
+        issueAfterAiDraft.status_history.slice(0, -1),
+        pendingIssue.status_history,
+        'AI 交付不应增加启动个人任务以外的 Issue 状态变更'
+      )
+      const startTransition = issueAfterAiDraft.status_history.at(-1)
+      assert.deepEqual(
+        {
+          from_status: startTransition.from_status,
+          to_status: startTransition.to_status,
+          trigger: startTransition.trigger,
+          by_user_id: startTransition.by_user_id,
+        },
+        {
+          from_status: pendingIssue.status,
+          to_status: 'in_progress',
+          trigger: 'user_update',
+          by_user_id: owner.id,
+        },
+        '原 Issue 应仅由用户启动个人任务进入进行中'
+      )
+      assert.equal(issueAfterAiDraft.completed_at, null)
       assert.equal(
         delivery.source_task_snapshot.humanAssignmentId,
         notification.payload.humanAssignmentId

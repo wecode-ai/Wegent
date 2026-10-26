@@ -224,6 +224,8 @@ async function verifyLateInstallAcknowledgementRemoval({
       .revision
   const beforeRevision = await manifestRevision()
   assert.ok(Number.isSafeInteger(beforeRevision), 'The real capability manifest has no revision')
+  const logOffset = (await readFile(cloud.backendLogPath, 'utf8')).length
+  const controller = new AbortController()
   let pending
   let reconnecting
   deviceProxy.pauseDeviceAcknowledgements(true)
@@ -231,7 +233,8 @@ async function verifyLateInstallAcknowledgementRemoval({
     pending = pluginApi(
       cloud,
       `/plugins/installed/${item.installedId}/sync-device?device_id=${encodeURIComponent(CLOUD_DEVICE_ID)}`,
-      'POST'
+      'POST',
+      { signal: controller.signal }
     ).then(
       value => ({ value }),
       error => ({ error })
@@ -260,19 +263,21 @@ async function verifyLateInstallAcknowledgementRemoval({
     )
     assert.equal(await accountPlugin(cloud, item.slug), undefined)
     deviceProxy.pauseDeviceAcknowledgements(false)
-    const acknowledged = await pending
-    if (acknowledged.error) throw acknowledged.error
-    assert.equal(acknowledged.value.sync.success, true)
-    assert.ok(
-      acknowledged.value.sync.plugins.some(
-        plugin => Number(plugin.id) === item.installedId && plugin.status === 'synced'
-      ),
-      'The delayed response was not the real targeted install acknowledgement'
+    await until(
+      async () => (await readFile(cloud.backendLogPath, 'utf8')).slice(logOffset),
+      log => hasLateInstallCorrection(log, item.installedId, CLOUD_DEVICE_ID),
+      'The late targeted install ACK did not trigger a fresh removal snapshot',
+      10_000
     )
     const afterInstallAck = await pendingRows()
     assert.equal(afterInstallAck.length, 1, 'An install ACK deleted the pending removal')
     assert.equal(afterInstallAck[0].state, 'uninstalling')
     assert.ok(await materializedPlugin(remoteHome, item.installedId))
+    // The API now waits for the corrective removal, whose delivery is held.
+    // Cancel that obsolete HTTP waiter before exercising disconnect recovery.
+    controller.abort()
+    const cancelled = await pending
+    assert.equal(cancelled.error?.name, 'AbortError', 'The held correction unexpectedly completed')
     // This checks the real transport and persistence invariant. The precise
     // final-snapshot-to-ACK-worker race is covered by the backend concurrency test.
     evidence.push({
@@ -312,9 +317,33 @@ async function verifyLateInstallAcknowledgementRemoval({
       installedId: item.installedId,
     })
   } finally {
+    controller.abort()
     deviceProxy.pauseDeviceAcknowledgements(false)
     deviceProxy.pauseDeviceDelivery(false)
     if (pending) await pending
     if (reconnecting) await reconnecting
   }
+}
+
+export function hasLateInstallCorrection(log, installedId, deviceId) {
+  const allLines = log.split('\n')
+  const request = allLines.find(line =>
+    line.includes(
+      `request : POST /api/plugins/installed/${installedId}/sync-device device_id=${deviceId} `
+    )
+  )
+  const requestId = request?.match(/\bINFO \[([^\]]+)\]/)?.[1]
+  if (!requestId) return false
+  const lines = allLines.filter(line => line.includes(`[${requestId}]`))
+  const delivered = lines.findIndex(line =>
+    line.includes(
+      `Capability sync delivered: user_id=1 device_id=${deviceId} skills=0 plugins=1 mcps=0`
+    )
+  )
+  const retry = lines.findIndex(line =>
+    line.includes(
+      `Capability desired state changed during sync; retrying latest snapshot: user_id=1 device_id=${deviceId} attempt=1`
+    )
+  )
+  return delivered >= 0 && retry > delivered
 }

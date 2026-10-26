@@ -1,4 +1,10 @@
 import assert from 'node:assert/strict'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { accountCommandResult } from '../modules/account-auth-command.mjs'
+import {
+  shellCommandResponse,
+  shellCommandPollResponse,
+} from '../modules/shell-command-response.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
@@ -17,6 +23,8 @@ import {
 const MARKER = 'WEWORK_REPLY_PREDICTION_AUTH'
 const API_KEY = 'reply-prediction-fixture-key'
 const MODEL = 'reply-prediction-auth-model'
+const ENV_CALL = 'prediction-parent-shell-identity'
+const ENV_OK = 'PREDICTION_PARENT_SHELL_IDENTITY_OK'
 const GHOST = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input-prediction"]`
 const PENDING = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input-prediction-pending"]`
 const ERROR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="reply-prediction-error"]`
@@ -25,6 +33,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
   let normalRequests = 0
   let predictionRequests = 0
   let rejectedPredictions = 0
+  let shellIdentityVerified = false
   let identity
 
   async function assertRedactedTask(control) {
@@ -82,8 +91,39 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         'The model request lost its current credentials'
       )
       assert.equal(body.model, MODEL, 'Prediction changed the selected model')
+      const command = shellIdentityVerified ? null : accountCommandResult(body.input, ENV_CALL)
+      if (!prediction && command) {
+        const id = `${ENV_CALL}-result`
+        const events = command.sessionId
+          ? shellCommandPollResponse(body, command.pollId, command.sessionId)
+          : [assistantMessage(`${MARKER} answer ${normalRequests}`)]
+        if (!command.sessionId) {
+          assert.ok(command.output.includes(ENV_OK), command.output)
+          shellIdentityVerified = true
+        }
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
+        return true
+      }
       if (prediction) predictionRequests += 1
       else normalRequests += 1
+      if (!prediction && normalRequests === 2) {
+        const id = `${ENV_CALL}-start`
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          createSse([
+            responseCreated(id),
+            ...shellCommandResponse(
+              body,
+              ENV_CALL,
+              `test -x "$WEGENT_EXECUTOR_BINARY" && test "$WEGENT_TASK_WORKSPACE" = "$PWD" && printf '${ENV_OK}\\n'`,
+              workspacePath
+            ),
+            responseCompleted(id),
+          ])
+        )
+        return true
+      }
       if (prediction && normalRequests === 2) {
         rejectedPredictions += 1
         response.writeHead(401, { 'Content-Type': 'application/json' })
@@ -143,6 +183,28 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
         timeoutMs: modelResponseTimeoutMs,
       })
       await assertRedactedTask(control)
+      // Make prediction the first reader to restore this parent after a native restart.
+      // The following real shell call must retain task identity even in this ordering.
+      const restarted = JSON.parse(
+        await control.command('restartLocalCodexAppServerIfIdle', 'body')
+      )
+      assert.equal(restarted.restarted, true, 'The parent must be unloaded before prediction')
+      const predicted = await requestExecutor(
+        control,
+        'runtime.text.predict_reply',
+        {
+          ...identity,
+          requestId: 'prediction-auth-cold-parent',
+          modelConfig: {
+            model_id: MODEL,
+            base_url: `${control.url}/v1`,
+            api_key: API_KEY,
+            api_format: 'openai-responses',
+          },
+        },
+        modelResponseTimeoutMs
+      )
+      assert.equal(predicted.suggestion, '继续第 1 轮方案')
       await send(control, 2)
       await control.command('waitFor', ERROR, {
         text: '回复建议生成失败',
@@ -159,6 +221,11 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
       assert.equal(Number(await control.command('getElementCount', ERROR)), 0)
       await assertRedactedTask(control)
       assert.equal(normalRequests, 3, 'Predictions sent a user message')
+      assert.equal(
+        shellIdentityVerified,
+        true,
+        'The resumed parent never verified its shell environment'
+      )
     },
     diagnostics() {
       return { normalRequests, predictionRequests, rejectedPredictions }

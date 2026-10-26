@@ -282,16 +282,19 @@ describe('notification center', () => {
   })
 
   it('keeps the local notification feed available while disconnected', async () => {
+    const open = vi.fn()
+    window.addEventListener(WEWORK_OPEN_SCHEME_EVENT, open)
     render(viewWithTask({ ...connection, token: null, apiBaseUrl: null }))
     expect(await screen.findByTestId('wework-notifications-unread')).toHaveTextContent('1')
     fireEvent.click(screen.getByTestId('wework-notifications-button'))
     fireEvent.click(screen.getByTestId('wework-notifications-category-tasks'))
     fireEvent.click(screen.getByTestId('wework-notification-task-task-1'))
     expect(markRuntimeTaskRead).toHaveBeenCalledWith(task.address)
-    expect(navigation.navigateTo).toHaveBeenCalledWith(
-      '/runtime-tasks?deviceId=device-1&taskId=task-1'
-    )
+    expect(open).toHaveBeenCalledOnce()
+    expect(open.mock.calls[0][0].detail).toBe('wework://tasks/device-1/task-1')
+    expect(navigation.navigateTo).not.toHaveBeenCalled()
     expect(api.list).not.toHaveBeenCalled()
+    window.removeEventListener(WEWORK_OPEN_SCHEME_EVENT, open)
   })
 
   it('keeps local task notification settings editable while disconnected', async () => {

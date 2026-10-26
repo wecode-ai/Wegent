@@ -2108,3 +2108,12 @@ def test_loop_item_reorder_respects_sibling_scope_across_statuses(
         second["id"]: "completed",
         child["id"]: "completed",
     }
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(test_client, ("issue_tasks",)) as client:
+        yield client

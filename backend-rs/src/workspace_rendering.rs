@@ -152,8 +152,9 @@ fn normalized_relative_path(value: &str) -> Result<String, FastApiError> {
 }
 
 /// `ExecutionEnvironmentDeviceState.prepared_at`: `null` or a datetime the
-/// pydantic lax parser accepts, re-rendered with `datetime.isoformat()`
-/// semantics (fractional microseconds only when nonzero, offset kept).
+/// pydantic lax parser accepts, re-rendered with pydantic's serializer
+/// (fractional microseconds only when nonzero; a UTC offset renders as `Z`,
+/// any other offset keeps `±HH:MM`).
 fn prepared_at_value(
     object: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<serde_json::Value, FastApiError> {
@@ -170,9 +171,15 @@ fn prepared_at_value(
         } else {
             format!(".{micros:06}")
         };
+        // Pydantic serializes a zero offset as `Z`; non-UTC offsets keep the
+        // `±HH:MM` rendering.
+        let suffix = if offset.offset().local_minus_utc() == 0 {
+            "Z".to_string()
+        } else {
+            offset.format("%:z").to_string()
+        };
         return Ok(serde_json::Value::String(format!(
-            "{base}{fraction}{}",
-            offset.format("%:z")
+            "{base}{fraction}{suffix}"
         )));
     }
     for format in ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%d"] {
@@ -464,6 +471,32 @@ mod tests {
             "devices": {"7": {"status": "gone"}}
         }}});
         assert_eq!(execution_environment(&invalid).unwrap_err().status(), 500);
+    }
+
+    #[test]
+    fn aware_prepared_at_renders_like_pydantic() {
+        for (input, expected) in [
+            (
+                "2026-10-08T07:01:47.709868+00:00",
+                "2026-10-08T07:01:47.709868Z",
+            ),
+            ("2026-10-08T07:01:47Z", "2026-10-08T07:01:47Z"),
+            (
+                "2026-10-08T07:01:47.709868+08:00",
+                "2026-10-08T07:01:47.709868+08:00",
+            ),
+        ] {
+            let json = serde_json::json!({"spec": {"executionEnvironment": {
+                "devices": {"7": {"prepared_at": input}}
+            }}});
+            let rendered =
+                crate::json_contract_tests::serialized(execution_environment(&json).unwrap())
+                    .unwrap();
+            assert_eq!(
+                rendered["devices"]["7"]["prepared_at"], expected,
+                "input {input}"
+            );
+        }
     }
 
     #[test]

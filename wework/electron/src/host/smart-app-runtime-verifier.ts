@@ -4,6 +4,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import semver from 'semver'
+import { traceSmartAppVerification } from './smart-app-verification-diagnostics.js'
 import { runtimeNodeArgs } from '../runtime/electron-node-runtime.js'
 import { dshBrowserAuthenticationCookies } from '../runtime/dsh-browser-auth.js'
 import {
@@ -105,33 +106,37 @@ export async function verifySmartAppRuntime(
     await dependencies.copyProject(options.projectRoot, isolatedProject)
     const environment = isolatedVerificationEnvironment(options.environment, home)
     const port = await dependencies.reservePort()
-    const launch = await dependencies.prepareLaunch({
-      runtimeRoot: options.runtimeRoot,
-      dataDirectory: temporaryRoot,
-      installationId,
-      packagePath: isolatedProject,
-      manifest: options.manifest,
-      environment,
-      port,
-      modelBaseUrl: null,
-      contextBaseUrl: null,
-      contextToken: null,
-      includeElectronHostBridge: false,
-      run: dependencies.runCommand,
-    })
+    const launch = await traceSmartAppVerification('runtime.prepare', () =>
+      dependencies.prepareLaunch({
+        runtimeRoot: options.runtimeRoot,
+        dataDirectory: temporaryRoot,
+        installationId,
+        packagePath: isolatedProject,
+        manifest: options.manifest,
+        environment,
+        port,
+        modelBaseUrl: null,
+        contextBaseUrl: null,
+        contextToken: null,
+        includeElectronHostBridge: false,
+        run: dependencies.runCommand,
+      })
+    )
     stage = 'config'
-    await abortable(
-      dependencies.runCommand(
-        launch.command,
-        runtimeNodeArgs(launch.environment, [
-          launch.entry,
-          '--profile',
-          launch.profile,
-          '--dump-config',
-        ]),
-        { cwd: launch.cwd, env: launch.environment }
-      ),
-      options.signal
+    await traceSmartAppVerification('runtime.config', () =>
+      abortable(
+        dependencies.runCommand(
+          launch.command,
+          runtimeNodeArgs(launch.environment, [
+            launch.entry,
+            '--profile',
+            launch.profile,
+            '--dump-config',
+          ]),
+          { cwd: launch.cwd, env: launch.environment }
+        ),
+        options.signal
+      )
     )
     stage = 'start'
     runtime = dependencies.createRuntime({
@@ -145,13 +150,18 @@ export async function verifySmartAppRuntime(
       logDirectory: options.logDirectory,
       logFileName: 'runtime.log',
     })
-    await abortable(runtime.start(), options.signal)
-    const page = await dependencies.verifyPage({
-      baseUrl: launch.url,
-      path: options.contract.runtime.path,
-      readySelector: options.contract.runtime.readySelector,
-      signal: options.signal,
-    })
+    const activeRuntime = runtime
+    await traceSmartAppVerification('runtime.start', () =>
+      abortable(activeRuntime.start(), options.signal)
+    )
+    const page = await traceSmartAppVerification('runtime.page', () =>
+      dependencies.verifyPage({
+        baseUrl: launch.url,
+        path: options.contract.runtime.path,
+        readySelector: options.contract.runtime.readySelector,
+        signal: options.signal,
+      })
+    )
     if (page.issues.length) return page
     if (options.contract.capabilities.remote) {
       const script = options.contract.scripts.runtimeProbe
@@ -189,7 +199,9 @@ export async function verifySmartAppRuntime(
     }[stage]
     return { issues: [runtimeIssue(code, `Smart App runtime ${stage} failed`)] }
   } finally {
-    await runtime?.stop().catch(() => {})
+    await traceSmartAppVerification('runtime.stop', async () => {
+      await runtime?.stop().catch(() => {})
+    })
     await rm(temporaryRoot, { recursive: true, force: true })
   }
 }

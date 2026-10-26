@@ -24,17 +24,21 @@
 //!    `loop_items` rows for the project.
 //! 3. `loop_item_service.list_project_task_bindings` — active
 //!    `loop_items` execution rows whose `loop_item_id` is in the item list;
-//! 4. `cloud_project_service.list_members` — approved `resource_members`
-//!    joined with `users`, plus the creator when absent;
+//! 4. `cloud_project_service.list_members` — the effective project roster
+//!    (`project_participant_ids`: approved direct members plus the parent
+//!    workspace owner/members), each row's permission provenance
+//!    (`collaboration_permission_service.project_sources`), the direct grant
+//!    id, and the metadata capability descriptions;
 //! 5. `project_chat_service.list_agents` — active `loop_items` chat-agent
 //!    rows for the project, filtered by visibility against the caller.
 //!
-//! The recorded case is a gitlab-backed public project whose provider API
-//! call fails TLS verification during Replay (the presented chain is
-//! anchored at a self-signed CA). The source raises
-//! `HTTPException(502, "Provider request failed: {e}")` where `{e}` is the
-//! httpx/openssl transport error text.
+//! The recorded cases are local projects; the external-provider branch keeps
+//! the source's provider list call and its
+//! `HTTPException(502, "Provider request failed: {e}")` mapping.
 
+pub mod agents;
 pub mod external_provider;
 pub mod handler;
+pub mod members;
+pub mod permissions;
 pub mod repository;

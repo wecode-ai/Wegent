@@ -1,7 +1,3 @@
-import { IssueStandInControl } from './IssueStandInControl'
-import type { SharedWorkspaceApi } from '@wegent/collaboration'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo } from '@/types/api'
 import { useImperativeHandle, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import {
@@ -23,27 +19,9 @@ import { AnchorPopover } from './AnchorPopover'
 import type { IssueHomeTaskComposerProps } from '@wegent/collaboration/platform'
 
 /** The Tasks-tab input with Issue persistence supplied by the collaboration host. */
-export function WeworkIssueHomeComposer({
-  ref,
-  api,
-  services,
-  devices = [],
-  userId,
-  ...props
-}: IssueHomeTaskComposerProps & {
-  api?: SharedWorkspaceApi
-  services?: WorkbenchServices
-  userId?: number
-  devices?: DeviceInfo[]
-}) {
+export function WeworkIssueHomeComposer({ ref, ...props }: IssueHomeTaskComposerProps) {
   const { t } = useTranslation('common')
   const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null)
-  const [standIn, setStandIn] = useState<{
-    projectId: string
-    deviceId: string | null
-    profileId?: string
-  } | null>(null)
-  const standInDeviceId = standIn?.projectId === props.projectId ? standIn.deviceId : null
   const input = useRef<ComposerInputHandle>(null)
   const selectedProject = props.projects.find(project => project.id === props.projectId)
   const projectLocation = (project: IssueHomeTaskComposerProps['projects'][number]) => {
@@ -154,15 +132,7 @@ export function WeworkIssueHomeComposer({
             value={props.value}
             onChange={props.onChange}
             onDraftEdit={handleDraftChange}
-            onSubmit={value =>
-              standInDeviceId
-                ? props.onSubmit(
-                    value ?? props.value,
-                    standInDeviceId,
-                    standIn?.profileId ?? 'default'
-                  )
-                : props.onSubmit(value ?? props.value)
-            }
+            onSubmit={value => props.onSubmit(value ?? props.value)}
             disabled={props.disabled}
             requireText
             placeholder={props.placeholder}
@@ -175,28 +145,6 @@ export function WeworkIssueHomeComposer({
             showExecutionTools={false}
             toolbarLeadingContext={
               <div className="flex flex-wrap items-center gap-1">
-                {api?.standIn?.run && services && selectedProject && (
-                  <IssueStandInControl
-                    api={api}
-                    services={services}
-                    project={selectedProject}
-                    devices={devices}
-                    disabled={props.disabled}
-                    deviceId={standInDeviceId}
-                    userId={userId}
-                    profileId={standIn?.profileId ?? 'default'}
-                    onSelectProfile={profileId =>
-                      setStandIn({
-                        projectId: props.projectId,
-                        deviceId: standInDeviceId,
-                        profileId,
-                      })
-                    }
-                    onSelect={deviceId =>
-                      setStandIn({ projectId: props.projectId, deviceId, profileId: 'default' })
-                    }
-                  />
-                )}
                 {(
                   [
                     { symbol: '@', Icon: AtSign, label: 'mention_member' },
@@ -204,7 +152,7 @@ export function WeworkIssueHomeComposer({
                   ] as const
                 ).map(({ symbol, Icon, label }) =>
                   symbol === '@' && props.ownerControl ? (
-                    <span key={label}>{standInDeviceId ? null : props.ownerControl}</span>
+                    <span key={label}>{props.ownerControl}</span>
                   ) : (
                     <button
                       key={label}

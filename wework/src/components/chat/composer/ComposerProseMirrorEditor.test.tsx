@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { Activity, createRef, useState } from 'react'
+import { Activity, Suspense, createRef, startTransition, useState } from 'react'
 import { EditorState } from 'prosemirror-state'
 import { describe, expect, test, vi } from 'vitest'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
@@ -77,6 +77,84 @@ function renderEditor(
 }
 
 describe('ComposerProseMirrorEditor', () => {
+  test('keeps native callbacks from the committed render while a transition suspends', async () => {
+    const committed = vi.fn(() => true)
+    const uncommitted = vi.fn(() => true)
+    const suspended = vi.fn()
+    const pending = new Promise<void>(() => {})
+    function Suspend({ active }: { active: boolean }) {
+      if (active) {
+        suspended()
+        throw pending
+      }
+      return null
+    }
+    function Frame({ blocked }: { blocked: boolean }) {
+      return (
+        <Suspense fallback={<div>Loading</div>}>
+          <ComposerProseMirrorEditor
+            value="ready to send"
+            disabled={blocked}
+            onChange={vi.fn()}
+            onSnapshotChange={vi.fn()}
+            onKeyDown={blocked ? uncommitted : committed}
+            onBeforeInput={() => false}
+            onKeyUp={vi.fn()}
+            onCompositionStart={vi.fn()}
+            onCompositionEnd={vi.fn()}
+            onPaste={() => false}
+            onDrop={() => false}
+            onClick={vi.fn()}
+            onFocus={vi.fn()}
+            placeholder="Message"
+            testId="committed-editor"
+            rows={2}
+            textareaRef={createRef<HTMLElement>()}
+            className="min-h-12"
+          />
+          <Suspend active={blocked} />
+        </Suspense>
+      )
+    }
+    const view = render(<Frame blocked={false} />)
+    await act(async () => {
+      startTransition(() => view.rerender(<Frame blocked />))
+    })
+    expect(suspended).toHaveBeenCalled()
+    const editor = screen.getByTestId('committed-editor')
+    expect(editor).toHaveAttribute('contenteditable', 'true')
+    fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter' })
+    expect(committed).toHaveBeenCalledTimes(1)
+    expect(uncommitted).not.toHaveBeenCalled()
+    view.rerender(<Frame blocked={false} />)
+    fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter' })
+    expect(committed).toHaveBeenCalledTimes(2)
+  })
+
+  test('inserts a delayed transcript once at the captured selection and supports undo', () => {
+    const { editorRef } = renderEditor('before ')
+    act(() => editorRef.current!.setValue('before ', 7))
+    const insertion = editorRef.current!.captureInsertion()
+    act(() => {
+      expect(insertion.insertText('语音')).toBe(true)
+    })
+    expect(editorRef.current!.getSnapshot().value).toBe('before 语音')
+    expect(insertion.insertText('duplicate')).toBe(false)
+    fireEvent.keyDown(screen.getByTestId('composer-editor'), { key: 'z', ctrlKey: true })
+    expect(editorRef.current!.getSnapshot().value).toBe('before ')
+  })
+
+  test('rejects a transcript after the draft changes even when its text is restored', () => {
+    const { editorRef } = renderEditor('original')
+    const insertion = editorRef.current!.captureInsertion()
+    act(() => {
+      editorRef.current!.setValue('changed')
+      editorRef.current!.setValue('original')
+    })
+    expect(insertion.insertText('stale')).toBe(false)
+    expect(editorRef.current!.getSnapshot().value).toBe('original')
+  })
+
   test.each([
     '~/worksapce/skills/test-skill/SKILL.md',
     '/tmp/skills/test-skill/SKILL.md',

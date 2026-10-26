@@ -1,0 +1,861 @@
+{
+  "version": 1,
+  "offsetUnit": "utf16",
+  "cases": [
+    {
+      "id": "cancelled-placeholder",
+      "status": "cancelled",
+      "items": [
+        {
+          "id": "cancelled-final",
+          "kind": "final",
+          "content": "cancelled"
+        }
+      ],
+      "regions": [],
+      "queries": [
+        {
+          "query": "cancelled",
+          "matches": []
+        }
+      ]
+    },
+    {
+      "id": "failed-placeholder",
+      "status": "failed",
+      "error": "API error: CORE_HIDDEN_ERROR",
+      "items": [
+        {
+          "id": "failed-final",
+          "kind": "final",
+          "content": "API error: CORE_HIDDEN_ERROR"
+        }
+      ],
+      "regions": [],
+      "queries": [
+        {
+          "query": "CORE_HIDDEN_ERROR",
+          "matches": []
+        }
+      ]
+    },
+    {
+      "id": "done-placeholder-control",
+      "status": "done",
+      "items": [
+        {
+          "id": "done-placeholder",
+          "kind": "final",
+          "content": "cancelled"
+        }
+      ],
+      "regions": [
+        {
+          "id": "done-placeholder",
+          "text": "cancelled"
+        }
+      ],
+      "queries": [
+        {
+          "query": "cancelled",
+          "matches": [
+            {
+              "regionId": "done-placeholder",
+              "start": 0,
+              "end": 9,
+              "text": "cancelled"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "done-error-control",
+      "status": "done",
+      "items": [
+        {
+          "id": "done-error",
+          "kind": "final",
+          "content": "API error: CORE_HIDDEN_ERROR"
+        }
+      ],
+      "regions": [
+        {
+          "id": "done-error",
+          "text": "API error: CORE_HIDDEN_ERROR"
+        }
+      ],
+      "queries": [
+        {
+          "query": "CORE_HIDDEN_ERROR",
+          "matches": [
+            {
+              "regionId": "done-error",
+              "start": 11,
+              "end": 28,
+              "text": "CORE_HIDDEN_ERROR"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cancelled-partial",
+      "status": "cancelled",
+      "items": [
+        {
+          "id": "cancelled-partial",
+          "kind": "final",
+          "content": "CORE_PARTIAL_CANCELLED useful output"
+        }
+      ],
+      "regions": [
+        {
+          "id": "cancelled-partial",
+          "text": "CORE_PARTIAL_CANCELLED useful output"
+        }
+      ],
+      "queries": [
+        {
+          "query": "CORE_PARTIAL_CANCELLED",
+          "matches": [
+            {
+              "regionId": "cancelled-partial",
+              "start": 0,
+              "end": 22,
+              "text": "CORE_PARTIAL_CANCELLED"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "failed-partial",
+      "status": "failed",
+      "error": "API error: provider unavailable",
+      "items": [
+        {
+          "id": "failed-partial",
+          "kind": "final",
+          "content": "CORE_PARTIAL_FAILED useful output"
+        }
+      ],
+      "regions": [
+        {
+          "id": "failed-partial",
+          "text": "CORE_PARTIAL_FAILED useful output"
+        }
+      ],
+      "queries": [
+        {
+          "query": "CORE_PARTIAL_FAILED",
+          "matches": [
+            {
+              "regionId": "failed-partial",
+              "start": 0,
+              "end": 19,
+              "text": "CORE_PARTIAL_FAILED"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hidden-final-visible-narrative",
+      "status": "failed",
+      "error": "API error: CORE_HIDDEN_NARRATIVE_ERROR",
+      "items": [
+        {
+          "id": "visible-narrative",
+          "kind": "narrative",
+          "content": "CORE_VISIBLE_NARRATIVE useful output"
+        },
+        {
+          "id": "hidden-narrative-final",
+          "kind": "final",
+          "content": "API error: CORE_HIDDEN_NARRATIVE_ERROR"
+        }
+      ],
+      "regions": [
+        {
+          "id": "visible-narrative",
+          "text": "CORE_VISIBLE_NARRATIVE useful output"
+        }
+      ],
+      "queries": [
+        {
+          "query": "CORE_VISIBLE_NARRATIVE",
+          "matches": [
+            {
+              "regionId": "visible-narrative",
+              "start": 0,
+              "end": 22,
+              "text": "CORE_VISIBLE_NARRATIVE"
+            }
+          ]
+        },
+        {
+          "query": "CORE_HIDDEN_NARRATIVE_ERROR",
+          "matches": []
+        }
+      ]
+    },
+    {
+      "id": "cancelled-narrative-is-visible",
+      "status": "cancelled",
+      "items": [
+        {
+          "id": "cancelled-narrative",
+          "kind": "narrative",
+          "content": "interrupted"
+        },
+        {
+          "id": "cancelled-narrative-final",
+          "kind": "final",
+          "content": "aborted"
+        }
+      ],
+      "regions": [
+        {
+          "id": "cancelled-narrative",
+          "text": "interrupted"
+        }
+      ],
+      "queries": [
+        {
+          "query": "interrupted",
+          "matches": [
+            {
+              "regionId": "cancelled-narrative",
+              "start": 0,
+              "end": 11,
+              "text": "interrupted"
+            }
+          ]
+        },
+        {
+          "query": "aborted",
+          "matches": []
+        }
+      ]
+    },
+    {
+      "id": "guidance-terminal-boundary",
+      "status": "failed",
+      "error": "API error: CORE_GUIDANCE",
+      "items": [
+        {
+          "id": "guidance-early",
+          "kind": "final",
+          "content": "API error: CORE_GUIDANCE"
+        },
+        {
+          "id": "guidance-user",
+          "kind": "user",
+          "content": "Continue CORE_GUIDANCE_USER"
+        },
+        {
+          "id": "guidance-final",
+          "kind": "final",
+          "content": "API error: CORE_GUIDANCE"
+        }
+      ],
+      "regions": [
+        {
+          "id": "guidance-early",
+          "text": "API error: CORE_GUIDANCE"
+        },
+        {
+          "id": "guidance-user",
+          "text": "Continue CORE_GUIDANCE_USER"
+        }
+      ],
+      "queries": [
+        {
+          "query": "API error: CORE_GUIDANCE",
+          "matches": [
+            {
+              "regionId": "guidance-early",
+              "start": 0,
+              "end": 24,
+              "text": "API error: CORE_GUIDANCE"
+            }
+          ]
+        },
+        {
+          "query": "CORE_GUIDANCE_USER",
+          "matches": [
+            {
+              "regionId": "guidance-user",
+              "start": 9,
+              "end": 27,
+              "text": "CORE_GUIDANCE_USER"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cross-item-reference",
+      "status": "done",
+      "items": [
+        {
+          "id": "reference-label",
+          "kind": "final",
+          "content": "[CORE_REFERENCE][core-ref]"
+        },
+        {
+          "id": "reference-definition",
+          "kind": "final",
+          "content": "[core-ref]: https://example.test/CORE_HIDDEN_URL"
+        }
+      ],
+      "regions": [
+        {
+          "id": "reference-label",
+          "text": "CORE_REFERENCE"
+        }
+      ],
+      "queries": [
+        {
+          "query": "CORE_REFERENCE",
+          "matches": [
+            {
+              "regionId": "reference-label",
+              "start": 0,
+              "end": 14,
+              "text": "CORE_REFERENCE"
+            }
+          ]
+        },
+        {
+          "query": "CORE_HIDDEN_URL",
+          "matches": []
+        },
+        {
+          "query": "[core-ref]",
+          "matches": []
+        }
+      ],
+      "mappingAssertions": [
+        {
+          "regionId": "reference-label",
+          "start": 0,
+          "end": 14,
+          "itemId": "reference-label",
+          "sourceStart": 1,
+          "sourceEnd": 15
+        }
+      ]
+    },
+    {
+      "id": "cross-item-fenced-code",
+      "status": "done",
+      "items": [
+        {
+          "id": "fence-open",
+          "kind": "final",
+          "content": "```txt\nCORE_FENCE"
+        },
+        {
+          "id": "fence-close",
+          "kind": "final",
+          "content": "```"
+        }
+      ],
+      "regions": [
+        {
+          "id": "fence-open",
+          "text": "CORE_FENCE\n"
+        }
+      ],
+      "queries": [
+        {
+          "query": "CORE_FENCE",
+          "matches": [
+            {
+              "regionId": "fence-open",
+              "start": 0,
+              "end": 10,
+              "text": "CORE_FENCE"
+            }
+          ]
+        }
+      ],
+      "mappingAssertions": [
+        {
+          "regionId": "fence-open",
+          "start": 0,
+          "end": 10,
+          "itemId": "fence-open",
+          "sourceStart": 7,
+          "sourceEnd": 17
+        }
+      ]
+    },
+    {
+      "id": "tool-separated-regions",
+      "status": "done",
+      "items": [
+        {
+          "id": "before-tool",
+          "kind": "final",
+          "content": "CORE_BEFORE_TOOL"
+        },
+        {
+          "id": "tool-boundary",
+          "kind": "tool",
+          "content": "CORE_HIDDEN_TOOL"
+        },
+        {
+          "id": "after-tool",
+          "kind": "final",
+          "content": "CORE_AFTER_TOOL"
+        }
+      ],
+      "regions": [
+        {
+          "id": "before-tool",
+          "text": "CORE_BEFORE_TOOL"
+        },
+        {
+          "id": "after-tool",
+          "text": "CORE_AFTER_TOOL"
+        }
+      ],
+      "queries": [
+        {
+          "query": "CORE_BEFORE_TOOL",
+          "matches": [
+            {
+              "regionId": "before-tool",
+              "start": 0,
+              "end": 16,
+              "text": "CORE_BEFORE_TOOL"
+            }
+          ]
+        },
+        {
+          "query": "CORE_AFTER_TOOL",
+          "matches": [
+            {
+              "regionId": "after-tool",
+              "start": 0,
+              "end": 15,
+              "text": "CORE_AFTER_TOOL"
+            }
+          ]
+        },
+        {
+          "query": "CORE_HIDDEN_TOOL",
+          "matches": []
+        }
+      ]
+    },
+    {
+      "id": "unicode-original-offsets",
+      "status": "done",
+      "items": [
+        {
+          "id": "unicode",
+          "kind": "final",
+          "content": "İ_CORE_UNICODE 😀 CORE_AFTER_UNICODE Σσ banana"
+        }
+      ],
+      "regions": [
+        {
+          "id": "unicode",
+          "text": "İ_CORE_UNICODE 😀 CORE_AFTER_UNICODE Σσ banana"
+        }
+      ],
+      "queries": [
+        {
+          "query": "i̇_core_unicode",
+          "matches": [
+            {
+              "regionId": "unicode",
+              "start": 0,
+              "end": 14,
+              "text": "İ_CORE_UNICODE"
+            }
+          ]
+        },
+        {
+          "query": "i_core_unicode",
+          "matches": []
+        },
+        {
+          "query": "CORE_AFTER_UNICODE",
+          "matches": [
+            {
+              "regionId": "unicode",
+              "start": 18,
+              "end": 36,
+              "text": "CORE_AFTER_UNICODE"
+            }
+          ]
+        },
+        {
+          "query": "😀",
+          "e2e": false,
+          "matches": [
+            {
+              "regionId": "unicode",
+              "start": 15,
+              "end": 17,
+              "text": "😀"
+            }
+          ]
+        },
+        {
+          "query": "σ",
+          "e2e": false,
+          "matches": [
+            {
+              "regionId": "unicode",
+              "start": 37,
+              "end": 38,
+              "text": "Σ"
+            },
+            {
+              "regionId": "unicode",
+              "start": 38,
+              "end": 39,
+              "text": "σ"
+            }
+          ]
+        },
+        {
+          "query": "ANA",
+          "e2e": false,
+          "matches": [
+            {
+              "regionId": "unicode",
+              "start": 41,
+              "end": 44,
+              "text": "ana"
+            }
+          ]
+        }
+      ],
+      "mappingAssertions": [
+        {
+          "regionId": "unicode",
+          "start": 0,
+          "end": 14,
+          "itemId": "unicode",
+          "sourceStart": 0,
+          "sourceEnd": 14
+        },
+        {
+          "regionId": "unicode",
+          "start": 15,
+          "end": 17,
+          "itemId": "unicode",
+          "sourceStart": 15,
+          "sourceEnd": 17
+        },
+        {
+          "regionId": "unicode",
+          "start": 18,
+          "end": 36,
+          "itemId": "unicode",
+          "sourceStart": 18,
+          "sourceEnd": 36
+        }
+      ]
+    },
+    {
+      "id": "citation-repeated-source",
+      "status": "done",
+      "items": [
+        {
+          "id": "citation-source",
+          "kind": "final",
+          "content": "CORE_CITE_AciteCORE_CITE_ACORE_CITE_A"
+        }
+      ],
+      "regions": [
+        {
+          "id": "citation-source",
+          "text": "CORE_CITE_ACORE_CITE_A"
+        }
+      ],
+      "queries": [
+        {
+          "query": "CORE_CITE_A",
+          "matches": [
+            {
+              "regionId": "citation-source",
+              "start": 0,
+              "end": 11,
+              "text": "CORE_CITE_A"
+            },
+            {
+              "regionId": "citation-source",
+              "start": 11,
+              "end": 22,
+              "text": "CORE_CITE_A"
+            }
+          ]
+        }
+      ],
+      "mappingAssertions": [
+        {
+          "regionId": "citation-source",
+          "start": 0,
+          "end": 11,
+          "itemId": "citation-source",
+          "sourceStart": 0,
+          "sourceEnd": 11
+        },
+        {
+          "regionId": "citation-source",
+          "start": 11,
+          "end": 22,
+          "itemId": "citation-source",
+          "sourceStart": 29,
+          "sourceEnd": 40
+        }
+      ]
+    },
+    {
+      "id": "entities-and-escapes",
+      "status": "done",
+      "items": [
+        {
+          "id": "entities-source",
+          "kind": "final",
+          "content": "CORE_ENTITY &amp; CORE_ESCAPE \\*literal\\* &#x1F600;"
+        }
+      ],
+      "regions": [
+        {
+          "id": "entities-source",
+          "text": "CORE_ENTITY & CORE_ESCAPE *literal* 😀"
+        }
+      ],
+      "queries": [
+        {
+          "query": "CORE_ENTITY &",
+          "matches": [
+            {
+              "regionId": "entities-source",
+              "start": 0,
+              "end": 13,
+              "text": "CORE_ENTITY &"
+            }
+          ]
+        },
+        {
+          "query": "CORE_ESCAPE *literal*",
+          "matches": [
+            {
+              "regionId": "entities-source",
+              "start": 14,
+              "end": 35,
+              "text": "CORE_ESCAPE *literal*"
+            }
+          ]
+        }
+      ],
+      "mappingAssertions": [
+        {
+          "regionId": "entities-source",
+          "start": 0,
+          "end": 38,
+          "itemId": "entities-source",
+          "sourceStart": 0,
+          "sourceEnd": 51,
+          "rawEnvelope": true
+        }
+      ]
+    },
+    {
+      "id": "assistant-directives-hidden",
+      "status": "done",
+      "items": [
+        {
+          "id": "assistant-directives-hidden-final",
+          "kind": "final",
+          "content": "CORE_NOTE before :codex-file-citation{path=\"CORE_HIDDEN_FILE.txt\"} after :codex-followup[CORE_HIDDEN_FOLLOWUP]{prompt=\"continue\"} end"
+        }
+      ],
+      "regions": [
+        {
+          "id": "assistant-directives-hidden-final",
+          "text": "CORE_NOTE before  after  end"
+        }
+      ],
+      "queries": [
+        {
+          "query": "CORE_NOTE",
+          "matches": [
+            {
+              "regionId": "assistant-directives-hidden-final",
+              "start": 0,
+              "end": 9,
+              "text": "CORE_NOTE"
+            }
+          ]
+        },
+        {
+          "query": "CORE_HIDDEN_FILE",
+          "matches": []
+        },
+        {
+          "query": "CORE_HIDDEN_FOLLOWUP",
+          "matches": []
+        }
+      ],
+      "mappingAssertions": [
+        {
+          "regionId": "assistant-directives-hidden-final",
+          "start": 0,
+          "end": 9,
+          "itemId": "assistant-directives-hidden-final",
+          "sourceStart": 0,
+          "sourceEnd": 9
+        },
+        {
+          "regionId": "assistant-directives-hidden-final",
+          "start": 18,
+          "end": 23,
+          "itemId": "assistant-directives-hidden-final",
+          "sourceStart": 67,
+          "sourceEnd": 72
+        },
+        {
+          "regionId": "assistant-directives-hidden-final",
+          "start": 25,
+          "end": 28,
+          "itemId": "assistant-directives-hidden-final",
+          "sourceStart": 130,
+          "sourceEnd": 133
+        }
+      ]
+    },
+    {
+      "id": "assistant-annotations-protected",
+      "status": "done",
+      "items": [
+        {
+          "id": "assistant-annotations-protected-final",
+          "kind": "final",
+          "content": "`citeCORE_CODE` [citeCORE_LINK](https://example.invalid/target)"
+        }
+      ],
+      "regions": [
+        {
+          "id": "assistant-annotations-protected-final",
+          "text": "citeCORE_CODE citeCORE_LINK"
+        }
+      ],
+      "queries": [
+        {
+          "query": "CORE_CODE",
+          "matches": [
+            {
+              "regionId": "assistant-annotations-protected-final",
+              "start": 6,
+              "end": 15,
+              "text": "CORE_CODE"
+            }
+          ]
+        },
+        {
+          "query": "CORE_LINK",
+          "matches": [
+            {
+              "regionId": "assistant-annotations-protected-final",
+              "start": 23,
+              "end": 32,
+              "text": "CORE_LINK"
+            }
+          ]
+        }
+      ],
+      "mappingAssertions": [
+        {
+          "regionId": "assistant-annotations-protected-final",
+          "start": 6,
+          "end": 15,
+          "itemId": "assistant-annotations-protected-final",
+          "sourceStart": 7,
+          "sourceEnd": 16
+        },
+        {
+          "regionId": "assistant-annotations-protected-final",
+          "start": 23,
+          "end": 32,
+          "itemId": "assistant-annotations-protected-final",
+          "sourceStart": 26,
+          "sourceEnd": 35
+        }
+      ]
+    },
+    {
+      "id": "assistant-directives-literal",
+      "status": "done",
+      "items": [
+        {
+          "id": "assistant-directives-literal-final",
+          "kind": "final",
+          "content": "CORE_LITERAL :unknown{path=CORE_UNKNOWN} :codex-file-citation{path=\"\" label=CORE_INVALID} \\:codex-file-citation{path=CORE_ESCAPED}"
+        }
+      ],
+      "regions": [
+        {
+          "id": "assistant-directives-literal-final",
+          "text": "CORE_LITERAL :unknown{path=CORE_UNKNOWN} :codex-file-citation{path=\"\" label=CORE_INVALID} :codex-file-citation{path=CORE_ESCAPED}"
+        }
+      ],
+      "queries": [
+        {
+          "query": "CORE_UNKNOWN",
+          "matches": [
+            {
+              "regionId": "assistant-directives-literal-final",
+              "start": 27,
+              "end": 39,
+              "text": "CORE_UNKNOWN"
+            }
+          ]
+        },
+        {
+          "query": "CORE_INVALID",
+          "matches": [
+            {
+              "regionId": "assistant-directives-literal-final",
+              "start": 76,
+              "end": 88,
+              "text": "CORE_INVALID"
+            }
+          ]
+        },
+        {
+          "query": "CORE_ESCAPED",
+          "matches": [
+            {
+              "regionId": "assistant-directives-literal-final",
+              "start": 116,
+              "end": 128,
+              "text": "CORE_ESCAPED"
+            }
+          ]
+        }
+      ],
+      "mappingAssertions": [
+        {
+          "regionId": "assistant-directives-literal-final",
+          "start": 0,
+          "end": 129,
+          "itemId": "assistant-directives-literal-final",
+          "sourceStart": 0,
+          "sourceEnd": 130,
+          "rawEnvelope": true
+        }
+      ]
+    }
+  ]
+}

@@ -490,7 +490,8 @@ def archive_cloud_project(
     cloud_project_service.archive(db, project_id, current_user.id, version)
 
 
-@router.get("/{project_id}/members", response_model=list[CloudProjectMemberResponse])
+# MIGRATION-CANDIDATE(api="GET /api/v1/cloud-projects/*/members"): remove after final confirmation.
+# @router.get("/{project_id}/members", response_model=list[CloudProjectMemberResponse])
 def list_cloud_project_members(
     project_id: int,
     db: Session = Depends(get_db),

@@ -554,7 +554,7 @@ fn parse_datetime(value: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> 
 /// ISO-8601 with 6-digit microseconds and the original offset. The result
 /// stays a String, including empty or invalid provider timestamps. Serde
 /// applies the same JSON string escaping as the previous Value::String.
-fn datetime_reformat(value: &str) -> String {
+pub(crate) fn datetime_reformat(value: &str) -> String {
     match parse_datetime(value) {
         Some(parsed) => {
             let nanos = parsed.timestamp_subsec_nanos();

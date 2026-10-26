@@ -53,6 +53,8 @@ struct EnvLockGuard {
     _guard: MutexGuard<'static, ()>,
 }
 
+// Default runner construction reads the home overrides and replaces the active
+// plugin connection binding, so readers must share this guard with writers.
 async fn env_lock() -> EnvLockGuard {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     EnvLockGuard {
@@ -294,6 +296,7 @@ async fn http_capability_provider_supports_signed_external_package_urls_without_
 
 #[tokio::test]
 async fn default_session_handler_uses_configured_workspace_root_for_relative_paths() {
+    let _lock = env_lock().await;
     let workspace_root = std::env::temp_dir().join(format!(
         "wegent-configured-session-root-{}",
         std::process::id()
@@ -328,6 +331,7 @@ async fn default_session_handler_uses_configured_workspace_root_for_relative_pat
 
 #[tokio::test]
 async fn default_session_handler_uses_configured_workspace_root_for_blank_path() {
+    let _lock = env_lock().await;
     let workspace_root = std::env::temp_dir().join(format!(
         "wegent-default-session-root-{}",
         std::process::id()
@@ -359,6 +363,7 @@ async fn default_session_handler_uses_configured_workspace_root_for_blank_path()
 
 #[tokio::test]
 async fn default_session_handler_uses_configured_workspace_root_when_path_is_omitted() {
+    let _lock = env_lock().await;
     let workspace_root = std::env::temp_dir().join(format!(
         "wegent-omitted-session-root-{}",
         std::process::id()
@@ -848,6 +853,7 @@ fn write_agent_binding(home: &std::path::Path, shell: &str) {
 #[cfg(unix)]
 #[tokio::test]
 async fn extension_event_runs_agent_home_skill_script_with_payload_environment() {
+    let _lock = env_lock().await;
     let temp = tempfile::tempdir().unwrap();
     let agent_home = temp.path().join("agents/user7/default/design");
     let script_dir = agent_home.join("skills/sample-extension");
@@ -1003,6 +1009,7 @@ async fn task_extension_cannot_self_assert_user_identity() {
 #[cfg(unix)]
 #[tokio::test]
 async fn default_extension_event_rejects_script_path_escape() {
+    let _lock = env_lock().await;
     let transport = RecordingTransport::default();
     let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
     runner.register_handlers();
@@ -1026,6 +1033,7 @@ async fn default_extension_event_rejects_script_path_escape() {
 
 #[tokio::test]
 async fn default_extension_event_rejects_path_meta_extension_names() {
+    let _lock = env_lock().await;
     let transport = RecordingTransport::default();
     let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
     runner.register_handlers();

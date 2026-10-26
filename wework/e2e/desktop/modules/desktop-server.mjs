@@ -1,3 +1,4 @@
+import { nativeApprovalModelResponse } from './native-approval-model.mjs'
 import {
   installedMiniProgramPlugin,
   installedSitesPlugin,
@@ -5,6 +6,7 @@ import {
   sitesMarketplacePlugin,
 } from './preferences-automation-flows.mjs'
 import { accountCommandResult } from './account-auth-command.mjs'
+import { CONCURRENT_SCENARIO, respondToConcurrentMcpInput } from './mcp-concurrent-model.mjs'
 
 import {
   assistantMessage,
@@ -29,7 +31,6 @@ import {
   matrixToolCompletion,
   matrixToolPreamble,
   matrixToolPrompt,
-  mcpToolRequestEvents,
   namespacedFunctionCall,
   parseTelemetryPayload,
   readRawRequestBody,
@@ -53,6 +54,7 @@ import {
   selectToolSearch,
   serializedOutputReportsSuccess,
   toolSearchResponseEvents,
+  toolOutputText,
   selectViewImageTool,
   streamingMarkdownReport,
   streamingTextEvents,
@@ -171,6 +173,7 @@ import {
   MCP_ELICITATION_ACCEPTED_MARKER,
   MCP_ELICITATION_CALL_ID,
   MCP_ELICITATION_COMPLETION_TEXT,
+  MCP_ELICITATION_NAMESPACE,
   MCP_ELICITATION_PROMPT,
   MCP_ELICITATION_SEARCH_ID,
   MCP_ELICITATION_TOOL_NAME,
@@ -232,6 +235,10 @@ import {
   REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT,
   REQUEST_USER_INPUT_ASYNC_PROMPT,
   REQUEST_USER_INPUT_ASYNC_QUESTION,
+  REQUEST_USER_INPUT_FREE_TEXT_PROMPT,
+  REQUEST_USER_INPUT_FREE_TEXT_QUESTION,
+  REQUEST_USER_INPUT_FREE_TEXT_ANSWER,
+  REQUEST_USER_INPUT_FREE_TEXT_COMPLETE,
   REQUEST_USER_INPUT_ASYNC_WAITING_TEXT,
   REQUEST_USER_INPUT_ASYNC_BUSY_CALL_ID,
   REQUEST_USER_INPUT_ASYNC_BUSY_COMPLETION_TEXT,
@@ -353,34 +360,6 @@ function requestContainsSkillLocator(body, skillPath, skillName) {
   return false
 }
 
-function toolOutputText(request, callId) {
-  const findOutput = value => {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const output = findOutput(item)
-        if (output != null) return output
-      }
-      return null
-    }
-    if (!value || typeof value !== 'object') return null
-    if (
-      (value.type === 'function_call_output' || value.type === 'custom_tool_call_output') &&
-      value.call_id === callId
-    ) {
-      return typeof value.output === 'string' ? value.output : JSON.stringify(value.output)
-    }
-    if (value.type === 'tool_search_output' && value.call_id === callId) {
-      return JSON.stringify(value.tools ?? [])
-    }
-    for (const item of Object.values(value)) {
-      const output = findOutput(item)
-      if (output != null) return output
-    }
-    return null
-  }
-  return findOutput(request.input ?? [])
-}
-
 /** Text of the user-authored turns codex forwarded to the model, in order. */
 function inputUserMessageTexts(request) {
   const texts = []
@@ -448,6 +427,7 @@ function readyPluginWorkspaceResult(body) {
 }
 
 const HELD_RESPONSE_SCENARIOS = new Set([
+  CONCURRENT_SCENARIO,
   'worktree_queue_hold',
   'worktree_restart_hold',
   'worktree_status_hold',
@@ -1311,6 +1291,8 @@ class DesktopE2EServer {
 
   async handleControl(request, response) {
     cors(response)
+    response.setHeader('X-Wework-Control-Received-At', String(Date.now()))
+    response.setHeader('Access-Control-Expose-Headers', 'X-Wework-Control-Received-At')
     if (request.method === 'OPTIONS') {
       response.writeHead(204)
       response.end()
@@ -1346,6 +1328,17 @@ class DesktopE2EServer {
     })
     if (await this.handleControlRoute(request, response, url)) return
     try {
+      if (
+        this.desktopScenario &&
+        request.method === 'POST' &&
+        ['/responses', '/v1/responses'].includes(url.pathname) &&
+        (await this.writeNativeApprovalReview(
+          response,
+          await readRequestBody(request),
+          'responses'
+        ))
+      )
+        return
       if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
     } catch (error) {
       console.error(
@@ -2075,6 +2068,7 @@ class DesktopE2EServer {
 
     if (request.method === 'POST' && url.pathname === '/started') {
       const started = await readRequestBody(request)
+      this.recordControlTransport('started', started.clientId)
       const pending = this.commandResults.get(started.id)
       if (!pending) {
         json(response, 404, { error: `Unknown command ${started.id}` })
@@ -2129,6 +2123,13 @@ class DesktopE2EServer {
     return false
   }
 
+  async writeNativeApprovalReview(response, body, protocol) {
+    const review = await nativeApprovalModelResponse(body, this.desktopScenario)
+    if (review === null) return false
+    this.writeLocalAssistantMessage(response, { protocol }, review)
+    return true
+  }
+
   async handleModelResponse(request, response, protocol, options = {}) {
     const body = await readRequestBody(request)
     const authorization = request.headers.authorization ?? null
@@ -2142,6 +2143,8 @@ class DesktopE2EServer {
       json(response, 401, { error: 'The Desktop E2E model API key was not forwarded by Codex' })
       return
     }
+
+    if (await this.writeNativeApprovalReview(response, body, protocol)) return
 
     if (isReplyPredictionRequest(body)) {
       this.writeLocalAssistantMessage(response, { protocol }, JSON.stringify({ suggestion: null }))
@@ -3921,6 +3924,31 @@ class DesktopE2EServer {
 
     if (this.scenario === 'request_user_input_async') {
       this.recordScenarioRequest('request_user_input_async', modelRequest)
+      if (JSON.stringify(body).includes(REQUEST_USER_INPUT_FREE_TEXT_PROMPT)) {
+        const callId = 'wework-e2e-request-user-input-free-text'
+        const toolOutput = toolOutputText(body, callId)
+        if (toolOutput !== null) {
+          assert.deepEqual(JSON.parse(toolOutput), { accepted: true })
+          const answered = inputUserMessageTexts(body).some(text =>
+            text.includes(REQUEST_USER_INPUT_FREE_TEXT_ANSWER)
+          )
+          this.writeSse(response, [
+            responseCreated(responseId),
+            assistantMessage(answered ? REQUEST_USER_INPUT_FREE_TEXT_COMPLETE : '等待回答'),
+            responseCompleted(responseId),
+          ])
+          return
+        }
+        const tool = selectTool(body, 'request_user_input_async', {
+          questions: [{ title: REQUEST_USER_INPUT_FREE_TEXT_QUESTION }],
+        })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall(callId, tool.name, tool.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
       const serializedBody = JSON.stringify(body)
       // Two variants share this scenario: a question answered after the turn
       // settles, and one answered while the model is still working.
@@ -3988,33 +4016,65 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === CONCURRENT_SCENARIO) {
+      await respondToConcurrentMcpInput(this, body, response, responseId, modelRequest)
+      return
+    }
+
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)
+      const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
+      assert.ok(requestNumber <= 12, `Unexpected MCP elicitation request ${requestNumber}`)
+      const round = Math.ceil(requestNumber / 3)
+      const stage = ((requestNumber - 1) % 3) + 1
+      const callId = `${MCP_ELICITATION_CALL_ID}-${round}`
       const requestText = JSON.stringify(body)
-      assert.ok(
-        requestText.includes(MCP_ELICITATION_PROMPT),
-        'The real Codex request did not contain the MCP elicitation prompt'
-      )
-      if (requestContainsToolOutput(body, MCP_ELICITATION_CALL_ID)) {
+      const timeoutScenario = round === 3 ? 'url_timeout' : round === 4 ? 'form_timeout' : null
+
+      if (stage === 1) {
         assert.ok(
-          requestText.includes(MCP_ELICITATION_ACCEPTED_MARKER),
-          'The MCP server did not return the accepted audience marker to the model'
+          requestText.includes(MCP_ELICITATION_PROMPT),
+          'The real Codex request did not contain the MCP elicitation prompt'
         )
+        const search = selectToolSearch(body, MCP_ELICITATION_TOOL_NAME)
         this.writeSse(response, [
           responseCreated(responseId),
-          assistantMessage(MCP_ELICITATION_COMPLETION_TEXT),
+          ...toolSearchResponseEvents(`${MCP_ELICITATION_SEARCH_ID}-${round}`, search),
           responseCompleted(responseId),
         ])
         return
       }
+
+      if (stage === 2) {
+        const tool = selectMcpTool(
+          body,
+          MCP_ELICITATION_NAMESPACE,
+          MCP_ELICITATION_TOOL_NAME,
+          timeoutScenario ? { scenario: timeoutScenario } : {}
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(callId, tool.namespace, tool.name, tool.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      assert.ok(
+        requestContainsToolOutput(body, callId),
+        'The MCP elicitation tool output did not return to the real model request'
+      )
+      assert.ok(
+        requestText.includes(
+          timeoutScenario
+            ? `E2E_MCP_ELICITATION_TIMEOUT:${timeoutScenario}:cancel`
+            : MCP_ELICITATION_ACCEPTED_MARKER
+        ),
+        'The MCP server did not return the expected answer or timeout cancellation to the model'
+      )
       this.writeSse(response, [
         responseCreated(responseId),
-        ...mcpToolRequestEvents(body, {
-          toolName: MCP_ELICITATION_TOOL_NAME,
-          argumentsValue: {},
-          searchCallId: MCP_ELICITATION_SEARCH_ID,
-          toolCallId: MCP_ELICITATION_CALL_ID,
-        }).events,
+        assistantMessage(`${MCP_ELICITATION_COMPLETION_TEXT}:${round}`),
         responseCompleted(responseId),
       ])
       return
@@ -6156,4 +6216,4 @@ class DesktopE2EServer {
   }
 }
 
-export { DesktopE2EServer, inputUserMessageTexts }
+export { DesktopE2EServer, inputUserMessageTexts, requestContainsSkillLocator }

@@ -2773,3 +2773,14 @@ def test_execution_environment_initialization_keeps_the_client_version_token(
 
     # The project row must be unlocked while the device prepares the environment.
     assert open_transactions == [False, False]
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(
+        test_client, ("project_members", "issue_assignments", "issue_tasks")
+    ) as client:
+        yield client

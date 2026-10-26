@@ -1,5 +1,19 @@
+import type { Root, RootContent } from "mdast";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
+
 const STATIC_MARKDOWN_WINDOW_THRESHOLD = 4_000;
 const STATIC_MARKDOWN_CHUNK_TARGET = 1_200;
+const parser = unified().use(remarkParse);
+
+/** Reference definitions belong to the full Markdown source, not one display chunk. */
+export function hasMarkdownReferenceDefinitions(content: string): boolean {
+  if (!content.includes("]:")) return false;
+  const containsDefinition = (node: Root | RootContent): boolean =>
+    node.type === "definition" ||
+    ("children" in node && node.children.some(containsDefinition));
+  return containsDefinition(parser.parse(content));
+}
 
 export function isOversizedAtomicMarkdownChunk(content: string): boolean {
   return content.length >= STATIC_MARKDOWN_WINDOW_THRESHOLD;

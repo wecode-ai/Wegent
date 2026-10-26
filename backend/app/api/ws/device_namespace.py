@@ -940,36 +940,21 @@ def _project_chat_runtime_event_sync(
             allow_unsequenced_terminal=trusted_terminal_snapshot,
         )
         if execution is not None and matched_execution is None:
-            if event_name == "response.completed":
-                from app.services.project_chat.execution_snapshot import (
-                    restore_completed_turn_content,
-                )
-
-                restored = restore_completed_turn_content(
-                    db,
-                    device_ids=[device_id, execution.runtime_device_id],
-                    task_id=runtime_task_id,
-                    payload=payload,
-                    owner_user_id=user_id,
-                    execution_id=execution.id,
-                )
-                if restored.handled:
-                    if restored.projection is None:
-                        return None
-                    message, mode = restored.projection
-                    return {
-                        "message": message.model_dump(mode="json", by_alias=True),
-                        "mode": mode,
-                        "workflow_continuation": None,
-                    }
-            logger.info(
-                "[ProjectChat] Runtime event projection rejected by execution truth: "
-                "device_id=%s task_id=%s event=%s",
-                device_id,
-                runtime_task_id,
-                event_name,
+            from app.services.project_chat.execution_snapshot import (
+                can_restore_reconciled_completion,
             )
-            return None
+
+            if not can_restore_reconciled_completion(
+                db, execution=execution, event_name=event_name, payload=payload
+            ):
+                logger.info(
+                    "[ProjectChat] Runtime event projection rejected by execution truth: "
+                    "device_id=%s task_id=%s event=%s",
+                    device_id,
+                    runtime_task_id,
+                    event_name,
+                )
+                return None
         if matched_execution is not None:
             workflow_continuation = None
             log_projection = (
@@ -1004,6 +989,8 @@ def _project_chat_runtime_event_sync(
             event_name=event_name,
             payload=payload,
             owner_user_id=user_id,
+            accepted_terminal=matched_execution is not None
+            and matched_execution.status == "completed",
         )
         if projected is None:
             return {
