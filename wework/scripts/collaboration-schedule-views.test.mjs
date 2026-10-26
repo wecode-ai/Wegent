@@ -71,6 +71,7 @@ test.each([
       if (action === 'waitFor' && selector.includes('collaboration-calendar-day-')) {
         expect(expectedDaySelectors).toContain(selector)
         assert.equal(navigations, fixture.navigationCount, 'The target month was overshot')
+        assert.equal(options.visible, true)
         visibleDaySelectors.push(selector)
       }
       if (action === 'drag' && rangeIndex === 0) {
