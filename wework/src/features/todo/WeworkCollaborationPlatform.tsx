@@ -364,6 +364,7 @@ export function WeworkSharedProject({
   standInDeviceId,
   onOpenRuntimeTask,
   onCancelRuntimeTask,
+  onProjectChange,
   project,
   runtimeTaskLifecycle,
   runtimeWork,
@@ -389,6 +390,7 @@ export function WeworkSharedProject({
   standInDeviceId?: string
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onCancelRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onProjectChange?(project: CollaborationProject): void
   sendRuntimePaneMessage?: WorkbenchContextValue['sendRuntimePaneMessage']
   project: CollaborationProject
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
@@ -1048,6 +1050,7 @@ export function WeworkSharedProject({
           initialProject={project}
           onProjectChange={nextProject => {
             latestProjectRef.current = nextProject
+            onProjectChange?.(nextProject)
           }}
           host={projectHost}
           locale={locale}
@@ -1832,7 +1835,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             />
           ) : null
         }
-        renderProject={({ project, workspace }) => {
+        renderProject={({ project, workspace, onProjectChange }) => {
           const projectApi = project.project_store === 'local' ? localProjectApi : api
           if (!projectApi) return null
           const localDeliveryApi = props.services.projectSpaceApis?.local
@@ -1864,6 +1867,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           return (
             <WeworkSharedProject
               api={projectApi}
+              onProjectChange={onProjectChange}
               projectCatalogApi={platformApi?.projects}
               detailServices={
                 props.services.projectSpaceDetailServices?.[

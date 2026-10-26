@@ -4762,6 +4762,49 @@ describe("CollaborationPlatformApp real component flow", () => {
     },
   );
 
+  it("retains canonical project changes from a custom renderer after leaving and reopening", async () => {
+    const { api } = createApi();
+    let context: CollaborationProjectRendererContext | undefined;
+    const renderProject = (next: CollaborationProjectRendererContext) => {
+      context = next;
+      return (
+        <div data-testid="custom-project-version">{next.project.version}</div>
+      );
+    };
+    await render(
+      <PlatformHarness
+        api={api}
+        renderProject={renderProject}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          projectId: project.id,
+          projectView: "manage",
+        }}
+      />,
+    );
+    const updated = {
+      ...project,
+      name: "Updated project",
+      version: project.version + 2,
+    };
+    await act(async () => context!.onProjectChange(updated));
+    expect(context!.project).toEqual(updated);
+    expect(
+      byTestId(`collaboration-workspace-project-${project.id}`).textContent,
+    ).toContain(updated.name);
+
+    await click(byTestId("collaboration-workspace-nav-projects"));
+    expect(
+      container.querySelector('[data-testid="custom-project-version"]'),
+    ).toBeNull();
+    await click(byTestId(`collaboration-workspace-project-${project.id}`));
+    expect(byTestId("custom-project-version").textContent).toBe(
+      String(updated.version),
+    );
+    expect(context!.project).toEqual(updated);
+  });
+
   it("passes the minimal parent context to a custom restricted project renderer", async () => {
     const restrictedProject = {
       ...project,
@@ -4814,6 +4857,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(renderProject).toHaveBeenCalledOnce();
     expect(renderProject).toHaveBeenCalledWith({
       project: restrictedProject,
+      onProjectChange: expect.any(Function),
       workspace: {
         id: workspace.id,
         public_id: "workspace-public",
@@ -5438,7 +5482,9 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
     expect(api.workspaces!.addExecutionEnvironment).toHaveBeenCalledWith(
       workspace.id,
-      { deviceId: currentEnvironment.device_id },
+      {
+        deviceId: currentEnvironment.device_id,
+      },
     );
     expect(
       api.workspaces!.addExecutionEnvironment.mock.invocationCallOrder[0],

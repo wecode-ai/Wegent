@@ -547,6 +547,7 @@ export type CollaborationProjectRendererWorkspaceContext =
 export interface CollaborationProjectRendererContext {
   project: CollaborationProject;
   workspace: CollaborationProjectRendererWorkspaceContext;
+  onProjectChange(project: CollaborationProject): void;
 }
 
 function navigateWithin(
@@ -3812,7 +3813,11 @@ export function CollaborationPlatformApp({
       ) ?? null;
     content =
       selectedProject && renderProject && workspaceContext ? (
-        renderProject({ project: selectedProject, workspace: workspaceContext })
+        renderProject({
+          project: selectedProject,
+          workspace: workspaceContext,
+          onProjectChange: commands.registerProject,
+        })
       ) : (
         <CollaborationApp
           api={scopedApi}
