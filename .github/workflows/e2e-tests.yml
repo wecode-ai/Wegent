@@ -448,7 +448,8 @@ jobs:
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
       ]
-    runs-on: ubuntu-latest
+    # setup-python uses the runner tool cache; match the noble container's ABI.
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
       HOME: /root
@@ -562,11 +563,10 @@ jobs:
         with:
           setup-toolchain: "false"
 
-      - name: Restore Python 3.11 dependency cache
+      - name: Set up Python 3.11 and uv
         uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: "3.11"
-          setup-python: "false"
           setup-uv: "false"
 
       - name: Install shared module
