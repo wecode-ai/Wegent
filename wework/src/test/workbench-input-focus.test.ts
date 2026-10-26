@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import postcss, { type Root } from 'postcss'
 import tailwindcss from 'tailwindcss'
 import loadConfig from 'tailwindcss/loadConfig'
-import { afterEach, beforeAll, expect, test } from 'vitest'
+import { afterAll, beforeAll, expect, test } from 'vitest'
 
 const readSource = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8')
 const sources = {
@@ -28,6 +28,7 @@ const variants = `
 `
 let css = ''
 type Modality = 'pointer' | 'keyboard' | undefined
+const frames = new Map<string, HTMLIFrameElement>()
 
 function sourceClass(source: string, expression: RegExp) {
   const match = source.match(expression)
@@ -64,28 +65,43 @@ function normalizeFixtureColors(root: Root) {
   })
 }
 
+function fixtureFrame(modality: Modality, theme: string) {
+  const key = JSON.stringify([modality, theme])
+  const existing = frames.get(key)
+  if (existing) return existing
+
+  // Keep root attributes fixed to avoid jsdom's stale modality selector cache.
+  // Parse the full stylesheet once per mode, with fresh controls for every probe.
+  const frame = document.createElement('iframe')
+  document.body.append(frame)
+  const copy = frame.contentDocument!
+  if (modality) copy.documentElement.dataset.inputModality = modality
+  copy.documentElement.classList.toggle('dark', theme === 'dark')
+  const style = copy.createElement('style')
+  style.textContent = css
+  copy.head.append(style)
+  frames.set(key, frame)
+  return frame
+}
+
 function computed(markup: string, modality: Modality, { focus = true, theme = 'light' } = {}) {
   // This checks cascade results; jsdom does not composite variable-based shadows.
   // Real pointer/Tab events and the rendered ring layers need browser verification.
-  // A fresh document avoids jsdom's stale selector cache after modality changes.
-  const frame = document.createElement('iframe')
-  document.body.append(frame)
+  const frame = fixtureFrame(modality, theme)
+  const copy = frame.contentDocument!
+  const view = frame.contentWindow as Window & typeof globalThis
   try {
-    const copy = frame.contentDocument!
-    if (modality) copy.documentElement.dataset.inputModality = modality
-    copy.documentElement.classList.toggle('dark', theme === 'dark')
-    const style = copy.createElement('style')
-    style.textContent = css
-    copy.head.append(style)
     copy.body.innerHTML = markup
     const target = copy.querySelector<HTMLElement>('[data-target]')!
     const control = copy.querySelector<HTMLElement>('[data-focus]')!
     if (focus) {
+      // Exercise suppression even when native focus-visible matches the control.
+      copy.dispatchEvent(new view.KeyboardEvent('keydown', { key: 'Tab' }))
       control.focus()
       expect(copy.activeElement).toBe(control)
       expect(control.matches(':focus-visible')).toBe(true)
     }
-    const result = frame.contentWindow!.getComputedStyle(target)
+    const result = view.getComputedStyle(target)
     const property = (name: string) => result.getPropertyValue(name).trim()
     return {
       border: result.borderColor,
@@ -104,7 +120,7 @@ function computed(markup: string, modality: Modality, { focus = true, theme = 'l
       radius: result.borderRadius,
     }
   } finally {
-    frame.remove()
+    copy.body.replaceChildren()
   }
 }
 
@@ -170,9 +186,17 @@ beforeAll(async () => {
     }
     ${compiled.toString()}
   `
+  for (const theme of ['light', 'dark']) {
+    for (const modality of ['pointer', 'keyboard', undefined] as const) {
+      fixtureFrame(modality, theme)
+    }
+  }
 })
 
-afterEach(() => document.body.replaceChildren())
+afterAll(() => {
+  for (const frame of frames.values()) frame.remove()
+  frames.clear()
+})
 
 test.each(['light', 'dark'])(
   '%s theme keeps an arbitrary border opacity without a pointer restoration rule',
