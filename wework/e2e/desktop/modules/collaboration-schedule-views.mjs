@@ -124,6 +124,20 @@ export async function verifyCollaborationScheduleViews({
     }
   )
 
+  // The following week's drag target can fall outside the current month grid.
+  const targetDayTestId = `collaboration-calendar-day-${keys.calendarStart}`
+  const calendarSelector = scoped('[data-testid="collaboration-calendar"]')
+  const calendarSnapshot = JSON.parse(await control.command('snapshot', calendarSelector))
+  if (!calendarSnapshot.testIds.includes(targetDayTestId)) {
+    await control.command(
+      'click',
+      `${calendarSelector} [data-testid="collaboration-schedule-next"]`
+    )
+    await control.command('waitFor', scoped(`[data-testid="${targetDayTestId}"]`), {
+      visible: true,
+      timeoutMs,
+    })
+  }
   const calendarBar = scoped('[data-testid^="collaboration-calendar-issue-"]')
   await control.command('waitFor', calendarBar, {
     text: issueTitle,

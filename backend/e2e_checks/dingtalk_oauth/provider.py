@@ -280,18 +280,20 @@ class DingTalkProvider:
         if name == "list_nodes":
             return {"items": [self.info(actor, node_id) for node_id in NODES]}
         if name == "get_document_info":
-            return self.info(actor, args["nodeId"])
+            return {"success": True, **self.info(actor, args["nodeId"])}
         if name == "get_document_content":
-            return {"markdown": self.marker(actor, args["nodeId"])}
+            return {"success": True, "markdown": self.marker(actor, args["nodeId"])}
         if name == "submit_export_job":
-            return {"jobId": f"{actor}-sheet"}
+            return {"success": True, "jobId": f"{actor}-sheet"}
         if name == "query_export_job":
             return {
+                "success": True,
                 "jobId": args["jobId"],
                 "status": "success",
                 "downloadUrl": self.download_url(actor, service),
             }
         return {
+            "status": "success",
             "data": {
                 "taskId": f"{actor}-base",
                 "status": "success",

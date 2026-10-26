@@ -235,7 +235,11 @@ class Actor:
         def settled() -> dict[str, Any] | None:
             document = self.document(document_id)
             if expected == "success" and document["index_status"] == "failed":
-                raise AssertionError("Document indexing failed")
+                error = document.get("processing_error") or {}
+                raise AssertionError(
+                    f"Document {document_id} indexing failed: "
+                    f"stage={error.get('stage')}, code={error.get('code')}"
+                )
             if document["index_status"] != expected:
                 return None
             if marker and marker not in self.content(document_id):

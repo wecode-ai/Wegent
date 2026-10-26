@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -31,7 +32,11 @@ async def read(resource: str, access: str) -> None:
             }
             result = await session.call_tool("get_document_content", {"nodeId": "doc"})
             assert not result.isError
+            assert json.loads(result.content[0].text)["success"] is True
             assert "DINGTALK-check-doc-V1" in result.content[0].text
+            info = await session.call_tool("get_document_info", {"nodeId": "doc"})
+            assert not info.isError
+            assert json.loads(info.content[0].text)["success"] is True
 
 
 def check() -> None:
