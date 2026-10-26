@@ -1,4 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest'
+import { calendarDays } from '../../../packages/collaboration/src/project-schedule/model'
 import { verifyCollaborationScheduleViews } from '../../e2e/desktop/modules/collaboration-schedule-views.mjs'
 
 afterEach(() => vi.useRealTimers())
@@ -8,26 +9,45 @@ test.each([
     today: new Date(2026, 9, 19, 12),
     target: '2026-11-02',
     initialRange: '2026-10-26 → 2026-10-28',
-    initiallyVisible: true,
+    displayedMonth: new Date(2026, 9, 1, 12),
+    expectedMonthAdvances: 0,
   },
   {
     today: new Date(2026, 9, 26, 12),
-    target: '2026-11-09',
-    initialRange: '2026-11-02 → 2026-11-04',
-    initiallyVisible: false,
+    target: '2026-11-02',
+    initialRange: '2026-10-26 → 2026-10-28',
+    displayedMonth: new Date(2026, 9, 1, 12),
+    expectedMonthAdvances: 0,
   },
   {
     today: new Date(2026, 11, 28, 12),
-    target: '2027-01-11',
-    initialRange: '2027-01-04 → 2027-01-06',
-    initiallyVisible: false,
+    target: '2027-01-04',
+    initialRange: '2026-12-28 → 2026-12-30',
+    displayedMonth: new Date(2026, 11, 1, 12),
+    expectedMonthAdvances: 0,
+  },
+  {
+    today: new Date(2026, 9, 26, 12),
+    target: '2026-11-02',
+    initialRange: '2026-10-26 → 2026-10-28',
+    displayedMonth: new Date(2026, 8, 1, 12),
+    expectedMonthAdvances: 1,
   },
 ])('shows calendar target $target without navigating past it', async fixture => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(fixture.today)
   let monthAdvances = 0
   const dragReached = new Error('Calendar is ready for the drag assertion')
-  const targetVisible = () => (fixture.initiallyVisible ? monthAdvances === 0 : monthAdvances === 1)
+  const targetVisible = () => {
+    const month = new Date(fixture.displayedMonth)
+    month.setMonth(month.getMonth() + monthAdvances)
+    return calendarDays(month, true).some(day => {
+      const date = [day.getFullYear(), day.getMonth() + 1, day.getDate()]
+        .map((value, index) => (index === 0 ? String(value) : String(value).padStart(2, '0')))
+        .join('-')
+      return date === fixture.target
+    })
+  }
   const control = {
     async command(action: string, selector: string) {
       if (
@@ -59,5 +79,5 @@ test.each([
       timeoutMs: 1000,
     })
   ).rejects.toBe(dragReached)
-  expect(monthAdvances).toBe(fixture.initiallyVisible ? 0 : 1)
+  expect(monthAdvances).toBe(fixture.expectedMonthAdvances)
 })
