@@ -9,7 +9,7 @@
  * Displays AI agent activities as a pure social media-like feed.
  * Supports multiple tabs for extensibility.
  */
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import dynamic from 'next/dynamic'
 import { Compass, Eye, EyeOff, Plus, Store, User } from 'lucide-react'
 import { SubscriptionProvider, useSubscriptionContext } from '../contexts/subscriptionContext'
@@ -17,6 +17,8 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { Subscription } from '@/types/subscription'
+import { loadEditableSubscription } from './subscription-form/load-editable-subscription'
+import { createLatestRequestGuard } from './subscription-form/latest-request-guard'
 
 const SubscriptionTimeline = dynamic(
   () => import('./SubscriptionTimeline').then(module => module.SubscriptionTimeline),
@@ -67,10 +69,13 @@ function SubscriptionPageContent() {
   const [editingSubscription, setEditingSubscription] = useState<Subscription | null>(null)
   const [activeTab, setActiveTab] = useState<FeedTabValue>('all')
   const [mineSubTab, setMineSubTab] = useState<MineSubTabValue>('my_created')
+  // Only the newest edit request may populate the form.
+  const editRequestRef = useRef(createLatestRequestGuard())
   const { refreshSubscriptions, refreshExecutions, showSilentExecutions, setShowSilentExecutions } =
     useSubscriptionContext()
 
   const handleCreateSubscription = useCallback(() => {
+    editRequestRef.current.invalidate()
     setEditingSubscription(null)
     setFormInitialData(undefined)
     setIsFormOpen(true)
@@ -80,19 +85,30 @@ function SubscriptionPageContent() {
     setActiveTab('mine')
   }, [])
 
-  const handleEditSubscription = useCallback((subscription: Subscription) => {
-    setEditingSubscription(subscription)
+  const handleEditSubscription = useCallback(async (subscription: Subscription) => {
+    const requestId = editRequestRef.current.begin()
+    const editable = await loadEditableSubscription(subscription)
+    if (!editRequestRef.current.isLatest(requestId)) return
+    setEditingSubscription(editable)
     setFormInitialData(undefined)
     setIsFormOpen(true)
   }, [])
 
   const handleFormSuccess = useCallback(() => {
+    editRequestRef.current.invalidate()
     refreshSubscriptions()
     refreshExecutions()
     // Clear initial data after successful creation
     setFormInitialData(undefined)
     setEditingSubscription(null)
   }, [refreshSubscriptions, refreshExecutions])
+
+  const handleFormOpenChange = useCallback((open: boolean) => {
+    if (!open) {
+      editRequestRef.current.invalidate()
+    }
+    setIsFormOpen(open)
+  }, [])
 
   const handleInvitationHandled = useCallback(() => {
     // Refresh executions to show newly followed subscriptions
@@ -107,6 +123,8 @@ function SubscriptionPageContent() {
         params?: Record<string, unknown>
       }
       if (detail?.type === 'create-subscription') {
+        editRequestRef.current.invalidate()
+        setEditingSubscription(null)
         // Parse the data parameter if provided
         if (detail.params?.data && typeof detail.params.data === 'string') {
           try {
@@ -133,6 +151,8 @@ function SubscriptionPageContent() {
         sessionStorage.removeItem('wegent:pending-dialog')
 
         if (data.type === 'create-subscription') {
+          editRequestRef.current.invalidate()
+          setEditingSubscription(null)
           // Parse the data parameter if provided
           if (data.params?.data && typeof data.params.data === 'string') {
             try {
@@ -310,7 +330,7 @@ function SubscriptionPageContent() {
       {isFormOpen && (
         <SubscriptionForm
           open={isFormOpen}
-          onOpenChange={setIsFormOpen}
+          onOpenChange={handleFormOpenChange}
           subscription={editingSubscription}
           onSuccess={handleFormSuccess}
           initialData={formInitialData}
