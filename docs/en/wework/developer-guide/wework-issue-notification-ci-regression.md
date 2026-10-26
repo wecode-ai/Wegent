@@ -26,6 +26,24 @@ or human submission permission changes are introduced.
 
 ## QA plan
 
+### Observing the transient highlight
+
+PR #3947 Core shard 8 read `animation-name=none` after waiting for the comment to
+settle. The scenario waited for the detail and comment to remain stable for 400 ms
+each before querying a two-second animation. A busy runner can consume that
+observation window. The scenario now reuses renderer frame sampling before
+navigation to retain the exact comment selector's `animationName`, then checks the
+record after landing. It does not extend the animation or wait budgets.
+Each navigation rejects an existing highlight and retains its own frame evidence.
+A missing target animation, another comment's animation, failed navigation, or a
+highlight beyond the original eight-second budget still fails. The six-second
+landing budget, reload, link opening, and persisted-read checks remain intact;
+product highlight behavior is unchanged.
+
+Focused tests cover expired animation records, exact comment ownership, and
+failure cleanup. Real Electron continues to run the existing
+`collaboration-issue-comment-notification` checkpoint in Core CI.
+
 Environment: isolated Electron with real Backend, Socket.IO and devices; only
 model services use the scenario's test service. Focused local Vitest checks run
 before submission; existing GitHub Core shards provide desktop validation.
