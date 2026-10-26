@@ -125,11 +125,23 @@ async function verifyMemberReply(cloud, issue, rootId, deviceId) {
     assert.equal(denied.error?.message, 'Comment execution authorization is revoked')
 
     const project = await requestJson(cloud, `/api/v1/cloud-projects/${cloud.projectId}`)
+    const deviceAccessChange = { device_id: deviceId, scope: 'members', member_ids: [member.id] }
+    const preview = await requestJson(cloud, `/api/v1/cloud-projects/${cloud.projectId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        version: project.version,
+        device_access_change: { ...deviceAccessChange, preview_only: true },
+      }),
+    })
+    assert.ok(preview.device_access_preview?.confirmation_token)
     await requestJson(cloud, `/api/v1/cloud-projects/${cloud.projectId}`, {
       method: 'PATCH',
       body: JSON.stringify({
         version: project.version,
-        device_access_change: { device_id: deviceId, scope: 'members', member_ids: [member.id] },
+        device_access_change: {
+          ...deviceAccessChange,
+          confirmation_token: preview.device_access_preview.confirmation_token,
+        },
       }),
     })
     const environments = await requestJson(
