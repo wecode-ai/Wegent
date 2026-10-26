@@ -919,6 +919,7 @@ class DesktopE2EServer {
         'skill_mention_display',
         'connector_auth_unmatched_resume',
         'supervisor',
+        'harness_app_models',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
