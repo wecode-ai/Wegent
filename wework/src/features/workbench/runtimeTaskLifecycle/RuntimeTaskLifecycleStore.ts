@@ -361,8 +361,16 @@ export class RuntimeTaskLifecycleStore {
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
     const knownTurnId = currentTurn?.id ?? currentTurn?.latestId
     if (hasStreamingTurn) {
+      if (ignoreStaleRunningTranscript) {
+        const machine = this.ensureMachine(this.canonicalizeAddress(address))
+        for (const turn of transcript.turns) {
+          if (turn.id && (turn.status === 'pending' || turn.status === 'streaming')) {
+            machine.observeTurn(turn.id)
+          }
+        }
+        return
+      }
       if (
-        ignoreStaleRunningTranscript ||
         (transcript.running === false &&
           streamingTurn?.id &&
           knownTurnId &&
@@ -827,7 +835,8 @@ function shouldIgnoreStaleRunningTranscript(current: RuntimeTaskLifecycleSnapsho
   return Boolean(
     current &&
     !current.derived.isRunning &&
-    (current.turn.outcome !== null ||
+    (current.task?.goalExecutionStatus === 'needsAttention' ||
+      current.turn.outcome !== null ||
       (current.goalStatus !== 'active' &&
         current.task !== null &&
         isRuntimeTaskAuthoritativeCompletion(current.task)))
