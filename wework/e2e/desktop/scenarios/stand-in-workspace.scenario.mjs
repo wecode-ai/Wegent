@@ -422,7 +422,10 @@ export function createDesktopScenario({
       await control.command('waitFor', selector(`stand-in-activity-task-${task.taskId}`))
       await control.command('click', selector(`stand-in-activity-task-${task.taskId}`))
       await control.command('click', '[data-testid="stand-in-preview-open"]')
-      await control.command('waitFor', '[data-testid="processing-summary-header"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="final-processing-toggle"], [data-testid="processing-summary-toggle"], [data-testid="processing-summary-header"]'
+      )
       await control.command('expandProcessingSummaries', 'body')
       await control.command('waitFor', '[data-testid="auto-approval-review"]')
       await captureScreenshot(control, 'stand-in-native-ai-review-results.png')
