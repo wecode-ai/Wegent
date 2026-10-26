@@ -3980,7 +3980,7 @@ export function CloudTodoWorkspace({
                             type="button"
                             data-testid="cloud-search-toggle"
                             onClick={() => setGlobalSearchOpen(true)}
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-blue-500"
                             aria-label={t('workbench.search')}
                           >
                             <Search className="h-4 w-4" />
@@ -4801,7 +4801,7 @@ export function CloudTodoWorkspace({
                                     setBatchConfirmRetryItemKeys(new Set())
                                     setBatchConfirmItems([...editableColumnItems])
                                   }}
-                                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-50 group-hover:opacity-100"
+                                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-50 group-hover:opacity-100"
                                   aria-label={t(
                                     'todo.batch_confirm_review_items',
                                     '批量确认完成待确认事项'
@@ -4825,7 +4825,7 @@ export function CloudTodoWorkspace({
                                   type="button"
                                   data-testid="cloud-my-tasks-archive-completed"
                                   onClick={() => setRuntimeBatchArchiveItems([...columnItems])}
-                                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
+                                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover:opacity-100"
                                   aria-label={t(
                                     'todo.archive_completed_tasks',
                                     '批量归档已完成任务'
@@ -4856,7 +4856,7 @@ export function CloudTodoWorkspace({
                                   type="button"
                                   data-testid={`cloud-todo-column-add-${column.key}`}
                                   onClick={open}
-                                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
+                                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover:opacity-100"
                                   aria-label={t(
                                     boardParent || isMyTasksBoard
                                       ? 'todo.new_task_in_column'
@@ -5686,7 +5686,7 @@ export function CloudTodoWorkspace({
                     setRenameProjectName(event.target.value)
                     setRenameError(null)
                   }}
-                  className="mt-2 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+                  className="mt-2 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
                 />
               </label>
               <p className="mt-2 text-xs text-text-muted">新名称会显示在项目空间和看板侧栏中。</p>

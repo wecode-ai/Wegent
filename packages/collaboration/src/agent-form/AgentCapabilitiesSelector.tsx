@@ -340,7 +340,7 @@ function CapabilityPicker<T>({
           className="mt-2 rounded-lg border border-border bg-popover p-2 shadow-lg"
           data-testid={`${testId}-picker`}
         >
-          <label className="flex h-9 items-center gap-2 rounded-md border border-border bg-background px-2.5 text-text-muted focus-within:border-focus focus-within:ring-2 focus-within:ring-focus/15">
+          <label className="flex h-9 items-center gap-2 rounded-md border border-border bg-background px-2.5 text-text-muted keyboard:focus-within:border-focus keyboard:focus-within:ring-2 keyboard:focus-within:ring-focus/15">
             <Search aria-hidden="true" className="h-4 w-4 shrink-0" />
             <input
               autoFocus

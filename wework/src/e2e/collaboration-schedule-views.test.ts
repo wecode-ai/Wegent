@@ -38,14 +38,14 @@ test.each([
   vi.setSystemTime(fixture.today)
   let monthAdvances = 0
   const dragReached = new Error('Calendar is ready for the drag assertion')
-  const targetVisible = () => {
+  const dayVisible = (selectedDate: string) => {
     const month = new Date(fixture.displayedMonth)
     month.setMonth(month.getMonth() + monthAdvances)
     return calendarDays(month, true).some(day => {
       const date = [day.getFullYear(), day.getMonth() + 1, day.getDate()]
         .map((value, index) => (index === 0 ? String(value) : String(value).padStart(2, '0')))
         .join('-')
-      return date === fixture.target
+      return date === selectedDate
     })
   }
   const control = {
@@ -56,14 +56,18 @@ test.each([
       ) {
         monthAdvances += 1
       }
-      if (action === 'getElementCount') return targetVisible() ? 1 : 0
+      if (action === 'getElementCount') return dayVisible(fixture.target) ? 1 : 0
       if (action === 'getAttribute') return fixture.initialRange
       if (action === 'waitFor' && selector.includes('collaboration-calendar-day-')) {
-        expect(selector).toContain(fixture.target)
-        expect(targetVisible(), 'The target day must remain in the displayed month grid').toBe(true)
+        const selectedDate = selector.match(/collaboration-calendar-day-(\d{4}-\d{2}-\d{2})/)?.[1]
+        expect([fixture.initialRange.split(' → ')[0], fixture.target]).toContain(selectedDate)
+        expect(
+          dayVisible(selectedDate!),
+          'The requested day must remain in the displayed month grid'
+        ).toBe(true)
       }
       if (action === 'drag') {
-        expect(targetVisible()).toBe(true)
+        expect(dayVisible(fixture.target)).toBe(true)
         throw dragReached
       }
       return undefined

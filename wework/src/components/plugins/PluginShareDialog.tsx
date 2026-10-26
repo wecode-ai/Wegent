@@ -74,7 +74,7 @@ export function PluginShareDialog({
             type="button"
             data-testid="plugin-share-close"
             aria-label={t('common.close', '关闭')}
-            className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20 sm:h-8 sm:w-8"
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20 sm:h-8 sm:w-8"
             onClick={onClose}
           >
             <X className="h-4 w-4" />
