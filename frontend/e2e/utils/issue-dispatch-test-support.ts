@@ -158,46 +158,33 @@ export async function createProjectFixture(
   return { issueId, projectId, projectPath, workspaceId }
 }
 
-export async function resolveConfiguredAppDeviceId(page: Page): Promise<number | undefined> {
-  const configuredDeviceId = process.env.E2E_DEVICE_ID
-  if (!configuredDeviceId) return undefined
-  const devices = await webApi<DeviceListResponse>(page, '/api/devices')
-  const matches = devices.items.filter(
-    device => device.device_id === configuredDeviceId && device.device_type === 'app'
-  )
-  expect(matches, `Expected one App device registered as ${configuredDeviceId}`).toHaveLength(1)
-  expect(matches[0].execution_target_id).toMatch(/^app-record-\d+$/)
-  return matches[0].id
-}
-
 export async function initializeProjectExecutionEnvironment(page: Page): Promise<void> {
-  const deviceId = await resolveConfiguredAppDeviceId(page)
+  const deviceId =
+    process.env.E2E_DEVICE_ID ||
+    (process.env.E2E_SHARD_INDEX
+      ? `e2e-platform-device-${process.env.E2E_SHARD_INDEX}`
+      : 'e2e-claudecode-device')
+  const { items } = await webApi<DeviceListResponse>(page, '/api/devices')
+  const device = items.find(item => item.device_id === deviceId)
+  expect(device, `Expected collaboration App device ${deviceId}`).toBeDefined()
+  expect(device!.device_type).toBe('app')
+  expect(device!.execution_target_id).toMatch(/^app-record-\d+$/)
+
   await selectCollaborationProjectView(page, 'manage')
   await page.getByTestId('collaboration-project-settings-environments').click()
-  const initialize =
-    deviceId == null
-      ? page
-          .locator('[data-testid^="collaboration-project-execution-environment-initialize-"]')
-          .first()
-      : page.getByTestId(`collaboration-project-execution-environment-initialize-${deviceId}`)
+  const prefix = 'collaboration-project-execution-environment'
+  const initialize = page.getByTestId(`${prefix}-initialize-${device!.id}`)
   if ((await initialize.count()) === 0) {
-    await page.getByTestId('collaboration-project-execution-environment-add').click()
-    const candidate =
-      deviceId == null
-        ? page
-            .locator('[data-testid^="collaboration-project-execution-environment-candidate-"]')
-            .first()
-        : page.getByTestId(`collaboration-project-execution-environment-candidate-${deviceId}`)
+    await page.getByTestId(`${prefix}-add`).click()
+    const candidate = page.getByTestId(`${prefix}-candidate-${device!.id}`)
     await expect(candidate).toBeVisible()
     await candidate.click()
   }
   await expect(initialize).toBeAttached()
-  const initializeId = await initialize.getAttribute('data-testid')
-  expect(initializeId).toBeTruthy()
-  await page.getByTestId(initializeId!.replace('-initialize-', '-actions-toggle-')).click()
+  await page.getByTestId(`${prefix}-actions-toggle-${device!.id}`).click()
   await expect(initialize).toBeVisible()
   await initialize.click()
-  await expect(page.getByTestId(initializeId!.replace('-initialize-', '-'))).toHaveAttribute(
+  await expect(page.getByTestId(`${prefix}-${device!.id}`)).toHaveAttribute(
     'data-preparation-state',
     'ready'
   )

@@ -27,6 +27,7 @@ export function IssueActivityMarkdown({
       <AssistantMarkdown
         content={content}
         isStreaming={isStreaming}
+        preserveLineBreaks
         renderLink={(href, text) => {
           const attachmentId = href.match(
             /^wegent:\/\/attachments\/([A-Za-z0-9_-]+)$/,
