@@ -2887,6 +2887,48 @@ describe('PluginsWorkspace', () => {
     )
   })
 
+  test('keeps marketplace install disabled until reconciliation settles', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch()
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    let finish!: () => void
+    const pending = new Promise<void>(resolve => {
+      finish = resolve
+    })
+    const reconcile = vi
+      .spyOn(refreshReconciliation, 'reconcilePluginRefresh')
+      .mockReturnValue(pending)
+    try {
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await screen.findByTestId('plugin-marketplace-install-101')
+      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+      await userEvent.click(screen.getByTestId('plugins-refresh-button'))
+      await waitFor(() => expect(reconcile).toHaveBeenCalledOnce())
+      expect(screen.getByTestId('plugins-refresh-button')).toHaveAttribute(
+        'data-reconciling',
+        'true'
+      )
+      expect(screen.getByTestId('plugin-marketplace-install-101')).toBeDisabled()
+      await userEvent.click(screen.getByTestId('plugin-marketplace-install-101'))
+      expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
+      await act(async () => {
+        finish()
+        await pending
+      })
+      await waitFor(() =>
+        expect(screen.getByTestId('plugin-marketplace-install-101')).not.toBeDisabled()
+      )
+      await userEvent.click(screen.getByTestId('plugin-marketplace-install-101'))
+      expect(await screen.findByTestId('install-plugin-dialog-confirm')).toBeInTheDocument()
+    } finally {
+      await act(async () => {
+        finish()
+        await pending
+      })
+      reconcile.mockRestore()
+    }
+  })
+
   test('does not transfer a pending manual reconciliation to a different account', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     mockSystemSkillsFetch()

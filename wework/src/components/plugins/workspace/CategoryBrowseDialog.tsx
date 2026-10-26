@@ -17,6 +17,7 @@ const CATEGORY_GRID_BREAKPOINT_PX = 1050
 export function CategoryBrowseDialog({
   section,
   isLoggedIn,
+  isReconciling,
   installingMarketplacePluginIds,
   uninstallingPluginIds,
   allowPendingRetry,
@@ -27,6 +28,7 @@ export function CategoryBrowseDialog({
 }: {
   section: MarketplaceCategorySection
   isLoggedIn: boolean
+  isReconciling: boolean
   installingMarketplacePluginIds: Set<string | number>
   uninstallingPluginIds: Set<string | number>
   allowPendingRetry: boolean
@@ -177,6 +179,7 @@ export function CategoryBrowseDialog({
                     key={item.id}
                     item={item}
                     isLoggedIn={isLoggedIn}
+                    isReconciling={isReconciling}
                     isInstalling={installingMarketplacePluginIds.has(item.id)}
                     isUninstalling={uninstallingPluginIds.has(item.installedPluginId ?? item.id)}
                     allowPendingRetry={allowPendingRetry}

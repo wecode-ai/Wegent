@@ -8,6 +8,7 @@ core_segments=(
   workspace-tabs
   notification-tab-navigation
   collaboration-shared-core
+  collaboration-deliveries
   collaboration-issue-task-discovery
   collaboration-app-queue-identity
   collaboration-issue-archive
@@ -219,7 +220,7 @@ core_shards=(
   window-lifecycle,model-routing,collaboration-app-queue-identity,stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,permission-modes,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
   collaboration-board-sorting,component-update,environment-panel-scroll,running-conversation-history,workspace-tabs,collaboration-board-move-recovery,collaboration-home-preload,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy
   claude-runtime,device-artifact-declaration,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery
-  harness-app-lifecycle,task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,office-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import
+  harness-app-lifecycle,task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,office-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import,collaboration-deliveries
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference
   conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome
   split-workbench
@@ -1616,6 +1617,11 @@ classify_path() {
       docker/device/Dockerfile)
       select_cloud_worktree_checkpoints
       ;;
+    wework/e2e/desktop/scenarios/collaboration-deliveries.scenario.mjs | \
+      packages/collaboration/src/issue-detail/IssueDelivery* | \
+      packages/collaboration/src/issue-detail/deliveryMessages*)
+      select_target "core:collaboration-deliveries"
+      ;;
     packages/collaboration/src/platform/WorkspaceResourceConfiguration* | \
       packages/collaboration/src/project-agent-config/* | \
       packages/collaboration/src/http-api/createSharedWorkspaceHttpApi* | \
@@ -1628,6 +1634,9 @@ classify_path() {
       select_target "core:collaboration-group-onboarding"
       select_collaboration_dispatch_checkpoints
       select_target "cloud:cloud-device-lifecycle"
+      if [[ "$path" == packages/collaboration/src/dto-mappers/workspaceDtoMappers* ]]; then
+        select_target "core:collaboration-deliveries"
+      fi
       ;;
     packages/collaboration/*)
       if [[ "$path" == packages/collaboration/src/composer/* ]]; then
@@ -1645,6 +1654,11 @@ classify_path() {
       select_target "core:collaboration-board-sorting"
       select_target "core:collaboration-board-move-recovery"
       select_target "core:collaboration-home-preload"
+      if [[ "$path" == packages/collaboration/src/issue-detail/IssueExecutionLists* ||
+        "$path" == packages/collaboration/src/issue-detail/createSharedIssueDetailPort* ||
+        "$path" == packages/collaboration/src/SharedIssueDetailEditor* ]]; then
+        select_target "core:collaboration-deliveries"
+      fi
       ;;
     executor/src/server/codex_model_catalog*.rs)
       select_target "core:codex-native-catalog"
