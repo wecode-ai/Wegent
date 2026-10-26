@@ -4,6 +4,9 @@ import path from 'node:path'
 import { test, expect, vi } from 'vitest'
 import { watchDevelopmentBuild } from './lib/development-build-watch.mjs'
 
+// FSEvents can coalesce and deliver changes seconds later on a loaded machine.
+const filesystemEventTimeout = 10000
+
 test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules/checkout'])(
   'builds changes under %s, recovers from failure, and ignores output',
   async checkout => {
@@ -33,16 +36,19 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
     try {
       expect(published).toBe('one')
       await writeFile(source, 'invalid')
-      await expect.poll(() => onError.mock.calls.length).toBe(1)
+      await expect
+        .poll(() => onError.mock.calls.length, { timeout: filesystemEventTimeout })
+        .toBe(1)
       expect(published).toBe('one')
       await writeFile(source, 'two')
-      await expect.poll(() => published).toBe('two')
+      await expect.poll(() => published, { timeout: filesystemEventTimeout }).toBe('two')
       expect(build).toHaveBeenCalledTimes(3)
     } finally {
       await watcher.close()
       await rm(temporary, { recursive: true, force: true })
     }
-  }
+  },
+  filesystemEventTimeout * 2 + 5000
 )
 
 test('rebuilds unchanged CSS assets and publishes subsequent asset edits with fresh Vite instances', async () => {
