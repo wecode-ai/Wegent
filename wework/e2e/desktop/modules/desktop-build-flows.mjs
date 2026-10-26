@@ -376,6 +376,19 @@ function mcpElicitationConfigToml(evidencePath) {
     'tool_timeout_sec = 1200',
     'default_tools_approval_mode = "prompt"',
     '',
+    // Codex keeps one pending request_user_input per turn. The concurrent
+    // ordinary-question cases publish the question before the form, so a
+    // prompt-mode MCP approval would overwrite the question slot and answer it
+    // with the approval result. Those cases use this auto-approved server; the
+    // form-first case keeps the prompting server so Full-access auto-approval
+    // remains covered.
+    '[mcp_servers.wegent_sites_interactions_approved]',
+    `command = ${command}`,
+    `args = [${server}, ${evidence}]`,
+    'env = { ELECTRON_RUN_AS_NODE = "1" }',
+    'tool_timeout_sec = 1200',
+    'default_tools_approval_mode = "approve"',
+    '',
   ].join('\n')
 }
 

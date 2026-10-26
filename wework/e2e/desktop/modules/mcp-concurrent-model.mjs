@@ -1,4 +1,9 @@
-import { assert, MCP_ELICITATION_NAMESPACE, MCP_ELICITATION_TOOL_NAME } from './shared.mjs'
+import {
+  assert,
+  MCP_ELICITATION_APPROVED_NAMESPACE,
+  MCP_ELICITATION_NAMESPACE,
+  MCP_ELICITATION_TOOL_NAME,
+} from './shared.mjs'
 import {
   assistantMessage,
   functionCall,
@@ -45,7 +50,12 @@ export async function respondToConcurrentMcpInput(
     return
   }
   if (stage === 1) {
-    const mcp = selectMcpTool(body, MCP_ELICITATION_NAMESPACE, MCP_ELICITATION_TOOL_NAME, {
+    // Only the form-first case may use the prompting server: Codex keeps one
+    // pending request_user_input per turn, so an auto-approved MCP call racing
+    // a question published earlier would answer the question with "Allow".
+    const namespace =
+      action === 'ordinary_first' ? MCP_ELICITATION_NAMESPACE : MCP_ELICITATION_APPROVED_NAMESPACE
+    const mcp = selectMcpTool(body, namespace, MCP_ELICITATION_TOOL_NAME, {
       scenario,
     })
     const exec = (body.tools ?? []).find(tool => tool.name === 'exec')
