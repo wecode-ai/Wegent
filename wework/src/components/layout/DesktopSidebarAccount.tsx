@@ -1,7 +1,7 @@
 import { calculateAppUpdateDownloadPercent } from '@/features/app-update/app-update-format'
 import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
 import { Download, Loader2, UserRound } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useContext, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Tooltip } from '@/components/ui/tooltip'
 import { getRuntimeConfig } from '@/config/runtime'
@@ -9,6 +9,7 @@ import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { formatAppUpdateErrorSummary } from '@/features/app-update/app-update-error-copy'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { isCloudConnectionUiAvailable } from '@/features/cloud-connection/cloudConnectionAvailability'
+import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -181,10 +182,12 @@ export function DesktopSidebarAccount({
   compact = false,
 }: DesktopSidebarAccountProps) {
   const { t } = useTranslation('common')
+  const cloudContext = useContext(CloudConnectionContext)
   const cloud = useOptionalCloudConnection()
   const appUpdate = useOptionalAppUpdate()
   const usesCloudAccount =
-    isCloudConnectionUiAvailable() && Boolean(getRuntimeConfig().wegentBackendUrl)
+    (isCloudConnectionUiAvailable() && Boolean(getRuntimeConfig().wegentBackendUrl)) ||
+    Boolean(cloudContext?.isConnected && cloudContext.backendUrl)
   const requiresCloudLogin = usesCloudAccount && !cloud.isConnected
   const hasAvailableAppUpdate = Boolean(appUpdate?.availableUpdate)
   const account = requiresCloudLogin

@@ -160,9 +160,7 @@ vi.mock('./CloudTodoBoardCard', () => ({
     const previewPinned = props.previewPinned ?? localPreviewPinned
     return (
       <>
-        <button data-column-key={props.columnKey} onClick={props.onClick}>
-          Open project card
-        </button>
+        <button onClick={props.onClick}>Open project card</button>
         <button onClick={props.issueDetailOnly ? props.onClick : undefined}>Open task area</button>
         <button
           disabled={props.previewDisabled || props.issueDetailOnly}
@@ -187,6 +185,7 @@ vi.mock('./TodoEditor', () => ({
     return (
       <section
         data-testid="cloud-todo-detail"
+        data-issue-id={props.item?.id}
         data-has-global-team-directory={props.teamApi ? 'true' : 'false'}
         data-read-first={props.readFirst ? 'true' : 'false'}
         data-selected-task-id={props.selectedTaskId ?? ''}
@@ -332,15 +331,17 @@ function Project({
 }
 
 describe('Wework Issue conversation drawers', () => {
-  it('keeps lane identities distinct for the same Issue in multiple tag columns', () => {
+  it('opens the same Issue from either rendered tag column', async () => {
     boardColumnKeys = ['tag-backend', 'tag-shared']
     render(<Project />)
 
-    expect(
-      screen
-        .getAllByRole('button', { name: 'Open project card' })
-        .map(card => card.getAttribute('data-column-key'))
-    ).toEqual(['tag-backend', 'tag-shared'])
+    expect(screen.getAllByRole('button', { name: 'Open project card' })).toHaveLength(2)
+    for (const index of [0, 1]) {
+      await userEvent.click(screen.getAllByRole('button', { name: 'Open project card' })[index])
+      expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-issue-id', issue.id)
+      await userEvent.click(screen.getByTestId('cloud-todo-detail-close'))
+      expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
+    }
   })
 
   it('keeps the missing environment explanation visible after opening environment settings', async () => {
