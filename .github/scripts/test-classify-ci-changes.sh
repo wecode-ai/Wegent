@@ -930,7 +930,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "collaboration execution environment changes select onboarding and lifecycle coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"collaboration-remote-group-coordinate"},{"id":"core-2","name":"Core / shard 2","segments":"project-assignment-notification,project-member-overrides,collaboration-group-onboarding"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,collaboration-human-round-resume,stand-in-controls,stand-in-project-enable"},{"id":"core-4","name":"Core / shard 4","segments":"collaboration-local-group-coordinate"},{"id":"core-5","name":"Core / shard 5","segments":"collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task"},{"id":"core-6","name":"Core / shard 6","segments":"remote-device-onboarding,collaboration-issue-archive"},{"id":"core-7","name":"Core / shard 7","segments":"collaboration-remote-agent-dispatch,stand-in-permissions,stand-in-workspace"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,collaboration-local-group-cancellation,collaboration-first-use"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"collaboration-remote-group-coordinate"},{"id":"core-2","name":"Core / shard 2","segments":"project-assignment-notification,project-member-overrides,collaboration-group-onboarding"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,collaboration-human-round-resume,stand-in-controls,stand-in-project-enable"},{"id":"core-4","name":"Core / shard 4","segments":"collaboration-local-group-coordinate"},{"id":"core-5","name":"Core / shard 5","segments":"collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task"},{"id":"core-6","name":"Core / shard 6","segments":"remote-device-onboarding,collaboration-issue-archive,collaboration-deliveries"},{"id":"core-7","name":"Core / shard 7","segments":"collaboration-remote-agent-dispatch,stand-in-permissions,stand-in-workspace"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,collaboration-local-group-cancellation,collaboration-first-use"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"cloud-device-lifecycle"}]}
 wework_desktop_other_e2e=false
@@ -2380,5 +2380,18 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-deliveries.scenario.mjs"
+
+for delivery_render_path in \
+  "packages/collaboration/src/issue-detail/IssueExecutionLists.tsx" \
+  "packages/collaboration/src/SharedIssueDetailEditor.tsx" \
+  "packages/collaboration/src/issue-detail/createSharedIssueDetailPort.ts" \
+  "packages/collaboration/src/dto-mappers/workspaceDtoMappers.ts"; do
+  delivery_render_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$delivery_render_path")"
+  if [[ "$delivery_render_output" != *collaboration-deliveries* ]]; then
+    printf 'Delivery rendering must select its regression checkpoint: %s\n%s\n' \
+      "$delivery_render_path" "$delivery_render_output" >&2
+    exit 1
+  fi
+done
 
 printf 'CI change classifier tests passed\n'

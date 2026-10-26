@@ -1621,6 +1621,9 @@ classify_path() {
       select_target "core:collaboration-group-onboarding"
       select_collaboration_dispatch_checkpoints
       select_target "cloud:cloud-device-lifecycle"
+      if [[ "$path" == packages/collaboration/src/dto-mappers/workspaceDtoMappers* ]]; then
+        select_target "core:collaboration-deliveries"
+      fi
       ;;
     packages/collaboration/*)
       if [[ "$path" == packages/collaboration/src/composer/* ]]; then
@@ -1637,6 +1640,11 @@ classify_path() {
       select_target "core:collaboration-issue-comment-notification"
       select_target "core:collaboration-board-sorting"
       select_target "core:collaboration-board-move-recovery"
+      if [[ "$path" == packages/collaboration/src/issue-detail/IssueExecutionLists* ||
+        "$path" == packages/collaboration/src/issue-detail/createSharedIssueDetailPort* ||
+        "$path" == packages/collaboration/src/SharedIssueDetailEditor* ]]; then
+        select_target "core:collaboration-deliveries"
+      fi
       ;;
     executor/src/server/codex_model_catalog*.rs)
       select_target "core:codex-native-catalog"
