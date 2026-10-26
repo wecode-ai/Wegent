@@ -409,6 +409,9 @@ if ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
     grep -F 'setup-toolchain: "false"' >/dev/null ||
   ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
   "$workflow_dir/e2e-tests.yml" |
+    grep -F 'setup-python: "false"' >/dev/null ||
+  ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
+  "$workflow_dir/e2e-tests.yml" |
     grep -F 'setup-uv: "false"' >/dev/null ||
   sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
     "$workflow_dir/e2e-tests.yml" |
@@ -513,6 +516,15 @@ if ! grep -Fq 'ARG UV_VERSION=0.11.17' "$wework_browser_image" ||
     "$wework_browser_image" ||
   ! grep -Fq 'uv --version' "$wework_browser_image"; then
   fail "The platform E2E image must provide the pinned uv toolchain"
+fi
+
+# Dockerfile arguments are matched literally in source.
+# shellcheck disable=SC2016
+if ! grep -Fq 'ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python' "$wework_browser_image" ||
+  ! grep -Fq 'UV_PYTHON_BIN_DIR=/usr/local/bin uv python install --default "${PYTHON_VERSION}"' \
+    "$wework_browser_image" ||
+  ! grep -Fq "python -c 'import ssl; print(ssl.OPENSSL_VERSION)'" "$wework_browser_image"; then
+  fail "Platform E2E Python and SSL must be provided and verified by the container image"
 fi
 
 if ! grep -Fq 'file: docker/wework-e2e/browser.Dockerfile' "$wework_workflow" ||

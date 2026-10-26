@@ -562,10 +562,11 @@ jobs:
         with:
           setup-toolchain: "false"
 
-      - name: Set up Python 3.11 and uv
+      - name: Restore Python 3.11 dependency cache
         uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: "3.11"
+          setup-python: "false"
           setup-uv: "false"
 
       - name: Install shared module
