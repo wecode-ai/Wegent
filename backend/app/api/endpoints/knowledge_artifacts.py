@@ -17,6 +17,7 @@ from app.models.user import User
 from app.schemas.knowledge_artifact import (
     KnowledgeArtifact,
     KnowledgeArtifactCreate,
+    KnowledgeArtifactListResponse,
     KnowledgeArtifactUpdate,
 )
 from app.services.knowledge.artifact_repository import (
@@ -77,6 +78,21 @@ async def create_artifact(
     """Create and launch one knowledge Artifact."""
     service = _service(db, current_user)
     return await _execute(lambda: service.create(knowledge_base_id, request))
+
+
+@router.get(
+    "/{knowledge_base_id}/artifacts",
+    response_model=KnowledgeArtifactListResponse,
+)
+@trace_async("list_artifacts", "knowledge.artifact.api")
+async def list_artifacts(
+    knowledge_base_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> KnowledgeArtifactListResponse:
+    """List recent Artifacts for a knowledge base."""
+    service = _service(db, current_user)
+    return await _execute(lambda: service.list(knowledge_base_id))
 
 
 @router.get(

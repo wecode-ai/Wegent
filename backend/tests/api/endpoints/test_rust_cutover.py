@@ -16,16 +16,20 @@ from app.api.api import api_router
 ROUTES_FILE = Path(__file__).resolve().parents[4] / "backend-rs/config/routes.toml"
 
 
-def _rust_owned_routes() -> list[tuple[str, str]]:
-    with ROUTES_FILE.open("rb") as file:
+def _rust_owned_routes(path: Path = ROUTES_FILE) -> list[tuple[str, str]]:
+    with path.open("rb") as file:
         config = tomllib.load(file)
 
-    return [
+    included = [
+        route
+        for child in config.get("include", [])
+        for route in _rust_owned_routes(path.parent / child)
+    ]
+    return included + [
         (method, rule["path"])
         for rule in config["routes"]
+        if not rule.get("admission")
         for method in rule["methods"]
-        # Root and metrics are listener-level routes, not children of the
-        # Python API router verified by this test.
         if rule["path"].startswith("/api")
     ]
 
@@ -175,3 +179,34 @@ def test_sibling_ownership_matches_active_route_table(method: str, path: str) ->
         for selected_method, selected_path in _rust_owned_routes()
     }
     assert python_registered is not rust_selected
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/knowledge/documents/{document_id}/content",
+        "/knowledge/documents",
+        "/knowledge-bases/{knowledge_base_id}/document-protection",
+        "/knowledge-bases/{knowledge_base_id}/folders",
+        "/knowledge-bases/{kb_id}/documents/{doc_id}/detail",
+        "/knowledge-bases/{knowledge_base_id}/artifacts",
+        "/wiki/connections",
+        "/share/KnowledgeBase/{resource_id}/my-permission",
+    ],
+)
+def test_restored_knowledge_routes_have_python_owner(path):
+    assert ("GET", _canonical_route_path(path)) in PYTHON_ROUTES
+    assert ("GET", _canonical_route_path(f"/api{path}")) not in {
+        (method, _canonical_route_path(selected))
+        for method, selected in _rust_owned_routes()
+    }
+
+
+def test_external_knowledge_mount_file_is_not_selected_for_rust():
+    from app.mcp_server.external_knowledge_app import build_external_knowledge_mcp_app
+
+    app = build_external_knowledge_mcp_app("/api/mcp/knowledge-external")
+    route = next(route for route in app.routes if route.path.endswith("/file"))
+    assert route.methods == {"GET", "HEAD"}
+    path = "/api/mcp/knowledge-external/documents/:document_id/file"
+    assert ("GET", path) not in _rust_owned_routes()
