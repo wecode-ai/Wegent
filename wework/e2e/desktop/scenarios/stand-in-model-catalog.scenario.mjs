@@ -89,12 +89,12 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           await control.command('waitFor', PANEL)
           const key = JSON.stringify(['codex', 'cloud', 'public', 'default', 0, model.name])
           const optionId = `model-option-${key}`
-          await ensureModelOptionVisible(
-            control,
-            optionId,
-            `${PANEL} [data-testid="model-selector-button"]`,
-            null
+          await control.command(
+            'clickWhenEnabled',
+            `${PANEL} [data-testid="model-selector-button"]`
           )
+          await control.command('waitFor', selector(optionId))
+          await control.command('scrollIntoView', selector(optionId))
           await control.command('waitFor', selector(optionId), { text: model.label })
           await control.command('clickWhenEnabled', selector(optionId))
           await control.command('waitFor', `${PANEL} [data-testid="model-selector-button"]`, {
@@ -121,6 +121,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           assert.equal(saved.primary.model.model_id, 'kimi-k3')
         }
       } catch (error) {
+        console.error('[stand-in-model-catalog] Verification failed', error)
         errors.push(error)
       } finally {
         const cleanup = await Promise.allSettled([
@@ -143,7 +144,8 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           ...cleanup.filter(result => result.status === 'rejected').map(result => result.reason)
         )
       }
-      if (errors.length)
+      if (errors.length === 1) throw errors[0]
+      if (errors.length > 1)
         throw new AggregateError(errors, 'Shared model catalog verification failed')
     },
   }
