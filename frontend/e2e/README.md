@@ -195,6 +195,10 @@ For GitHub Actions, `executor_manager` runs directly on the runner and task cont
 
 `tests/tasks/claudecode-compaction.spec.ts` runs in the same `executor-chromium` CI suite. It creates a 1M-context cloud Model CRD with an 8,000-token output limit and supplies only the model identity to the real Backend runtime API. A dedicated CLI/local test device starts the real Executor and Claude Code 2.1.277 and forwards through the local model proxy and authenticated Backend gateway, using the endpoint for the declared upstream protocol. The App device retains its existing remote-control restrictions. Only the model service is mocked: its reported cached usage crosses the auto-compact threshold, or it returns a provider-specific 400/460 overflow. The tests require a summary request before successful completion, verify that every upstream request uses the plain provider model ID and at most 8,000 output tokens, and require unrelated errors to leave the runtime turn failed. Each scenario records its ordered provider requests in the Playwright artifacts and runs independently without retries.
 
+Collaboration fixtures select the App device named by `E2E_DEVICE_ID` (executor suite) or `e2e-platform-device-${E2E_SHARD_INDEX}` (sharded suites), then use its database ID in the real device picker. They verify the canonical `app-record-*` execution target before preparing the project. Device list ordering must not select the separate CLI/local compaction device.
+
+Platform and Wework E2E jobs check out the PR head SHA for both build and test jobs. The desktop app, scenarios, gateway, and cross-workflow Executor artifact must use the same revision; mixing the merge preview with a PR-head Executor can report unsupported runtime methods and stale UI assertions.
+
 ## Page Object Model
 
 Tests use the Page Object Model pattern for better maintainability:
