@@ -150,6 +150,9 @@ export function createCatalogContextVerification({
       // A customized row confirms persistence before the optional restart confirmation.
       const restartLogOffset = (await readFile(executorLogPath, 'utf8')).length
       await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
+      await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
+        visible: false,
+      })
       await control.command(
         'waitFor',
         `[data-testid="codex-official-model-row-openai-${modelId}"]`,
