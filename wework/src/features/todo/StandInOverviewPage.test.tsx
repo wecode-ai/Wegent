@@ -60,6 +60,23 @@ function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
   return { props, personalAgents, personalSave }
 }
 
+async function renderLoadedOverview(props: ReturnType<typeof fixture>['props']) {
+  const api = props.services.standInApi!
+  const settings = await api.personalGet(7, 'device')
+  let resolveInitial!: (value: typeof settings) => void
+  vi.mocked(api.personalGet).mockReturnValueOnce(
+    new Promise<typeof settings>(done => {
+      resolveInitial = done
+    })
+  )
+  render(<StandInOverviewPage {...props} />)
+  await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(2))
+  expect(screen.queryByTestId('identity-conversation')).not.toBeInTheDocument()
+  // Install the device-scoped subscription before publishing a reload event.
+  await act(async () => resolveInitial(settings))
+  return { api, settings, conversation: screen.getByTestId('identity-conversation') }
+}
+
 it('lists existing stand-ins without execution history and keeps project names separate', async () => {
   const role = newStandInRole('device', 'default')
   role.collaboration = {
@@ -116,25 +133,11 @@ it('opens settings for the selected stand-in and reflects its renamed identity',
 
 it('keeps the active conversation mounted while settings reload', async () => {
   const { props } = fixture()
-  const api = props.services.standInApi!
-  const settings = await api.personalGet(7, 'device')
-  let resolveInitial!: (value: typeof settings) => void
-  vi.mocked(api.personalGet).mockReturnValueOnce(
-    new Promise<typeof settings>(done => {
-      resolveInitial = done
-    })
-  )
+  const { api, settings, conversation } = await renderLoadedOverview(props)
   let resolve!: (value: typeof settings) => void
   const pending = new Promise<typeof settings>(done => {
     resolve = done
   })
-  render(<StandInOverviewPage {...props} />)
-  await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(2))
-  expect(screen.queryByTestId('identity-conversation')).not.toBeInTheDocument()
-  // Install the device-scoped subscription before publishing the reload event.
-  await act(async () => resolveInitial(settings))
-  await screen.findByTestId('stand-in-overview-role-default')
-  const conversation = await screen.findByTestId('identity-conversation')
   vi.mocked(api.personalGet).mockReturnValueOnce(pending)
   act(() => publishPersonalStandIn(settings))
   await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
@@ -344,15 +347,14 @@ it('groups actual stand-in executions by project, excludes ordinary tasks, and o
 
 it('preserves the mounted conversation when settings refresh fails', async () => {
   const { props } = fixture()
-  const api = props.services.standInApi!
-  const settings = await api.personalGet(7, 'device')
-  render(<StandInOverviewPage {...props} />)
-  const conversation = await screen.findByTestId('identity-conversation')
+  const { api, settings, conversation } = await renderLoadedOverview(props)
   vi.mocked(api.personalGet).mockRejectedValueOnce(new Error('settings unavailable'))
   act(() => publishPersonalStandIn(settings))
+  await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
   expect(await screen.findByRole('alert')).toHaveTextContent('settings unavailable')
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
   await userEvent.click(screen.getByTestId('stand-in-overview-inline-retry'))
+  await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(4))
   await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
 })
