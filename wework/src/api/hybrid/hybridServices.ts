@@ -159,10 +159,6 @@ function stringField(record: Record<string, unknown>, key: string): string | und
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
-  return models
-}
-
 function cloudExecutableModels(models: UnifiedModel[]): UnifiedModel[] {
   return models.filter(supportsCloudExecution)
 }
@@ -1689,7 +1685,7 @@ export function createHybridWorkbenchServices(
           return { data: [] }
         })
         return {
-          data: mergeModelCatalogs(annotateLocalModels(localModels.data), cloudModels.getModels()),
+          data: mergeModelCatalogs(localModels.data, cloudModels.getModels()),
         }
       },
     },

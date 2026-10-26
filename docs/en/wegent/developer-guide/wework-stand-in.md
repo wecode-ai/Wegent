@@ -20,6 +20,16 @@ A role can cover all participating collaboration projects, including future proj
 
 One personal document owns stand-in configurations and versions. Legacy project configurations migrate transactionally into roles preserving project scopes, assignment cutoffs and original project-agent authority. Project-addressed RPCs are projections over this document, with no duplicate project persistence.
 
+## Model catalog and execution references
+
+Stand-ins and ordinary tasks share the model picker, classification, sorting, and option rules. Cloud models use their original `UnifiedModel` catalog objects directly, without a round trip through execution models or changes to catalog names, labels, or `config.ui`. Native Executor catalogs require only one display adaptation and reuse the common Codex catalog helpers for provider metadata.
+
+Display models and `RunnerModelIdentity` are stored separately. Display models serve the UI; execution references contain only the actual runtime, provider, model ID, and the cloud resource name, type, namespace, and owner. Saving submits only the execution reference, not model configurations or credentials. The `public` resource type means a public resource, not a public-network endpoint. Intranet, public-network, and overseas labels come from the original catalog; unmarked models are not automatically labeled public-network.
+
+Desktop and mobile use the same complete model identity comparison, distinguishing same-name providers, namespaces, and owners. Option identifiers are independent of display names and preserve existing identifiers. Changing the device or runtime invalidates old catalog requests; unavailable saved models retain the recovery entry.
+
+The existing CI `stand-in-profile` checkpoint group includes the original `stand-in-profile-settings` scenario and the new `stand-in-model-catalog` scenario. The latter compares ordinary and stand-in labels for real Backend intranet, public-network, and unmarked models sharing an upstream model ID, then validates persisted execution references. The runner and CI catalog validator share checkpoint-group expansion so registered scenarios cannot be left outside CI.
+
 ## Multiple stand-ins handling work
 
 Each enabled stand-in independently checks its connected sources, tags, handling policy, and enable-time cutoff. Every eligible stand-in handles the work. Tagged matches do not suppress unrestricted stand-ins. Scheduling, priority ordering, and AI role selection have been removed; matching does not invoke a model.

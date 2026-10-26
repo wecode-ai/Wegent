@@ -31,6 +31,38 @@ def test_task_store_protocol_declares_all_public_implementation_methods() -> Non
     assert implementation_methods <= protocol_methods
 
 
+@pytest.mark.parametrize(
+    ("origin", "expected_ids"),
+    [(CLIENT_ORIGIN_FRONTEND, {1}), (CLIENT_ORIGIN_WEWORK, {2}), (None, {1, 2})],
+)
+def test_project_detachment_preserves_owner_project_and_origin_scope(
+    test_db: Session, origin: str | None, expected_ids: set[int]
+) -> None:
+    """Point updates retain the same project detachment ownership filters."""
+    rows = [
+        _task(task_id=1, user_id=10),
+        _task(task_id=2, user_id=10, client_origin=CLIENT_ORIGIN_WEWORK),
+        _task(task_id=3, user_id=20),
+        _task(task_id=4, user_id=10),
+    ]
+    for row in rows:
+        row.project_id = 8 if row.id == 4 else 7
+    test_db.add_all(rows)
+    test_db.commit()
+
+    changed = SqlAlchemyTaskStore().clear_project_for_owned_tasks(
+        test_db, project_id=7, user_id=10, client_origin=origin
+    )
+    test_db.commit()
+    test_db.expire_all()
+
+    assert changed == len(expected_ids)
+    for row in rows:
+        assert row.project_id == (
+            0 if row.id in expected_ids else 8 if row.id == 4 else 7
+        )
+
+
 def _task(
     *,
     task_id: int,
