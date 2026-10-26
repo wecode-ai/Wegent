@@ -508,6 +508,13 @@ fi
 wework_workflow="$workflow_dir/wework-e2e.yml"
 wework_browser_image="$script_dir/../../docker/wework-e2e/browser.Dockerfile"
 wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
+if ! grep -Eq '^FROM mcr.microsoft.com/playwright:v[0-9.]+-noble$' \
+    "$wework_browser_image" ||
+  ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
+    "$workflow_dir/e2e-tests.yml" | grep -F 'runs-on: ubuntu-24.04' >/dev/null; then
+  fail "Platform E2E Python tool-cache binaries must match the noble container ABI"
+fi
+
 if ! grep -Fq 'ARG UV_VERSION=0.11.17' "$wework_browser_image" ||
   ! grep -Fq '"https://astral.sh/uv/${UV_VERSION}/install.sh"' \
     "$wework_browser_image" ||
