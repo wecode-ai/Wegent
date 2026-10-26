@@ -1,7 +1,9 @@
 import { openProjectStandIn, discardStandInDraft } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { promisify } from 'node:util'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
@@ -70,7 +72,9 @@ export function createDesktopScenario({
       await mkdir(dirname(pluginSkill), { recursive: true })
       await writeFile(pluginSkill, 'SOURCE_PLUGIN_RESOURCE_READABLE')
       await mkdir(ghConfigDirectory, { recursive: true })
-      await writeFile(join(ghConfigDirectory, 'config.yml'), 'git_protocol: ssh\n')
+      await promisify(execFile)('gh', ['config', 'set', 'git_protocol', 'ssh'], {
+        env: { ...process.env, GH_CONFIG_DIR: ghConfigDirectory },
+      })
     },
     reviewApproval(body) {
       const dangerous = JSON.stringify(body.input ?? []).includes('REVIEW_PRIVATE_READ')
@@ -105,16 +109,6 @@ export function createDesktopScenario({
           assert.ok(allowedReviews > 0, 'The native reviewer must approve the context read')
           assert.ok(deniedReviews > 0, 'The native reviewer must deny the private read')
           verifiedSandbox = true
-        } else if (requestContainsToolOutput(body, 'source-approved-escalation')) {
-          const output = toolOutputText(body, 'source-approved-escalation') ?? ''
-          assert.ok(output.includes('SOURCE_ESCALATION_SUCCEEDED'), output)
-          assert.equal(await readFile(elevatedFile, 'utf8'), 'approved-escalation')
-          const command =
-            process.platform === 'win32'
-              ? `try { Add-Content -LiteralPath ${powershellQuote(elevatedFile)} -Value 'unapproved' -ErrorAction Stop; Write-Output 'SOURCE_OUTSIDE_WRITE_ALLOWED' } catch { Write-Output 'SOURCE_OUTSIDE_WRITE_BLOCKED' }`
-              : `if printf 'unapproved' >> ${quote(elevatedFile)}; then printf 'SOURCE_OUTSIDE_WRITE_ALLOWED'; else printf 'SOURCE_OUTSIDE_WRITE_BLOCKED'; fi`
-          const tool = selectShellToolCommand(body, command, undefined)
-          events = functionCall('source-escalation-not-persistent', tool.name, tool.arguments)
         } else if (requestContainsToolOutput(body, 'source-escalation-not-persistent')) {
           const output = toolOutputText(body, 'source-escalation-not-persistent') ?? ''
           assert.ok(output.includes('SOURCE_OUTSIDE_WRITE_BLOCKED'), output)
@@ -129,6 +123,16 @@ export function createDesktopScenario({
           tool.arguments.justification =
             'REVIEW_PRIVATE_READ: source requests an unrelated private file'
           events = functionCall('source-private-review', tool.name, tool.arguments)
+        } else if (requestContainsToolOutput(body, 'source-approved-escalation')) {
+          const output = toolOutputText(body, 'source-approved-escalation') ?? ''
+          assert.ok(output.includes('SOURCE_ESCALATION_SUCCEEDED'), output)
+          assert.equal(await readFile(elevatedFile, 'utf8'), 'approved-escalation')
+          const command =
+            process.platform === 'win32'
+              ? `try { Add-Content -LiteralPath ${powershellQuote(elevatedFile)} -Value 'unapproved' -ErrorAction Stop; Write-Output 'SOURCE_OUTSIDE_WRITE_ALLOWED' } catch { Write-Output 'SOURCE_OUTSIDE_WRITE_BLOCKED' }`
+              : `if printf 'unapproved' >> ${quote(elevatedFile)}; then printf 'SOURCE_OUTSIDE_WRITE_ALLOWED'; else printf 'SOURCE_OUTSIDE_WRITE_BLOCKED'; fi`
+          const tool = selectShellToolCommand(body, command, undefined)
+          events = functionCall('source-escalation-not-persistent', tool.name, tool.arguments)
         } else if (requestContainsToolOutput(body, 'source-sandbox-probe')) {
           const output = toolOutputText(body, 'source-sandbox-probe') ?? ''
           for (const marker of [
