@@ -94,7 +94,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
       await control.command('waitFor', row(filesOnly.id), { text: '1 个附件' })
       await control.command('waitFor', row(chatOnly.id), { text: '2 条消息' })
       assert.match(await control.command('getText', row(filesOnly.id)), /result\.txt/)
-      assert.match(await control.command('getText', row(chatOnly.id)), /用户 #0 交付/)
+      assert.match(await control.command('getText', row(chatOnly.id)), /我 交付/)
       assert.equal(Number(await control.command('getElementCount', row(mixed.id))), 0)
       await control.command('click', scoped('[data-testid="todo-detail-toggle-deliveries"]'))
       await control.command('waitFor', row(mixed.id), { text: '交付说明 · 2 条消息 · 2 个附件' })
