@@ -173,6 +173,7 @@ describe("workspace DTO mappers", () => {
       mapWorkspaceDeliveryDto({
         id: "delivery-1",
         loop_item_id: "issue-1",
+        created_by_user_id: 8,
         status: "delivered",
         markdown: "# Result",
         chat: { message: "done" },
@@ -194,6 +195,7 @@ describe("workspace DTO mappers", () => {
     ).toMatchObject({
       id: "delivery-1",
       issueId: "issue-1",
+      createdByUserId: 8,
       status: "delivered",
       markdown: "# Result",
       assets: [{ displayName: "report.txt", sizeBytes: 12 }],
