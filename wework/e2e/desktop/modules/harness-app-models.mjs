@@ -3,7 +3,11 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { createHarnessPackage, MODEL_LABEL } from './harness-app-fixture.mjs'
+import {
+  createHarnessPackage,
+  MODEL_LABEL,
+  setExperimentalFeatures,
+} from './harness-app-fixture.mjs'
 import { LOCAL_MODEL_CASES } from './shared.mjs'
 
 /** Created by this checkpoint so its DSH profile pins the Wework default model. */
@@ -27,6 +31,7 @@ export async function verifyHarnessAppModels(
   assert.ok(EXTRA_MODEL, 'Desktop E2E responses model fixture is missing')
   control.setScenario('harness_app_models')
 
+  await setExperimentalFeatures(control, true, uiTimeoutMs)
   const readyCountBeforeSeed = control.readyCount
   await control.command('reloadMainWindow', 'body', {
     value: JSON.stringify({
@@ -38,6 +43,7 @@ export async function verifyHarnessAppModels(
     timeoutMs: 90_000,
   })
   await control.awaitReadyAfter(readyCountBeforeSeed)
+  await openSmartAppsTab(control, uiTimeoutMs)
   await openOwnedApps(control, uiTimeoutMs)
 
   const packagePath = await createHarnessPackage(resultDir, INSTALLED_APP_ID, '0.1.0-rc.8', {
@@ -253,6 +259,25 @@ async function openOwnedApps(control, uiTimeoutMs) {
   })
   await control.command('click', '[data-testid="smart-apps-section-owned"]')
   await control.command('waitFor', '[data-testid="smart-apps-created-list"]', {
+    timeoutMs: uiTimeoutMs,
+  })
+}
+
+async function openSmartAppsTab(control, uiTimeoutMs) {
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('waitFor', '[data-testid="workspace-tab-add-smart-app"]', {
+    text: '智能工作台',
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('click', '[data-testid="workspace-tab-add-smart-app"]')
+  await control.command('waitFor', '[data-testid="smart-apps-marketplace-page"]', {
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('waitFor', '[data-testid="smart-apps-section-owned"]', {
     timeoutMs: uiTimeoutMs,
   })
 }

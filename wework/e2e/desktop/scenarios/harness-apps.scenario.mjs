@@ -209,6 +209,15 @@ export async function createDesktopScenario({
     },
 
     async verify(control) {
+      if (checkpoint === 'harness-app-models') {
+        await verifyHarnessAppModels(control, {
+          uiTimeoutMs,
+          resultDir,
+          captureScreenshot,
+          electronUserDataDirectory,
+        })
+        return
+      }
       const { legacyRuntimeCache } = await prepareHarnessAppUi(control, {
         uiTimeoutMs,
         captureScreenshot,
@@ -254,14 +263,6 @@ export async function createDesktopScenario({
           downloadsPath,
           resultDir,
           legacyRuntimeCache,
-        })
-      } else {
-        assert.equal(checkpoint, 'harness-app-models')
-        await verifyHarnessAppModels(control, {
-          uiTimeoutMs,
-          resultDir,
-          captureScreenshot,
-          electronUserDataDirectory,
         })
       }
     },
