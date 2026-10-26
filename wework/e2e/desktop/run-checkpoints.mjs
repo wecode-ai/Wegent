@@ -226,6 +226,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-context-resilience',
   'cloud-login-proxy',
   'collaboration-shared-core',
+  'collaboration-deliveries',
   'collaboration-issue-task-discovery',
   'collaboration-app-queue-identity',
   'collaboration-first-use',

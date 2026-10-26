@@ -23,6 +23,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
   const batches = []
   return {
     async verify(control) {
+      console.log('[delivery-e2e] Starting real delivery snapshot assertions')
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
@@ -94,7 +95,8 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
       await control.command('waitFor', row(filesOnly.id), { text: '1 个附件' })
       await control.command('waitFor', row(chatOnly.id), { text: '2 条消息' })
       assert.match(await control.command('getText', row(filesOnly.id)), /result\.txt/)
-      assert.match(await control.command('getText', row(chatOnly.id)), /我 交付/)
+      // The E2E cloud identity differs from the device-owned local author (0).
+      assert.match(await control.command('getText', row(chatOnly.id)), /用户 #0 交付/)
       assert.equal(Number(await control.command('getElementCount', row(mixed.id))), 0)
       await control.command('click', scoped('[data-testid="todo-detail-toggle-deliveries"]'))
       await control.command('waitFor', row(mixed.id), { text: '交付说明 · 2 条消息 · 2 个附件' })
@@ -141,6 +143,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
       await control.command('click', row(chatOnly.id))
       await control.command('waitFor', panel, { text: '项目讨论答复' })
       await control.command('click', scoped('[data-testid="todo-detail-delivery-close"]'))
+      console.log(`[delivery-e2e] Verified three persisted batches for ${issue.id}`)
     },
     diagnostics() {
       return {
