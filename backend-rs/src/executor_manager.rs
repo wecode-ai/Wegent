@@ -131,6 +131,9 @@ impl ExecutorManager {
     fn with_cancel_url(base: impl Into<String>, cancel_url: String) -> Result<Self> {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(5))
+            // Override Breeze's 400ms socket-read default. Each operation's
+            // existing request deadline below remains the tighter bound.
+            .read_timeout(SANDBOX_MUTATION_TIMEOUT)
             .build()
             .context("failed to build the executor-manager HTTP client")?;
         Ok(Self {
@@ -291,11 +294,30 @@ impl ExecutorManager {
             .await
             .context("failed to call the executor delete endpoint")?;
         let status = response.status().as_u16();
-        if (200..300).contains(&status) {
-            Ok(())
-        } else {
+        if !(200..300).contains(&status) {
             anyhow::bail!("executor delete returned HTTP {status}")
         }
+        let result = response
+            .json::<serde_json::Value>()
+            .await
+            .context("failed to decode the executor delete result")?;
+        // The manager returns HTTP 200 for business failures too. Already
+        // absent runtimes satisfy the same cleanup postcondition as deletion.
+        if result == serde_json::Value::Bool(true)
+            || matches!(
+                result.get("status").and_then(serde_json::Value::as_str),
+                Some("success" | "not_found")
+            )
+        {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "executor delete was not confirmed (status={})",
+            result
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("missing")
+        )
     }
 
     /// `ArchiveService._call_executor_restore`: `POST
@@ -356,3 +378,6 @@ mod metric_name_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -5,6 +5,8 @@
 //! Capture repository queries at the Mysql boundary without a database.
 #[path = "../tests/support/mysql_pool_server.rs"]
 pub(crate) mod mysql_pool_server;
+#[path = "../tests/support/mysql_row.rs"]
+pub(crate) mod mysql_row;
 
 use brz_mysql::{
     FromMysqlRow, Mysql, MysqlArgs, MysqlExecution, MysqlResult, MysqlRouteKey, MysqlRouting,

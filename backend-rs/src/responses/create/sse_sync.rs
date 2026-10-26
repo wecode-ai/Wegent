@@ -296,6 +296,7 @@ async fn complete(state: &AppState, event: &ExecutionEvent) {
         redis,
         tables: crate::internal_callback::tables(state),
         executor_manager: &state.executor_manager,
+        celery: &state.celery,
     };
     // `StatusUpdatingEmitter`'s terminal branch. The create flow wraps an
     // `SSEResultEmitter`, so the callback's `task:status` owner pre-read does
@@ -324,6 +325,7 @@ async fn complete_failure(state: &AppState, request: &ExecutionRequest, failure:
         redis,
         tables: crate::internal_callback::tables(state),
         executor_manager: &state.executor_manager,
+        celery: &state.celery,
     };
     completion::complete_terminal_event(
         &ctx,

@@ -21,14 +21,11 @@ use crate::internal_callback::completion::task_column;
 
 use super::{local_datetime, now_local};
 
-/// `handle_task_completed`.
-///
-/// `on_task_completed` wraps the execution lookup and the auto-delete cleanup
-/// in one `get_db_session()` block (`task_completion_handler.py:78-90`), so
-/// the first read opens the connection transaction and the cleanup
-/// `db.commit()` ends it. One explicit transaction reproduces that boundary:
-/// every read and the cleanup update share one connection, and it commits only
-/// after the cleanup succeeds.
+mod execution;
+mod round;
+
+/// Finalize projections before best-effort network effects. A cleanup failure
+/// must not roll a successfully completed execution back to RUNNING.
 pub(crate) async fn handle_task_completed<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
     event: &TaskCompletedEvent<'_>,
@@ -36,74 +33,82 @@ pub(crate) async fn handle_task_completed<M: Mysql, R: Redis>(
     let mysql = ctx
         .mysql
         .route(crate::task_routing::ByTaskId(event.task_id as u64));
-    let outcome = mysql
+    let completed = mysql
         .with_transaction(async |transaction| {
-            if let Some(execution) = find_execution_by_task_id(transaction, event.task_id).await {
-                // An execution exists: the terminal-status update, inbox
-                // write-back and notification fan-out that follow are outside
-                // this callback's recorded traffic and are not reproduced
-                // here.
-                tracing::debug!(
-                    execution_id = execution,
-                    task_id = event.task_id,
-                    "subscription execution found for completed task"
-                );
-                return Ok(());
+            let Some(task) = round::current_task(transaction, ctx.tables, event).await? else {
+                return Ok(None);
+            };
+            if let Some(execution) = execution::find(transaction, &task, event).await? {
+                return execution::complete(transaction, execution, event).await;
             }
             cleanup_auto_delete_task_executor(transaction, ctx.tables, ctx.executor_manager, event)
-                .await
+                .await?;
+            Ok(None)
         })
         .await;
-    if let Err(error) = outcome {
-        // `on_task_completed`'s outer handler logs the failure after
-        // `_db_session` rolled the session back.
-        tracing::error!(
-            task_id = event.task_id,
-            %error,
-            "task completion transaction failed; cleanup rolled back"
-        );
+    let completed = match completed {
+        Ok(Some(completed)) => completed,
+        Ok(None) => return,
+        Err(error) => {
+            tracing::error!(task_id=event.task_id, %error, "subscription completion transaction failed");
+            return;
+        }
+    };
+    let execution_id = completed.execution.id;
+    tracing::info!(execution_id, task_id=event.task_id, status=%completed.execution.status, "subscription execution finalized");
+    if let Err(error) = crate::internal_callback::socketio::publish_emit_in_room(
+        ctx.redis,
+        "background:execution_update",
+        &format!("user:{}", completed.execution.user_id),
+        completed.payload,
+    )
+    .await
+    {
+        tracing::warn!(execution_id, %error, "subscription status event failed");
     }
-}
-
-/// `_find_execution_by_task_id`: the active execution, the newest execution,
-/// then the code-wiki scheduled-execution recovery read.
-async fn find_execution_by_task_id<T: MysqlTransaction>(
-    transaction: &mut T,
-    task_id: i64,
-) -> Option<i64> {
-    let running: Option<MysqlRow> = transaction
-        .fetch_optional(sql::background_execution_running(), (task_id,))
-        .await
-        .ok()
-        .flatten();
-    if let Some(row) = running {
-        return row.get::<i64>("background_executions_id").ok().flatten();
+    if matches!(
+        completed.execution.status.as_str(),
+        "COMPLETED" | "COMPLETED_SILENT"
+    ) && completed.subscription.is_some()
+    {
+        if let Err(error) = mysql
+            .with_transaction(async |transaction| {
+                // A new round can start after the status transaction commits.
+                // Recheck under the same locks held throughout runtime deletion.
+                if round::current_task(transaction, ctx.tables, event)
+                    .await?
+                    .is_none()
+                {
+                    return Ok(());
+                }
+                cleanup_task_runtime(
+                    transaction,
+                    ctx.tables,
+                    ctx.executor_manager,
+                    event.task_id,
+                    "subscription",
+                )
+                .await
+            })
+            .await
+        {
+            tracing::error!(execution_id, task_id=event.task_id, %error, "subscription executor cleanup failed after completion");
+        }
     }
-    let latest: Option<MysqlRow> = transaction
-        .fetch_optional(sql::background_execution_latest(), (task_id,))
-        .await
-        .ok()
-        .flatten();
-    if let Some(row) = latest {
-        return row.get::<i64>("background_executions_id").ok().flatten();
+    if completed.notify {
+        let kwargs = serde_json::Map::from_iter([("execution_id".to_owned(), execution_id.into())]);
+        if let Err(error) = ctx
+            .celery
+            .dispatch_background(
+                ctx.redis,
+                "app.tasks.subscription_completion_tasks.notify_execution",
+                &kwargs,
+            )
+            .await
+        {
+            tracing::error!(execution_id, task_id=event.task_id, %error, "subscription notification enqueue failed");
+        }
     }
-    // `recover_scheduled_execution_for_task`: the code-wiki integration reads
-    // the task's newest wiki generation before giving up.
-    let generation: Option<MysqlRow> = transaction
-        .fetch_optional(sql::wiki_generation_latest(), (task_id,))
-        .await
-        .ok()
-        .flatten();
-    if let Some(row) = generation {
-        // A recovered generation is an execution the subscription handler
-        // completes through the code-wiki runner, which is outside this
-        // callback's recorded traffic.
-        tracing::debug!(
-            generation_id = row.get::<i64>("wiki_generations_id").ok().flatten(),
-            "recovered scheduled wiki generation"
-        );
-    }
-    None
 }
 
 /// `_cleanup_auto_delete_task_executor`: with no execution, the task's
@@ -224,7 +229,7 @@ async fn cleanup_task_runtime<T: MysqlTransaction>(
                         cleanup_source,
                         namespace,
                         name,
-                        %error,
+                        error = %format!("{error:#}"),
                         "executor delete failed"
                     );
                 }
@@ -344,380 +349,4 @@ fn subtask_column<T: FromMysqlCol>(row: &MysqlRow, column: &str) -> Option<T> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    use brz_redis::{EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, RedisResult, RedisValues};
-
-    /// The cleanup path issues no Redis command; the completion context still
-    /// requires a Redis handle.
-    struct NoRedis;
-
-    impl Redis for NoRedis {
-        async fn get<K, R>(&self, _key: K) -> RedisResult<Option<R>>
-        where
-            K: EncodeRedisArg + Send,
-            R: FromRedisBulk + Send,
-        {
-            unreachable!("runtime cleanup issues no Redis read")
-        }
-
-        async fn set<K, V>(&self, _key: K, _value: V) -> RedisResult<()>
-        where
-            K: EncodeRedisArg + Send,
-            V: EncodeRedisArg + Send,
-        {
-            unreachable!("runtime cleanup issues no Redis write")
-        }
-
-        async fn mget<K, R>(&self, _keys: K) -> RedisResult<Vec<Option<R>>>
-        where
-            K: EncodeRedisArgs + Send,
-            R: FromRedisBulk + Send,
-        {
-            unreachable!("runtime cleanup issues no Redis read")
-        }
-
-        async fn del_many<K>(&self, _keys: K) -> RedisResult<i64>
-        where
-            K: EncodeRedisArgs + Send,
-        {
-            unreachable!("runtime cleanup issues no Redis write")
-        }
-
-        async fn pfcount<K>(&self, _keys: K) -> RedisResult<i64>
-        where
-            K: EncodeRedisArgs + Send,
-        {
-            unreachable!("runtime cleanup issues no Redis read")
-        }
-
-        async fn hget<K, F, R>(&self, _key: K, _field: F) -> RedisResult<Option<R>>
-        where
-            K: EncodeRedisArg + Send,
-            F: EncodeRedisArg + Send,
-            R: FromRedisBulk + Send,
-        {
-            unreachable!("runtime cleanup issues no Redis read")
-        }
-
-        async fn hmget<K, F, R>(&self, _key: K, _fields: F) -> RedisResult<RedisValues<R>>
-        where
-            K: EncodeRedisArg + Send,
-            F: EncodeRedisArgs + Send,
-            R: FromRedisBulk + Send,
-        {
-            unreachable!("runtime cleanup issues no Redis read")
-        }
-    }
-
-    fn tables() -> Tables {
-        Tables {
-            tasks: "tasks_0030",
-            subtasks: "subtasks_0030",
-        }
-    }
-
-    fn manager() -> crate::executor_manager::ExecutorManager {
-        crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
-            .expect("executor-manager client")
-    }
-
-    /// `on_task_completed`'s one `get_db_session()` block: the execution
-    /// lookup and the auto-delete probe run inside the same transaction, and
-    /// the probe keeps the source's two-state `is_active_query()` read.
-    #[tokio::test]
-    async fn the_task_completion_reads_run_inside_one_transaction() {
-        let capture = TransactionCapture::default();
-        let redis = NoRedis;
-        let manager = manager();
-        let ctx = Completion {
-            mysql: &capture,
-            redis: &redis,
-            tables: tables(),
-            executor_manager: &manager,
-        };
-        let event = TaskCompletedEvent {
-            task_id: 42,
-            user_id: 7,
-            status: "COMPLETED",
-        };
-        handle_task_completed(&ctx, &event).await;
-        assert_eq!(capture.transaction_count(), 1);
-        let statements = capture.statements();
-        assert_eq!(statements.len(), 4, "{statements:?}");
-        assert!(
-            statements[0].sql.contains("background_executions"),
-            "{statements:?}"
-        );
-        assert!(
-            statements[3]
-                .sql
-                .contains("WHERE id = ? AND kind = 'Task' AND is_active IN (1, 2)"),
-            "{statements:?}"
-        );
-    }
-
-    /// A capture-only `Mysql` handle: the pool issues no statement directly,
-    /// and `with_transaction` runs the closure against a transaction capture.
-    #[derive(Clone, Default)]
-    struct TransactionCapture {
-        transactions: std::sync::Arc<std::sync::Mutex<usize>>,
-        statements: std::sync::Arc<std::sync::Mutex<Vec<crate::sql_test_support::Query>>>,
-        attempts: std::sync::Arc<std::sync::Mutex<usize>>,
-        fail_at: Option<usize>,
-    }
-
-    impl TransactionCapture {
-        /// Fail the Nth update so the batch's abort behavior is observable.
-        fn failing_at(attempt: usize) -> Self {
-            Self {
-                fail_at: Some(attempt),
-                ..Self::default()
-            }
-        }
-
-        fn transaction(&self) -> CapturedTransaction {
-            CapturedTransaction {
-                statements: std::sync::Arc::clone(&self.statements),
-                attempts: std::sync::Arc::clone(&self.attempts),
-                fail_at: self.fail_at,
-            }
-        }
-
-        fn transaction_count(&self) -> usize {
-            *self.transactions.lock().unwrap()
-        }
-
-        fn update_attempts(&self) -> usize {
-            *self.attempts.lock().unwrap()
-        }
-
-        fn statements(&self) -> Vec<crate::sql_test_support::Query> {
-            self.statements.lock().unwrap().clone()
-        }
-    }
-
-    struct CapturedTransaction {
-        statements: std::sync::Arc<std::sync::Mutex<Vec<crate::sql_test_support::Query>>>,
-        attempts: std::sync::Arc<std::sync::Mutex<usize>>,
-        fail_at: Option<usize>,
-    }
-
-    impl CapturedTransaction {
-        fn record<S: AsRef<str>, A: brz_mysql::MysqlArgs>(&self, sql: S, arguments: A) {
-            self.statements
-                .lock()
-                .unwrap()
-                .push(crate::sql_test_support::Query {
-                    sql: sql.as_ref().to_string(),
-                    args: arguments.len(),
-                    first_integer: arguments
-                        .first_route_value()
-                        .and_then(|value| value.as_i64().ok()),
-                });
-        }
-    }
-
-    impl MysqlTransaction for CapturedTransaction {
-        async fn execute<S, A>(
-            &mut self,
-            sql: S,
-            arguments: A,
-        ) -> brz_mysql::MysqlResult<brz_mysql::MysqlExecution>
-        where
-            S: AsRef<str> + Send,
-            A: brz_mysql::MysqlArgs + Send,
-        {
-            let mut attempts = self.attempts.lock().unwrap();
-            *attempts += 1;
-            if self.fail_at == Some(*attempts) {
-                return Err(brz_mysql::MysqlError::RowNotFound);
-            }
-            drop(attempts);
-            self.record(sql, arguments);
-            Ok(brz_mysql::MysqlExecution {
-                rows_affected: 1,
-                last_insert_id: 0,
-            })
-        }
-
-        async fn fetch_optional<S, A, T>(
-            &mut self,
-            sql: S,
-            arguments: A,
-        ) -> brz_mysql::MysqlResult<Option<T>>
-        where
-            S: AsRef<str> + Send,
-            A: brz_mysql::MysqlArgs + Send,
-            T: brz_mysql::FromMysqlRow + Send,
-        {
-            self.record(sql, arguments);
-            Ok(None)
-        }
-
-        async fn fetch_one<S, A, T>(&mut self, _: S, _: A) -> brz_mysql::MysqlResult<T>
-        where
-            S: AsRef<str> + Send,
-            A: brz_mysql::MysqlArgs + Send,
-            T: brz_mysql::FromMysqlRow + Send,
-        {
-            panic!("transaction capture does not serve single-row reads")
-        }
-
-        fn fetch<'transaction, S, A, T>(
-            &'transaction mut self,
-            _: S,
-            _: A,
-        ) -> impl futures_util::Stream<Item = brz_mysql::MysqlResult<T>> + Send + 'transaction
-        where
-            S: AsRef<str> + Send + 'transaction,
-            A: brz_mysql::MysqlArgs + Send + 'transaction,
-            T: brz_mysql::FromMysqlRow + Send + 'transaction,
-        {
-            futures_util::stream::once(async { panic!("transaction capture does not stream") })
-        }
-
-        async fn fetch_all<S, A, T>(
-            &mut self,
-            sql: S,
-            arguments: A,
-        ) -> brz_mysql::MysqlResult<Vec<T>>
-        where
-            S: AsRef<str> + Send,
-            A: brz_mysql::MysqlArgs + Send,
-            T: brz_mysql::FromMysqlRow + Send,
-        {
-            self.record(sql, arguments);
-            Ok(Vec::new())
-        }
-    }
-
-    impl brz_mysql::Mysql for TransactionCapture {
-        type Transaction = CapturedTransaction;
-
-        fn with_route<R: brz_mysql::MysqlRouting + 'static>(
-            &self,
-            _: R,
-        ) -> brz_mysql::MysqlService {
-            panic!("the handler opens exactly one transaction")
-        }
-
-        fn route<K: brz_mysql::MysqlRouteKey>(&self, _: K) -> Self {
-            self.clone()
-        }
-
-        async fn execute<S, A>(
-            &self,
-            _: S,
-            _: A,
-        ) -> brz_mysql::MysqlResult<brz_mysql::MysqlExecution>
-        where
-            S: AsRef<str> + Send,
-            A: brz_mysql::MysqlArgs + Send,
-        {
-            panic!("the executor updates must run inside the transaction")
-        }
-
-        async fn fetch_optional<S, A, T>(&self, _: S, _: A) -> brz_mysql::MysqlResult<Option<T>>
-        where
-            S: AsRef<str> + Send,
-            A: brz_mysql::MysqlArgs + Send,
-            T: brz_mysql::FromMysqlRow + Send,
-        {
-            panic!("the handler reads inside the transaction")
-        }
-
-        async fn fetch_one<S, A, T>(&self, _: S, _: A) -> brz_mysql::MysqlResult<T>
-        where
-            S: AsRef<str> + Send,
-            A: brz_mysql::MysqlArgs + Send,
-            T: brz_mysql::FromMysqlRow + Send,
-        {
-            panic!("the handler reads inside the transaction")
-        }
-
-        fn fetch<'service, S, A, T>(
-            &'service self,
-            _: S,
-            _: A,
-        ) -> impl futures_util::Stream<Item = brz_mysql::MysqlResult<T>> + Send + 'service
-        where
-            S: AsRef<str> + Send + 'service,
-            A: brz_mysql::MysqlArgs + Send + 'service,
-            T: brz_mysql::FromMysqlRow + Send + 'service,
-        {
-            futures_util::stream::once(async { panic!("the handler reads inside the transaction") })
-        }
-
-        async fn fetch_all<S, A, T>(&self, _: S, _: A) -> brz_mysql::MysqlResult<Vec<T>>
-        where
-            S: AsRef<str> + Send,
-            A: brz_mysql::MysqlArgs + Send,
-            T: brz_mysql::FromMysqlRow + Send,
-        {
-            panic!("the handler reads inside the transaction")
-        }
-
-        async fn with_transaction<T, F>(&self, operation: F) -> brz_mysql::MysqlResult<T>
-        where
-            T: Send,
-            F: for<'transaction> AsyncFnOnce(
-                    &'transaction mut Self::Transaction,
-                ) -> brz_mysql::MysqlResult<T>
-                + Send,
-        {
-            *self.transactions.lock().unwrap() += 1;
-            let mut transaction = self.transaction();
-            operation(&mut transaction).await
-        }
-    }
-
-    /// `_db_session`'s flush: every selected subtask update joins the caller's
-    /// transaction, and the helper never sends the old ad-hoc `COMMIT`.
-    #[tokio::test]
-    async fn the_executor_deleted_updates_join_the_session_transaction() {
-        let capture = TransactionCapture::default();
-        let sql = sql::update_subtask_executor_deleted(tables());
-        let updates = vec![
-            ("2026-10-21 15:45:26.537475".to_string(), 801406538589674),
-            ("2026-10-21 15:45:26.537475".to_string(), 801406538589675),
-        ];
-
-        let mut transaction = capture.transaction();
-        apply_executor_deleted_updates(&mut transaction, &sql, &updates)
-            .await
-            .expect("batch applies");
-
-        assert_eq!(capture.update_attempts(), 2);
-        let statements = capture.statements();
-        assert_eq!(statements.len(), 2, "{statements:?}");
-        for statement in &statements {
-            assert_eq!(statement.sql, sql, "{statement:?}");
-            assert_eq!(statement.args, 3, "{statement:?}");
-        }
-        assert!(
-            statements.iter().all(|statement| statement.sql != "COMMIT"),
-            "{statements:?}"
-        );
-    }
-
-    /// A failed update aborts the batch: the source `db_session` rolls the
-    /// whole flush back, so no later subtask is updated.
-    #[tokio::test]
-    async fn a_failed_executor_deleted_update_aborts_the_batch() {
-        let capture = TransactionCapture::failing_at(2);
-        let sql = sql::update_subtask_executor_deleted(tables());
-        let updates = vec![
-            ("2026-10-21 15:45:26.537475".to_string(), 801406538589674),
-            ("2026-10-21 15:45:26.537475".to_string(), 801406538589675),
-        ];
-
-        let mut transaction = capture.transaction();
-        let outcome = apply_executor_deleted_updates(&mut transaction, &sql, &updates).await;
-
-        assert!(outcome.is_err(), "{outcome:?}");
-        assert_eq!(capture.update_attempts(), 2);
-        assert_eq!(capture.statements().len(), 1);
-    }
-}
+mod tests;

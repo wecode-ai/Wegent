@@ -73,7 +73,12 @@ pub async fn build() -> Result<AppState> {
     } else {
         None
     };
-    let celery = crate::celery_broker::CeleryBroker::new(celery_subscriber);
+    let mut celery = crate::celery_broker::CeleryBroker::new(celery_subscriber);
+    if let Some(url) = config::optional_env_or_dotenv("CELERY_BROKER_URL") {
+        let broker_config =
+            config::RedisConfig::from_urls(&url, None).context("invalid CELERY_BROKER_URL")?;
+        celery = celery.with_background_broker(broker_config);
+    }
     // `executor_version_service` is created once with the application's Redis
     // service: its refresh worker is started here, at process startup, so a
     // device listing only enqueues the refresh a cache miss requires.

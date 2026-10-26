@@ -118,6 +118,7 @@ async fn handle_callback(
             redis,
             tables: tables(state),
             executor_manager: &state.executor_manager,
+            celery: &state.celery,
         };
         let (final_result, user_id) = completion::complete_terminal(
             &ctx,

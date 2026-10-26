@@ -58,6 +58,7 @@ pub(super) async fn dispatch_next(
                 redis,
                 tables: super::tables(state),
                 executor_manager: &state.executor_manager,
+                celery: &state.celery,
             };
             super::completion::persist_completed_result(
                 &ctx,

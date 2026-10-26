@@ -44,18 +44,21 @@ pub(crate) struct Completion<'a, M: Mysql, R: Redis> {
     /// The retained executor-manager client the subscription handler's
     /// auto-delete cleanup calls.
     pub(crate) executor_manager: &'a ExecutorManager,
+    pub(crate) celery: &'a crate::CeleryBroker,
 }
 
 /// One `TaskCompletedEvent` (`app/core/events.py`).
 ///
-/// The handlers this callback reaches consume the task identity, the owner and
-/// the terminal status; the collected result and error stay in the persistence
-/// step that already wrote them. The source only publishes the event once
+/// Carry the collected result and error to downstream lifecycle projections.
+/// The source only publishes the event once
 /// `_resolve_owner_user_id` produced an owner, so the owner is always known.
 pub(crate) struct TaskCompletedEvent<'a> {
     pub(crate) task_id: i64,
+    pub(crate) subtask_id: i64,
     pub(crate) user_id: i64,
     pub(crate) status: &'a str,
+    pub(crate) result: Option<&'a Value>,
+    pub(crate) error: Option<&'a str>,
 }
 
 /// `_get_task_status_user_id`: the owner of one active task, read before the
@@ -199,7 +202,15 @@ async fn finish_terminal<M: Mysql, R: Redis>(
     )
     .await;
 
-    events::publish_task_completed(ctx, task_id, status).await;
+    events::publish_task_completed(
+        ctx,
+        task_id,
+        subtask_id,
+        status,
+        final_result.as_ref(),
+        error,
+    )
+    .await;
 
     final_result
 }
