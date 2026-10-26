@@ -140,7 +140,7 @@ export function HarnessAppInstallDialog({
                 <span className="relative mt-2 block">
                   <select
                     data-testid="harness-app-model-select"
-                    className="h-10 w-full appearance-none rounded-xl border border-border/50 bg-background px-3 pr-10 text-sm text-text-primary outline-none transition-colors focus:border-focus focus:ring-2 focus:ring-focus/15"
+                    className="h-10 w-full appearance-none rounded-xl border border-border/50 bg-background px-3 pr-10 text-sm text-text-primary outline-none transition-colors keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
                     value={modelKey}
                     onChange={event => onModelChange(event.target.value)}
                   >

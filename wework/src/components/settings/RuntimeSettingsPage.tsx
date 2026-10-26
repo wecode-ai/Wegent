@@ -253,7 +253,7 @@ export function RuntimeSettingsPage({
                 data-testid="runtime-profile-name"
                 value={name}
                 onChange={event => setName(event.target.value)}
-                className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-focus"
+                className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none keyboard:focus:border-focus"
               />
             </label>
             <MenuSelect

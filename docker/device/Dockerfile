@@ -136,7 +136,7 @@ RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
 
 # Install the agent CLIs from the selected npm registry.
 RUN npm install -g --registry "$NPM_REGISTRY" \
-      @anthropic-ai/claude-code@2.1.277 @openai/codex@0.155.1 \
+      @anthropic-ai/claude-code@2.1.310 @openai/codex@0.155.1 \
     && npm cache clean --force
 
 # Install the GitHub (gh) and GitLab (glab) CLIs used by git hosting features.

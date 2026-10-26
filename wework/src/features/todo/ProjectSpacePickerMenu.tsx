@@ -125,7 +125,7 @@ export function ProjectSpacePickerMenu({
           {t('workbench.project_picker_title', '加入项目空间')}
         </h2>
         <div className="mt-3 flex gap-2">
-          <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border px-2 focus-within:ring-1 focus-within:ring-blue-500/70 max-md:h-11">
+          <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border px-2 keyboard:focus-within:ring-1 keyboard:focus-within:ring-blue-500/70 max-md:h-11">
             <Search className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
             <input
               ref={inputRef}
@@ -182,7 +182,7 @@ export function ProjectSpacePickerMenu({
               setOrder(event.target.value as ProjectSpacePickerOrder)
               setActiveKey('')
             }}
-            className="h-8 max-w-32 shrink-0 rounded-lg border border-border bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70 max-md:h-11"
+            className="h-8 max-w-32 shrink-0 rounded-lg border border-border bg-background px-2 text-sm focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-blue-500/70 max-md:h-11"
           >
             <option value="name-asc" className="bg-background text-text-primary">
               {t('workbench.project_picker_name_asc', '名称 A–Z')}
@@ -212,7 +212,7 @@ export function ProjectSpacePickerMenu({
                 aria-label={group.label}
                 title={group.label}
                 onClick={() => selectGroup(group.key)}
-                className={`flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70 max-md:h-11 ${groupKey === group.key ? 'bg-muted font-medium' : ''}`}
+                className={`flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-blue-500/70 max-md:h-11 ${groupKey === group.key ? 'bg-muted font-medium' : ''}`}
               >
                 {group.key === null ? (
                   <LayoutDashboard className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -303,7 +303,7 @@ export function ProjectSpacePickerMenu({
               onClose()
               onRemoveProject()
             }}
-            className="flex h-9 items-center gap-2 rounded-lg px-2 text-left text-sm text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70 max-md:h-11"
+            className="flex h-9 items-center gap-2 rounded-lg px-2 text-left text-sm text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-blue-500/70 max-md:h-11"
           >
             <X className="h-4 w-4 shrink-0" aria-hidden="true" />
             {t('workbench.clear_extra_project_space', '不加入其他项目空间')}

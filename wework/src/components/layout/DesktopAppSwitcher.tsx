@@ -83,7 +83,7 @@ function AvailabilityTooltip({ label, testId }: { label: string; testId: string 
         onMouseLeave={() => setPosition(null)}
         onFocus={showTooltip}
         onBlur={() => setPosition(null)}
-        className="inline-flex shrink-0 rounded-sm text-text-muted outline-none focus-visible:ring-2 focus-visible:ring-focus"
+        className="inline-flex shrink-0 rounded-sm text-text-muted outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
       >
         <CloudOff aria-hidden="true" className="h-3.5 w-3.5" />
       </span>

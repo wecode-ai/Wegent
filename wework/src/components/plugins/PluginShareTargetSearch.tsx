@@ -84,7 +84,7 @@ export function PluginShareTargetSearch({
           ref={inputRef}
           value={query}
           data-testid="plugin-share-search"
-          className="h-11 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+          className="h-11 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
           placeholder={t('workbench.plugins_share_search', '搜索成员或部门')}
           onChange={event => handleQueryChange(event.target.value)}
         />
