@@ -440,19 +440,30 @@ async function verifyWindowsProfileOwnedAssets(userDataDirectory) {
   assert.ok((await readdir(assets)).length > 0, 'Windows Core DSH profile assets must not be empty')
 }
 
-async function verifyEmbeddedNodeSkillRuntime(userDataDirectory, resultDir) {
-  const binDirectory = join(userDataDirectory, 'managed-runtimes', 'electron-node', 'bin')
+export async function verifyEmbeddedNodeSkillRuntime(userDataDirectory, resultDir) {
+  const binDirectory = join(userDataDirectory, 'runtime', 'bin')
+  const launcher = join(binDirectory, process.platform === 'win32' ? 'node.cmd' : 'node')
+  assert.ok((await lstat(launcher)).isFile(), 'The packaged Node launcher must exist')
   const skillScript = join(resultDir, 'embedded-node-skill.ts')
   await writeFile(
     skillScript,
-    'const runtime: string = `electron-node:${process.versions.node}`\nconsole.log(runtime)\n'
+    'const runtime: NodeJS.ProcessVersions = process.versions\nconsole.log(JSON.stringify({ node: runtime.node, electron: runtime.electron, availableMemoryBytes: process.availableMemory() }))\n'
   )
   const output = await runNodeSkill(skillScript, binDirectory)
+  const runtime = JSON.parse(output)
+  const electronPackage = JSON.parse(
+    await readFile(new URL('../../../electron/package.json', import.meta.url), 'utf8')
+  )
+  // DSH's native loader accepts exact Electron fingerprints, not an entire major range.
+  assert.equal(runtime.electron, electronPackage.devDependencies.electron)
+  assert.match(runtime.electron, /^43\./, 'The release package must support Electron 43')
+  assert.ok(Number.isFinite(runtime.availableMemoryBytes) && runtime.availableMemoryBytes >= 0)
   assert.match(
-    output,
-    /^electron-node:\d+\.\d+\.\d+$/m,
+    runtime.node,
+    /^\d+\.\d+\.\d+$/,
     'A Codex skill TypeScript script did not run through Electron embedded Node'
   )
+  await writeFile(join(resultDir, 'embedded-node-versions.json'), `${JSON.stringify(runtime)}\n`)
 }
 
 function runNodeSkill(script, binDirectory) {
