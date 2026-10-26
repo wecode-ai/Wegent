@@ -122,7 +122,9 @@ it('keeps the active conversation mounted while settings reload', async () => {
   const pending = new Promise<typeof settings>(done => {
     resolve = done
   })
-  render(<StandInOverviewPage {...props} />)
+  await act(async () => {
+    render(<StandInOverviewPage {...props} />)
+  })
   const conversation = await screen.findByTestId('identity-conversation')
   vi.mocked(api.personalGet).mockReturnValueOnce(pending)
   act(() => publishPersonalStandIn(settings))
