@@ -45,6 +45,23 @@ create_stub() {
 printf '%s %s\n' "$(basename "$0")" "$*" >> "$CALL_LOG"
 if [ "$(basename "$0")" = "pnpm" ]; then
     case "$*" in
+        '--filter wework typecheck')
+            if [ "${PUSH_GATE_TEST_REQUIRE_STATIC_ISOLATION:-0}" = "1" ]; then
+                rm -f "$CALL_LOG.wework-typecheck-complete"
+                sleep 1
+                touch "$CALL_LOG.wework-typecheck-complete"
+                if [ "${PUSH_GATE_TEST_STATIC_FAILURE:-0}" = "1" ]; then
+                    exit 7
+                fi
+            fi
+            ;;
+        '--filter wework exec vitest '*)
+            if [ "${PUSH_GATE_TEST_REQUIRE_STATIC_ISOLATION:-0}" = "1" ] &&
+                [ ! -f "$CALL_LOG.wework-typecheck-complete" ]; then
+                echo 'Renderer tests overlapped the unfinished TypeScript check' >&2
+                exit 1
+            fi
+            ;;
         '--filter wework run prepare:electron')
             rm -f "$CALL_LOG.electron-typecheck-complete"
             ;;
@@ -190,11 +207,16 @@ WEWORK_LOCAL_SHA="2f77b34aae02d0e9d5254530b503655835072cc7"
 
 ensure_wework_node_modules
 
+if ! PUSH_GATE_TEST_REQUIRE_STATIC_ISOLATION=1 \
 AI_VERIFIED=1 \
 PATH="$TMP_DIR/bin:$PATH" \
 bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_TEST_OUT" 2>&1
 refs/heads/topic $WEWORK_LOCAL_SHA refs/heads/topic $WEWORK_REMOTE_SHA
 EOF
+then
+    cat "$WEWORK_TEST_OUT"
+    exit 1
+fi
 
 if ! grep -qE '^pnpm --filter wework typecheck$' "$CALL_LOG"; then
     echo "Expected Wework changes to run the Wework TypeScript check."
@@ -237,12 +259,31 @@ if ! grep -qE 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST
     exit 1
 fi
 
-STATIC_CHECK_LINE=$(grep -n 'Running static checks and unit tests in parallel' "$WEWORK_TEST_OUT" | cut -d: -f1)
+STATIC_CHECK_LINE=$(grep -n 'Running static checks before unit tests' "$WEWORK_TEST_OUT" | cut -d: -f1)
 UNIT_TEST_LINE=$(grep -n 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST_OUT" | cut -d: -f1)
 if [ -z "$STATIC_CHECK_LINE" ] || [ -z "$UNIT_TEST_LINE" ] ||
     [ "$STATIC_CHECK_LINE" -ge "$UNIT_TEST_LINE" ]; then
     echo "Expected Wework static checks to be reported before unit tests."
     cat "$WEWORK_TEST_OUT"
+    exit 1
+fi
+
+: > "$CALL_LOG"
+rm -f "$CALL_LOG.wework-typecheck-complete"
+if PUSH_GATE_TEST_REQUIRE_STATIC_ISOLATION=1 \
+    PUSH_GATE_TEST_STATIC_FAILURE=1 \
+    AI_VERIFIED=1 \
+    PATH="$TMP_DIR/bin:$PATH" \
+    bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$TMP_DIR/wework-static-failure.out" 2>&1; then
+refs/heads/topic $WEWORK_LOCAL_SHA refs/heads/topic $WEWORK_REMOTE_SHA
+EOF
+    echo "Expected a failed Wework TypeScript check to block the push."
+    exit 1
+fi
+if ! grep -q 'TypeScript: FAILED' "$TMP_DIR/wework-static-failure.out" ||
+    ! grep -q 'Unit Tests: PASSED' "$TMP_DIR/wework-static-failure.out"; then
+    echo "Expected static failures to propagate while all unit tests still run in isolation."
+    cat "$TMP_DIR/wework-static-failure.out"
     exit 1
 fi
 
