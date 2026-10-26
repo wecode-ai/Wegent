@@ -85,6 +85,9 @@ export function createDesktopScenario(options) {
         value: '300001',
       })
       await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
+      await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
+        visible: false,
+      })
       await control.command('waitFor', ROW, { text: '已自定义' })
       const persisted = JSON.parse(await readFile(overridePath, 'utf8'))
       assert.deepEqual(persisted, [
