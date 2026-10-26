@@ -38,6 +38,20 @@ async function waitForAttributeIncludes(
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
 }
 
+// The month grid only covers the six weeks around the visible month, so a day
+// that is a week past the first task lands outside it near the end of a month.
+async function revealCalendarDay(control, scoped, day, timeoutMs) {
+  const selector = scoped(`[data-testid="collaboration-calendar-day-${day}"]`)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (Number(await control.command('getElementCount', selector)) > 0) return selector
+    await control.command('click', scoped('[data-testid="collaboration-schedule-next"]'))
+    await new Promise(resolve => setTimeout(resolve, 300))
+  }
+  const count = Number(await control.command('getElementCount', selector))
+  assert.ok(count > 0, `The calendar grid never reached ${day} within ${timeoutMs}ms`)
+  return selector
+}
+
 export async function verifyCollaborationScheduleViews({
   capture,
   control,
@@ -139,8 +153,15 @@ export async function verifyCollaborationScheduleViews({
     timeoutMs
   )
   await capture(control, 'offline-local-project-space-02-calendar-schedule.png')
+  const calendarTarget = await revealCalendarDay(control, scoped, keys.calendarStart, timeoutMs)
+  await control.command('waitFor', calendarBar, {
+    text: issueTitle,
+    visible: true,
+    timeoutMs,
+  })
+  await control.command('waitFor', calendarTarget, { visible: true, timeoutMs })
   await control.command('drag', `${calendarBar} > button:not([data-testid])`, {
-    target: scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`),
+    target: calendarTarget,
     timeoutMs,
   })
   await waitForAttributeIncludes(
