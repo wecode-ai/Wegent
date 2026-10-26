@@ -66,6 +66,9 @@ describe("createSharedIssueDetailPort", () => {
           {
             id: "delivery-1",
             issueId: "issue-1",
+            createdByUserId: 8,
+            markdown: "# Notes",
+            chat: { messages: [{ role: "assistant", content: "Result" }] },
             status: "delivered",
             assets: [
               {
@@ -136,6 +139,9 @@ describe("createSharedIssueDetailPort", () => {
     await expect(port.deliveries.list("issue-1")).resolves.toEqual([
       expect.objectContaining({
         loop_item_id: "issue-1",
+        created_by_user_id: 8,
+        markdown: "# Notes",
+        chat: { messages: [{ role: "assistant", content: "Result" }] },
         assets: [
           expect.objectContaining({
             display_name: "result.txt",
