@@ -18,7 +18,6 @@ test.each([
 ])('keeps both drag ranges in the rendered calendar when run on %s', async today => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(today)
-  const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1, 12)
   let visibleMonth = today
   const dates = {}
   const navigation = []
@@ -30,11 +29,16 @@ test.each([
         if (selector.includes('start-date')) dates.start = options.value
         if (selector.includes('due-date')) dates.end = options.value
       }
-      if (action === 'click' && selector.includes('collaboration-schedule-')) {
+      if (
+        action === 'click' &&
+        (selector.includes('collaboration-schedule-') ||
+          selector.includes('[aria-label="下一个月"]'))
+      ) {
         navigation.push(selector)
         if (selector.includes('today')) visibleMonth = today
-        else if (selector.includes('next')) visibleMonth = nextMonth
-        else assert.fail(`Unexpected calendar navigation: ${selector}`)
+        else if (selector.includes('next') || selector.includes('[aria-label="下一个月"]')) {
+          visibleMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1, 12)
+        } else assert.fail(`Unexpected calendar navigation: ${selector}`)
       }
       if (action === 'getElementCount') {
         const target = selector.match(/collaboration-calendar-day-(\d{4}-\d{2}-\d{2})/)[1]

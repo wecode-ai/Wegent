@@ -5,7 +5,10 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { fetchJson } from '../modules/shared.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
-import { createCatalogContextVerification } from './codex-catalog-context.mjs'
+import {
+  createCatalogContextVerification,
+  saveCatalogAndWaitForRestart,
+} from './codex-catalog-context.mjs'
 
 const MODEL_ID = 'gpt-5.5'
 const EDIT = `[data-testid="codex-catalog-edit-openai-${MODEL_ID}"]`
@@ -84,7 +87,7 @@ export function createDesktopScenario(options) {
       await control.command('fill', '[data-testid="local-model-context-window-input"]', {
         value: '300001',
       })
-      await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
+      await saveCatalogAndWaitForRestart(control, join(options.resultDir, 'executor.log'))
       await control.command('waitFor', ROW, { text: '已自定义' })
       const persisted = JSON.parse(await readFile(overridePath, 'utf8'))
       assert.deepEqual(persisted, [

@@ -71,6 +71,15 @@ async function waitForCatalogRestart(control, executorLogPath, fromOffset) {
   throw new Error('The saved Catalog was not loaded by a restarted Codex app-server')
 }
 
+export async function saveCatalogAndWaitForRestart(control, executorLogPath) {
+  const restartLogOffset = (await readFile(executorLogPath, 'utf8')).length
+  await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
+  await waitForCatalogRestart(control, executorLogPath, restartLogOffset)
+  await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
+    visible: false,
+  })
+}
+
 export function createCatalogContextVerification({
   workspacePath,
   modelId,
@@ -147,15 +156,12 @@ export function createCatalogContextVerification({
         value: '500000',
       })
       const executorLogPath = join(resultDir, 'executor.log')
-      // A customized row confirms persistence before the optional restart confirmation.
-      const restartLogOffset = (await readFile(executorLogPath, 'utf8')).length
-      await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
+      await saveCatalogAndWaitForRestart(control, executorLogPath)
       await control.command(
         'waitFor',
         `[data-testid="codex-official-model-row-openai-${modelId}"]`,
         { text: '已自定义' }
       )
-      await waitForCatalogRestart(control, executorLogPath, restartLogOffset)
       await control.command('navigate', 'body', { value: '/' })
       await createSingleRootLocalProject(control, workspacePath, 'catalog-context-500k')
       await selectE2EModel(control, modelId, modelLabel, '', 'openai')

@@ -874,7 +874,11 @@ async function verifyCloudCheckpoint({
       return
     case 'supervisor-lifecycle':
       setPhase('cloud-supervisor-lifecycle')
-      await verifyTaskSupervisorLifecycle({ composerSelector, control })
+      await verifyTaskSupervisorLifecycle({
+        composerSelector,
+        control,
+        readRuntimeTask: taskId => cloudEnvironment.runtimeTask(taskId),
+      })
       return
     case 'resilience':
       setPhase('cloud-send-rejection')

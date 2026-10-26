@@ -2,10 +2,9 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import {
   findRuntimeWorkTask,
-  hasRunningRuntimeTaskSnapshot,
   waitForCompletedRuntimeTaskThread,
+  waitForRunningRuntimeTask,
 } from '../e2e/desktop/modules/runtime-task-evidence.mjs'
-import { waitForWorkbenchDebugState } from '../e2e/desktop/modules/workspace-flows.mjs'
 
 const selectedTaskId = 'runtime-selected'
 const threadId = '01a1388e-17ed-74a1-a926-28d723f9dab4'
@@ -30,71 +29,82 @@ describe('running executor snapshot evidence', () => {
 
   afterEach(() => vi.useRealTimers())
 
-  function snapshot(task = { taskId: selectedTaskId, running: true, completedAt: null }) {
-    return {
-      workbench: {
-        currentRuntimeTask: { taskId: selectedTaskId },
-        activeLifecycle: { execution: { running: true }, task },
-      },
-    }
-  }
-
-  test('waits for the wire summary after a start event has already made execution running', async () => {
-    const previousCompletion = 1_792_998_868_321
-    const pending = snapshot({
-      taskId: selectedTaskId,
-      running: false,
-      completedAt: previousCompletion,
-    })
-    const running = snapshot()
-    const control = ownerControl([pending, running])
-    const ready = waitForWorkbenchDebugState(
-      control,
-      state => hasRunningRuntimeTaskSnapshot(state, selectedTaskId),
-      'The correction summary did not arrive',
-      stepTimeoutMs
-    )
+  test('queries the owner for a running summary after the execution event arrived', async () => {
+    const running = { taskId: selectedTaskId, running: true, completedAt: null }
+    const readTask = vi
+      .fn()
+      .mockResolvedValueOnce({
+        taskId: selectedTaskId,
+        running: false,
+        completedAt: 1_792_998_868_321,
+      })
+      .mockResolvedValue(running)
+    const ready = waitForRunningRuntimeTask(readTask, selectedTaskId, stepTimeoutMs)
 
     await vi.advanceTimersByTimeAsync(99)
-    expect(control.command).toHaveBeenCalledTimes(1)
+    expect(readTask).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(1)
     await expect(ready).resolves.toEqual(running)
-    expect(control.command).toHaveBeenCalledTimes(2)
-    expect(control.command).toHaveBeenNthCalledWith(1, 'getWorkbenchDebugSnapshot', 'body')
+    expect(readTask).toHaveBeenCalledTimes(2)
+    expect(readTask).toHaveBeenNthCalledWith(1, selectedTaskId)
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  test('does not use completion clearance as readiness and hide a broken wire summary', () => {
-    const broken = snapshot({ taskId: selectedTaskId, running: true, completedAt: 123 })
+  test.each([123, undefined])(
+    'preserves invalid completion %s for the wire assertion',
+    async completedAt => {
+      const broken = {
+        taskId: selectedTaskId,
+        running: true,
+        ...(completedAt === undefined ? {} : { completedAt }),
+      }
+      const readTask = vi.fn().mockResolvedValue(broken)
+      const result = await waitForRunningRuntimeTask(readTask, selectedTaskId, stepTimeoutMs)
 
-    expect(hasRunningRuntimeTaskSnapshot(broken, selectedTaskId)).toBe(true)
-    expect(broken.workbench.activeLifecycle.task.completedAt).not.toBeNull()
-  })
+      expect(result).toBe(broken)
+      expect(result.completedAt).not.toBeNull()
+      expect(readTask).toHaveBeenCalledTimes(1)
+    }
+  )
 
-  test.each(['active task', 'wire task'])('does not accept another %s', source => {
-    const other = snapshot()
-    if (source === 'active task') other.workbench.currentRuntimeTask.taskId = 'other-task'
-    else other.workbench.activeLifecycle.task.taskId = 'other-task'
-
-    expect(hasRunningRuntimeTaskSnapshot(other, selectedTaskId)).toBe(false)
-  })
-
-  test('fails at the shared deadline if only the execution event arrived', async () => {
-    const control = ownerControl([
-      snapshot({ taskId: selectedTaskId, running: false, completedAt: 123 }),
-    ])
-    const failure = waitForWorkbenchDebugState(
-      control,
-      state => hasRunningRuntimeTaskSnapshot(state, selectedTaskId),
-      'The correction summary did not arrive',
-      stepTimeoutMs
-    ).catch(error => error)
+  test.each([
+    undefined,
+    { taskId: 'other-task', running: true },
+    { taskId: selectedTaskId, running: false },
+  ])('does not accept missing, mismatched, or idle owner evidence: %j', async pending => {
+    const readTask = vi.fn().mockResolvedValue(pending)
+    const failure = waitForRunningRuntimeTask(readTask, selectedTaskId, stepTimeoutMs).catch(
+      error => error
+    )
 
     await vi.advanceTimersByTimeAsync(stepTimeoutMs)
 
     expect(await failure).toMatchObject({
-      message: expect.stringContaining('The correction summary did not arrive'),
+      message: expect.stringContaining(
+        `The owning executor did not expose running task ${selectedTaskId} within ${stepTimeoutMs}ms`
+      ),
     })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  test('bounds a stalled owner query by the same step budget', async () => {
+    const readTask = vi.fn(() => new Promise(() => {}))
+    const failure = waitForRunningRuntimeTask(readTask, selectedTaskId, stepTimeoutMs).catch(
+      error => error
+    )
+    await vi.advanceTimersByTimeAsync(stepTimeoutMs)
+    expect(await failure).toBeInstanceOf(Error)
+    expect(readTask).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  test('propagates owner failure without silently querying another source', async () => {
+    const error = new Error('Cloud owner disconnected')
+    const readTask = vi.fn().mockRejectedValue(error)
+    await expect(waitForRunningRuntimeTask(readTask, selectedTaskId, stepTimeoutMs)).rejects.toBe(
+      error
+    )
+    expect(readTask).toHaveBeenCalledTimes(1)
     expect(vi.getTimerCount()).toBe(0)
   })
 })
