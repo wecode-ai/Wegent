@@ -61,6 +61,27 @@ if [ "$(basename "$0")" = "pnpm" ]; then
                 echo 'Renderer tests overlapped the unfinished TypeScript check' >&2
                 exit 1
             fi
+            if [ "${PUSH_GATE_TEST_SERIAL_RENDERER:-0}" = "1" ]; then
+                case "$*" in
+                    *--shard=1/2*)
+                        printf 'start 1\n' >> "$CALL_LOG.renderer-order"
+                        sleep 1
+                        printf 'finish 1\n' >> "$CALL_LOG.renderer-order"
+                        touch "$CALL_LOG.renderer-first-complete"
+                        if [ "${PUSH_GATE_TEST_FAIL_FIRST_RENDERER:-0}" = "1" ]; then
+                            exit 9
+                        fi
+                        ;;
+                    *--shard=2/2*)
+                        printf 'start 2\n' >> "$CALL_LOG.renderer-order"
+                        if [ ! -f "$CALL_LOG.renderer-first-complete" ]; then
+                            echo 'The second renderer shard overlapped the first' >&2
+                            exit 8
+                        fi
+                        printf 'finish 2\n' >> "$CALL_LOG.renderer-order"
+                        ;;
+                esac
+            fi
             ;;
         '--filter wework run prepare:electron')
             rm -f "$CALL_LOG.electron-typecheck-complete"
@@ -324,6 +345,66 @@ if ! grep -qE 'Running full renderer unit tests in 2 shards with 1 worker each' 
     exit 1
 fi
 
+: > "$CALL_LOG"
+
+# Both existing shards must run in order when the host requests isolation.
+if ! AI_VERIFIED=1 \
+WEWORK_PRE_PUSH_RENDERER_SHARD_CONCURRENCY=1 \
+PUSH_GATE_TEST_SERIAL_RENDERER=1 \
+PATH="$TMP_DIR/bin:$PATH" \
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$TMP_DIR/renderer-serial.out" 2>&1
+refs/heads/topic $WEWORK_FULL_LOCAL_SHA refs/heads/topic $WEWORK_FULL_BASE_SHA
+EOF
+then
+    echo "Expected the isolation budget to run both renderer shards without overlapping."
+    cat "$TMP_DIR/renderer-serial.out"
+    exit 1
+fi
+if [ "$(cat "$CALL_LOG.renderer-order")" != "$(printf 'start 1\nfinish 1\nstart 2\nfinish 2')" ]; then
+    echo "Expected both unchanged renderer shards to execute without overlapping."
+    cat "$CALL_LOG.renderer-order"
+    exit 1
+fi
+for shard in 1 2; do
+    if ! grep -qE "^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --shard=$shard/2$" "$CALL_LOG"; then
+        echo "Expected serialized execution to retain renderer shard $shard and its original budget."
+        exit 1
+    fi
+done
+: > "$CALL_LOG"
+
+# A failed first shard must still run the second shard and block the push.
+rm -f "$CALL_LOG.renderer-first-complete" "$CALL_LOG.renderer-order"
+if AI_VERIFIED=1 \
+    WEWORK_PRE_PUSH_RENDERER_SHARD_CONCURRENCY=1 \
+    PUSH_GATE_TEST_SERIAL_RENDERER=1 \
+    PUSH_GATE_TEST_FAIL_FIRST_RENDERER=1 \
+    PATH="$TMP_DIR/bin:$PATH" \
+    bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$TMP_DIR/renderer-serial-failure.out" 2>&1; then
+refs/heads/topic $WEWORK_FULL_LOCAL_SHA refs/heads/topic $WEWORK_FULL_BASE_SHA
+EOF
+    echo "Expected a failed serialized renderer shard to block the push."
+    exit 1
+fi
+if ! grep -q 'Unit Tests: FAILED' "$TMP_DIR/renderer-serial-failure.out" ||
+    ! grep -q -- '--shard=2/2' "$CALL_LOG"; then
+    echo "Expected serialized execution to preserve failures and run all remaining tests."
+    cat "$TMP_DIR/renderer-serial-failure.out"
+    exit 1
+fi
+: > "$CALL_LOG"
+if AI_VERIFIED=1 WEWORK_PRE_PUSH_RENDERER_SHARD_CONCURRENCY=0 PATH="$TMP_DIR/bin:$PATH" \
+    bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$TMP_DIR/renderer-invalid-budget.out" 2>&1; then
+refs/heads/topic $WEWORK_FULL_LOCAL_SHA refs/heads/topic $WEWORK_FULL_BASE_SHA
+EOF
+    echo "Expected an invalid isolation budget to fail rather than pass without tests."
+    exit 1
+fi
+if ! grep -q 'Invalid renderer shard concurrency' "$TMP_DIR/renderer-invalid-budget.out"; then
+    echo "Expected an explicit configuration error for an invalid isolation budget."
+    cat "$TMP_DIR/renderer-invalid-budget.out"
+    exit 1
+fi
 : > "$CALL_LOG"
 
 # Build an unreferenced synthetic commit that changes only Electron host code.

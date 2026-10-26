@@ -35,6 +35,18 @@ PR #3947 的 Core 分片 8 在评论落点等待完成后读取到 `animation-na
 聚焦测试覆盖动画结束后的记录保留、精确评论归属及失败清理。真实 Electron
 仍运行现有 `collaboration-issue-comment-notification` checkpoint，由 Core CI 调用。
 
+### 本地门禁资源隔离
+
+低内存主机可设置 `WEWORK_PRE_PUSH_RENDERER_SHARD_CONCURRENCY=1`，串行执行
+原来的 `1/2`、`2/2` 两个完整 renderer 分片；默认仍并发两个分片。
+`WEWORK_PRE_PUSH_TEST_WORKERS` 仍控制每个分片的 worker 数。串行模式保留所有
+文件、原有超时和失败传播，首个分片失败也会执行第二个；无效并发值明确阻止推送。
+门禁回归检查分片不重叠、覆盖完整及失败不被吞掉。
+
+可见活动游标单测先等评论加载，再用受控动画帧驱动真实滚动读取 hook，避免依赖
+宿主及时调度 `requestAnimationFrame`。帧执行前不得读，执行后仍必须只确认可见的
+序号 2，不得确认屏外序号 3，并保留父级回调检查；不修改产品滚动或展示逻辑。
+
 环境：隔离的 Electron、真实 Backend/Socket.IO/设备，只有模型服务使用场景内的测试服务。
 本地使用聚焦 Vitest 验证，完整桌面验收由现有 GitHub CI Core 分片执行；
 不操作个人 WeWork 窗口，不通过重跑、扩大超时或跳过断言掩盖失败。
