@@ -172,11 +172,8 @@ restart policy restores the service. Health checks reach Python's `/api/health`
 through Rust. `GRACEFUL_SHUTDOWN_TIMEOUT` still controls Python's drain timeout;
 allow enough time for active requests when using `docker compose stop -t`.
 
-Existing observation overrides such as `docker-compose.observe.yml` can still be
-added with `-f`. They must not replace `backend.command` with direct Uvicorn
-startup, which would bypass the gateway. Inject configuration through Compose's
-environment: real `.env` files and local Cargo `target` directories are excluded
-from the image build context.
+Inject configuration through Compose's environment: real `.env` files and local
+Cargo `target` directories are excluded from the image build context.
 
 When using `install.sh`, you can also pass the edge shortcut directly:
 

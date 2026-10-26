@@ -169,8 +169,6 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml --profile rag u
 `/api/health`。`GRACEFUL_SHUTDOWN_TIMEOUT` 继续控制 Python 的优雅退出等待时间，
 使用 `docker compose stop -t` 时应为活跃请求预留足够时间。
 
-已有的监控覆盖文件（例如 `docker-compose.observe.yml`）可以继续通过 `-f` 叠加，
-但不要将 `backend.command` 覆盖为直接运行 Uvicorn，以免绕过 Rust 网关。
 运行配置通过 Compose 环境变量注入，真实 `.env` 和本机 Cargo `target` 不会打进镜像。
 
 使用 `install.sh` 时也可以直接传入 edge 快捷参数：
