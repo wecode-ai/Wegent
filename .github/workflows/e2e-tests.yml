@@ -573,21 +573,21 @@ jobs:
         run: |
           uv python install 3.11
           container_python="$(uv python find --managed-python 3.11)"
-          echo "UV_PYTHON=$container_python" >> "$GITHUB_ENV"
+          echo "E2E_PYTHON=$container_python" >> "$GITHUB_ENV"
           uv run --no-project --python "$container_python" python -c \
             'import ssl; ssl.create_default_context(); print(ssl.OPENSSL_VERSION)'
 
       - name: Install shared module
         working-directory: ./shared
         run: |
-          uv venv --allow-existing
+          uv venv --python "$E2E_PYTHON" --allow-existing
           source .venv/bin/activate
           uv pip install -e .
 
       - name: Install backend dependencies
         working-directory: ./backend
         run: |
-          uv sync
+          uv sync --python "$E2E_PYTHON"
           source .venv/bin/activate
           uv pip install -e ../shared
 
@@ -629,17 +629,17 @@ jobs:
           PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}
           DOCKER_BUILDKIT: "0"
         run: |
-          uv sync --project executor_manager --frozen
+          uv sync --python "$E2E_PYTHON" --project executor_manager --frozen
           docker build --pull=false \
             --build-arg BASE_IMAGE="$PLATFORM_E2E_IMAGE" \
             --file frontend/e2e/fixtures/remote-workspace-executor/Dockerfile \
             --tag wegent/e2e-workspace-executor:latest .ci-artifacts
 
       - name: Install Knowledge Runtime dependencies
-        run: uv sync --project knowledge_runtime --frozen
+        run: uv sync --python "$E2E_PYTHON" --project knowledge_runtime --frozen
 
       - name: Install Knowledge Doc Converter dependencies
-        run: uv sync --project knowledge_doc_converter --frozen
+        run: uv sync --python "$E2E_PYTHON" --project knowledge_doc_converter --frozen
 
       - name: Restore frontend E2E build
         run: .github/scripts/restore-frontend-e2e-build.sh

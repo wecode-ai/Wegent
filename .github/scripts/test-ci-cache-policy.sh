@@ -521,7 +521,15 @@ require 'yaml'
 YAML.load_file(ARGV.fetch(0)).fetch('jobs').each do |name, job|
   next unless job['container']
 
+  if job.fetch('env', {}).key?('UV_PYTHON')
+    abort "#{name}: UV_PYTHON overrides activated virtual environments"
+  end
+
   job.fetch('steps', []).each do |step|
+    if step.fetch('env', {}).key?('UV_PYTHON') || step.fetch('run', '').match?(/\bUV_PYTHON=/)
+      abort "#{name}: select Python when creating environments, not when installing packages"
+    end
+
     next unless step['uses'] == './.github/actions/setup-python-uv-cache'
 
     unless step.fetch('with', {})['setup-python'] == 'false'
