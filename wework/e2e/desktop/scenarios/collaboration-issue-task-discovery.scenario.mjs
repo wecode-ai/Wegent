@@ -48,13 +48,15 @@ export function createDesktopScenario({
     assert.equal(response.ok, true, `${path}: ${JSON.stringify(body)}`)
     return body
   }
+  async function addWorkspaceEnvironment(device) {
+    await request(`/api/v1/workspaces/${workspace.id}/execution-environments`, {
+      device_id: device.id,
+    })
+  }
   async function prepareIssue(device, label, owner) {
     let project = await request('/api/v1/cloud-projects', {
       name: label,
       workspace_id: workspace.id,
-    })
-    await request(`/api/v1/workspaces/${workspace.id}/execution-environments`, {
-      device_id: device.id,
     })
     await request(`/api/v1/cloud-projects/${project.id}/execution-environments`, {
       device_id: device.id,
@@ -249,6 +251,7 @@ export function createDesktopScenario({
       await runLocalTask(control)
       // Large-history transport needs one unambiguous device; identity conflicts are tested below.
       const owner = await request('/api/users/me')
+      await addWorkspaceEnvironment(localApp)
       const history = await prepareIssue(localApp, `${TITLE} large history`, owner)
       await openIssueWorkspace(control)
       const binding = await runAssistance(control, history)
@@ -273,6 +276,7 @@ export function createDesktopScenario({
       const otherApp = await environment.waitForDeviceType(OTHER_APP_ID, 'app')
       assert.notEqual(otherApp.runtime_instance_id, localApp.runtime_instance_id)
       assert.match(otherApp.execution_target_id, /^app-record-\d+$/)
+      await addWorkspaceEnvironment(otherApp)
       const local = await prepareIssue(localApp, `${TITLE} local`, owner)
       const other = await prepareIssue(otherApp, `${TITLE} other`, owner)
       console.log(
