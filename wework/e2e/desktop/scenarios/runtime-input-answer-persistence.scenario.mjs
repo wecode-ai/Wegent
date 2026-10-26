@@ -410,11 +410,11 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
       })
       await control.command('click', `${WORKBENCH} ${ANSWER_OPTION}`)
       await waitForRequestHold(control)
-      await control.command('click', `${WORKBENCH} [data-testid="pause-response-button"]`)
+      rejectionGate.resolve()
       await waitForWorkbenchDebugState(
         control,
         snapshot => snapshot.pane?.status?.isBusy === false,
-        'The runtime turn did not stop before the stale answer was dispatched',
+        'The runtime turn did not finish before the stale answer was dispatched',
         taskTimeoutMs
       )
       await releaseRequestHold(control, taskTimeoutMs)
@@ -436,7 +436,6 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         false,
         'A rejected input answer was recorded as accepted'
       )
-      rejectionGate.resolve()
 
       await startNewChat(control, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
       const archiveGate = nextContinuationGate()
