@@ -17,7 +17,7 @@ import {
   projectBoardDnd,
   projectBoardCollisionDetection,
   projectBoardDrop,
-  projectBoardActiveItemId,
+  projectBoardDragItemId,
   useProjectBoardSensors,
 } from '@wegent/collaboration/project-board/projectBoardDnd'
 import { ProjectBoardDragOverlay } from '@wegent/collaboration/project-board/ProjectBoardDragOverlay'
@@ -4632,7 +4632,7 @@ export function CloudTodoWorkspace({
                         sensors: boardSensors,
                         collisionDetection: projectBoardCollisionDetection,
                         onDragStart: (event: DragStartEvent) => {
-                          setActiveDragItemId(projectBoardActiveItemId(event.active))
+                          setActiveDragItemId(projectBoardDragItemId(event.active))
                         },
                         onDragCancel: () => setActiveDragItemId(null),
                         onDragEnd: finishBoardDrop,
@@ -4926,7 +4926,6 @@ export function CloudTodoWorkspace({
                             : 'compact'
                         return (
                           <CloudTodoBoardCard
-                            columnKey={column.key}
                             item={item}
                             unread={isMyTasksBoard && isTaskBoardItemUnread(item)}
                             taskBindings={

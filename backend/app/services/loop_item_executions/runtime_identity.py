@@ -22,6 +22,12 @@ def execution_runtime_task_id(execution: LoopItemExecution) -> str:
     )
 
 
+def execution_runtime_turn_id(execution: LoopItemExecution) -> str:
+    """Return the deterministic turn id generated for an execution pull."""
+    task_id = execution.runtime_task_id or execution_runtime_task_id(execution)
+    return f"{task_id}-execution-{execution.id}"
+
+
 def execution_conversation_task_id(execution: LoopItemExecution) -> str:
     """Address the initial manager created by runtime.collaboration.dispatch."""
     task_id = execution.runtime_task_id or execution_runtime_task_id(execution)

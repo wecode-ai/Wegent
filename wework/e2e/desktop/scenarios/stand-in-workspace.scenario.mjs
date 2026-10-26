@@ -1,7 +1,9 @@
 import { openProjectStandIn, discardStandInDraft } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { promisify } from 'node:util'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
@@ -39,16 +41,41 @@ async function clickVisibleControl(control, target) {
 
 export function createDesktopScenario({
   workspacePath,
+  homePath,
   uiTimeoutMs,
   modelResponseTimeoutMs,
   captureScreenshot,
 }) {
   const privateFile = join(dirname(workspacePath), 'source-private-proof.txt')
+  const elevatedFile = join(dirname(workspacePath), 'source-approved-proof.txt')
+  const ghConfigDirectory = join(homePath, '.config', 'gh')
+  let pluginSkill
+  const quote = value => "'" + value.replaceAll("'", "'\\''") + "'"
+  const powershellQuote = value => "'" + value.replaceAll("'", "''") + "'"
   let networkProbeRequests = 0
   let verifiedSandbox = false
   let allowedReviews = 0
   let deniedReviews = 0
   return {
+    async prepareApp({ codexHome }) {
+      pluginSkill = join(
+        codexHome,
+        'plugins',
+        'cache',
+        'e2e',
+        'source-permissions',
+        '1.0.0',
+        'skills',
+        'verify',
+        'SKILL.md'
+      )
+      await mkdir(dirname(pluginSkill), { recursive: true })
+      await writeFile(pluginSkill, 'SOURCE_PLUGIN_RESOURCE_READABLE')
+      await mkdir(ghConfigDirectory, { recursive: true })
+      await promisify(execFile)('gh', ['config', 'set', 'git_protocol', 'ssh'], {
+        env: { ...process.env, GH_CONFIG_DIR: ghConfigDirectory },
+      })
+    },
     reviewApproval(body) {
       const dangerous = JSON.stringify(body.input ?? []).includes('REVIEW_PRIVATE_READ')
       if (dangerous) deniedReviews++
@@ -82,11 +109,11 @@ export function createDesktopScenario({
           assert.ok(allowedReviews > 0, 'The native reviewer must approve the context read')
           assert.ok(deniedReviews > 0, 'The native reviewer must deny the private read')
           verifiedSandbox = true
-        } else if (requestContainsToolOutput(body, 'source-sandbox-probe')) {
-          const output = toolOutputText(body, 'source-sandbox-probe') ?? ''
-          assert.ok(output.includes('SOURCE_PRIVATE_BLOCKED'), output)
-          assert.ok(!output.includes('SOURCE_PRIVATE_ALLOWED'), output)
-          const quote = value => "'" + value.replaceAll("'", "'\\''") + "'"
+        } else if (requestContainsToolOutput(body, 'source-escalation-not-persistent')) {
+          const output = toolOutputText(body, 'source-escalation-not-persistent') ?? ''
+          assert.ok(output.includes('SOURCE_OUTSIDE_WRITE_BLOCKED'), output)
+          assert.ok(!output.includes('SOURCE_OUTSIDE_WRITE_ALLOWED'), output)
+          assert.equal(await readFile(elevatedFile, 'utf8'), 'approved-escalation')
           const command =
             process.platform === 'win32'
               ? `Get-Content -LiteralPath '${privateFile.replaceAll("'", "''")}' # REVIEW_PRIVATE_READ`
@@ -96,12 +123,42 @@ export function createDesktopScenario({
           tool.arguments.justification =
             'REVIEW_PRIVATE_READ: source requests an unrelated private file'
           events = functionCall('source-private-review', tool.name, tool.arguments)
-        } else if (requestContainsToolOutput(body, 'source-context-read')) {
-          const quote = value => "'" + value.replaceAll("'", "'\\''") + "'"
+        } else if (requestContainsToolOutput(body, 'source-approved-escalation')) {
+          const output = toolOutputText(body, 'source-approved-escalation') ?? ''
+          assert.ok(output.includes('SOURCE_ESCALATION_SUCCEEDED'), output)
+          assert.equal(await readFile(elevatedFile, 'utf8'), 'approved-escalation')
           const command =
             process.platform === 'win32'
-              ? `Set-Content -LiteralPath 'source-sandbox-proof.txt' -Value 'source-sandbox-ok' -NoNewline; (Invoke-WebRequest -Uri '${url.origin}/external-source-probe' -TimeoutSec 5 -UseBasicParsing).Content; try { [IO.File]::ReadAllText('${privateFile.replaceAll("'", "''")}') | Out-Null; Write-Output 'SOURCE_PRIVATE_ALLOWED' } catch { Write-Output 'SOURCE_PRIVATE_BLOCKED' }`
-              : `printf 'source-sandbox-ok' > source-sandbox-proof.txt && curl -fsS --connect-timeout 3 --max-time 5 ${quote(url.origin + '/external-source-probe')}; if cat ${quote(privateFile)} >/dev/null 2>&1; then printf 'SOURCE_PRIVATE_ALLOWED'; else printf 'SOURCE_PRIVATE_BLOCKED'; fi`
+              ? `try { Add-Content -LiteralPath ${powershellQuote(elevatedFile)} -Value 'unapproved' -ErrorAction Stop; Write-Output 'SOURCE_OUTSIDE_WRITE_ALLOWED' } catch { Write-Output 'SOURCE_OUTSIDE_WRITE_BLOCKED' }`
+              : `if printf 'unapproved' >> ${quote(elevatedFile)}; then printf 'SOURCE_OUTSIDE_WRITE_ALLOWED'; else printf 'SOURCE_OUTSIDE_WRITE_BLOCKED'; fi`
+          const tool = selectShellToolCommand(body, command, undefined)
+          events = functionCall('source-escalation-not-persistent', tool.name, tool.arguments)
+        } else if (requestContainsToolOutput(body, 'source-sandbox-probe')) {
+          const output = toolOutputText(body, 'source-sandbox-probe') ?? ''
+          for (const marker of [
+            'SOURCE_PLUGIN_RESOURCE_READABLE',
+            'SOURCE_GH_CONFIG_READABLE',
+            'SOURCE_OUTSIDE_WRITE_BLOCKED',
+            'AUTHORIZED_NETWORK_READ',
+          ]) {
+            assert.ok(output.includes(marker), output)
+          }
+          assert.ok(!output.includes('SOURCE_OUTSIDE_WRITE_ALLOWED'), output)
+          await assert.rejects(readFile(elevatedFile), { code: 'ENOENT' })
+          const command =
+            process.platform === 'win32'
+              ? `Set-Content -LiteralPath ${powershellQuote(elevatedFile)} -Value 'approved-escalation' -NoNewline -ErrorAction Stop; Write-Output 'SOURCE_ESCALATION_SUCCEEDED'`
+              : `printf 'approved-escalation' > ${quote(elevatedFile)} && printf 'SOURCE_ESCALATION_SUCCEEDED'`
+          const tool = selectShellToolCommand(body, command, undefined)
+          tool.arguments.sandbox_permissions = 'require_escalated'
+          tool.arguments.justification =
+            'Create the explicitly authorized regression proof outside the workspace.'
+          events = functionCall('source-approved-escalation', tool.name, tool.arguments)
+        } else if (requestContainsToolOutput(body, 'source-context-read')) {
+          const command =
+            process.platform === 'win32'
+              ? `Set-Content -LiteralPath 'source-sandbox-proof.txt' -Value 'source-sandbox-ok' -NoNewline; (Invoke-WebRequest -Uri '${url.origin}/external-source-probe' -TimeoutSec 5 -UseBasicParsing).Content; Get-Content -LiteralPath ${powershellQuote(pluginSkill)} -ErrorAction Stop; $env:GH_CONFIG_DIR=${powershellQuote(ghConfigDirectory)}; $protocol = gh config get git_protocol; if ($LASTEXITCODE -ne 0 -or $protocol -ne 'ssh') { throw 'GitHub CLI configuration is unreadable' }; Write-Output 'SOURCE_GH_CONFIG_READABLE'; try { Set-Content -LiteralPath ${powershellQuote(elevatedFile)} -Value 'unapproved' -NoNewline -ErrorAction Stop; Write-Output 'SOURCE_OUTSIDE_WRITE_ALLOWED' } catch { Write-Output 'SOURCE_OUTSIDE_WRITE_BLOCKED' }`
+              : `printf 'source-sandbox-ok' > source-sandbox-proof.txt && curl -fsS --connect-timeout 3 --max-time 5 ${quote(url.origin + '/external-source-probe')} && cat ${quote(pluginSkill)} && test "$(GH_CONFIG_DIR=${quote(ghConfigDirectory)} gh config get git_protocol)" = ssh && printf 'SOURCE_GH_CONFIG_READABLE'; if printf 'unapproved' > ${quote(elevatedFile)}; then printf 'SOURCE_OUTSIDE_WRITE_ALLOWED'; else printf 'SOURCE_OUTSIDE_WRITE_BLOCKED'; fi`
           const tool = selectShellToolCommand(body, command, undefined)
           tool.arguments.login = false
           events = functionCall('source-sandbox-probe', tool.name, tool.arguments)
@@ -393,6 +450,7 @@ export function createDesktopScenario({
         await rm(skillDirectory, { recursive: true, force: true })
       }
       await rm(privateFile)
+      await rm(elevatedFile)
       const beforeProject = await requestExecutor(
         control,
         'runtime.stand_in.personal.get',
@@ -424,7 +482,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="stand-in-preview-open"]')
       await control.command(
         'waitFor',
-        '[data-testid="final-processing-toggle"], [data-testid="processing-summary-toggle"]'
+        '[data-testid="final-processing-toggle"], [data-testid="processing-summary-toggle"], [data-testid="processing-summary-header"]'
       )
       await control.command('expandProcessingSummaries', 'body')
       await control.command('waitFor', '[data-testid="auto-approval-review"]')

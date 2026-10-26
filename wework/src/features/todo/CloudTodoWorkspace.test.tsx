@@ -52,10 +52,17 @@ vi.mock('@/telemetry/client', () => telemetryMocks)
 vi.mock('@dnd-kit/core', async importOriginal => {
   const actual = await importOriginal<typeof import('@dnd-kit/core')>()
   const ActualDndContext = actual.DndContext
-  const activeCard = () => ({
-    id: JSON.stringify([item.status, item.id]),
-    data: { current: { itemId: item.id } },
-  })
+  const dragSource = () => {
+    const columnKey = document
+      .querySelector(`[data-testid="cloud-todo-card-${item.id}"]`)
+      ?.closest('section[data-testid^="cloud-todo-column-"]')
+      ?.getAttribute('data-testid')
+      ?.slice('cloud-todo-column-'.length)
+    return {
+      id: JSON.stringify(['status', columnKey, item.id]),
+      data: { current: { itemId: item.id, columnKey, groupBy: 'status' } },
+    }
+  }
   return {
     ...actual,
     DndContext: ({ children, ...props }: DndContextProps) => (
@@ -67,7 +74,7 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-start"
           onClick={() =>
             props.onDragStart?.({
-              active: activeCard(),
+              active: dragSource(),
             } as DragStartEvent)
           }
         />
@@ -77,7 +84,7 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-cancel"
           onClick={() =>
             props.onDragCancel?.({
-              active: activeCard(),
+              active: dragSource(),
             } as DragCancelEvent)
           }
         />
@@ -87,8 +94,8 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-to-pending"
           onClick={() =>
             props.onDragEnd?.({
-              active: activeCard(),
-              over: { id: 'todo-column:pending' },
+              active: dragSource(),
+              over: { id: 'todo-column:pending', data: { current: undefined } },
             } as DragEndEvent)
           }
         />
@@ -98,10 +105,10 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-before-third"
           onClick={() =>
             props.onDragEnd?.({
-              active: activeCard(),
+              active: dragSource(),
               over: {
-                id: 'todo-card:["in_progress","WEG-3"]',
-                data: { current: { columnKey: 'in_progress' } },
+                id: 'todo-card:["status","in_progress","WEG-3"]',
+                data: { current: { itemId: 'WEG-3', columnKey: 'in_progress', groupBy: 'status' } },
               },
             } as DragEndEvent)
           }
@@ -112,8 +119,8 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-to-in-progress"
           onClick={() =>
             props.onDragEnd?.({
-              active: activeCard(),
-              over: { id: 'todo-column:in_progress' },
+              active: dragSource(),
+              over: { id: 'todo-column:in_progress', data: { current: undefined } },
             } as DragEndEvent)
           }
         />

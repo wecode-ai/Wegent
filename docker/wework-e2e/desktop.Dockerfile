@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     gnupg \
+    gh \
     git \
     imagemagick \
     libasound2t64 \
@@ -58,6 +59,7 @@ ENV IS_SANDBOX=1
 
 RUN node --version \
   && pnpm --version \
+  && gh --version \
   && python3 --version \
   && uv --version \
   && mysqld --version \
