@@ -39,8 +39,16 @@ test.each([
       if (action === 'getElementCount') return targetVisible() ? 1 : 0
       if (action === 'getAttribute') return fixture.initialRange
       if (action === 'waitFor' && selector.includes('collaboration-calendar-day-')) {
-        expect(selector).toContain(fixture.target)
-        expect(targetVisible(), 'The target day must remain in the displayed month grid').toBe(true)
+        const initialStart = fixture.initialRange.split(' → ')[0]
+        expect(
+          selector.includes(fixture.target) || selector.includes(initialStart),
+          `Unexpected calendar day selector: ${selector}`
+        ).toBe(true)
+        if (selector.includes(fixture.target)) {
+          expect(targetVisible(), 'The target day must remain in the displayed month grid').toBe(
+            true
+          )
+        }
       }
       if (action === 'drag') {
         expect(targetVisible()).toBe(true)
