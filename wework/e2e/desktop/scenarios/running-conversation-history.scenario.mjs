@@ -18,7 +18,11 @@ import {
   createCachedHistoryTask,
   verifyCachedHistorySearch,
 } from '../modules/cached-history-search.mjs'
-import { createSingleRootLocalProject, selectE2EModel, WORKBENCH_READY_TIMEOUT_MS } from '../modules/shared.mjs'
+import {
+  createSingleRootLocalProject,
+  selectE2EModel,
+  WORKBENCH_READY_TIMEOUT_MS,
+} from '../modules/shared.mjs'
 import {
   TERMINAL_HISTORY_TURN_COUNT as LEGACY_TURN_COUNT,
   seedNativeTerminalHistory,
@@ -563,6 +567,20 @@ export function createDesktopScenario({
           snapshot.workbench?.currentRuntimeTask?.taskId === switchTaskId &&
           snapshot.pane?.transcript?.loading === false,
         'The task-switch fixture did not settle before the transcript race',
+        uiTimeoutMs
+      )
+
+      // A reload clears the renderer's in-memory transcript cache. Without it a
+      // warm source cache can render before this assertion ever observes the
+      // delayed request, which made the race below depend on cache eviction.
+      await reloadWorkbench(control)
+      await control.command('click', switchTaskRow)
+      await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === switchTaskId &&
+          snapshot.pane?.transcript?.loading === false,
+        'The task-switch fixture did not settle after the cache reset',
         uiTimeoutMs
       )
 
