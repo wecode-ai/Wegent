@@ -440,8 +440,10 @@ async function verifyWindowsProfileOwnedAssets(userDataDirectory) {
   assert.ok((await readdir(assets)).length > 0, 'Windows Core DSH profile assets must not be empty')
 }
 
-async function verifyEmbeddedNodeSkillRuntime(userDataDirectory, resultDir) {
-  const binDirectory = join(userDataDirectory, 'managed-runtimes', 'electron-node', 'bin')
+export async function verifyEmbeddedNodeSkillRuntime(userDataDirectory, resultDir) {
+  const binDirectory = join(userDataDirectory, 'runtime', 'bin')
+  const launcher = join(binDirectory, process.platform === 'win32' ? 'node.cmd' : 'node')
+  assert.ok((await lstat(launcher)).isFile(), 'The packaged Node launcher must exist')
   const skillScript = join(resultDir, 'embedded-node-skill.ts')
   await writeFile(
     skillScript,
