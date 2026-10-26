@@ -1,3 +1,4 @@
+import { readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -132,9 +133,7 @@ export function createDesktopScenario({
         !['/responses', '/v1/responses'].includes(url.pathname)
       )
         return false
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      const body = await readRequestBody(request)
       toolResults.push(
         ...(Array.isArray(body.input) ? body.input : []).filter(
           item => item.type === 'function_call_output'

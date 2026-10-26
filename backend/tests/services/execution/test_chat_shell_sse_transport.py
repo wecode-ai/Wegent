@@ -5,6 +5,7 @@
 """Exercise the SDK and SSE dispatcher together across failures and cancellation."""
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -21,6 +22,7 @@ from shared.models import EventType, ExecutionEvent, ExecutionRequest
 
 _COMPLETED = b'data: {"type":"response.completed","response":{"output":[]}}\n\n'
 _DELTA = b'data: {"type":"response.output_text.delta","delta":"partial"}\n\n'
+_TEST_TIMEOUT_SECONDS = 30
 
 
 @asynccontextmanager
@@ -232,7 +234,7 @@ class _UnfinishedTerminalStream(httpx.AsyncByteStream):
     [("timeout", 0), ("read_error", 0), ("cancel", 0), ("cancel", 2.1)],
 )
 async def test_terminal_cleanup_preserves_completion(
-    failure: str, first_byte_delay: float
+    failure: str, first_byte_delay: float, caplog: pytest.LogCaptureFixture
 ) -> None:
     body = _UnfinishedTerminalStream(failure, first_byte_delay)
     requests = []
@@ -263,33 +265,46 @@ async def test_terminal_cleanup_preserves_completion(
             task = asyncio.create_task(
                 dispatcher._dispatch_sse(request, target, emitter)
             )
+            cancel_task = None
             try:
-                # Request startup and SDK decoding precede the cleanup under test.
-                # Keep the original two-second bounds on the terminal drain itself.
-                await asyncio.wait_for(terminal_delivered.wait(), timeout=30)
                 if failure == "cancel":
-                    tail_started = asyncio.create_task(body.tail_started.wait())
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.wait(
-                                {task, tail_started},
-                                return_when=asyncio.FIRST_COMPLETED,
-                            ),
-                            timeout=2,
-                        )
-                        if not body.tail_started.is_set():
-                            await task
-                            pytest.fail(
-                                "Dispatch ended before terminal cleanup started"
-                            )
-                    finally:
-                        tail_started.cancel()
-                        await asyncio.gather(tail_started, return_exceptions=True)
-                    task.cancel()
-                await asyncio.wait_for(task, timeout=2)
+
+                    async def cancel_when_cleanup_starts() -> None:
+                        await body.tail_started.wait()
+                        assert task.cancel()
+
+                    cancel_task = asyncio.create_task(cancel_when_cleanup_starts())
+                # Keep request startup separate from the two-second cleanup bound.
+                await asyncio.wait_for(
+                    terminal_delivered.wait(), timeout=_TEST_TIMEOUT_SECONDS
+                )
+                # Shield separates the watchdog from the cancellation under test.
+                await asyncio.wait_for(asyncio.shield(task), timeout=2)
+                if cancel_task is not None:
+                    assert cancel_task.done()
+                    await cancel_task
             finally:
                 task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
+                tasks = [task]
+                if cancel_task is not None:
+                    cancel_task.cancel()
+                    tasks.append(cancel_task)
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+        cleanup_errors = [
+            json.loads(record.getMessage().removeprefix("[ChatShellTransport] "))[
+                "exception_chain"
+            ][0]["exception_type"]
+            for record in caplog.records
+            if '"event": "stream_cleanup_interrupted"' in record.getMessage()
+        ]
+        assert cleanup_errors == [
+            {
+                "timeout": "TimeoutError",
+                "read_error": "ReadError",
+                "cancel": "CancelledError",
+            }[failure]
+        ]
 
         assert body.closed
         assert not client.is_closed()
@@ -302,7 +317,8 @@ async def test_terminal_cleanup_preserves_completion(
         next_request = replace(request, subtask_id=request.subtask_id + 1)
         next_emitter = AsyncMock()
         await asyncio.wait_for(
-            dispatcher._dispatch_sse(next_request, target, next_emitter), timeout=30
+            dispatcher._dispatch_sse(next_request, target, next_emitter),
+            timeout=_TEST_TIMEOUT_SECONDS,
         )
 
         assert len(requests) == 2

@@ -1,3 +1,4 @@
+import { nativeApprovalModelResponse } from './native-approval-model.mjs'
 import {
   installedMiniProgramPlugin,
   installedSitesPlugin,
@@ -5,6 +6,7 @@ import {
   sitesMarketplacePlugin,
 } from './preferences-automation-flows.mjs'
 import { accountCommandResult } from './account-auth-command.mjs'
+import { CONCURRENT_SCENARIO, respondToConcurrentMcpInput } from './mcp-concurrent-model.mjs'
 
 import {
   assistantMessage,
@@ -52,6 +54,7 @@ import {
   selectToolSearch,
   serializedOutputReportsSuccess,
   toolSearchResponseEvents,
+  toolOutputText,
   selectViewImageTool,
   streamingMarkdownReport,
   streamingTextEvents,
@@ -356,34 +359,6 @@ function requestContainsSkillLocator(body, skillPath, skillName) {
   return false
 }
 
-function toolOutputText(request, callId) {
-  const findOutput = value => {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const output = findOutput(item)
-        if (output != null) return output
-      }
-      return null
-    }
-    if (!value || typeof value !== 'object') return null
-    if (
-      (value.type === 'function_call_output' || value.type === 'custom_tool_call_output') &&
-      value.call_id === callId
-    ) {
-      return typeof value.output === 'string' ? value.output : JSON.stringify(value.output)
-    }
-    if (value.type === 'tool_search_output' && value.call_id === callId) {
-      return JSON.stringify(value.tools ?? [])
-    }
-    for (const item of Object.values(value)) {
-      const output = findOutput(item)
-      if (output != null) return output
-    }
-    return null
-  }
-  return findOutput(request.input ?? [])
-}
-
 /** Text of the user-authored turns codex forwarded to the model, in order. */
 function inputUserMessageTexts(request) {
   const texts = []
@@ -451,6 +426,7 @@ function readyPluginWorkspaceResult(body) {
 }
 
 const HELD_RESPONSE_SCENARIOS = new Set([
+  CONCURRENT_SCENARIO,
   'worktree_queue_hold',
   'worktree_restart_hold',
   'worktree_status_hold',
@@ -1371,6 +1347,17 @@ class DesktopE2EServer {
     })
     if (await this.handleControlRoute(request, response, url)) return
     try {
+      if (
+        this.desktopScenario &&
+        request.method === 'POST' &&
+        ['/responses', '/v1/responses'].includes(url.pathname) &&
+        (await this.writeNativeApprovalReview(
+          response,
+          await readRequestBody(request),
+          'responses'
+        ))
+      )
+        return
       if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
     } catch (error) {
       console.error(
@@ -2176,6 +2163,13 @@ class DesktopE2EServer {
     return false
   }
 
+  async writeNativeApprovalReview(response, body, protocol) {
+    const review = await nativeApprovalModelResponse(body, this.desktopScenario)
+    if (review === null) return false
+    this.writeLocalAssistantMessage(response, { protocol }, review)
+    return true
+  }
+
   async handleModelResponse(request, response, protocol, options = {}) {
     const body = await readRequestBody(request)
     const authorization = request.headers.authorization ?? null
@@ -2189,6 +2183,8 @@ class DesktopE2EServer {
       json(response, 401, { error: 'The Desktop E2E model API key was not forwarded by Codex' })
       return
     }
+
+    if (await this.writeNativeApprovalReview(response, body, protocol)) return
 
     if (isReplyPredictionRequest(body)) {
       this.writeLocalAssistantMessage(response, { protocol }, JSON.stringify({ suggestion: null }))
@@ -4060,12 +4056,22 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === CONCURRENT_SCENARIO) {
+      await respondToConcurrentMcpInput(this, body, response, responseId, modelRequest)
+      return
+    }
+
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)
       const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
+      assert.ok(requestNumber <= 12, `Unexpected MCP elicitation request ${requestNumber}`)
+      const round = Math.ceil(requestNumber / 3)
+      const stage = ((requestNumber - 1) % 3) + 1
+      const callId = `${MCP_ELICITATION_CALL_ID}-${round}`
       const requestText = JSON.stringify(body)
+      const timeoutScenario = round === 3 ? 'url_timeout' : round === 4 ? 'form_timeout' : null
 
-      if (requestNumber === 1) {
+      if (stage === 1) {
         assert.ok(
           requestText.includes(MCP_ELICITATION_PROMPT),
           'The real Codex request did not contain the MCP elicitation prompt'
@@ -4073,39 +4079,42 @@ class DesktopE2EServer {
         const search = selectToolSearch(body, MCP_ELICITATION_TOOL_NAME)
         this.writeSse(response, [
           responseCreated(responseId),
-          ...toolSearchResponseEvents(MCP_ELICITATION_SEARCH_ID, search),
+          ...toolSearchResponseEvents(`${MCP_ELICITATION_SEARCH_ID}-${round}`, search),
           responseCompleted(responseId),
         ])
         return
       }
 
-      if (requestNumber === 2) {
-        const tool = selectMcpTool(body, MCP_ELICITATION_NAMESPACE, MCP_ELICITATION_TOOL_NAME, {})
+      if (stage === 2) {
+        const tool = selectMcpTool(
+          body,
+          MCP_ELICITATION_NAMESPACE,
+          MCP_ELICITATION_TOOL_NAME,
+          timeoutScenario ? { scenario: timeoutScenario } : {}
+        )
         this.writeSse(response, [
           responseCreated(responseId),
-          ...namespacedFunctionCall(
-            MCP_ELICITATION_CALL_ID,
-            tool.namespace,
-            tool.name,
-            tool.arguments
-          ),
+          ...namespacedFunctionCall(callId, tool.namespace, tool.name, tool.arguments),
           responseCompleted(responseId),
         ])
         return
       }
 
-      assert.equal(requestNumber, 3, `Unexpected MCP elicitation request ${requestNumber}`)
       assert.ok(
-        requestContainsToolOutput(body, MCP_ELICITATION_CALL_ID),
+        requestContainsToolOutput(body, callId),
         'The MCP elicitation tool output did not return to the real model request'
       )
       assert.ok(
-        requestText.includes(MCP_ELICITATION_ACCEPTED_MARKER),
-        'The MCP server did not return the accepted audience marker to the model'
+        requestText.includes(
+          timeoutScenario
+            ? `E2E_MCP_ELICITATION_TIMEOUT:${timeoutScenario}:cancel`
+            : MCP_ELICITATION_ACCEPTED_MARKER
+        ),
+        'The MCP server did not return the expected answer or timeout cancellation to the model'
       )
       this.writeSse(response, [
         responseCreated(responseId),
-        assistantMessage(MCP_ELICITATION_COMPLETION_TEXT),
+        assistantMessage(`${MCP_ELICITATION_COMPLETION_TEXT}:${round}`),
         responseCompleted(responseId),
       ])
       return

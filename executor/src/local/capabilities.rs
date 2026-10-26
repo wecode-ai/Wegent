@@ -21,6 +21,7 @@ use crate::{config::device::DeviceConfig, protocol::ExecutionRequest};
 use super::personal_marketplace_lock::acquire_personal_marketplace_lock;
 
 mod manifest_migration;
+mod plugin_sync_protocol;
 mod runtime_recovery;
 mod runtime_skill_config;
 mod shared_packages;
@@ -378,6 +379,7 @@ pub struct PluginSyncSpec {
     checksum: Option<String>,
     download_path: Option<String>,
     component_states: Value,
+    sync_generation: Option<u64>,
 }
 
 impl PluginSyncSpec {
@@ -426,6 +428,7 @@ impl PluginSyncSpec {
                 .or_else(|| value.get("componentStates"))
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new())),
+            sync_generation: None,
         })
     }
 
@@ -463,6 +466,7 @@ impl PluginSyncSpec {
                 .get("component_states")
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new())),
+            sync_generation: plugin.get("plugin_sync_generation").and_then(Value::as_u64),
         }
     }
 }
@@ -672,6 +676,7 @@ impl GlobalCapabilityStore {
                     .get("component_states")
                     .cloned()
                     .unwrap_or_else(|| Value::Object(Map::new())),
+                sync_generation: plugin.get("plugin_sync_generation").and_then(Value::as_u64),
             };
             let Some(store_path) = value_string(plugin.get("store_path")).map(PathBuf::from) else {
                 continue;
@@ -1263,6 +1268,8 @@ where
     store: GlobalCapabilityStore,
     package_provider: P,
     sync_lock: AsyncMutex<()>,
+    plugin_sync_inflight: plugin_sync_protocol::InFlightRequests,
+    plugin_sync_binding: plugin_sync_protocol::ConnectionBinding,
 }
 
 impl CapabilitySyncHandler<NoopPackageProvider> {
@@ -1284,11 +1291,16 @@ where
         store: GlobalCapabilityStore,
         package_provider: P,
     ) -> Self {
+        let auth_token = auth_token.into();
+        let plugin_sync_binding =
+            plugin_sync_protocol::ConnectionBinding::new(&store.manifest.path, &auth_token);
         Self {
-            auth_token: auth_token.into(),
+            auth_token,
             store,
             package_provider,
             sync_lock: AsyncMutex::new(()),
+            plugin_sync_inflight: Default::default(),
+            plugin_sync_binding,
         }
     }
 
@@ -1297,8 +1309,19 @@ where
     }
 
     pub async fn apply_sync(&self, payload: Value) -> Result<Value, CapabilitySyncError> {
+        self.plugin_sync_binding.check()?;
+        let protocol = plugin_sync_protocol::PluginSyncRequest::parse(&payload)?;
+        if let Some(request) = protocol {
+            return self.apply_plugin_sync_request(payload, request).await;
+        }
+        self.apply_legacy_sync(payload).await
+    }
+
+    async fn apply_legacy_sync(&self, payload: Value) -> Result<Value, CapabilitySyncError> {
+        let started = std::time::Instant::now();
         let _sync_guard = self.sync_lock.lock().await;
         let _activation = crate::services::capability_activation::activate().await;
+        let queued_ms = started.elapsed().as_millis();
         let _changed = shared_packages::ActivationRevision;
         let _publication_lock = self.store.lock_shared_manifest()?;
         let plugins_only = payload.get("scope").and_then(Value::as_str) == Some("plugins");
@@ -1324,25 +1347,31 @@ where
             .into_iter()
             .map(|value| PluginSyncSpec::from_value(&value))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut manifest = if plugin_specs.is_empty() || self.store.shared_packages {
-            self.store.manifest.load()?
-        } else {
-            self.store.load_manifest_with_plugin_store_migration()?
+        let mut manifest = {
+            let _binding = self.plugin_sync_binding.lock_active()?;
+            if plugin_specs.is_empty() || self.store.shared_packages {
+                self.store.manifest.load()?
+            } else {
+                self.store.load_manifest_with_plugin_store_migration()?
+            }
         };
 
-        if mode == "replace" || plugins_only {
-            let desired_skills = skill_specs
-                .iter()
-                .map(|spec| spec.name.clone())
-                .collect::<BTreeSet<_>>();
-            let desired_plugins = plugin_specs
-                .iter()
-                .map(|spec| spec.key.clone())
-                .collect::<BTreeSet<_>>();
-            if !plugins_only {
-                self.remove_stale_managed_skills(&desired_skills, &mut manifest)?;
+        {
+            let _binding = self.plugin_sync_binding.lock_active()?;
+            if mode == "replace" || plugins_only {
+                let desired_skills = skill_specs
+                    .iter()
+                    .map(|spec| spec.name.clone())
+                    .collect::<BTreeSet<_>>();
+                let desired_plugins = plugin_specs
+                    .iter()
+                    .map(|spec| spec.key.clone())
+                    .collect::<BTreeSet<_>>();
+                if !plugins_only {
+                    self.remove_stale_managed_skills(&desired_skills, &mut manifest)?;
+                }
+                self.remove_stale_managed_plugins(&desired_plugins, &mut manifest, plugins_only)?;
             }
-            self.remove_stale_managed_plugins(&desired_plugins, &mut manifest, plugins_only)?;
         }
 
         let mut skill_results = Vec::with_capacity(skill_specs.len());
@@ -1353,6 +1382,7 @@ where
         for spec in &plugin_specs {
             plugin_results.push(self.sync_plugin(spec, &mut manifest).await);
         }
+        let _binding = self.plugin_sync_binding.lock_active()?;
         if !plugins_only {
             self.record_mcps(payload.get("mcps"), mode, &mut manifest)?;
         }
@@ -1363,6 +1393,14 @@ where
             .iter()
             .chain(plugin_results.iter())
             .all(|result| result.get("status").and_then(Value::as_str) != Some("failed"));
+        crate::logging::log_executor_event(
+            "capability_sync_completed",
+            &[
+                ("queue_ms", queued_ms.to_string()),
+                ("total_ms", started.elapsed().as_millis().to_string()),
+                ("plugin_count", plugin_specs.len().to_string()),
+            ],
+        );
 
         Ok(json!({
             "success": success,
@@ -1412,9 +1450,21 @@ where
             ));
         }
 
-        if !is_installed_skill_current(spec, &store_path, manifest) {
+        let staging = if !is_installed_skill_current(spec, &store_path, manifest) {
+            let parent = store_path.parent().expect("skill store parent");
+            fs::create_dir_all(parent)?;
+            let staging = tempfile::tempdir_in(parent)?;
+            self.package_provider
+                .stage_skill(spec, &staging.path().join("package"))
+                .await?;
+            Some(staging)
+        } else {
+            None
+        };
+        let _binding = self.plugin_sync_binding.lock_active()?;
+        if let Some(staging) = staging {
             remove_existing_path(&store_path)?;
-            self.package_provider.stage_skill(spec, &store_path).await?;
+            fs::rename(staging.path().join("package"), &store_path)?;
         }
         link_or_copy_dir(&store_path, &runtime_link)?;
         link_or_copy_dir(&store_path, &codex_link)?;
@@ -1475,6 +1525,10 @@ where
             return self.try_sync_shared_plugin(spec, manifest).await;
         }
         let Some(store_path) = self.store.plugin_store_path(spec) else {
+            let _binding = self
+                .plugin_sync_binding
+                .lock_active()
+                .map_err(PluginSyncFailure::runtime_metadata)?;
             ensure_object_field(manifest, "plugins").insert(
                 spec.key.clone(),
                 json!({
@@ -1521,6 +1575,10 @@ where
                 .map_err(|error| {
                     PluginSyncFailure::new("download", "PLUGIN_DOWNLOAD_FAILED", true, error)
                 })?;
+            let _binding = self
+                .plugin_sync_binding
+                .lock_active()
+                .map_err(PluginSyncFailure::runtime_metadata)?;
             if let Some(expected) = &spec.checksum {
                 let actual = sha256_digest(&package);
                 if &actual != expected {
@@ -1584,6 +1642,10 @@ where
             ));
         }
 
+        let _binding = self
+            .plugin_sync_binding
+            .lock_active()
+            .map_err(PluginSyncFailure::runtime_metadata)?;
         self.store
             .install_plugin_runtime_metadata(spec, &store_path, manifest)
             .map_err(PluginSyncFailure::runtime_metadata)?;
@@ -1642,6 +1704,15 @@ where
             return Ok(());
         }
 
+        self.remove_managed_plugins(stale, desired, manifest)
+    }
+
+    fn remove_managed_plugins(
+        &self,
+        stale: Vec<(String, Value)>,
+        desired: &BTreeSet<String>,
+        manifest: &mut Value,
+    ) -> Result<(), CapabilitySyncError> {
         let _personal_marketplace_lock = if stale.iter().any(|(key, plugin)| {
             PluginSyncSpec::from_manifest_entry(key, plugin).marketplace
                 == PERSONAL_SHARED_PLUGIN_MARKETPLACE
@@ -1706,6 +1777,7 @@ where
             }
         }
         let mut file_paths = vec![
+            self.store.manifest.path.clone(),
             self.store.plugins_dir.join("installed_plugins.json"),
             self.store
                 .plugins_dir
@@ -1736,6 +1808,12 @@ where
             }
         }
         for path in &file_paths {
+            // The store manifest lives outside the managed plugin roots; the
+            // transaction still snapshots it, but the managed-path guard only
+            // applies to runtime and registration files.
+            if path == &self.store.manifest.path {
+                continue;
+            }
             self.store.ensure_state_path(path, false)?;
         }
         let original_manifest = manifest.clone();
@@ -1766,6 +1844,11 @@ where
                 &stale_marketplaces,
                 &desired_marketplaces,
             )?;
+            if self.store.shared_packages || manifest.get("plugin_sync").is_some() {
+                self.store
+                    .manifest
+                    .save_with_revision_bump(manifest.clone())?;
+            }
             Ok(())
         })();
         match result {

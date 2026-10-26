@@ -41,6 +41,102 @@ function providerModel(id: string, enabled = true) {
 }
 
 describe('Electron desktop E2E automation', () => {
+  test.each([
+    { html: 'interrupted', query: 'interrupted', text: 'interrupted', occurrence: 0 },
+    {
+      html: 'interrupted before <strong>interrupted</strong> after',
+      query: 'interrupted',
+      text: 'interrupted before interrupted after',
+      occurrence: 1,
+    },
+    {
+      html: '<button data-search-excluded>İ</button>İ before <strong>İ</strong> after',
+      query: 'i\u0307',
+      text: 'İ before İ after',
+      occurrence: 1,
+    },
+  ])(
+    'reads the active highlight at occurrence $occurrence in the exact requested message',
+    async ({ html, query, text, occurrence }) => {
+      const fixture = document.createElement('div')
+      fixture.innerHTML = `
+      <input data-testid="conversation-find-input">
+      <p data-testid="highlight-message">${html}</p>
+      <p data-testid="highlight-message">The operation was interrupted after useful output</p>
+    `
+      document.body.append(fixture)
+      fixture.querySelector('input')!.value = query
+      const [message, partial] = fixture.querySelectorAll('p')
+      const range = document.createRange()
+      const target = message.querySelector('strong') ?? message
+      range.selectNodeContents(target)
+      const targetText = target.textContent
+      const partialRange = document.createRange()
+      partialRange.selectNodeContents(partial)
+      const collapsed = document.createRange()
+      collapsed.setStart(message.firstChild!, 0)
+      Object.assign(range, {
+        getBoundingClientRect: () => ({
+          top: 100,
+          bottom: 120,
+          left: 20,
+          right: 90,
+          width: 70,
+          height: 20,
+        }),
+      })
+      const highlights = new Map([
+        ['conversation-search-fixture', new Set([partialRange])],
+        ['conversation-search-fixture-active', new Set([range, partialRange, collapsed])],
+        ['unrelated-active', new Set([range])],
+      ])
+      vi.stubGlobal('CSS', { highlights })
+      const results: Array<{ ok: boolean; value: string }> = []
+      let polls = 0
+      vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+        if (url.includes('/commands?')) {
+          polls += 1
+          if (polls > 1) return new Promise<Response>(() => {})
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                id: 'read-highlight',
+                action: 'getConversationSearchHighlightMetrics',
+                selector: '[data-testid="highlight-message"]',
+                text,
+              })
+            )
+          )
+        }
+        if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+        return Promise.resolve(new Response('{}'))
+      })
+      void runDesktopControlClient('http://127.0.0.1:43111', 'main')
+      try {
+        await vi.waitFor(() => expect(results).toHaveLength(1))
+        expect(results[0].ok).toBe(true)
+        expect(JSON.parse(results[0].value)).toEqual({
+          query,
+          ranges: [
+            {
+              text: targetText,
+              occurrence,
+              top: 100,
+              bottom: 120,
+              left: 20,
+              right: 90,
+              width: 70,
+              height: 20,
+            },
+          ],
+        })
+        expect(highlights.get('conversation-search-fixture-active')?.size).toBe(3)
+      } finally {
+        fixture.remove()
+      }
+    }
+  )
+
   test('acknowledges refresh before activating the native menu that unloads the renderer', async () => {
     const activate = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(true)
     let acknowledgeResult!: (value: Response) => void
@@ -256,8 +352,16 @@ describe('Electron desktop E2E automation', () => {
       expect(results[0].ok).toBe(true)
       expect(console.error).toHaveBeenCalledWith(
         '[Wework] Desktop E2E result acknowledgement failed:',
-        expect.objectContaining({ action: 'click', actionSucceeded: true })
+        expect.any(String)
       )
+      const diagnostic = vi
+        .mocked(console.error)
+        .mock.calls.find(call => call[0] === '[Wework] Desktop E2E result acknowledgement failed:')
+      expect(JSON.parse(String(diagnostic?.[1]))).toMatchObject({
+        action: 'click',
+        actionSucceeded: true,
+        error: 'Failed to fetch',
+      })
     } finally {
       button.remove()
     }

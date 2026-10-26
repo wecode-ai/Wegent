@@ -26,11 +26,12 @@ const CHECKPOINT_RESOURCES = new Map([
   ['project-assignment-notification', ['macos-inspector-foreground']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'notification-tab-navigation': './scenarios/notification-tab-navigation.scenario.mjs',
   'voice-input': './scenarios/voice-input.scenario.mjs',
   'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
   'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
   'plugin-toggle-persistence': './scenarios/plugin-toggle-persistence.scenario.mjs',
-  'goal-state-sync': './scenarios/goal-output-identity.scenario.mjs',
+  'goal-state-sync': './scenarios/goal-stream-order.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
   'task-model-deletion': './scenarios/task-model-deletion.scenario.mjs',
@@ -76,6 +77,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'streaming-timers': './scenarios/streaming-text.scenario.mjs',
   'streaming-scroll': './scenarios/streaming-text.scenario.mjs',
   'streaming-message-order': './scenarios/streaming-text.scenario.mjs',
+  'streaming-conversation-switching': './scenarios/streaming-text.scenario.mjs',
   'streaming-subagents': './scenarios/streaming-text.scenario.mjs',
 
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
@@ -114,6 +116,14 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
+  'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
+  'stand-in-list-confirmation': './scenarios/stand-in-list-confirmation.scenario.mjs',
+  'stand-in-profile': './scenarios/stand-in-profile.scenario.mjs',
+  'stand-in-identities': './scenarios/stand-in-identities.scenario.mjs',
+  'stand-in-connections': './scenarios/stand-in-connections.scenario.mjs',
+  'stand-in-mcp': './scenarios/stand-in-mcp.scenario.mjs',
+  'stand-in-cli': './scenarios/stand-in-cli.scenario.mjs',
+  'stand-in-plugin-bridge': './scenarios/stand-in-plugin-bridge.scenario.mjs',
   'stand-in-assignment-notifications': './scenarios/stand-in-assignment-notifications.scenario.mjs',
   'stand-in-personal-task': './scenarios/stand-in-personal-task.scenario.mjs',
   'stand-in': './scenarios/stand-in.scenario.mjs',
@@ -162,6 +172,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'notification-tab-navigation',
   'voice-input',
   'archived-worktree-cleanup',
   'plugin-toggle-persistence',
@@ -170,6 +181,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'streaming-timers',
   'streaming-scroll',
   'streaming-message-order',
+  'streaming-conversation-switching',
   'streaming-subagents',
 
   'goal-state-sync',
@@ -218,6 +230,14 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-first-use',
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
+  'stand-in-action-confirmation',
+  'stand-in-list-confirmation',
+  'stand-in-profile',
+  'stand-in-identities',
+  'stand-in-connections',
+  'stand-in-mcp',
+  'stand-in-cli',
+  'stand-in-plugin-bridge',
   'stand-in-assignment-notifications',
   'stand-in-personal-task',
   'stand-in',

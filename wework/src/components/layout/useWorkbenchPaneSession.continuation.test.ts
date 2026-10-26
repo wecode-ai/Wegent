@@ -1,7 +1,10 @@
-import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
-import { createElement, type ReactNode } from 'react'
+import { act, cleanup, fireEvent, renderHook, waitFor } from '@testing-library/react'
+import { createElement, StrictMode, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { RuntimeTaskAddress } from '@/types/api'
+import type { WorkbenchMessage } from '@/types/workbench'
+import { useConversationFind } from '@/components/chat/useConversationFind'
+import { getPlatform } from '@/lib/platform'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import {
   cacheRuntimeConversationQueuedMessages,
@@ -23,6 +26,7 @@ import {
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
+import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 
 const mocks = vi.hoisted(() => ({
   context: {} as Record<string, unknown>,
@@ -103,16 +107,23 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   resetRuntimeConversationQueueControllersForTests()
   clearRuntimeConversationCacheForTests()
 })
 
 async function renderSession(currentRuntimeTask: RuntimeTaskAddress | null = address) {
   const hook = renderHook(
-    () => useWorkbenchPaneSession({ currentRuntimeTask, debugSnapshotEnabled: false }),
+    ({ currentRuntimeTask }) =>
+      useWorkbenchPaneSession({ currentRuntimeTask, debugSnapshotEnabled: false }),
     {
+      initialProps: { currentRuntimeTask },
       wrapper: ({ children }: { children: ReactNode }) =>
-        createElement(RuntimeTaskLifecycleProvider, { store: lifecycleStore, children }),
+        createElement(
+          StrictMode,
+          null,
+          createElement(RuntimeTaskLifecycleProvider, { store: lifecycleStore, children })
+        ),
     }
   )
   await waitFor(() => expect(hook.result.current.transcriptLoading).toBe(false))
@@ -127,6 +138,87 @@ function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession
   expect(mocks.setInput).not.toHaveBeenCalled()
   expect(mocks.resetAttachments).not.toHaveBeenCalled()
 }
+
+describe('composer draft ownership during delayed send acknowledgment', () => {
+  test.each([false, true])(
+    'clears an unchanged submitted draft after acceptance (code comments=%s)',
+    async withCodeComments => {
+      const { result } = await renderSession()
+      if (!withCodeComments) act(() => result.current.clearCodeComments())
+
+      await act(async () => expect(await result.current.send(draft)).toBe(true))
+
+      expect(mocks.setInput).toHaveBeenCalledExactlyOnceWith(scopeKey, '')
+    }
+  )
+
+  test.each([
+    { withCodeComments: false, nextDraft: 'A newer follow-up' },
+    { withCodeComments: false, nextDraft: draft },
+    { withCodeComments: true, nextDraft: 'A newer follow-up' },
+  ])(
+    'preserves a newer draft after acceptance (code comments=$withCodeComments, draft=$nextDraft)',
+    async ({ withCodeComments, nextDraft }) => {
+      let acknowledge!: (accepted: boolean) => void
+      mocks.send.mockReturnValue(new Promise<boolean>(resolve => (acknowledge = resolve)))
+      const { result } = await renderSession()
+      if (!withCodeComments) act(() => result.current.clearCodeComments())
+      let sending!: Promise<boolean>
+      act(() => {
+        sending = result.current.send(draft)
+        // BufferedChatInput clears synchronously, before the runtime acknowledges.
+        result.current.setInput('')
+      })
+      await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+      act(() => result.current.setInput(nextDraft))
+      mocks.setInput.mockClear()
+
+      await act(async () => {
+        acknowledge(true)
+        expect(await sending).toBe(true)
+      })
+
+      expect(mocks.setInput).not.toHaveBeenCalled()
+    }
+  )
+
+  test('does not clear again when submission context resolves after the buffered clear', async () => {
+    const { result } = await renderSession()
+    act(() => result.current.clearCodeComments())
+    // DesktopWorkbenchMain captures send, then awaits prepareSubmission. In the
+    // meantime BufferedChatInput clears and may hold an unflushed new draft.
+    const sendAfterPreparingContext = result.current.send
+    act(() => result.current.setInput(''))
+    mocks.setInput.mockClear()
+
+    await act(async () => expect(await sendAfterPreparingContext(draft)).toBe(true))
+
+    expect(mocks.send).toHaveBeenCalledOnce()
+    expect(mocks.setInput).not.toHaveBeenCalled()
+  })
+
+  test('invalidates a pending clear when leaving and returning to its composer scope', async () => {
+    let acknowledge!: (accepted: boolean) => void
+    mocks.send.mockReturnValue(new Promise<boolean>(resolve => (acknowledge = resolve)))
+    const { result, rerender } = await renderSession()
+    act(() => result.current.clearCodeComments())
+    let sending!: Promise<boolean>
+    act(() => {
+      sending = result.current.send(draft)
+    })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+    rerender({ currentRuntimeTask: { ...address, taskId: 'another-task' } })
+    rerender({ currentRuntimeTask: address })
+    mocks.setInput.mockClear()
+
+    await act(async () => {
+      acknowledge(true)
+      expect(await sending).toBe(true)
+    })
+
+    expect(mocks.setInput).not.toHaveBeenCalled()
+  })
+})
 
 describe('composer draft during an in-flight send', () => {
   test.each([true, false])(
@@ -311,6 +403,65 @@ describe('composer draft during an in-flight send', () => {
 })
 
 describe('pane continuation without composer submission', () => {
+  test('keeps a new turn interactive when the runtime reuses a previously answered request ID', async () => {
+    const { result } = await renderSession()
+    const formTurn = (id: string): RuntimeConversationTurn => ({
+      id,
+      status: 'streaming',
+      items: [
+        {
+          id: 'request-user-input-0',
+          type: 'block',
+          block: {
+            id: 'request-user-input-0',
+            subtaskId: id,
+            type: 'tool',
+            toolName: 'request_user_input',
+            status: 'pending',
+            createdAt: 1,
+            renderPayload: {
+              kind: 'request_user_input',
+              requestId: 0,
+              itemId: 'mcp_server_elicitation',
+              interactionScope: id,
+              questions: [{ id: 'action', question: 'Publish?' }],
+            },
+          },
+        },
+      ],
+    })
+    const previous = formTurn('previous-turn')
+    const response = {
+      requestId: 0,
+      itemId: 'mcp_server_elicitation',
+      interactionScope: previous.id!,
+      answers: { action: { answers: ['Publish'] } },
+    }
+    act(() => reconcileRuntimeConversationSnapshot(address, [previous]))
+    await act(async () => {
+      expect(await result.current.sendRequestUserInputResponse(response)).toBe(true)
+    })
+    expect(mocks.send).toHaveBeenCalledWith(
+      expect.objectContaining({ requestUserInputResponse: response })
+    )
+
+    act(() => {
+      reconcileRuntimeConversationSnapshot(address, [
+        { ...previous, status: 'done' },
+        formTurn('current-turn'),
+      ])
+    })
+    await act(async () => {
+      await result.current.sendRequestUserInputResponse(response)
+    })
+
+    const pending = pendingRequestUserInputPayload(
+      result.current.messages,
+      result.current.answeredRequestUserInputIds
+    )
+    expect(pending).toMatchObject({ requestId: 0, interactionScope: 'current-turn' })
+    expect(pending).not.toHaveProperty('response')
+  })
   test.each([
     { running: false, accepted: true },
     { running: false, accepted: false },
@@ -480,7 +631,7 @@ describe('pane continuation without composer submission', () => {
     const { result, rerender, unmount } = await renderSession()
 
     await act(async () => expect(await result.current.sendContinuation(continuation)).toBe(true))
-    rerender()
+    rerender({ currentRuntimeTask: address })
 
     expect(result.current.queuedMessages).toMatchObject([
       { content: continuation, status: 'queued' },
@@ -533,6 +684,61 @@ describe('pane continuation without composer submission', () => {
     await act(async () => expect(await result.current.sendContinuation(continuation)).toBe(false))
 
     expect(mocks.send).not.toHaveBeenCalled()
+  })
+})
+
+describe('unbound pane conversation search', () => {
+  test('finds and navigates loaded messages without attempting a persisted transcript search', async () => {
+    const searchTranscript = vi.fn()
+    mocks.context.searchRuntimeTranscriptForPane = searchTranscript
+    const messages: WorkbenchMessage[] = [
+      {
+        id: 'loaded-message',
+        role: 'assistant',
+        content: 'needle first; needle second',
+        status: 'done',
+        createdAt: '2026-10-20T00:00:00Z',
+      },
+    ]
+    const { result } = renderHook(
+      () => {
+        const pane = useWorkbenchPaneSession({
+          currentRuntimeTask: null,
+          debugSnapshotEnabled: false,
+        })
+        const find = useConversationFind(
+          {
+            messages,
+            onSearchTranscript: pane.searchTranscript,
+            onEnsureSearchMatch: pane.ensureSearchMatch,
+          },
+          true
+        )
+        return { pane, find }
+      },
+      {
+        wrapper: ({ children }: { children: ReactNode }) =>
+          createElement(RuntimeTaskLifecycleProvider, { store: lifecycleStore, children }),
+      }
+    )
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    act(() => {
+      fireEvent.keyDown(window, {
+        key: 'f',
+        metaKey: getPlatform() === 'mac',
+        ctrlKey: getPlatform() !== 'mac',
+      })
+      result.current.find.changeQuery('needle')
+    })
+    await act(async () => vi.advanceTimersByTime(150))
+
+    expect(result.current.find.result).toEqual({ matches: 2, active: 1, isCapped: false })
+    expect(result.current.find.historyFailed).toBe(false)
+    expect(result.current.find.isLoading).toBe(false)
+    act(() => result.current.find.step(1))
+    expect(result.current.find.result.active).toBe(2)
+    expect(result.current.find.searchTarget?.occurrence).toBe(1)
+    expect(searchTranscript).not.toHaveBeenCalled()
   })
 })
 

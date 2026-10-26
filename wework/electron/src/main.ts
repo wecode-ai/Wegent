@@ -423,6 +423,9 @@ app.on('web-contents-created', (_event, contents) => {
     })
   })
   contents.on('console-message', (_event, level, message, lineNumber, sourceId) => {
+    if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[desktop-e2e-key] ')) {
+      console.info(redactLog(message).slice(0, 1024))
+    }
     if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
       console.warn('[renderer-error]', {
         webContentsId: contents.id,
@@ -1731,14 +1734,12 @@ function prepareApplicationShutdown(): Promise<void> {
 }
 
 function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
-  if (!desktopRuntime) return null
+  const runtime = desktopRuntime
+  if (!runtime) return null
   return {
-    open: async launch => {
-      await desktopRuntime?.openWorkbenchRuntime(launch)
-    },
-    close: tabId => desktopRuntime?.closeWorkbenchRuntime(tabId) ?? Promise.resolve(),
-    runningTabIds: () =>
-      new Set(desktopRuntime?.diagnostics().workbenchRuntimes.map(item => item.tabId) ?? []),
+    open: launch => runtime.openWorkbenchRuntime(launch),
+    close: tabId => runtime.closeWorkbenchRuntime(tabId),
+    runningTabIds: () => new Set(runtime.diagnostics().workbenchRuntimes.map(item => item.tabId)),
   }
 }
 

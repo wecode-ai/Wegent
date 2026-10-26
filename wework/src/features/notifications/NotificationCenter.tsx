@@ -32,7 +32,6 @@ import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
 import { Tooltip } from '@/components/ui/tooltip'
 import { AnchorPopover } from '@/features/todo/AnchorPopover'
 import { syncNotificationUnreadCount } from '@/desktop/trayNavigation'
-import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import { cn } from '@/lib/utils'
@@ -42,7 +41,7 @@ import {
   useNotificationTaskSource,
   type IssueDispatchPersonalTaskAction,
 } from './NotificationTaskSourceContext'
-import { weworkIssueScheme } from './scheme'
+import { weworkIssueScheme, weworkTaskScheme } from './scheme'
 import { openWeworkScheme } from './schemeEvents'
 import {
   cacheNotificationPreferences,
@@ -533,7 +532,7 @@ function ConnectedNotificationCenter({
 
   const openTask = (item: RuntimeTaskReminderItem) => {
     taskSource?.markRuntimeTaskRead(item.address)
-    navigateTo(buildRuntimeTaskRoute(item.address))
+    openWeworkScheme(weworkTaskScheme(item.address))
     close()
   }
   const readAll = () =>

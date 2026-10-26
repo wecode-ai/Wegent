@@ -208,8 +208,12 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   )
   const runningDebugSnapshot = await waitForWorkbenchDebugState(
     control,
-    snapshot => snapshot.pane?.status?.isAssistantStreaming === true,
-    'The running Goal turn never entered visible streaming state'
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === goalTaskId &&
+      snapshot.pane?.currentRuntimeTask?.taskId === goalTaskId &&
+      snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
+      snapshot.pane?.status?.isAssistantStreaming === true,
+    'The running Goal turn never exposed its authoritative streaming state'
   )
   assert.equal(
     runningDebugSnapshot.workbench?.lifecycleCurrentTaskRunning,

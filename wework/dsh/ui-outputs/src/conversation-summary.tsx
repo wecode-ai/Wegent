@@ -16,6 +16,7 @@ const OUTPUT_ICONS: Record<ConversationOutputKind, ComponentType<{ className?: s
 }
 
 const SOURCE_ICONS: Record<ConversationOutputSourceKind, ComponentType<{ className?: string }>> = {
+  file: FileText,
   attachment: Paperclip,
   memory: ScrollText,
   website: Globe2,

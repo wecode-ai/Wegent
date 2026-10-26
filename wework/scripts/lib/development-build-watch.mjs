@@ -1,5 +1,6 @@
 import { existsSync, watch } from 'node:fs'
 import path from 'node:path'
+import { developmentBuildInputs } from './development-build-inputs.mjs'
 
 /** Serialize fresh builds so emitted asset references never cross build generations. */
 export async function watchDevelopmentBuild({
@@ -21,6 +22,7 @@ export async function watchDevelopmentBuild({
       .relative(directory, filename)
       .split(path.sep)
       .some(part => ['node_modules', '.git', 'dist'].includes(part))
+  let inputChanged
   const drain = async () => {
     do {
       pending = false
@@ -49,7 +51,12 @@ export async function watchDevelopmentBuild({
     const watcher = watch(directory, { recursive }, (_event, filename) => {
       if (!filename) return schedule()
       const resolved = path.resolve(directory, String(filename))
-      if (!excluded(resolved, directory) && accept(resolved)) schedule()
+      if (excluded(resolved, directory) || !accept(resolved)) return
+      try {
+        if (inputChanged(resolved, directory)) schedule()
+      } catch (error) {
+        onError(error)
+      }
     })
     watcher.on('error', onError)
     watchers.push(watcher)
@@ -63,8 +70,9 @@ export async function watchDevelopmentBuild({
     parents.set(parent, names)
   }
   for (const [parent, names] of parents) observe(parent, false, filename => names.has(filename))
-  running = build()
   try {
+    inputChanged = developmentBuildInputs({ directories, files, excluded })
+    running = build()
     await running
   } catch (error) {
     for (const watcher of watchers) watcher.close()

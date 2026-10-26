@@ -30,6 +30,45 @@ const project = (items: RuntimeConversationItem[]) =>
   projectRuntimeConversationTurn({ ...turn, items });
 
 describe("assistant view identity", () => {
+  it("keeps pre-prompt processing in the same reply when native positions put it before the initial user", () => {
+    const compact: RuntimeConversationItem = {
+      id: "compact",
+      position: 1,
+      type: "block",
+      block: {
+        id: "compact",
+        subtaskId: "turn-1",
+        type: "tool",
+        toolName: "context_compaction",
+        status: "done",
+        createdAt: 1,
+      },
+    };
+    const user: RuntimeConversationItem = {
+      id: "user",
+      position: 2,
+      type: "user_message",
+      message: {
+        id: "client-user",
+        role: "user",
+        content: "Continue",
+        status: "done",
+        createdAt: "",
+      },
+    };
+    const result = projectRuntimeConversationTurn({
+      ...turn,
+      status: "done",
+      items: [compact, user, text],
+    });
+    expect(result.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+    expect(result[1].id).toBe("runtime-view:turn-1:assistant");
+    expect(result[1].blocks).toEqual([compact.block]);
+    expect(result[1].content).toBe(text.content);
+  });
   it("keeps the same view from empty startup through late reasoning and native recovery", () => {
     const initial = project([])[0];
     const streamed = project([
@@ -80,6 +119,54 @@ describe("assistant view identity", () => {
       text.content,
       "Continue",
       "After",
+    ]);
+  });
+
+  it("splits an existing reply before the first user without a guidance flag", () => {
+    const content = "API error: CORE_GUIDANCE";
+    const result = projectRuntimeConversationTurn({
+      ...turn,
+      status: "failed",
+      error: content,
+      items: [
+        { ...text, id: "early", content },
+        {
+          id: "follow-up",
+          type: "user_message",
+          message: {
+            id: "client-follow-up",
+            role: "user",
+            content: "Continue",
+            status: "done",
+          },
+        },
+        { ...text, id: "final", content },
+      ],
+    });
+
+    expect(result.map((message) => message.id)).toEqual([
+      "runtime-view:turn-1:assistant",
+      "client-follow-up",
+      "runtime-view:turn-1:after:follow-up",
+    ]);
+    expect(result.map((message) => message.content)).toEqual([
+      content,
+      "Continue",
+      content,
+    ]);
+    expect(result.map((message) => message.status)).toEqual([
+      "done",
+      "done",
+      "failed",
+    ]);
+    expect(result[0].error).toBeUndefined();
+    expect(result[2].error).toBe(content);
+    expect(result[0].runtimeDisplayItems).toEqual([
+      { id: "early", type: "assistant_text", content },
+    ]);
+    expect(result[1].runtimeItemId).toBe("follow-up");
+    expect(result[2].runtimeDisplayItems).toEqual([
+      { id: "final", type: "assistant_text", content },
     ]);
   });
 });

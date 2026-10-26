@@ -203,6 +203,7 @@ mod resource_refs;
 mod responses;
 mod runtime_check;
 mod runtime_profiles;
+mod runtime_transcript_search;
 mod runtime_work;
 mod runtime_work_im_notifications;
 mod runtime_work_projection;

@@ -156,7 +156,6 @@ import {
   getRuntimeConversationMetadata,
   isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationAssistantStarted,
-  publishRuntimeTransportReplaced,
   reconcileRuntimeConversationSnapshot,
   runtimeConversationKey,
   setRuntimeConversationTaskPlan,
@@ -1908,6 +1907,9 @@ export function WorkbenchProvider({
   const stableStartNewProjectChat = useStableEvent(startNewProjectChat)
   const stableOpenRuntimeTask = useStableEvent(runtimeTasks.openRuntimeTask)
   const stableSearchRuntimeWork = useStableEvent(runtimeTasks.searchRuntimeWork)
+  const stableSearchRuntimeTranscriptForPane = useStableEvent(
+    runtimeTasks.searchRuntimeTranscriptForPane
+  )
   const resolveRuntimeContextUsage = useCallback(
     (address: RuntimeTaskAddress, usage: RuntimeContextUsage): RuntimeContextUsage => {
       const taskSelection =
@@ -1964,7 +1966,7 @@ export function WorkbenchProvider({
       options?: Parameters<typeof runtimeTasks.loadRuntimeTranscriptForPane>[1]
     ) => {
       const transcript = await runtimeTasks.loadRuntimeTranscriptForPane(address, options)
-      if (transcript.contextUsage) {
+      if (!options?.threadOnly && transcript.contextUsage) {
         const contextUsage = resolveRuntimeContextUsage(address, transcript.contextUsage)
         setContextUsageByRuntimeTask(current => ({
           ...current,
@@ -2221,7 +2223,6 @@ export function WorkbenchProvider({
             syncRuntimeTaskSnapshot(address)
           },
           onRuntimePlanUpdated: setRuntimeConversationTaskPlan,
-          onRuntimeTransportReplaced: publishRuntimeTransportReplaced,
         },
         syncRuntimeTaskLifecycle
       ),
@@ -2833,6 +2834,7 @@ export function WorkbenchProvider({
       reorderQueuedRuntimeTask: stableReorderQueuedRuntimeTask,
       searchRuntimeWork: stableSearchRuntimeWork,
       loadRuntimeTranscriptForPane: stableLoadRuntimeTranscriptForPane,
+      searchRuntimeTranscriptForPane: stableSearchRuntimeTranscriptForPane,
       subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
       renameRuntimeTask: stableRenameRuntimeTask,
       archiveRuntimeTask: stableArchiveRuntimeTask,
@@ -2941,6 +2943,7 @@ export function WorkbenchProvider({
       stableLoadEnvironmentDiff,
       stableLoadEnvironmentInfo,
       stableLoadRuntimeTranscriptForPane,
+      stableSearchRuntimeTranscriptForPane,
       stableLoadTurnFileChangesDiff,
       stableOpenRuntimeTask,
       stableOpenStandaloneWorkspace,

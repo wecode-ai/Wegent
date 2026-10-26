@@ -84,7 +84,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       const prompt = TASK_PROMPTS.find(candidate => input.includes(candidate))
       const responseId = `task-board-bulk-actions-${Date.now()}`
       const events = [responseCreated(responseId)]
-      if (prompt) events.push(assistantMessage(TASK_COMPLETIONS.get(prompt)))
+      if (prompt) {
+        assert.equal(body.model, DEFAULT_MODEL_ID)
+        events.push(assistantMessage(TASK_COMPLETIONS.get(prompt)))
+      }
       events.push(responseCompleted(responseId))
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.end(createSse(events))

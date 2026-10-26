@@ -486,6 +486,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       workspacePath: address.workspacePath,
       runtime: address.runtime,
       running: false,
+      supersededTurnIds: ['provisional-turn'],
       fullContent: true,
       messages: [
         {
@@ -501,6 +502,17 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
           status: 'completed',
           completedAt: 1_786_692_066_192,
           items: [
+            {
+              id: 'native-user',
+              type: 'user_message',
+              message: {
+                id: 'native-user',
+                clientUserMessageId: 'optimistic-user',
+                role: 'user',
+                content: 'continue',
+                status: 'done',
+              },
+            },
             {
               id: 'assistant-item-1',
               type: 'assistant_text',
@@ -549,6 +561,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     expect(store.getTask(address)?.execution.phase).toBe('idle')
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
     expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual([
+      'continue',
       'fast completed answer',
     ])
   })
@@ -613,6 +626,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
         workspacePath: address.workspacePath,
         runtime: address.runtime,
         running: false,
+        supersededTurnIds: ['provisional-turn'],
         fullContent: true,
         messages: [],
         turns: [
@@ -621,6 +635,17 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
             status: 'completed',
             completedAt: 1_786_692_066_192,
             items: [
+              {
+                id: 'native-user',
+                type: 'user_message',
+                message: {
+                  id: 'native-user',
+                  clientUserMessageId: 'optimistic-user',
+                  role: 'user',
+                  content: 'continue',
+                  status: 'done',
+                },
+              },
               {
                 id: 'assistant-item-1',
                 type: 'assistant_text',
@@ -636,6 +661,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     expect(store.getTask(address)?.execution.phase).toBe('idle')
     expect(store.getTask(address)?.turn.phase).toBe('idle')
     expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual([
+      'continue',
       'authoritative completed answer',
     ])
   })

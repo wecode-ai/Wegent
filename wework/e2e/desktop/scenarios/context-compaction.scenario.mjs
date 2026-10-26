@@ -1,3 +1,4 @@
+import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { createInterruptedCompactionScenario } from './interrupted-context-compaction.mjs'
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
@@ -69,12 +70,6 @@ function requestKind(body) {
   } catch {
     return null
   }
-}
-
-async function readJson(request) {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
 export function currentSessionContext(body) {

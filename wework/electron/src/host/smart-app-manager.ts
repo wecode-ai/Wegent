@@ -2,9 +2,11 @@ import { ZipArchive } from 'archiver'
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { copyFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { createServer } from 'node:net'
 import { dirname, join, resolve, sep } from 'node:path'
-import type { WorkbenchRuntimeLaunch } from '../runtime/workbench-runtime.js'
+import type {
+  WorkbenchRuntimeLaunch,
+  WorkbenchRuntimeSnapshot,
+} from '../runtime/workbench-runtime.js'
 import { cloudFetch } from './cloud-http.js'
 import {
   materializeManifestPackages,
@@ -76,7 +78,7 @@ export interface SmartAppSavedExport extends SmartAppExport {
 }
 
 export interface SmartAppRuntimeHost {
-  open(launch: WorkbenchRuntimeLaunch): Promise<void>
+  open(launch: WorkbenchRuntimeLaunch): Promise<WorkbenchRuntimeSnapshot>
   close(tabId: string): Promise<void>
   runningTabIds(): ReadonlySet<string>
 }
@@ -476,7 +478,6 @@ export class SmartAppManager {
       if (runtimeHost.runningTabIds().has(id)) {
         return installation
       }
-      const port = await freePort()
       try {
         const prepared = await prepareWorkbenchDshLaunch({
           runtimeRoot: this.options.runtimeRoot,
@@ -485,14 +486,14 @@ export class SmartAppManager {
           packagePath: installation.packagePath,
           manifest: installation.manifest,
           environment: this.options.environment,
-          port,
+          port: 0,
           modelBaseUrl: input.modelBaseUrl,
           contextBaseUrl: input.contextBaseUrl,
           contextToken: input.contextToken,
           decisionBaseUrl: decisionRoute?.baseUrl ?? null,
           decisionProtocolVersion: decisionRoute?.protocolVersion ?? null,
         })
-        await runtimeHost.open({
+        const runtime = await runtimeHost.open({
           tabId: id,
           url: prepared.url,
           command: prepared.command,
@@ -502,7 +503,7 @@ export class SmartAppManager {
           logDirectory: this.options.logDirectory,
         })
         installation.state = 'running'
-        installation.webUrl = prepared.url
+        installation.webUrl = runtime.url
         installation.runtimeVersion = prepared.version
         installation.error = null
         await this.writeRegistry(installations)
@@ -991,23 +992,4 @@ async function uniquePath(directory: string, filename: string): Promise<string> 
     if (!(await exists(candidate))) return candidate
   }
   throw new Error('Downloads directory has too many Smart app exports with the same name')
-}
-
-function freePort(): Promise<number> {
-  return new Promise((resolvePromise, reject) => {
-    const server = createServer()
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        server.close()
-        reject(new Error('Failed to allocate a Smart app port'))
-        return
-      }
-      server.close(error => {
-        if (error) reject(error)
-        else resolvePromise(address.port)
-      })
-    })
-  })
 }

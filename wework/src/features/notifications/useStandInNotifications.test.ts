@@ -80,6 +80,32 @@ describe('stand-in notification read and delivery state', () => {
     }
   })
 
+  it('retains a live completion when discovery precedes the runtime unread update', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-10-23T12:00:00Z'))
+      const hook = renderHook(
+        ({ item, unread }: { item: RuntimeTaskReminderItem | null; unread: boolean }) =>
+          useStandInNotifications(inbox, item ? source(item, unread) : null, 'user', true, true),
+        { initialProps: { item: null, unread: false } }
+      )
+      vi.setSystemTime(new Date('2026-10-23T12:00:01Z'))
+      const item = completed(new Date().toISOString())
+      hook.rerender({ item, unread: false })
+      hook.rerender({ item, unread: true })
+      expect(send).toHaveBeenCalledTimes(1)
+      expect(hook.result.current.unreadCount).toBe(1)
+      hook.unmount()
+      const restored = renderHook(() =>
+        useStandInNotifications(inbox, source(item, true), 'user', true, true)
+      )
+      expect(send).toHaveBeenCalledTimes(1)
+      restored.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not notify or mark unread again when a settled turn receives its task summary', () => {
     const machine = new RuntimeTaskMachine(runtimeItem.address)
     machine.dispatch({
@@ -237,6 +263,7 @@ describe('stand-in notification read and delivery state', () => {
     expect(send).not.toHaveBeenCalled()
   })
   it('remains bounded when more than 1000 executions are available', () => {
+    const writes = vi.spyOn(Storage.prototype, 'setItem')
     const items = Array.from({ length: 1005 }, (_, index) => ({
       ...completed(),
       key: `device\0task-${index}`,
@@ -259,6 +286,10 @@ describe('stand-in notification read and delivery state', () => {
       Object.keys(JSON.parse(localStorage.getItem('wework.stand-in-notifications:user')!))
     ).toHaveLength(1000)
     expect(send).not.toHaveBeenCalled()
+    expect(
+      writes.mock.calls.filter(([key]) => key === 'wework.stand-in-notifications:user:delivered')
+    ).toHaveLength(1)
+    writes.mockRestore()
   })
 })
 
