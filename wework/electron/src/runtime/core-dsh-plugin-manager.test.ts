@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import {
@@ -9,6 +9,57 @@ import {
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('CoreDshPluginManager', () => {
+  test.each([undefined, { '.': './index.js' }])(
+    'preserves installation-owned bundles with exports %j while toggling a workspace plugin',
+    async exports => {
+      const fixture = await createFixture()
+      const bundle = '@deepseek-ai/dsh-experimental-voice-input-bundle'
+      const pnpmModules = join(fixture.runtimeRoot, 'node_modules', '.pnpm', 'dsh', 'node_modules')
+      const entry = join(pnpmModules, '@deepseek-ai', 'dsh', 'cli.js')
+      await mkdir(join(pnpmModules, '@deepseek-ai', 'dsh'), { recursive: true })
+      await writeFile(entry, '')
+      await rm(join(fixture.runtimeRoot, 'dsh.js'))
+      await symlink(entry, join(fixture.runtimeRoot, 'dsh.js'))
+      const packageRoot = join(pnpmModules, ...bundle.split('/'))
+      await mkdir(packageRoot, { recursive: true })
+      await writeJson(join(packageRoot, 'package.json'), {
+        name: bundle,
+        exports,
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      })
+      const manifest = await fixture.manifest()
+      manifest.dsh.profile.bundles.push(bundle)
+      await fixture.writeManifest(manifest)
+
+      await fixture.manager().setEnabled('dsh-alpha', false)
+
+      expect((await fixture.manifest()).dsh.profile.bundles).toEqual([
+        '@wegent/dsh-app-wework',
+        bundle,
+        'dsh-beta',
+      ])
+      await fixture.remove()
+    }
+  )
+
+  test('removes uninstalled user bundles instead of retaining them as installation bundles', async () => {
+    const fixture = await createFixture({
+      runCommand: async (_command, args) => {
+        if (args.includes('remove')) {
+          const manifest = await fixture.manifest()
+          delete manifest.dependencies['dsh-alpha']
+          await fixture.writeManifest(manifest)
+        }
+        return { stdout: '', stderr: '' }
+      },
+    })
+
+    await fixture.manager().uninstall('dsh-alpha')
+
+    expect(await fixture.userBundles()).toEqual(['dsh-beta'])
+    await fixture.remove()
+  })
+
   test('preserves disabled plugins and bundle order across unrelated updates', async () => {
     const fixture = await createFixture()
     const manager = fixture.manager()

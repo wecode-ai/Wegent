@@ -7,6 +7,7 @@
 //! Row structs and queries mirror the SQLAlchemy models and query shapes in
 //! `app/models/plugin_marketplace.py` and
 //! `app/services/plugin_marketplace_service.py` of the source service.
+use super::query::PluginQuery;
 use std::collections::HashMap;
 
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
@@ -386,12 +387,23 @@ pub struct UserRepository;
 /// approved entity ids bound to one resource type (the candidate list passed
 /// to the application-supplied resolver).
 pub async fn distinct_entity_resource_ids<M>(
-    mysql: &M,
+    mut mysql: &M,
     resource_type: &str,
     entity_type: &str,
 ) -> MysqlResult<Vec<String>>
 where
     M: Mysql,
+{
+    distinct_entity_resource_ids_on(&mut mysql, resource_type, entity_type).await
+}
+
+pub(crate) async fn distinct_entity_resource_ids_on<Q>(
+    mysql: &mut Q,
+    resource_type: &str,
+    entity_type: &str,
+) -> MysqlResult<Vec<String>>
+where
+    Q: PluginQuery,
 {
     #[derive(Debug, FromMysqlRow)]
     struct Row {
@@ -416,13 +428,25 @@ where
 /// `list_resources_by_entity_match`: the DISTINCT approved resource ids
 /// bound to resolver-matched entity ids for one resource type.
 pub async fn resource_ids_by_entity_ids<M>(
-    mysql: &M,
+    mut mysql: &M,
     resource_type: &str,
     entity_type: &str,
     matched_entity_ids: &[String],
 ) -> MysqlResult<Vec<i64>>
 where
     M: Mysql,
+{
+    resource_ids_by_entity_ids_on(&mut mysql, resource_type, entity_type, matched_entity_ids).await
+}
+
+pub(crate) async fn resource_ids_by_entity_ids_on<Q>(
+    mysql: &mut Q,
+    resource_type: &str,
+    entity_type: &str,
+    matched_entity_ids: &[String],
+) -> MysqlResult<Vec<i64>>
+where
+    Q: PluginQuery,
 {
     if matched_entity_ids.is_empty() {
         return Ok(Vec::new());
@@ -552,11 +576,21 @@ impl UserRepository {
 
     /// Load approved plugin grants grouped by plugin ID.
     pub async fn list_plugin_grants<M>(
-        mysql: &M,
+        mut mysql: &M,
         plugin_ids: &[i64],
     ) -> MysqlResult<HashMap<i64, Vec<ResourceMemberRow>>>
     where
         M: Mysql,
+    {
+        Self::list_plugin_grants_on(&mut mysql, plugin_ids).await
+    }
+
+    pub(crate) async fn list_plugin_grants_on<Q>(
+        mysql: &mut Q,
+        plugin_ids: &[i64],
+    ) -> MysqlResult<HashMap<i64, Vec<ResourceMemberRow>>>
+    where
+        Q: PluginQuery,
     {
         if plugin_ids.is_empty() {
             return Ok(HashMap::new());
@@ -582,9 +616,22 @@ impl UserRepository {
     }
 
     /// Load the namespaces the user holds approved membership in.
-    pub async fn list_user_namespaces<M>(mysql: &M, user_id: i64) -> MysqlResult<Vec<NamespaceRow>>
+    pub async fn list_user_namespaces<M>(
+        mut mysql: &M,
+        user_id: i64,
+    ) -> MysqlResult<Vec<NamespaceRow>>
     where
         M: Mysql,
+    {
+        Self::list_user_namespaces_on(&mut mysql, user_id).await
+    }
+
+    pub(crate) async fn list_user_namespaces_on<Q>(
+        mysql: &mut Q,
+        user_id: i64,
+    ) -> MysqlResult<Vec<NamespaceRow>>
+    where
+        Q: PluginQuery,
     {
         mysql
             .fetch_all(
@@ -602,9 +649,22 @@ impl UserRepository {
     }
 
     /// Load active namespace rows for the given IDs.
-    pub async fn list_namespaces_by_ids<M>(mysql: &M, ids: &[i64]) -> MysqlResult<Vec<NamespaceRow>>
+    pub async fn list_namespaces_by_ids<M>(
+        mut mysql: &M,
+        ids: &[i64],
+    ) -> MysqlResult<Vec<NamespaceRow>>
     where
         M: Mysql,
+    {
+        Self::list_namespaces_by_ids_on(&mut mysql, ids).await
+    }
+
+    pub(crate) async fn list_namespaces_by_ids_on<Q>(
+        mysql: &mut Q,
+        ids: &[i64],
+    ) -> MysqlResult<Vec<NamespaceRow>>
+    where
+        Q: PluginQuery,
     {
         if ids.is_empty() {
             return Ok(Vec::new());

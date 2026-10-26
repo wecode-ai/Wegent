@@ -72,7 +72,7 @@ Executor 启动的设备命令必须关闭 stdin，不能继承承载 App JSONL 
 
 本地 runtime 事件通道和 App IPC 写入队列使用有界缓冲，容量均为 8192。IPC 写入将 Responses 文本、终态、错误和 RPC 响应放入高优先级队列，将工具块、诊断、计划和文件变化事件放入低优先级队列。高优先级队列满时发送方显式等待并记录背压；低优先级队列满时丢弃当前可恢复事件、记录背压并发送 `executor.event_lagged`，避免直到 broadcast 覆盖旧事件后才发现消息缺失。
 
-工具输出事件最多携带 64 KiB，文件变化事件中的 diff 预览最多携带 128 KiB；完整 patch 仍保存在可读取的 artifact 中。Wework 收到 `executor.event_lagged` 后会重新拉取当前任务和全部运行中任务的 transcript，并使用稳定的客户端消息 ID 将 transcript 与尚未落盘的乐观用户消息合并。因此任务切换或事件积压后，运行状态、用户输入和 AI 输出会从同一份恢复结果重新收敛。
+工具输出事件最多携带 64 KiB，文件变化事件中的 diff 预览最多携带 128 KiB；完整 patch 仍保存在可读取的 artifact 中。Wework 收到 `executor.event_lagged` 后会重新拉取当前任务和全部运行中任务的 transcript，并使用稳定的客户端消息 ID 将 transcript 与尚未落盘的乐观用户消息合并。因此任务切换或事件积压后，运行状态、用户输入和 AI 输出会从同一份恢复结果重新收敛。同一工具块的空历史输出不能覆盖已收到的实时结果；此规则同时适用于命令、Node REPL 和其他 MCP 工具，并保留输出截断与加载引用信息。
 
 Wework 的 DSH 通道通过独立的本地 endpoint 连接订阅 executor 事件。事件序号、断线重放和历史丢失检测全部由 executor 负责：executor 为事件分配单调递增的 `sequence`，并维护同时受 4096 条事件和 8 MiB 限制的内存日志；客户端重连时携带最后已消费的序号，executor 原子地返回其后的日志快照并继续发送实时事件，避免快照与订阅之间的竞态。请求序号已经落后于日志窗口或超出当前最新序号时，executor 发送带 `event_history_lost` 原因的 `executor.event_lagged`，由 Wework 通过 transcript 重新收敛。
 
@@ -99,6 +99,10 @@ Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在�
 排查一条请求时，先从用户可见失败附近的 Wework frontend、DSH 或 Backend 日志取得 `request_id`，再在同一诊断目录或集中式日志系统中按精确值搜索。开始和结束日志还会记录方法名、结果与耗时，因此缺失的边界可以直接定位请求停留在哪个组件，而不需要按相近时间或任务名称猜测。
 
 ### Executor 启动环境与 Codex Home 初始化
+
+自动凭据同步只对实际凭据尝试应用冷却。登录或退出使旧迁移意图失效时，`plugin_auth_migration_expired` 不得阻止下一轮处理新登录意图；其他失败仍保留冷却，避免反复触发原生授权。同步日志仅记录插件、连接标识和结果码，不记录凭据或迁移意图令牌。
+
+Git worktree 会话设置 `PNPM_CONFIG_IGNORE_SCRIPTS=true` 和 `PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false`，复用 pnpm 内容缓存，但将虚拟依赖目录保留在工作树内。全局虚拟仓库的真实路径会让 TypeScript 向用户主目录查找类型，可能混入另一版本的 React。Wework 的 TypeScript 配置还将 `react` 和 `react/*` 绑定到自身的 `@types/react`，让共享 JSON 等工作树包目录外的输入也使用同一套类型。已有工作树切换此设置后，需运行 `PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false pnpm install --frozen-lockfile` 重建依赖链接；PowerShell 使用 `$env:PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE='false'; pnpm install --frozen-lockfile`。执行器更新后的新会话会自动使用该设置。
 
 共享插件包按内容哈希保存并保留旧包；Codex 原生缓存目录使用插件清单中的版本号。不能给该缓存版本追加哈希，否则 Codex 原生安装会清理该目录并使工作台保存的路径失效。插件认证 SDK 从 Executor 的 `capabilities/manifest-v2.json` 解析当前安装身份，不能读取迁移后残留的旧清单。
 
@@ -174,7 +178,7 @@ Codex Goal 协议返回的 `createdAt` 和 `updatedAt` 使用 Unix 秒，而 Wew
 
 Wework 创建 Codex thread 时显式设置 `historyMode=paginated`。恢复 transcript 时，executor 先用 `thread/read(includeTurns=false)` 读取线程元数据，再用 `thread/turns/list` 按时间倒序读取回合，并对每个回合调用 `thread/items/list` 按正序加载完整 item。分页游标是 Codex 生成的不透明值，前后端不得解析或改写为本地 offset；普通页面只读取一页，搜索、Supervisor 和其他完整历史消费者会沿 `nextCursor` 读取到末尾。executor 会拒绝重复游标、缺失回合 ID、跨回合 item 等无效响应，避免静默产生缺失或错序的历史。
 
-分页 transcript 响应不再伪造全局 `rangeStart`、`rangeEnd` 或 provider 级完整导航索引。Wework 使用当前已加载消息构建回合导航；用户请求更早历史时，将 `beforeCursor` 原样传回 executor，加载结果再合并到现有会话。真实 Codex 桌面 E2E 必须创建超过单页大小的会话，重启应用后验证首屏只恢复最新页、加载更早历史使用不透明游标，并确认虚拟滚动中的导航状态仍由当前可见用户消息决定。
+分页 transcript 响应不伪造全局 `rangeStart` 或 `rangeEnd`。完整导航独立读取轮次摘要，按稳定轮次 ID 关联当前已加载的用户消息和助手回复，不能将轮次序号视作页面消息索引；未加载轮次保留请求和回复预览。用户请求更早历史时，将 `beforeCursor` 原样传回 executor，加载结果再合并到现有会话。真实 Codex 桌面 E2E 必须覆盖超过单页大小的会话，验证最新页与缓存恢复后的导航高亮、历史轮次悬停摘要和不透明游标分页。
 
 工具状态以 app-server 的生命周期事件为准：`item/started` 创建运行中的工具块，`item/completed` 必须将对应工具块收敛为 `done`（显式失败除外）。部分独立工具条目（如图片查看、等待和网页搜索）不携带 `status` 字段；executor 在实时事件映射和 transcript 恢复时都将这类终态条目规范化为 `done`，避免 Wework 在工具已经完成后继续显示运行状态或递增计时。
 

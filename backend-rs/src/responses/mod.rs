@@ -11,7 +11,7 @@
 
 pub mod auth;
 pub mod auth_error;
-mod create;
+pub(crate) mod create;
 pub mod dispatch;
 pub mod error;
 pub mod http_error;
@@ -27,4 +27,4 @@ mod delete;
 mod generation_output;
 mod handler;
 mod shell_output;
-mod stream_state;
+pub(crate) mod stream_state;

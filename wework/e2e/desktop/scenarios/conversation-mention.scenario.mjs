@@ -1,3 +1,4 @@
+import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 
 import {
@@ -57,12 +58,6 @@ function assistantMessage(text) {
       content: [{ type: 'output_text', text, annotations: [] }],
     },
   }
-}
-
-async function readJson(request) {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
 async function waitForConversationOption(control, timeoutMs) {

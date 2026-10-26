@@ -7,8 +7,9 @@ use base64::Engine as _;
 use turbojpeg::{Colorspace, Compressor, Decompressor, Image, PixelFormat, Subsamp};
 
 use super::model_image::{
-    MAX_IMAGE_PIXELS, MAX_MODEL_IMAGE_LONG_EDGE, reduce, resample, resample_box, thumbnail_size,
+    MAX_IMAGE_PIXELS, MAX_MODEL_IMAGE_LONG_EDGE, decode_png, premultiply, unpremultiply,
 };
+use super::resample::{reduce, resample, resample_box, thumbnail_size};
 
 /// `thumbnail(..., reducing_gap=3.0)`: the integer pre-reduce factors
 /// `resize` applies before the Lanczos pass (`int(box / size / gap) or 1`).
@@ -64,18 +65,26 @@ pub(super) fn prepare(bytes: &[u8]) -> Option<PreparedJpeg> {
     };
     let pitch = header.width.checked_mul(channels)?;
     let mut pixels = vec![0u8; pitch.checked_mul(header.height)?];
-    decoder
-        .decompress(
-            bytes,
-            Image {
-                pixels: pixels.as_mut_slice(),
-                width: header.width,
-                height: header.height,
-                pitch,
-                format,
-            },
-        )
-        .ok()?;
+    let decoded = decoder.decompress(
+        bytes,
+        Image {
+            pixels: pixels.as_mut_slice(),
+            width: header.width,
+            height: header.height,
+            pitch,
+            format,
+        },
+    );
+    match decoded {
+        Ok(()) => {}
+        // libjpeg completes the output for JWRN_HIT_MARKER, filling missing
+        // entropy bits as Pillow does. The pinned wrapper reports this warning
+        // as an error even after decoding every scanline. Accept only this
+        // precise warning; fatal errors and truncated files still fail.
+        Err(turbojpeg::Error::TurboJpegError(message))
+            if message == "Corrupt JPEG data: premature end of data segment" => {}
+        Err(_) => return None,
+    }
     // libjpeg returns Adobe-inverted CMYK; Pillow exposes non-inverted CMYK
     // before resizing, so normalize before the fixed-point convolution.
     if channels == 4 {
@@ -107,6 +116,65 @@ pub(super) fn prepare(bytes: &[u8]) -> Option<PreparedJpeg> {
         has_exif: has_exif(bytes),
         image_base64: base64::engine::general_purpose::STANDARD.encode(data),
     })
+}
+
+/// `prepare_image_bytes_for_model` when Pillow detects PNG content under a
+/// `.jpg`/`.jpeg` filename: `Image.open` reads the format from the bytes, while
+/// the extension's MIME (`image/jpeg`) still selects JPEG as the output format.
+/// The decoded PNG pixels take the same resize path and are encoded as JPEG.
+///
+/// Returns the base64 payload and the prepared dimensions; `None` dimensions
+/// mean the source kept the original bytes (no resize, or an unreadable image).
+pub(super) fn prepare_png_as_jpeg(image_data: &[u8]) -> (String, Option<(u32, u32)>) {
+    let engine = base64::engine::general_purpose::STANDARD;
+    match encode_png_content_as_jpeg(image_data) {
+        Some((data, size)) => (engine.encode(&data), Some(size)),
+        None => (engine.encode(image_data), None),
+    }
+}
+
+fn encode_png_content_as_jpeg(image_data: &[u8]) -> Option<(Vec<u8>, (u32, u32))> {
+    let decoded = decode_png(image_data)?;
+    let (width, height) = (decoded.width, decoded.height);
+    let (target_width, target_height) = thumbnail_size(width, height, MAX_MODEL_IMAGE_LONG_EDGE)?;
+    let (source_pixels, source_channels) = match decoded.channels {
+        4 => (premultiply(&decoded.pixels), 4),
+        channels => (decoded.pixels, channels),
+    };
+    let resized = resample(
+        &source_pixels,
+        width as usize,
+        height as usize,
+        target_width as usize,
+        target_height as usize,
+        source_channels,
+    );
+    // `_normalize_mode_for_output` for JPEG: `RGBA`/`LA` paste over white and
+    // the remaining modes expand to RGB.
+    let rgb = match source_channels {
+        1 => resized.into_iter().flat_map(|value| [value; 3]).collect(),
+        3 => resized,
+        4 => composite_over_white(&unpremultiply(&resized)),
+        _ => return None,
+    };
+    let data = encode(&rgb, target_width as usize, target_height as usize)?;
+    Some((data, (target_width, target_height)))
+}
+
+/// `_normalize_mode_for_output`: `background.paste(image.convert("RGB"),
+/// mask=alpha)` over a white `RGB` image.
+fn composite_over_white(pixels: &[u8]) -> Vec<u8> {
+    pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .flat_map(|pixel| {
+            let alpha = u32::from(pixel[3]);
+            [0, 1, 2].map(|index| {
+                ((u32::from(pixel[index]) * alpha + 255 * (255 - alpha) + 127) / 255) as u8
+            })
+        })
+        .collect()
 }
 
 /// `resize` with `reducing_gap=3.0` (`Image.py`): when either integer
@@ -257,5 +325,44 @@ mod tests {
         let header = turbojpeg::read_header(&bytes).unwrap();
         assert_eq!((header.width, header.height), (1568, 980));
         assert!(prepare(b"invalid JPEG").is_none());
+    }
+
+    #[test]
+    fn completed_jpeg_decode_with_recoverable_entropy_warning_matches_pillow() {
+        // Synthetic one-pixel JPEG with an early entropy marker: Pillow.load()
+        // accepts it, and libjpeg completes its pixel output with JWRN_HIT_MARKER.
+        let original = base64::engine::general_purpose::STANDARD
+            .decode(concat!(
+                "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwg",
+                "JC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAHwAAAQUBAQEBAQEAAAAA",
+                "AAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEI",
+                "I0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1",
+                "dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi",
+                "4+Tl5ufo6erx8vP09fb3+Pn6/9oACAEBAAA/APvV2yCo8X7/2Q==",
+            ))
+            .unwrap();
+        let prepared = prepare(&original).unwrap();
+        assert_eq!((prepared.width, prepared.height), (1, 1));
+        assert_eq!(prepared.mode, "L");
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(&prepared.image_base64)
+                .unwrap(),
+            original
+        );
+        let parsed = super::super::document::parse(&original, ".jpg").unwrap();
+        assert!(parsed.text.contains("尺寸: 1 x 1 像素"));
+        assert!(parsed.text.contains("颜色模式: L"));
+        assert_eq!(parsed.image_base64, Some(prepared.image_base64));
+
+        // Pillow rejects missing EOI and missing scan data; this exception must
+        // not turn either into an accepted upload.
+        assert!(prepare(&original[..original.len() - 2]).is_none());
+        let scan = original
+            .windows(2)
+            .position(|bytes| bytes == [0xff, 0xda])
+            .unwrap();
+        assert!(prepare(&original[..scan]).is_none());
+        assert!(super::super::document::parse(&original[..original.len() - 2], ".jpg").is_err());
     }
 }

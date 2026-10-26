@@ -1,3 +1,4 @@
+import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { constants } from 'node:fs'
 import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
@@ -109,12 +110,6 @@ function writeToolCall(response, id, callId, name, input) {
     },
     responseCompleted(id),
   ])
-}
-
-async function readJson(request) {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
 async function waitFor(condition, message, timeoutMs) {

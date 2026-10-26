@@ -1,46 +1,90 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { ScrollableMessageAreaProps } from '@wegent/collaboration/conversation'
+import type {
+  ConversationSearchTarget,
+  ScrollableMessageAreaProps,
+} from '@wegent/collaboration/conversation'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
-import { resolveAsyncRequestUserInputReplies } from '@wegent/chat-core/runtime-user-input'
+import type {
+  RuntimeTranscriptSearchMatch,
+  RuntimeTranscriptSearchResponse,
+} from '@wegent/chat-core/runtime'
 import {
   isConversationDiagnosticsEnabled,
   recordConversationDiagnostic,
 } from '@wegent/collaboration/conversation/conversationDiagnostics'
 import { getPlatform } from '@/lib/platform'
 import { isImeComposingEvent } from '@/lib/ime'
-import { conversationSearchText, findConversationMatches } from './conversationSearch'
+import {
+  conversationMatchKey,
+  conversationReplyQuestions,
+  deduplicateConversationSearchIndex,
+  findConversationMatches,
+  mergeConversationMatches,
+  resolveConversationMatch,
+} from './conversationSearch'
 
-type SearchSnapshot = {
-  request: { query: string }
-  result: ReturnType<typeof findConversationMatches>
+type SearchRequest = { query: string }
+type SearchResult = ReturnType<typeof mergeConversationMatches>
+type SearchSnapshot = { request: SearchRequest; result: SearchResult }
+type RemoteSearch = {
+  request: SearchRequest
+  status: 'pending' | 'done' | 'failed'
+  result?: RuntimeTranscriptSearchResponse
 }
-
-const EMPTY_RESULT: SearchSnapshot['result'] = {
-  matches: [],
-  totalMatches: 0,
-  isCapped: false,
+type Selection = { index: number }
+type SearchTarget = NonNullable<ReturnType<typeof resolveConversationMatch>> & {
+  query: string
+  matchCounts: ReadonlyMap<string, number>
 }
-
-const searchTextByMessage = new WeakMap<WorkbenchMessage, string>()
-
-function cachedSearchText(message: WorkbenchMessage): string {
-  const cached = searchTextByMessage.get(message)
-  if (cached !== undefined) return cached
-  const text = conversationSearchText(message)
-  searchTextByMessage.set(message, text)
-  return text
+type Hydration = {
+  request: SearchRequest
+  selection: Selection
+  key: string
+  status: 'pending' | 'done' | 'failed' | 'unresolved'
 }
+type LocationFailure = { request: SearchRequest; selection: Selection; key: string }
 
-function sameSearchResult(left: SearchSnapshot['result'], right: SearchSnapshot['result']) {
+const EMPTY_RESULT: SearchResult = { matches: [], totalMatches: 0, isCapped: false }
+
+function sameSearchResult(left: SearchResult, right: SearchResult) {
   return (
     left.totalMatches === right.totalMatches &&
     left.isCapped === right.isCapped &&
     left.matches.length === right.matches.length &&
-    left.matches.every(
-      (match, index) =>
-        match.messageId === right.matches[index].messageId &&
-        match.occurrence === right.matches[index].occurrence
-    )
+    left.matches.every((match, index) => {
+      const other = right.matches[index]
+      return (
+        conversationMatchKey(match) === conversationMatchKey(other) &&
+        match.messageId === other.messageId &&
+        match.occurrence === other.occurrence &&
+        match.regionId === other.regionId &&
+        match.range?.start === other.range?.start &&
+        match.range?.end === other.range?.end &&
+        match.cursor === other.cursor &&
+        match.replyQuestions?.length === other.replyQuestions?.length &&
+        (match.replyQuestions?.every(
+          (question, index) => question === other.replyQuestions?.[index]
+        ) ??
+          true)
+      )
+    })
+  )
+}
+
+function sameSearchTarget(left: SearchTarget | null, right: SearchTarget | null) {
+  if (left === right) return true
+  return Boolean(
+    left &&
+    right &&
+    left.query === right.query &&
+    left.messageId === right.messageId &&
+    left.occurrence === right.occurrence &&
+    left.regionId === right.regionId &&
+    left.range?.start === right.range?.start &&
+    left.range?.end === right.range?.end &&
+    left.source === right.source &&
+    left.matchCounts.size === right.matchCounts.size &&
+    [...left.matchCounts].every(([id, count]) => right.matchCounts.get(id) === count)
   )
 }
 
@@ -55,34 +99,44 @@ export function useConversationFind(
     | 'hasMoreBefore'
     | 'onLoadMoreBefore'
     | 'onLoadTranscriptGap'
-  > & { transcriptError?: string | null },
+  > & {
+    transcriptError?: string | null
+    searchMessages?: WorkbenchMessage[]
+    onSearchTranscript?: (
+      query: string,
+      signal: AbortSignal
+    ) => Promise<RuntimeTranscriptSearchResponse>
+    onEnsureSearchMatch?: (
+      match: RuntimeTranscriptSearchMatch,
+      signal: AbortSignal
+    ) => Promise<void>
+  },
   active: boolean
 ) {
   const [conversationKey, setConversationKey] = useState(props.conversationKey)
   const [open, setOpen] = useState(false)
-  const [searchRequest, setSearchRequest] = useState({ query: '' })
+  const [searchRequest, setSearchRequest] = useState<SearchRequest>({ query: '' })
   const [completedRequest, setCompletedRequest] = useState(searchRequest)
   const [publishedSnapshot, setPublishedSnapshot] = useState<SearchSnapshot>({
     request: searchRequest,
     result: EMPTY_RESULT,
   })
-  const { query } = searchRequest
+  const [remoteSearch, setRemoteSearch] = useState<RemoteSearch | null>(null)
+  const [hydration, setHydration] = useState<Hydration | null>(null)
+  const [locationFailure, setLocationFailure] = useState<LocationFailure | null>(null)
   const [focusRequest, setFocusRequest] = useState(0)
-  const [selected, setSelected] = useState({ index: 0 })
-  const [pending, setPending] = useState(false)
-  const [failed, setFailed] = useState(false)
-  const [retryRequest, setRetryRequest] = useState(0)
+  const [selected, setSelected] = useState<Selection>({ index: 0 })
+  const [navigationTarget, setNavigationTarget] = useState<{
+    selection: Selection
+    target: SearchTarget | null
+  }>({ selection: selected, target: null })
+  const [searchRetry, setSearchRetry] = useState(0)
+  const [hydrationRetry, setHydrationRetry] = useState(0)
   const previousFocus = useRef<HTMLElement | null>(null)
-  const attempted = useRef(new Set<string>())
-  const historyGeneration = useRef(0)
+  const { query } = searchRequest
   useLayoutEffect(() => {
-    historyGeneration.current += 1
     previousFocus.current = null
-    attempted.current.clear()
-    return () => {
-      historyGeneration.current += 1
-    }
-  }, [props.conversationKey])
+  }, [conversationKey])
   if (conversationKey !== props.conversationKey) {
     const request = { query: '' }
     setConversationKey(props.conversationKey)
@@ -90,71 +144,43 @@ export function useConversationFind(
     setSearchRequest(request)
     setCompletedRequest(request)
     setPublishedSnapshot({ request, result: EMPTY_RESULT })
+    setRemoteSearch(null)
+    setHydration(null)
+    setLocationFailure(null)
     setFocusRequest(0)
     setSelected({ index: 0 })
-    setPending(false)
-    setFailed(false)
-    setRetryRequest(0)
   }
   const hasQuery = Boolean(query.trim())
   const queryPending = hasQuery && searchRequest !== completedRequest
-  const { onLoadMoreBefore, onLoadTranscriptGap } = props
-  const { gap, request } = useMemo(() => {
-    const ranges = [...(props.loadedTranscriptRanges ?? [])].sort((a, b) => a.start - b.start)
-    let end = ranges[0]?.end ?? 0
-    let gap: { start: number; end: number } | undefined
-    for (const range of ranges.slice(1)) {
-      if (end < range.start) {
-        gap = { start: end, end: range.start }
-        break
-      }
-      end = Math.max(end, range.end)
-    }
-    const request =
-      gap && onLoadTranscriptGap
-        ? { key: `gap:${gap.start}:${gap.end}`, load: () => onLoadTranscriptGap(gap) }
-        : props.hasMoreBefore && onLoadMoreBefore
-          ? {
-              key: `before:${ranges[0]?.start ?? props.messages[0]?.id}`,
-              load: onLoadMoreBefore,
-            }
-          : null
-    return { gap, request }
-  }, [
-    props.loadedTranscriptRanges,
-    props.hasMoreBefore,
-    props.messages,
-    onLoadMoreBefore,
-    onLoadTranscriptGap,
-  ])
-  const incomplete = Boolean(gap || props.hasMoreBefore)
-  const historyFailed =
-    (failed && incomplete) || Boolean(props.transcriptError) || (incomplete && !request)
-  const historyLoading = Boolean(
-    hasQuery &&
-    (incomplete || props.loading || props.loadingMoreBefore || pending) &&
-    !historyFailed
-  )
-  // Publish one complete transcript, never a partial page or an outdated query.
-  const indexReady =
-    open && active && Boolean(completedRequest.query.trim()) && !historyLoading && !historyFailed
-  const searchReady = indexReady && hasQuery && !queryPending
+  const enabled = open && active && hasQuery
+  const { onSearchTranscript, onEnsureSearchMatch } = props
+  const indexReady = open && active && Boolean(completedRequest.query.trim()) && !props.loading
   const searchIndex = useMemo(() => {
     if (!indexReady) return []
     return measureSearch('search-index', { messageCount: props.messages.length }, () => {
-      const replies = resolveAsyncRequestUserInputReplies(props.messages)
-      return props.messages.map(message => {
-        const replyQuestions = replies.get(message.id)
-        return {
-          messageId: message.id,
-          // Reply text also depends on questions in preceding messages.
-          text: replyQuestions?.length
-            ? conversationSearchText(message, replyQuestions)
-            : cachedSearchText(message),
-        }
-      })
+      const pageMessages = props.searchMessages ?? []
+      const liveReplies = conversationReplyQuestions(props.messages)
+      const pageReplies = conversationReplyQuestions(pageMessages)
+      return deduplicateConversationSearchIndex(
+        [
+          ...props.messages.map(message => ({ message, source: undefined })),
+          ...(onSearchTranscript
+            ? []
+            : pageMessages.map(message => ({ message, source: 'page' as const }))),
+        ].map(({ message, ...source }) => {
+          const replyQuestions = (source.source === 'page' ? pageReplies : liveReplies).get(
+            message.id
+          )
+          return {
+            messageId: message.id,
+            message,
+            replyQuestions,
+            ...source,
+          }
+        })
+      )
     })
-  }, [indexReady, props.messages])
+  }, [indexReady, onSearchTranscript, props.messages, props.searchMessages])
   useEffect(() => {
     if (!open || !active || !queryPending) return
     const startedAt = performance.now()
@@ -167,14 +193,46 @@ export function useConversationFind(
     }, 150)
     return () => window.clearTimeout(timer)
   }, [active, open, queryPending, searchRequest])
+
+  useEffect(() => {
+    if (!enabled || queryPending || !onSearchTranscript) return
+    const controller = new AbortController()
+    Promise.resolve()
+      .then(() => {
+        if (controller.signal.aborted) return
+        setRemoteSearch({ request: completedRequest, status: 'pending' })
+        return onSearchTranscript(completedRequest.query, controller.signal)
+      })
+      .then(result => {
+        if (!controller.signal.aborted && result)
+          setRemoteSearch({ request: completedRequest, status: 'done', result })
+      })
+      .catch(() => {
+        if (!controller.signal.aborted)
+          setRemoteSearch({ request: completedRequest, status: 'failed' })
+      })
+    return () => controller.abort()
+  }, [enabled, queryPending, completedRequest, onSearchTranscript, searchRetry, conversationKey])
+
   const candidateResult = useMemo(() => {
-    if (!searchReady) return null
+    if (!indexReady || queryPending) return null
+    if (
+      onSearchTranscript &&
+      (remoteSearch?.request !== completedRequest || remoteSearch.status !== 'done')
+    )
+      return null
     return measureSearch(
       'search-match',
       { queryLength: completedRequest.query.length, messageCount: searchIndex.length },
-      () => findConversationMatches(searchIndex, completedRequest.query)
+      () =>
+        mergeConversationMatches(
+          findConversationMatches(searchIndex, completedRequest.query),
+          searchIndex,
+          completedRequest.query,
+          onSearchTranscript ? remoteSearch?.result : undefined
+        )
     )
-  }, [searchReady, searchIndex, completedRequest])
+  }, [indexReady, queryPending, onSearchTranscript, remoteSearch, completedRequest, searchIndex])
   if (
     candidateResult &&
     (publishedSnapshot.request !== completedRequest ||
@@ -182,19 +240,153 @@ export function useConversationFind(
   ) {
     setPublishedSnapshot({ request: completedRequest, result: candidateResult })
   }
-  const searchResult = open && active && hasQuery ? publishedSnapshot.result : EMPTY_RESULT
+  const searchResult = enabled ? publishedSnapshot.result : EMPTY_RESULT
   const { matches, totalMatches, isCapped } = searchResult
   const index = selected.index < matches.length ? selected.index : 0
+  if (selected.index !== index) setSelected({ index })
+  const match = matches[index]
+  const matchKey = match ? conversationMatchKey(match) : ''
+  const resolvedMatch = useMemo(
+    () =>
+      match
+        ? resolveConversationMatch(
+            match,
+            props.messages,
+            publishedSnapshot.request.query,
+            props.searchMessages
+          )
+        : null,
+    [match, props.messages, props.searchMessages, publishedSnapshot.request]
+  )
+  const matchesRef = useRef({ match, resolvedMatch })
+  useLayoutEffect(() => {
+    matchesRef.current = { match, resolvedMatch }
+  }, [match, resolvedMatch])
+  const currentHydration =
+    hydration?.selection === selected &&
+    hydration.request === completedRequest &&
+    hydration.request === publishedSnapshot.request &&
+    hydration.key === matchKey
+      ? hydration
+      : null
+  useEffect(() => {
+    const { match, resolvedMatch } = matchesRef.current
+    if (
+      !enabled ||
+      queryPending ||
+      publishedSnapshot.request !== completedRequest ||
+      !match?.cursor ||
+      resolvedMatch
+    )
+      return
+    const controller = new AbortController()
+    const state = { request: publishedSnapshot.request, selection: selected, key: matchKey }
+    Promise.resolve()
+      .then(() => {
+        if (controller.signal.aborted) return
+        if (!onEnsureSearchMatch) throw new Error('Transcript match loading is unavailable')
+        setHydration({ ...state, status: 'pending' })
+        return onEnsureSearchMatch(match as RuntimeTranscriptSearchMatch, controller.signal)
+      })
+      .then(() => {
+        if (!controller.signal.aborted) setHydration({ ...state, status: 'done' })
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setHydration({ ...state, status: 'failed' })
+      })
+    return () => controller.abort()
+  }, [
+    enabled,
+    queryPending,
+    matchKey,
+    selected,
+    publishedSnapshot.request,
+    completedRequest,
+    onEnsureSearchMatch,
+    hydrationRetry,
+    conversationKey,
+  ])
+  // A successful load may dispatch React state before the projected message commits.
+  useEffect(() => {
+    if (currentHydration?.status !== 'done' || resolvedMatch || !enabled || queryPending) return
+    const timer = window.setTimeout(() => {
+      setHydration(state =>
+        state === currentHydration ? { ...state, status: 'unresolved' } : state
+      )
+    }, 1500)
+    return () => window.clearTimeout(timer)
+  }, [currentHydration, resolvedMatch, enabled, queryPending])
+
   const matchCounts = useMemo(() => {
     const counts = new Map<string, number>()
-    for (const match of matches) counts.set(match.messageId, (counts.get(match.messageId) ?? 0) + 1)
+    for (const match of matches) {
+      const target = resolveConversationMatch(
+        match,
+        props.messages,
+        publishedSnapshot.request.query,
+        props.searchMessages
+      )
+      if (target)
+        counts.set(
+          target.messageId,
+          Math.max(counts.get(target.messageId) ?? 0, target.occurrence + 1)
+        )
+    }
     return counts
-  }, [matches])
-  if (selected.index !== index) setSelected({ index })
-  const searchTarget = useMemo(() => {
-    const match = matches[selected.index]
-    return match ? { query: publishedSnapshot.request.query, ...match, matchCounts } : null
-  }, [matches, selected, publishedSnapshot.request, matchCounts])
+  }, [matches, props.messages, props.searchMessages, publishedSnapshot.request])
+  const candidateTarget = useMemo(() => {
+    if (
+      publishedSnapshot.request !== completedRequest ||
+      selected.index !== index ||
+      !resolvedMatch ||
+      currentHydration?.status === 'pending' ||
+      currentHydration?.status === 'failed'
+    )
+      return null
+    return { query: publishedSnapshot.request.query, ...resolvedMatch, matchCounts }
+  }, [
+    completedRequest,
+    resolvedMatch,
+    currentHydration,
+    publishedSnapshot.request,
+    matchCounts,
+    selected,
+    index,
+  ])
+  // Only a changed hit or an explicit selection should restart navigation.
+  if (
+    navigationTarget.selection !== selected ||
+    !sameSearchTarget(navigationTarget.target, candidateTarget)
+  )
+    setNavigationTarget({ selection: selected, target: candidateTarget })
+  const searchTarget = navigationTarget.target
+  const reportNavigationFailure = useCallback(
+    (target: ConversationSearchTarget) => {
+      if (
+        !enabled ||
+        queryPending ||
+        publishedSnapshot.request !== completedRequest ||
+        !searchTarget ||
+        target.query !== searchTarget.query ||
+        target.messageId !== searchTarget.messageId ||
+        target.regionId !== searchTarget.regionId ||
+        target.range?.start !== searchTarget.range?.start ||
+        target.range?.end !== searchTarget.range?.end ||
+        target.occurrence !== searchTarget.occurrence
+      )
+        return
+      setLocationFailure({ request: completedRequest, selection: selected, key: matchKey })
+    },
+    [
+      enabled,
+      queryPending,
+      publishedSnapshot.request,
+      searchTarget,
+      completedRequest,
+      selected,
+      matchKey,
+    ]
+  )
   const changeQuery = useCallback((value: string) => {
     const request = { query: value }
     setSearchRequest(request)
@@ -215,8 +407,8 @@ export function useConversationFind(
   }, [])
   const step = useCallback(
     (direction: 1 | -1) => {
-      if (!matches.length) return
-      setSelected({ index: (index + direction + matches.length) % matches.length })
+      if (matches.length)
+        setSelected({ index: (index + direction + matches.length) % matches.length })
     },
     [index, matches.length]
   )
@@ -231,7 +423,6 @@ export function useConversationFind(
     },
     [query, searchRequest, publishedSnapshot.request, step]
   )
-
   useEffect(() => {
     if (!active) return
     const handleKey = (event: KeyboardEvent) => {
@@ -263,72 +454,55 @@ export function useConversationFind(
     return () => window.removeEventListener('keydown', handleKey)
   }, [active, changeQuery, close, open])
 
-  useEffect(() => {
-    if (
-      !open ||
-      !active ||
-      queryPending ||
-      !completedRequest.query.trim() ||
-      props.loading ||
-      props.loadingMoreBefore ||
-      props.transcriptError ||
-      pending ||
-      !request
-    )
-      return
-    const attemptKey = `${retryRequest}:${request.key}`
-    if (attempted.current.has(attemptKey)) {
-      setFailed(true)
-      return
-    }
-    attempted.current.add(attemptKey)
-    const generation = historyGeneration.current
-    setPending(true)
-    setFailed(false)
-    Promise.resolve()
-      .then(() => {
-        if (historyGeneration.current === generation) return request.load()
-      })
-      .catch(() => {
-        if (historyGeneration.current === generation) setFailed(true)
-      })
-      .finally(() => {
-        if (historyGeneration.current === generation) setPending(false)
-      })
-  }, [
-    active,
-    open,
-    queryPending,
-    completedRequest,
-    pending,
-    props.loading,
-    props.loadingMoreBefore,
-    props.transcriptError,
-    request,
-    retryRequest,
-  ])
-  const isLoading = open && active && (queryPending || historyLoading)
+  const searchFailed =
+    !queryPending && remoteSearch?.request === completedRequest && remoteSearch.status === 'failed'
+  const failure =
+    !enabled || queryPending
+      ? null
+      : searchFailed
+        ? 'request'
+        : currentHydration?.status === 'failed'
+          ? 'load'
+          : (currentHydration?.status === 'unresolved' && !resolvedMatch) ||
+              (locationFailure?.request === completedRequest &&
+                locationFailure.selection === selected &&
+                locationFailure.key === matchKey)
+            ? 'locate'
+            : null
+  const historyFailed = failure === 'load'
+  const remotePending = Boolean(
+    onSearchTranscript &&
+    (remoteSearch?.request !== completedRequest || remoteSearch.status === 'pending')
+  )
+  const historyLoading = Boolean(
+    enabled &&
+    !queryPending &&
+    !failure &&
+    (remotePending ||
+      (publishedSnapshot.request === completedRequest && match?.cursor && !resolvedMatch) ||
+      currentHydration?.status === 'pending')
+  )
+  const isLoading = enabled && (queryPending || historyLoading || Boolean(props.loading))
   useEffect(() => {
     if (!open || !active) return
     recordConversationDiagnostic('search-status', {
       queryPending,
       historyLoading,
-      historyIncomplete: incomplete,
-      historyPending: pending,
       historyFailed,
+      requestFailed: failure === 'request',
+      locationFailed: failure === 'locate',
       loading: Boolean(props.loading),
-      loadingMoreBefore: Boolean(props.loadingMoreBefore),
+      messageCount: props.messages.length,
     })
   }, [
     active,
     open,
     queryPending,
     historyLoading,
-    incomplete,
-    pending,
     historyFailed,
+    failure,
     props.loading,
-    props.loadingMoreBefore,
+    props.messages.length,
   ])
   return {
     open: open && active,
@@ -339,18 +513,27 @@ export function useConversationFind(
     close,
     step,
     submit,
+    navigationRequest: selected,
     searchTarget,
-    result: {
-      matches: totalMatches,
-      active: matches.length ? index + 1 : 0,
-      isCapped,
-    },
+    reportNavigationFailure,
+    result: { matches: totalMatches, active: matches.length ? index + 1 : 0, isCapped },
     isLoading,
     historyLoading,
-    historyFailed: Boolean(query.trim() && historyFailed),
+    historyFailed: Boolean(historyFailed),
+    failure,
     retry: () => {
-      setFailed(false)
-      setRetryRequest(current => current + 1)
+      if (searchFailed) {
+        setRemoteSearch({ request: completedRequest, status: 'pending' })
+        setSearchRetry(value => value + 1)
+      } else if (currentHydration?.status === 'failed') {
+        setHydration({ ...currentHydration, status: 'pending' })
+        setHydrationRetry(value => value + 1)
+      } else if (failure === 'locate') {
+        // Rebuild the result and its anchor; reloading the same stale hit cannot repair it.
+        setSearchRequest({ query })
+        setSelected({ index: 0 })
+        setLocationFailure(null)
+      }
     },
   }
 }

@@ -1,3 +1,4 @@
+import { readRawRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
@@ -6,7 +7,29 @@ import { gunzipSync } from 'node:zlib'
 import { DatabaseSync } from 'node:sqlite'
 
 import { requestExecutor } from '../modules/executor-rpc.mjs'
-import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import {
+  LEGACY_PROMPT,
+  LEGACY_ATTACHMENT_PREVIEW,
+  LEGACY_MATCH_TURNS,
+  assertFindInputFocus,
+  verifyLegacySearch,
+} from '../modules/legacy-history-search.mjs'
+import {
+  createCachedHistoryTask,
+  verifyCachedHistorySearch,
+} from '../modules/cached-history-search.mjs'
+import { createSingleRootLocalProject, selectE2EModel, WORKBENCH_READY_TIMEOUT_MS } from '../modules/shared.mjs'
+import {
+  TERMINAL_HISTORY_TURN_COUNT as LEGACY_TURN_COUNT,
+  seedNativeTerminalHistory,
+  terminalHistoryAssistantEvents,
+  terminalHistoryCompletion,
+  terminalHistoryTurn,
+  terminalHistoryUserText,
+  verifyNativeTerminalHistorySearch,
+  waitForHighlightedHistoryMatch as waitForHighlightedSearchTarget,
+  waitForHistorySearchCount,
+} from '../modules/terminal-history-search.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -17,9 +40,13 @@ const SWITCH_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH'
 const SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SWITCH_COMPLETE'
 const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND'
 const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND_COMPLETE'
-const PAGED_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_PAGED'
+const PAGED_PROMPT = 'WEWORK-DESKTOP-E2E-RUNNING-HISTORY-PAGED'
+const PAGED_SEARCH_TERM = 'foo bar & baz'
+const PAGED_REQUEST = `${PAGED_PROMPT} foo **bar** &amp; baz`
 const PAGED_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_PAGED_COMPLETE'
-const PAGED_ITEM_COUNT = 650
+const PAGED_ITEM_COUNT = 1_250
+const PAGED_ASSISTANT_ITEM = 'paged-history-assistant'
+const PAGED_ASSISTANT_BODY = 'WEWORK_E2E_PAGED_ANCHOR_BODY'
 const LONG_HISTORY_ITEM_COUNT = 1_200
 // High-entropy output forces several transport chunks even after compression.
 const LARGE_TOOL_OUTPUT = Array.from(
@@ -131,13 +158,28 @@ async function seedPaginatedTurnHistory(sqliteHome, threadId, cwd, timeoutMs) {
     const insert = database.prepare(`INSERT INTO thread_items
       (thread_id, turn_id, item_id, rollout_ordinal, created_at_ms, item_json, item_type)
       VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    // Put the search target before the tool history, outside the initial item budget.
+    insert.run(
+      threadId,
+      turn.turn_id,
+      PAGED_ASSISTANT_ITEM,
+      ordinal + 1,
+      Date.now(),
+      JSON.stringify({
+        type: 'agentMessage',
+        id: PAGED_ASSISTANT_ITEM,
+        text: PAGED_ASSISTANT_BODY,
+        phase: 'final_answer',
+      }),
+      'agentMessage'
+    )
     for (let index = 0; index < PAGED_ITEM_COUNT; index += 1) {
       const id = `paged-history-command-${index}`
       insert.run(
         threadId,
         turn.turn_id,
         id,
-        ordinal + index + 1,
+        ordinal + index + 2,
         Date.now(),
         JSON.stringify({
           type: 'commandExecution',
@@ -161,6 +203,85 @@ async function seedPaginatedTurnHistory(sqliteHome, threadId, cwd, timeoutMs) {
   } finally {
     database.close()
   }
+}
+
+async function seedLegacySearchHistory(executorHome, sqliteHome, task) {
+  const threadId = task.thread_id
+  assert.equal(typeof threadId, 'string', 'The legacy fixture has no Codex thread')
+  const path = await findRolloutPath(join(executorHome, 'codex', 'sessions'), threadId)
+  assert.ok(path, 'The legacy fixture rollout was not found')
+  const rollout = (await readFile(path, 'utf8'))
+    .split('\n')
+    .filter(Boolean)
+    .map(line => JSON.parse(line))
+  const metadata = rollout.find(record => record.type === 'session_meta')
+  assert.ok(metadata?.payload, 'The legacy fixture rollout has no session metadata')
+  metadata.payload.history_mode = 'legacy'
+  const records = []
+  for (let index = 0; index < LEGACY_TURN_COUNT; index += 1) {
+    const turnId = `legacy-search-turn-${index}`
+    const terminal = terminalHistoryTurn(index)
+    const answer = terminal?.text ?? `Legacy search answer ${index}`
+    const assistantEvents = terminalHistoryAssistantEvents(index, answer, turnId)
+    const prompt = terminalHistoryUserText(
+      index,
+      LEGACY_MATCH_TURNS.includes(index)
+        ? `${LEGACY_PROMPT} ${index}`
+        : `Legacy search prompt ${index}`
+    )
+    const attachmentTurn = index === LEGACY_MATCH_TURNS[0]
+    const events = [
+      { type: 'task_started', turn_id: turnId, model_context_window: null },
+      {
+        type: 'user_message',
+        message: attachmentTurn
+          ? `${prompt}\n\n# User-provided text attachments\nMIME Type: text/markdown\nContent: ${LEGACY_ATTACHMENT_PREVIEW}`
+          : prompt,
+        client_id: attachmentTurn ? 'legacy-attachment-user' : undefined,
+        text_elements: [],
+        local_images: [],
+      },
+      ...assistantEvents,
+      terminalHistoryCompletion(turnId, assistantEvents.at(-1).message, terminal),
+    ]
+    records.push(
+      ...events.map(payload =>
+        JSON.stringify({ timestamp: '2026-10-20T00:00:00Z', type: 'event_msg', payload })
+      )
+    )
+  }
+  await writeFile(
+    path,
+    `${[...rollout.map(record => JSON.stringify(record)), ...records].join('\n')}\n`
+  )
+  const database = new DatabaseSync(join(sqliteHome, 'state_5.sqlite'))
+  try {
+    const result = database
+      .prepare("UPDATE threads SET history_mode = 'legacy' WHERE id = ?")
+      .run(threadId)
+    assert.equal(Number(result.changes), 1, 'The legacy fixture thread metadata was not updated')
+  } finally {
+    database.close()
+  }
+  delete task.runtime_handle?.completedTranscriptMessages
+  delete task.runtime_handle?.completedTranscriptThreadId
+  task.runtime_handle.userMessagePresentations ??= []
+  task.runtime_handle.userMessagePresentations.push({
+    clientUserMessageId: 'legacy-attachment-user',
+    turnId: `legacy-search-turn-${LEGACY_MATCH_TURNS[0]}`,
+    content: `${LEGACY_PROMPT} ${LEGACY_MATCH_TURNS[0]}`,
+    attachments: [
+      {
+        id: -1,
+        filename: 'notes.md',
+        file_size: Buffer.byteLength(LEGACY_ATTACHMENT_PREVIEW),
+        mime_type: 'text/markdown',
+        status: 'ready',
+        file_extension: '.md',
+        created_at: '2026-10-20T00:00:00Z',
+      },
+    ],
+  })
 }
 
 async function assertLargeHistoryTransfer(executorHome, taskId, threadId) {
@@ -219,6 +340,37 @@ async function waitForTranscriptState(control, predicate, description, timeoutMs
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(`${description}: ${JSON.stringify(latest?.pane?.transcript ?? null)}`)
+}
+
+async function reloadWorkbench(control) {
+  const readyCount = control.readyCount
+  // Reload flushes durable storage before replacing the renderer and reconnecting.
+  await control.command('reloadMainWindow', 'body', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  let timeout
+  try {
+    await Promise.race([
+      control.awaitReadyAfter(readyCount),
+      new Promise((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('The reloaded control client did not reconnect')),
+          WORKBENCH_READY_TIMEOUT_MS
+        )
+      }),
+    ])
+  } finally {
+    clearTimeout(timeout)
+  }
+  // Control registration precedes device discovery and persisted task restoration.
+  await waitForTranscriptState(
+    control,
+    snapshot =>
+      snapshot.workbench?.isBootstrapping === false &&
+      snapshot.workbench.runtimeWorkSummary.totalTasks > 0,
+    'The reloaded workbench did not restore its task index',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
 }
 
 async function verifyMoveToProject(control, { taskId, executorHome, timeoutMs }) {
@@ -290,6 +442,10 @@ export function createDesktopScenario({
   let active = false
   let restartDesktopApp
   let secondRequestReceivedResolve
+  let pagedRequestReceivedResolve
+  const pagedRequestReceived = new Promise(resolve => {
+    pagedRequestReceivedResolve = resolve
+  })
   let releasePagedResponseResolve
   const releasePagedResponse = new Promise(resolve => {
     releasePagedResponseResolve = resolve
@@ -311,9 +467,7 @@ export function createDesktopScenario({
       if (!active || request.method !== 'POST') return false
       if (!['/v1/responses', '/responses'].includes(url.pathname)) return false
 
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      const body = Buffer.concat(chunks).toString('utf8')
+      const body = await readRawRequestBody(request)
       const responseId = `wework-running-history-${Date.now()}`
       response.writeHead(200, {
         'Cache-Control': 'no-cache',
@@ -324,6 +478,7 @@ export function createDesktopScenario({
       if (body.includes(PAGED_PROMPT)) {
         response.flushHeaders()
         response.write(sse([responseCreated(responseId)]))
+        pagedRequestReceivedResolve()
         await releasePagedResponse
         response.end(
           sse([assistantMessage(responseId, PAGED_COMPLETION), responseCompleted(responseId)])
@@ -401,6 +556,7 @@ export function createDesktopScenario({
       const switchTaskRowTestId = await waitForNewTaskRow(control, rowsAfterFirstTask, uiTimeoutMs)
       const switchTaskId = switchTaskRowTestId.replace('runtime-local-task-row-', '')
       const switchTaskRow = `[data-testid="${switchTaskRowTestId}"]`
+      const cachedTaskId = `${switchTaskId}-cached-search`
       await waitForTranscriptState(
         control,
         snapshot =>
@@ -471,6 +627,27 @@ export function createDesktopScenario({
         const indexPath = join(executorHome, 'runtime-work', 'index.json')
         const index = JSON.parse(await readFile(indexPath, 'utf8'))
         const task = Object.values(index.tasks ?? {}).find(
+          candidate => candidate.local_task_id === switchTaskId
+        )
+        assert.ok(task?.thread_id, 'The completed native search task was missing')
+        const cachedTask = createCachedHistoryTask(task)
+        index.tasks[cachedTask.local_task_id] = cachedTask
+        seedNativeTerminalHistory(codexSqliteHome, task.thread_id)
+        delete task.runtime_handle?.completedTranscriptMessages
+        delete task.runtime_handle?.completedTranscriptThreadId
+        await writeFile(indexPath, `${JSON.stringify(index)}\n`, 'utf8')
+      })
+      await control.command('waitFor', switchTaskRow, { timeoutMs: uiTimeoutMs })
+      await control.command('clickWhenEnabled', switchTaskRow, { timeoutMs: uiTimeoutMs })
+      await verifyNativeTerminalHistorySearch(
+        control,
+        await waitForTaskAddress(control, switchTaskId, uiTimeoutMs),
+        uiTimeoutMs
+      )
+      await restartDesktopApp(async () => {
+        const indexPath = join(executorHome, 'runtime-work', 'index.json')
+        const index = JSON.parse(await readFile(indexPath, 'utf8'))
+        const task = Object.values(index.tasks ?? {}).find(
           candidate => candidate.local_task_id === taskId
         )
         assert.ok(task, 'The running-history task was missing from the persisted runtime index')
@@ -484,6 +661,11 @@ export function createDesktopScenario({
         const longHistory = appendLongRunningHistory(rollout, threadId)
         await appendFile(threadPath, `${longHistory}\n`, 'utf8')
         task.runtime_handle.cloudTranscript ??= {}
+        const legacyTask = Object.values(index.tasks ?? {}).find(
+          candidate => candidate.local_task_id === switchTaskId
+        )
+        assert.ok(legacyTask, 'The legacy search task was missing from the runtime index')
+        await seedLegacySearchHistory(executorHome, codexSqliteHome, legacyTask)
         await writeFile(indexPath, `${JSON.stringify(index)}\n`, 'utf8')
       })
       await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
@@ -511,6 +693,31 @@ export function createDesktopScenario({
         'The restored conversation did not include the complete long tool history'
       )
       await assertLargeHistoryTransfer(executorHome, taskId, moved.address.threadId)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: FIRST_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+
+      await control.command('click', switchTaskRow)
+      await verifyLegacySearch(control, uiTimeoutMs)
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="runtime-local-task-row-${cachedTaskId}"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      const cachedAddress = await waitForTaskAddress(control, cachedTaskId, uiTimeoutMs)
+      await verifyCachedHistorySearch(
+        control,
+        query =>
+          requestExecutor(
+            control,
+            'runtime.tasks.transcript.search',
+            { address: cachedAddress, query },
+            uiTimeoutMs
+          ),
+        uiTimeoutMs
+      )
+      await control.command('click', taskRow)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: FIRST_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -545,11 +752,20 @@ export function createDesktopScenario({
       )
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('fill', COMPOSER_SELECTOR, { value: PAGED_PROMPT })
+      await control.command('fill', COMPOSER_SELECTOR, { value: PAGED_REQUEST })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       const pagedRowId = await waitForNewTaskRow(control, rowsBeforePagedTask, uiTimeoutMs)
       const pagedTaskId = pagedRowId.replace('runtime-local-task-row-', '')
       const pagedAddress = await waitForTaskAddress(control, pagedTaskId, uiTimeoutMs)
+      await Promise.race([
+        pagedRequestReceived,
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error('The paginated-history model request was not received')),
+            uiTimeoutMs
+          )
+        ),
+      ])
       await control.command('waitFor', '[data-testid="pause-response-button"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -559,6 +775,24 @@ export function createDesktopScenario({
         pagedAddress.workspacePath,
         uiTimeoutMs
       )
+      const persistedSearch = await requestExecutor(
+        control,
+        'runtime.tasks.transcript.search',
+        { address: pagedAddress, query: PAGED_SEARCH_TERM },
+        uiTimeoutMs
+      )
+      assert.equal(persistedSearch.totalMatches, 1, 'Persisted search missed rendered user text')
+      assert.equal(persistedSearch.matches.length, 1)
+      assert.ok(persistedSearch.matches[0].cursor?.startsWith('wework-codex-search:'))
+      const anchorSearch = await requestExecutor(
+        control,
+        'runtime.tasks.transcript.search',
+        { address: pagedAddress, query: PAGED_ASSISTANT_BODY },
+        uiTimeoutMs
+      )
+      assert.equal(anchorSearch.totalMatches, 1)
+      assert.equal(anchorSearch.matches[0].itemId, PAGED_ASSISTANT_ITEM)
+      const anchorMessageId = `runtime-view:${anchorSearch.matches[0].turnId}:assistant`
       const pageRequest = { address: pagedAddress, limit: 50 }
       const nativePage = await requestExecutor(
         control,
@@ -570,7 +804,11 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       assert.equal(nativePage.hasMoreBefore, true, 'The fixture must exceed the native item budget')
-      assert.ok(nativePage.beforeCursor?.startsWith('wework-codex-items:'))
+      assert.ok(nativePage.beforeCursor?.startsWith('wework-codex-timeline:'))
+      assert.ok(
+        nativePage.turns.every(turn => turn.items.every(item => item.id !== PAGED_ASSISTANT_ITEM)),
+        'The anchor search must require loading an older native item'
+      )
       const cachedPage = await requestExecutor(
         control,
         'runtime.tasks.transcript',
@@ -599,21 +837,20 @@ export function createDesktopScenario({
         'Pagination returned the live cache again'
       )
 
-      const pagedReadyCount = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await Promise.race([
-        control.awaitReadyAfter(pagedReadyCount),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error('The paginated conversation did not reconnect')),
-            uiTimeoutMs
-          )
-        ),
-      ])
+      await reloadWorkbench(control)
       await control.command('waitFor', `[data-testid="${pagedRowId}"]`, {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', `[data-testid="${pagedRowId}"]`)
+      const restored = await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === pagedTaskId &&
+          snapshot.pane?.transcript?.loading === false,
+        'The paginated conversation did not finish restoration',
+        WORKBENCH_READY_TIMEOUT_MS
+      )
+      assert.equal(restored.pane.transcript.hasMoreBefore, true)
       const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
       await control.command('waitFor', loadOlder, { timeoutMs: uiTimeoutMs })
       for (let page = 0; page < 2; page += 1) {
@@ -622,13 +859,122 @@ export function createDesktopScenario({
           control,
           snapshot => snapshot.pane?.transcript?.loadingMoreBefore === false,
           'Native item pagination did not finish',
-          uiTimeoutMs
+          // This checkpoint deliberately delays transcript reads and restores 1,250 native
+          // items. Include queued reads and hydration in the existing restoration budget.
+          WORKBENCH_READY_TIMEOUT_MS
         )
       }
-      const pagedSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
+      const nativeSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
       assert.ok(
-        pagedSnapshot.runtimeAssistantDisplayItemCount >= PAGED_ITEM_COUNT,
+        nativeSnapshot.runtimeAssistantDisplayItemCount >= PAGED_ITEM_COUNT,
         'The UI did not restore the middle of the running native turn'
+      )
+      // Restore a partially loaded live view before testing isolated search pages.
+      await reloadWorkbench(control)
+      await control.command('waitFor', `[data-testid="${pagedRowId}"]`)
+      await control.command('click', `[data-testid="${pagedRowId}"]`)
+      await control.command('waitFor', loadOlder)
+      const originalSearchPane = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      ).pane
+      const comparison = originalSearchPane.messageStyleComparison
+      const partialAssistant = [comparison.transcriptLoaded, comparison.currentStreaming].find(
+        message => message?.id === anchorMessageId
+      )
+      assert.ok(partialAssistant, 'The partially loaded anchor assistant was not projected')
+      assert.equal(partialAssistant.hasVisibleContent, false, 'The older body was already loaded')
+      assert.ok(
+        partialAssistant.blockCount < PAGED_ITEM_COUNT,
+        'The live turn was already complete'
+      )
+      const findInput = '[data-testid="conversation-find-input"]'
+      await control.command('nativePress', COMPOSER_SELECTOR, {
+        key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
+      })
+      await assertFindInputFocus(control, findInput)
+      await control.command('fill', findInput, { value: `${PAGED_PROMPT}_NO_MATCH` })
+      await waitForHistorySearchCount(control, '0 个结果', uiTimeoutMs)
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="conversation-find-loading-icon"]')
+        ),
+        0,
+        'An unsuccessful history search did not settle'
+      )
+      await control.command('fill', findInput, { value: PAGED_SEARCH_TERM })
+      await waitForHistorySearchCount(control, '1 / 1', uiTimeoutMs)
+      assert.equal(
+        (await control.command('getText', '[data-testid="conversation-find-count"]')).trim(),
+        '1 / 1 个结果',
+        'Conversation search must find exactly one historical prompt'
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid="conversation-find-retry"]')),
+        0,
+        'Conversation search reported a history failure after native item pagination'
+      )
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="conversation-find-loading-icon"]')
+        ),
+        0,
+        'Conversation search kept loading after locating the historical match'
+      )
+      await control.command('waitFor', '[data-testid="user-message-content"]', {
+        text: `${PAGED_PROMPT} ${PAGED_SEARCH_TERM}`,
+      })
+      await waitForHighlightedSearchTarget(
+        control,
+        `${PAGED_PROMPT} ${PAGED_SEARCH_TERM}`,
+        uiTimeoutMs
+      )
+      // The prompt is already cached. Only the older assistant item exercises isolated hydration.
+      await control.command('fill', findInput, { value: PAGED_ASSISTANT_BODY })
+      await waitForHistorySearchCount(control, '1 / 1', uiTimeoutMs)
+      const anchorMessage = `${ACTIVE_WORKBENCH_SELECTOR} [data-message-id="${anchorMessageId}"]`
+      await waitForHighlightedSearchTarget(
+        control,
+        PAGED_ASSISTANT_BODY,
+        uiTimeoutMs,
+        `${anchorMessage} [data-testid="assistant-message-content"]`,
+        0
+      )
+      await control.command('expandProcessingSummaries', 'body')
+      const toolStats = `${anchorMessage} [data-testid="processing-tool-stats"]`
+      await control.command('waitFor', toolStats, { text: String(PAGED_ITEM_COUNT) })
+      assert.equal(
+        (await control.command('getText', toolStats)).trim(),
+        String(PAGED_ITEM_COUNT),
+        'The isolated search page must project every tool in the anchor turn'
+      )
+      for (const index of [0, PAGED_ITEM_COUNT - 1]) {
+        const tool = `${anchorMessage} [data-processing-block-id="paged-history-command-${index}"]`
+        await control.command('waitFor', tool)
+        await control.command('scrollIntoView', tool)
+        await control.command('waitFor', tool, { visible: true })
+      }
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid="conversation-find-retry"]')),
+        0,
+        'Loading the complete anchor turn must not report a history failure'
+      )
+      await control.command('nativePress', findInput, { key: 'Escape' })
+      await control.command('waitFor', loadOlder)
+      await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.pane?.transcript?.hasMoreBefore === true &&
+          snapshot.pane?.transcript?.loadingMoreBefore === false,
+        'Search changed the original conversation pagination state',
+        uiTimeoutMs
+      )
+      const restoredSearchPane = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      ).pane
+      assert.deepEqual(restoredSearchPane.messageSummary, originalSearchPane.messageSummary)
+      assert.deepEqual(
+        restoredSearchPane.transcript.loadedRanges,
+        originalSearchPane.transcript.loadedRanges
       )
       releasePagedResponseResolve()
       await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -637,17 +983,7 @@ export function createDesktopScenario({
       })
       await control.command('click', taskRow)
 
-      const readyCountBeforeReload = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await Promise.race([
-        control.awaitReadyAfter(readyCountBeforeReload),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error('The reloaded Wework window did not reconnect')),
-            uiTimeoutMs
-          )
-        ),
-      ])
+      await reloadWorkbench(control)
       await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
       })

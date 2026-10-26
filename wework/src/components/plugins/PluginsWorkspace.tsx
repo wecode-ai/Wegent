@@ -8,7 +8,15 @@ import { useInstalledPluginDetail } from './hooks/useInstalledPluginDetail'
 import { useOpenAiPluginCatalog } from '@/features/plugins/useOpenAiPluginCatalog'
 import { RefreshCw, Settings2 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { ApiError } from '@/api/http'
@@ -99,8 +107,10 @@ import { MarketplaceCatalogView } from './workspace/MarketplaceCatalogView'
 import {
   beginPluginDeviceSync,
   collectPluginDeviceStatusReports,
+  getPluginDeviceSyncRevision,
   hasAttemptedPluginDeviceAutoSync,
   hasAttemptedPluginDeviceStatusReport,
+  hasInFlightPluginDeviceSync,
   hasSettledPluginDeviceAutoSync,
   marketplaceItemNeedsDeviceSync,
   marketplaceItemOffersDeviceSyncRetry,
@@ -108,6 +118,7 @@ import {
   markPluginDeviceAutoSyncAttempted,
   markPluginDeviceAutoSyncSettled,
   markPluginDeviceStatusReportAttempted,
+  subscribePluginDeviceSync,
   withAcknowledgedDeviceInstallations,
   withAcknowledgedMarketplaceDeviceState,
   withOptimisticDevicePending,
@@ -183,7 +194,7 @@ import {
   marketplaceItemMarketplaceId,
   marketplacePluginDistribution,
 } from './pluginDistribution'
-import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
+import { pluginDetailPrimaryActionPending, pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 
 import {
   CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS,
@@ -339,6 +350,7 @@ export function PluginsWorkspace({
   const [isDeletingPersonalPlugin, setIsDeletingPersonalPlugin] = useState(false)
   const [pendingLocalConnectorAuth, setPendingLocalConnectorAuth] = useState<{
     target: LocalConnectorAuthTarget
+    purpose: 'install' | 'manage'
     title: string
     description?: string
     resolve: () => void
@@ -448,6 +460,9 @@ export function PluginsWorkspace({
   })
   const [currentDeviceId, setCurrentDeviceId] = useState(
     () => initialMarketplaceCache?.deviceId || initialDurablePeek?.deviceId || ''
+  )
+  const deviceSyncRevision = useSyncExternalStore(subscribePluginDeviceSync, () =>
+    getPluginDeviceSyncRevision(currentDeviceId)
   )
   const [pluginShareState, setPluginShareState] = useState<PluginShareState | null>(null)
   const [pluginShareSaving, setPluginShareSaving] = useState(false)
@@ -833,7 +848,10 @@ export function PluginsWorkspace({
           items: nextItems,
           installed: nextInstalledRaw,
           installingIds: installingMarketplacePluginIdsRef.current,
-          authPluginKey: pendingLocalConnectorAuthRef.current?.target.pluginKey,
+          authPluginKey:
+            pendingLocalConnectorAuthRef.current?.purpose === 'install'
+              ? pendingLocalConnectorAuthRef.current.target.pluginKey
+              : null,
         })
         const nextInstalled = heldBack.installed
         setInstalledPlugins(previous =>
@@ -2525,12 +2543,14 @@ export function PluginsWorkspace({
 
   const promptLocalConnectorAuth = (input: {
     target: LocalConnectorAuthTarget
+    purpose: 'install' | 'manage'
     title: string
     description?: string
   }) =>
     new Promise<void>((resolve, reject) => {
       setPendingLocalConnectorAuth({
         target: input.target,
+        purpose: input.purpose,
         title: input.title,
         description: input.description,
         resolve,
@@ -2620,6 +2640,7 @@ export function PluginsWorkspace({
       try {
         await promptLocalConnectorAuth({
           target,
+          purpose: 'install',
           title: isLocalBrowserConnector(connector)
             ? t('workbench.plugins_local_browser_install_title', {
                 defaultValue: `授权 ${displayName}`,
@@ -2768,6 +2789,7 @@ export function PluginsWorkspace({
       try {
         await promptLocalConnectorAuth({
           target,
+          purpose: 'manage',
           description: localConnector.description || undefined,
           title: githubCli
             ? t('workbench.github_cli_login_title')
@@ -3083,7 +3105,10 @@ export function PluginsWorkspace({
         items: retained.items,
         installed: retained.installed,
         installingIds: installingMarketplacePluginIdsRef.current,
-        authPluginKey: pendingLocalConnectorAuthRef.current?.target.pluginKey,
+        authPluginKey:
+          pendingLocalConnectorAuthRef.current?.purpose === 'install'
+            ? pendingLocalConnectorAuthRef.current.target.pluginKey
+            : null,
       })
       const nextInstalled = heldBack.installed
       const mergedItems = heldBack.items
@@ -3314,7 +3339,10 @@ export function PluginsWorkspace({
         items: retained.items,
         installed: retained.installed,
         installingIds: installingMarketplacePluginIdsRef.current,
-        authPluginKey: pendingLocalConnectorAuthRef.current?.target.pluginKey,
+        authPluginKey:
+          pendingLocalConnectorAuthRef.current?.purpose === 'install'
+            ? pendingLocalConnectorAuthRef.current.target.pluginKey
+            : null,
       })
       const nextInstalled = heldBack.installed
       const mergedItems = heldBack.items
@@ -3443,7 +3471,10 @@ export function PluginsWorkspace({
             items: retained.items,
             installed: retained.installed,
             installingIds: installingMarketplacePluginIdsRef.current,
-            authPluginKey: pendingLocalConnectorAuthRef.current?.target.pluginKey,
+            authPluginKey:
+              pendingLocalConnectorAuthRef.current?.purpose === 'install'
+                ? pendingLocalConnectorAuthRef.current.target.pluginKey
+                : null,
           })
           const nextInstalled = heldBack.installed
           const mergedItems = heldBack.items
@@ -4018,6 +4049,10 @@ export function PluginsWorkspace({
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (personalDiskSettledKey !== marketplaceCacheKeyValue) return
     if (pendingDevicePackageSync) return
+    // A sync effect earlier in this commit can acquire the lock before React
+    // publishes its new snapshot. Recheck the live lock; the subscription resumes
+    // reconciliation after release even if catalog/connection hints changed.
+    if (hasInFlightPluginDeviceSync(currentDeviceId)) return
 
     const skipLocalCatalogReconcile = skipLocalCatalogReconcileRef.current
     skipLocalCatalogReconcileRef.current = false
@@ -4063,6 +4098,8 @@ export function PluginsWorkspace({
     }
   }, [
     applyLiveCodexCatalog,
+    currentDeviceId,
+    deviceSyncRevision,
     localInstalledStateReadyKey,
     localPluginApi,
     marketplaceCacheKeyValue,
@@ -4594,6 +4631,7 @@ export function PluginsWorkspace({
         cancelLabel={t('common.cancel', '取消')}
         confirmLabel={t('workbench.plugins_update', '更新')}
         confirmTestId="plugin-update-confirm-button"
+        pending={isReconcilingPlugins}
         onClose={() => setPendingPluginUpdate(null)}
         onConfirm={() => {
           const item = pendingPluginUpdate
@@ -5007,7 +5045,10 @@ export function PluginsWorkspace({
     const baseDetailPlugin = installedDetail
       ? withMarketplaceListingInterface(installedDetail, selectedMarketplacePlugin)
       : toMarketplaceInstalledPluginItem(selectedMarketplacePlugin)
-    const detailPlugin = selectedMarketplacePluginDetail ?? baseDetailPlugin
+    // Detail reads enrich presentation; the inventory owns installation identity.
+    const detailPlugin = selectedMarketplacePluginDetail
+      ? withMarketplacePluginDetail(baseDetailPlugin, selectedMarketplacePluginDetail.raw)
+      : baseDetailPlugin
     const detailedMarketplacePlugin = withMarketplaceDetailComponents(
       selectedMarketplacePlugin,
       detailPlugin
@@ -5038,12 +5079,18 @@ export function PluginsWorkspace({
       marketplaceItemCanRetryPluginUpdate(selectedMarketplacePlugin) &&
       selectedMarketplacePlugin.installed &&
       selectedMarketplacePlugin.installedPluginId
+    const primaryActionPending = pluginDetailPrimaryActionPending({
+      operationPending: isActionPending,
+      reconciling: isReconcilingPlugins,
+      readyToTry: isInstalled,
+      updateAvailable: Boolean(canUpdate),
+    })
     const autoUpdatePaused = marketplaceItemHasPausedPluginAutoUpdate(selectedMarketplacePlugin)
     const showDetailActionMenu =
       isInstalled ||
       (selectedMarketplacePlugin.installedPluginId !== null &&
         selectedMarketplacePlugin.installedPluginId !== undefined)
-    const marketplacePrimaryIcon: 'try' | 'install' | 'none' = isActionPending
+    const marketplacePrimaryIcon: 'try' | 'install' | 'none' = primaryActionPending
       ? 'none'
       : isInstalled
         ? 'try'
@@ -5216,7 +5263,7 @@ export function PluginsWorkspace({
               : undefined
           }
           primaryActionLabel={
-            isActionPending
+            primaryActionPending
               ? isUninstalling
                 ? t('workbench.plugins_uninstalling', '正在卸载')
                 : isInstalling
@@ -5238,7 +5285,7 @@ export function PluginsWorkspace({
                       : t('workbench.plugins_install_plugin', '安装插件')
           }
           primaryActionIcon={marketplacePrimaryIcon}
-          primaryActionDisabled={isActionPending}
+          primaryActionDisabled={primaryActionPending}
           tertiaryActionLabel={
             selectedMarketplacePlugin.accessRole === 'recipient' &&
             selectedMarketplacePlugin.allowCopy

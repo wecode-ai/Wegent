@@ -157,11 +157,11 @@ export function useWorkbenchModels({
   )
   const isSelectionReady = useMemo(
     () =>
-      !enabled ||
-      (selectionReady &&
-        hasCompletedModelLoad &&
-        !configuredModelUnavailable &&
-        (restoredSelectionKeyByScope[scopeKey] === selectionKey || selectionMatchesConfig)),
+      enabled &&
+      selectionReady &&
+      hasCompletedModelLoad &&
+      !configuredModelUnavailable &&
+      (restoredSelectionKeyByScope[scopeKey] === selectionKey || selectionMatchesConfig),
     [
       configuredModelUnavailable,
       enabled,

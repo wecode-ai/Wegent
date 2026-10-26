@@ -1,6 +1,8 @@
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import i18n from '@/i18n'
-import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
+import { navigateTo } from '@/lib/navigation'
+import { weworkTaskScheme } from '@/features/notifications/scheme'
+import { openWeworkScheme } from '@/features/notifications/schemeEvents'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { EMPTY_TRAY_MENU_TASK_GROUPS, type TrayMenuTaskGroups } from './trayMenuState'
 import { parseTrayTaskMenuId } from './trayTaskMenuId'
@@ -66,7 +68,7 @@ export function installTraySettingsNavigation() {
         navigateTo('/settings')
       } else if (action.type === 'open-task' && typeof action.taskId === 'string') {
         const address = parseTrayTaskMenuId(action.taskId)
-        if (address) navigateTo(buildRuntimeTaskRoute(address))
+        if (address) openWeworkScheme(weworkTaskScheme(address))
       }
     })
   }

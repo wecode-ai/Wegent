@@ -702,7 +702,7 @@ jobs:
         test-wegent-cli,
         test-wegent-cli-integration,
       ]
-    if: always() && github.event_name != 'merge_group'
+    if: always() && !cancelled() && github.event_name != 'merge_group'
 
     steps:
       - name: Check test results

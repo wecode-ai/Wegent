@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
 import { test } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
-import { CLOUD_VISION_SIDECAR_CASE, MODEL_API_KEY } from '../e2e/desktop/modules/shared.mjs'
+import {
+  CLOUD_VISION_SIDECAR_CASE,
+  LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES,
+  MODEL_API_KEY,
+} from '../e2e/desktop/modules/shared.mjs'
 import {
   handleEmptyReplyPrediction,
   isReplyPredictionRequest,
@@ -15,6 +19,22 @@ function predictionMetadata(requestKind = 'turn') {
       thread_source: 'composer_predictions',
       request_kind: requestKind,
     }),
+  }
+}
+
+function visionBody(context) {
+  return {
+    model: CLOUD_VISION_SIDECAR_CASE.sidecarModelId,
+    stream: false,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: `Describe this image.\n\nThe user's request:\n\n${context}` },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,fixture' } },
+        ],
+      },
+    ],
   }
 }
 
@@ -112,19 +132,7 @@ test('keeps prediction image descriptions separate from conversation cache asser
   const server = new DesktopE2EServer('/tmp/reply-prediction-vision-fixture')
   server.scenario = 'vision_sidecar'
   for (const context of ['Describe the attached image', REPLY_PREDICTION_PROMPT]) {
-    const body = {
-      model: CLOUD_VISION_SIDECAR_CASE.sidecarModelId,
-      stream: false,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: `Describe this image.\n\nThe user's request:\n\n${context}` },
-            { type: 'image_url', image_url: { url: 'data:image/png;base64,fixture' } },
-          ],
-        },
-      ],
-    }
+    const body = visionBody(context)
     const request = Readable.from([JSON.stringify(body)])
     request.headers = { authorization: `Bearer ${MODEL_API_KEY}` }
     let output
@@ -144,5 +152,40 @@ test('keeps prediction image descriptions separate from conversation cache asser
   assert.deepEqual(
     server.visionSidecarRequests.map(request => request.kind),
     ['vision', 'prediction-vision']
+  )
+})
+
+test('serves late prediction image descriptions without consuming the active protocol matrix', async () => {
+  const server = new DesktopE2EServer('/tmp/reply-prediction-late-vision-fixture')
+  server.setMatrixCase(
+    LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES.find(model => model.protocol === 'responses')
+  )
+  const request = Readable.from([JSON.stringify(visionBody(REPLY_PREDICTION_PROMPT))])
+  request.headers = { authorization: `Bearer ${MODEL_API_KEY}` }
+  let output
+  const response = {
+    writeHead(status) {
+      assert.equal(status, 200)
+    },
+    end(value) {
+      output = JSON.parse(value)
+    },
+  }
+
+  await server.handleModelResponse(request, response, 'chat')
+
+  assert.ok(output.choices[0].message.content)
+  assert.equal(server.scenario, 'model_protocol_matrix')
+  assert.equal(server.matrixState.stage, 'text')
+  assert.deepEqual(server.matrixState.requests, [])
+  assert.deepEqual(
+    server.visionSidecarRequests.map(row => row.kind),
+    ['prediction-vision']
+  )
+  const foreground = Readable.from([JSON.stringify(visionBody('Describe the attached image'))])
+  foreground.headers = { authorization: `Bearer ${MODEL_API_KEY}` }
+  await assert.rejects(
+    server.handleModelResponse(foreground, response, 'chat'),
+    /local-local-responses reached the wrong endpoint/
   )
 })

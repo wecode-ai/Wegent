@@ -79,6 +79,10 @@ async def sync_plugin_after_change(
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
             ) from exc
+        except PluginWriteError as exc:
+            return deferred_plugin_sync(
+                exc, user_id=user_id, device_id=device_id, stage="snapshot"
+            )
         finally:
             db.close()
         return await record_sync_response(
@@ -110,7 +114,7 @@ async def sync_plugin_after_change(
         required_installed_kind_id=installed_id,
         require_device_success=False,
     )
-    if any(item.get("stage") == "global_ack" for item in result.errors):
+    if any(item.get("stage") in {"global_ack", "snapshot"} for item in result.errors):
         return result
     return (
         await ensure_installed_plugin_on_device(
@@ -159,6 +163,17 @@ async def ensure_installed_plugin_on_device(
     previous: DeviceCapabilitySyncResponse | None = None,
     manual_retry: bool = False,
 ) -> DeviceCapabilitySyncResponse | None:
+    if (
+        device_id
+        and previous
+        and await run_plugin_operation(
+            _has_current_plugin_snapshot,
+            user_id=user_id,
+            device_id=device_id,
+            previous=previous,
+        )
+    ):
+        return previous
     if not device_id or not await run_plugin_operation(
         _needs_device_install,
         user_id=user_id,
@@ -193,6 +208,22 @@ async def ensure_installed_plugin_on_device(
         device_id=device_id,
         stage="plugin_ack",
         installed_kind_id=installed_id,
+    )
+
+
+def _has_current_plugin_snapshot(
+    db: Session,
+    *,
+    user_id: int,
+    device_id: str,
+    previous: DeviceCapabilitySyncResponse,
+) -> bool:
+    """A v2 result for another device must not suppress the old-device retry."""
+    return any(
+        result.desired_plugin_snapshot is not None
+        and plugin_device_id(db, user_id, result.device_id)
+        == plugin_device_id(db, user_id, device_id)
+        for result in previous.results
     )
 
 
@@ -270,8 +301,25 @@ async def sync_global_capabilities(
     require_device_success: bool = True,
 ) -> DeviceCapabilitySyncResponse:
     try:
-        result = await device_capability_sync_service.sync_user_global_capabilities(
-            db, user_id=user_id
+        if required_installed_kind_id is not None:
+            from app.services.device.plugin_change_sync import (
+                sync_changed_plugin_to_devices,
+            )
+
+            result = await sync_changed_plugin_to_devices(
+                device_capability_sync_service,
+                db,
+                user_id=user_id,
+                installed_plugin_id=required_installed_kind_id,
+                current_device_id=required_device_id,
+            )
+        else:
+            result = await device_capability_sync_service.sync_user_global_capabilities(
+                db, user_id=user_id
+            )
+    except PluginWriteError as exc:
+        return deferred_plugin_sync(
+            exc, user_id=user_id, device_id=required_device_id, stage="snapshot"
         )
     finally:
         db.close()

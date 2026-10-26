@@ -14,8 +14,11 @@
 //! `_get_attachment_context` (`get_context_optional` SELECT, 404 when absent
 //! or not the `attachment` context type, `_ensure_attachment_access`) and
 //! `AttachmentDetailResponse.from_context` (a pure row projection; no
-//! further dependency calls). Share-token access is a separate method that
-//! the recorded case does not exercise. The download-token route uses the
+//! further dependency calls). The recorded cases use the JWT method; the
+//! share-token method is the public shared-task branch: `share_token.rs`
+//! validates the task/subtask/owner chain and a granted viewer re-reads the
+//! context directly (no `_ensure_attachment_access`), exactly like the
+//! playback and download endpoints. The download-token route uses the
 //! required `get_current_user`, the same context/access check, and the
 //! knowledge-document download policy before minting its token.
 use std::sync::Arc;
@@ -49,54 +52,80 @@ async fn attachment_detail(
     share_token: Option<&str>,
     user: Option<&UserRow>,
 ) -> Result<AttachmentDetailResponse, crate::http_compat::FastApiError> {
-    if share_token.is_some() {
-        // Share-token authentication: decode_share_token plus the task/
-        // subtask ownership chain; the recorded case uses the JWT method.
-        return Err(error_response(
-            StatusCode::FORBIDDEN,
-            "Share token access denied",
-        ));
-    }
-
-    let Some(user) = user else {
-        return Err(error_response(
-            StatusCode::UNAUTHORIZED,
-            "Authentication required",
-        ));
-    };
-
-    let context = match context_store::get_context_optional(&state.mysql, attachment_id).await {
-        Ok(context) => context,
-        Err(error) => {
-            tracing::error!(%error, "attachment context lookup failed");
-            return Err(internal_error());
+    // A present `share_token` selects the public shared-task method; an empty
+    // parameter is falsy in the source and falls through to the session JWT.
+    let context = match share_token.filter(|token| !token.is_empty()) {
+        Some(token) => {
+            // Method 1: the share-token viewer. `_validate_share_token_access`
+            // owns the task/subtask/owner chain; a denied token renders the
+            // endpoint's 403 (not the download endpoint's 404).
+            let has_access =
+                super::share_token::validate_share_token_access(state, attachment_id, token)
+                    .await?;
+            if !has_access {
+                return Err(error_response(
+                    StatusCode::FORBIDDEN,
+                    "Share token access denied",
+                ));
+            }
+            // The granted viewer re-reads the context directly; the source
+            // does not re-check the `attachment` context type here.
+            match context_store::get_context_optional(&state.mysql, attachment_id).await {
+                Ok(Some(context)) => context,
+                Ok(None) => return Err(attachment_not_found()),
+                Err(error) => {
+                    tracing::error!(%error, "attachment share context lookup failed");
+                    return Err(internal_error());
+                }
+            }
         }
+        // Method 2: the bearer session JWT (`get_current_user_optional`).
+        None => match user {
+            Some(user) => {
+                let context =
+                    match context_store::get_context_optional(&state.mysql, attachment_id).await {
+                        Ok(context) => context,
+                        Err(error) => {
+                            tracing::error!(%error, "attachment context lookup failed");
+                            return Err(internal_error());
+                        }
+                    };
+                let Some(context) = context else {
+                    return Err(attachment_not_found());
+                };
+                if context.context_type != CONTEXT_TYPE_ATTACHMENT {
+                    return Err(attachment_not_found());
+                }
+                let has_access = match context_store::ensure_attachment_access(
+                    &*state.task_store,
+                    &state.mysql,
+                    state.redis.as_ref(),
+                    &state.entity_resolvers,
+                    &context,
+                    user.users_id,
+                )
+                .await
+                {
+                    Ok(access) => access,
+                    Err(error) => {
+                        tracing::error!(%error, "attachment access check failed");
+                        return Err(internal_error());
+                    }
+                };
+                if !has_access {
+                    return Err(attachment_not_found());
+                }
+                context
+            }
+            // No authentication provided.
+            None => {
+                return Err(error_response(
+                    StatusCode::UNAUTHORIZED,
+                    "Authentication required",
+                ));
+            }
+        },
     };
-    let Some(context) = context else {
-        return Err(attachment_not_found());
-    };
-    if context.context_type != CONTEXT_TYPE_ATTACHMENT {
-        return Err(attachment_not_found());
-    }
-    let has_access = match context_store::ensure_attachment_access(
-        &*state.task_store,
-        &state.mysql,
-        state.redis.as_ref(),
-        &state.entity_resolvers,
-        &context,
-        user.users_id,
-    )
-    .await
-    {
-        Ok(access) => access,
-        Err(error) => {
-            tracing::error!(%error, "attachment access check failed");
-            return Err(internal_error());
-        }
-    };
-    if !has_access {
-        return Err(attachment_not_found());
-    }
 
     // The endpoint declares `response_model=AttachmentDetailResponse`, so
     // FastAPI renders the model through its default `JSONResponse` and
@@ -367,6 +396,64 @@ mod tests {
         let rendered = render(&context);
         let value: Value = serde_json::from_str(&rendered).expect("valid json");
         assert!(value["subtask_id"].is_null());
+    }
+
+    /// The cutover and the handler registration must agree. The hybrid
+    /// gateway forwards unselected paths to Python, whose Replay upstream is
+    /// unavailable (`502 fallback upstream unavailable`), so a missing route
+    /// entry reproduces the recorded failure instead of the detail body.
+    #[test]
+    fn selected_route_is_registered_in_the_shared_group() {
+        const PATH: &str = "/api/attachments/:attachment_id";
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let config = crate::load_routes_config(&file).unwrap();
+        assert!(
+            config
+                .routes
+                .iter()
+                .any(|rule| rule.path == PATH && rule.methods.iter().any(|method| method == "GET")),
+            "GET {PATH} must be selected for Rust"
+        );
+        let table = crate::RouteTable::compile(config).unwrap();
+        assert!(table.matches(&http::Method::GET, "/api/attachments/1385519"));
+
+        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
+        const GET: u16 = 1 << 1;
+        let registered = brz_http_server::__private::inventory::iter::<
+            crate::__http_registry_http_apis::Entry,
+        >()
+        .flat_map(|entry| (entry.0.routes)())
+        .any(|route| route.path == PATH && route.methods & GET != 0);
+        assert!(registered, "GET {PATH} must be registered by the router");
+    }
+
+    /// The download cutover is selected and registered; without the entry the
+    /// gateway proxies the request to Python and Replay observes the 502
+    /// `fallback upstream unavailable` body instead of the stored file bytes.
+    #[test]
+    fn download_route_is_selected_and_registered() {
+        const PATH: &str = "/api/attachments/:attachment_id/download";
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let config = crate::load_routes_config(&file).unwrap();
+        assert!(
+            config
+                .routes
+                .iter()
+                .any(|rule| rule.path == PATH && rule.methods.iter().any(|method| method == "GET")),
+            "GET {PATH} must be selected for Rust"
+        );
+        let table = crate::RouteTable::compile(config).unwrap();
+        assert!(table.matches(&http::Method::GET, "/api/attachments/1404377/download"));
+        assert!(!table.matches(&http::Method::POST, "/api/attachments/1404377/download"));
+
+        // `method_bit`: GET.
+        const GET: u16 = 1 << 1;
+        let registered = brz_http_server::__private::inventory::iter::<
+            crate::__http_registry_http_apis::Entry,
+        >()
+        .flat_map(|entry| (entry.0.routes)())
+        .any(|route| route.path == PATH && route.methods & GET != 0);
+        assert!(registered, "GET {PATH} must be registered by the router");
     }
 
     /// A dedicated test group (separate from the crate's real `http_apis`

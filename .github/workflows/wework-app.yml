@@ -16,13 +16,13 @@ on:
         type: string
         required: false
       publish_release:
-        description: "Publish the automatically selected full or component update"
+        description: "Publish a new version for all desktop changes"
         type: boolean
         required: false
         default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}
   cancel-in-progress: false
 
 permissions:
@@ -91,7 +91,7 @@ jobs:
           NODE
           fi
 
-      - name: Select full or component update
+      - name: Select release or skip unchanged source
         id: plan
         env:
           CANDIDATE_PRERELEASE: ${{ steps.version.outputs.prerelease }}
@@ -102,6 +102,20 @@ jobs:
           PUBLISH_RELEASE: ${{ steps.version.outputs.publish_release }}
           RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
         run: node wework/scripts/plan-desktop-release.mjs
+
+      - name: Validate release target
+        if: steps.version.outputs.publish_release == 'true' && steps.plan.outputs.kind != 'none'
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          RELEASE_TAG: ${{ steps.plan.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            if [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" != "true" ]]; then
+              echo "::error::Release $RELEASE_TAG is already published. Use a new version."
+              exit 1
+            fi
+          fi
 
       - name: Commit Wework version files
         id: version-files
@@ -143,18 +157,14 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
-          PREVIOUS_TAG: ${{ steps.plan.outputs.kind == 'component' && steps.plan.outputs.base_tag || steps.previous-release.outputs.tag }}
+          PREVIOUS_TAG: ${{ steps.previous-release.outputs.tag }}
           RELEASE_SHA: ${{ steps.version-files.outputs.release_sha }}
           RELEASE_TAG: ${{ steps.plan.outputs.release_tag }}
           RELEASE_VERSION: ${{ steps.plan.outputs.value }}
           RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
-          RELEASE_KIND: ${{ steps.plan.outputs.kind }}
         run: |
           set -euo pipefail
           title="Wework $RELEASE_VERSION"
-          if [[ "$RELEASE_KIND" == "component" ]]; then
-            title="$title Runtime ${RELEASE_SHA:0:12}"
-          fi
           [[ "$RELEASE_CHANNEL" == "beta" ]] && title="$title Beta"
           notes="$(mktemp)"
           node wework/scripts/generate-release-notes.mjs > "$notes"
@@ -469,7 +479,6 @@ jobs:
       - name: Upload formal release assets
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
-          RELEASE_KIND: ${{ needs.prepare-release.outputs.release_kind }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: |
           set -euo pipefail
@@ -480,11 +489,7 @@ jobs:
             xargs -0 gh release upload "$RELEASE_TAG" --clobber
           node wework/scripts/upload-desktop-component-assets.mjs \
             release-assets version "$RELEASE_TAG"
-          if [[ "$RELEASE_KIND" == "full" ]]; then
-            gh release upload "$RELEASE_TAG" release-manifests/* --clobber
-          else
-            gh release upload "$RELEASE_TAG" release-manifests/components-*.json --clobber
-          fi
+          gh release upload "$RELEASE_TAG" release-manifests/* --clobber
 
       - name: Publish version release
         env:
@@ -505,7 +510,6 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
-          RELEASE_KIND: ${{ needs.prepare-release.outputs.release_kind }}
           RELEASE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
           RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
         run: |
@@ -565,23 +569,6 @@ jobs:
                 node wework/scripts/update-channel-manifests.mjs \
                   read-electron-version "$current_manifest"
               )"
-              if [[ "$RELEASE_KIND" == "component" ]]; then
-                if [[ "$current_version" != "$RELEASE_VERSION" ]]; then
-                  if [[ "$channel" == "$RELEASE_CHANNEL" ]]; then
-                    echo "::error::The ${channel} channel advanced from ${RELEASE_VERSION} to ${current_version} while component assets were building."
-                    return 1
-                  fi
-                  echo "Keeping ${channel} component manifests at newer app version ${current_version}."
-                  return
-                fi
-                gh release upload wework-updater \
-                  "release-manifests/components-${channel}-macos-arm64.json" \
-                  "release-manifests/components-${channel}-macos-x64.json" \
-                  "release-manifests/components-${channel}-windows-x64.json" \
-                  "release-manifests/components-${channel}-linux-x64.json" \
-                  --clobber
-                return
-              fi
               if ! node wework/scripts/update-channel-manifests.mjs \
                 is-newer "$RELEASE_VERSION" "$current_version"; then
                 if node wework/scripts/update-channel-manifests.mjs \
@@ -596,9 +583,6 @@ jobs:
                 fi
                 echo "Repairing incomplete ${channel} updater assets at ${current_version}."
               fi
-            elif [[ "$RELEASE_KIND" == "component" ]]; then
-              echo "::error::Cannot publish components without an existing ${channel} app release."
-              return 1
             fi
 
             gh release upload wework-updater \

@@ -12,7 +12,7 @@ use brz_redis::Redis;
 use crate::teams::group_membership::{TEAM_USE_ROLE, has_permission};
 
 use super::knowledge::AclContextSource;
-use super::resolution::{KindRow, team_entity_check_statement, team_member_check_statement};
+use super::resolution::{team_entity_check_statement, team_member_check_statement};
 
 /// `MemberRole.Reporter` (`app/schemas/base_role.py`).
 const REPORTER_ROLE: &str = "Reporter";
@@ -25,9 +25,16 @@ const REPORTER_ROLE: &str = "Reporter";
 /// namespace) must admit the caller.
 pub async fn team_shared_for_use<R: Redis>(
     acl: &AclContextSource<'_, R>,
-    team: &KindRow,
+    team_id: i64,
     user_id: i64,
 ) -> MysqlResult<bool> {
+    // `TeamShareService._get_resource`: the Team is re-read by primary key
+    // (`Kind.id + kind='Team' + is_active`), and the owner/public
+    // short-circuit uses that row.
+    let Some(team) = crate::responses::create::resolution::team_by_id(acl.mysql(), team_id).await?
+    else {
+        return Ok(false);
+    };
     if team.user_id == user_id || team.user_id == 0 {
         return Ok(true);
     }
@@ -39,18 +46,24 @@ pub async fn team_shared_for_use<R: Redis>(
     if team.namespace == "default" {
         return Ok(false);
     }
-    // `TeamShareService.check_permission`'s group branch, then
-    // `can_use_group_teams`: both read the same effective role, and
-    // `TEAM_USE_ROLE` is the lowest known role, so the second read decides
-    // whether a non-`default` Team is usable through its group.
-    let group_role = acl.group_role(user_id, &team.namespace).await?;
+    // `TeamShareService.check_permission`'s group branch re-reads the Team
+    // (`_get_active_team`) before the native group role, then
+    // `can_use_group_teams` reads the same effective role again; `TEAM_USE_ROLE`
+    // is the lowest known role, so the second read decides whether a
+    // non-`default` Team is usable through its group.
+    let Some(active) =
+        crate::responses::create::resolution::team_by_id(acl.mysql(), team_id).await?
+    else {
+        return Ok(false);
+    };
+    let group_role = acl.group_role(user_id, &active.namespace).await?;
     if group_role
         .as_deref()
         .is_some_and(|role| has_permission(role, REPORTER_ROLE))
     {
         return Ok(true);
     }
-    let use_role = acl.group_role(user_id, &team.namespace).await?;
+    let use_role = acl.group_role(user_id, &active.namespace).await?;
     Ok(use_role
         .as_deref()
         .is_some_and(|role| has_permission(role, TEAM_USE_ROLE)))

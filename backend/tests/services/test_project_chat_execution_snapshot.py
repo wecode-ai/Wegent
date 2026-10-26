@@ -1,5 +1,6 @@
 """Durable execution reconciliation must survive a fresh database read."""
 
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -302,7 +303,9 @@ def test_legacy_completion_respects_mysql_session_timezone(test_db, test_user, r
     assert result[0]["status"] == "completed"
 
 
-@pytest.mark.parametrize("root_status", ["running", "failed"])
+@pytest.mark.parametrize(
+    "root_status", ["running", "failed", "queued", "pending_approval"]
+)
 def test_managed_execution_root_remains_authoritative(
     test_db, test_user, run, root_status
 ):
@@ -325,6 +328,7 @@ def test_managed_execution_root_remains_authoritative(
     test_db.flush()
     row.metadata_json = {**row.metadata_json, "execution_id": str(execution.id)}
     test_db.commit()
+    original_metadata = dict(row.metadata_json)
     changed = reconcile_execution_snapshot(
         test_db, user_id=test_user.id, snapshot=report()
     )
@@ -334,9 +338,91 @@ def test_managed_execution_root_remains_authoritative(
         assert row.status == "completed"
         assert changed[0]["status"] == "completed"
     else:
-        assert execution.status == "failed"
+        assert execution.status == root_status
         assert row.status == "streaming"
+        assert row.metadata_json == original_metadata
         assert changed == []
+
+
+@pytest.mark.parametrize(
+    "mismatch", [None, "turn", "execution", "failed", "cancelled", "sequence"]
+)
+def test_device_final_content_after_managed_snapshot(
+    test_db, test_user, run, monkeypatch, mismatch
+):
+    from app.api.ws.device_namespace import _project_chat_runtime_event_sync
+    from app.models.loop_item_execution import LoopItemExecution
+
+    project, task, row = run
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        execution_environment="cloud",
+        execution_device_id="snapshot-device",
+        runtime_device_id="snapshot-device",
+        runtime_task_id="runtime-1",
+        status="running",
+        last_event_seq=10,
+    )
+    test_db.add(execution)
+    test_db.flush()
+    row.metadata_json = {**row.metadata_json, "execution_id": execution.id}
+    test_db.commit()
+    from app.services.loop_item_executions.service import loop_item_execution_service
+
+    original_handle = loop_item_execution_service.handle_runtime_event
+    reconciled = {}
+
+    def reconcile_before_event(db, **kwargs):
+        reconcile_execution_snapshot(db, user_id=test_user.id, snapshot=report())
+        if mismatch in {"failed", "cancelled"}:
+            execution.status = mismatch
+        elif mismatch == "execution":
+            row.metadata_json = {**row.metadata_json, "execution_id": execution.id + 1}
+        db.commit()
+        advance.reset_mock()
+        reconciled.update(
+            version=execution.version, task_version=task.version, content=row.content
+        )
+        return original_handle(db, **kwargs)
+
+    monkeypatch.setattr(
+        loop_item_execution_service, "handle_runtime_event", reconcile_before_event
+    )
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr("app.api.ws.device_namespace.get_db_session", same_session)
+    with patch.object(project_chat_service, "_advance_task_to_review") as advance:
+        projected = _project_chat_runtime_event_sync(
+            "snapshot-device",
+            {
+                "event": "response.completed",
+                "payload": {
+                    "taskId": "runtime-1",
+                    "subtaskId": "wrong-turn" if mismatch == "turn" else "turn-1",
+                    "eventSeq": 10 if mismatch == "sequence" else 11,
+                    "data": {"text": "Actual final response"},
+                },
+            },
+            test_user.id,
+        )
+        advance.assert_not_called()
+    test_db.expire_all()
+    assert execution.version == reconciled["version"]
+    assert task.version == reconciled["task_version"]
+    if mismatch is None:
+        assert projected["message"]["content"] == "Actual final response"
+        assert projected["workflow_continuation"] is None
+        assert row.content == "Actual final response"
+        assert execution.status == "completed"
+    else:
+        assert projected is None
+        assert row.content == reconciled["content"]
 
 
 def test_conflicting_terminal_report_cannot_replace_durable_outcome(
@@ -351,3 +437,162 @@ def test_conflicting_terminal_report_cannot_replace_durable_outcome(
     )
     test_db.expire_all()
     assert run[2].status == "cancelled"
+
+
+@pytest.mark.parametrize("race_window", ["terminal_commit", "execution_lookup"])
+def test_managed_final_event_restores_content_during_outcome_snapshot(
+    test_db, test_user, run, monkeypatch, race_window
+):
+    from app.api.ws.device_namespace import _project_chat_runtime_event_sync
+    from app.models.loop_item_execution import LoopItemExecution
+    from app.services.loop_item_executions.service import loop_item_execution_service
+
+    project, task, row = run
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        assigner_user_id=test_user.id,
+        execution_environment="cloud",
+        execution_device_id="snapshot-device",
+        runtime_device_id="snapshot-device",
+        runtime_task_id="runtime-1",
+        status="running",
+        last_event_seq=10,
+    )
+    test_db.add(execution)
+    test_db.flush()
+    row.content = "Partial answer"
+    row.metadata_json = {**row.metadata_json, "execution_id": str(execution.id)}
+    test_db.commit()
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr("app.api.ws.device_namespace.get_db_session", same_session)
+    event = {
+        "event": "response.completed",
+        "payload": {
+            "taskId": "runtime-1",
+            "subtaskId": "turn-1",
+            "eventSeq": 12,
+            "data": {"text": "Complete answer from the real Runtime"},
+        },
+    }
+    projected = None
+
+    def deliver_final():
+        nonlocal projected
+        test_db.refresh(row)
+        assert row.content == "Partial answer"
+        with patch.object(project_chat_service, "_advance_task_to_review") as advance:
+            projected = _project_chat_runtime_event_sync(
+                "snapshot-device", event, user_id=test_user.id
+            )
+            advance.assert_not_called()
+
+    if race_window == "terminal_commit":
+        # The terminal root/activity commit used to precede the turn binding.
+        # Deliver the real event at that boundary, before reconciliation returns.
+        with patch.object(
+            loop_item_execution_service,
+            "_push_activity_after_commit",
+            side_effect=lambda *_: deliver_final(),
+        ):
+            reconcile_execution_snapshot(
+                test_db, user_id=test_user.id, snapshot=report()
+            )
+    else:
+        original = loop_item_execution_service.handle_runtime_event
+
+        def settle_before_second_lookup(*args, **kwargs):
+            reconcile_execution_snapshot(
+                test_db, user_id=test_user.id, snapshot=report()
+            )
+            return original(*args, **kwargs)
+
+        with patch.object(
+            loop_item_execution_service,
+            "handle_runtime_event",
+            side_effect=settle_before_second_lookup,
+        ):
+            projected = _project_chat_runtime_event_sync(
+                "snapshot-device", event, user_id=test_user.id
+            )
+    assert projected is not None
+    assert projected["message"]["content"] == "Complete answer from the real Runtime"
+    test_db.expire_all()
+    assert row.content == "Complete answer from the real Runtime"
+    assert row.status == execution.status == "completed"
+    assert execution.last_event_seq == 10
+    assert row.metadata_json["runtime_turn_id"] == "turn-1"
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        "failed",
+        "cancelled",
+        "turn",
+        "execution",
+        "sequence",
+        "missing_sequence",
+        "no_snapshot",
+    ],
+)
+def test_reconciled_content_rejects_conflicting_execution_evidence(
+    test_db, test_user, run, mismatch
+):
+    from app.models.loop_item_execution import LoopItemExecution
+    from app.services.project_chat.execution_snapshot import (
+        can_restore_reconciled_completion,
+    )
+
+    project, task, row = run
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        runtime_device_id="snapshot-device",
+        runtime_task_id="runtime-1",
+        status=mismatch if mismatch in {"failed", "cancelled"} else "completed",
+        last_event_seq=10,
+    )
+    test_db.add(execution)
+    test_db.flush()
+    row.status = "completed"
+    row.content = "Preserved answer"
+    row.metadata_json = {
+        **row.metadata_json,
+        "execution_id": str(execution.id) if mismatch != "execution" else "another",
+        "runtime_turn_id": "turn-1",
+        "runtime_completed_at": datetime.now(UTC).isoformat(),
+    }
+    if mismatch == "no_snapshot":
+        row.metadata_json = {
+            key: value
+            for key, value in row.metadata_json.items()
+            if key != "runtime_completed_at"
+        }
+    test_db.commit()
+    event = {
+        "subtaskId": "another-turn" if mismatch == "turn" else "turn-1",
+        "eventSeq": 10 if mismatch == "sequence" else 11,
+        "data": {"text": "Unmatched final answer"},
+    }
+    if mismatch == "missing_sequence":
+        event.pop("eventSeq")
+    assert (
+        can_restore_reconciled_completion(
+            test_db,
+            execution=execution,
+            event_name="response.completed",
+            payload=event,
+        )
+        is False
+    )
+    test_db.expire_all()
+    assert row.content == "Preserved answer"

@@ -96,6 +96,8 @@ impl ExecutorHttp for HttpClient {
             .post(url)
             .map_err(|error| ExecutorDispatchError::Transport(error.to_string()))?
             .header("content-type", "application/json")
+            .header("accept", super::dispatch::OPENAI_ACCEPT)
+            .header("authorization", super::dispatch::OPENAI_DUMMY_AUTHORIZATION)
             .json(body)
             .send()
             .await
@@ -190,7 +192,7 @@ mod tests {
             stream: false,
             input: "hi".to_string(),
             instructions: "sys".to_string(),
-            background: true,
+            background: Some(true),
             ..DispatchPayload::new()
         };
         let ack = client

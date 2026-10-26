@@ -55,7 +55,7 @@ export function notificationTextFromMessages(
 
     return {
       title: prompt,
-      body: reply || fallbackNotificationBody(),
+      body: reply,
     }
   }
 
@@ -70,7 +70,7 @@ export function fallbackNotificationText(
 
   return {
     title: taskTitle,
-    body: context || fallbackNotificationBody(),
+    body: context,
   }
 }
 
@@ -86,7 +86,9 @@ export async function getRuntimeTaskNotificationText(
         refresh: true,
       }
     )
-    return notificationTextFromMessages(transcript.messages) ?? fallbackNotificationText(item)
+    const text = notificationTextFromMessages(transcript.messages)
+    const fallback = fallbackNotificationText(item)
+    return text ? { ...text, body: text.body || fallback.body } : fallback
   } catch (error) {
     console.error('[Wework] Failed to load task completion notification content', error)
     return fallbackNotificationText(item)
@@ -96,9 +98,4 @@ export async function getRuntimeTaskNotificationText(
 function fallbackNotificationTitle(): string {
   const language = i18n.resolvedLanguage || i18n.language
   return language?.toLowerCase().startsWith('en') ? 'Task completed' : '任务已完成'
-}
-
-function fallbackNotificationBody(): string {
-  const language = i18n.resolvedLanguage || i18n.language
-  return language?.toLowerCase().startsWith('en') ? 'Model reply is ready' : '模型回复已完成'
 }

@@ -16,19 +16,27 @@
 //!    `thumbnail((1568, 1568), LANCZOS, reducing_gap=3.0)`, and saves it as
 //!    `PNG` with `optimize=True`.
 //!
-//! Every step below mirrors Pillow 12.0.0 so the produced bytes match the
-//! source byte-for-byte: `Image.py:thumbnail`/`resize`,
-//! `libImaging/Resample.c` (coefficient precomputation, the 22-bit fixed-point
-//! convolution, and the `+0.5` accumulator bias), `libImaging/Convert.c`'s
-//! premultiplied `RGBa` round trip, and `libImaging/ZipEncode.c` (adaptive
-//! scanline filters plus `deflateInit2(level=9, windowBits=15, memLevel=9,
-//! Z_FILTERED)`). PNG IDAT chunks are bounded by `ImageFile.MAXBLOCK` (65536).
+//! Every step below mirrors Pillow 13.0.0 (the version the recording source
+//! runs) so the produced bytes match the source byte-for-byte:
+//! `Image.py:thumbnail`/`resize`, `libImaging/Resample.c` (the pass order,
+//! coefficient precomputation, the 22-bit fixed-point convolution, and the
+//! `+0.5` accumulator bias), `libImaging/Convert.c`'s premultiplied `RGBa`
+//! round trip, and `libImaging/ZipEncode.c` (adaptive scanline filters plus
+//! `deflateInit2(level=9, windowBits=15, memLevel=9, Z_FILTERED)`). PNG IDAT
+//! chunks are bounded by `ImageFile.MAXBLOCK` (65536).
+//!
+//! Pillow 13.0.0 changed only one resample rule from 12.x: when the height is
+//! scaled down more than twice as much as the width, the vertical pass runs
+//! first. Both passes quantize their intermediate to 8 bits, so the order is
+//! part of the output and reproduces the recording.
 //!
 //! Decoding covers the non-interlaced 8-bit PNG modes (grayscale, RGB, RGBA,
 //! gray+alpha, and palette), which is the set the recording corpus contains;
 //! other PNG variants keep the caller's existing
 //! `unsupported_type` behavior instead of guessing at pixels.
 use std::io::{Read, Write};
+
+use super::resample::{resample, thumbnail_size};
 
 use base64::Engine as _;
 use flate2::Crc;
@@ -38,20 +46,18 @@ use flate2::read::ZlibDecoder;
 pub(super) const MAX_MODEL_IMAGE_LONG_EDGE: u32 = 1568;
 /// Pillow's `Image.MAX_IMAGE_PIXELS`; larger images raise a decode error.
 pub(super) const MAX_IMAGE_PIXELS: u64 = 89_478_485;
-/// `PRECISION_BITS` in `libImaging/Resample.c`.
-const PRECISION_BITS: u32 = 32 - 8 - 2;
 /// `ImageFile.MAXBLOCK`: the PNG encoder's IDAT chunk size.
 const MAX_BLOCK: usize = 65_536;
 
 /// A decoded PNG image with 8 bits per channel.
 #[derive(Debug)]
-struct DecodedImage {
-    width: u32,
-    height: u32,
+pub(super) struct DecodedImage {
+    pub(super) width: u32,
+    pub(super) height: u32,
     /// 1 (L), 2 (LA), 3 (RGB), or 4 (RGBA).
-    channels: usize,
-    pixels: Vec<u8>,
-    icc_profile: Option<Vec<u8>>,
+    pub(super) channels: usize,
+    pub(super) pixels: Vec<u8>,
+    pub(super) icc_profile: Option<Vec<u8>>,
 }
 
 /// The bytes and dimensions the caller embeds in `subtask_contexts`.
@@ -133,44 +139,8 @@ pub(super) fn inline_image(image_data: &[u8]) -> (String, Option<(u32, u32)>) {
     }
 }
 
-/// `Image.thumbnail`'s `preserve_aspect_ratio`, including `round_aspect`.
-pub(super) fn thumbnail_size(width: u32, height: u32, max: u32) -> Option<(u32, u32)> {
-    if width <= max && height <= max {
-        return None;
-    }
-    let aspect = width as f64 / height as f64;
-    let limit = max as f64;
-    // `Image.thumbnail`: `x / y >= aspect` with both provided edges at `max`.
-    if aspect <= 1.0 {
-        Some((
-            round_aspect(limit * aspect, |n| (n / limit - aspect).abs()),
-            max,
-        ))
-    } else {
-        Some((
-            max,
-            round_aspect(limit / aspect, |n| {
-                if n == 0.0 {
-                    0.0
-                } else {
-                    (limit / n - aspect).abs()
-                }
-            }),
-        ))
-    }
-}
-
-/// `round_aspect(number, key) = max(min(floor(number), ceil(number), key=key), 1)`.
-fn round_aspect(number: f64, key: impl Fn(f64) -> f64) -> u32 {
-    let floor = number.floor();
-    let ceil = number.ceil();
-    // Python's `min(floor, ceil, key=key)` keeps the first of equal keys.
-    let chosen = if key(floor) <= key(ceil) { floor } else { ceil };
-    chosen.max(1.0) as u32
-}
-
 /// `Image.py`: `RGBA` -> `RGBa` (`Convert.c:rgbA2rgba`).
-fn premultiply(pixels: &[u8]) -> Vec<u8> {
+pub(super) fn premultiply(pixels: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(pixels.len());
     for pixel in pixels.as_chunks::<4>().0 {
         let alpha = pixel[3] as u32;
@@ -183,7 +153,7 @@ fn premultiply(pixels: &[u8]) -> Vec<u8> {
 }
 
 /// `Image.py`: `RGBa` -> `RGBA` (`Convert.c:rgba2rgbA`).
-fn unpremultiply(pixels: &[u8]) -> Vec<u8> {
+pub(super) fn unpremultiply(pixels: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(pixels.len());
     for pixel in pixels.as_chunks::<4>().0 {
         let alpha = pixel[3] as u32;
@@ -203,195 +173,6 @@ fn unpremultiply(pixels: &[u8]) -> Vec<u8> {
 fn muldiv255(a: u32, b: u32) -> u32 {
     let tmp = a * b + 128;
     ((tmp >> 8) + tmp) >> 8
-}
-
-/// One output coordinate's tap range and normalized fixed-point weights.
-struct Taps {
-    start: usize,
-    weights: Vec<i64>,
-}
-
-/// `Resample.c:precompute_coeffs` + `normalize_coeffs_8bpc`.
-/// `Resample.c:precompute_coeffs` with an explicit source box
-/// (`in0`/`in1`): the `resize` call after the `reducing_gap` pre-reduce
-/// resamples a sub-rectangle of the reduced image.
-fn precompute_box(in_size: usize, in0: f64, in1: f64, out_size: usize) -> Vec<Taps> {
-    let scale = (in1 - in0) / out_size as f64;
-    let filter_scale = scale.max(1.0);
-    let support = 3.0 * filter_scale;
-    let inverse_scale = 1.0 / filter_scale;
-    let mut taps = Vec::with_capacity(out_size);
-    for index in 0..out_size {
-        let center = in0 + (index as f64 + 0.5) * scale;
-        let mut start = (center - support + 0.5) as i64;
-        if start < 0 {
-            start = 0;
-        }
-        let mut end = (center + support + 0.5) as i64;
-        if end > in_size as i64 {
-            end = in_size as i64;
-        }
-        let count = (end - start) as usize;
-        let mut weights: Vec<f64> = (0..count)
-            .map(|tap| lanczos((tap as f64 + start as f64 - center + 0.5) * inverse_scale))
-            .collect();
-        let total: f64 = weights.iter().sum();
-        if total != 0.0 {
-            for weight in &mut weights {
-                *weight /= total;
-            }
-        }
-        let scaled = (1_i64 << PRECISION_BITS) as f64;
-        let fixed = weights
-            .into_iter()
-            .map(|weight| {
-                if weight < 0.0 {
-                    (-0.5 + weight * scaled) as i64
-                } else {
-                    (0.5 + weight * scaled) as i64
-                }
-            })
-            .collect();
-        taps.push(Taps {
-            start: start as usize,
-            weights: fixed,
-        });
-    }
-    taps
-}
-
-/// `lanczos_filter`: truncated sinc with a three-lobe support.
-fn lanczos(x: f64) -> f64 {
-    if (-3.0..3.0).contains(&x) {
-        sinc(x) * sinc(x / 3.0)
-    } else {
-        0.0
-    }
-}
-
-/// `sinc_filter`.
-fn sinc(x: f64) -> f64 {
-    if x == 0.0 {
-        return 1.0;
-    }
-    let x = x * std::f64::consts::PI;
-    x.sin() / x
-}
-
-/// The two-pass 8-bit resample: horizontal into an intermediate image, then
-/// vertical. Both passes clip through `clip8` exactly like `Resample.c`.
-pub(super) fn resample(
-    pixels: &[u8],
-    width: usize,
-    height: usize,
-    out_width: usize,
-    out_height: usize,
-    channels: usize,
-) -> Vec<u8> {
-    resample_box(
-        pixels,
-        width,
-        height,
-        out_width,
-        out_height,
-        channels,
-        (0.0, 0.0, width as f64, height as f64),
-    )
-}
-
-/// `resize` with a source `box` (`Resample.c:ImagingResampleInner`): the
-/// horizontal and vertical coefficient sets are precomputed for the box, and
-/// the vertical pass keeps only the rows the box selects.
-pub(super) fn resample_box(
-    pixels: &[u8],
-    width: usize,
-    height: usize,
-    out_width: usize,
-    out_height: usize,
-    channels: usize,
-    source_box: (f64, f64, f64, f64),
-) -> Vec<u8> {
-    let (box_x0, box_y0, box_x1, box_y1) = source_box;
-    let horizontal = precompute_box(width, box_x0, box_x1, out_width);
-    let vertical = precompute_box(height, box_y0, box_y1, out_height);
-    let bias = 1_i64 << (PRECISION_BITS - 1);
-
-    let mut intermediate = vec![0u8; out_width * height * channels];
-    for y in 0..height {
-        let row = &pixels[y * width * channels..(y + 1) * width * channels];
-        for (x, taps) in horizontal.iter().enumerate() {
-            let target = (y * out_width + x) * channels;
-            for channel in 0..channels {
-                let mut accumulator = bias;
-                for (tap, weight) in taps.weights.iter().enumerate() {
-                    accumulator += row[(taps.start + tap) * channels + channel] as i64 * weight;
-                }
-                intermediate[target + channel] = clip8(accumulator);
-            }
-        }
-    }
-
-    let mut output = vec![0u8; out_width * out_height * channels];
-    for (y, taps) in vertical.iter().enumerate() {
-        for x in 0..out_width {
-            let target = (y * out_width + x) * channels;
-            for channel in 0..channels {
-                let mut accumulator = bias;
-                for (tap, weight) in taps.weights.iter().enumerate() {
-                    accumulator += intermediate
-                        [((taps.start + tap) * out_width + x) * channels + channel]
-                        as i64
-                        * weight;
-                }
-                output[target + channel] = clip8(accumulator);
-            }
-        }
-    }
-    output
-}
-
-/// `Image.reduce` (`Reduce.c`): integer box averaging with
-/// `(sum + n/2) / n` rounding per channel; the trailing partial block covers
-/// only the remaining pixels.
-pub(super) fn reduce(
-    pixels: &[u8],
-    width: usize,
-    height: usize,
-    channels: usize,
-    factor: (usize, usize),
-) -> Vec<u8> {
-    let (factor_x, factor_y) = factor;
-    let out_width = width.div_ceil(factor_x);
-    let out_height = height.div_ceil(factor_y);
-    let mut output = vec![0u8; out_width * out_height * channels];
-    for y in 0..out_height {
-        let y0 = y * factor_y;
-        let rows = (height - y0).min(factor_y);
-        for x in 0..out_width {
-            let x0 = x * factor_x;
-            let columns = (width - x0).min(factor_x);
-            let count = (rows * columns) as i64;
-            let half = count / 2;
-            for channel in 0..channels {
-                let mut sum = 0i64;
-                for row in 0..rows {
-                    let base = ((y0 + row) * width + x0) * channels + channel;
-                    for column in 0..columns {
-                        sum += pixels[base + column * channels] as i64;
-                    }
-                }
-                output[(y * out_width + x) * channels + channel] =
-                    ((sum + half) / count).clamp(0, 255) as u8;
-            }
-        }
-    }
-    output
-}
-
-/// `Resample.c:clip8`: the lookup table maps `-640..=639` to `0..=255`.
-fn clip8(value: i64) -> u8 {
-    let index = value >> PRECISION_BITS;
-    index.clamp(0, 255) as u8
 }
 
 /// `Image.save(..., format="PNG", optimize=True)` for an 8-bit L/LA/RGB/RGBA
@@ -566,7 +347,7 @@ fn write_chunk(png: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
 /// sample's high byte; grayscale+alpha loads as `RGBA` with the gray value
 /// in all three channels; 16-bit grayscale loads as `I;16`, which this port
 /// does not resize, so it stays outside the subset.
-fn decode_png(data: &[u8]) -> Option<DecodedImage> {
+pub(super) fn decode_png(data: &[u8]) -> Option<DecodedImage> {
     const SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
     if data.len() < 8 || &data[..8] != SIGNATURE {
         return None;
@@ -874,29 +655,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn thumbnail_sizes_match_pillows_round_aspect() {
-        assert_eq!(thumbnail_size(4480, 1440, 1568), Some((1568, 504)));
-        assert_eq!(thumbnail_size(750, 5100, 1568), Some((231, 1568)));
-        assert_eq!(thumbnail_size(3420, 2016, 1568), Some((1568, 924)));
-        assert_eq!(thumbnail_size(1881, 450, 1568), Some((1568, 375)));
-        assert_eq!(thumbnail_size(966, 358, 1568), None);
-    }
-
-    #[test]
-    fn a_solid_image_survives_the_resample_round_trip() {
-        let pixels = [17u8, 34, 51, 255].repeat(64 * 64);
-        let resized = resample(&pixels, 64, 64, 32, 32, 4);
-        assert_eq!(resized.len(), 32 * 32 * 4);
-        assert!(
-            resized
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .all(|pixel| *pixel == [17, 34, 51, 255])
-        );
-    }
-
-    #[test]
     fn the_png_encoder_round_trips_through_the_decoder() {
         let pixels: Vec<u8> = (0..32 * 8 * 4).map(|value| (value * 7) as u8).collect();
         let png = encode_png(32, 8, &pixels, 4, None).expect("png encodes");
@@ -915,5 +673,29 @@ mod tests {
         let decoded = decode_png(&prepared.data).unwrap();
         assert_eq!((decoded.width, decoded.height), (32, 32));
         assert_eq!(decoded.icc_profile.as_deref(), Some(profile.as_slice()));
+    }
+
+    /// A PNG named `.jpg` stays on Pillow's content-detected PNG decode path;
+    /// the extension-derived MIME only selects the JPEG output format.
+    #[test]
+    fn png_content_named_jpeg_uses_png_decode_with_jpeg_output() {
+        let engine = base64::engine::general_purpose::STANDARD;
+
+        // No resize: `prepare_image_bytes_for_model` keeps the upload bytes.
+        let small: Vec<u8> = (0..64 * 8 * 3).map(|value| (value * 11) as u8).collect();
+        let small_png = encode_png(64, 8, &small, 3, None).unwrap();
+        let (small_base64, small_size) = super::super::model_jpeg::prepare_png_as_jpeg(&small_png);
+        assert_eq!(small_size, None);
+        assert_eq!(engine.decode(small_base64).unwrap(), small_png);
+
+        // 1600x800 exceeds the model long edge: resize to 1568x784 and encode
+        // the PNG pixels as JPEG.
+        let large: Vec<u8> = (0..1600 * 800 * 3).map(|value| (value * 7) as u8).collect();
+        let large_png = encode_png(1600, 800, &large, 3, None).unwrap();
+        let (large_base64, large_size) = super::super::model_jpeg::prepare_png_as_jpeg(&large_png);
+        assert_eq!(large_size, Some((1568, 784)));
+        let jpeg = engine.decode(large_base64).unwrap();
+        let header = turbojpeg::read_header(&jpeg).unwrap();
+        assert_eq!((header.width, header.height), (1568, 784));
     }
 }

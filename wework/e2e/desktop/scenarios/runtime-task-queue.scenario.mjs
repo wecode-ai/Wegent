@@ -1,3 +1,4 @@
+import { readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { access } from 'node:fs/promises'
 
@@ -232,9 +233,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       if (!active || request.method !== 'POST') return false
       if (!['/v1/responses', '/responses'].includes(url.pathname)) return false
 
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       const requestText = JSON.stringify(body)
       const prompt = Object.values(PROMPTS)
