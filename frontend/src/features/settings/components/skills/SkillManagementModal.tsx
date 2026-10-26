@@ -60,6 +60,41 @@ interface SkillManagementModalProps {
   groupName?: string | null
 }
 
+type ManageableSkillScope = Exclude<NonNullable<SkillManagementModalProps['scope']>, 'public'>
+
+function mergeSkills(...skillGroups: UnifiedSkill[][]): UnifiedSkill[] {
+  const seenSkillIds = new Set<number>()
+  return skillGroups.flat().filter(skill => {
+    if (seenSkillIds.has(skill.id)) return false
+    seenSkillIds.add(skill.id)
+    return true
+  })
+}
+
+async function fetchSkillsForManagement(
+  scope: ManageableSkillScope,
+  groupName?: string | null
+): Promise<UnifiedSkill[]> {
+  if (scope !== 'group') {
+    return fetchUnifiedSkillsList({
+      scope,
+      groupName: groupName || undefined,
+    })
+  }
+
+  // Agent editing exposes personal and team skills in the same selector, so
+  // management must use the same combined scope. Otherwise personal skills
+  // disappear from this modal and newly uploaded skills look lost.
+  const [personalSkills, groupSkills] = await Promise.all([
+    fetchUnifiedSkillsList({ scope: 'personal' }),
+    fetchUnifiedSkillsList({
+      scope: 'group',
+      groupName: groupName || undefined,
+    }),
+  ])
+  return mergeSkills(personalSkills, groupSkills)
+}
+
 export default function SkillManagementModal({
   open,
   onClose,
@@ -94,10 +129,7 @@ export default function SkillManagementModal({
       const skillsData =
         scope === 'public'
           ? await fetchPublicSkillsList()
-          : await fetchUnifiedSkillsList({
-              scope: scope,
-              groupName: groupName || undefined,
-            })
+          : await fetchSkillsForManagement(scope, groupName)
       // Filter out public skills for management (only show user's own skills) unless scope is 'public'
       setSkills(scope === 'public' ? skillsData : skillsData.filter(s => !s.is_public))
     } catch (error) {
@@ -233,10 +265,7 @@ export default function SkillManagementModal({
       if (scope === 'public') {
         await downloadPublicSkill(skill.id, skill.name)
       } else {
-        // For group scope, use the groupName as namespace
-        // For personal scope, use the skill's namespace (usually 'default')
-        const namespace = scope === 'group' && groupName ? groupName : skill.namespace
-        await downloadSkill(skill.id, skill.name, namespace)
+        await downloadSkill(skill.id, skill.name, skill.namespace)
       }
       toast({
         title: t('common:common.success'),
@@ -376,6 +405,7 @@ export default function SkillManagementModal({
                       <Card
                         key={skill.id || skill.name}
                         className="p-4 hover:shadow-md transition-shadow"
+                        data-testid={`managed-skill-${skill.id}`}
                       >
                         <div className="flex items-start justify-between">
                           {/* Skill Info */}
@@ -433,16 +463,19 @@ export default function SkillManagementModal({
                                 )}
                               </div>
 
-                              {/* Namespace info for group skills */}
-                              {scope === 'group' &&
-                                skill.namespace &&
-                                skill.namespace !== 'default' && (
-                                  <div className="flex items-center gap-1.5 mt-2">
-                                    <span className="text-xs text-text-muted">
-                                      {t('common:skills.namespace')}: {skill.namespace}
-                                    </span>
-                                  </div>
-                                )}
+                              {/* Source info when personal and team skills are combined */}
+                              {scope === 'group' && (
+                                <div
+                                  className="flex items-center gap-1.5 mt-2"
+                                  data-testid={`managed-skill-source-${skill.id}`}
+                                >
+                                  <Tag variant={skill.namespace === 'default' ? 'default' : 'info'}>
+                                    {skill.namespace === 'default'
+                                      ? t('settings:skills.source.personal')
+                                      : `${t('settings:skills.source.group')} · ${skill.namespace}`}
+                                  </Tag>
+                                </div>
+                              )}
 
                               {/* Git source info */}
                               {skill.source?.type === 'git' && skill.source.repo_url && (
@@ -526,6 +559,7 @@ export default function SkillManagementModal({
                               className="h-8 w-8"
                               onClick={() => handleEditSkill(skill)}
                               title={t('common:skills.update_skill')}
+                              data-testid={`edit-skill-button-${skill.id}`}
                             >
                               <PencilIcon className="w-4 h-4" />
                             </Button>
@@ -563,7 +597,7 @@ export default function SkillManagementModal({
           open={uploadModalOpen}
           onClose={handleModalClose}
           skill={editingSkill}
-          namespace={uploadNamespace}
+          namespace={editingSkill?.namespace || uploadNamespace}
           isPublic={scope === 'public'}
         />
       )}
