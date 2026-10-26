@@ -204,9 +204,15 @@ class TaskQueueConsumer:
         try:
             result = self.task_processor.process_tasks([task])
 
-            # Check if task processing actually succeeded
+            # Check if task processing actually succeeded. Executors keep the
+            # bound executor_name in failed results so the caller can surface
+            # which runtime failed; presence of the name alone is not success.
             task_result = result.get(task_id, {}) if isinstance(result, dict) else {}
-            if isinstance(task_result, dict) and task_result.get("executor_name"):
+            if (
+                isinstance(task_result, dict)
+                and task_result.get("status") == "success"
+                and task_result.get("executor_name")
+            ):
                 # Success - executor was created
                 return
 
