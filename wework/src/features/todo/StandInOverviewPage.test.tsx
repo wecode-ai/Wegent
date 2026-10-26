@@ -118,11 +118,22 @@ it('keeps the active conversation mounted while settings reload', async () => {
   const { props } = fixture()
   const api = props.services.standInApi!
   const settings = await api.personalGet(7, 'device')
+  let resolveInitial!: (value: typeof settings) => void
+  vi.mocked(api.personalGet).mockReturnValueOnce(
+    new Promise<typeof settings>(done => {
+      resolveInitial = done
+    })
+  )
   let resolve!: (value: typeof settings) => void
   const pending = new Promise<typeof settings>(done => {
     resolve = done
   })
   render(<StandInOverviewPage {...props} />)
+  await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(2))
+  expect(screen.queryByTestId('identity-conversation')).not.toBeInTheDocument()
+  // Install the device-scoped subscription before publishing the reload event.
+  await act(async () => resolveInitial(settings))
+  await screen.findByTestId('stand-in-overview-role-default')
   const conversation = await screen.findByTestId('identity-conversation')
   vi.mocked(api.personalGet).mockReturnValueOnce(pending)
   act(() => publishPersonalStandIn(settings))

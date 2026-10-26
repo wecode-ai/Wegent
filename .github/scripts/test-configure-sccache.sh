@@ -17,11 +17,13 @@ mkdir "$test_dir/bin"
 cat > "$test_dir/bin/sccache" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$*" == '--show-stats' ]]
+[[ "$*" == '--show-stats' || "$*" == 'rustc -vV' ]]
 [[ "$SCCACHE_GHA_ENABLED" == true ]]
 [[ "$SCCACHE_BASEDIRS" == '/test/workspace' ]]
 [[ "$SCCACHE_GHA_VERSION" == 'wegent-sccache-v1-Linux-X64' ]]
 printf '%s\n' "${SCCACHE_GHA_RW_MODE-unset}" >> "$SCCACHE_TEST_CALLS"
+# Stats can succeed without starting the server or checking remote storage.
+[[ "$*" != '--show-stats' ]] || exit 0
 exit "$SCCACHE_TEST_EXIT"
 SH
 chmod +x "$test_dir/bin/sccache"

@@ -54,7 +54,9 @@ runs:
           export SCCACHE_GHA_RW_MODE=READ_ONLY
         fi
 
-        if ! sccache --show-stats; then
+        # Stats can succeed without starting the server or checking remote storage.
+        # Exercise Cargo's compiler probe before enabling the optional wrapper.
+        if ! sccache rustc -vV >/dev/null 2>&1; then
           echo "::warning::sccache could not start; continuing without Rust compiler caching"
           exit 0
         fi
