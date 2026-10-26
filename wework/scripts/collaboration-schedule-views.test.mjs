@@ -108,6 +108,7 @@ test.each([
     vi.setSystemTime(today)
     let navigations = 0
     let rangeIndex = 0
+    const awaitedCalendarDays = []
     const dayVisible = date => {
       const displayedMonth = new Date(today.getFullYear(), today.getMonth(), 1, 12)
       displayedMonth.setMonth(
@@ -122,6 +123,8 @@ test.each([
         if (action === 'click' && /collaboration-schedule-next|下一个月/.test(selector))
           navigations++
         if (action === 'waitFor' && date) {
+          awaitedCalendarDays.push(selector)
+          assert.equal(options.visible, true)
           expect([fixture.ranges[0].split(' → ')[0], fixture.target]).toContain(date)
           assert.ok(
             dayVisible(date),
@@ -146,6 +149,10 @@ test.each([
       timeoutMs: 100,
     })
     expect(navigations).toBe(fixture.navigationCount)
+    expect(awaitedCalendarDays).toEqual([
+      '[data-testid="collaboration-calendar-day-' + fixture.ranges[0].split(' → ')[0] + '"]',
+      '[data-testid="collaboration-calendar-day-' + fixture.target + '"]',
+    ])
     expect(rangeIndex).toBe(3)
   }
 )

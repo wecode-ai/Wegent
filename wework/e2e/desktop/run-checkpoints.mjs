@@ -6,7 +6,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { DESKTOP_CHECKPOINTS, DESKTOP_CHECKPOINT_GROUPS } from './checkpoints.mjs'
+import {
+  DESKTOP_CHECKPOINTS,
+  DESKTOP_CHECKPOINT_GROUPS,
+  expandDesktopCheckpoints,
+} from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
@@ -121,7 +125,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
   'stand-in-list-confirmation': './scenarios/stand-in-list-confirmation.scenario.mjs',
-  'stand-in-profile': './scenarios/stand-in-profile.scenario.mjs',
+  'stand-in-profile-settings': './scenarios/stand-in-profile.scenario.mjs',
+  'stand-in-model-catalog': './scenarios/stand-in-model-catalog.scenario.mjs',
   'stand-in-identities': './scenarios/stand-in-identities.scenario.mjs',
   'stand-in-connections': './scenarios/stand-in-connections.scenario.mjs',
   'stand-in-mcp': './scenarios/stand-in-mcp.scenario.mjs',
@@ -238,7 +243,8 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-local-agent-dispatch',
   'stand-in-action-confirmation',
   'stand-in-list-confirmation',
-  'stand-in-profile',
+  'stand-in-profile-settings',
+  'stand-in-model-catalog',
   'stand-in-identities',
   'stand-in-connections',
   'stand-in-mcp',
@@ -600,7 +606,7 @@ async function prepareSharedHarnessRuntime(appBinary, parentDirectory) {
 function requestedCheckpointRange(args) {
   if (args.length !== 2) return null
   const [flag, checkpoint] = args
-  if (flag === '--segment') return expandCompositeCheckpoints([checkpoint])
+  if (flag === '--segment') return expandDesktopCheckpoints([checkpoint])
   if (flag === '--from-segment') {
     const startCheckpoint = COMPOSITE_CHECKPOINTS.get(checkpoint)?.[0] ?? checkpoint
     const startIndex = DEFAULT_DESKTOP_CHECKPOINTS.indexOf(startCheckpoint)
@@ -608,20 +614,6 @@ function requestedCheckpointRange(args) {
     return DEFAULT_DESKTOP_CHECKPOINTS.slice(startIndex)
   }
   return null
-}
-
-function expandCompositeCheckpoints(checkpoints) {
-  const expanded = []
-  const seen = new Set()
-  for (const checkpoint of checkpoints) {
-    const members = COMPOSITE_CHECKPOINTS.get(checkpoint) ?? [checkpoint]
-    for (const member of members) {
-      if (seen.has(member)) continue
-      seen.add(member)
-      expanded.push(member)
-    }
-  }
-  return expanded
 }
 
 function requestedParallelCheckpoints(args) {
@@ -638,7 +630,7 @@ function requestedParallelCheckpoints(args) {
       throw new Error(`Unknown desktop E2E checkpoint: ${checkpoint}`)
     }
   }
-  return expandCompositeCheckpoints(checkpoints)
+  return expandDesktopCheckpoints(checkpoints)
 }
 
 function parallelCheckpointLimit() {

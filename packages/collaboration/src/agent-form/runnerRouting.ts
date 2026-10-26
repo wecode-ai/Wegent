@@ -57,37 +57,64 @@ export function runnerModelKey(model: RunnerModelIdentity): string {
   return JSON.stringify([model.runtime, model.provider, model.model_id])
 }
 
+/** Execution references never include display metadata or provider credentials. */
+export function runnerModelIdentity(model: RunnerModelIdentity): RunnerModelIdentity {
+  return {
+    runtime: model.runtime,
+    provider: model.provider,
+    model_id: model.model_id,
+    ...(model.source ? { source: model.source } : {}),
+    ...(model.cloud_model ? { cloud_model: model.cloud_model } : {}),
+  }
+}
+
+export function cloudRunnerModelIdentity(
+  model: UnifiedModel,
+  runtime: RunnerModelIdentity['runtime']
+): RunnerModelIdentity | null {
+  const protocol = getCloudModelUpstreamApiFormat(model)
+  if (
+    model.type === 'runtime' ||
+    model.isActive === false ||
+    model.compatibilityDisabled ||
+    !protocol ||
+    !model.namespace ||
+    model.resourceUserId == null
+  )
+    return null
+  return {
+    runtime,
+    source: 'cloud',
+    provider: model.provider || protocol,
+    model_id: model.modelId || model.name,
+    cloud_model: {
+      name: model.name,
+      type: model.type,
+      namespace: model.namespace,
+      resource_user_id: model.resourceUserId,
+    },
+  }
+}
+
 /** Resource references and account labels only; never persist a model config. */
 export function cloudRunnerModels(models: UnifiedModel[]): RunnerModel[] {
-  return models.flatMap(model => {
-    const protocol = getCloudModelUpstreamApiFormat(model)
-    if (
-      model.type === 'runtime' ||
-      model.isActive === false ||
-      model.compatibilityDisabled ||
-      !protocol ||
-      !model.namespace ||
-      model.resourceUserId == null
-    )
-      return []
-    const runtimes: RunnerModelIdentity['runtime'][] = ['codex', 'claude_code']
-    return runtimes.map(runtime => ({
-      runtime,
-      source: 'cloud' as const,
-      provider: model.provider || protocol,
-      model_id: model.modelId || model.name,
-      cloud_model: {
-        name: model.name,
-        type: model.type as 'public' | 'user' | 'group',
-        namespace: model.namespace!,
-        resource_user_id: model.resourceUserId!,
-      },
-      label: model.displayName || model.name,
-      local_model_id: '',
-      account_label: 'cloud_gateway',
-      is_default: false,
-    }))
-  })
+  const runtimes: RunnerModelIdentity['runtime'][] = ['codex', 'claude_code']
+  return models.flatMap(model =>
+    runtimes.flatMap(runtime => {
+      const identity = cloudRunnerModelIdentity(model, runtime)
+      return identity
+        ? [
+            {
+              ...identity,
+              label: model.displayName || model.name,
+              local_model_id: '',
+              account_label: 'cloud_gateway',
+              is_default: false,
+            },
+          ]
+        : []
+    })
+  )
 }
 
 export function runnerSupportsModel(
@@ -218,13 +245,7 @@ export function resolveRunnerSelection(input: {
   if (!model) throw new Error('RUNNER_MODEL_REQUIRED: select a model before execution')
   if (model.runtime !== input.runtime)
     throw new Error('RUNNER_RUNTIME_MISMATCH: the model does not support this runtime')
-  const selectedModel: RunnerModelIdentity = {
-    runtime: model.runtime,
-    provider: model.provider,
-    model_id: model.model_id,
-    ...(model.source ? { source: model.source } : {}),
-    ...(model.cloud_model ? { cloud_model: model.cloud_model } : {}),
-  }
+  const selectedModel = runnerModelIdentity(model)
   if (model.source === 'native' && input.executionPolicy.mode !== 'fixed')
     throw new Error('RUNNER_MODEL_UNAVAILABLE: local models require a fixed environment')
   if (
