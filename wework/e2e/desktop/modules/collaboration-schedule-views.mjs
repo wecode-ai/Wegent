@@ -13,11 +13,50 @@ function addDays(value, days) {
   return next
 }
 
-function nextMonday() {
-  const today = new Date()
+function nextMonday(value) {
+  const today = new Date(value)
   today.setHours(12, 0, 0, 0)
   const daysUntilMonday = (8 - today.getDay()) % 7 || 7
   return addDays(today, daysUntilMonday)
+}
+
+export function collaborationScheduleDates(today = new Date()) {
+  const initialStart = nextMonday(today)
+  const initialEnd = addDays(initialStart, 2)
+  const calendarStart = addDays(initialStart, 7)
+  const calendarEnd = addDays(calendarStart, 2)
+  const resizedEnd = addDays(calendarEnd, 1)
+  const movedStart = calendarEnd
+  const movedEnd = addDays(resizedEnd, 2)
+  return Object.fromEntries(
+    Object.entries({
+      initialStart,
+      initialEnd,
+      calendarStart,
+      calendarEnd,
+      resizedEnd,
+      movedStart,
+      movedEnd,
+    }).map(([key, value]) => [key, dateKey(value)])
+  )
+}
+
+export async function ensureCalendarScheduleDatesVisible({ control, scoped, keys, timeoutMs }) {
+  const calendar = scoped('[data-testid="collaboration-calendar"]')
+  const selectors = [keys.initialStart, keys.calendarStart].map(
+    key => `${calendar} [data-testid="collaboration-calendar-day-${key}"]`
+  )
+  let hasAllDates = true
+  for (const selector of selectors) {
+    if (Number(await control.command('getElementCount', selector)) === 0) hasAllDates = false
+  }
+  // Keep both dates in one grid; blindly opening the target month can hide the source.
+  if (!hasAllDates) {
+    await control.command('click', `${calendar} [data-testid="collaboration-schedule-next"]`)
+  }
+  for (const selector of selectors) {
+    await control.command('waitFor', selector, { visible: true, timeoutMs })
+  }
 }
 
 async function waitForAttributeIncludes(
@@ -48,24 +87,7 @@ export async function verifyCollaborationScheduleViews({
   await control.command('setMainWindowSize', 'body', {
     value: JSON.stringify({ width: 1440, height: 900 }),
   })
-  const initialStart = nextMonday()
-  const initialEnd = addDays(initialStart, 2)
-  const calendarStart = addDays(initialStart, 7)
-  const calendarEnd = addDays(calendarStart, 2)
-  const resizedEnd = addDays(calendarEnd, 1)
-  const movedStart = calendarEnd
-  const movedEnd = addDays(resizedEnd, 2)
-  const keys = Object.fromEntries(
-    Object.entries({
-      initialStart,
-      initialEnd,
-      calendarStart,
-      calendarEnd,
-      resizedEnd,
-      movedStart,
-      movedEnd,
-    }).map(([key, value]) => [key, dateKey(value)])
-  )
+  const keys = collaborationScheduleDates()
 
   await control.command('click', scoped('[aria-label="时间范围"]'))
   await control.command('waitFor', '[data-testid="cloud-todo-detail-start-date"]', {
@@ -96,6 +118,7 @@ export async function verifyCollaborationScheduleViews({
     visible: true,
     timeoutMs,
   })
+  await ensureCalendarScheduleDatesVisible({ control, scoped, keys, timeoutMs })
   await control.command('select', scoped('[data-testid="collaboration-calendar-status-filter"]'), {
     value: 'inbox',
   })
