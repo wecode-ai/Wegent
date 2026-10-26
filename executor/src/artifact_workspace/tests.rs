@@ -127,13 +127,20 @@ fn real_custom_git_worktrees_are_valid_native_artifact_roots() {
     let files = tempfile::tempdir().unwrap();
     let repository = files.path().join("repo");
     let worktree = files.path().join("custom-worktree");
+    let foreign = files.path().join("foreign-git-context");
     fs::create_dir(&repository).unwrap();
+    fs::create_dir(&foreign).unwrap();
     let git = |args: &[&str]| {
-        let output = std::process::Command::new("git")
+        let mut command = std::process::Command::new("git");
+        command
             .args(args)
-            .current_dir(&repository)
-            .output()
-            .unwrap();
+            .env("GIT_DIR", &foreign)
+            .env("GIT_COMMON_DIR", &foreign)
+            .env("GIT_WORK_TREE", &foreign)
+            .env("GIT_INDEX_FILE", foreign.join("index"))
+            .current_dir(&repository);
+        crate::local::native_git::clear_local_git_env(&mut command);
+        let output = command.output().unwrap();
         assert!(
             output.status.success(),
             "{}",
@@ -166,6 +173,8 @@ fn real_custom_git_worktrees_are_valid_native_artifact_roots() {
         execute_at(home.path(), &query("worktree-token", &worktree)).unwrap()["content_base64"],
         "b3JpZ2luYWw="
     );
+    assert!(!foreign.join("HEAD").exists());
+    assert!(!foreign.join("index").exists());
 }
 
 #[test]
