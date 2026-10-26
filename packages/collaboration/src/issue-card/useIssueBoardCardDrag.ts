@@ -1,31 +1,23 @@
-import { useDraggable, useDroppable } from "@dnd-kit/core";
-import { useCallback } from "react";
-import { CSS } from "@dnd-kit/utilities";
+import { useDraggable, useDroppable } from '@dnd-kit/core'
+import { useCallback, useContext } from 'react'
+import { CSS } from '@dnd-kit/utilities'
+import { ProjectBoardCardContext } from '../project-board/projectBoardCardContext'
 
-export function useIssueBoardCardDrag(
-  id: string,
-  enabled: boolean,
-  columnKey?: string,
-) {
-  const drag = useDraggable({
-    id: JSON.stringify([columnKey ?? null, id]),
-    data: { itemId: id, columnKey },
-    disabled: !enabled,
-  });
-  const drop = useDroppable({
-    id: `todo-card:${JSON.stringify([columnKey ?? null, id])}`,
-    data: { itemId: id, columnKey },
-    disabled: !enabled,
-  });
-  const setDraggableRef = drag.setNodeRef;
-  const setDroppableRef = drop.setNodeRef;
+export function useIssueBoardCardDrag(id: string, enabled: boolean) {
+  const column = useContext(ProjectBoardCardContext)
+  const cardId = JSON.stringify([column?.groupBy, column?.columnKey, id])
+  const data = { ...column, itemId: id }
+  const drag = useDraggable({ id: cardId, data, disabled: !enabled })
+  const drop = useDroppable({ id: `todo-card:${cardId}`, data, disabled: !enabled })
+  const setDraggableRef = drag.setNodeRef
+  const setDroppableRef = drop.setNodeRef
   const setNodeRef = useCallback(
     (node: HTMLElement | null) => {
-      setDraggableRef(node);
-      setDroppableRef(node);
+      setDraggableRef(node)
+      setDroppableRef(node)
     },
-    [setDraggableRef, setDroppableRef],
-  );
+    [setDraggableRef, setDroppableRef]
+  )
   return {
     setNodeRef,
     style: { transform: CSS.Translate.toString(drag.transform) },
@@ -33,5 +25,5 @@ export function useIssueBoardCardDrag(
     dragging: enabled && drag.isDragging,
     boardDragging: Boolean(drag.active),
     dropTarget: enabled && drop.isOver,
-  };
+  }
 }

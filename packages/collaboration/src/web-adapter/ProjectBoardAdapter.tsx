@@ -2,7 +2,7 @@ import {
   projectBoardDnd,
   projectBoardCollisionDetection,
   projectBoardDrop,
-  projectBoardActiveItemId,
+  projectBoardDragItemId,
   useProjectBoardSensors,
 } from "../project-board/projectBoardDnd";
 import { ProjectBoardDragOverlay } from "../project-board/ProjectBoardDragOverlay";
@@ -114,7 +114,6 @@ interface ProjectBoardAdapterProps {
   onCreateIssue(): void;
   onArchiveCompleted?(issues: CollaborationIssue[]): void;
   onOpenArchive?(): void;
-  onGroupByChange(groupBy: ProjectBoardGroupBy): Promise<void>;
   onSaveViews?(
     config: ProjectBoardViews,
     settings?: import("../project-board/projectBoardViews").BoardViewSaveSettings,
@@ -162,7 +161,6 @@ export function ProjectBoardAdapter({
   onOpenArchive,
   onMarkRead,
   onDeleteIssue,
-  onGroupByChange,
   onSaveViews,
   onMove,
   onOpen,
@@ -270,7 +268,6 @@ export function ProjectBoardAdapter({
     focusStorageKey: `collaboration-board-focus:${project.id}`,
     items: issues,
     supportsOrder,
-    onGroupByChange,
     onMove: async (issue, _column, _beforeItemId, mutation) => {
       try {
         return await onMove(issue, mutation);
@@ -279,7 +276,10 @@ export function ProjectBoardAdapter({
         throw message ? new Error(message) : error;
       }
     },
-    personalGroupStorageKey: null,
+    personalGroupStorageKey:
+      project.current_user_id === undefined
+        ? null
+        : `collaboration-board-group:v1:${project.current_user_id}:${project.project_store}:${project.id}`,
     personalSortStorageKey:
       project.current_user_id != null
         ? `collaboration-board-column-sort:v2:${project.current_user_id}:${project.id}${savedViews.view ? `:view:${savedViews.view.id}` : ""}`
@@ -373,7 +373,7 @@ export function ProjectBoardAdapter({
               event.active.data.current?.columnKey ?? null,
             );
             controller.setActiveDragItemId(
-              projectBoardActiveItemId(event.active),
+              projectBoardDragItemId(event.active),
             );
           },
           onDragCancel: () => controller.setActiveDragItemId(null),
@@ -382,7 +382,7 @@ export function ProjectBoardAdapter({
             if (
               issues.some(
                 (issue) =>
-                  issue.id === projectBoardActiveItemId(event.active) &&
+                  issue.id === projectBoardDragItemId(event.active) &&
                   canEditCollaborationIssue(issue),
               )
             )
@@ -541,7 +541,6 @@ export function ProjectBoardAdapter({
           const cardProps = {
             translate,
             item: issue,
-            columnKey: column.key,
             unread: false,
             reference: `${project.project_key}-${issue.sequence_number}`,
             labels: cardLabels,

@@ -29,7 +29,7 @@ import {
   projectBoardDnd,
   projectBoardCollisionDetection,
   projectBoardDrop,
-  projectBoardActiveItemId,
+  projectBoardDragItemId,
   useProjectBoardSensors,
 } from '@wegent/collaboration/project-board/projectBoardDnd'
 import { ProjectBoardDragOverlay } from '@wegent/collaboration/project-board/ProjectBoardDragOverlay'
@@ -4723,7 +4723,7 @@ export function CloudTodoWorkspace({
                           standardBoardController.setActiveSourceColumnKey(
                             event.active.data.current?.columnKey ?? null
                           )
-                          setActiveDragItemId(projectBoardActiveItemId(event.active))
+                          setActiveDragItemId(projectBoardDragItemId(event.active))
                         },
                         onDragCancel: () => setActiveDragItemId(null),
                         onDragEnd: finishBoardDrop,
@@ -5032,7 +5032,6 @@ export function CloudTodoWorkspace({
                             statusNames={Object.fromEntries(
                               nativeStatuses.map(status => [status.id, status.name])
                             )}
-                            columnKey={column.key}
                             item={item}
                             unread={isMyTasksBoard && isTaskBoardItemUnread(item)}
                             taskBindings={

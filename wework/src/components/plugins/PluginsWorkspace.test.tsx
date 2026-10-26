@@ -4788,6 +4788,7 @@ describe('PluginsWorkspace', () => {
 
       expect(await screen.findByText('Documents')).toBeInTheDocument()
       expect(readCurrentCatalog).not.toHaveBeenCalled()
+      expect(marketplaceMock.getReportDeviceCalls()).toBe(0)
 
       resolveInstalled?.({
         marketplaces: [
@@ -4804,6 +4805,7 @@ describe('PluginsWorkspace', () => {
       expect(marketplaceMock.getReportDeviceCalls()).toBe(0)
       expect(hasInFlightPluginDeviceSync('current-device')).toBe(true)
       expect(readCurrentCatalog).not.toHaveBeenCalled()
+      expect(marketplaceMock.getReportDeviceCalls()).toBe(0)
 
       // Disconnecting clears the UI's pending hint, but the package request is
       // still running and must retain priority over local catalog reconciliation.

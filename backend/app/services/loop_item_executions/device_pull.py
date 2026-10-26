@@ -17,6 +17,9 @@ from app.db.session import get_db_session
 from app.models.delivery import loop_datetime_is_unset
 from app.models.loop_item_execution import LoopItemExecution
 from app.services.loop_item_executions.profile import WeworkExecutionProfileError
+from app.services.loop_item_executions.runtime_identity import (
+    execution_runtime_turn_id,
+)
 from app.services.loop_item_executions.service import (
     WeworkRuntimeConfigurationError,
     loop_item_execution_service,
@@ -151,7 +154,7 @@ def _claim_execution(
         execution_request = payload.get("executionRequest")
         if isinstance(execution_request, dict):
             execution_request["task_id"] = runtime_task_id
-            execution_request["subtask_id"] = f"{runtime_task_id}-execution-{row.id}"
+            execution_request["subtask_id"] = execution_runtime_turn_id(row)
 
         # Claiming and materializing a payload does not prove that the
         # Socket.IO acknowledgement reached the Executor. Keep

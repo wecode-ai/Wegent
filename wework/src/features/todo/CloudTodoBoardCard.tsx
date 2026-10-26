@@ -130,7 +130,6 @@ export interface CloudTodoBoardTaskBinding {
 interface CloudTodoBoardCardProps {
   statusNames?: Record<string, string>
   item: CloudLoopItem
-  columnKey?: string
   unread?: boolean
   taskBindings?: CloudTodoBoardTaskBinding[]
   onClick: () => void
@@ -167,7 +166,6 @@ interface CloudTodoBoardCardProps {
 export function CloudTodoBoardCard({
   statusNames,
   item,
-  columnKey,
   unread,
   taskBindings = [],
   onClick,
@@ -239,7 +237,6 @@ export function CloudTodoBoardCard({
         : []
   return (
     <IssueBoardCard
-      columnKey={columnKey}
       item={item}
       unread={unread}
       reference={item.id}

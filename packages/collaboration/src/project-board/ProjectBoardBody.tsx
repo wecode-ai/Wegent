@@ -1,3 +1,4 @@
+import { ProjectBoardCardContext } from "./projectBoardCardContext";
 import {
   Plus,
   ChevronDown,
@@ -532,18 +533,22 @@ export function ProjectBoardBody<TItem>({
                   dropFeedback.columnKey === column.key;
                 // Preserve the card's drag registration when feedback changes.
                 return (
-                  <div
-                    data-testid={
-                      highlighted ? "board-drop-highlight" : undefined
-                    }
-                    className={
-                      highlighted
-                        ? "rounded-xl ring-2 ring-focus/50"
-                        : undefined
-                    }
+                  <ProjectBoardCardContext.Provider
+                    value={{ columnKey: column.key, groupBy: state.groupBy }}
                   >
-                    {renderItem(item, column, state)}
-                  </div>
+                    <div
+                      data-testid={
+                        highlighted ? "board-drop-highlight" : undefined
+                      }
+                      className={
+                        highlighted
+                          ? "rounded-xl ring-2 ring-focus/50"
+                          : undefined
+                      }
+                    >
+                      {renderItem(item, column, state)}
+                    </div>
+                  </ProjectBoardCardContext.Provider>
                 );
               }}
               renderItemsFooter={renderItemsFooter}

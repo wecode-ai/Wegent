@@ -9,6 +9,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { ProjectBoardColumnSortPicker } from "./ProjectBoardColumnSortPicker";
 import { createProjectBoardSortLabels } from "./projectBoardSorting";
+import { ProjectBoardCardContext } from "./projectBoardCardContext";
 import { KanbanBoard } from "../kanban/KanbanBoard";
 import {
   ProjectBoardBody,
@@ -144,6 +145,34 @@ describe("ProjectBoardBody", () => {
     } finally {
       act(() => root.unmount());
     }
+  });
+
+  it("scopes copies of the same Issue to their current group and column", () => {
+    const options = props();
+    options.state.groupBy = "tag";
+    const board = descendants(ProjectBoardBody(options)).find(
+      (node) => node.type === KanbanBoard,
+    )!;
+    const item = { id: "shared-issue" };
+    const contexts = ["tag-backend", "tag-shared"].map((columnKey) => {
+      const rendered = board.props.renderItem(item, {
+        ...options.columns[0],
+        key: columnKey,
+      });
+      expect(rendered.type).toBe(ProjectBoardCardContext.Provider);
+      return rendered.props.value;
+    });
+    expect(contexts).toEqual([
+      { groupBy: "tag", columnKey: "tag-backend" },
+      { groupBy: "tag", columnKey: "tag-shared" },
+    ]);
+    options.state.groupBy = "priority";
+    expect(
+      board.props.renderItem(item, {
+        ...options.columns[0],
+        key: "priority-high",
+      }).props.value,
+    ).toEqual({ groupBy: "priority", columnKey: "priority-high" });
   });
 
   it("renders sorting in each lane header and preserves existing header actions", () => {

@@ -1,0 +1,695 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+import { expect, test, type Locator, type Page, type Request } from '@playwright/test'
+import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
+import { LoginPage } from '../../pages/auth/login.page'
+import { createApiClient } from '../../utils/api-client'
+import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
+import { webApi } from '../../utils/collaboration-test-support'
+
+interface Resource {
+  id: string
+  version: number
+}
+
+interface Project extends Resource {
+  board_config: { group_by: string }
+}
+
+interface Issue extends Resource {
+  assignee_user_id: number | null
+  priority: string
+  sort_order: number
+  status: string
+  tags: string[]
+}
+
+type GroupBy = 'status' | 'priority' | 'assignee' | 'tag'
+
+function projectPath(workspaceId: string, projectId: string): string {
+  return `/collaboration/workspaces/${workspaceId}/projects/${projectId}`
+}
+
+function projectApi(projectId: string): string {
+  return `/api/v1/cloud-projects/${projectId}`
+}
+
+async function createIssue(
+  page: Page,
+  projectId: string,
+  title: string,
+  overrides: Record<string, unknown> = {}
+): Promise<Issue> {
+  return webApi(page, `${projectApi(projectId)}/loop-items`, {
+    method: 'POST',
+    body: { title, status: 'pending', priority: 'none', tags: [], ...overrides },
+  })
+}
+
+async function archive(page: Page, path: string): Promise<void> {
+  const current = await webApi<Resource>(page, path)
+  await webApi(page, `${path}?version=${current.version}`, { method: 'DELETE' })
+}
+
+async function groupBy(page: Page, value: GroupBy): Promise<void> {
+  await page.getByTestId('cloud-board-group-by').click()
+  await page.getByTestId(`cloud-board-group-option-${value}`).click()
+  await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', value)
+}
+
+async function columnSort(page: Page, column: string, rules: string[] = []): Promise<void> {
+  const testId = `cloud-board-sort-by-${column}`
+  const trigger = page.getByTestId(testId)
+  await trigger.click()
+  await page.getByTestId(`${testId}-manual`).click()
+  for (const [index, rule] of rules.entries()) {
+    await page.getByTestId(`${testId}-add`).click()
+    await page.getByTestId(`${testId}-rule-${index}-mode`).click()
+    await page.getByTestId(`${testId}-rule-${index}-mode-${rule}`).click()
+  }
+  await trigger.click()
+  await expect(trigger).toHaveAttribute('data-sort-rules', rules.join(',') || 'manual')
+}
+
+async function expectIssues(page: Page, all: Issue[], visible: Issue[]): Promise<void> {
+  for (const issue of all) {
+    await expect(page.getByTestId(`collaboration-issue-${issue.id}`)).toHaveCount(
+      visible.includes(issue) ? 1 : 0
+    )
+  }
+  await expect(page.getByText(/保存失败|Failed to save|Could not save/i)).toHaveCount(0)
+}
+
+async function switchUser(
+  page: Page,
+  currentUsername: string,
+  nextUser: typeof REGULAR_USER
+): Promise<void> {
+  await page.getByRole('button').filter({ hasText: currentUsername }).click()
+  await page.getByRole('menuitem', { name: /^(退出登录|Logout)$/ }).click()
+  await new LoginPage(page).login(nextUser.username, nextUser.password)
+}
+
+for (const role of ['Developer', 'Viewer'] as const) {
+  test(`${role} filters their own Issues without saving shared settings and isolates grouping preferences`, async ({
+    page: ownerPage,
+    browser,
+    request,
+  }) => {
+    test.setTimeout(180_000)
+    await ownerPage.goto('/collaboration')
+    await expect(ownerPage.getByTestId('collaboration-platform-root')).toBeVisible()
+    const suffix = crypto.randomUUID()
+    const workspace = await webApi<Resource>(ownerPage, '/api/v1/workspaces', {
+      method: 'POST',
+      body: { name: `Personal board ${role} ${suffix}` },
+    })
+    const projects: Project[] = []
+    const login = await createApiClient(request).login(
+      REGULAR_USER.username,
+      REGULAR_USER.password,
+      1
+    )
+    expect(login.status).toBe(200)
+    const token = login.data?.access_token
+    if (!token) throw new Error('Regular user login did not return an access token')
+    const context = await browser.newContext({
+      baseURL: process.env.E2E_BASE_URL || 'http://localhost:3000',
+      storageState: buildStorageState(
+        process.env.E2E_BASE_URL || 'http://localhost:3000',
+        token,
+        getJwtExpiryMs(token)
+      ),
+    })
+    const updates: string[] = []
+    const recordUpdate = (request: Request) => {
+      if (
+        request.method() === 'PATCH' &&
+        projects.some(project => new URL(request.url()).pathname === projectApi(project.id))
+      ) {
+        updates.push(request.url())
+      }
+    }
+    context.on('request', recordUpdate)
+
+    try {
+      const users = await webApi<{ users: Array<{ id: number; user_name: string }> }>(
+        ownerPage,
+        `/api/users/search?q=${encodeURIComponent(REGULAR_USER.username)}&limit=20`
+      )
+      const member = users.users.find(user => user.user_name === REGULAR_USER.username)
+      expect(member, 'Global setup must provision the regular user').toBeDefined()
+      const owner = await webApi<{ id: number }>(ownerPage, '/api/users/me')
+      expect(member!.id).not.toBe(owner.id)
+      for (const name of ['Primary', 'Separate']) {
+        const created = await webApi<Project>(ownerPage, '/api/v1/cloud-projects', {
+          method: 'POST',
+          body: {
+            workspace_id: workspace.id,
+            name: `${name} ${suffix}`,
+            task_provider: 'local',
+            visibility: 'private',
+          },
+        })
+        projects.push(created)
+        await webApi(ownerPage, `${projectApi(created.id)}/members`, {
+          method: 'POST',
+          body: { user_id: member!.id, role: 'Developer' },
+        })
+      }
+      const [project, separate] = projects
+      const mineAlpha = await createIssue(ownerPage, project.id, `Mine alpha ${suffix}`, {
+        assignee_user_id: member!.id,
+        tags: ['alpha', 'keep'],
+      })
+      const mineBeta = await createIssue(ownerPage, project.id, `Mine beta ${suffix}`, {
+        assignee_user_id: member!.id,
+      })
+      const other = await createIssue(ownerPage, project.id, `Other alpha ${suffix}`, {
+        assignee_user_id: owner.id,
+        tags: ['beta'],
+      })
+      const unassigned = await createIssue(ownerPage, project.id, `Unassigned alpha ${suffix}`)
+      const cleared = await webApi<Issue>(ownerPage, `/api/v1/loop-items/${unassigned.id}`, {
+        method: 'PATCH',
+        body: { version: unassigned.version, assignee_user_id: null },
+      })
+      expect(cleared.assignee_user_id).toBeNull()
+      await createIssue(ownerPage, separate.id, `Separate project Issue ${suffix}`)
+      if (role === 'Viewer') {
+        // Viewers cannot receive new assignments; retain real assignments after a role change.
+        for (const project of projects) {
+          await webApi(ownerPage, `${projectApi(project.id)}/members/${member!.id}`, {
+            method: 'PATCH',
+            body: { role: 'Viewer' },
+          })
+        }
+        expect(
+          (await webApi<Issue>(ownerPage, `/api/v1/loop-items/${mineAlpha.id}`)).assignee_user_id
+        ).toBe(member!.id)
+      }
+      const snapshots = await Promise.all(
+        projects.map(project => webApi<Project>(ownerPage, projectApi(project.id)))
+      )
+      const all = [mineAlpha, mineBeta, other, unassigned]
+      let page = await context.newPage()
+      const path = projectPath(workspace.id, project.id)
+      const separatePath = projectPath(workspace.id, separate.id)
+      await page.goto(path)
+      const signedIn = await webApi<{ id: number; role: string }>(page, '/api/users/me')
+      expect(signedIn.id).toBe(member!.id)
+      expect(signedIn.role, 'Permission coverage must use an ordinary global user').toBe('user')
+      expect(
+        await webApi<Array<{ user_id: number; role: string }>>(
+          ownerPage,
+          `${projectApi(project.id)}/members`
+        )
+      ).toContainEqual(expect.objectContaining({ user_id: member!.id, role }))
+      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', 'status')
+      await expectIssues(page, all, all)
+      await groupBy(page, 'assignee')
+      const filter = page.getByTestId('cloud-board-group-filter')
+      const search = page.getByTestId('cloud-board-search')
+      await filter.selectOption(`assignee-${member!.id}`)
+      await expectIssues(page, all, [mineAlpha, mineBeta])
+      await search.fill('alpha')
+      await expectIssues(page, all, [mineAlpha])
+      await search.fill(`no-match-${suffix}`)
+      await expectIssues(page, all, [])
+      await search.clear()
+      await expectIssues(page, all, [mineAlpha, mineBeta])
+      await filter.selectOption(`assignee-${owner.id}`)
+      await expectIssues(page, all, [other])
+      await filter.selectOption('assignee-unassigned')
+      await expectIssues(page, all, [unassigned])
+      await filter.selectOption('')
+      await expectIssues(page, all, all)
+
+      // Only grouping is a saved personal preference; search and value filters reset.
+      await filter.selectOption(`assignee-${member!.id}`)
+      await search.fill('alpha')
+      await page.reload()
+      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
+        'data-value',
+        'assignee'
+      )
+      await expect(page.getByTestId('cloud-board-group-filter')).toHaveValue('')
+      await expect(page.getByTestId('cloud-board-search')).toHaveValue('')
+      await expectIssues(page, all, all)
+      await page.close()
+      page = await context.newPage()
+      await page.goto(path)
+      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
+        'data-value',
+        'assignee'
+      )
+      await expectIssues(page, all, all)
+
+      await page.goto(separatePath)
+      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', 'status')
+      await groupBy(page, 'tag')
+      await page.goto(path)
+      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
+        'data-value',
+        'assignee'
+      )
+      await page.goto(separatePath)
+      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', 'tag')
+      await page.goto(path)
+
+      // Switch accounts in the same browser storage so an unscoped key cannot pass.
+      await switchUser(page, REGULAR_USER.username, ADMIN_USER)
+      await page.goto(path)
+      expect((await webApi<{ id: number }>(page, '/api/users/me')).id).toBe(owner.id)
+      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', 'status')
+      await groupBy(page, 'priority')
+      await switchUser(page, ADMIN_USER.username, REGULAR_USER)
+      await page.goto(path)
+      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
+        'data-value',
+        'assignee'
+      )
+      await expectIssues(page, all, all)
+
+      if (role === 'Viewer') {
+        await expectViewerCannotDrag(page, project.id, mineAlpha, owner.id)
+      } else {
+        await expectDeveloperCanMove(page, project.id, owner.id, suffix)
+      }
+
+      for (const before of snapshots) {
+        const after = await webApi<Project>(ownerPage, projectApi(before.id))
+        expect(after.board_config).toEqual(before.board_config)
+        expect(after.version).toBe(before.version)
+      }
+      expect(updates, 'Personal view changes must never PATCH a shared project').toEqual([])
+    } finally {
+      await context.close()
+      for (const project of [...projects].reverse())
+        await archive(ownerPage, projectApi(project.id))
+      await archive(ownerPage, `/api/v1/workspaces/${workspace.id}`)
+    }
+  })
+}
+
+async function dragCard(page: Page, source: Locator, target: Locator): Promise<void> {
+  await source.scrollIntoViewIfNeeded()
+  const sourceBox = await source.boundingBox()
+  expect(sourceBox).not.toBeNull()
+  await page.mouse.move(sourceBox!.x + 20, sourceBox!.y + 20)
+  await page.mouse.down()
+  try {
+    await page.mouse.move(sourceBox!.x + 30, sourceBox!.y + 20)
+    await expect(page.getByTestId('project-board-drag-overlay')).toBeVisible()
+    await target.scrollIntoViewIfNeeded()
+    const targetBox = await target.boundingBox()
+    expect(targetBox).not.toBeNull()
+    await page.mouse.move(
+      targetBox!.x + targetBox!.width / 2,
+      targetBox!.y + targetBox!.height / 2,
+      {
+        steps: 15,
+      }
+    )
+  } finally {
+    await page.mouse.up()
+  }
+  await expect(page.getByTestId('project-board-drag-overlay')).toHaveCount(0)
+}
+
+async function expectViewerCannotDrag(
+  page: Page,
+  projectId: string,
+  moving: Issue,
+  otherUserId: number
+): Promise<void> {
+  const before = await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)
+  const writes: string[] = []
+  const recordWrite = (request: Request) => {
+    if (request.method() !== 'GET' && new URL(request.url()).pathname.includes('/loop-items')) {
+      writes.push(`${request.method()} ${new URL(request.url()).pathname}`)
+    }
+  }
+  page.on('request', recordWrite)
+  try {
+    for (const [group, sourceKey, targetKey] of [
+      ['status', 'pending', 'completed'],
+      ['priority', 'priority-none', 'priority-high'],
+      ['assignee', `assignee-${moving.assignee_user_id}`, `assignee-${otherUserId}`],
+      ['tag', 'tag-alpha', 'tag-beta'],
+    ] as const) {
+      await groupBy(page, group)
+      const source = page
+        .getByTestId(`cloud-todo-column-${sourceKey}`)
+        .getByTestId(`cloud-todo-card-${moving.id}`)
+      const target = page.getByTestId(`cloud-todo-column-dropzone-${targetKey}`)
+      await source.scrollIntoViewIfNeeded()
+      const sourceBox = await source.boundingBox()
+      expect(sourceBox).not.toBeNull()
+      await page.mouse.move(sourceBox!.x + 20, sourceBox!.y + 20)
+      await page.mouse.down()
+      try {
+        await page.mouse.move(sourceBox!.x + 40, sourceBox!.y + 20, { steps: 5 })
+        await expect(page.getByTestId('project-board-drag-overlay')).toHaveCount(0)
+        await target.scrollIntoViewIfNeeded()
+        const targetBox = await target.boundingBox()
+        expect(targetBox).not.toBeNull()
+        await page.mouse.move(targetBox!.x + 30, targetBox!.y + 10, { steps: 10 })
+      } finally {
+        await page.mouse.up()
+      }
+      await expect(page.getByTestId('collaboration-issue-detail')).toHaveCount(0)
+      await page.reload()
+      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', group)
+      await expect(source).toHaveCount(1)
+      const after = await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)
+      for (const key of [
+        'version',
+        'priority',
+        'status',
+        'assignee_user_id',
+        'sort_order',
+        'tags',
+      ] as const) {
+        expect(after[key], `${group} drag changed ${key} for a Viewer in ${projectId}`).toEqual(
+          before[key]
+        )
+      }
+      expect(writes, `Viewer dragging in ${group} must not issue a write`).toEqual([])
+    }
+  } finally {
+    page.off('request', recordWrite)
+  }
+}
+
+async function expectSortedDropUnchanged(
+  page: Page,
+  moving: Issue,
+  source: Locator,
+  target: Locator
+): Promise<void> {
+  const before = await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)
+  const writes: string[] = []
+  const recordWrite = (request: Request) => {
+    if (request.method() !== 'GET' && new URL(request.url()).pathname.includes('/loop-items')) {
+      writes.push(`${request.method()} ${new URL(request.url()).pathname}`)
+    }
+  }
+  page.on('request', recordWrite)
+  try {
+    await dragCard(page, source, target)
+    const after = await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)
+    for (const key of [
+      'version',
+      'priority',
+      'status',
+      'assignee_user_id',
+      'sort_order',
+      'tags',
+    ] as const) {
+      expect(after[key], `A sorted same-column drop must preserve ${key}`).toEqual(before[key])
+    }
+    await page.reload()
+    await expect(source).toHaveCount(1)
+    const reloaded = await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)
+    for (const key of [
+      'version',
+      'priority',
+      'status',
+      'assignee_user_id',
+      'sort_order',
+      'tags',
+    ] as const) {
+      expect(reloaded[key], `Reload must preserve ${key}`).toEqual(before[key])
+    }
+    expect(writes, 'A compound-sorted same-column drop must not write').toEqual([])
+  } finally {
+    page.off('request', recordWrite)
+  }
+}
+
+async function expectManualDrop(
+  page: Page,
+  moving: Issue,
+  source: Locator,
+  target: Locator
+): Promise<void> {
+  const path = `/api/v1/loop-items/${moving.id}`
+  const before = await webApi<Issue>(page, path)
+  const saved = page.waitForResponse(
+    response => response.request().method() === 'PATCH' && new URL(response.url()).pathname === path
+  )
+  await dragCard(page, source, target)
+  const response = await saved
+  expect(response.ok(), `Manual reorder failed: ${await response.text()}`).toBe(true)
+  expect(response.request().postDataJSON()).toHaveProperty('position')
+  const after = await webApi<Issue>(page, path)
+  expect(after.version).toBeGreaterThan(before.version)
+  for (const key of ['priority', 'status', 'assignee_user_id', 'tags'] as const) {
+    expect(after[key], `A manual same-column drop must preserve ${key}`).toEqual(before[key])
+  }
+}
+
+async function expectDeveloperCanMove(
+  page: Page,
+  projectId: string,
+  otherUserId: number,
+  suffix: string
+): Promise<void> {
+  const title = `Developer reorder ${suffix}`
+  // Creating as the Developer exercises their own implicit creator assignment.
+  const first = await createIssue(page, projectId, `${title} first`)
+  const second = await createIssue(page, projectId, `${title} second`)
+  // Give both cards an explicit initial order; creation defaults may tie at zero.
+  const initial = await webApi<{ items: Issue[] }>(
+    page,
+    `${projectApi(projectId)}/loop-items/reorder`,
+    {
+      method: 'POST',
+      body: { parent_id: null, status: 'pending', item_ids: [first.id, second.id] },
+    }
+  )
+  expect(initial.items.find(issue => issue.id === first.id)!.sort_order).toBeLessThan(
+    initial.items.find(issue => issue.id === second.id)!.sort_order
+  )
+  await page.reload()
+  await groupBy(page, 'status')
+  await columnSort(page, 'pending')
+  await page.getByTestId('cloud-board-search').fill(title)
+  const card = (column: string, issueId = second.id) =>
+    page.getByTestId(`cloud-todo-column-${column}`).getByTestId(`cloud-todo-card-${issueId}`)
+  const orderedCards = page
+    .getByTestId('cloud-todo-column-pending')
+    .getByTestId(new RegExp(`^cloud-todo-card-(${first.id}|${second.id})$`))
+  await expect(orderedCards).toHaveCount(2)
+  await expect(orderedCards.first()).toHaveAttribute('data-testid', `cloud-todo-card-${first.id}`)
+  const reordered = page.waitForResponse(
+    response =>
+      response.request().method() === 'PATCH' &&
+      new URL(response.url()).pathname === `/api/v1/loop-items/${second.id}`
+  )
+  await dragCard(page, card('pending'), card('pending', first.id))
+  expect((await reordered).ok()).toBe(true)
+  const persistedFirst = await webApi<Issue>(page, `/api/v1/loop-items/${first.id}`)
+  const persistedSecond = await webApi<Issue>(page, `/api/v1/loop-items/${second.id}`)
+  expect(persistedSecond.sort_order).toBeLessThan(persistedFirst.sort_order)
+  await page.reload()
+  await page.getByTestId('cloud-board-search').fill(title)
+  await expect(orderedCards).toHaveCount(2)
+  await expect(orderedCards.first()).toHaveAttribute('data-testid', `cloud-todo-card-${second.id}`)
+  const anchor = await createIssue(page, projectId, `${title} anchor`)
+  await page.reload()
+
+  for (const [group, sourceKey, targetKey, field, expected] of [
+    ['status', 'pending', 'completed', 'status', 'completed'],
+    ['priority', 'priority-none', 'priority-high', 'priority', 'high'],
+    [
+      'assignee',
+      `assignee-${second.assignee_user_id}`,
+      `assignee-${otherUserId}`,
+      'assignee_user_id',
+      otherUserId,
+    ],
+  ] as const) {
+    const moving = group === 'status' ? second : first
+    if (group !== 'status') {
+      await webApi(page, `${projectApi(projectId)}/loop-items/reorder`, {
+        method: 'POST',
+        body: { parent_id: null, status: null, item_ids: [anchor.id, moving.id] },
+      })
+      await page.reload()
+    }
+    await groupBy(page, group)
+    if (group !== 'status') {
+      await columnSort(page, sourceKey, ['priority-desc', 'created-asc'])
+      await expectSortedDropUnchanged(
+        page,
+        moving,
+        card(sourceKey, moving.id),
+        card(sourceKey, anchor.id)
+      )
+      await columnSort(page, sourceKey)
+      await expectManualDrop(page, moving, card(sourceKey, moving.id), card(sourceKey, anchor.id))
+      expect(
+        (await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)).sort_order
+      ).toBeLessThan((await webApi<Issue>(page, `/api/v1/loop-items/${anchor.id}`)).sort_order)
+      await page.reload()
+      const ordered = page
+        .getByTestId(`cloud-todo-column-${sourceKey}`)
+        .getByTestId(new RegExp(`^cloud-todo-card-(${moving.id}|${anchor.id})$`))
+      await expect(ordered.first()).toHaveAttribute('data-testid', `cloud-todo-card-${moving.id}`)
+    }
+    const mutation = page.waitForResponse(response => {
+      const pathname = new URL(response.url()).pathname
+      return (
+        ['PATCH', 'POST'].includes(response.request().method()) &&
+        (pathname === `/api/v1/loop-items/${moving.id}` ||
+          pathname === `${projectApi(projectId)}/loop-items/${moving.id}/assign`)
+      )
+    })
+    await dragCard(
+      page,
+      card(sourceKey, moving.id),
+      page.getByTestId(`cloud-todo-column-dropzone-${targetKey}`)
+    )
+    expect((await mutation).ok()).toBe(true)
+    await expect
+      .poll(async () => (await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`))[field])
+      .toBe(expected)
+    await page.reload()
+    expect((await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`))[field]).toBe(expected)
+    await expect(card(targetKey, moving.id)).toHaveCount(1)
+    await expect(page.getByText(/保存失败|Failed to save|Could not save/i)).toHaveCount(0)
+  }
+}
+
+test('keeps unrelated tags during real multi-column drops and persists manual same-column order', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  await page.goto('/collaboration')
+  await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
+  const suffix = crypto.randomUUID()
+  const workspace = await webApi<Resource>(page, '/api/v1/workspaces', {
+    method: 'POST',
+    body: { name: `Tag board ${suffix}` },
+  })
+  let project: Project | undefined
+  try {
+    project = await webApi<Project>(page, '/api/v1/cloud-projects', {
+      method: 'POST',
+      body: {
+        workspace_id: workspace.id,
+        name: `Tag drops ${suffix}`,
+        task_provider: 'local',
+        visibility: 'private',
+      },
+    })
+    await webApi(page, projectApi(project.id), {
+      method: 'PATCH',
+      body: { version: project.version, tags: ['alpha', 'beta', 'gamma', 'delta', 'keep'] },
+    })
+    const moving = await createIssue(page, project.id, `Multi-tag moving ${suffix}`, {
+      tags: ['alpha', 'beta', 'keep'],
+    })
+    const sibling = await createIssue(page, project.id, `Same-column target ${suffix}`, {
+      tags: ['alpha'],
+    })
+    const target = await createIssue(page, project.id, `Multi-tag target ${suffix}`, {
+      tags: ['beta', 'gamma'],
+    })
+    await webApi(page, `${projectApi(project.id)}/loop-items/reorder`, {
+      method: 'POST',
+      body: { parent_id: null, status: null, item_ids: [sibling.id, moving.id, target.id] },
+    })
+    await page.goto(projectPath(workspace.id, project.id))
+    await groupBy(page, 'tag')
+    const column = (key: string) => page.getByTestId(`cloud-todo-column-${key}`)
+    const card = (key: string, id = moving.id) => column(key).getByTestId(`cloud-todo-card-${id}`)
+    const mutations: string[] = []
+    const recordMutation = (request: Request) => {
+      const pathname = new URL(request.url()).pathname
+      if (
+        ['PATCH', 'POST'].includes(request.method()) &&
+        (pathname.includes('/loop-items/') || pathname.endsWith('/loop-items/reorder'))
+      ) {
+        mutations.push(pathname)
+      }
+    }
+    page.on('request', recordMutation)
+    try {
+      await expect(card('tag-alpha')).toHaveCount(1)
+      await expect(card('tag-beta')).toHaveCount(1)
+      await expect(card('tag-keep')).toHaveCount(1)
+      await columnSort(page, 'tag-alpha', ['priority-desc', 'created-asc'])
+      await expectSortedDropUnchanged(
+        page,
+        moving,
+        card('tag-alpha'),
+        card('tag-alpha', sibling.id)
+      )
+      expect(mutations, 'A compound-sorted same-tag drop must not mutate the Issue').toEqual([])
+      await columnSort(page, 'tag-alpha')
+      await expectManualDrop(page, moving, card('tag-alpha'), card('tag-alpha', sibling.id))
+      expect(mutations).toEqual([`/api/v1/loop-items/${moving.id}`])
+      const reordered = await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)
+      expect([...reordered.tags].sort()).toEqual(['alpha', 'beta', 'keep'])
+      expect(reordered.sort_order).toBeLessThan(
+        (await webApi<Issue>(page, `/api/v1/loop-items/${sibling.id}`)).sort_order
+      )
+      await page.reload()
+      await expect(
+        column('tag-alpha')
+          .getByTestId(new RegExp(`^cloud-todo-card-(${moving.id}|${sibling.id})$`))
+          .first()
+      ).toHaveAttribute('data-testid', `cloud-todo-card-${moving.id}`)
+
+      const dropAndVerify = async (
+        sourceKey: string,
+        destinationKey: string,
+        tags: string[],
+        targetId?: string
+      ) => {
+        const response = page.waitForResponse(
+          response =>
+            response.request().method() === 'PATCH' &&
+            new URL(response.url()).pathname === `/api/v1/loop-items/${moving.id}`
+        )
+        await dragCard(
+          page,
+          card(sourceKey),
+          targetId
+            ? card(destinationKey, targetId)
+            : page.getByTestId(`cloud-todo-column-dropzone-${destinationKey}`)
+        )
+        const saved = await response
+        expect(saved.ok(), `Tag mutation failed: ${await saved.text()}`).toBe(true)
+        expect(
+          [...(await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)).tags].sort()
+        ).toEqual([...tags].sort())
+        await page.reload()
+        await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', 'tag')
+        for (const tag of ['alpha', 'beta', 'gamma', 'delta', 'keep']) {
+          await expect(card(`tag-${tag}`)).toHaveCount(tags.includes(tag) ? 1 : 0)
+        }
+        await expect(card('tag-untagged')).toHaveCount(tags.length === 0 ? 1 : 0)
+        expect(
+          [...(await webApi<Issue>(page, `/api/v1/loop-items/${moving.id}`)).tags].sort()
+        ).toEqual([...tags].sort())
+      }
+      // The target appears in beta and gamma; its actual rendered column must win.
+      await dropAndVerify('tag-alpha', 'tag-gamma', ['beta', 'gamma', 'keep'], target.id)
+      // Moving to a tag already present must remove only the source and add no duplicates.
+      await dropAndVerify('tag-gamma', 'tag-beta', ['beta', 'keep'], target.id)
+      await dropAndVerify('tag-beta', 'tag-delta', ['delta', 'keep'])
+      await dropAndVerify('tag-delta', 'tag-untagged', [])
+      await dropAndVerify('tag-untagged', 'tag-alpha', ['alpha'])
+    } finally {
+      page.off('request', recordMutation)
+    }
+  } finally {
+    if (project) await archive(page, projectApi(project.id))
+    await archive(page, `/api/v1/workspaces/${workspace.id}`)
+  }
+})

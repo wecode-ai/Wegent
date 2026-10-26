@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page, type Request } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
 import { dragCollaborationIssueToColumn, webApi } from '../../utils/collaboration-test-support'
@@ -643,17 +643,23 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       const expected = canonical
         .filter(item => [first.id, second.id, outside.id].includes(item.id))
         .map(item => item.id)
-      const groupingSaved = page.waitForResponse(
-        response =>
-          response.request().method() === 'PATCH' &&
-          response.url().endsWith(`/cloud-projects/${projectId}`) &&
-          response.ok()
-      )
+      const sharedProjectUpdates: string[] = []
+      const onRequest = (request: Request) => {
+        if (request.method() === 'PATCH' && request.url().endsWith(`/cloud-projects/${projectId}`))
+          sharedProjectUpdates.push(request.url())
+      }
+      page.on('request', onRequest)
+      const beforeGrouping = await webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}`)
       await page.getByTestId('cloud-board-group-by').click()
       await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()
-      expect((await groupingSaved).ok()).toBe(true)
+      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', groupBy)
       await assertOrder(expected)
+      page.off('request', onRequest)
+      expect(sharedProjectUpdates).toEqual([])
+      const afterGrouping = await webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}`)
+      expect(afterGrouping.version).toBe(beforeGrouping.version)
       await page.reload()
+      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', groupBy)
       await assertOrder(expected)
     }
   )

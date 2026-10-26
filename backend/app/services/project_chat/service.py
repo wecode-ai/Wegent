@@ -1237,6 +1237,7 @@ class ProjectChatService:
             identities = device_identity_ids(device)
         data = payload.get("data")
         data = data if isinstance(data, dict) else {}
+        turn_id = self._runtime_turn_id(payload)
         if event_name == "response.completed":
             from app.services.project_chat.execution_snapshot import (
                 completed_activity_for_turn,
@@ -1246,14 +1247,31 @@ class ProjectChatService:
                 db,
                 device_ids=identities,
                 task_id=runtime_task_id,
-                turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
+                turn_id=turn_id,
             )
+            if completed is None:
+                from app.services.loop_item_executions.service import (
+                    loop_item_execution_service,
+                )
+
+                completed = loop_item_execution_service.reconciled_activity_for_runtime(
+                    db,
+                    runtime_device_id=device_id,
+                    runtime_task_id=runtime_task_id,
+                    turn_id=turn_id,
+                    owner_user_id=owner_user_id,
+                )
             if completed is not None:
                 # History reports outcomes without text. A delayed final event
                 # must still save its full content without replaying workflow.
                 content = self._project_chat_final_text(data, payload)
                 if content is not None:
                     completed.content = content
+                    if turn_id:
+                        completed.metadata_json = {
+                            **dict(completed.metadata_json or {}),
+                            "runtime_turn_id": turn_id,
+                        }
                     self._index_activity_change_requests(db, completed)
                 self._commit(db)
                 db.refresh(completed)
@@ -1610,6 +1628,12 @@ class ProjectChatService:
             if normalized in PROJECT_CHAT_FAILED_STATUSES:
                 return "failed"
         return None
+
+    @staticmethod
+    def _runtime_turn_id(payload: dict) -> str | None:
+        """Return the Runtime turn identity attached to an event."""
+        value = payload.get("subtaskId") or payload.get("subtask_id")
+        return value if isinstance(value, str) and value else None
 
     @staticmethod
     def _project_chat_final_text(data: dict, payload: dict) -> str | None:

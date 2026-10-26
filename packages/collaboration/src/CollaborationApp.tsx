@@ -831,17 +831,6 @@ export function CollaborationApp({
                       onOpenArchive={
                         issueArchiveAvailable ? openArchiveDrawer : undefined
                       }
-                      onGroupByChange={(groupBy) =>
-                        commands.changeProjectGroup({
-                          project,
-                          groupBy,
-                          defaultStatuses: projectStatuses(
-                            project,
-                            messages,
-                            translate,
-                          ),
-                        })
-                      }
                       onSaveViews={async (boardViews, settings) => {
                         await saveProjectBoardViews({
                           api: api.projects,

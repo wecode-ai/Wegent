@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test, type Browser, type Page } from '@playwright/test'
+import { expect, test, type Browser, type Page, type Request } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import {
@@ -289,16 +289,26 @@ async function selectGroupBy(
   projectId: string,
   groupBy: 'status' | 'priority' | 'assignee' | 'tag'
 ): Promise<void> {
-  const updateResponse = page.waitForResponse(
-    response =>
-      response.request().method() === 'PATCH' &&
-      new URL(response.url()).pathname.endsWith(`/cloud-projects/${projectId}`)
-  )
-  await page.getByTestId('cloud-board-group-by').click()
-  await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()
-  const response = await updateResponse
-  expect(response.ok(), `Board grouping update failed: ${await response.text()}`).toBe(true)
-  await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', groupBy)
+  const projectPath = `/api/v1/cloud-projects/${encodeURIComponent(projectId)}`
+  const before = await webApi<CloudProject>(page, projectPath)
+  const updates: string[] = []
+  const recordUpdate = (request: Request) => {
+    if (request.method() === 'PATCH' && new URL(request.url()).pathname === projectPath) {
+      updates.push(request.url())
+    }
+  }
+  page.on('request', recordUpdate)
+  try {
+    await page.getByTestId('cloud-board-group-by').click()
+    await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()
+    await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', groupBy)
+    const after = await webApi<CloudProject>(page, projectPath)
+    expect(updates, 'Personal grouping must not update the shared project').toEqual([])
+    expect(after.board_config).toEqual(before.board_config)
+    expect(after.version).toBe(before.version)
+  } finally {
+    page.off('request', recordUpdate)
+  }
 }
 
 async function dragIssueTo(page: Page, issueId: string, columnKey: string): Promise<void> {
