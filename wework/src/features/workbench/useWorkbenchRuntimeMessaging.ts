@@ -434,10 +434,7 @@ export function useWorkbenchRuntimeMessaging({
       try {
         if (!isCurrent()) return false
         // Replies settle an existing native request and do not select a model.
-        if (
-          !userInputResponse &&
-          blockRuntimeSendForUnavailableModel(request.address, options)
-        )
+        if (!userInputResponse && blockRuntimeSendForUnavailableModel(request.address, options))
           return false
         if (optimisticUserMessage) {
           applyRuntimeConversationAction(request.address, {

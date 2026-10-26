@@ -11,6 +11,7 @@ import {
   createSse,
   handleEmptyReplyPrediction,
   namespacedFunctionCall,
+  readRequestBody,
   responseCompleted,
   responseCreated,
   selectMcpTool,
@@ -44,12 +45,6 @@ function deferred() {
     resolve = resolvePromise
   })
   return { promise, resolve }
-}
-
-async function readJson(request) {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
 function lastUserMessageBody(body) {
@@ -216,7 +211,8 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
     if (request.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname)) {
       return false
     }
-    const body = await readJson(request)
+    // Native approval inspection may have consumed the stream; reuse its cache.
+    const body = await readRequestBody(request)
     if (!lastUserMessageBody(body).includes(PROMPT)) {
       if (handleEmptyReplyPrediction(body, response)) return true
       return false
