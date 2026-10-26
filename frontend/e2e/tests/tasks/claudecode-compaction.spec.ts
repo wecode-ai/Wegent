@@ -19,7 +19,15 @@ type Transcript = {
   messages: Array<{ role: string; content: string; status?: string }>
   turns: Array<{ status?: string; error?: unknown }>
 }
-type Capture = { kind: string; body: { model: string; max_tokens: number; messages: unknown[] } }
+type Capture = {
+  kind: string
+  body: {
+    model: string
+    max_tokens: number
+    messages: unknown[]
+    thinking?: Record<string, unknown>
+  }
+}
 
 test.describe('Real Claude Code cloud-model compaction', () => {
   test.describe.configure({ mode: 'default', timeout: 180_000 })
@@ -172,9 +180,17 @@ test.describe('Real Claude Code cloud-model compaction', () => {
           mode === 'proactive'
             ? ['seed', 'seed', 'compact', 'complete']
             : mode === 'unrelated-error'
-              ? ['seed', 'seed', 'overflow']
+              ? ['seed', 'seed', 'overflow', 'overflow']
               : ['seed', 'seed', 'overflow', 'compact', 'complete']
         expect(captures.map(capture => capture.kind)).toEqual(expected)
+        if (mode === 'unrelated-error') {
+          // Claude Code 2.1.310 retries once without thinking.display after this 400 error.
+          const { thinking: initialThinking, ...initialRequest } = captures[2].body
+          const { thinking: retryThinking, ...retryRequest } = captures[3].body
+          expect(initialThinking).toEqual({ type: 'adaptive', display: 'updates' })
+          expect(retryThinking).toEqual({ type: 'adaptive' })
+          expect(retryRequest).toEqual(initialRequest)
+        }
         for (const capture of captures) {
           expect(capture.body.model).toBe(model)
           expect(capture.body.max_tokens).toBeGreaterThan(0)

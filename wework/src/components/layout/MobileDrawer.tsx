@@ -607,7 +607,7 @@ export function MobileDrawer({
                               setRenamingProjectId(null)
                             }
                           }}
-                          className="min-w-0 flex-1 select-text rounded-lg border border-border bg-background px-2 py-1 text-heading-sm leading-6 text-text-primary outline-none focus:border-focus"
+                          className="min-w-0 flex-1 select-text rounded-lg border border-border bg-background px-2 py-1 text-heading-sm leading-6 text-text-primary outline-none keyboard:focus:border-focus"
                         />
                       ) : (
                         <span className="min-w-0 flex-1 truncate">{project.name}</span>

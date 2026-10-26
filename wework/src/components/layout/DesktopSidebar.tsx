@@ -1409,7 +1409,7 @@ function SidebarReleaseNotesCard({
         type="button"
         data-testid="sidebar-release-notes-open"
         onClick={onOpen}
-        className="block w-full py-3 pl-3 pr-10 text-left hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+        className="block w-full py-3 pl-3 pr-10 text-left hover:bg-muted/60 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-blue-500"
       >
         <span className="flex items-center gap-2">
           <Sparkles className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
@@ -4227,7 +4227,7 @@ export function DesktopSidebar({
                       type="button"
                       data-testid="runtime-search-button"
                       onClick={onOpenSearch}
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-blue-500"
                       aria-label={t('workbench.search')}
                     >
                       <Search className="h-4 w-4" />
@@ -4266,7 +4266,7 @@ export function DesktopSidebar({
                           : priorityFilterActive
                       }
                       className={cn(
-                        'relative flex h-7 w-7 shrink-0 items-center justify-center text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500',
+                        'relative flex h-7 w-7 shrink-0 items-center justify-center text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-blue-500',
                         onToggleMyWork ? 'rounded-l-lg' : 'rounded-lg',
                         (selectedTaskViewAction === 'board'
                           ? taskView === 'default-work-items'
@@ -4324,7 +4324,7 @@ export function DesktopSidebar({
                           onSelect: () => selectTaskViewAction('board'),
                         },
                       ]}
-                      triggerClassName="flex h-7 w-4 shrink-0 items-center justify-center rounded-r-lg text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500 [&_svg]:h-2.5 [&_svg]:w-2.5"
+                      triggerClassName="flex h-7 w-4 shrink-0 items-center justify-center rounded-r-lg text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-blue-500 [&_svg]:h-2.5 [&_svg]:w-2.5"
                     />
                   ) : null}
                 </span>
@@ -4734,7 +4734,7 @@ export function DesktopSidebar({
                                   setStandaloneWorkspaceDialogMode('existing')
                                 }
                               }}
-                              className="rounded-xl border border-border bg-background p-4 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                              className="rounded-xl border border-border bg-background p-4 text-left hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
                             >
                               <FolderOpen className="h-5 w-5 text-text-primary" />
                               <span className="mt-3 block text-base font-medium">
@@ -4759,7 +4759,7 @@ export function DesktopSidebar({
                                   setStandaloneWorkspaceDialogMode('remote')
                                 }
                               }}
-                              className="rounded-xl border border-border bg-background p-4 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                              className="rounded-xl border border-border bg-background p-4 text-left hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
                             >
                               <Globe2 className="h-5 w-5 text-text-primary" />
                               <span className="mt-3 block text-base font-medium">
