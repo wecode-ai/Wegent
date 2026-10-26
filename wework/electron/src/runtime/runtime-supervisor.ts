@@ -8,6 +8,8 @@ import { readdir, readFile } from 'node:fs/promises'
 import { RotatingLog, type RotatingLogOptions } from './rotating-log.js'
 import { resolveSpawnCommand } from './spawn-command.js'
 
+const PROCESS_GROUP_POLL_INTERVAL_MS = 25
+
 export type RuntimeSupervisorState =
   | 'idle'
   | 'starting'
@@ -308,23 +310,35 @@ async function waitForProcessGroupExit(
   timeoutMs: number
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (!(await processGroupHasLiveMembers(processGroupId))) return true
-    await new Promise(resolve => setTimeout(resolve, 25))
+  let firstDeadAt: number | null = null
+  while (true) {
+    const state = await inspectProcessGroup(processGroupId)
+    const now = Date.now()
+    if (state === 'absent') return true
+    if (state === 'dead') {
+      // A second scan can find children forked after the previous /proc listing.
+      if (firstDeadAt !== null && now - firstDeadAt >= PROCESS_GROUP_POLL_INTERVAL_MS) {
+        return true
+      }
+      firstDeadAt ??= now
+    } else {
+      firstDeadAt = null
+    }
+    if (now >= deadline) return false
+    await new Promise(resolve => setTimeout(resolve, PROCESS_GROUP_POLL_INTERVAL_MS))
   }
-  return !(await processGroupHasLiveMembers(processGroupId))
 }
 
-async function processGroupHasLiveMembers(processGroupId: number): Promise<boolean> {
+async function inspectProcessGroup(processGroupId: number): Promise<'absent' | 'dead' | 'present'> {
   try {
     process.kill(-processGroupId, 0)
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
-    if (code === 'ESRCH') return false
-    if (code === 'EPERM') return true
+    if (code === 'ESRCH') return 'absent'
+    if (code === 'EPERM') return 'present'
     throw error
   }
-  if (process.platform !== 'linux') return true
+  if (process.platform !== 'linux') return 'present'
 
   // Container PID 1 may leave exited descendants unreaped. kill(-pgid, 0)
   // still sees their group, but zombies cannot run or respond to SIGKILL.
@@ -347,9 +361,11 @@ async function processGroupHasLiveMembers(processGroupId: number): Promise<boole
     if (endOfName < 0 || !state || !group || !Number.isSafeInteger(Number(group))) {
       throw new Error(`Invalid process stat for PID ${pid}`)
     }
-    if (Number(group) === processGroupId && !['Z', 'X', 'x'].includes(state)) return true
+    if (Number(group) === processGroupId && !['Z', 'X', 'x'].includes(state)) {
+      return 'present'
+    }
   }
-  return false
+  return 'dead'
 }
 
 function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {

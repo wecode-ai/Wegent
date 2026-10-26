@@ -17,12 +17,15 @@ impl LocalTaskStore {
         role: Option<&str>,
     ) -> Result<Value, TaskRuntimeError> {
         let connection = self.connection()?;
-        Ok(
+        let mut proposal =
             get_item_from(&connection, &proposal_key(user, role), "stand_in_proposal")?
                 .map(|row| row.metadata)
                 .filter(|value| value["status"] == "pending")
-                .unwrap_or(Value::Null),
-        )
+                .unwrap_or(Value::Null);
+        if proposal.is_object() {
+            super::personal_stand_in::migrate_connections(&mut proposal["settings"])?;
+        }
+        Ok(proposal)
     }
 
     pub fn propose_stand_in_settings(
@@ -31,8 +34,9 @@ impl LocalTaskStore {
         device: &str,
         role: Option<&str>,
         summary: &str,
-        settings: Value,
+        mut settings: Value,
     ) -> Result<Value, TaskRuntimeError> {
+        super::personal_stand_in::migrate_connections(&mut settings)?;
         if summary.trim().is_empty() || summary.len() > 4000 {
             return Err(TaskRuntimeError::Invalid(
                 "proposal summary is required".into(),
@@ -51,7 +55,6 @@ impl LocalTaskStore {
                 })
             };
             if previous["primary"] != settings["primary"]
-                || previous["autoSelect"] != settings["autoSelect"]
                 || other_roles(&previous) != other_roles(&settings)
             {
                 return Err(TaskRuntimeError::Invalid(

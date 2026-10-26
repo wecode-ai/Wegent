@@ -28,17 +28,18 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useStandInProjectAgents, projectAgentChoiceValue } from './useStandInProjectAgents'
 import { usePersonalStandIn } from './usePersonalStandIn'
 import { StandInProjectSetup } from './StandInProjectSetup'
 import { StandInConnectionSettings } from './StandInConnectionSettings'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
-import { StandInRoleScheduling } from './StandInRoleScheduling'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInComposer } from './StandInComposer'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import { findStandInProject } from './standInProjects'
 
-type View = 'project' | 'main' | 'connections' | 'scheduling' | 'advanced' | 'create'
+type View = 'project' | 'main' | 'connections' | 'advanced' | 'create'
 export interface StandInSettingsHandle {
   requestClose(): void
 }
@@ -152,7 +153,6 @@ export function StandInSettingsPage({
       active = false
     }
   }, [view, selectedResourceId, services, setError])
-  const multiple = Boolean(draft && draft.roles.length > 1)
   const dirty = Boolean(draft && saved && !dequal(draft, saved))
   useEffect(() => {
     onSavingChange?.(saving)
@@ -203,7 +203,7 @@ export function StandInSettingsPage({
   }
   const dialogRef = useDialogKeyboard<HTMLElement>(
     close,
-    Boolean(initialCreate || initialProfileId)
+    Boolean(initialCreate || initialProfileId) && !confirmDiscard
   )
   useImperativeHandle(ref, () => ({ requestClose: closeSettings }))
   const save = async (disconnectProject = false) => {
@@ -396,8 +396,7 @@ export function StandInSettingsPage({
           <p data-testid="stand-in-project-agent-scope" className="mt-2 text-xs text-text-muted">
             {t('standIn.personal.project_agent_scope', {
               project:
-                projects.find(project => project.id === role.agentProject?.id)?.name ??
-                role.agentProject.id,
+                findStandInProject(projects, role.agentProject)?.name ?? role.agentProject.id,
             })}
           </p>
         )}
@@ -456,11 +455,9 @@ export function StandInSettingsPage({
                     ? 'standIn.personal.description'
                     : view === 'connections'
                       ? 'standIn.personal.connections_help'
-                      : view === 'scheduling'
-                        ? 'standIn.personal.scheduling_help'
-                        : view === 'create'
-                          ? 'standIn.personal.create_help'
-                          : 'standIn.personal.advanced_help',
+                      : view === 'create'
+                        ? 'standIn.personal.create_help'
+                        : 'standIn.personal.advanced_help',
                 { project: initialProject?.name }
               )}
             </p>
@@ -490,29 +487,6 @@ export function StandInSettingsPage({
             </button>
           )}
         </header>
-        {!initialProject && !!draft?.selectionErrors?.length && (
-          <div
-            role="alert"
-            data-testid="stand-in-selection-errors"
-            className="m-5 rounded-lg border border-border p-3"
-          >
-            <p>{t('standIn.personal.selection_failed')}</p>
-            {draft.selectionErrors.map(item => (
-              <p key={item.issueId} className="mt-1 text-xs text-text-muted">
-                {item.title}
-              </p>
-            ))}
-            <button
-              type="button"
-              data-testid="stand-in-selection-retry"
-              disabled={saving}
-              onClick={() => void state.save()}
-              className="mt-2 text-primary"
-            >
-              {t('standIn.personal.selection_retry')}
-            </button>
-          </div>
-        )}
         {loading ? (
           <p role="status" className="px-5 py-8 text-text-muted">
             {t('standIn.loading')}
@@ -520,24 +494,6 @@ export function StandInSettingsPage({
         ) : draft && role ? (
           <>
             <div className="space-y-5 px-5 pb-5">
-              {multiple && view === 'main' && !initialProject && (
-                <label className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-3">
-                  <span className="text-text-secondary">{t('standIn.personal.current_role')}</span>
-                  <select
-                    data-testid="stand-in-role-select"
-                    value={role.id}
-                    disabled={saving}
-                    onChange={event => setSelectedId(event.target.value)}
-                    className="min-h-9 rounded-md border border-border bg-transparent px-2"
-                  >
-                    {draft.roles.map((row, index) => (
-                      <option key={row.id} value={row.id}>
-                        {standInRoleName(row, index, t('standIn.personal.default_role'))}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
               {initialProject && (view === 'project' || view === 'create') && (
                 <StandInProjectSetup
                   project={initialProject}
@@ -567,7 +523,7 @@ export function StandInSettingsPage({
                   }}
                 />
               )}
-              {view === 'create' && (
+              {(view === 'main' || view === 'create') && (
                 <label
                   className={
                     initialProject
@@ -583,7 +539,7 @@ export function StandInSettingsPage({
                     )}
                   </span>
                   <input
-                    autoFocus
+                    autoFocus={view === 'create'}
                     data-testid="stand-in-role-name"
                     value={role.name}
                     disabled={saving}
@@ -594,7 +550,15 @@ export function StandInSettingsPage({
                       changeRole({ ...role, name: event.target.value })
                     }}
                     className="min-h-9 rounded-md border border-border bg-background px-2"
-                    placeholder={t('standIn.personal.role_name_placeholder')}
+                    placeholder={
+                      view === 'create'
+                        ? t('standIn.personal.role_name_placeholder')
+                        : standInRoleName(
+                            role,
+                            draft.roles.indexOf(role),
+                            t('standIn.personal.default_role')
+                          )
+                    }
                   />
                   {roleNameError && (
                     <span
@@ -645,7 +609,7 @@ export function StandInSettingsPage({
                         <ChevronRight className="h-4 w-4" />
                       </button>
                     </div>
-                    {role.collaboration.enabled || role.dingtalk?.length ? (
+                    {role.collaboration.enabled || role.connections?.length ? (
                       <div
                         className="flex items-start gap-3 rounded-lg border border-border bg-muted/40 p-4"
                         data-testid="stand-in-source-summary"
@@ -665,10 +629,10 @@ export function StandInSettingsPage({
                               </p>
                             </>
                           )}
-                          {!!role.dingtalk?.length && (
+                          {!!role.connections?.length && (
                             <p className="mt-1 text-xs text-text-muted">
-                              {t('standIn.workspace.dingtalk_connections', {
-                                count: role.dingtalk.length,
+                              {t('standIn.workspace.source_connections', {
+                                count: role.connections.length,
                               })}
                             </p>
                           )}
@@ -719,30 +683,6 @@ export function StandInSettingsPage({
                       {t('standIn.workspace.pause_help')}
                     </p>
                   </div>
-                  {multiple && view === 'main' && (
-                    <button
-                      type="button"
-                      data-testid="stand-in-scheduling-open"
-                      disabled={saving}
-                      onClick={() => openView('scheduling')}
-                      className="flex w-full items-center gap-2 border-t border-border pt-4 text-left"
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="font-medium">{t('standIn.personal.scheduling')}</span>
-                        <span className="mt-1 block text-xs text-text-muted">
-                          {t('standIn.personal.shared_scheduling')}
-                        </span>
-                      </span>
-                      <span className="text-xs text-text-muted">
-                        {t(
-                          draft.autoSelect
-                            ? 'standIn.personal.ai_selection'
-                            : 'standIn.personal.order_selection'
-                        )}
-                      </span>
-                      <ChevronRight className="h-4 w-4" />
-                    </button>
-                  )}
                   <button
                     type="button"
                     data-testid="stand-in-advanced-open"
@@ -761,7 +701,7 @@ export function StandInSettingsPage({
               {view === 'connections' && (
                 <StandInConnectionSettings
                   role={role}
-                  projects={availableProjects}
+                  projects={projects}
                   focusedProjectId={initialProject?.id}
                   disabled={saving}
                   onChange={changeRole}
@@ -769,9 +709,6 @@ export function StandInSettingsPage({
                   deviceId={draft.executionDeviceId}
                   localDeviceId={state.currentDeviceId}
                 />
-              )}
-              {view === 'scheduling' && (
-                <StandInRoleScheduling settings={draft} onChange={setDraft} disabled={saving} />
               )}
               {view === 'advanced' && (
                 <StandInComposer
@@ -838,33 +775,22 @@ export function StandInSettingsPage({
                   {t('standIn.saved')}
                 </p>
               )}
-              {confirmDiscard && (
-                <div role="alert" className="rounded-md border border-border p-3">
-                  <p>{t('standIn.personal.discard_help')}</p>
-                  <div className="mt-2 flex gap-3">
-                    <button
-                      type="button"
-                      data-testid="stand-in-discard"
-                      onClick={() => {
-                        setDraft(saved)
-                        setConfirmDiscard(false)
-                        onCancel?.()
-                      }}
-                      className="min-h-8 rounded-md border border-border px-2"
-                    >
-                      {t('standIn.personal.discard')}
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="stand-in-keep-editing"
-                      onClick={() => setConfirmDiscard(false)}
-                      className="min-h-8 px-2"
-                    >
-                      {t('standIn.personal.keep_editing')}
-                    </button>
-                  </div>
-                </div>
-              )}
+              <ConfirmDialog
+                open={confirmDiscard}
+                destructive
+                title={t('standIn.personal.discard_help')}
+                description={t('standIn.personal.discard_description')}
+                cancelLabel={t('standIn.personal.keep_editing')}
+                confirmLabel={t('standIn.personal.discard')}
+                confirmTestId="stand-in-discard"
+                cancelTestId="stand-in-keep-editing"
+                onClose={() => setConfirmDiscard(false)}
+                onConfirm={() => {
+                  setDraft(saved)
+                  setConfirmDiscard(false)
+                  onCancel?.()
+                }}
+              />
             </div>
             <footer className="flex flex-wrap items-center gap-3 border-t border-border px-5 py-4">
               {initialProfileId &&
@@ -883,9 +809,7 @@ export function StandInSettingsPage({
                   </button>
                 )}
               <span className="mr-auto text-xs text-text-muted">
-                {view === 'scheduling' ? (
-                  t('standIn.personal.shared_scheduling')
-                ) : view === 'connections' ? (
+                {view === 'connections' ? (
                   t('standIn.personal.connections_only')
                 ) : initialProject && view === 'create' ? (
                   <span data-testid="stand-in-project-auto-connect">

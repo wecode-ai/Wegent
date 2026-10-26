@@ -1,6 +1,72 @@
 //! A single device-owned personal stand-in with reusable, independently configured roles.
 use super::*;
 
+pub const DINGTALK_PROVIDER: &str = "@wegent/dsh-connection-dingtalk/dingtalk";
+
+pub(super) fn migrate_connections(value: &mut Value) -> Result<bool, TaskRuntimeError> {
+    let mut changed = false;
+    for identity in value
+        .get_mut("roles")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        changed |= migrate_identity_connections(identity)?;
+    }
+    if value["primary"].is_object() {
+        changed |= migrate_identity_connections(&mut value["primary"])?;
+    }
+    Ok(changed)
+}
+
+fn migrate_identity_connections(identity: &mut Value) -> Result<bool, TaskRuntimeError> {
+    let Some(object) = identity.as_object_mut() else {
+        return Ok(false);
+    };
+    if object.contains_key("dingtalk") && object.contains_key("connections") {
+        return Err(TaskRuntimeError::Invalid(
+            "conflicting connection formats".into(),
+        ));
+    }
+    let Some(mut legacy) = object.remove("dingtalk") else {
+        return Ok(false);
+    };
+    let rows = legacy
+        .as_array_mut()
+        .ok_or_else(|| TaskRuntimeError::Invalid("invalid legacy connections".into()))?;
+    for source in rows {
+        if !source.is_object() {
+            return Err(TaskRuntimeError::Invalid(
+                "invalid legacy connection".into(),
+            ));
+        }
+        source["providerId"] = json!(DINGTALK_PROVIDER);
+    }
+    object.insert("connections".into(), legacy);
+    Ok(true)
+}
+
+pub fn source_provider(source: &Value) -> &str {
+    // Historical work/source records retain their identity and are read without re-keying.
+    source["providerId"].as_str().unwrap_or(DINGTALK_PROVIDER)
+}
+
+pub fn source_namespace(source: &Value) -> Value {
+    if source_provider(source) == DINGTALK_PROVIDER {
+        source["profile"].clone()
+    } else {
+        json!({"providerId":source_provider(source),"profile":source["profile"]})
+    }
+}
+
+pub fn connection_memory_scope(source: &Value) -> Value {
+    if source_provider(source) == DINGTALK_PROVIDER {
+        json!({"kind":"dingtalk","id":source["id"],"profile":source["profile"],"conversationKind":source["kind"]})
+    } else {
+        json!({"kind":"connection","providerId":source_provider(source),"id":source["id"],"profile":source["profile"],"resourceKind":source["kind"]})
+    }
+}
+
 pub(super) fn empty_role(id: &str, device: &str) -> Value {
     json!({"id":id,"name":"","enabled":false,"prompt":"","executionDeviceId":device,
         "version":0,"tags":[],"collaboration":{"enabled":false,"allProjects":true,
@@ -8,7 +74,7 @@ pub(super) fn empty_role(id: &str, device: &str) -> Value {
 }
 
 fn empty_personal(user: i64, device: &str) -> Value {
-    json!({"userId":user,"executionDeviceId":device,"version":0,"autoSelect":true,
+    json!({"userId":user,"executionDeviceId":device,"version":0,
         "roles":[empty_role("default", device)]})
 }
 
@@ -35,7 +101,13 @@ pub(super) fn read_personal(
     device: &str,
 ) -> Result<Value, TaskRuntimeError> {
     if let Some(row) = get_item_from(connection, &personal_key(user), "personal_stand_in")? {
-        return Ok(row.metadata);
+        let mut settings = row.metadata;
+        if let Some(fields) = settings.as_object_mut() {
+            fields.remove("autoSelect");
+            fields.remove("selectionErrors");
+        }
+        migrate_connections(&mut settings)?;
+        return Ok(settings);
     }
     let mut personal = empty_personal(user, device);
     let mut statement = connection.prepare(
@@ -68,6 +140,7 @@ pub(super) fn read_personal(
         personal["executionDeviceId"] = roles[0]["executionDeviceId"].clone();
         personal["roles"] = json!(roles);
     }
+    migrate_connections(&mut personal)?;
     Ok(personal)
 }
 
@@ -98,19 +171,12 @@ pub fn role_project_matches(role: &Value, project: &str, store: &str) -> bool {
         && (!role["agentProject"].is_object() || matches(&role["agentProject"]))
 }
 
-pub fn project_role(
-    role: &Value,
-    user: i64,
-    project: &str,
-    store: &str,
-    auto_select: bool,
-) -> Value {
+pub fn project_role(role: &Value, user: i64, project: &str, store: &str) -> Value {
     let mut config = role.clone();
     config["projectId"] = json!(project);
     config["projectStore"] = json!(store);
     config["userId"] = json!(user);
     config["tags"] = role["collaboration"]["tags"].clone();
-    config["autoSelect"] = json!(auto_select);
     config["handlingPolicy"] = project_policy(role, project, store);
     config
 }
@@ -173,8 +239,13 @@ fn valid_collaboration(source: &Value) -> bool {
 }
 
 fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
+    if role.get("dingtalk").is_some() {
+        return Err(TaskRuntimeError::Invalid(
+            "conflicting connection formats".into(),
+        ));
+    }
     if role["agentProject"].is_object()
-        && role["dingtalk"]
+        && role["connections"]
             .as_array()
             .is_some_and(|rows| !rows.is_empty())
     {
@@ -196,7 +267,7 @@ fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
                     })
             })
         })
-        && role.get("dingtalk").map_or(true, |rows| {
+        && role.get("connections").map_or(true, |rows| {
             rows.as_array().is_some_and(|rows| {
                 let mut ids = HashSet::new();
                 rows.len() <= 1000
@@ -210,9 +281,15 @@ fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
                             && row["profile"].as_str().is_some_and(|profile| {
                                 !profile.trim().is_empty() && profile.len() <= 512
                             })
-                            && matches!(row["kind"].as_str(), Some("group" | "direct"))
+                            && row["providerId"]
+                                .as_str()
+                                .is_some_and(|id| !id.is_empty() && id.len() <= 256)
+                            && row["kind"]
+                                .as_str()
+                                .is_some_and(|kind| !kind.is_empty() && kind.len() <= 128)
                             && validate_policy(&row["policy"])
                             && ids.insert((
+                                row["providerId"].to_string(),
                                 row["profile"].to_string(),
                                 row["kind"].to_string(),
                                 row["id"].to_string(),
@@ -240,15 +317,15 @@ pub fn stand_in_identities(settings: &Value) -> Vec<Value> {
     for identity in &mut identities {
         identity["userId"] = settings["userId"].clone();
         identity["executionDeviceId"] = settings["executionDeviceId"].clone();
-        identity["personalVersion"] = settings["version"].clone();
         identity["sharedPreferences"] = settings["primary"]["preferences"].clone();
     }
     identities
 }
 
-pub fn dingtalk_connection<'a>(identity: &'a Value, source: &Value) -> Option<&'a Value> {
-    identity["dingtalk"].as_array()?.iter().find(|row| {
+pub fn stand_in_connection<'a>(identity: &'a Value, source: &Value) -> Option<&'a Value> {
+    identity["connections"].as_array()?.iter().find(|row| {
         row["id"] == source["id"]
+            && source_provider(row) == source_provider(source)
             && row["profile"] == source["profile"]
             && row["kind"] == source["kind"]
     })
@@ -273,7 +350,8 @@ impl LocalTaskStore {
         if let Some(row) = get_item_from(&connection, &personal_key(user), "personal_stand_in")? {
             let mut personal = row.metadata;
             // Device-owned settings follow their Executor, not a stale desktop identity.
-            if bind_personal_device(&mut personal, device) {
+            let migrated = migrate_connections(&mut personal)?;
+            if bind_personal_device(&mut personal, device) || migrated {
                 write_personal(&connection, &personal)?;
             }
             connection.commit()?;
@@ -313,8 +391,10 @@ impl LocalTaskStore {
         device: &str,
         mut value: Value,
     ) -> Result<Value, TaskRuntimeError> {
+        migrate_connections(&mut value)?;
         if let Some(object) = value.as_object_mut() {
             object.remove("selectionErrors");
+            object.remove("autoSelect");
         }
         for role in value["roles"].as_array_mut().into_iter().flatten() {
             if role["agentId"].is_string()
@@ -334,7 +414,7 @@ impl LocalTaskStore {
                     "personal roles must be an array of at most 100 roles".into(),
                 )
             })?;
-        if value["autoSelect"].as_bool().is_none() || value["executionDeviceId"] != device {
+        if value["executionDeviceId"] != device {
             return Err(TaskRuntimeError::Invalid(
                 "invalid personal stand-in settings".into(),
             ));
@@ -360,7 +440,7 @@ impl LocalTaskStore {
             return Err(TaskRuntimeError::VersionConflict);
         }
         if value["primary"].is_object() {
-            stamp_dingtalk_connections(&mut value["primary"], &previous["primary"]);
+            stamp_stand_in_connections(&mut value["primary"], &previous["primary"]);
             stamp_project_enabled(&mut value["primary"], &previous["primary"]);
         }
         for role in value["roles"].as_array_mut().unwrap() {
@@ -372,7 +452,7 @@ impl LocalTaskStore {
             let version = before
                 .and_then(|before| before["version"].as_i64())
                 .unwrap_or(0);
-            stamp_dingtalk_connections(role, before.unwrap_or(&Value::Null));
+            stamp_stand_in_connections(role, before.unwrap_or(&Value::Null));
             role["version"] = json!(version + 1);
             stamp_project_enabled(role, before.unwrap_or(&Value::Null));
         }
@@ -396,49 +476,20 @@ impl LocalTaskStore {
             .map(|user| self.personal_stand_in(user, device))
             .collect()
     }
-
-    pub fn stand_in_selection_errors(
-        &self,
-        user: i64,
-        version: &Value,
-    ) -> Result<Vec<Value>, TaskRuntimeError> {
-        let connection = self.connection()?;
-        let mut statement = connection.prepare("SELECT metadata FROM loop_items WHERE resource_type='stand_in_decision' AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.error') IS NOT NULL ORDER BY updated_at DESC LIMIT 20")?;
-        let rows = statement.query_map(params![user], |row| row.get::<_, String>(0))?;
-        let mut errors = Vec::new();
-        for row in rows {
-            let value: Value = serde_json::from_str(&row?)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
-            if value["version"] == *version {
-                errors.push(value);
-            }
-        }
-        Ok(errors)
-    }
-
-    pub fn stand_in_decision(&self, id: &str) -> Result<Option<Value>, TaskRuntimeError> {
-        let connection = self.connection()?;
-        Ok(get_item_from(&connection, id, "stand_in_decision")?.map(|row| row.metadata))
-    }
-
-    pub fn save_stand_in_decision(&self, id: &str, value: &Value) -> Result<(), TaskRuntimeError> {
-        let connection = self.connection()?;
-        connection.execute("INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,'stand_in_decision',?2,?3,?3) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,updated_at=excluded.updated_at", params![id,value.to_string(),now()])?;
-        Ok(())
-    }
 }
 
-fn stamp_dingtalk_connections(identity: &mut Value, previous: &Value) {
+fn stamp_stand_in_connections(identity: &mut Value, previous: &Value) {
     let preserve = identity["enabled"] == previous["enabled"];
     for source in identity
-        .get_mut("dingtalk")
+        .get_mut("connections")
         .and_then(Value::as_array_mut)
         .into_iter()
         .flatten()
     {
-        let before = previous["dingtalk"].as_array().and_then(|rows| {
+        let before = previous["connections"].as_array().and_then(|rows| {
             rows.iter().find(|row| {
                 row["id"] == source["id"]
+                    && source_provider(row) == source_provider(source)
                     && row["kind"] == source["kind"]
                     && row["profile"] == source["profile"]
             })

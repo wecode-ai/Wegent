@@ -74,12 +74,6 @@ export function StandInProposalCard({
               projects={projects}
             />
           )}
-          {current.autoSelect !== proposal.settings.autoSelect && (
-            <p className="py-3 text-sm">
-              {t('standIn.workspace.ai_ownership')} ·{' '}
-              {t(proposal.settings.autoSelect ? 'standIn.auto_on' : 'standIn.auto_off')}
-            </p>
-          )}
         </div>
       </div>
       <footer className="shrink-0 border-t border-border bg-background px-4 py-3">

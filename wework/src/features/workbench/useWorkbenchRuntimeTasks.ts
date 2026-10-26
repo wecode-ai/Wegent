@@ -10,6 +10,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
 import { buildRuntimeTaskRoute, navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
+import { getErrorMessage } from '@/lib/error-message'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type {
   RuntimeTaskSummary,
   ProjectWithTasks,
@@ -17,6 +19,8 @@ import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
+  RuntimeTranscriptRequest,
+  RuntimeTranscriptSearchResponse,
   RuntimeWorkSearchRequest,
   ModelSelectionConfig,
   User,
@@ -160,13 +164,38 @@ export function useWorkbenchRuntimeTasks({
       address: RuntimeTaskAddress,
       options: RuntimePaneTranscriptLoadOptions = {}
     ): Promise<RuntimePaneTranscript> => {
-      const { threadOnly, ...requestOptions } = options
-      const load = threadOnly ? readRuntimeThreadConversation : synchronizeRuntimeConversation
-      return load(
-        request => executorClient.runtime.getRuntimeTranscript(request),
-        address,
-        requestOptions
-      )
+      const { threadOnly, isolated, ...requestOptions } = options
+      const read = (request: RuntimeTranscriptRequest) =>
+        executorClient.runtime.getRuntimeTranscript(request)
+      return threadOnly
+        ? readRuntimeThreadConversation(read, address, requestOptions)
+        : synchronizeRuntimeConversation(read, address, { ...requestOptions, isolated })
+    },
+    [executorClient]
+  )
+
+  const searchRuntimeTranscriptForPane = useCallback(
+    async (
+      address: RuntimeTaskAddress,
+      query: string
+    ): Promise<RuntimeTranscriptSearchResponse> => {
+      const startedAt = performance.now()
+      try {
+        return await executorClient.runtime.searchRuntimeTranscript({
+          ...address,
+          query,
+          limit: 250,
+        })
+      } catch (error) {
+        logRuntimeTaskCreateStage('pane-transcript-search-failed', {
+          taskId: address.taskId,
+          deviceId: address.deviceId,
+          queryLength: query.length,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          error: getErrorMessage(error, 'Unknown transcript search error'),
+        })
+        throw error
+      }
     },
     [executorClient]
   )
@@ -587,6 +616,7 @@ export function useWorkbenchRuntimeTasks({
     reconcileCurrentRuntimeTaskAddress,
     clearCurrentRuntimeTaskView,
     loadRuntimeTranscriptForPane,
+    searchRuntimeTranscriptForPane,
     subscribeRuntimeTaskStream,
     openRuntimeTask,
     renameRuntimeTask,

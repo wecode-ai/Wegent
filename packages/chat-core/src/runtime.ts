@@ -182,6 +182,31 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   navigationOnly?: boolean;
 }
 
+export interface RuntimeTranscriptSearchRequest extends RuntimeTaskAddress {
+  query: string;
+  limit?: number;
+}
+
+export interface RuntimeTranscriptSearchMatch {
+  messageId?: string;
+  itemId?: string;
+  /** Stable identity of the Markdown render region, independent of message projection. */
+  regionId?: string;
+  /** Half-open UTF-16 range in the original visible region text. */
+  range?: { start: number; end: number };
+  turnId?: string;
+  /** Question labels required to resolve this reply's visible occurrences. */
+  replyQuestions?: string[];
+  occurrence: number;
+  cursor: string;
+}
+
+export interface RuntimeTranscriptSearchResponse {
+  matches: RuntimeTranscriptSearchMatch[];
+  totalMatches: number;
+  isCapped: boolean;
+}
+
 export interface RuntimeTokenUsageBreakdown {
   totalTokens: number;
   inputTokens: number;

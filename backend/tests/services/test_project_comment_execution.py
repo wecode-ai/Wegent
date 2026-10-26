@@ -716,8 +716,9 @@ async def test_project_transcript_uses_manual_binding_and_reports_real_device_fa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("search", [False, True])
 async def test_project_transcript_websocket_uses_same_authorization(
-    scenario, monkeypatch
+    scenario, monkeypatch, search
 ):
     from contextlib import contextmanager
 
@@ -739,11 +740,14 @@ async def test_project_transcript_websocket_uses_same_authorization(
     await ws.relay_ipc_request(
         user_id=s.member.id,
         device_id="admin-cloud",
-        method="runtime.tasks.transcript",
+        method=(
+            "runtime.tasks.transcript.search" if search else "runtime.tasks.transcript"
+        ),
         params={
             "deviceId": "forged-device",
             "taskId": "original-session",
             "projectSession": {"projectId": str(s.project.id), "issueId": s.issue.id},
+            **({"query": "needle", "limit": 250} if search else {}),
         },
         timeout_seconds=30,
     )
@@ -751,6 +755,7 @@ async def test_project_transcript_websocket_uses_same_authorization(
     assert s.rpc.await_args.kwargs["payload"] == {
         "deviceId": "admin-cloud",
         "taskId": "original-session",
+        **({"query": "needle", "limit": 250} if search else {}),
     }
 
 

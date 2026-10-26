@@ -1,6 +1,12 @@
 //! Durable source cursors, message deduplication and role-owned work associations.
+use super::personal_stand_in::source_namespace;
 use super::*;
 use sha2::{Digest, Sha256};
+
+enum MessageGrouping<'a> {
+    Known(Option<&'a str>),
+    Uncertain(Option<&'a str>),
+}
 
 pub(crate) fn stand_in_record_key(prefix: &str, value: &Value) -> String {
     format!(
@@ -25,6 +31,27 @@ fn write_record(
 ) -> Result<(), TaskRuntimeError> {
     connection.execute("INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,?2,?3,?4,?4) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,updated_at=excluded.updated_at",params![id,kind,value.to_string(),now()])?;
     Ok(())
+}
+
+fn find_message(
+    connection: &Connection,
+    user: i64,
+    role: &str,
+    source: &Value,
+    message: &str,
+) -> Result<Option<Value>, TaskRuntimeError> {
+    let raw: Option<String> = connection.query_row(
+        "SELECT metadata FROM loop_items WHERE resource_type='stand_in_message'
+         AND json_extract(metadata,'$.userId')=?1 AND json_extract(metadata,'$.roleId')=?2
+         AND json_extract(metadata,'$.source.profile')=?3 AND json_extract(metadata,'$.source.kind')=?4
+         AND json_extract(metadata,'$.source.id')=?5 AND json_extract(metadata,'$.id')=?6 AND COALESCE(json_extract(metadata,'$.source.providerId'),?7)=?8 LIMIT 1",
+        params![user, role, source["profile"].as_str(), source["kind"].as_str(), source["id"].as_str(), message, super::personal_stand_in::DINGTALK_PROVIDER, super::personal_stand_in::source_provider(source)],
+        |row| row.get(0),
+    ).optional()?;
+    raw.map(|raw| {
+        serde_json::from_str(&raw).map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+    })
+    .transpose()
 }
 
 fn refresh_work(connection: &Connection, work: &mut Value) -> Result<(), TaskRuntimeError> {
@@ -70,7 +97,7 @@ impl LocalTaskStore {
     pub fn stand_in_source(&self, user: i64, source: &Value) -> Result<Value, TaskRuntimeError> {
         let key = stand_in_record_key(
             "stand-in-source",
-            &json!([user, source["profile"], source["kind"], source["id"]]),
+            &json!([user, source_namespace(source), source["kind"], source["id"]]),
         );
         let connection = self.connection()?;
         Ok(read_record(&connection, &key, "stand_in_source")?.unwrap_or(Value::Null))
@@ -84,7 +111,7 @@ impl LocalTaskStore {
     ) -> Result<(), TaskRuntimeError> {
         let key = stand_in_record_key(
             "stand-in-source",
-            &json!([user, source["profile"], source["kind"], source["id"]]),
+            &json!([user, source_namespace(source), source["kind"], source["id"]]),
         );
         let mut state = state.clone();
         state["userId"] = json!(user);
@@ -130,15 +157,12 @@ impl LocalTaskStore {
     pub fn known_stand_in_message(
         &self,
         user: i64,
-        profile: &str,
+        role: &str,
+        source: &Value,
         message: &str,
     ) -> Result<Option<Value>, TaskRuntimeError> {
         let connection = self.connection()?;
-        read_record(
-            &connection,
-            &stand_in_record_key("stand-in-message", &json!([user, profile, message])),
-            "stand_in_message",
-        )
+        find_message(&connection, user, role, source, message)
     }
 
     pub fn ingest_stand_in_message(
@@ -149,13 +173,64 @@ impl LocalTaskStore {
         message: &Value,
         work_id: Option<&str>,
     ) -> Result<Value, TaskRuntimeError> {
+        self.ingest_stand_in_message_record(
+            user,
+            role,
+            source,
+            message,
+            MessageGrouping::Known(work_id),
+        )
+    }
+
+    pub fn ingest_ungrouped_stand_in_message(
+        &self,
+        user: i64,
+        role: &str,
+        source: &Value,
+        message: &Value,
+        error: Option<&str>,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.ingest_stand_in_message_record(
+            user,
+            role,
+            source,
+            message,
+            MessageGrouping::Uncertain(error),
+        )
+    }
+
+    fn ingest_stand_in_message_record(
+        &self,
+        user: i64,
+        role: &str,
+        source: &Value,
+        message: &Value,
+        grouping: MessageGrouping<'_>,
+    ) -> Result<Value, TaskRuntimeError> {
+        let (work_id, status, error) = match grouping {
+            MessageGrouping::Known(id) => (id, "pending", None),
+            MessageGrouping::Uncertain(error) => (None, "needs_grouping", error),
+        };
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let key = stand_in_record_key(
             "stand-in-message",
-            &json!([user, source["profile"], message["id"]]),
+            &json!([
+                user,
+                role,
+                source_namespace(source),
+                source["kind"],
+                source["id"],
+                message["id"]
+            ]),
         );
-        if let Some(existing) = read_record(&connection, &key, "stand_in_message")? {
+        if let Some(existing) = find_message(
+            &connection,
+            user,
+            role,
+            source,
+            message["id"].as_str().unwrap_or_default(),
+        )? {
             let result = read_record(
                 &connection,
                 existing["workId"].as_str().unwrap_or_default(),
@@ -179,7 +254,10 @@ impl LocalTaskStore {
         record["roleId"] = json!(role);
         record["workId"] = work["id"].clone();
         record["source"] = source.clone();
-        record["dispatchStatus"] = json!("pending");
+        record["dispatchStatus"] = json!(status);
+        if status == "needs_grouping" {
+            work["error"] = json!(error);
+        }
         write_record(&connection, &key, "stand_in_message", &record)?;
         refresh_work(&connection, &mut work)?;
         connection.commit()?;

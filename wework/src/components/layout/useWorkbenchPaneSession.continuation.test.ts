@@ -1,7 +1,10 @@
-import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, renderHook, waitFor } from '@testing-library/react'
 import { createElement, StrictMode, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { RuntimeTaskAddress } from '@/types/api'
+import type { WorkbenchMessage } from '@/types/workbench'
+import { useConversationFind } from '@/components/chat/useConversationFind'
+import { getPlatform } from '@/lib/platform'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import {
   cacheRuntimeConversationQueuedMessages,
@@ -104,6 +107,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   resetRuntimeConversationQueueControllersForTests()
   clearRuntimeConversationCacheForTests()
 })
@@ -680,6 +684,61 @@ describe('pane continuation without composer submission', () => {
     await act(async () => expect(await result.current.sendContinuation(continuation)).toBe(false))
 
     expect(mocks.send).not.toHaveBeenCalled()
+  })
+})
+
+describe('unbound pane conversation search', () => {
+  test('finds and navigates loaded messages without attempting a persisted transcript search', async () => {
+    const searchTranscript = vi.fn()
+    mocks.context.searchRuntimeTranscriptForPane = searchTranscript
+    const messages: WorkbenchMessage[] = [
+      {
+        id: 'loaded-message',
+        role: 'assistant',
+        content: 'needle first; needle second',
+        status: 'done',
+        createdAt: '2026-10-20T00:00:00Z',
+      },
+    ]
+    const { result } = renderHook(
+      () => {
+        const pane = useWorkbenchPaneSession({
+          currentRuntimeTask: null,
+          debugSnapshotEnabled: false,
+        })
+        const find = useConversationFind(
+          {
+            messages,
+            onSearchTranscript: pane.searchTranscript,
+            onEnsureSearchMatch: pane.ensureSearchMatch,
+          },
+          true
+        )
+        return { pane, find }
+      },
+      {
+        wrapper: ({ children }: { children: ReactNode }) =>
+          createElement(RuntimeTaskLifecycleProvider, { store: lifecycleStore, children }),
+      }
+    )
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    act(() => {
+      fireEvent.keyDown(window, {
+        key: 'f',
+        metaKey: getPlatform() === 'mac',
+        ctrlKey: getPlatform() !== 'mac',
+      })
+      result.current.find.changeQuery('needle')
+    })
+    await act(async () => vi.advanceTimersByTime(150))
+
+    expect(result.current.find.result).toEqual({ matches: 2, active: 1, isCapped: false })
+    expect(result.current.find.historyFailed).toBe(false)
+    expect(result.current.find.isLoading).toBe(false)
+    act(() => result.current.find.step(1))
+    expect(result.current.find.result.active).toBe(2)
+    expect(result.current.find.searchTarget?.occurrence).toBe(1)
+    expect(searchTranscript).not.toHaveBeenCalled()
   })
 })
 

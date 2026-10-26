@@ -33,18 +33,21 @@ const APPLICATION_CONTEXT_CLOSE: &str = "</application_context>";
 #[derive(Clone, Copy)]
 pub(crate) struct TranscriptBuildOptions {
     truncate_content: bool,
+    materialize_artifacts: bool,
 }
 
 impl TranscriptBuildOptions {
     fn truncated() -> Self {
         Self {
             truncate_content: true,
+            materialize_artifacts: true,
         }
     }
 
     fn full_content() -> Self {
         Self {
             truncate_content: false,
+            materialize_artifacts: true,
         }
     }
 }
@@ -55,6 +58,18 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
 
 pub(crate) fn full_transcript_messages(thread: &Value, device_id: &str) -> Vec<Value> {
     transcript_messages_with_options(thread, device_id, TranscriptBuildOptions::full_content())
+}
+
+// Search reuses presentation without writing diff or generated-image artifacts.
+pub(super) fn search_transcript_messages(thread: &Value) -> Vec<Value> {
+    transcript_messages_with_options(
+        thread,
+        "",
+        TranscriptBuildOptions {
+            truncate_content: false,
+            materialize_artifacts: false,
+        },
+    )
 }
 
 fn transcript_messages_with_options(
@@ -166,7 +181,6 @@ struct TurnTranscriptProjector<'a> {
     assistant_status: &'static str,
     assistant_error: Option<String>,
     fold_commentary: bool,
-    turn_cancelled: bool,
     options: TranscriptBuildOptions,
     assistant_segment_index: usize,
     assistant: AssistantTurnAccumulation,
@@ -199,7 +213,6 @@ impl<'a> TurnTranscriptProjector<'a> {
             assistant_status: turn_assistant_status(turn),
             assistant_error: turn_error_message(turn),
             fold_commentary: turn_should_fold_commentary(turn),
-            turn_cancelled: turn_interrupted(turn),
             assistant: AssistantTurnAccumulation::new(file_changes(turn)),
             turn_id,
             created_at,
@@ -301,6 +314,9 @@ impl<'a> TurnTranscriptProjector<'a> {
                 self.options,
             ),
             "filechange" => {
+                if !self.options.materialize_artifacts {
+                    return;
+                }
                 let summary = file_changes_from_file_change_item(
                     item,
                     &self.turn_id,
@@ -310,6 +326,9 @@ impl<'a> TurnTranscriptProjector<'a> {
                 self.project_file_change(item, summary);
             }
             "patchapplyend" => {
+                if !self.options.materialize_artifacts {
+                    return;
+                }
                 let summary = file_changes_from_patch_apply_end(
                     item,
                     &self.turn_id,
@@ -399,7 +418,6 @@ impl<'a> TurnTranscriptProjector<'a> {
             item,
             self.created_at,
             self.fold_commentary,
-            self.turn_cancelled && self.fold_commentary,
             has_later_process || self.assistant_status == "streaming",
             &mut self.assistant,
             self.options,
@@ -445,6 +463,11 @@ impl<'a> TurnTranscriptProjector<'a> {
     }
 
     fn push_workbench_block(&mut self, item: &Value) {
+        if !self.options.materialize_artifacts
+            && matches!(item_type(item).as_str(), "filechange" | "patchapplyend")
+        {
+            return;
+        }
         if let Some(block) = workbench_block_from_codex_item(
             item,
             &self.turn_id,
@@ -794,7 +817,10 @@ pub(crate) fn workbench_block_from_codex_item(
     }
     if is_likely_codex_tool_item_type(&item_type) || is_default_tool_item(item) {
         let mut block = tool_block(item, fallback_timestamp, options);
-        if let Some(object) = block.as_object_mut() {
+        if let Some(object) = block
+            .as_object_mut()
+            .filter(|_| options.materialize_artifacts)
+        {
             insert_image_generation_render_payload(
                 object,
                 item,
@@ -1290,7 +1316,7 @@ fn turn_failed(turn: &Value) -> bool {
     })
 }
 
-fn turn_assistant_status(turn: &Value) -> &'static str {
+pub(super) fn turn_assistant_status(turn: &Value) -> &'static str {
     if turn_running(turn) {
         "streaming"
     } else if turn_interrupted(turn) {
@@ -1343,12 +1369,14 @@ fn is_final_assistant_message(item: &Value) -> bool {
 #[path = "transcript/message_projection.rs"]
 mod message_projection;
 
-pub(crate) use message_projection::normalized_user_request_content;
 use message_projection::{
     assistant_message_phase_name, collect_assistant_message, file_changes_block, guidance_block,
     is_internal_turn_abort_message, item_completed_at, item_timestamp, normalized_phase_or_status,
     plan_block, push_accumulated_assistant, push_reasoning_block, push_user_message_once,
     AssistantEmitContext, AssistantTurnAccumulation,
+};
+pub(crate) use message_projection::{
+    normalized_user_request_content, visible_user_request_content,
 };
 
 #[path = "transcript/tool_projection.rs"]

@@ -22,7 +22,9 @@ impl RuntimeWorkRpcHandler {
             .stand_in_project_configs(&personal, project, "cloud")
             .into_iter()
             .filter(|config| {
-                config["enabled"] == true && config["userId"] == payload["recipientUserId"]
+                config["enabled"] == true
+                    && config["handlingPolicy"]["automatic"] != false
+                    && config["userId"] == payload["recipientUserId"]
             })
             .collect();
         if configs.is_empty() {
@@ -85,7 +87,7 @@ mod tests {
             }))
             .route("/api/v1/loop-items/issue/tasks", get(move || {
                 binding_calls.fetch_add(1, Ordering::SeqCst);
-                async { Json(json!([{"human_assignment_id":"human","device_id":"other"}])) }
+                async { Json(json!([{"human_assignment_id":"human","device_id":"other","task_id":"stand-in-human-default"}])) }
             }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -125,7 +127,10 @@ mod tests {
             .unwrap();
         assert_eq!(fixture.assignments.load(Ordering::SeqCst), 1);
         assert_eq!(fixture.bindings.load(Ordering::SeqCst), 1);
-        assert!(fixture.handler.local_task_link("stand-in-human").is_none());
+        assert!(fixture
+            .handler
+            .local_task_link("stand-in-human-default")
+            .is_none());
         // Local discovery cannot issue cloud requests, even with cloud roles enabled.
         for _ in 0..3 {
             assert!(fixture
@@ -165,7 +170,7 @@ mod tests {
         assert_eq!(fixture.assignments.load(Ordering::SeqCst), 1);
         assert_eq!(fixture.bindings.load(Ordering::SeqCst), 0);
         fixture.handler.upsert_local_task(RuntimeTaskLink {
-            local_task_id: "stand-in-human".into(),
+            local_task_id: "stand-in-human-default".into(),
             status: "failed".into(),
             ..RuntimeTaskLink::default()
         });

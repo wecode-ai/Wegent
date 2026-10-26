@@ -164,60 +164,6 @@ impl RuntimeWorkRpcHandler {
             )
             .await?
         };
-        let personal = store
-            .personal_stand_in(user, &self.device_id)
-            .map_err(settings_error)?;
-        let identities = crate::task_runtime::personal_stand_in::stand_in_identities(&personal);
-        let configs: Vec<Value> = identities
-            .iter()
-            .enumerate()
-            .filter(|(_, role)| {
-                crate::task_runtime::personal_stand_in::role_project_matches(
-                    role,
-                    &project,
-                    if local { "local" } else { "cloud" },
-                )
-            })
-            .map(|(order, role)| {
-                let mut value = crate::task_runtime::personal_stand_in::project_role(
-                    role,
-                    user,
-                    &project,
-                    if local { "local" } else { "cloud" },
-                    personal["autoSelect"] == true,
-                );
-                value["roleOrder"] = json!(order);
-                value["personalVersion"] = personal["version"].clone();
-                value
-            })
-            .collect();
-        if payload["standInId"].is_null() {
-            let mut issue_for_selection = issue.clone();
-            if local {
-                issue_for_selection["tags"] = issue["metadata"]["tags"].clone();
-            }
-            config = if let Some(selected) = self
-                .select_personal_role(&configs, &issue_for_selection)
-                .await?
-            {
-                selected
-            } else {
-                crate::task_runtime::personal_stand_in::project_role(
-                    identities.first().ok_or_else(|| {
-                        AppIpcError::new(
-                            "stand_in_identity_missing",
-                            "No stand-in identity is available",
-                        )
-                    })?,
-                    user,
-                    &project,
-                    if local { "local" } else { "cloud" },
-                    false,
-                )
-            };
-            config["executionDeviceId"] = json!(self.device_id);
-            config["manual"] = json!(true);
-        }
         if issue["cloud_project_id"] == project
             && issue["assignee_user_id"].is_null()
             && issue["assignee_agent_id"].is_null()
@@ -247,6 +193,25 @@ impl RuntimeWorkRpcHandler {
                 "invalid_assignment",
                 "Choose an Issue assigned to yourself in this project",
             ));
+        }
+        if payload["standInId"].as_str().is_none() {
+            config = self
+                .stand_in_project_configs(
+                    &[store
+                        .personal_stand_in(user, &self.device_id)
+                        .map_err(settings_error)?],
+                    &project,
+                    if local { "local" } else { "cloud" },
+                )
+                .into_iter()
+                .next()
+                .ok_or_else(|| {
+                    AppIpcError::new(
+                        "stand_in_unavailable",
+                        "Connect a stand-in to this project first",
+                    )
+                })?;
+            config["manual"] = json!(true);
         }
         let human_id = if local {
             let history = issue["metadata"]["assignment_history"]
@@ -279,7 +244,7 @@ impl RuntimeWorkRpcHandler {
             self.start_cloud_stand_in(&config, &issue).await?;
             human
         };
-        let task_id = format!("stand-in-{human_id}");
+        let task_id = self.stand_in_task_id(&config, &json!({"humanAssignmentId":human_id}));
         let task = self.local_task_link(&task_id);
         if task.as_ref().is_some_and(|task| task.status == "failed") {
             return Err(AppIpcError::new(
@@ -395,33 +360,37 @@ impl RuntimeWorkRpcHandler {
             }
             let binding =
                 json!({"humanAssignmentId":format!("{}-{}", issue.id, history.unwrap().len())});
-            let task_id = format!(
+            let bindings = store
+                .list_task_bindings(&issue.id)
+                .map_err(settings_error)?;
+            let previous = format!(
                 "stand-in-{}",
                 binding["humanAssignmentId"].as_str().unwrap()
             );
-            if self.local_task_link(&task_id).is_some()
-                || store
-                    .list_task_bindings(&issue.id)
-                    .map_err(settings_error)?
-                    .iter()
-                    .any(|binding| binding.task_id == task_id)
-            {
+            if bindings.iter().any(|row| row.task_id == previous) {
                 continue;
             }
-            let Some(config) = self
-                .select_polled_personal_role(&eligible, &issue_value)
-                .await
-            else {
-                continue;
-            };
-            if let Err(error) = self
-                .start_local_stand_in(&config, &issue_value, &binding)
-                .await
+            for config in super::personal_stand_in::matching_personal_roles(&eligible, &issue_value)
             {
-                log_executor_event(
-                    "stand-in assignment failed",
-                    &[("issue_id", issue.id), ("error", error.message)],
-                );
+                let task_id = self.stand_in_task_id(config, &binding);
+                if self.local_task_link(&task_id).is_some()
+                    || bindings.iter().any(|binding| binding.task_id == task_id)
+                {
+                    continue;
+                }
+                if let Err(error) = self
+                    .start_local_stand_in(config, &issue_value, &binding)
+                    .await
+                {
+                    log_executor_event(
+                        "stand-in assignment failed",
+                        &[
+                            ("issue_id", issue.id.clone()),
+                            ("role_id", config["id"].to_string()),
+                            ("error", error.message),
+                        ],
+                    );
+                }
             }
         }
         Ok(())
@@ -458,13 +427,21 @@ impl RuntimeWorkRpcHandler {
         let Some(assignment_id) = binding["assignmentId"].as_str() else {
             return Ok(());
         };
-        let Some(human_id) = binding["humanAssignmentId"].as_str() else {
+        if binding["humanAssignmentId"].as_str().is_none() {
             return Ok(());
+        }
+        let matching = if config["manual"] == true {
+            configs.iter().collect()
+        } else {
+            super::personal_stand_in::matching_personal_roles(configs, issue)
         };
-        if config["manual"] != true
-            && self
-                .local_task_link(&format!("stand-in-{human_id}"))
+        if matching.is_empty() {
+            return Ok(());
+        }
+        if matching.iter().all(|role| {
+            self.local_task_link(&self.stand_in_task_id(role, binding))
                 .is_some()
+        }) && config["manual"] != true
         {
             return Ok(());
         }
@@ -483,12 +460,11 @@ impl RuntimeWorkRpcHandler {
         else {
             return Ok(());
         };
-        let eligible: Vec<Value> = configs
-            .iter()
+        let eligible: Vec<&Value> = matching
+            .into_iter()
             .filter(|config| {
                 config["manual"] == true || assignment_after_enable(assignment, config)
             })
-            .cloned()
             .collect();
         if eligible.is_empty() {
             return Ok(());
@@ -500,37 +476,60 @@ impl RuntimeWorkRpcHandler {
                 None,
             )
             .await?;
-        if let Some(row) = existing
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|row| row["human_assignment_id"] == human_id)
-        {
-            let task_id = format!("stand-in-{human_id}");
-            if config["manual"] == true
-                && row["device_id"] == self.device_id
-                && row["task_id"] == task_id
-                && self
-                    .local_task_link(&task_id)
-                    .is_some_and(|task| task.status == "failed")
-            {
-                let payload = self.prepare_stand_in_task(config, issue, binding).await?;
-                self.dispatch_stand_in_task(payload, true).await?;
-            }
+        let previous = format!(
+            "stand-in-{}",
+            binding["humanAssignmentId"].as_str().unwrap()
+        );
+        if existing.as_array().into_iter().flatten().any(|row| {
+            row["human_assignment_id"] == binding["humanAssignmentId"] && row["task_id"] == previous
+        }) {
             return Ok(());
         }
-        let selected = if config["manual"] == true {
-            config.clone()
-        } else {
-            let Some(selected) = self.select_personal_role(&eligible, issue).await? else {
-                return Ok(());
-            };
-            selected
-        };
-        let config = &selected;
+        let mut failure = None;
+        for config in eligible {
+            let result = self
+                .dispatch_cloud_stand_in_role(config, issue, binding, &existing)
+                .await;
+            if let Err(error) = result {
+                log_executor_event(
+                    "stand-in assignment failed",
+                    &[
+                        ("issue_id", issue_id.to_owned()),
+                        ("role_id", config["id"].to_string()),
+                        ("error", error.message.clone()),
+                    ],
+                );
+                failure.get_or_insert(error);
+            }
+        }
+        failure.map_or(Ok(()), Err)
+    }
+
+    async fn dispatch_cloud_stand_in_role(
+        &self,
+        config: &Value,
+        issue: &Value,
+        binding: &Value,
+        existing: &Value,
+    ) -> Result<(), AppIpcError> {
+        let task_id = self.stand_in_task_id(config, binding);
+        let bound = existing.as_array().into_iter().flatten().find(|row| {
+            row["human_assignment_id"] == binding["humanAssignmentId"] && row["task_id"] == task_id
+        });
+        let retry = config["manual"] == true
+            && self
+                .local_task_link(&task_id)
+                .is_some_and(|task| task.status == "failed");
+        if bound.is_some_and(|row| row["device_id"] != self.device_id || !retry) {
+            return Ok(());
+        }
         let payload = self.prepare_stand_in_task(config, issue, binding).await?;
-        self.create_stand_in_task(config, issue, binding, payload)
-            .await
+        if bound.is_some() {
+            self.dispatch_stand_in_task(payload, true).await.map(|_| ())
+        } else {
+            self.create_stand_in_task(config, issue, binding, payload)
+                .await
+        }
     }
 
     async fn create_stand_in_task(
@@ -545,8 +544,7 @@ impl RuntimeWorkRpcHandler {
         }
         let project = config["projectId"].as_str().unwrap_or_default();
         let issue_id = issue["id"].as_str().unwrap_or_default();
-        let human_id = binding["humanAssignmentId"].as_str().unwrap_or_default();
-        let task_id = format!("stand-in-{human_id}");
+        let task_id = self.stand_in_task_id(config, binding);
         let gate = self.task_send_gate(&format!("stand-in-start:{task_id}"));
         let _guard = gate.lock().await;
         let existing = self.local_task_link(&task_id);
@@ -646,10 +644,7 @@ impl RuntimeWorkRpcHandler {
         } else {
             Some(gate.lock().await)
         };
-        let task_id = format!(
-            "stand-in-{}",
-            binding["humanAssignmentId"].as_str().unwrap_or_default()
-        );
+        let task_id = self.stand_in_task_id(config, binding);
         if self
             .local_task_link(&task_id)
             .is_some_and(|task| config["manual"] != true || task.status != "failed")
@@ -659,6 +654,27 @@ impl RuntimeWorkRpcHandler {
         let payload = self.prepare_stand_in_task(config, issue, binding).await?;
         self.create_stand_in_task(config, issue, binding, payload)
             .await
+    }
+
+    fn stand_in_task_id(&self, config: &Value, binding: &Value) -> String {
+        let human = &binding["humanAssignmentId"];
+        // Resolve existing work by its owning identity, including archived executions.
+        if let Some(task) = self.local_task_links(true).into_iter().find(|task| {
+            let origin = &task.runtime_handle["origin"];
+            origin["initiatedBy"] == "stand_in"
+                && origin["humanAssignmentId"] == *human
+                && origin["standInId"] == config["id"]
+                && origin["userId"] == config["userId"]
+                && origin["projectStore"] == config["projectStore"]
+                && origin["cloudProjectId"] == config["projectId"]
+        }) {
+            return task.local_task_id;
+        }
+        format!(
+            "stand-in-{}-{}",
+            human.as_str().unwrap_or_default(),
+            config["id"].as_str().unwrap_or_default()
+        )
     }
 
     async fn prepare_stand_in_task(
@@ -673,7 +689,7 @@ impl RuntimeWorkRpcHandler {
         let project = config["projectId"].as_str().unwrap_or_default();
         let issue_id = issue["id"].as_str().unwrap_or_default();
         let human_id = binding["humanAssignmentId"].as_str().unwrap_or_default();
-        let task_id = format!("stand-in-{human_id}");
+        let task_id = self.stand_in_task_id(config, binding);
         let protocol = if config["projectStore"] == "local" {
             "local"
         } else {
@@ -685,7 +701,7 @@ impl RuntimeWorkRpcHandler {
             issue["description"].as_str().unwrap_or_default(),
             config["prompt"].as_str().unwrap_or_default()
         );
-        let origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","trigger":if config["manual"] == true { "manual" } else { "assignment" },"standInId":config["id"],"roleName":config["name"],"userId":config["userId"],"deviceId":self.device_id,"askBeforeAct":config["handlingPolicy"]["askBeforeAct"] == true,"selectionMode":config["selectionMode"],"selectionReason":config["selectionReason"],"projectStore":config["projectStore"],"cloudProjectId":project,"loopItemId":issue_id,"humanAssignmentId":human_id,"assignmentId":binding["assignmentId"],"dispatchId":binding["dispatchId"],"roundId":binding["dispatchRoundId"]});
+        let origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","trigger":if config["manual"] == true { "manual" } else { "assignment" },"standInId":config["id"],"roleName":config["name"],"userId":config["userId"],"deviceId":self.device_id,"askBeforeAct":config["handlingPolicy"]["askBeforeAct"] == true,"projectStore":config["projectStore"],"cloudProjectId":project,"loopItemId":issue_id,"humanAssignmentId":human_id,"assignmentId":binding["assignmentId"],"dispatchId":binding["dispatchId"],"roundId":binding["dispatchRoundId"]});
         let mut payload = json!({"taskId":task_id,"title":issue["title"],"message":prompt,"cloudProjectId":project,"origin":origin});
         if config["goalMode"] == true {
             payload["initialGoal"] =

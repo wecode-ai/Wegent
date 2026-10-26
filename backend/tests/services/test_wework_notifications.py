@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.config import settings
+from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
@@ -35,6 +36,9 @@ from tests.services.test_loop_item_assignment import (
     _make_member,
     _make_project,
 )
+
+NOTIFICATION_CARD_CHANNEL_ID = 9_701
+PLAIN_CHANNEL_ID = 9_702
 
 
 @pytest.fixture(autouse=True)
@@ -318,6 +322,10 @@ async def test_im_receives_message_even_when_live_push_fails(
             AsyncMock(return_value=[session]),
         ),
         patch(
+            "app.services.im.notification_dispatcher.im_notification_dispatcher.notification_sessions",
+            side_effect=lambda _db, sessions: list(sessions),
+        ),
+        patch(
             "app.services.im.notification_dispatcher.im_notification_dispatcher.send_notification",
             AsyncMock(return_value={"success": True}),
         ) as send,
@@ -355,6 +363,10 @@ async def test_im_push_closes_with_the_board_the_inbox_summarises(test_db, test_
             AsyncMock(return_value=[session]),
         ),
         patch(
+            "app.services.im.notification_dispatcher.im_notification_dispatcher.notification_sessions",
+            side_effect=lambda _db, sessions: list(sessions),
+        ),
+        patch(
             "app.services.im.notification_dispatcher.im_notification_dispatcher.send_notification",
             AsyncMock(return_value={"success": True}),
         ) as send,
@@ -365,6 +377,116 @@ async def test_im_push_closes_with_the_board_the_inbox_summarises(test_db, test_
     assert push.facts == (("看板", "test-pro"),)
     assert push.detail_label == "评论内容"
     assert push.plain_text() == "看板：test-pro\n\n评论内容：麻烦看下这个改动"
+
+
+def _messager_channel(channel_id: int, notification_card: dict | None) -> Kind:
+    config = {
+        "client_id": f"client-{channel_id}",
+        "client_secret": "encrypted",
+    }
+    if notification_card is not None:
+        config["notification_card"] = notification_card
+    return Kind(
+        id=channel_id,
+        user_id=0,
+        kind="Messager",
+        name=f"channel-{channel_id}",
+        namespace="system",
+        json={
+            "spec": {
+                "channelType": "dingtalk",
+                "config": config,
+            }
+        },
+        is_active=True,
+    )
+
+
+async def test_im_delivery_only_uses_channels_with_notification_cards(
+    test_db, test_user
+):
+    """A second connected bot must not duplicate the notification."""
+
+    test_db.add_all(
+        [
+            _messager_channel(
+                NOTIFICATION_CARD_CHANNEL_ID, {"template_id": "card-template"}
+            ),
+            _messager_channel(PLAIN_CHANNEL_ID, None),
+        ]
+    )
+    row = create_notification(
+        test_db,
+        user_id=test_user.id,
+        actor_user_id=test_user.id,
+        title="Review",
+        body="Review failed",
+    )
+    test_db.commit()
+    card_session = SimpleNamespace(
+        channel_type="dingtalk",
+        user_id=test_user.id,
+        channel_id=NOTIFICATION_CARD_CHANNEL_ID,
+    )
+    plain_session = SimpleNamespace(
+        channel_type="dingtalk",
+        user_id=test_user.id,
+        channel_id=PLAIN_CHANNEL_ID,
+    )
+    with (
+        patch("app.db.session.SessionLocal", return_value=test_db),
+        patch(
+            "app.core.socketio.get_sio",
+            return_value=SimpleNamespace(emit=AsyncMock()),
+        ),
+        patch(
+            "app.services.im.session_service.im_session_service.list_user_sessions",
+            AsyncMock(return_value=[card_session, plain_session]),
+        ),
+        patch(
+            "app.services.im.notification_dispatcher.im_notification_dispatcher.send_notification",
+            AsyncMock(return_value={"success": True}),
+        ) as send,
+    ):
+        await deliver_notification(row.id)
+
+    assert send.await_count == 1
+    assert send.call_args.args[1] is card_session
+
+
+async def test_im_delivery_stays_in_app_without_a_notification_card(test_db, test_user):
+    test_db.add(_messager_channel(PLAIN_CHANNEL_ID, None))
+    row = create_notification(
+        test_db,
+        user_id=test_user.id,
+        actor_user_id=test_user.id,
+        title="Review",
+        body="Review failed",
+    )
+    test_db.commit()
+    session = SimpleNamespace(
+        channel_type="dingtalk",
+        user_id=test_user.id,
+        channel_id=PLAIN_CHANNEL_ID,
+    )
+    with (
+        patch("app.db.session.SessionLocal", return_value=test_db),
+        patch(
+            "app.core.socketio.get_sio",
+            return_value=SimpleNamespace(emit=AsyncMock()),
+        ),
+        patch(
+            "app.services.im.session_service.im_session_service.list_user_sessions",
+            AsyncMock(return_value=[session]),
+        ),
+        patch(
+            "app.services.im.notification_dispatcher.im_notification_dispatcher.send_notification",
+            AsyncMock(return_value={"success": True}),
+        ) as send,
+    ):
+        await deliver_notification(row.id)
+
+    send.assert_not_awaited()
 
 
 def test_push_offers_the_desktop_deep_link_and_the_web_page(test_db, test_user):

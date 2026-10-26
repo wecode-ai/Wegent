@@ -134,13 +134,10 @@ fn valid_scope(settings: &Value, scope: &Value) -> bool {
                     )
                 })
         }
-        Some("dingtalk") => stand_in_identities(settings).iter().any(|role| {
-            role["dingtalk"].as_array().is_some_and(|rows| {
-                rows.iter().any(|row| {
-                    row["id"] == scope["id"]
-                        && row["profile"] == scope["profile"]
-                        && row["kind"] == scope["conversationKind"]
-                })
+        Some("dingtalk" | "connection") => stand_in_identities(settings).iter().any(|role| {
+            role["connections"].as_array().is_some_and(|rows| {
+                rows.iter()
+                    .any(|row| super::personal_stand_in::connection_memory_scope(row) == *scope)
             })
         }),
         _ => false,

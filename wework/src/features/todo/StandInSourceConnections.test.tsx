@@ -4,30 +4,45 @@ import { expect, it, vi } from 'vitest'
 import { newStandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import '@/i18n'
-import { StandInDingTalkConnections } from './StandInDingTalkConnections'
+import { StandInSourceConnections } from './StandInSourceConnections'
 
 it.each(['resolve', 'reject'] as const)(
   'ignores a stale search %s after the visible query changes',
   async outcome => {
-    type Result = Awaited<ReturnType<StandInExecutorApi['searchDingTalk']>>
+    type Result = Awaited<ReturnType<StandInExecutorApi['searchConnectionResources']>>
     let resolve!: (value: Result) => void
     let reject!: (error: Error) => void
     const pending = new Promise<Result>((done, fail) => {
       resolve = done
       reject = fail
     })
-    const searchDingTalk = vi
+    const searchConnectionResources = vi
       .fn()
       .mockReturnValueOnce(pending)
       .mockResolvedValue({
-        items: [{ id: 'new', name: 'New group', kind: 'group', profile: 'corp:user' }],
+        items: [
+          {
+            providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
+            id: 'new',
+            name: 'New group',
+            kind: 'group',
+            profile: 'corp:user',
+          },
+        ],
         hasMore: false,
       })
     const user = userEvent.setup()
     render(
-      <StandInDingTalkConnections
+      <StandInSourceConnections
+        provider={{
+          id: '@wegent/dsh-connection-dingtalk/dingtalk',
+          displayName: '钉钉',
+          resourceKinds: ['group', 'direct'],
+          dependencies: [],
+          availability: { status: 'ready' },
+        }}
         role={newStandInRole('device', 'default')}
-        api={{ searchDingTalk } as unknown as StandInExecutorApi}
+        api={{ searchConnectionResources } as unknown as StandInExecutorApi}
         deviceId="device"
         localDeviceId="device"
         disabled={false}
@@ -44,7 +59,15 @@ it.each(['resolve', 'reject'] as const)(
       if (outcome === 'reject') reject(new Error('Old query failed'))
       else
         resolve({
-          items: [{ id: 'old', name: 'Old group', kind: 'group', profile: 'corp:user' }],
+          items: [
+            {
+              providerId: '@wegent/dsh-connection-dingtalk/dingtalk',
+              id: 'old',
+              name: 'Old group',
+              kind: 'group',
+              profile: 'corp:user',
+            },
+          ],
           hasMore: true,
           nextCursor: 'old-cursor',
         })
@@ -55,6 +78,12 @@ it.each(['resolve', 'reject'] as const)(
     expect(screen.queryByText('Old query failed')).not.toBeInTheDocument()
     await user.click(screen.getByTestId('stand-in-dingtalk-search'))
     expect(await screen.findByTestId('stand-in-dingtalk-result-new')).toHaveTextContent('New group')
-    expect(searchDingTalk).toHaveBeenLastCalledWith('device', 'group', 'new', undefined)
+    expect(searchConnectionResources).toHaveBeenLastCalledWith(
+      'device',
+      '@wegent/dsh-connection-dingtalk/dingtalk',
+      'group',
+      'new',
+      undefined
+    )
   }
 )

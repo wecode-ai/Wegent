@@ -69,14 +69,26 @@ describe('conversation find', () => {
     }))
     expect(findConversationMatches(index, '输出')).toEqual({
       matches: [
-        { messageId: 'user', occurrence: 0 },
-        { messageId: 'assistant', occurrence: 0 },
+        { messageId: 'user', occurrence: 0, regionId: 'user', range: { start: 0, end: 2 } },
+        {
+          messageId: 'assistant',
+          occurrence: 0,
+          regionId: 'assistant',
+          range: { start: 0, end: 2 },
+        },
       ],
       totalMatches: 2,
       isCapped: false,
     })
     expect(findConversationMatches(index, 'OUTPUT')).toEqual({
-      matches: [{ messageId: 'assistant', occurrence: 0 }],
+      matches: [
+        {
+          messageId: 'assistant',
+          occurrence: 0,
+          regionId: 'assistant',
+          range: { start: 9, end: 15 },
+        },
+      ],
       totalMatches: 1,
       isCapped: false,
     })
@@ -108,10 +120,30 @@ describe('conversation find', () => {
     expect(result.totalMatches).toBe(300)
     expect(result.isCapped).toBe(true)
     expect(result.matches).toHaveLength(250)
-    expect(result.matches[0]).toEqual({ messageId: 'first', occurrence: 0 })
-    expect(result.matches[199]).toEqual({ messageId: 'first', occurrence: 199 })
-    expect(result.matches[200]).toEqual({ messageId: 'second', occurrence: 0 })
-    expect(result.matches[249]).toEqual({ messageId: 'second', occurrence: 49 })
+    expect(result.matches[0]).toEqual({
+      messageId: 'first',
+      occurrence: 0,
+      regionId: 'first',
+      range: { start: 0, end: 1 },
+    })
+    expect(result.matches[199]).toEqual({
+      messageId: 'first',
+      occurrence: 199,
+      regionId: 'first',
+      range: { start: 597, end: 598 },
+    })
+    expect(result.matches[200]).toEqual({
+      messageId: 'second',
+      occurrence: 0,
+      regionId: 'second',
+      range: { start: 0, end: 1 },
+    })
+    expect(result.matches[249]).toEqual({
+      messageId: 'second',
+      occurrence: 49,
+      regionId: 'second',
+      range: { start: 147, end: 148 },
+    })
   })
 
   test('indexes displayed assistant text in timeline order and hides failure and citation metadata', () => {
@@ -312,6 +344,8 @@ describe('conversation find', () => {
       query: '输出',
       messageId: 'first',
       occurrence: 0,
+      regionId: 'first',
+      range: { start: 0, end: 2 },
       matchCounts: new Map([
         ['first', 2],
         ['last', 1],
@@ -323,6 +357,8 @@ describe('conversation find', () => {
       query: '输出',
       messageId: 'first',
       occurrence: 0,
+      regionId: 'first',
+      range: { start: 0, end: 2 },
       matchCounts: new Map([
         ['first', 2],
         ['last', 1],
@@ -593,62 +629,6 @@ describe('conversation find', () => {
     expect(result.current.searchTarget?.messageId).toBe('second')
   })
 
-  test('ignores the old conversation history completion while the next conversation is loading', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    let rejectOld!: (reason: Error) => void
-    let finishNew!: () => void
-    const loadBefore = vi
-      .fn()
-      .mockImplementationOnce(
-        () =>
-          new Promise<void>((_resolve, reject) => {
-            rejectOld = reject
-          })
-      )
-      .mockImplementationOnce(
-        () =>
-          new Promise<void>(resolve => {
-            finishNew = resolve
-          })
-      )
-    const props = {
-      conversationKey: 'history-a',
-      messages: [message('latest', 'latest')],
-      hasMoreBefore: true,
-      onLoadMoreBefore: loadBefore,
-    }
-    const { result, rerender } = renderHook(props => useConversationFind(props, true), {
-      initialProps: props,
-    })
-    const startSearch = async () => {
-      act(() => {
-        fireEvent.keyDown(window, { key: 'f', metaKey: true })
-        result.current.changeQuery('old')
-      })
-      await act(async () => {
-        vi.advanceTimersByTime(150)
-      })
-    }
-    await startSearch()
-    expect(loadBefore).toHaveBeenCalledTimes(1)
-    rerender({ ...props, conversationKey: 'history-b' })
-    await startSearch()
-    expect(loadBefore).toHaveBeenCalledTimes(2)
-
-    await act(async () => rejectOld(new Error('previous history unavailable')))
-    expect(result.current.historyFailed).toBe(false)
-    expect(result.current.isLoading).toBe(true)
-    rerender({
-      ...props,
-      conversationKey: 'history-b',
-      hasMoreBefore: false,
-      messages: [message('history-b-old', 'old'), ...props.messages],
-    })
-    await act(async () => finishNew())
-    expect(result.current.isLoading).toBe(false)
-    expect(result.current.searchTarget?.messageId).toBe('history-b-old')
-  })
-
   test('clears completed targets and cancels pending search when the pane becomes inactive', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const props = { messages: [message('first', '灰度 输出')], active: true }
@@ -678,110 +658,11 @@ describe('conversation find', () => {
       query: '输出',
       messageId: 'first',
       occurrence: 0,
+      regionId: 'first',
+      range: { start: 3, end: 5 },
       matchCounts: new Map([['first', 1]]),
     })
     expect(result.current.isLoading).toBe(false)
-  })
-
-  test('keeps the loading icon until historical messages finish loading', async () => {
-    let finishLoad!: () => void
-    const loadBefore = vi.fn(
-      () =>
-        new Promise<void>(resolve => {
-          finishLoad = resolve
-        })
-    )
-    const props = {
-      messages: [message('last', 'latest')],
-      hasMoreBefore: true,
-      onLoadMoreBefore: loadBefore,
-    }
-    const { rerender } = render(<FindHarness {...props} />)
-    fireEvent.keyDown(window, { key: 'f', metaKey: true })
-    const input = screen.getByTestId('conversation-find-input')
-    fireEvent.change(input, { target: { value: 'old' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
-    await waitFor(() => expect(loadBefore).toHaveBeenCalledOnce())
-    expect(screen.getByTestId('conversation-find-loading-icon')).toBeInTheDocument()
-    expect(input).toHaveAttribute('aria-busy', 'true')
-    rerender(
-      <FindHarness
-        {...props}
-        hasMoreBefore={false}
-        messages={[message('old', 'old'), ...props.messages]}
-      />
-    )
-    await act(async () => finishLoad())
-    expect(screen.queryByTestId('conversation-find-loading-icon')).not.toBeInTheDocument()
-    expect(input).not.toHaveAttribute('aria-busy')
-    expect(input).toHaveValue('old')
-    expect(screen.getByTestId('conversation-find-count')).toHaveTextContent('1 / 1')
-  })
-
-  test('loads historical pages and interior gaps sequentially, without reporting partial history as complete', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const loadBefore = vi.fn().mockResolvedValue(undefined)
-    const loadGap = vi.fn().mockResolvedValue(undefined)
-    const props = {
-      messages: [message('last', 'latest')],
-      hasMoreBefore: true,
-      loadedTranscriptRanges: [{ start: 10, end: 20 }],
-      onLoadMoreBefore: loadBefore,
-      onLoadTranscriptGap: loadGap,
-    }
-    const { result, rerender } = renderHook(props => useConversationFind(props, true), {
-      initialProps: props,
-    })
-    act(() => {
-      fireEvent.keyDown(window, { key: 'f', metaKey: true })
-      result.current.changeQuery('old')
-    })
-    act(() => vi.advanceTimersByTime(149))
-    expect(loadBefore).not.toHaveBeenCalled()
-    expect(result.current.searchTarget).toBeNull()
-    act(() => vi.advanceTimersByTime(1))
-    vi.useRealTimers()
-    await waitFor(() => expect(loadBefore).toHaveBeenCalledTimes(1))
-    rerender({
-      ...props,
-      hasMoreBefore: false,
-      loadedTranscriptRanges: [
-        { start: 0, end: 5 },
-        { start: 10, end: 20 },
-      ],
-      messages: [message('partial', 'old'), ...props.messages],
-    })
-    expect(result.current.searchTarget).toBeNull()
-    expect(result.current.result.matches).toBe(0)
-    await waitFor(() => expect(loadGap).toHaveBeenCalledWith({ start: 5, end: 10 }))
-    rerender({
-      ...props,
-      hasMoreBefore: false,
-      loadedTranscriptRanges: [{ start: 0, end: 20 }],
-      messages: [message('old', 'old'), ...props.messages],
-    })
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-    expect(result.current.result.matches).toBe(1)
-  })
-
-  test('stops after a history error and allows an explicit retry', async () => {
-    const loadBefore = vi.fn().mockRejectedValue(new Error('unavailable'))
-    const props = {
-      messages: [message('last', 'latest')],
-      hasMoreBefore: true,
-      onLoadMoreBefore: loadBefore,
-    }
-    const { result } = renderHook(() => useConversationFind(props, true))
-    act(() => {
-      fireEvent.keyDown(window, { key: 'f', metaKey: true })
-      result.current.changeQuery('old')
-    })
-    await waitFor(() => expect(result.current.historyFailed).toBe(true))
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-    expect(loadBefore).toHaveBeenCalledTimes(1)
-    act(() => result.current.retry())
-    expect(result.current.isLoading).toBe(true)
-    await waitFor(() => expect(loadBefore).toHaveBeenCalledTimes(2))
   })
 
   test('find input preserves IME composition, supports Enter/Shift+Enter, and refocuses on repeated Cmd+F', async () => {

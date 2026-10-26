@@ -1,19 +1,26 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
 import { Brain, Plus, X } from 'lucide-react'
 import { dequal } from 'dequal'
+import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInExecutorApi, StandInMemory, StandInMemoryScope } from '@/api/standIn'
-import type { PersonalStandInSettings } from '@/api/personalStandIn'
+import { standInRoleName, type PersonalStandInSettings } from '@/api/personalStandIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import type { StandInSettingsHandle } from './StandInSettingsPage'
 
 export function StandInMemoryPanel({
   api,
   settings,
+  projects,
   onClose,
+  ref,
 }: {
   api: StandInExecutorApi
   settings: PersonalStandInSettings
+  projects: CollaborationProject[]
   onClose(): void
+  ref?: Ref<StandInSettingsHandle>
 }) {
   const { t } = useTranslation('common')
   const [items, setItems] = useState<StandInMemory[] | null>(null)
@@ -25,28 +32,45 @@ export function StandInMemoryPanel({
   const [discard, setDiscard] = useState<'close' | 'cancel' | null>(null)
   const scopes: { scope: StandInMemoryScope; label: string }[] = [
     { scope: { kind: 'personal' }, label: t('standIn.memory.personal') },
-    ...settings.roles.map(role => ({
+    ...settings.roles.map((role, index) => ({
       scope: { kind: 'role' as const, roleId: role.id },
-      label: role.name || t('standIn.workspace.role_name'),
+      label: t('standIn.memory.role', {
+        name: standInRoleName(role, index, t('standIn.personal.default_role')),
+      }),
     })),
   ]
   for (const identity of [settings.primary, ...settings.roles]) {
-    for (const source of identity?.dingtalk ?? []) {
-      const scope: StandInMemoryScope = {
-        kind: 'dingtalk',
-        id: source.id,
-        profile: source.profile,
-        conversationKind: source.kind,
-      }
-      if (!scopes.some(row => dequal(row.scope, scope)))
-        scopes.push({ scope, label: `${t('standIn.memory.dingtalk')} · ${source.name}` })
+    for (const source of identity?.connections ?? []) {
+      const scope: StandInMemoryScope =
+        source.providerId === '@wegent/dsh-connection-dingtalk/dingtalk' &&
+        (source.kind === 'group' || source.kind === 'direct')
+          ? {
+              kind: 'dingtalk',
+              id: source.id,
+              profile: source.profile,
+              conversationKind: source.kind,
+            }
+          : {
+              kind: 'connection',
+              providerId: source.providerId,
+              id: source.id,
+              profile: source.profile,
+              resourceKind: source.kind,
+            }
+      if (!scopes.some(row => dequal(row.scope, scope))) scopes.push({ scope, label: source.name })
     }
     for (const project of identity?.collaboration?.projects ?? []) {
       const scope: StandInMemoryScope = { kind: 'project', id: project.id, store: project.store }
-      if (!scopes.some(row => dequal(row.scope, scope)))
-        scopes.push({ scope, label: `${t('standIn.memory.project')} · ${project.id}` })
+      const source = projects.find(
+        row =>
+          row.id === project.id &&
+          (row.project_store === 'local' ? 'local' : 'cloud') === project.store
+      )
+      if (source && !scopes.some(row => dequal(row.scope, scope)))
+        scopes.push({ scope, label: `${t('standIn.memory.project')} · ${source.name}` })
     }
   }
+  const selectedScope = scopes.find(row => dequal(row.scope, editing?.scope))
   const label = (scope: StandInMemoryScope) =>
     scopes.find(row => dequal(row.scope, scope))?.label ?? t('standIn.memory.disconnected')
   useEffect(() => {
@@ -77,7 +101,8 @@ export function StandInMemoryPanel({
     if (dirty) setDiscard('close')
     else onClose()
   }
-  const ref = useDialogKeyboard<HTMLDivElement>(close)
+  const dialogRef = useDialogKeyboard<HTMLDivElement>(close, !discard)
+  useImperativeHandle(ref, () => ({ requestClose: close }))
   const mutate = async (action: () => Promise<void>) => {
     setBusy(true)
     setError(null)
@@ -90,7 +115,11 @@ export function StandInMemoryPanel({
     }
   }
   return (
-    <div ref={ref} className="flex min-h-full flex-col px-5" data-testid="stand-in-memory-panel">
+    <div
+      ref={dialogRef}
+      className="flex min-h-full flex-col px-5"
+      data-testid="stand-in-memory-panel"
+    >
       <header className="sticky top-0 z-10 mb-5 flex items-center gap-2 border-b border-border bg-background py-4">
         <Brain className="h-4 w-4" />
         <h2 className="heading-sm flex-1">{t('standIn.memory.title')}</h2>
@@ -170,7 +199,7 @@ export function StandInMemoryPanel({
                 <select
                   data-testid="stand-in-memory-scope"
                   disabled={busy}
-                  value={JSON.stringify(editing.scope)}
+                  value={JSON.stringify(selectedScope?.scope ?? editing.scope)}
                   onChange={event =>
                     setEditing({
                       ...editing,
@@ -179,6 +208,11 @@ export function StandInMemoryPanel({
                   }
                   className="min-h-8 rounded-md border border-border bg-background px-2"
                 >
+                  {!selectedScope && (
+                    <option value={JSON.stringify(editing.scope)} disabled>
+                      {t('standIn.memory.disconnected')}
+                    </option>
+                  )}
                   {scopes.map(row => (
                     <option key={JSON.stringify(row.scope)} value={JSON.stringify(row.scope)}>
                       {row.label}
@@ -202,7 +236,7 @@ export function StandInMemoryPanel({
                 <button
                   type="submit"
                   data-testid="stand-in-memory-save"
-                  disabled={busy || !editing.content?.trim()}
+                  disabled={busy || !editing.content?.trim() || !selectedScope}
                   className="min-h-8 rounded-md bg-text-primary px-3 text-background disabled:opacity-50"
                 >
                   {t('standIn.save')}
@@ -278,37 +312,22 @@ export function StandInMemoryPanel({
           </ul>
         </>
       )}
-      {discard && (
-        <div
-          role="alertdialog"
-          aria-label={t('standIn.personal.discard_help')}
-          className="sticky bottom-0 mt-auto border-t border-border bg-background py-4"
-        >
-          <p className="text-sm">{t('standIn.personal.discard_help')}</p>
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              data-testid="stand-in-memory-discard"
-              onClick={() => {
-                setEditing(null)
-                setDiscard(null)
-                if (discard === 'close') onClose()
-              }}
-              className="min-h-8 rounded-md border border-border px-3"
-            >
-              {t('standIn.memory.discard')}
-            </button>
-            <button
-              type="button"
-              data-testid="stand-in-memory-keep"
-              onClick={() => setDiscard(null)}
-              className="min-h-8 rounded-md px-3 hover:bg-muted"
-            >
-              {t('standIn.cancel')}
-            </button>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={discard !== null}
+        destructive
+        title={t('standIn.personal.discard_help')}
+        description={t('standIn.personal.discard_description')}
+        cancelLabel={t('standIn.personal.keep_editing')}
+        confirmLabel={t('standIn.memory.discard')}
+        confirmTestId="stand-in-memory-discard"
+        cancelTestId="stand-in-memory-keep"
+        onClose={() => setDiscard(null)}
+        onConfirm={() => {
+          setEditing(null)
+          setDiscard(null)
+          if (discard === 'close') onClose()
+        }}
+      />
     </div>
   )
 }
