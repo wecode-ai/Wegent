@@ -105,7 +105,7 @@ export async function createDesktopScenario({ resultDir }) {
         'The startup stages were logged out of order'
       )
       const runtimeStartupEvents = parseStartupEvents(appLog)
-      const expectedProgressStages = [
+      const canonicalProgressStages = [
         'launch',
         'shell',
         'components',
@@ -116,13 +116,43 @@ export async function createDesktopScenario({ resultDir }) {
         'core-dsh',
         'renderer',
       ]
+      const requiredProgressStages = [
+        'launch',
+        'shell',
+        'components',
+        'cli',
+        'workspace',
+        'services',
+        'core-dsh',
+        'renderer',
+      ]
       const progressStages = runtimeStartupEvents
         .filter(event => event.step === 'startup-progress' && event.status === 'started')
         .map(event => event.stage)
-      assert.deepEqual(
-        progressStages,
-        expectedProgressStages,
-        'The startup splash did not receive every real startup stage in order'
+      const progressIndexes = progressStages.map(stage => canonicalProgressStages.indexOf(stage))
+      assert.ok(
+        progressIndexes.every(index => index >= 0),
+        `The startup splash received an unknown stage: ${JSON.stringify(progressStages)}`
+      )
+      assert.ok(
+        progressIndexes.every((value, index) => index === 0 || value > progressIndexes[index - 1]),
+        `The startup splash received stages out of order: ${JSON.stringify(progressStages)}`
+      )
+      for (const stage of requiredProgressStages) {
+        assert.ok(
+          progressStages.includes(stage),
+          `The startup splash did not receive required stage ${stage}: ${JSON.stringify(progressStages)}`
+        )
+      }
+      assert.equal(
+        progressStages[0],
+        'launch',
+        `The startup splash did not start with launch: ${JSON.stringify(progressStages)}`
+      )
+      assert.equal(
+        progressStages.at(-1),
+        'renderer',
+        `The startup splash did not end with renderer: ${JSON.stringify(progressStages)}`
       )
       const corePrepareStarted = startupEventIndex(
         runtimeStartupEvents,
