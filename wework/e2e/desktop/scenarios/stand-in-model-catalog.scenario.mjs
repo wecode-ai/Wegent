@@ -20,7 +20,7 @@ const selector = id => `[data-testid=${JSON.stringify(id)}]`
 export function createDesktopScenario({ uiTimeoutMs }) {
   let cloud
   let userId
-  const createdIds = []
+  const createdIds = new Set()
   const request = (path, options = {}) =>
     fetchJson(`${cloud.backendUrl}${path}`, {
       ...options,
@@ -63,8 +63,24 @@ export function createDesktopScenario({ uiTimeoutMs }) {
             },
           }),
         })
-        createdIds.push(created.id)
+        createdIds.add(created.id)
       }
+    },
+    async cleanup() {
+      const results = await Promise.allSettled(
+        [...createdIds].map(async id => {
+          const response = await fetch(`${cloud.backendUrl}/api/admin/public-models/${id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${cloud.authToken}` },
+          })
+          assert.equal(response.status, 204, 'Catalog fixture cleanup must return 204')
+          createdIds.delete(id)
+        })
+      )
+      const errors = results
+        .filter(result => result.status === 'rejected')
+        .map(result => result.reason)
+      if (errors.length) throw new AggregateError(errors, 'Catalog fixture cleanup failed')
     },
     async verify(control) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
@@ -127,25 +143,15 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         console.error('[stand-in-model-catalog] Verification failed', error)
         errors.push(error)
       } finally {
-        const cleanup = await Promise.allSettled([
-          (async () => {
-            const latest = await rpc('runtime.stand_in.personal.get', { userId })
-            await rpc('runtime.stand_in.personal.save', {
-              userId,
-              settings: { ...initial, version: latest.version },
-            })
-          })(),
-          ...createdIds.map(async id => {
-            const response = await fetch(`${cloud.backendUrl}/api/admin/public-models/${id}`, {
-              method: 'DELETE',
-              headers: { Authorization: `Bearer ${cloud.authToken}` },
-            })
-            assert.equal(response.status, 204, 'Catalog fixture cleanup must return 204')
-          }),
-        ])
-        errors.push(
-          ...cleanup.filter(result => result.status === 'rejected').map(result => result.reason)
-        )
+        try {
+          const latest = await rpc('runtime.stand_in.personal.get', { userId })
+          await rpc('runtime.stand_in.personal.save', {
+            userId,
+            settings: { ...initial, version: latest.version },
+          })
+        } catch (error) {
+          errors.push(error)
+        }
       }
       if (errors.length === 1) throw errors[0]
       if (errors.length > 1)
