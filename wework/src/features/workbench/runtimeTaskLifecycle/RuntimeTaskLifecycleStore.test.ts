@@ -2020,6 +2020,16 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.turnStarted(address, 'resumed-turn')
     expect(store.getTask(address)?.derived.isRunning).toBe(true)
     expect(store.getTask(address)?.turn.id).toBe('resumed-turn')
+    store.syncTranscript(
+      address,
+      transcript({
+        running: true,
+        turns: [{ id: 'stopped-turn', status: 'streaming', items: [] }],
+      })
+    )
+    expect(store.getTask(address)?.turn.id).toBe('resumed-turn')
+    store.turnSettled(address, 'resumed-turn', 'succeeded')
+    expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
   })
 
   test('preserves a known Goal status when a later executor snapshot omits it', () => {

@@ -2037,6 +2037,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 &thread_id,
                 startup_deadline,
                 startup_timeout_seconds,
+                &mut cancellation,
                 client.request(
                     "turn/start",
                     turn_start_params(&thread_id, request, &launch_config, turn_input),
@@ -2501,9 +2502,10 @@ async fn read_shared_turn_notifications(
                         startup_timeout_seconds,
                     )
                     .await?;
-                    // The shared process is still executing this turn. Keep its
-                    // subscription and cancellation handler until it settles.
-                    waiting_for_initial_progress = false;
+                    // Keep listening and retry recovery if this becomes the
+                    // only active turn. Goal startup may still lack a turn ID.
+                    startup_deadline =
+                        Instant::now() + Duration::from_secs(startup_timeout_seconds);
                     continue;
                 }
             }
@@ -2709,26 +2711,15 @@ async fn read_shared_turn_notifications(
                                 .map(|response| (response, true))
                         }
                     };
-                    let start = startup::wait_for_shared_startup(
+                    let (response, restarted) = startup::wait_for_shared_startup(
                         client,
                         thread_id,
                         startup_deadline,
                         startup_timeout_seconds,
+                        &mut options.cancellation,
                         continuation,
-                    );
-                    let response = if let Some(cancel_rx) = options.cancellation.as_mut() {
-                        tokio::select! {
-                            biased;
-                            _ = cancel_rx => {
-                                let _ = interrupt_shared_turn(client, thread_id, "").await;
-                                return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
-                            }
-                            response = start => response,
-                        }
-                    } else {
-                        start.await
-                    };
-                    let (response, restarted) = response?;
+                    )
+                    .await?;
                     if restoring_goal {
                         overload_recovery::sync_goal_snapshot(
                             state,

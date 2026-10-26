@@ -10,18 +10,34 @@ mod tests;
 pub(super) async fn wait_for_shared_startup<T>(
     client: &CodexAppServerClient,
     thread_id: &str,
-    deadline: Instant,
+    mut deadline: Instant,
     timeout_seconds: u64,
+    cancellation: &mut Option<oneshot::Receiver<()>>,
     request: impl Future<Output = Result<T, String>>,
 ) -> Result<T, String> {
     tokio::pin!(request);
-    match timeout_at(deadline, &mut request).await {
-        Ok(result) => result,
-        Err(_) => {
-            recover_stalled_shared_turn(client, thread_id, timeout_seconds).await?;
-            // A timeout does not cancel a request already sent to Codex. If the
-            // process survives, retain the same future and consume its response.
-            request.await
+    loop {
+        let response = timeout_at(deadline, &mut request);
+        let received = if let Some(cancel_rx) = cancellation.as_mut() {
+            tokio::select! {
+                biased;
+                _ = cancel_rx => {
+                    let _ = interrupt_shared_turn(client, thread_id, "").await;
+                    return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
+                }
+                response = response => response,
+            }
+        } else {
+            response.await
+        };
+        match received {
+            Ok(result) => return result,
+            Err(_) => {
+                recover_stalled_shared_turn(client, thread_id, timeout_seconds).await?;
+                // Preserve the same request while retrying recovery when other
+                // active turns may have finished since the previous deadline.
+                deadline = Instant::now() + Duration::from_secs(timeout_seconds);
+            }
         }
     }
 }

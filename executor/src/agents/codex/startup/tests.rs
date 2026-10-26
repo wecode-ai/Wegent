@@ -37,7 +37,15 @@ async fn shared_startup_timeout_keeps_original_request_pending() {
     let client = shared_client();
     let (response_tx, response_rx) = oneshot::channel();
     let request = async { response_rx.await.map_err(|error| error.to_string()) };
-    let run = wait_for_shared_startup(&client, "thread-slow", Instant::now(), 1, request);
+    let mut cancellation = None;
+    let run = wait_for_shared_startup(
+        &client,
+        "thread-slow",
+        Instant::now(),
+        1,
+        &mut cancellation,
+        request,
+    );
     tokio::pin!(run);
     assert!(timeout(Duration::from_millis(20), &mut run).await.is_err());
     response_tx.send("original response").unwrap();

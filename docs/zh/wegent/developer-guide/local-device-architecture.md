@@ -146,7 +146,7 @@ executor 的活动 transcript 缓存同时累计 `item/agentMessage/delta` 和 `
 
 Goal 的单个物理 turn 完成后，executor 会等待 Codex 自动创建下一轮。若等待超时，它会通过 `thread/goal/get` 和 `thread/read` 对账 provider 的权威状态：已有活跃 turn 时重新绑定并继续监听；目标仍为 active 且线程空闲时只尝试一次原生 `thread/resume`；仍无法继续时停止静默等待并向 Wework 暴露 `needsAttention`。Wework 使用 `running`、`recovering` 和 `needsAttention` 三种 Goal 执行状态分别显示正常运行、重启恢复和需要用户恢复，用户点击恢复时复用已保留的 Goal 请求，而不是发送一条普通聊天消息。
 
-首个模型或工具进展的等待超时不能单独证明执行已停止。共享 Codex app-server 只有一个活跃执行时，executor 可以终止该进程并上报超时失败；为保护其他活跃执行而跳过重启时，必须保留原来的启动请求、事件订阅和取消入口，继续等待真实终态，不能上报失败或将 Goal 标记为 `needsAttention`。已经进入 `needsAttention` 且停止的执行，不得被历史 transcript 中残留的流式回合重新激活；新的运行中 executor 快照或用户恢复操作仍可正常启动后续执行。该规则确保任务状态、Goal 恢复提示和“正在思考”反映同一执行生命周期。
+首个模型或工具进展的等待超时不能单独证明执行已停止。共享 Codex app-server 只有一个活跃执行时，executor 可以终止该进程并上报超时失败；为保护其他活跃执行而跳过重启时，必须保留原来的启动请求、事件订阅和取消入口，继续等待真实终态，不能上报失败或将 Goal 标记为 `needsAttention`。等待期间按启动超时间隔重新检查恢复条件；启动请求尚未返回或 Goal 尚无 turn ID 时，取消仍须发送原生启动中断。已经进入 `needsAttention` 且停止的执行，不得被历史 transcript 中残留的流式回合重新激活；被抑制的回合 ID 必须保留为历史，防止迟到快照覆盖恢复后的新回合。新的运行中 executor 快照或用户恢复操作仍可正常启动后续执行。该规则确保任务状态、Goal 恢复提示和“正在思考”反映同一执行生命周期。
 
 Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任务生命周期；Store 为每个任务维护一个状态机并负责事件路由，状态机是执行状态、回合状态、Goal 状态和未读状态的聚合根，reducer 仅作为状态机内部的状态转换实现。React Provider 只把同一个 Store 适配为订阅，不保存或推断运行状态。任务列表、输入框、消息思考态、系统托盘、关闭保护和完成提醒都读取该 Store 的同一份快照。
 
