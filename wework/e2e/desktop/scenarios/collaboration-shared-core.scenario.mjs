@@ -692,6 +692,17 @@ export function createDesktopScenario({
           visible: false,
           timeoutMs: uiTimeoutMs,
         })
+        await control.command('click', scoped('[data-testid="collaboration-tab-table"]'))
+        const tableRow = scoped(`[data-testid="collaboration-issue-table-row-${issue.id}"]`)
+        await control.command('waitFor', tableRow, {
+          text: HUMAN_WORKFLOW_STEP,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('waitFor', tableRow, {
+          text: AGENT_WORKFLOW_STEP,
+          timeoutMs: uiTimeoutMs,
+        })
+        await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
         await control.command(
           'clickWhenEnabled',
           scoped(`[data-testid="cloud-todo-card-${issue.id}"]`),

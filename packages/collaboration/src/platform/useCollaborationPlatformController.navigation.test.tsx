@@ -13,9 +13,18 @@ import {
   type CollaborationPlatformState,
 } from './useCollaborationPlatformController'
 
-const localWorkspace = { id: 'local', project_count: 0 } as CollaborationWorkspace
-const cloudWorkspace = { id: 'cloud', project_count: 1 } as CollaborationWorkspace
-const project = { id: 'project', workspace_id: 'cloud' } as CollaborationProject
+const localWorkspace = {
+  id: 'local',
+  project_count: 0,
+} as CollaborationWorkspace
+const cloudWorkspace = {
+  id: 'cloud',
+  project_count: 1,
+} as CollaborationWorkspace
+const project = {
+  id: 'project',
+  workspace_id: 'cloud',
+} as CollaborationProject
 const location: CollaborationPlatformLocation = {
   platformView: 'spaces',
   workspaceId: 'cloud',
@@ -79,7 +88,11 @@ it.each([
 ])(
   'loads a new navigation source with incomplete=$incomplete and project=$projectId',
   async ({ incomplete, projectId }) => {
-    const nextLocation = { ...location, workspaceId: projectId ? 'cloud' : null, projectId }
+    const nextLocation = {
+      ...location,
+      workspaceId: projectId ? 'cloud' : null,
+      projectId,
+    }
     const cloudApi = apiFor(cloudWorkspace, [project])
     const unavailableLocalApi = apiFor(localWorkspace, [])
     if (incomplete) {
@@ -109,4 +122,58 @@ it('reuses the cache when the navigation source identities are unchanged', async
   await render([cloudApi])
   expect(cloudApi.projects.list).toHaveBeenCalledOnce()
   expect(cloudApi.workspaces!.list).toHaveBeenCalledOnce()
+})
+
+it('opens a cloud project while the unrelated local navigation is pending', async () => {
+  let resolveLocal!: (projects: CollaborationProject[]) => void
+  const localApi = apiFor(localWorkspace, [])
+  vi.mocked(localApi.projects.list).mockReturnValue(
+    new Promise(resolve => {
+      resolveLocal = resolve
+    })
+  )
+  const cloudApi = apiFor(cloudWorkspace, [project])
+
+  await render([cloudApi, localApi])
+
+  expect(currentState().loading).toBe(false)
+  expect(currentState().workspace?.id).toBe(cloudWorkspace.id)
+  expect(currentState().projects).toEqual([project])
+  expect(currentState().navigationIncomplete).toBe(true)
+  await act(async () => resolveLocal([]))
+  expect(currentState().navigationIncomplete).toBe(false)
+})
+
+it('opens an authorized project from its detail before global catalogs arrive', async () => {
+  const context = { id: 'cloud', public_id: 'public', name: 'Parent' }
+  const target = { ...project, workspace_context: context }
+  const cloudApi = apiFor(cloudWorkspace, [])
+  cloudApi.projects.get = vi.fn(async () => target)
+  let resolveProjects!: (projects: CollaborationProject[]) => void
+  let resolveWorkspaces!: (workspaces: CollaborationWorkspace[]) => void
+  vi.mocked(cloudApi.projects.list).mockReturnValue(
+    new Promise(resolve => {
+      resolveProjects = resolve
+    })
+  )
+  vi.mocked(cloudApi.workspaces!.list).mockReturnValue(
+    new Promise(resolve => {
+      resolveWorkspaces = resolve
+    })
+  )
+
+  await render([cloudApi], { ...location, workspaceId: null })
+
+  expect(currentState().loading).toBe(false)
+  expect(currentState().projects).toEqual([target])
+  expect(currentState().workspace).toBeNull()
+  expect(currentState().workspaceNavigationContext).toEqual({
+    ...context,
+    location: 'cloud',
+  })
+  await act(async () => {
+    resolveProjects([target])
+    resolveWorkspaces([])
+  })
+  expect(currentState().error).toBeNull()
 })

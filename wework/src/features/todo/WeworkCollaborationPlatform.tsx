@@ -447,13 +447,17 @@ export function WeworkSharedProject({
     }
   }, [project])
   const hasFullWorkspaceAccess = 'access_role' in workspace
+  const workspaceAccessRef = useRef(hasFullWorkspaceAccess)
+  useLayoutEffect(() => {
+    workspaceAccessRef.current = hasFullWorkspaceAccess
+  }, [hasFullWorkspaceAccess])
   const scopedApi = useMemo<SharedWorkspaceApi>(
     () => ({
       ...api,
       projects: {
         ...api.projects,
         list: async () => {
-          if (hasFullWorkspaceAccess) return api.projects.list(workspace.id)
+          if (workspaceAccessRef.current) return api.projects.list(workspace.id)
           const accessibleProjects = await api.projects.list()
           return accessibleProjects.filter(candidate => String(candidate.id) === String(project.id))
         },
@@ -483,7 +487,7 @@ export function WeworkSharedProject({
         },
       },
     }),
-    [api, hasFullWorkspaceAccess, project.id, project.project_store, workspace.id]
+    [api, project.id, project.project_store, workspace.id]
   )
   const standInWorkspaceApi = useMemo(
     () => ({

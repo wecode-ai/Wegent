@@ -295,9 +295,24 @@ def execution_ai_state(
 
     if execution.status == STATUS_PENDING_APPROVAL:
         return None
-    state = dict(existing) if isinstance(existing, dict) else {}
     agent = db.get(ProjectChatAgent, execution.agent_id) if execution.agent_id else None
     team = db.get(Kind, execution.team_id) if execution.team_id else None
+    return execution_ai_state_from_resources(
+        execution, existing=existing, agent=agent, team=team
+    )
+
+
+def execution_ai_state_from_resources(
+    execution: LoopItemExecution,
+    *,
+    existing: object = None,
+    agent: ProjectChatAgent | None = None,
+    team: Kind | None = None,
+) -> dict[str, object] | None:
+    """Render execution state using resources loaded by the caller."""
+    if execution.status == STATUS_PENDING_APPROVAL:
+        return None
+    state = dict(existing) if isinstance(existing, dict) else {}
 
     def iso(value: datetime) -> str | None:
         optional = _optional_datetime(value)

@@ -3419,9 +3419,46 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.issues.getBoardSnapshot).toHaveBeenCalledExactlyOnceWith(
       project.id,
     );
-    expect(api.assignments?.list).toHaveBeenCalledExactlyOnceWith(issue.id);
+    expect(api.assignments?.list).not.toHaveBeenCalled();
     await click(byTestId("collaboration-tab-table"));
     expect(api.assignments?.list).toHaveBeenCalledExactlyOnceWith(issue.id);
+  });
+
+  it("keeps the loaded board when its workspace catalog arrives later", async () => {
+    const target = {
+      ...project,
+      workspace_context: {
+        id: workspace.id,
+        public_id: "parent",
+        name: workspace.name,
+      },
+    };
+    const { api } = createApi({ initialProjects: [target] });
+    const pending = deferred<CollaborationWorkspace[]>();
+    vi.mocked(api.workspaces!.list).mockReturnValue(pending.promise);
+
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          projectId: project.id,
+        }}
+      />,
+    );
+
+    expect(byTestId(`cloud-todo-card-${issue.id}`)).toBeTruthy();
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledExactlyOnceWith(
+      project.id,
+    );
+    await act(async () => pending.resolve([workspace]));
+    await flush();
+    expect(byTestId(`cloud-todo-card-${issue.id}`)).toBeTruthy();
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledExactlyOnceWith(
+      project.id,
+    );
+    expect(api.assignments?.list).not.toHaveBeenCalled();
   });
 
   it.each(["board", "table"] as const)(
