@@ -8,7 +8,7 @@ const directory = mkdtempSync(join(tmpdir(), "wework-executor-debugger-"));
 try {
   const executor = join(directory, "executor");
   const wrapper = `${executor}.gdb`;
-  writeFileSync(executor, "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\"\n", {
+  writeFileSync(executor, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n", {
     mode: 0o755,
   });
   copyFileSync(

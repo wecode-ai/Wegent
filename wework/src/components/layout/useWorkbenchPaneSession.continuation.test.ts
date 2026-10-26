@@ -5,6 +5,7 @@ import type { RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { useConversationFind } from '@/components/chat/useConversationFind'
 import { getPlatform } from '@/lib/platform'
+import { useScopedDraftInput } from '@/features/workbench/useScopedDraftInput'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import {
   cacheRuntimeConversationQueuedMessages,
@@ -66,7 +67,7 @@ let lifecycleStore: RuntimeTaskLifecycleStore
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocks.send.mockResolvedValue(true)
+  mocks.send.mockReset().mockResolvedValue(true)
   mocks.guide.mockResolvedValue({ sent: true, turnId: 'answer-turn' })
   mocks.cancel.mockResolvedValue(true)
   lifecycleStore = new RuntimeTaskLifecycleStore('pane-continuation-test')
@@ -77,6 +78,12 @@ beforeEach(() => {
     runtime: 'codex',
     running: false,
     continuable: true,
+  })
+  const sharedRevisions = new Map<string, number>()
+  mocks.setInput.mockImplementation((scope: string, value: string) => {
+    const context = mocks.context.projectChat as { inputByScope: Record<string, string> }
+    context.inputByScope = { ...context.inputByScope, [scope]: value }
+    sharedRevisions.set(scope, (sharedRevisions.get(scope) ?? 0) + 1)
   })
   mocks.context = {
     state: {
@@ -93,6 +100,7 @@ beforeEach(() => {
       selectedModelOptions: { reasoning: 'high' },
       models: [],
       setInputForScope: mocks.setInput,
+      getInputRevisionForScope: (scope: string) => sharedRevisions.get(scope) ?? 0,
       resetAttachmentsForScope: mocks.resetAttachments,
       setComposerErrorForScope: mocks.setError,
     },
@@ -156,6 +164,7 @@ describe('composer draft ownership during delayed send acknowledgment', () => {
     { withCodeComments: false, nextDraft: 'A newer follow-up' },
     { withCodeComments: false, nextDraft: draft },
     { withCodeComments: true, nextDraft: 'A newer follow-up' },
+    { withCodeComments: true, nextDraft: draft },
   ])(
     'preserves a newer draft after acceptance (code comments=$withCodeComments, draft=$nextDraft)',
     async ({ withCodeComments, nextDraft }) => {
@@ -403,6 +412,90 @@ describe('composer draft during an in-flight send', () => {
 })
 
 describe('pane continuation without composer submission', () => {
+  test('preserves an externally replaced draft when an earlier send completes', async () => {
+    let finishSend!: (accepted: boolean) => void
+    mocks.send.mockReturnValueOnce(
+      new Promise<boolean>(resolve => {
+        finishSend = resolve
+      })
+    )
+    const { result, rerender } = await renderSession()
+    let submission!: Promise<boolean>
+    act(() => {
+      submission = result.current.send(draft)
+    })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledTimes(1))
+    mocks.setInput(scopeKey, 'Programmatically replaced draft')
+    mocks.setInput.mockClear()
+    rerender({ currentRuntimeTask: address })
+
+    await act(async () => {
+      finishSend(true)
+      expect(await submission).toBe(true)
+    })
+
+    expect(result.current.input).toBe('Programmatically replaced draft')
+    expect(mocks.setInput).not.toHaveBeenCalled()
+  })
+
+  test('preserves a shared draft written in the same batch as send completion', async () => {
+    let finishSend!: (accepted: boolean) => void
+    mocks.send.mockReturnValueOnce(new Promise<boolean>(resolve => (finishSend = resolve)))
+    const context = mocks.context.projectChat as Record<string, unknown>
+    const { result } = renderHook(
+      () => {
+        const drafts = useScopedDraftInput(() => ({ [scopeKey]: draft }))
+        context.inputByScope = drafts.inputs
+        context.setInputForScope = drafts.setInput
+        context.getInputRevisionForScope = drafts.getRevision
+        const pane = useWorkbenchPaneSession({
+          currentRuntimeTask: address,
+          debugSnapshotEnabled: false,
+        })
+        return { pane, drafts }
+      },
+      {
+        wrapper: ({ children }: { children: ReactNode }) =>
+          createElement(RuntimeTaskLifecycleProvider, { store: lifecycleStore, children }),
+      }
+    )
+    await waitFor(() => expect(result.current.pane.transcriptLoading).toBe(false))
+    let submission!: Promise<boolean>
+    act(() => {
+      submission = result.current.pane.send(draft)
+    })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+    await act(async () => {
+      result.current.drafts.setInput(scopeKey, 'Shared replacement before commit')
+      finishSend(true)
+      expect(await submission).toBe(true)
+    })
+    expect(result.current.pane.input).toBe('Shared replacement before commit')
+  })
+
+  test('does not clear a shared draft after the submitting pane unmounts', async () => {
+    let finishSend!: (accepted: boolean) => void
+    mocks.send.mockReturnValueOnce(
+      new Promise<boolean>(resolve => {
+        finishSend = resolve
+      })
+    )
+    const { result, unmount } = await renderSession()
+    let submission!: Promise<boolean>
+    act(() => {
+      submission = result.current.send(draft)
+    })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledTimes(1))
+    unmount()
+
+    await act(async () => {
+      finishSend(true)
+      expect(await submission).toBe(true)
+    })
+
+    expect(mocks.setInput).not.toHaveBeenCalled()
+  })
+
   test('keeps a new turn interactive when the runtime reuses a previously answered request ID', async () => {
     const { result } = await renderSession()
     const formTurn = (id: string): RuntimeConversationTurn => ({
