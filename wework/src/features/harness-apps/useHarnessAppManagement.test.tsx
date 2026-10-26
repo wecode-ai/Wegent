@@ -167,6 +167,30 @@ describe('useHarnessAppManagement', () => {
     expect(onRefresh).toHaveBeenCalled()
   })
 
+  test('keeps the stopped app busy until its list refresh completes', async () => {
+    let finishRefresh!: () => void
+    onRefresh.mockImplementation(
+      () =>
+        new Promise<void>(resolve => {
+          finishRefresh = resolve
+        })
+    )
+    const { result } = renderManagement([running])
+    let stopping!: Promise<boolean>
+
+    act(() => {
+      stopping = result.current.stop(running)
+    })
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledExactlyOnceWith())
+
+    expect(onBusyChange.mock.calls).toEqual([[running.id]])
+    await act(async () => {
+      finishRefresh()
+      expect(await stopping).toBe(true)
+    })
+    expect(onBusyChange.mock.calls).toEqual([[running.id], [null]])
+  })
+
   test('changes the bound model while the app is stopped', async () => {
     const { result } = renderManagement()
 
