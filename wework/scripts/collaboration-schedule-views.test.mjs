@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import {
   addLocalDays,
   calendarDays,
@@ -9,6 +9,7 @@ import {
 import {
   collaborationScheduleDates,
   ensureCalendarScheduleDatesVisible,
+  verifyCollaborationScheduleViews,
 } from '../e2e/desktop/modules/collaboration-schedule-views.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -16,6 +17,8 @@ const scoped = selector => `${CONTENT} ${selector}`
 const CALENDAR = scoped('[data-testid="collaboration-calendar"]')
 const NEXT_MONTH = `${CALENDAR} [data-testid="collaboration-schedule-next"]`
 const TIMEOUT_MS = 10_000
+
+afterEach(() => vi.useRealTimers())
 
 function localDate(key) {
   const [year, month, day] = key.split('-').map(Number)
@@ -156,4 +159,69 @@ test('keeps every fixture inside the real calendar and Gantt windows throughout 
       assert.ok(ganttDays.has(key), `${localDateKey(today)}: Gantt ${name}`)
     }
   }
+})
+
+test.each([
+  {
+    today: '2026-10-26T12:00:00',
+    target: '2026-11-09',
+    navigationCount: 1,
+    ranges: [
+      '2026-11-02 → 2026-11-04',
+      '2026-11-09 → 2026-11-11',
+      '2026-11-09 → 2026-11-12',
+      '2026-11-11 → 2026-11-14',
+    ],
+  },
+  {
+    today: '2026-10-05T12:00:00',
+    target: '2026-10-19',
+    navigationCount: 0,
+    ranges: [
+      '2026-10-12 → 2026-10-14',
+      '2026-10-19 → 2026-10-21',
+      '2026-10-19 → 2026-10-22',
+      '2026-10-21 → 2026-10-24',
+    ],
+  },
+])('keeps the target date visible when scheduling from $today', async fixture => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date(fixture.today))
+  const calendar = calendarControl(new Date(fixture.today))
+  let rangeIndex = 0
+  const control = {
+    async command(action, selector, options) {
+      if (
+        (action === 'getElementCount' || action === 'waitFor') &&
+        selector.includes('collaboration-calendar-day-')
+      ) {
+        const day = selector.match(/\[data-testid="collaboration-calendar-day-[^"]+"\]/)?.[0]
+        return calendar.command(action, `${CALENDAR} ${day}`, options)
+      }
+      if (action === 'click' && /collaboration-schedule-next|下一个月/.test(selector)) {
+        return calendar.command(action, NEXT_MONTH, options)
+      }
+      if (action === 'getAttribute')
+        return options.value === 'aria-sort' ? 'ascending' : fixture.ranges[rangeIndex]
+      if (action === 'drag' || action === 'dragBy') rangeIndex++
+      if (action === 'getValue') return 'status'
+      if (action === 'getComputedStyleValue') return 'ew-resize'
+      if (action === 'getText') return '开始时间 结束时间'
+      return ''
+    },
+  }
+
+  await verifyCollaborationScheduleViews({
+    capture: async () => {},
+    control,
+    issueTitle: 'Calendar navigation regression',
+    scoped,
+    timeoutMs: TIMEOUT_MS,
+  })
+
+  expect(calendar.calls.filter(({ selector }) => selector === NEXT_MONTH)).toHaveLength(
+    fixture.navigationCount
+  )
+  expect(calendar.visibleDates().has(fixture.target)).toBe(true)
+  expect(rangeIndex).toBe(3)
 })

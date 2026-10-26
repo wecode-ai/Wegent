@@ -1,4 +1,8 @@
 import { afterEach, expect, test, vi } from 'vitest'
+import {
+  calendarDays,
+  localDateKey,
+} from '../../../packages/collaboration/src/project-schedule/model'
 import { verifyCollaborationScheduleViews } from '../../e2e/desktop/modules/collaboration-schedule-views.mjs'
 
 afterEach(() => vi.useRealTimers())
@@ -26,8 +30,17 @@ test.each([
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(fixture.today)
   let monthAdvances = 0
+  const source = fixture.initialRange.split(' → ')[0]
+  const waitedDates = new Set<string>()
   const dragReached = new Error('Calendar is ready for the drag assertion')
-  const targetVisible = () => (fixture.initiallyVisible ? monthAdvances === 0 : monthAdvances === 1)
+  const visibleDates = () =>
+    new Set(
+      calendarDays(
+        new Date(fixture.today.getFullYear(), fixture.today.getMonth() + monthAdvances, 1),
+        true
+      ).map(localDateKey)
+    )
+  const targetVisible = () => visibleDates().has(fixture.target)
   const control = {
     async command(action: string, selector: string) {
       if (
@@ -36,11 +49,16 @@ test.each([
       ) {
         monthAdvances += 1
       }
-      if (action === 'getElementCount') return targetVisible() ? 1 : 0
+      const day = selector.match(/collaboration-calendar-day-(\d{4}-\d{2}-\d{2})/)?.[1]
+      if (action === 'getElementCount' && day) return visibleDates().has(day) ? 1 : 0
       if (action === 'getAttribute') return fixture.initialRange
-      if (action === 'waitFor' && selector.includes('collaboration-calendar-day-')) {
-        expect(selector).toContain(fixture.target)
-        expect(targetVisible(), 'The target day must remain in the displayed month grid').toBe(true)
+      if (action === 'waitFor' && day) {
+        expect([source, fixture.target]).toContain(day)
+        expect(
+          visibleDates().has(day),
+          'Both drag dates must remain in the displayed month grid'
+        ).toBe(true)
+        waitedDates.add(day)
       }
       if (action === 'drag') {
         expect(targetVisible()).toBe(true)
@@ -59,5 +77,6 @@ test.each([
       timeoutMs: 1000,
     })
   ).rejects.toBe(dragReached)
+  expect(waitedDates).toEqual(new Set([source, fixture.target]))
   expect(monthAdvances).toBe(fixture.initiallyVisible ? 0 : 1)
 })
