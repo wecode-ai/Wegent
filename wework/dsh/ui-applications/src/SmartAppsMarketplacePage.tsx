@@ -1008,7 +1008,7 @@ export function SmartAppsMarketplacePage({
               <select
                 data-testid="smart-apps-marketplace-source"
                 value={source}
-                className="h-full min-w-32 rounded-lg border border-border/50 bg-background px-3 text-sm outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+                className="h-full min-w-32 rounded-lg border border-border/50 bg-background px-3 text-sm outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
                 onChange={event => setSource(event.target.value as typeof source)}
               >
                 <option value="all">{t('workbench.smart_apps_source_all', '全部来源')}</option>
@@ -1025,7 +1025,7 @@ export function SmartAppsMarketplacePage({
               <select
                 data-testid="smart-apps-marketplace-tag"
                 value={tag}
-                className="h-full min-w-32 rounded-lg border border-border/50 bg-background px-3 text-sm outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+                className="h-full min-w-32 rounded-lg border border-border/50 bg-background px-3 text-sm outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
                 onChange={event => setTag(event.target.value)}
               >
                 <option value="">{t('workbench.smart_apps_tag_all', '全部标签')}</option>
@@ -1089,7 +1089,7 @@ export function SmartAppsMarketplacePage({
               data-testid="smart-apps-marketplace-sort"
               value={marketplaceSort}
               aria-label={t('workbench.smart_apps_sort_label', '排序方式')}
-              className="h-8 rounded-lg border border-transparent bg-transparent px-2 text-sm text-text-primary outline-none hover:bg-muted focus:border-focus focus:ring-2 focus:ring-focus/15"
+              className="h-8 rounded-lg border border-transparent bg-transparent px-2 text-sm text-text-primary outline-none hover:bg-muted keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
               onChange={event => setMarketplaceSort(event.target.value as MarketplaceSort)}
             >
               <option value="recommended">
@@ -1263,7 +1263,7 @@ export function SmartAppsMarketplacePage({
                             <select
                               data-testid={`harness-app-model-${installation.id}`}
                               aria-label={t('workbench.smart_apps_change_model', '修改模型')}
-                              className="min-w-0 max-w-44 rounded-md border border-border/50 bg-background px-1.5 py-0.5 text-xs text-text-secondary outline-none focus:border-focus focus:ring-2 focus:ring-focus/15 disabled:cursor-not-allowed disabled:opacity-60"
+                              className="min-w-0 max-w-44 rounded-md border border-border/50 bg-background px-1.5 py-0.5 text-xs text-text-secondary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15 disabled:cursor-not-allowed disabled:opacity-60"
                               value={installation.modelKey ?? ''}
                               disabled={
                                 busy === installation.id || installation.state === 'running'
@@ -1715,7 +1715,7 @@ function SmartAppCard({
       {onDetails ? (
         <button
           type="button"
-          className="flex items-start gap-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+          className="flex items-start gap-4 text-left focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
           onClick={onDetails}
         >
           {identity}
@@ -1728,7 +1728,7 @@ function SmartAppCard({
           <button
             type="button"
             data-testid={visibility.testId}
-            className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-border/50 bg-background px-2 text-text-primary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+            className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-border/50 bg-background px-2 text-text-primary hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
             onClick={visibility.onClick}
           >
             {visibilityContent}

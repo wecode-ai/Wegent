@@ -643,7 +643,7 @@ function PluginManagementWorkspaceContent({
               onClick={() => setActiveTab('codex')}
               onKeyDown={event => handleTabKeyDown(event, 'codex')}
               className={[
-                'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8',
+                'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
                 activeTab === 'codex'
                   ? 'text-text-primary'
                   : 'text-text-muted hover:text-text-secondary',
@@ -665,7 +665,7 @@ function PluginManagementWorkspaceContent({
               onClick={() => setActiveTab('core-dsh')}
               onKeyDown={event => handleTabKeyDown(event, 'core-dsh')}
               className={[
-                'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8',
+                'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
                 activeTab === 'core-dsh'
                   ? 'text-text-primary'
                   : 'text-text-muted hover:text-text-secondary',
@@ -777,7 +777,7 @@ function PluginManagementWorkspaceContent({
                 <button
                   type="button"
                   data-testid="plugin-management-browse-marketplace-button"
-                  className="inline-flex h-[31px] items-center rounded-lg bg-surface px-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                  className="inline-flex h-[31px] items-center rounded-lg bg-surface px-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
                   onClick={() => navigateTo('/plugins')}
                 >
                   {t('workbench.plugins_browse_marketplace', '浏览插件市场')}

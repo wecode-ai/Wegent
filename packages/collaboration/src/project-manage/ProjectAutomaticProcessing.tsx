@@ -135,7 +135,7 @@ function AutomaticProcessingSwitch({
     <button
       aria-checked={checked}
       aria-label={label}
-      className="inline-flex shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:cursor-not-allowed disabled:opacity-50"
+      className="inline-flex shrink-0 rounded-full focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:cursor-not-allowed disabled:opacity-50"
       data-testid={testId}
       disabled={disabled}
       onClick={() => onChange(!checked)}
@@ -981,7 +981,7 @@ export function ProjectAutomaticProcessing({
                         {translate("todo.matching_tag", "Tag")}
                       </label>
                       <input
-                        className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 outline-none focus:border-focus"
+                        className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 outline-none keyboard:focus:border-focus"
                         data-testid="automatic-processing-tag"
                         id="automatic-processing-tag"
                         placeholder={translate(
@@ -1004,7 +1004,7 @@ export function ProjectAutomaticProcessing({
                             {translate("todo.schedule_frequency", "重复")}
                           </span>
                           <select
-                            className="h-10 w-full rounded-lg border border-border bg-background px-3 outline-none focus:border-focus"
+                            className="h-10 w-full rounded-lg border border-border bg-background px-3 outline-none keyboard:focus:border-focus"
                             data-testid="automatic-processing-schedule-frequency"
                             value={schedule.frequency}
                             onChange={(event) => {
@@ -1049,7 +1049,7 @@ export function ProjectAutomaticProcessing({
                             {translate("todo.schedule_time", "执行时间")}
                           </span>
                           <input
-                            className="h-10 w-full rounded-lg border border-border bg-background px-3 tabular-nums outline-none focus:border-focus"
+                            className="h-10 w-full rounded-lg border border-border bg-background px-3 tabular-nums outline-none keyboard:focus:border-focus"
                             data-testid="automatic-processing-schedule-time"
                             onChange={(event) =>
                               updateDraft({
@@ -1075,7 +1075,7 @@ export function ProjectAutomaticProcessing({
                             {translate("todo.schedule_weekday", "星期")}
                           </span>
                           <select
-                            className="h-10 w-full rounded-lg border border-border bg-background px-3 outline-none focus:border-focus"
+                            className="h-10 w-full rounded-lg border border-border bg-background px-3 outline-none keyboard:focus:border-focus"
                             data-testid="automatic-processing-schedule-weekday"
                             value={schedule.weekday}
                             onChange={(event) =>
@@ -1139,7 +1139,7 @@ export function ProjectAutomaticProcessing({
                             )}
                           </label>
                           <input
-                            className="h-9 w-full rounded-lg border border-border bg-surface px-3 font-mono text-sm outline-none focus:border-focus"
+                            className="h-9 w-full rounded-lg border border-border bg-surface px-3 font-mono text-sm outline-none keyboard:focus:border-focus"
                             data-testid="automatic-processing-cron"
                             id="automatic-processing-cron"
                             placeholder="0 9 * * 1-5"
@@ -1350,7 +1350,7 @@ export function ProjectAutomaticProcessing({
                       data-testid="automatic-processing-target-picker"
                     >
                       <div className="border-b border-border p-2">
-                        <label className="!flex h-8 items-center gap-2 rounded-lg border border-border bg-background px-3 focus-within:border-focus">
+                        <label className="!flex h-8 items-center gap-2 rounded-lg border border-border bg-background px-3 keyboard:focus-within:border-focus">
                           <Search
                             aria-hidden="true"
                             className="h-4 w-4 shrink-0 text-text-muted"

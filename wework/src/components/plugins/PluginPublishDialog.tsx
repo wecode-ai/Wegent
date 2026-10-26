@@ -200,7 +200,7 @@ function PluginPublicationRiskStep({
             <input
               value={domainsText}
               data-testid="plugin-publication-external-domains"
-              className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+              className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
               placeholder="api.example.com"
               onChange={event => setDomainsText(event.target.value)}
             />
@@ -246,7 +246,7 @@ function PluginPublicationRiskStep({
                     value={commandExamplesText}
                     rows={3}
                     data-testid="plugin-publication-command-examples"
-                    className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+                    className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
                     placeholder="node scripts/check.js"
                     onChange={event => setCommandExamplesText(event.target.value)}
                   />
@@ -285,7 +285,7 @@ function PluginPublicationRiskStep({
                 value={applicationPermissionsText}
                 rows={3}
                 data-testid="plugin-publication-application-permissions"
-                className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+                className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
                 placeholder="GitLab OAuth: read_api"
                 onChange={event => setApplicationPermissionsText(event.target.value)}
               />
@@ -306,10 +306,10 @@ function PluginPublicationRiskStep({
           aria-invalid={testNotesAreBlank}
           aria-describedby="plugin-publication-test-notes-help"
           className={cn(
-            'w-full resize-none rounded-xl border bg-background px-3 py-2 text-sm outline-none focus:ring-2',
+            'w-full resize-none rounded-xl border bg-background px-3 py-2 text-sm outline-none',
             testNotesAreBlank
-              ? 'border-red-500/50 focus:border-red-500/70 focus:ring-red-500/15'
-              : 'border-border focus:border-focus/70 focus:ring-focus/15'
+              ? 'border-red-500/50 focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15'
+              : 'border-border keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15'
           )}
           placeholder={t(
             'workbench.plugins_publication_test_notes_placeholder',
@@ -339,7 +339,7 @@ function PluginPublicationRiskStep({
           data-testid="plugin-publication-additional-notes"
           rows={3}
           maxLength={2000}
-          className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+          className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
           onChange={event =>
             setRiskDeclaration(current => ({
               ...current,
@@ -590,7 +590,7 @@ export function PluginPublishDialog({
                     data-testid="plugin-publication-release-notes"
                     rows={6}
                     maxLength={2000}
-                    className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+                    className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
                     placeholder={t(
                       'workbench.plugins_publication_release_notes_placeholder',
                       '说明本版本解决的问题、主要能力和测试结果'

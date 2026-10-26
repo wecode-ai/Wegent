@@ -839,7 +839,7 @@ export function ProjectWorkBar({
               data-testid="project-work-button"
               onClick={handleToggleMenu}
               className={cn(
-                'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-base font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+                'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-base font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
                 open && 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]',
                 buttonClassName
               )}
@@ -868,7 +868,7 @@ export function ProjectWorkBar({
                   onClick={handleClearProject}
                   title={t('workbench.no_project', '不使用项目')}
                   aria-label={t('workbench.no_project', '不使用项目')}
-                  className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                  className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
                 >
                   <ProjectFolderIcon
                     project={currentProject}
@@ -888,7 +888,7 @@ export function ProjectWorkBar({
                 onClick={handleToggleMenu}
                 title={t('workbench.change_project', '更改项目')}
                 className={cn(
-                  'flex h-8 w-full min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+                  'flex h-8 w-full min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
                   open && 'bg-background/70 text-text-primary',
                   buttonClassName
                 )}
@@ -913,7 +913,7 @@ export function ProjectWorkBar({
               data-testid="project-work-button"
               onClick={handleToggleMenu}
               className={cn(
-                'flex h-8 w-full min-w-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-normal leading-[18px] text-text-secondary transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+                'flex h-8 w-full min-w-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-normal leading-[18px] text-text-secondary transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
                 open && 'bg-background/70 text-text-primary',
                 buttonClassName
               )}

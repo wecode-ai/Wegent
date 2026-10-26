@@ -27,7 +27,7 @@ import {
 const BUTTON =
   'inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8'
 const INPUT =
-  'min-h-11 w-full min-w-0 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 md:min-h-8'
+  'min-h-11 w-full min-w-0 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-text-primary focus:outline-none keyboard:focus:ring-2 keyboard:focus:ring-primary/30 md:min-h-8'
 const PRIMARY =
   'inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-45 md:min-h-8'
 const FORMATS = ['openai-responses', 'openai-chat-completions', 'anthropic-messages'] as const

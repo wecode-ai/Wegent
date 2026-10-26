@@ -79,7 +79,7 @@ export function ProjectSwitcherOverlay({
             value={search}
             onChange={event => onSearchChange(event.target.value)}
             placeholder={t('todo.search_projects', '搜索项目…')}
-            className="h-[34px] w-full rounded-md border border-border bg-muted pl-8 pr-2 text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-focus"
+            className="h-[34px] w-full rounded-md border border-border bg-muted pl-8 pr-2 text-xs text-text-primary outline-none placeholder:text-text-muted keyboard:focus:border-focus"
           />
         </label>
         <span className="shrink-0 text-xs font-semibold text-text-muted">

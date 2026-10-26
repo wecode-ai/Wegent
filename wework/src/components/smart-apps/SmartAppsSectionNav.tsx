@@ -48,7 +48,7 @@ export function SmartAppsSectionNav({ active, onNavigate = navigateTo }: SmartAp
             data-testid={section.testId}
             aria-current={selected ? 'page' : undefined}
             className={cn(
-              'flex h-full flex-1 items-center justify-center rounded-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30',
+              'flex h-full flex-1 items-center justify-center rounded-md px-3 text-sm transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30',
               selected
                 ? 'bg-background font-medium text-text-primary shadow-sm'
                 : 'text-text-secondary hover:bg-background/60 hover:text-text-primary'
