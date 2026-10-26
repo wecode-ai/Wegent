@@ -410,6 +410,12 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
       })
       await control.command('click', `${WORKBENCH} ${ANSWER_OPTION}`)
       await waitForRequestHold(control)
+      const cancelled = JSON.parse(
+        await control.command('cancelRuntimeTaskDirectly', 'body', {
+          value: JSON.stringify(rejectionAddress),
+        })
+      )
+      assert.equal(cancelled.accepted, true, 'The runtime task did not accept cancellation')
       rejectionGate.resolve()
       await waitForWorkbenchDebugState(
         control,
