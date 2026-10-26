@@ -238,6 +238,51 @@ function createMockDeliveryApi() {
 }
 
 describe('createWeworkDeliverySharedWorkspaceApi', () => {
+  it('maps device permission previews and confirmations through the existing project update', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+    const preview = {
+      affected_agent_count: 1,
+      affected_execution_count: 2,
+      confirmation_token: 'reviewed',
+    }
+    vi.mocked(deliveryApi.updateCloudProject).mockResolvedValue({
+      ...project,
+      device_access_preview: preview,
+    })
+    const result = await api.projects.update('project-1', {
+      version: 3,
+      deviceAccessChange: { deviceId: 21, scope: 'members', memberIds: [2], previewOnly: true },
+    })
+    expect(deliveryApi.updateCloudProject).toHaveBeenCalledWith('project-1', {
+      version: 3,
+      device_access_change: {
+        device_id: 21,
+        scope: 'members',
+        member_ids: [2],
+        preview_only: true,
+      },
+    })
+    expect(result.device_access_preview).toEqual(preview)
+    await api.projects.update('project-1', {
+      version: 3,
+      deviceAccessChange: {
+        deviceId: 21,
+        scope: 'members',
+        memberIds: [2],
+        confirmationToken: 'reviewed',
+      },
+    })
+    expect(deliveryApi.updateCloudProject).toHaveBeenLastCalledWith('project-1', {
+      version: 3,
+      device_access_change: {
+        device_id: 21,
+        scope: 'members',
+        member_ids: [2],
+        confirmation_token: 'reviewed',
+      },
+    })
+  })
   it('preserves current project authority and member override provenance', async () => {
     const deliveryApi = createMockDeliveryApi()
     const authoritative: CloudProject = {

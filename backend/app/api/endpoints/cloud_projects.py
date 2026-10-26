@@ -222,6 +222,15 @@ def update_cloud_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> CloudProjectResponse:
+    if values.device_access_change is not None:
+        from app.services.project_device_access import update_device_access
+
+        project, preview = update_device_access(
+            db, project_id, current_user.id, values.version, values.device_access_change
+        )
+        response = _project_response(db, project, current_user)
+        response.device_access_preview = preview
+        return response
     project = cloud_project_service.update(db, project_id, current_user.id, values)
     return _project_response(db, project, current_user)
 

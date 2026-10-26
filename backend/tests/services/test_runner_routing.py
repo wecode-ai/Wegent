@@ -957,3 +957,59 @@ def test_catalog_report_preserves_device_config_updated_after_loading(
 
     assert device.json["spec"]["cloudConfig"] == cloud_config
     assert device.json["spec"]["runnerCatalog"] == report.model_dump()
+
+
+@pytest.mark.parametrize("mode", ["fixed", "project_pool", "user_select"])
+def test_device_owner_consent_is_rechecked_on_dispatch_and_claim(
+    test_db, routing_setup, test_admin_user, mode
+):
+    from app.models.delivery import CloudProject
+    from app.schemas.project_device_access import ProjectDeviceAccess
+    from app.services.project_device_access import set_device_access
+
+    user, devices, issue = routing_setup
+    for device in devices:
+        device.user_id = test_admin_user.id
+    test_db.flush()
+    selection = None
+    policy = {"mode": mode}
+    if mode == "fixed":
+        policy["environment_id"] = str(devices[0].id)
+    elif mode == "user_select":
+        selection = {
+            "execution_policy": {"mode": "fixed", "environment_id": str(devices[0].id)}
+        }
+    kwargs = dict(
+        config={
+            "runtime": "codex",
+            "execution_policy": policy,
+            "model_policy": {"mode": "fixed", "model": MODEL},
+        },
+        user_id=user.id,
+        project_id=issue.cloud_project_id,
+        issue_id=issue.id,
+        selection=selection,
+    )
+    snapshot = resolve_routing(test_db, **kwargs).snapshot()
+    execution = _execution_stub(
+        assigner_user_id=user.id,
+        cloud_project_id=issue.cloud_project_id,
+        loop_item_id=issue.id,
+        runtime_selection={"runner_routing": snapshot},
+    )
+    assert claim_routing(test_db, execution, devices[0])
+    project = test_db.get(CloudProject, issue.cloud_project_id)
+    for device in devices:
+        set_device_access(project, device.id, ProjectDeviceAccess())
+    test_db.flush()
+    with pytest.raises(HTTPException):
+        resolve_routing(test_db, **kwargs)
+    assert not claim_routing(test_db, execution, devices[0])
+    set_device_access(
+        project,
+        devices[0].id,
+        ProjectDeviceAccess(scope="members", member_ids=[user.id]),
+    )
+    test_db.flush()
+    assert resolve_routing(test_db, **kwargs).snapshot()
+    assert claim_routing(test_db, execution, devices[0])

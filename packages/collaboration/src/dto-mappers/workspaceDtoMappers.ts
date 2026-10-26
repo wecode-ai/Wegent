@@ -369,6 +369,14 @@ export function mapCollaborationExecutionEnvironmentDto(
     status: (row.status ??
       "offline") as CollaborationExecutionEnvironment["status"],
     can_use: (row.can_use ?? row.canUse) !== false,
+    ...(row.use_access == null
+      ? {}
+      : {
+          use_access:
+            row.use_access as CollaborationExecutionEnvironment["use_access"],
+          can_manage_access: row.can_manage_access === true,
+          project_version: Number(row.project_version),
+        }),
     unavailable_reason: nullableString(
       row.unavailable_reason ?? row.unavailableReason,
     ),

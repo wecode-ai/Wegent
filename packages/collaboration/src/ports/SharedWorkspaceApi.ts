@@ -48,6 +48,13 @@ export interface WorkspaceProjectCreateInput {
 }
 
 export interface WorkspaceProjectUpdateInput {
+  deviceAccessChange?: {
+    deviceId: number;
+    scope: "owner" | "project" | "members";
+    memberIds: number[];
+    previewOnly?: boolean;
+    confirmationToken?: string;
+  };
   version: number;
   name?: string;
   description?: string;

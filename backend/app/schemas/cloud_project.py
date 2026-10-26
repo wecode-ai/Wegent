@@ -18,6 +18,10 @@ from pydantic import (
 from app.core.provider_credentials import mask_provider_config
 from app.schemas.base_role import BaseRole
 from app.schemas.issue_workflow import ProjectWorkflowDefinition
+from app.schemas.project_device_access import (
+    ProjectDeviceAccessChange,
+    ProjectDeviceAccessPreview,
+)
 from app.schemas.tagging import MAX_TAGS_PER_ITEM, normalize_tags
 from app.schemas.types import SnowflakeId
 from app.schemas.workspace import (
@@ -222,6 +226,7 @@ class CloudProjectPullRequestAutomation(BaseModel):
 
 
 class CloudProjectUpdate(BaseModel):
+    device_access_change: ProjectDeviceAccessChange | None = None
     membership_mode: Literal["inherit", "restricted"] | None = None
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = None
@@ -245,6 +250,11 @@ class CloudProjectUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_provider(self) -> "CloudProjectUpdate":
+        if self.device_access_change is not None and self.model_fields_set - {
+            "version",
+            "device_access_change",
+        }:
+            raise ValueError("Device permissions must be updated separately")
         if self.visibility == "private" and self.public_access is not None:
             raise ValueError("Private projects cannot grant public access")
         if self.provider_config is not None:
@@ -262,6 +272,8 @@ class CloudProjectUpdate(BaseModel):
 
 class CloudProjectResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+    device_access_preview: ProjectDeviceAccessPreview | None = None
 
     id: SnowflakeId
     workspace_id: SnowflakeId | None = None

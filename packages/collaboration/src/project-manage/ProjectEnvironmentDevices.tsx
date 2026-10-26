@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CollaborationTranslate } from '../i18n'
+import type { ReactNode } from 'react'
 import {
   executionEnvironmentStatuses,
   executionEnvironmentStatusLabel,
@@ -13,6 +14,7 @@ import type {
 } from '../types'
 
 interface Props {
+  renderDeviceAccess?(environment: CollaborationExecutionEnvironment): ReactNode
   testIdPrefix: string
   translate: CollaborationTranslate
   isWorkspaceScope: boolean
@@ -43,6 +45,7 @@ interface Props {
 }
 
 export function ProjectEnvironmentDevices({
+  renderDeviceAccess,
   testIdPrefix,
   translate,
   isWorkspaceScope,
@@ -236,7 +239,7 @@ export function ProjectEnvironmentDevices({
                           )}
                     </span>
                   ) : null}
-                  {canManage && environment.status === 'online' ? (
+                  {canManage && environment.status === 'online' && environment.can_use !== false ? (
                     <details
                       className="relative"
                       data-testid={`${testIdPrefix}-actions-${environment.device_id}`}
@@ -274,6 +277,7 @@ export function ProjectEnvironmentDevices({
                       {translate('common.remove', '移除')}
                     </button>
                   ) : null}
+                  {renderDeviceAccess?.(environment)}
                 </div>
               )
             })}

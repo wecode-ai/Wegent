@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.base_role import COLLABORATION_ROLE_ALIASES, BaseRole
+from app.schemas.project_device_access import ProjectDeviceAccess
 from app.schemas.types import SnowflakeId
 
 ResourceOwnerType = Literal["user", "workspace"]
@@ -346,6 +347,9 @@ class WorkspaceExecutionEnvironmentCreate(BaseModel):
 
 
 class WorkspaceExecutionEnvironmentResponse(BaseModel):
+    use_access: ProjectDeviceAccess | None = None
+    can_manage_access: bool = False
+    project_version: int | None = None
     can_use: bool = True
     unavailable_reason: str | None = None
     id: SnowflakeId

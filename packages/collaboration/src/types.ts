@@ -65,6 +65,7 @@ export interface CollaborationScheduleViewConfig {
 }
 
 export interface CollaborationProject {
+  device_access_preview?: ProjectDeviceAccessPreview | null;
   id: CollaborationProjectId;
   workspace_access_role?: CollaborationWorkspaceRole | null;
   membership_mode?: "inherit" | "restricted";
@@ -255,6 +256,9 @@ export interface CollaborationWorkspaceNavigationContext {
 }
 
 export interface CollaborationExecutionEnvironment {
+  use_access?: ProjectDeviceAccess | null;
+  can_manage_access?: boolean;
+  project_version?: number | null;
   can_use?: boolean;
   unavailable_reason?: string | null;
   id: string;
@@ -270,6 +274,17 @@ export interface CollaborationExecutionEnvironment {
   owner_name: string;
   status: "online" | "offline" | "provisioning" | "error";
   updated_at: string;
+}
+
+export interface ProjectDeviceAccess {
+  scope: "owner" | "project" | "members";
+  member_ids: number[];
+}
+
+export interface ProjectDeviceAccessPreview {
+  affected_execution_count: number;
+  affected_agent_count: number;
+  confirmation_token: string;
 }
 
 export interface CollaborationOwnedAgent extends CollaborationAgent {

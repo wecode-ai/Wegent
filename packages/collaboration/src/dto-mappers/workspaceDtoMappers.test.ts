@@ -16,6 +16,30 @@ import {
 } from "./workspaceDtoMappers";
 
 describe("workspace DTO mappers", () => {
+  it("preserves project device consent and server-owned editing capabilities", () => {
+    const policy = { scope: "members", member_ids: [2] };
+    expect(
+      mapCollaborationExecutionEnvironmentDto({
+        id: 21,
+        device_id: 21,
+        use_access: policy,
+        can_manage_access: false,
+        project_version: 4,
+        can_use: false,
+        unavailable_reason: "device_use_not_allowed",
+      }),
+    ).toMatchObject({
+      device_id: 21,
+      use_access: policy,
+      can_manage_access: false,
+      project_version: 4,
+      can_use: false,
+      unavailable_reason: "device_use_not_allowed",
+    });
+    expect(
+      mapCollaborationExecutionEnvironmentDto({ id: 21 }).use_access,
+    ).toBeUndefined();
+  });
   it("maps v1 read-only roles without manufacturing ownership capabilities", () => {
     const workspace = mapCollaborationWorkspaceDto({
       id: "old-space",

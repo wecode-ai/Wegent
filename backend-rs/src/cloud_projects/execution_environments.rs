@@ -32,6 +32,9 @@ async fn list_execution_environments(
 /// `device_id` stays numeric.
 #[derive(Debug, serde::Serialize)]
 struct ExecutionEnvironmentItem {
+    use_access: super::device_access::DeviceAccess,
+    can_manage_access: bool,
+    project_version: i64,
     id: String,
     workspace_id: String,
     device_id: i64,
@@ -91,6 +94,8 @@ struct ExecutionEnvironmentRow {
 #[derive(Debug, Default, Clone, serde::Deserialize)]
 #[serde(default)]
 struct DeviceEnvironmentInput {
+    #[serde(rename = "workspaceOwnerId")]
+    workspace_owner_id: Option<String>,
     #[serde(rename = "deviceType")]
     device_type: Option<String>,
     #[serde(rename = "displayName")]
@@ -437,8 +442,22 @@ async fn execution_environments(
             .filter(|value| !value.is_empty())
             .map(str::to_string);
 
-        let can_use = row.is_active && authorized.contains(&row.id);
+        let use_access = super::device_access::DeviceAccess::for_device(metadata, row.id);
+        let may_execute = matches!(
+            super::role_for_priority(access.priority),
+            Some("Owner" | "Maintainer" | "Developer")
+        );
+        let resource_authorized = row.is_active && authorized.contains(&row.id);
+        let owns_device = match spec.workspace_owner_id.as_deref() {
+            Some(id) => id == workspace_id && matches!(access.workspace_priority, Some(0 | 1)),
+            None => row.device_user_id == current_user.id,
+        };
+        let can_use =
+            resource_authorized && may_execute && use_access.allows(owns_device, current_user.id);
         items.push(ExecutionEnvironmentItem {
+            use_access,
+            can_manage_access: may_execute && owns_device && resource_authorized,
+            project_version: access.project.version,
             id: row.id.to_string(),
             workspace_id: workspace_id.clone(),
             device_id: row.id,
@@ -450,10 +469,22 @@ async fn execution_environments(
             runtime_instance_id,
             capabilities: spec.capabilities_values(),
             coding_tools: coding_tools(&spec),
-            owner_type: "user".to_string(),
-            owner_id: row.device_user_id.to_string(),
-            owner_name,
-            status: if can_use {
+            owner_type: if spec.workspace_owner_id.is_some() {
+                "workspace"
+            } else {
+                "user"
+            }
+            .into(),
+            owner_id: spec
+                .workspace_owner_id
+                .clone()
+                .unwrap_or_else(|| row.device_user_id.to_string()),
+            owner_name: if spec.workspace_owner_id.as_deref() == Some(&workspace_id) {
+                access.workspace.name.clone()
+            } else {
+                owner_name
+            },
+            status: if resource_authorized {
                 status_map
                     .get(&row.id)
                     .cloned()
@@ -462,8 +493,17 @@ async fn execution_environments(
                 "error".to_owned()
             },
             can_use,
-            unavailable_reason: (!can_use).then_some("resource_authorization_revoked"),
-            owner_user_id: Some(row.device_user_id),
+            unavailable_reason: if !resource_authorized {
+                Some("resource_authorization_revoked")
+            } else if !can_use {
+                Some("device_use_not_allowed")
+            } else {
+                None
+            },
+            owner_user_id: spec
+                .workspace_owner_id
+                .is_none()
+                .then_some(row.device_user_id),
             added_by_user_id: row.invited_by_user_id,
             created_at: row.grant_created_at.map(datetime_value),
             updated_at: row.updated_at.map(datetime_value),
@@ -584,6 +624,9 @@ mod tests {
 
     fn sample_item(app_device_id: Option<&str>) -> ExecutionEnvironmentItem {
         ExecutionEnvironmentItem {
+            use_access: super::super::device_access::DeviceAccess::default(),
+            can_manage_access: false,
+            project_version: 1,
             id: "101".to_string(),
             workspace_id: "201".to_string(),
             device_id: 101,

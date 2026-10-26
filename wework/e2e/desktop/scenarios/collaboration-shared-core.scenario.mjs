@@ -7,6 +7,7 @@ import { createProjectSpacePickerRegression } from '../modules/project-space-pic
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
+import { verifyProjectDeviceAccess } from '../modules/project-device-access.mjs'
 import {
   selectProjectBoardGrouping,
   verifyPersonalBoardGrouping,
@@ -487,6 +488,13 @@ export function createDesktopScenario({
           uiTimeoutMs,
           remoteDevice.id
         )
+        await verifyProjectDeviceAccess(control, {
+          scoped,
+          request,
+          project,
+          deviceId: remoteDevice.id,
+          timeoutMs: uiTimeoutMs,
+        })
         await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
         await control.command('waitFor', scoped('[data-testid="collaboration-issue-workspace"]'), {
           timeoutMs: uiTimeoutMs,
