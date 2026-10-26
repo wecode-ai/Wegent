@@ -23,7 +23,7 @@ from app.services.im.session_service import im_session_service
 from app.services.loop_item_executions.notification import notify_execution_lifecycle
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_chat.service import project_chat_service
-from app.services.wework_notifications import deliver_notification
+from app.services.wework_notifications import create_notification, deliver_notification
 from shared.utils.crypto import encrypt_sensitive_data
 from tests.services.im.test_notification_dispatcher import (
     _create_channel,
@@ -36,15 +36,20 @@ from tests.services.test_loop_item_assignment import (
 )
 
 CHANNEL_ID = 9_612_001
+OTHER_CHANNEL_ID = 9_612_002
+CARD_TEMPLATE_ID = "notification-card-test"
 
 
 class FakeDingTalkSender:
     """Capture what DingTalk would deliver instead of calling the open API."""
 
     sent: list[dict[str, Any]] = []
+    card_attempts: list[dict[str, Any]] = []
+    clients: list[str] = []
 
     def __init__(self, client_id: str, client_secret: str) -> None:
         self.client_id = client_id
+        FakeDingTalkSender.clients.append(client_id)
 
     async def send_text_message(self, user_ids: list[str], content: str):
         FakeDingTalkSender.sent.append({"user_ids": user_ids, "text": content})
@@ -55,6 +60,27 @@ class FakeDingTalkSender:
             {"user_ids": user_ids, "title": title, "text": text}
         )
         return {"success": True, "result": {"processQueryKey": self._key()}}
+
+    async def send_card(
+        self,
+        *,
+        user_id: str,
+        card_template_id: str,
+        card_param_map: dict[str, str],
+        preview: str,
+    ):
+        FakeDingTalkSender.card_attempts.append(
+            {
+                "client_id": self.client_id,
+                "user_id": user_id,
+                "card_template_id": card_template_id,
+                "card_param_map": card_param_map,
+                "preview": preview,
+            }
+        )
+        # Force the markdown fallback so these content tests keep asserting the
+        # same text a channel receives when the card API is unavailable.
+        return {"success": False, "error": "card transport unavailable"}
 
     @staticmethod
     def _key() -> str:
@@ -73,6 +99,8 @@ def dingtalk_recipient(monkeypatch: pytest.MonkeyPatch):
     """Deliver into the capture list, and never schedule background delivery."""
 
     FakeDingTalkSender.sent = []
+    FakeDingTalkSender.card_attempts = []
+    FakeDingTalkSender.clients = []
     monkeypatch.setattr(
         "app.services.channels.dingtalk.sender.DingTalkRobotSender",
         FakeDingTalkSender,
@@ -83,21 +111,31 @@ def dingtalk_recipient(monkeypatch: pytest.MonkeyPatch):
     )
 
 
-async def connect_dingtalk(db: Session, user_id: int) -> None:
+async def connect_dingtalk(
+    db: Session,
+    user_id: int,
+    *,
+    channel_id: int = CHANNEL_ID,
+    client_id: str = "ding-client-id",
+    notification_card: bool = True,
+) -> None:
     """Give one recipient a connected bot with proactive private messages on."""
 
+    config: dict[str, Any] = {
+        "client_id": client_id,
+        "client_secret": encrypt_sensitive_data(f"{client_id}-secret"),
+    }
+    if notification_card:
+        config["notification_card"] = {"template_id": CARD_TEMPLATE_ID}
     _create_channel(
         db,
-        channel_id=CHANNEL_ID,
+        channel_id=channel_id,
         channel_type="dingtalk",
-        config={
-            "client_id": "ding-client-id",
-            "client_secret": encrypt_sensitive_data("ding-client-secret"),
-        },
+        config=config,
     )
     session = _create_session(
         user_id=user_id,
-        channel_id=CHANNEL_ID,
+        channel_id=channel_id,
         channel_type="dingtalk",
         sender_id=f"sender-{user_id}",
         proactive_recipient_id=f"staff-{user_id}",
@@ -118,6 +156,65 @@ async def deliver(db: Session, notification: WeworkNotification) -> None:
         ),
     ):
         await deliver_notification(notification.id)
+
+
+async def test_push_only_targets_channels_with_notification_cards(
+    test_db: Session, test_user
+) -> None:
+    """A recipient connected to several bots hears from the notification channel."""
+
+    await connect_dingtalk(test_db, test_user.id)
+    await connect_dingtalk(
+        test_db,
+        test_user.id,
+        channel_id=OTHER_CHANNEL_ID,
+        client_id="plain-client-id",
+        notification_card=False,
+    )
+    notification = create_notification(
+        test_db,
+        user_id=test_user.id,
+        actor_user_id=test_user.id,
+        title="Review",
+        body="Review failed",
+    )
+    test_db.commit()
+
+    await deliver(test_db, notification)
+
+    assert FakeDingTalkSender.clients == ["ding-client-id"]
+    assert [call["card_template_id"] for call in FakeDingTalkSender.card_attempts] == [
+        CARD_TEMPLATE_ID
+    ]
+    assert len(FakeDingTalkSender.sent) == 1
+
+
+async def test_push_sends_no_im_when_no_channel_has_a_notification_card(
+    test_db: Session, test_user
+) -> None:
+    """Card configuration is the IM opt-in; without it the inbox stays in-app."""
+
+    await connect_dingtalk(
+        test_db,
+        test_user.id,
+        channel_id=OTHER_CHANNEL_ID,
+        client_id="plain-client-id",
+        notification_card=False,
+    )
+    notification = create_notification(
+        test_db,
+        user_id=test_user.id,
+        actor_user_id=test_user.id,
+        title="Review",
+        body="Review failed",
+    )
+    test_db.commit()
+
+    await deliver(test_db, notification)
+
+    assert FakeDingTalkSender.clients == []
+    assert FakeDingTalkSender.card_attempts == []
+    assert FakeDingTalkSender.sent == []
 
 
 def dingtalk_preview(headline: str, limit: int = 20) -> str:

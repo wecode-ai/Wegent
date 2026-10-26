@@ -469,25 +469,21 @@ mod tests {
         );
     }
 
-    /// The cutover and the handler registration must agree. The hybrid
-    /// gateway sends `GET /api/knowledge-bases/*/folders` to the Rust
-    /// listener, whose unmatched-path fallback renders FastAPI's
-    /// `404 {"detail":"Not Found"}`; a missing registration therefore
-    /// reproduces the recorded failure instead of the endpoint's body.
+    /// Python owns the route while the Rust handler stays registered.
     #[test]
-    fn selected_route_is_registered_by_the_router() {
+    fn registered_route_keeps_python_ownership() {
         const PATH: &str = "/api/knowledge-bases/:knowledge_base_id/folders";
         let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
         let config = crate::hybrid::load_routes_config(&file).unwrap();
         assert!(
-            config
+            !config
                 .routes
                 .iter()
                 .any(|rule| rule.path == PATH && rule.methods.iter().any(|method| method == "GET")),
-            "GET {PATH} must be selected for Rust"
+            "GET {PATH} must remain Python-owned"
         );
         let table = crate::RouteTable::compile(config).unwrap();
-        assert!(table.matches(&http::Method::GET, "/api/knowledge-bases/257464/folders"));
+        assert!(!table.matches(&http::Method::GET, "/api/knowledge-bases/257464/folders"));
 
         // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
         const GET: u16 = 1 << 1;
