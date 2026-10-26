@@ -29,6 +29,7 @@ def test_backend_image_runs_prebuilt_hybrid_gateway_in_existing_layout() -> None
 
     assert "AS rust-builder" in dockerfile
     assert "cargo build --release --locked --bin wegent-backend-rs" in dockerfile
+    assert "dnf --enablerepo=crb install -y nasm" in dockerfile
     assert "COPY --from=rust-builder" in dockerfile
     assert "COPY backend /app" in dockerfile
     assert "WEGENT_PYTHON_BACKEND_DIR=/app" in dockerfile
