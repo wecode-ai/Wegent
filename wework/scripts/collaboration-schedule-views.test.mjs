@@ -29,6 +29,10 @@ test.each([
   let navigations = 0
   let rangeIndex = 0
   const target = `collaboration-calendar-day-${fixture.target}`
+  const [initialStart, initialEnd] = fixture.ranges[0].split(' → ')
+  const [calendarStart, calendarEnd] = fixture.ranges[1].split(' → ')
+  const [, resizedEnd] = fixture.ranges[2].split(' → ')
+  const [movedStart, movedEnd] = fixture.ranges[3].split(' → ')
   const control = {
     async command(action, selector, options) {
       if (action === 'getElementCount' && selector.includes(target))
@@ -50,7 +54,15 @@ test.each([
     capture: async () => {},
     control,
     issueTitle: 'Calendar navigation regression',
-    now: new Date(fixture.today),
+    scheduleKeys: {
+      initialStart,
+      initialEnd,
+      calendarStart,
+      calendarEnd,
+      resizedEnd,
+      movedStart,
+      movedEnd,
+    },
     scoped: selector => selector,
     timeoutMs: 100,
   })

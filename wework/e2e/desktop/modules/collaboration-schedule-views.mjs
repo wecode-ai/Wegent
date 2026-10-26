@@ -20,6 +20,27 @@ function nextMonday(now) {
   return addDays(today, daysUntilMonday)
 }
 
+function buildScheduleKeys(now) {
+  const initialStart = nextMonday(now)
+  const initialEnd = addDays(initialStart, 2)
+  const calendarStart = addDays(initialStart, 7)
+  const calendarEnd = addDays(calendarStart, 2)
+  const resizedEnd = addDays(calendarEnd, 1)
+  const movedStart = calendarEnd
+  const movedEnd = addDays(resizedEnd, 2)
+  return Object.fromEntries(
+    Object.entries({
+      initialStart,
+      initialEnd,
+      calendarStart,
+      calendarEnd,
+      resizedEnd,
+      movedStart,
+      movedEnd,
+    }).map(([key, value]) => [key, dateKey(value)])
+  )
+}
+
 async function waitForAttributeIncludes(
   control,
   selector,
@@ -43,30 +64,14 @@ export async function verifyCollaborationScheduleViews({
   control,
   issueTitle,
   now = new Date(),
+  scheduleKeys,
   scoped,
   timeoutMs,
 }) {
   await control.command('setMainWindowSize', 'body', {
     value: JSON.stringify({ width: 1440, height: 900 }),
   })
-  const initialStart = nextMonday(now)
-  const initialEnd = addDays(initialStart, 2)
-  const calendarStart = addDays(initialStart, 7)
-  const calendarEnd = addDays(calendarStart, 2)
-  const resizedEnd = addDays(calendarEnd, 1)
-  const movedStart = calendarEnd
-  const movedEnd = addDays(resizedEnd, 2)
-  const keys = Object.fromEntries(
-    Object.entries({
-      initialStart,
-      initialEnd,
-      calendarStart,
-      calendarEnd,
-      resizedEnd,
-      movedStart,
-      movedEnd,
-    }).map(([key, value]) => [key, dateKey(value)])
-  )
+  const keys = scheduleKeys ?? buildScheduleKeys(now)
 
   await control.command('click', scoped('[aria-label="时间范围"]'))
   await control.command('waitFor', '[data-testid="cloud-todo-detail-start-date"]', {
