@@ -128,6 +128,8 @@ fn claude_endpoint_provider(env: &Value) -> Result<String, AppIpcError> {
     let path = url.path().trim_end_matches('/').to_owned();
     url.set_path(&path);
     url.set_fragment(None);
+    url.set_username("").map_err(|_| invalid_endpoint())?;
+    url.set_password(None).map_err(|_| invalid_endpoint())?;
     let endpoint = url.as_str();
     if endpoint == "https://api.anthropic.com/" {
         return Ok("anthropic".to_owned());
@@ -225,11 +227,26 @@ mod tests {
     }
 
     #[test]
+    fn claude_provider_identity_excludes_url_credentials() {
+        let provider =
+            |endpoint| claude_endpoint_provider(&json!({"ANTHROPIC_BASE_URL": endpoint})).unwrap();
+        let expected = provider("https://gateway.example/claude?route=tenant");
+        for endpoint in [
+            "https://user:first-password@gateway.example/claude?route=tenant",
+            "https://user:rotated-password@gateway.example/claude?route=tenant",
+            "https://other-user@gateway.example/claude?route=tenant",
+        ] {
+            assert_eq!(provider(endpoint), expected);
+        }
+    }
+
+    #[test]
     fn claude_official_service_keeps_its_provider_identity() {
         for env in [
             json!({}),
             json!({"ANTHROPIC_BASE_URL": ""}),
             json!({"ANTHROPIC_BASE_URL": "https://API.ANTHROPIC.COM:443/"}),
+            json!({"ANTHROPIC_BASE_URL": "https://user:password@api.anthropic.com/"}),
         ] {
             let models = claude_runner_models(&json!({"model": "model-a", "env": env})).unwrap();
             assert_eq!(models[0]["provider"], "anthropic");

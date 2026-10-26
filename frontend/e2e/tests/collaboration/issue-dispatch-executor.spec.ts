@@ -23,6 +23,7 @@ import {
 } from '../../utils/provider-native-test-support'
 
 const suiteSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+const DEVICE_ID = process.env.E2E_DEVICE_ID || 'e2e-claudecode-device'
 interface CollaborationIssue {
   id: string
   status: string
@@ -53,9 +54,26 @@ test.describe.configure({ mode: 'serial' })
 
 test.describe('Collaboration group Executor coordination', () => {
   let model: IssueDispatchMockModel | undefined
+  let deviceRecordId: number
+  let executionDeviceId: string
 
   test.beforeAll(async ({ request }) => {
     model = await createIssueDispatchMockModel(request, suiteSuffix)
+    const response = await request.get(`${PROVIDER_NATIVE_API_URL}/api/devices`, {
+      headers: authHeaders(model.token),
+    })
+    expect(response.status()).toBe(200)
+    const devices = (await response.json()).items as {
+      id: number
+      device_id: string
+      execution_target_id: string
+    }[]
+    const device = devices.find(candidate => candidate.device_id === DEVICE_ID)
+    expect(device, `Expected the registered Wework App device ${DEVICE_ID}`).toBeDefined()
+    deviceRecordId = device!.id
+    expect(deviceRecordId).toBeGreaterThan(0)
+    executionDeviceId = device!.execution_target_id
+    expect(executionDeviceId).toBe(`app-record-${deviceRecordId}`)
   })
 
   test.afterAll(async ({ request }) => {
@@ -72,7 +90,7 @@ test.describe('Collaboration group Executor coordination', () => {
     const suffix = `${Date.now()}`
     const issueTitle = `Direct agent dispatch ${suffix}`
     const result = `DIRECT_AGENT_RESULT_${suffix}`
-    const fixture = await createProjectFixture(page, suffix, issueTitle)
+    const fixture = await createProjectFixture(page, suffix, issueTitle, deviceRecordId)
     const agent = await createProjectAgent(page, `Direct Agent ${suffix}`, model.modelName)
     const scenarioMatch = `task_id: ${fixture.issueId}`
     const clearScenario = await configureIssueDispatchModelScenario(request, scenarioMatch, [
@@ -124,6 +142,7 @@ test.describe('Collaboration group Executor coordination', () => {
       expect(executions[0].runtimeTaskId).toMatch(/^codex-queue-\d+$/)
       expect(executions[0].executionEnvironment).toBe('local')
       expectCanonicalAppRoute(executions[0])
+      expect(executions[0].executionDeviceId).toBe(executionDeviceId)
 
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')
       expect(completed.execution_state).not.toBe('failed')
@@ -163,7 +182,7 @@ test.describe('Collaboration group Executor coordination', () => {
     const synthesisEvidence = `SYNTHESIS_EVIDENCE_${suffix}`
     const finalComment =
       'The manager reviewed both collaboration rounds and submitted the Issue for confirmation.'
-    const fixture = await createProjectFixture(page, suffix, issueTitle)
+    const fixture = await createProjectFixture(page, suffix, issueTitle, deviceRecordId)
     const leader = await createProjectAgent(page, `Coordinate Leader ${suffix}`, model.modelName)
     const collector = await createProjectAgent(
       page,
@@ -325,6 +344,7 @@ test.describe('Collaboration group Executor coordination', () => {
       expect(executions[0].runtimeTaskId).toMatch(/^codex-queue-\d+$/)
       expect(executions[0].executionEnvironment).toBe('local')
       expectCanonicalAppRoute(executions[0])
+      expect(executions[0].executionDeviceId).toBe(executionDeviceId)
       expect(executions[0].status).toBe('completed')
 
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')

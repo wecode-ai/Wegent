@@ -235,7 +235,7 @@ WEGENT_AUTH_TOKEN=<注册响应的 token>
 
 `local` 是 Executor 已有的连接协议模式；环境资源的 `deploymentLocation=cloud` 表示它部署在服务器上。空间拥有权由 `workspaceOwnerId` 表示，独立于部署位置。
 
-runner 使用独立机器身份，不依赖管理员的个人登录。凭证只允许该设备注册，数据库只保存摘要。任务内的项目操作使用触发者的授权；模型账号留在服务器上。Codex 模型目录来自其原生配置。Claude 目录读取 `WEGENT_CLAUDE_HOME/settings.json`（默认 `~/.claude/settings.json`）中显式配置的模型。自定义 Claude 服务根据规范化地址的 SHA-256 摘要自动生成服务标识，无需额外配置；已有的 `env.WEGENT_CLAUDE_PROVIDER_ID` 仍作为显式标识使用。地址保留协议、端口、路径与查询参数差异，地址本身和凭证不随目录上报。账号仍需在执行环境中配置。
+runner 使用独立机器身份，不依赖管理员的个人登录。凭证只允许该设备注册，数据库只保存摘要。任务内的项目操作使用触发者的授权；模型账号留在服务器上。Codex 模型目录来自其原生配置。Claude 目录读取 `WEGENT_CLAUDE_HOME/settings.json`（默认 `~/.claude/settings.json`）中显式配置的模型。自定义 Claude 服务根据规范化地址的 SHA-256 摘要自动生成服务标识，无需额外配置；已有的 `env.WEGENT_CLAUDE_PROVIDER_ID` 仍作为显式标识使用。地址规范化时移除 URL 用户名、密码和片段，保留协议、端口、路径与查询参数差异；URL 用户信息变更不影响服务标识，地址本身和凭证不随目录上报。账号仍需在执行环境中配置。
 
 撤销凭证：`DELETE /api/v1/workspaces/{workspace_id}/runners/{environment_id}`。撤销会停用环境、断开连接，后续事件和重连均拒绝旧凭证。重新注册会创建新环境，不迁移已绑定 Issue。
 

@@ -91,6 +91,7 @@ export async function createDesktopScenario({
   let agentRequests = 0
   const tagRequests = { review: 0, docs: 0 }
   return {
+    appEnvironment: { WEGENT_CLAUDE_HOME: claudeHome },
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
