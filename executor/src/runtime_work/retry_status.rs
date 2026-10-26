@@ -213,4 +213,59 @@ mod tests {
         let cleared = event_rx.try_recv().unwrap();
         assert_eq!(cleared["payload"]["data"]["updates"]["status"], "done");
     }
+
+    #[test]
+    fn proxy_retry_wait_remains_until_every_subagent_has_resumed() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
+        let mut mapper = CodexNotificationEventMapper::default();
+        for (thread, waiting) in [("child-a", true), ("child-b", true), ("child-a", false)] {
+            mapper.map(
+                &Some(event_tx.clone()),
+                "device",
+                "task",
+                &ExecutionRequest::default(),
+                json!({
+                    "method": crate::server::local_model_proxy::retry_notifications::METHOD,
+                    "params": {
+                        "threadId": thread,
+                        "waiting": waiting,
+                        "error": { "codexErrorInfo": "rateLimitExceeded" },
+                    },
+                }),
+            );
+        }
+        assert_eq!(
+            event_rx.try_recv().unwrap()["event"],
+            "response.block.created"
+        );
+        assert_eq!(
+            event_rx.try_recv().unwrap()["event"],
+            "response.block.updated"
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device",
+            "task",
+            &ExecutionRequest::default(),
+            json!({"method": "turn/diff/updated", "params": {"threadId": "parent"}}),
+        );
+        assert!(
+            event_rx.try_recv().is_err(),
+            "Parent progress cleared a child wait"
+        );
+        mapper.map(
+            &Some(event_tx),
+            "device",
+            "task",
+            &ExecutionRequest::default(),
+            json!({
+                "method": crate::server::local_model_proxy::retry_notifications::METHOD,
+                "params": {"threadId": "child-b", "waiting": false},
+            }),
+        );
+        assert_eq!(
+            event_rx.try_recv().unwrap()["payload"]["data"]["updates"]["status"],
+            "done"
+        );
+    }
 }

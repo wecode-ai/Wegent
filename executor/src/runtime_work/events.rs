@@ -281,6 +281,7 @@ pub(crate) struct CodexNotificationEventMapper {
     tool_output_deltas: BTreeMap<String, String>,
     goal_status: Option<String>,
     reconnecting_block_id: Option<String>,
+    proxy_retry_wait_threads: BTreeSet<String>,
     completed_context_compaction_ids: BTreeSet<String>,
 }
 
@@ -317,7 +318,9 @@ impl CodexNotificationEventMapper {
             request,
         };
         let notification = codex_notification(&message);
-        if codex_notification_resumes_turn(&notification.method) {
+        if self.proxy_retry_wait_threads.is_empty()
+            && codex_notification_resumes_turn(&notification.method)
+        {
             self.clear_reconnecting(&emit_context);
         }
         if codex_stream_debug_enabled()
@@ -691,10 +694,17 @@ impl CodexNotificationEventMapper {
                 self.emit_reconnecting(&emit_context, notification.params);
             }
             crate::server::local_model_proxy::retry_notifications::METHOD => {
+                let Some(thread_id) = string_field(notification.params, "threadId") else {
+                    return;
+                };
                 if notification.params["waiting"] == true {
+                    self.proxy_retry_wait_threads.insert(thread_id);
                     self.emit_reconnecting(&emit_context, notification.params);
                 } else {
-                    self.clear_reconnecting(&emit_context);
+                    self.proxy_retry_wait_threads.remove(&thread_id);
+                    if self.proxy_retry_wait_threads.is_empty() {
+                        self.clear_reconnecting(&emit_context);
+                    }
                 }
             }
             _ => {

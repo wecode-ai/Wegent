@@ -61,14 +61,21 @@ pub(super) struct RetryWait {
 
 impl RetryWait {
     pub(super) fn for_request(body: &[u8]) -> Option<Self> {
-        let thread_id = super::request_thread_identity(body)?.thread_id;
-        let sender = listeners()
+        let identity = super::request_thread_identity(body)?;
+        let listeners = listeners()
             .lock()
-            .expect("model retry listeners should not be poisoned")
-            .get(&thread_id)?
+            .expect("model retry listeners should not be poisoned");
+        let sender = listeners
+            .get(&identity.thread_id)
+            .or_else(|| {
+                identity
+                    .parent_thread_id
+                    .as_ref()
+                    .and_then(|parent| listeners.get(parent))
+            })?
             .clone();
         Some(Self {
-            thread_id,
+            thread_id: identity.thread_id,
             sender,
             waiting: false,
         })
@@ -150,5 +157,34 @@ mod tests {
         drop(wait);
         drop(current);
         assert!(RetryWait::for_request(body).is_none());
+    }
+
+    #[test]
+    fn subagent_retry_uses_its_parent_execution_unless_it_has_its_own() {
+        let (parent_tx, mut parent_rx) = mpsc::unbounded_channel();
+        let (child_tx, mut child_rx) = mpsc::unbounded_channel();
+        let _parent = subscribe("retry-parent", Some(&parent_tx)).unwrap();
+        let body =
+            br#"{"client_metadata":{"thread_id":"retry-child","parent_thread_id":"retry-parent"}}"#;
+        {
+            let mut wait = RetryWait::for_request(body).unwrap();
+            wait.waiting();
+            let notification = parent_rx.try_recv().unwrap();
+            assert_eq!(notification["params"]["threadId"], "retry-child");
+            assert_eq!(notification["params"]["waiting"], true);
+        }
+        assert_eq!(parent_rx.try_recv().unwrap()["params"]["waiting"], false);
+        let _child = subscribe("retry-child", Some(&child_tx)).unwrap();
+        {
+            let mut wait = RetryWait::for_request(body).unwrap();
+            wait.waiting();
+            assert_eq!(child_rx.try_recv().unwrap()["params"]["waiting"], true);
+            assert!(parent_rx.try_recv().is_err());
+        }
+        assert_eq!(child_rx.try_recv().unwrap()["params"]["waiting"], false);
+        assert!(RetryWait::for_request(
+            br#"{"client_metadata":{"thread_id":"unrelated-child","parent_thread_id":"unrelated-parent"}}"#
+        )
+        .is_none());
     }
 }

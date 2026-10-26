@@ -26,6 +26,8 @@ test.each([
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(fixture.today)
   let monthAdvances = 0
+  const visibleDates: string[] = []
+  const initialStart = fixture.initialRange.split(' → ')[0]
   const dragReached = new Error('Calendar is ready for the drag assertion')
   const targetVisible = () => (fixture.initiallyVisible ? monthAdvances === 0 : monthAdvances === 1)
   const control = {
@@ -39,11 +41,15 @@ test.each([
       if (action === 'getElementCount') return targetVisible() ? 1 : 0
       if (action === 'getAttribute') return fixture.initialRange
       if (action === 'waitFor' && selector.includes('collaboration-calendar-day-')) {
-        expect(selector).toContain(fixture.target)
+        const date = selector.match(/collaboration-calendar-day-(\d{4}-\d{2}-\d{2})/)?.[1] ?? ''
+        expect([initialStart, fixture.target]).toContain(date)
         expect(targetVisible(), 'The target day must remain in the displayed month grid').toBe(true)
+        visibleDates.push(date)
       }
       if (action === 'drag') {
         expect(targetVisible()).toBe(true)
+        expect(visibleDates).toEqual([initialStart, fixture.target])
+        expect(selector).toContain('collaboration-calendar-issue-')
         throw dragReached
       }
       return undefined
