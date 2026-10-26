@@ -36,6 +36,7 @@ import { StandInConnectionSettings } from './StandInConnectionSettings'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInComposer } from './StandInComposer'
+import { standInDeviceLabel, standInErrorMessage } from './standInErrors'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { findStandInProject } from './standInProjects'
 
@@ -82,6 +83,13 @@ export function StandInSettingsPage({
   const canLoadPersonalAgents = cloudConnection?.isConnected ?? true
   const state = usePersonalStandIn(services, userId, initialDeviceId, canLoadPersonalAgents)
   const { draft, saved, setDraft, updateRole, loading, saving, setError } = state
+  const errorMessage = state.error
+    ? standInErrorMessage(
+        state.error,
+        standInDeviceLabel(devices, state.loadDeviceId || state.currentDeviceId),
+        t
+      )
+    : null
   const [confirmDelete, setConfirmDelete] = useState(false)
   const executionDeviceId = draft?.executionDeviceId
   const [selectedId, setSelectedId] = useState(initialProfileId ?? '')
@@ -758,7 +766,7 @@ export function StandInSettingsPage({
               )}
               {state.error && (
                 <div role="alert" className="text-sm text-error">
-                  <p>{state.error}</p>
+                  <p>{errorMessage}</p>
                   <button
                     type="button"
                     data-testid="stand-in-reload"
@@ -896,7 +904,7 @@ export function StandInSettingsPage({
           </>
         ) : (
           <div className="px-5 pb-5" role="alert">
-            <p className="text-error">{state.error}</p>
+            <p className="text-error">{errorMessage}</p>
             <button
               type="button"
               data-testid="stand-in-reload"

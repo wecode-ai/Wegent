@@ -345,3 +345,21 @@ it('preserves the mounted conversation when settings refresh fails', async () =>
   await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
 })
+
+it('explains an outdated Executor at the top level and recovers after retry', async () => {
+  const { props } = fixture()
+  const api = props.services.standInApi!
+  vi.mocked(api.personalGet).mockRejectedValueOnce(
+    new Error('runtime_rpc_failed: Unsupported runtime RPC method: runtime.stand_in.personal.get')
+  )
+  const user = userEvent.setup()
+  render(<StandInOverviewPage {...props} />)
+
+  const error = await screen.findByRole('alert')
+  expect(error).toHaveTextContent('Wework 版本过旧')
+  expect(error).not.toHaveTextContent('runtime.stand_in.personal.get')
+
+  await user.click(screen.getByTestId('stand-in-overview-retry'))
+  expect(await screen.findByTestId('stand-in-overview-status')).toHaveTextContent('未开启')
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})

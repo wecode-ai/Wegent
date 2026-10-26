@@ -20,6 +20,7 @@ import { standInWorkRole } from './standInWork'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 import { StandInProposalCard } from './StandInProposalCard'
+import { standInDeviceLabel, standInErrorMessage } from './standInErrors'
 import { inboxRuntimeItem, useStandInInbox } from './useStandInInbox'
 
 type SettingsProps = ComponentProps<typeof StandInSettingsPage>
@@ -48,6 +49,13 @@ export function StandInOverviewPage({
   const panelRef = useRef<StandInSettingsHandle>(null)
   const pressedInPanel = useRef(false)
   const { saved, setDraft, reload } = state
+  const errorMessage = state.error
+    ? standInErrorMessage(
+        state.error,
+        standInDeviceLabel(props.devices, state.loadDeviceId || state.currentDeviceId),
+        t
+      )
+    : null
   const deviceId = saved?.executionDeviceId
   const api = props.services.standInApi
   const inbox = useStandInInbox(api, props.userId, deviceId)
@@ -254,7 +262,7 @@ export function StandInOverviewPage({
           </p>
         ) : state.error && !state.saved ? (
           <div role="alert" className="p-5 text-error">
-            <p>{state.error}</p>
+            <p>{errorMessage}</p>
             <button
               type="button"
               data-testid="stand-in-overview-retry"
@@ -268,7 +276,7 @@ export function StandInOverviewPage({
           <>
             {(state.error || proposalError || inbox.error) && (
               <div role="alert" className="flex items-center gap-3 px-5 py-2 text-sm text-error">
-                <span className="flex-1">{state.error || proposalError || inbox.error}</span>
+                <span className="flex-1">{errorMessage || proposalError || inbox.error}</span>
                 {state.error && (
                   <button
                     type="button"

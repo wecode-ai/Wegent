@@ -17,6 +17,9 @@ export function usePersonalStandIn(
   const [draft, setDraft] = useState<PersonalStandInSettings | null>(null)
   const [currentDeviceId, setCurrentDeviceId] = useState('')
   const [deviceId, setDeviceId] = useState(initialDeviceId ?? '')
+  // Device targeted by the latest load, kept even when that load fails so error
+  // messages can name the Executor that needs an update.
+  const [loadDeviceId, setLoadDeviceId] = useState(initialDeviceId ?? '')
   const [agents, setAgents] = useState<PersonalStandInAgent[]>([])
   const [agentError, setAgentError] = useState<string | null>(null)
   const [agentReload, setAgentReload] = useState(0)
@@ -36,6 +39,8 @@ export function usePersonalStandIn(
       const identity = await services.getLocalRuntimeSidebarIdentity?.()
       if (!identity) throw new Error('Executor identity is unavailable')
       const target = deviceId || identity.deviceId
+      if (!active) return
+      setLoadDeviceId(target)
       const settings = await services.standInApi!.personalGet(userId, target)
       if (!active) return
       const key = JSON.stringify([userId, target, reload])
@@ -122,6 +127,7 @@ export function usePersonalStandIn(
     saving,
     save,
     currentDeviceId,
+    loadDeviceId,
     setDeviceId: (value: string) => {
       setLoading(true)
       setDeviceId(value)
