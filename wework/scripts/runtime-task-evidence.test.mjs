@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import {
   findRuntimeWorkTask,
+  hasRunningRuntimeTaskSnapshot,
   waitForCompletedRuntimeTaskThread,
 } from '../e2e/desktop/modules/runtime-task-evidence.mjs'
+import { waitForWorkbenchDebugState } from '../e2e/desktop/modules/workspace-flows.mjs'
 
 const selectedTaskId = 'runtime-selected'
 const threadId = '01a1388e-17ed-74a1-a926-28d723f9dab4'
@@ -19,6 +21,83 @@ function ownerControl(snapshots) {
     command: vi.fn(async () => JSON.stringify(snapshots[Math.min(index++, snapshots.length - 1)])),
   }
 }
+
+describe('running executor snapshot evidence', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+  })
+
+  afterEach(() => vi.useRealTimers())
+
+  function snapshot(task = { taskId: selectedTaskId, running: true, completedAt: null }) {
+    return {
+      workbench: {
+        currentRuntimeTask: { taskId: selectedTaskId },
+        activeLifecycle: { execution: { running: true }, task },
+      },
+    }
+  }
+
+  test('waits for the wire summary after a start event has already made execution running', async () => {
+    const previousCompletion = 1_792_998_868_321
+    const pending = snapshot({
+      taskId: selectedTaskId,
+      running: false,
+      completedAt: previousCompletion,
+    })
+    const running = snapshot()
+    const control = ownerControl([pending, running])
+    const ready = waitForWorkbenchDebugState(
+      control,
+      state => hasRunningRuntimeTaskSnapshot(state, selectedTaskId),
+      'The correction summary did not arrive',
+      stepTimeoutMs
+    )
+
+    await vi.advanceTimersByTimeAsync(99)
+    expect(control.command).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(ready).resolves.toEqual(running)
+    expect(control.command).toHaveBeenCalledTimes(2)
+    expect(control.command).toHaveBeenNthCalledWith(1, 'getWorkbenchDebugSnapshot', 'body')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  test('does not use completion clearance as readiness and hide a broken wire summary', () => {
+    const broken = snapshot({ taskId: selectedTaskId, running: true, completedAt: 123 })
+
+    expect(hasRunningRuntimeTaskSnapshot(broken, selectedTaskId)).toBe(true)
+    expect(broken.workbench.activeLifecycle.task.completedAt).not.toBeNull()
+  })
+
+  test.each(['active task', 'wire task'])('does not accept another %s', source => {
+    const other = snapshot()
+    if (source === 'active task') other.workbench.currentRuntimeTask.taskId = 'other-task'
+    else other.workbench.activeLifecycle.task.taskId = 'other-task'
+
+    expect(hasRunningRuntimeTaskSnapshot(other, selectedTaskId)).toBe(false)
+  })
+
+  test('fails at the shared deadline if only the execution event arrived', async () => {
+    const control = ownerControl([
+      snapshot({ taskId: selectedTaskId, running: false, completedAt: 123 }),
+    ])
+    const failure = waitForWorkbenchDebugState(
+      control,
+      state => hasRunningRuntimeTaskSnapshot(state, selectedTaskId),
+      'The correction summary did not arrive',
+      stepTimeoutMs
+    ).catch(error => error)
+
+    await vi.advanceTimersByTimeAsync(stepTimeoutMs)
+
+    expect(await failure).toMatchObject({
+      message: expect.stringContaining('The correction summary did not arrive'),
+    })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+})
 
 describe('owning executor task evidence', () => {
   beforeEach(() => {

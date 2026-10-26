@@ -1,3 +1,14 @@
+export function hasRunningRuntimeTaskSnapshot(snapshot, taskId) {
+  const workbench = snapshot.workbench
+  const lifecycle = workbench?.activeLifecycle
+  return (
+    workbench?.currentRuntimeTask?.taskId === taskId &&
+    lifecycle?.execution?.running === true &&
+    lifecycle?.task?.taskId === taskId &&
+    lifecycle.task.running === true
+  )
+}
+
 export function findRuntimeWorkTask(runtimeWork, taskId) {
   const workspaces = Array.isArray(runtimeWork.workspaces)
     ? runtimeWork.workspaces

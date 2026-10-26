@@ -12,6 +12,7 @@ import { waitForBlankConversation } from './memory-tool-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
 
 import { snapshotHasAssistantActivity } from './response-protocol.mjs'
+import { hasRunningRuntimeTaskSnapshot } from './runtime-task-evidence.mjs'
 
 import {
   COMPOSER_READY_STABILITY_MS,
@@ -775,8 +776,11 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
   await control.command('waitFor', `[data-testid="${supervisorRunningTestId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const beforeStaleSettlement = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  // Start events can precede the executor summary that clears the prior completion.
+  const beforeStaleSettlement = await waitForWorkbenchDebugState(
+    control,
+    snapshot => hasRunningRuntimeTaskSnapshot(snapshot, supervisorTaskId),
+    'The supervisor correction did not publish its running executor summary'
   )
   assert.equal(
     beforeStaleSettlement.workbench?.activeLifecycle?.execution.running,
