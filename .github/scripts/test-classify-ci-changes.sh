@@ -986,7 +986,7 @@ done
 assert_desktop_case "Runtime input answer persistence scenario selects its checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"runtime-input-answer-persistence"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"runtime-input-answer-persistence"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/runtime-input-answer-persistence.scenario.mjs"
@@ -1084,7 +1084,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "temporary chat files select temporary chat coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"temporary-chat"},{"id":"core-3","name":"Core / shard 3","segments":"runtime-input-answer-persistence"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"temporary-chat"},{"id":"core-10","name":"Core / shard 10","segments":"runtime-input-answer-persistence"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx"
@@ -1158,7 +1158,7 @@ wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","co
 wework_desktop_macos_inspector_e2e=true'
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,resilience,project-member-overrides/\"segments\":\"project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides}"
 full_desktop_expected="${full_desktop_expected/collaboration-issue-comment-attachments,reply-predictions/collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions}"
-full_desktop_expected="${full_desktop_expected/permission-modes,stand-in-notifications/permission-modes,runtime-input-answer-persistence,stand-in-notifications}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"collaboration-shared-core\"/\"segments\":\"collaboration-shared-core,runtime-input-answer-persistence\"}"
 
 assert_desktop_case "latest conversation history runs its desktop regression" \
   'wework_desktop_e2e=true
@@ -1299,7 +1299,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "Claude runtime messaging selects task and Claude coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-3","name":"Core / shard 3","segments":"runtime-input-answer-persistence"},{"id":"core-5","name":"Core / shard 5","segments":"claude-runtime"},{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-5","name":"Core / shard 5","segments":"claude-runtime"},{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings"},{"id":"core-10","name":"Core / shard 10","segments":"runtime-input-answer-persistence"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-2","name":"Cloud / shard 2","segments":"cloud-worktree-create,cloud-worktree-tools"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"cloud-worktree-archive-restore,cloud-worktree-capability,cloud-worktree-queued-cancel"}]}
 wework_desktop_other_e2e=false

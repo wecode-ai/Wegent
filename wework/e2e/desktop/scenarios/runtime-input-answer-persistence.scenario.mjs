@@ -474,6 +474,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         'The task was not archived while the input answer acceptance was pending',
         taskTimeoutMs
       )
+      await startNewChat(control, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
       // Archiving cancels the live turn. Release the model and the held answer
       // only afterward so late completions cannot restore the conversation.
       archiveGate.resolve()
