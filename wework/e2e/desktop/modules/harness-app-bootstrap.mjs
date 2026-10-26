@@ -5,11 +5,6 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { verifyDownloadedDshRuntimeCache } from './dsh-runtime-cache.mjs'
 
-// Telemetry leaves the renderer through a batched SDK transport. App startup
-// under parallel E2E load can delay that flush well past the ordinary step
-// timeout while the route itself has already opened.
-const TELEMETRY_STARTUP_TIMEOUT_MS = 60_000
-
 export async function prepareHarnessAppUi(
   control,
   { uiTimeoutMs, captureScreenshot, electronUserDataDirectory, resultDir }
@@ -55,10 +50,7 @@ export async function prepareHarnessAppUi(
   await control.command('waitFor', '[data-testid="smart-apps-marketplace-page"]', {
     timeoutMs: uiTimeoutMs,
   })
-  const marketplaceRequest = await control.awaitTelemetryEvent(
-    'smart_app_marketplace_opened',
-    TELEMETRY_STARTUP_TIMEOUT_MS
-  )
+  const marketplaceRequest = await control.awaitTelemetryEvent('smart_app_marketplace_opened')
   const marketplaceEvent = telemetryEvents(marketplaceRequest.payload).find(
     event => event.event === 'smart_app_marketplace_opened'
   )
@@ -116,10 +108,7 @@ export async function prepareHarnessAppUi(
   await control.command('clickWhenEnabled', '[data-testid="harness-app-install-confirm"]', {
     timeoutMs: uiTimeoutMs,
   })
-  const installRequest = await control.awaitTelemetryEvent(
-    'smart_app_install_succeeded',
-    TELEMETRY_STARTUP_TIMEOUT_MS
-  )
+  const installRequest = await control.awaitTelemetryEvent('smart_app_install_succeeded')
   const installEvent = telemetryEvents(installRequest.payload).find(
     event => event.event === 'smart_app_install_succeeded'
   )

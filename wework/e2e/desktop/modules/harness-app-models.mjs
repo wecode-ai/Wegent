@@ -111,17 +111,6 @@ export async function verifyHarnessAppModels(
     value => value.groups.some(group => group.id === 'wework-local'),
     30_000
   ).then(value => value.groups)
-  const defaultProvider = providerGroups.find(group => group.id === 'wework-local')
-  assert.ok(defaultProvider, 'DSH did not expose the original default model provider')
-  assert.deepEqual(
-    defaultProvider.models.map(model => model.id),
-    ['wework-selected'],
-    'The default provider no longer exposes the selected Wework model'
-  )
-  const extraProvider = providerGroups.find(group => group.name === EXTRA_MODEL.labels[1])
-  assert.ok(extraProvider, 'DSH did not load the extra Wework model provider')
-  const extraModelId = extraProvider.models[0]?.id
-  assert.ok(extraModelId, 'The extra Wework provider exposed no model')
   assert.equal(
     providerGroups.some(group => group.name === UNAVAILABLE_MODEL_LABEL),
     false,
@@ -133,54 +122,10 @@ export async function verifyHarnessAppModels(
     'The selected model must not be duplicated as an extra provider'
   )
 
-  const workspace = join(resultDir, 'harness-app-models-workspace')
-  await mkdir(workspace, { recursive: true })
-  const { sessionId } = await dshRequest(installation.webUrl, 'session.create', { cwd: workspace })
-  const sessionModels = await dshRequest(installation.webUrl, 'session.models', { sessionId })
-  assert.deepEqual(
-    { provider: sessionModels.current.provider, model: sessionModels.current.model },
-    { provider: 'wework-local', model: 'wework-selected' },
-    'A new DSH session did not start on the original default model route'
-  )
-
-  const defaultPrompt = `HARNESS_DEFAULT_MODEL_PROMPT_${randomUUID()}`
-  await dshRequest(installation.webUrl, 'session.prompt', {
-    sessionId,
-    mode: 'queue',
-    content: [{ type: 'text', text: defaultPrompt }],
+  const sessionId = await exerciseModelRoutes(control, installation, {
+    resultDir,
+    screenshotName: 'harness-apps-13-multi-model-routes.png',
   })
-  await waitForHarnessModelRequest(control, defaultPrompt, DEFAULT_MODEL.modelId, 30_000)
-  await waitForSessionIdle(installation.webUrl, sessionId, 30_000)
-
-  await dshRequest(installation.webUrl, 'session.selectModel', {
-    sessionId,
-    provider: extraProvider.id,
-    model: extraModelId,
-  })
-  const extraPrompt = `HARNESS_EXTRA_MODEL_PROMPT_${randomUUID()}`
-  await dshRequest(installation.webUrl, 'session.prompt', {
-    sessionId,
-    mode: 'queue',
-    content: [{ type: 'text', text: extraPrompt }],
-  })
-  const extraRequest = await waitForHarnessModelRequest(
-    control,
-    extraPrompt,
-    EXTRA_MODEL.modelId,
-    30_000
-  )
-  assert.notEqual(
-    extraRequest.body.model,
-    DEFAULT_MODEL.modelId,
-    'Selecting the extra provider did not reach a different upstream model'
-  )
-  assert.equal(
-    control.modelRequests.some(request => request.body?.model === UNAVAILABLE_MODEL_UPSTREAM),
-    false,
-    'A model with an incomplete proxy configuration still reached the model service'
-  )
-  await waitForSessionIdle(installation.webUrl, sessionId, 30_000)
-  await captureScreenshot(control, 'harness-apps-13-multi-model-routes.png', 'body')
 
   // A failed launch must release the routes it registered before DSH started,
   // and it must not disturb the app that is already running.
@@ -220,19 +165,33 @@ export async function verifyHarnessAppModels(
   await waitForHarnessModelRequest(control, afterFailurePrompt, EXTRA_MODEL.modelId, 30_000)
   await waitForSessionIdle(installation.webUrl, sessionId, 30_000)
 
-  await openOwnedApps(control, uiTimeoutMs)
-  await control.command('click', `[data-testid="smart-app-actions-${INSTALLED_APP_ID}"]`)
-  await control.command('waitFor', `[data-testid="smart-app-stop-menu-${INSTALLED_APP_ID}"]`, {
-    timeoutMs: uiTimeoutMs,
+  // Closing the app tab must stop the runtime and release every route, not just
+  // the route used by the selected model.
+  const appTabId = await harnessAppTabId(control, INSTALLED_APP_ID)
+  await closeHarnessAppTab(control, appTabId, INSTALLED_APP_ID, uiTimeoutMs)
+  await waitForReleasedRoutes([defaultRoute, extraRoute], 60_000)
+
+  const reopened = await startInstalledHarnessApp(control, INSTALLED_APP_ID, {
+    uiTimeoutMs,
+    electronUserDataDirectory,
   })
-  await control.command('click', `[data-testid="smart-app-stop-menu-${INSTALLED_APP_ID}"]`)
-  await control.command('waitFor', `[data-testid="harness-app-start-${INSTALLED_APP_ID}"]`, {
-    timeoutMs: 60_000,
+  const reopenedRoutes = parseHarnessModelRoutes(
+    await readFile(join(instanceDirectory, 'settings.yaml'), 'utf8')
+  )
+  const reopenedDefaultRoute = reopenedRoutes.find(route => route.id === 'wework-local')
+  const reopenedExtraRoute = reopenedRoutes.find(
+    route => route.displayName === EXTRA_MODEL.labels[1]
+  )
+  assert.ok(reopenedDefaultRoute, 'Reopening the Smart app lost the default model route')
+  assert.ok(reopenedExtraRoute, 'Reopening the Smart app lost the extra model route')
+  await exerciseModelRoutes(control, reopened, {
+    resultDir,
+    screenshotName: 'harness-apps-14-reopened-model-routes.png',
   })
-  await Promise.all([
-    assertHarnessRouteReleased(defaultRoute.baseUrl),
-    assertHarnessRouteReleased(extraRoute.baseUrl),
-  ])
+
+  const reopenedTabId = await harnessAppTabId(control, INSTALLED_APP_ID)
+  await closeHarnessAppTab(control, reopenedTabId, INSTALLED_APP_ID, uiTimeoutMs)
+  await waitForReleasedRoutes([reopenedDefaultRoute, reopenedExtraRoute], 60_000)
 
   const readyCountBeforeCleanup = control.readyCount
   await control.command('reloadMainWindow', 'body', {
@@ -292,6 +251,119 @@ async function selectHarnessAppModel(control, installationId, label, uiTimeoutMs
     stableMs: 300,
     timeoutMs: uiTimeoutMs,
   })
+}
+
+async function harnessAppTabId(control, installationId) {
+  const tabId = await control.command(
+    'getAttribute',
+    `[data-testid="app-iframe-harness-${installationId}"]`,
+    { value: 'data-workspace-tab-id' }
+  )
+  assert.ok(tabId, 'Harness app did not expose its workspace tab ID')
+  return tabId
+}
+
+async function closeHarnessAppTab(control, tabId, installationId, uiTimeoutMs) {
+  const tabSelector = `[data-testid="workspace-tab-select-${tabId}"]`
+  await control.command('click', tabSelector)
+  await control.command('waitFor', `${tabSelector}[aria-selected="true"]`, {
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('click', `[data-testid="workspace-tab-close-${tabId}"]`)
+  await waitForSelectorGone(control, `[data-testid="app-iframe-harness-${installationId}"]`, 30_000)
+  await waitForSelectorGone(control, `[data-testid="harness-app-launch-${installationId}"]`, 30_000)
+}
+
+async function waitForSelectorGone(control, selector, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (Number(await control.command('getElementCount', selector)) === 0) return
+    await delay(100)
+  }
+  throw new Error(`Timed out waiting for "${selector}" to disappear`)
+}
+
+async function startInstalledHarnessApp(
+  control,
+  installationId,
+  { uiTimeoutMs, electronUserDataDirectory }
+) {
+  await openOwnedApps(control, uiTimeoutMs)
+  await control.command('clickWhenEnabled', `[data-testid="harness-app-start-${installationId}"]`, {
+    timeoutMs: 60_000,
+  })
+  await control.command('waitFor', `[data-testid="harness-app-launch-${installationId}"]`, {
+    timeoutMs: 60_000,
+  })
+  await control.command('waitFor', `[data-testid="app-iframe-harness-${installationId}"]`, {
+    timeoutMs: 600_000,
+  })
+  return waitForRunningInstallation(electronUserDataDirectory, installationId, 30_000)
+}
+
+async function exerciseModelRoutes(control, installation, { resultDir, screenshotName }) {
+  const models = await dshRequest(installation.webUrl, 'llm.models', {})
+  const defaultProvider = models.groups.find(group => group.id === 'wework-local')
+  assert.ok(defaultProvider, 'DSH did not expose the original default model provider')
+  assert.deepEqual(
+    defaultProvider.models.map(model => model.id),
+    ['wework-selected'],
+    'The default provider no longer exposes the selected Wework model'
+  )
+  const extraProvider = models.groups.find(group => group.name === EXTRA_MODEL.labels[1])
+  assert.ok(extraProvider, 'DSH did not load the extra Wework model provider')
+  const extraModelId = extraProvider.models[0]?.id
+  assert.ok(extraModelId, 'The extra Wework provider exposed no model')
+
+  const workspace = join(resultDir, 'harness-app-models-workspace')
+  await mkdir(workspace, { recursive: true })
+  const { sessionId } = await dshRequest(installation.webUrl, 'session.create', { cwd: workspace })
+  const sessionModels = await dshRequest(installation.webUrl, 'session.models', { sessionId })
+  assert.deepEqual(
+    { provider: sessionModels.current.provider, model: sessionModels.current.model },
+    { provider: 'wework-local', model: 'wework-selected' },
+    'A new DSH session did not start on the original default model route'
+  )
+
+  const defaultPrompt = `HARNESS_DEFAULT_MODEL_PROMPT_${randomUUID()}`
+  await dshRequest(installation.webUrl, 'session.prompt', {
+    sessionId,
+    mode: 'queue',
+    content: [{ type: 'text', text: defaultPrompt }],
+  })
+  await waitForHarnessModelRequest(control, defaultPrompt, DEFAULT_MODEL.modelId, 30_000)
+  await waitForSessionIdle(installation.webUrl, sessionId, 30_000)
+
+  await dshRequest(installation.webUrl, 'session.selectModel', {
+    sessionId,
+    provider: extraProvider.id,
+    model: extraModelId,
+  })
+  const extraPrompt = `HARNESS_EXTRA_MODEL_PROMPT_${randomUUID()}`
+  await dshRequest(installation.webUrl, 'session.prompt', {
+    sessionId,
+    mode: 'queue',
+    content: [{ type: 'text', text: extraPrompt }],
+  })
+  const extraRequest = await waitForHarnessModelRequest(
+    control,
+    extraPrompt,
+    EXTRA_MODEL.modelId,
+    30_000
+  )
+  assert.notEqual(
+    extraRequest.body.model,
+    DEFAULT_MODEL.modelId,
+    'Selecting the extra provider did not reach a different upstream model'
+  )
+  assert.equal(
+    control.modelRequests.some(request => request.body?.model === UNAVAILABLE_MODEL_UPSTREAM),
+    false,
+    'A model with an incomplete proxy configuration still reached the model service'
+  )
+  await waitForSessionIdle(installation.webUrl, sessionId, 30_000)
+  await captureScreenshot(control, screenshotName, 'body')
+  return sessionId
 }
 
 async function readLocalModelConfigs(control) {
@@ -463,14 +535,6 @@ async function waitForFailedLaunchRoutes(userDataDirectory, installationId, time
   return routes
 }
 
-async function assertHarnessRouteReleased(baseUrl) {
-  assert.equal(
-    await isHarnessRouteReleased(baseUrl),
-    true,
-    `Harness model route ${baseUrl} still accepted requests after release`
-  )
-}
-
 async function waitForReleasedRoutes(routes, timeoutMs) {
   const startedAt = Date.now()
   let remaining = routes
@@ -483,7 +547,7 @@ async function waitForReleasedRoutes(routes, timeoutMs) {
     await delay(200)
   }
   throw new Error(
-    `Harness model routes were not released after the failed launch: ${remaining
+    `Harness model routes were not released: ${remaining
       .map(route => route.displayName || route.id)
       .join(', ')}`
   )
