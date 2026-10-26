@@ -7,7 +7,6 @@ export {
   type ConversationScrollSnapshot,
 } from '@wegent/collaboration/conversation/conversationViewportCache'
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
-import type { RuntimeTransportReplacedPayload } from '@/stream/chatStream'
 import type {
   RuntimeGoal,
   RuntimeGoalContinuationPayload,
@@ -28,6 +27,7 @@ import {
   appendAcceptedRuntimeConversationUser,
   appendRuntimeConversationGuidance,
   mergeRuntimeConversationTurns,
+  hydrateRuntimeConversationTurns,
   projectRuntimeConversationTurns,
   reduceRuntimeConversationTurns,
 } from './runtimeConversationTurns'
@@ -40,7 +40,7 @@ import {
   createAppliedRuntimeGuidanceMessage,
   createOptimisticRuntimeGuidanceMessage,
 } from './runtimeGuidanceMessages'
-import { updateRuntimeGoalContinuation } from '@/lib/runtime-goal'
+import { reconcileRuntimeGoal, updateRuntimeGoalContinuation } from '@/lib/runtime-goal'
 import {
   cacheBoundedEntry,
   cacheRuntimeConversationQueuedMessagesByKey,
@@ -60,8 +60,9 @@ import {
   queuedMessagesByConversation,
   queuedMessagesPausedByConversation,
   runtimeConversationKey,
-  runtimeTransportReplacedListeners,
   turnsByConversation,
+  threadIdsByConversation,
+  supersededTurnIdsByConversation,
   turnContainsClientUserMessage,
   type RuntimeConversationMetadata,
 } from './runtimeConversationCacheStore'
@@ -75,6 +76,10 @@ export {
 } from './runtimeConversationCacheStore'
 
 const EMPTY_RUNTIME_CONVERSATION_TURNS: RuntimeConversationTurn[] = []
+export const EMPTY_RUNTIME_CONVERSATION_SNAPSHOT = {
+  turns: EMPTY_RUNTIME_CONVERSATION_TURNS,
+  messages: [] as WorkbenchMessage[],
+}
 const pendingConversationOperations = new Set<{
   address: RuntimeTaskAddress
   current: boolean
@@ -151,25 +156,6 @@ function invalidateRuntimeGoalSnapshots(address: RuntimeTaskAddress): void {
   nextRuntimeGoalSnapshotVersion += 1
 }
 
-function reconcileRuntimeGoal(
-  current: RuntimeGoal | null,
-  next: RuntimeGoal | null
-): RuntimeGoal | null {
-  if (!next || !current) return next
-  // Native Goals use second precision; a matching native creation must own its
-  // optimistic millisecond seed without admitting snapshots of an older Goal.
-  if (
-    current.threadId === 'pending' &&
-    next.threadId !== 'pending' &&
-    next.objective === current.objective &&
-    next.tokenBudget === current.tokenBudget &&
-    next.createdAt >= Math.floor(current.createdAt / 1000) * 1000
-  ) {
-    return next
-  }
-  return next.updatedAt < current.updatedAt ? current : next
-}
-
 export function applyRuntimeConversationGoalContinuation(
   address: RuntimeTaskAddress,
   payload: RuntimeGoalContinuationPayload
@@ -227,6 +213,29 @@ export function getRuntimeConversationMessages(address: RuntimeTaskAddress): Wor
   )
 }
 
+export function getRuntimeConversationSnapshot(address: RuntimeTaskAddress) {
+  const key = runtimeConversationKey(address)
+  const turns = turnsByConversation.get(key)
+  if (!turns) return EMPTY_RUNTIME_CONVERSATION_SNAPSHOT
+  projectRuntimeConversationMessages(key, turns)
+  return projectedMessagesByConversation.get(key)!
+}
+
+export function adoptRuntimeConversationThread(
+  address: RuntimeTaskAddress,
+  threadId?: string | null
+): boolean {
+  if (!threadId) return false
+  const key = runtimeConversationKey(address)
+  const previous = threadIdsByConversation.get(key)
+  threadIdsByConversation.set(key, threadId)
+  if (!previous || previous === threadId) return false
+  supersededTurnIdsByConversation.delete(key)
+  cacheRuntimeConversationTurns(key, [])
+  projectedMessagesByConversation.delete(key)
+  return true
+}
+
 export function getRuntimeConversationTurns(
   address: RuntimeTaskAddress
 ): RuntimeConversationTurn[] {
@@ -275,52 +284,44 @@ export function runtimeConversationMessageHasStartedTurn(
   )
 }
 
-export function publishRuntimeTransportReplaced(payload: RuntimeTransportReplacedPayload): void {
-  runtimeTransportReplacedListeners.forEach(listener => listener(payload))
-}
-
-export function subscribeRuntimeTransportReplaced(
-  listener: (payload: RuntimeTransportReplacedPayload) => void
-): () => void {
-  runtimeTransportReplacedListeners.add(listener)
-  return () => runtimeTransportReplacedListeners.delete(listener)
-}
-
 export function beginRuntimeConversationHydration(address: RuntimeTaskAddress): symbol {
   const key = runtimeConversationKey(address)
   const existing = hydrationByConversation.get(key)
-  if (existing) return existing.token
   cancelTerminalConversationEviction(key)
+  // A closing reader must not cancel a newer reader's hydration.
   const token = Symbol(key)
-  hydrationByConversation.set(key, { token, bufferedActions: [] })
+  hydrationByConversation.set(key, { token, bufferedActions: existing?.bufferedActions ?? [] })
   return token
-}
-
-export function runtimeConversationHydrationHasUpdates(
-  address: RuntimeTaskAddress,
-  token: symbol
-): boolean {
-  const hydration = hydrationByConversation.get(runtimeConversationKey(address))
-  return hydration?.token === token && hydration.bufferedActions.length > 0
 }
 
 export function completeRuntimeConversationHydration(
   address: RuntimeTaskAddress,
   token: symbol,
-  snapshotTurns: RuntimeConversationTurn[]
+  snapshotTurns: RuntimeConversationTurn[],
+  threadId?: string | null,
+  supersededTurnIds: string[] = []
 ): WorkbenchMessage[] {
   const key = runtimeConversationKey(address)
   const hydration = hydrationByConversation.get(key)
   if (hydration?.token !== token) return getRuntimeConversationMessages(address)
+  const changedThread = adoptRuntimeConversationThread(address, threadId)
+  const superseded = new Set([
+    ...(supersededTurnIdsByConversation.get(key) ?? []),
+    ...supersededTurnIds,
+  ])
+  if (superseded.size > 0) supersededTurnIdsByConversation.set(key, superseded)
 
-  let turns = turnsByConversation.get(key) ?? []
-  for (const action of hydration.bufferedActions) {
-    turns = reduceRuntimeConversationTurns(turns, action)
-  }
-  turns = mergeRuntimeConversationTurns(turns, snapshotTurns)
+  const turns = hydrateRuntimeConversationTurns(
+    turnsByConversation.get(key) ?? [],
+    snapshotTurns,
+    hydration.bufferedActions,
+    !changedThread,
+    [...superseded]
+  )
   hydrationByConversation.delete(key)
   cacheRuntimeConversationTurns(key, turns)
-  notifyHydratedRuntimeConversation(key, hydration.bufferedActions)
+  cancelPendingStreamingNotification(key)
+  notifyRuntimeConversation(key)
   return projectRuntimeConversationMessages(key, turns)
 }
 
@@ -332,13 +333,11 @@ export function abortRuntimeConversationHydration(
   const hydration = hydrationByConversation.get(key)
   if (hydration?.token !== token) return getRuntimeConversationMessages(address)
 
-  let turns = turnsByConversation.get(key) ?? []
-  for (const action of hydration.bufferedActions) {
-    turns = reduceRuntimeConversationTurns(turns, action)
-  }
+  const turns = turnsByConversation.get(key) ?? []
   hydrationByConversation.delete(key)
   cacheRuntimeConversationTurns(key, turns)
-  notifyHydratedRuntimeConversation(key, hydration.bufferedActions)
+  cancelPendingStreamingNotification(key)
+  notifyRuntimeConversation(key)
   return projectRuntimeConversationMessages(key, turns)
 }
 
@@ -420,11 +419,12 @@ export function applyRuntimeConversationAction(
   const hydration = hydrationByConversation.get(key)
   if (hydration) {
     hydration.bufferedActions.push(action)
-    const turns = turnsByConversation.get(key) ?? []
-    return projectRuntimeConversationMessages(key, turns)
   }
   const currentTurns = turnsByConversation.get(key) ?? []
-  const nextTurns = reduceRuntimeConversationTurns(currentTurns, action)
+  const superseded = supersededTurnIdsByConversation.get(key)
+  const nextTurns = reduceRuntimeConversationTurns(currentTurns, action).filter(
+    turn => !turn.id || !superseded?.has(turn.id)
+  )
   cacheRuntimeConversationTurns(key, nextTurns)
   publishRuntimeConversationAction(key, action)
   return projectRuntimeConversationMessages(key, nextTurns)
@@ -961,17 +961,6 @@ function scheduleStreamingConversationNotification(key: string): void {
 
 function isStreamingConversationAction(action: RuntimePaneMessageAction): boolean {
   return action.type === 'assistant_chunk' || action.type === 'block_updated'
-}
-
-function notifyHydratedRuntimeConversation(
-  key: string,
-  bufferedActions: RuntimePaneMessageAction[]
-): void {
-  if (bufferedActions.length === 0) {
-    notifyRuntimeConversation(key)
-    return
-  }
-  bufferedActions.forEach(action => publishRuntimeConversationAction(key, action))
 }
 
 function touchEntry<T>(entries: Map<string, T>, key: string): T | undefined {

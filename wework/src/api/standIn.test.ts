@@ -4,6 +4,7 @@ import { bindProjectStandInApi, createStandInExecutorApi, type StandInExecutorAp
 const settings = { enabled: false, prompt: '', executionDeviceId: '', version: 0 }
 function fixture() {
   const transport = {
+    notifyAssignment: vi.fn<StandInExecutorApi['notifyAssignment']>(),
     personalAgents: vi.fn<StandInExecutorApi['personalAgents']>(),
     personalGet: vi.fn<StandInExecutorApi['personalGet']>(),
     personalSave: vi.fn<StandInExecutorApi['personalSave']>(),
@@ -83,6 +84,12 @@ describe('device-local Stand-in settings', () => {
       expect.objectContaining({ projectStore: 'cloud' }),
       'cloud-device'
     )
+    await api.notifyAssignment('project', 'issue', 'assignment', 7, 'mac')
+    expect(request).toHaveBeenLastCalledWith(
+      'runtime.stand_in.assignment',
+      { projectId: 'project', itemId: 'issue', assignmentId: 'assignment', recipientUserId: 7 },
+      'mac'
+    )
   })
 
   it('addresses an independent named Stand-in in the same project', async () => {
@@ -110,7 +117,6 @@ it('routes personal saves to the selected Executor independently of stored devic
     userId: 7,
     executionDeviceId: 'current-device',
     version: 1,
-    autoSelect: false,
     roles: [],
   }
   const request = vi.fn().mockResolvedValue(saved)

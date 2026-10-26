@@ -52,6 +52,7 @@ class _MemoryDeviceCache:
 def _runtime_features(*, managed: bool) -> dict:
     return {
         "schemaVersion": 3,
+        "pluginSync": {"protocolVersion": 2},
         "interactiveSessions": {
             "codeServer": False,
             "terminal": True,

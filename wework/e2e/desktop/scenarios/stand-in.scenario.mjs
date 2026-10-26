@@ -23,32 +23,52 @@ const AGENT_PROMPT = `STAND_IN_AGENT_INSTRUCTIONS_${process.pid}`
 // The ordinary desktop fixture authenticates /api/users/me as this account.
 const USER_ID = 9001
 
-async function waitForExecution(control, issueId, timeoutMs) {
+async function waitForExecution(control, issueId, timeoutMs, roleIds = ['default']) {
   const deadline = Date.now() + timeoutMs
   let latest
   while (Date.now() < deadline) {
     const bindings = await requestExecutor(control, 'todos.bindings', { task_id: issueId }, 10000)
-    assert.ok(bindings.length <= 1, 'One assignment created duplicate tasks')
-    if (bindings[0]) {
-      latest = await requestExecutor(
+    assert.ok(
+      bindings.length <= roleIds.length,
+      'A stand-in created duplicate tasks for one assignment'
+    )
+    latest = []
+    for (const binding of bindings) {
+      const { task } = await requestExecutor(
         control,
         'runtime.tasks.get',
-        { taskId: bindings[0].task_id },
+        { taskId: binding.task_id },
         10000
       )
-      if (latest.task?.status === 'done') return latest.task
-      assert.notEqual(latest.task?.status, 'failed', JSON.stringify(latest))
+      assert.notEqual(task?.status, 'failed', JSON.stringify(task))
+      latest.push(task)
+    }
+    if (latest.length === roleIds.length && latest.every(task => task?.status === 'done')) {
+      const owners = []
+      for (const task of latest) {
+        const transcript = await requestExecutor(
+          control,
+          'runtime.tasks.transcript',
+          { taskId: task.taskId, limit: 5 },
+          10000
+        )
+        owners.push(transcript.origin.standInId)
+      }
+      assert.deepEqual(
+        owners.sort(),
+        [...roleIds].sort(),
+        'Every matching stand-in must own one execution'
+      )
+      return latest
     }
     await new Promise(resolve => setTimeout(resolve, 200))
   }
-  assert.fail(`Stand-in task did not complete: ${JSON.stringify(latest)}`)
+  assert.fail(`Stand-in tasks did not complete: ${JSON.stringify(latest)}`)
 }
 
 export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, captureScreenshot }) {
   let requests = 0
   let agentRequests = 0
-  let selectionRequests = 0
-  let invalidSelection = false
   const tagRequests = { review: 0, docs: 0 }
   return {
     async handleHttp(request, response, url) {
@@ -58,26 +78,10 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       const text = JSON.stringify(body)
       const id = `stand-in-${Date.now()}`
       const kind = codexRequestKind(body)
-      if (
-        text.includes('Select exactly one role for this task.') &&
-        kind !== 'prewarm' &&
-        kind !== 'compaction'
-      ) {
-        selectionRequests += 1
-        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-        response.end(
-          createSse([
-            responseCreated(id),
-            assistantMessage(
-              invalidSelection
-                ? 'invalid selection'
-                : JSON.stringify({ roleId: 'docs', reason: '该任务以文档交付为主。' })
-            ),
-            responseCompleted(id),
-          ])
-        )
-        return true
-      }
+      assert.ok(
+        !text.includes('Select exactly one role for this task.'),
+        'Connected stand-ins must not invoke a role selection model'
+      )
       if (text.includes(MARKER) && kind !== 'prewarm' && kind !== 'compaction') requests += 1
       if (text.includes(AGENT_PROMPT) && kind !== 'prewarm' && kind !== 'compaction')
         agentRequests += 1
@@ -502,28 +506,23 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         },
         uiTimeoutMs
       )
-      for (const tagged of taggedIssues)
-        await waitForExecution(control, tagged.id, modelResponseTimeoutMs)
-      const selected = await waitForExecution(control, ambiguous.id, modelResponseTimeoutMs)
-      const selectedTranscript = await requestExecutor(
-        control,
-        'runtime.tasks.transcript',
-        { taskId: selected.taskId, limit: 5 },
-        uiTimeoutMs
-      )
-      assert.equal(
-        selectedTranscript.origin.standInId,
-        'review',
-        'Overlapping tags must use the first matching role'
-      )
+      for (const [index, tagged] of taggedIssues.entries())
+        await waitForExecution(control, tagged.id, modelResponseTimeoutMs, [
+          index === 0 ? 'review' : 'docs',
+        ])
+      await waitForExecution(control, ambiguous.id, modelResponseTimeoutMs, ['review', 'docs'])
       await new Promise(resolve => setTimeout(resolve, 11000))
-      assert.equal(requests, 5, 'Each assignment must execute exactly once')
-      assert.equal(agentRequests, 4)
-      assert.deepEqual(tagRequests, { review: 2, docs: 1 }, 'Each tag must use its own prompt')
+      assert.equal(requests, 6, 'Each eligible stand-in must execute each assignment exactly once')
+      assert.equal(agentRequests, 5)
+      assert.deepEqual(
+        tagRequests,
+        { review: 2, docs: 2 },
+        'Each matching role must use its own prompt'
+      )
       assert.equal(
         (await requestExecutor(control, 'todos.bindings', { task_id: ambiguous.id }, uiTimeoutMs))
           .length,
-        1
+        2
       )
       assert.equal(
         (
@@ -578,21 +577,16 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
         requirements: false,
       })
-      await control.command('waitFor', '[data-testid="stand-in-role-select"]')
+      await control.command('waitFor', '[data-testid="stand-in-role-name"]')
       await captureScreenshot(
         control,
         'stand-in-07-multiple-roles.png',
         '[data-testid="stand-in-settings"]'
       )
-      await control.command('click', '[data-testid="stand-in-scheduling-open"]')
-      await control.command('click', '[data-testid="stand-in-auto-select"]')
-      await captureScreenshot(
-        control,
-        'stand-in-08-role-scheduling.png',
-        '[data-testid="stand-in-settings"]'
+      assert.equal(
+        await control.command('getElementCount', '[data-testid="stand-in-scheduling-open"]'),
+        '0'
       )
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
-      await control.command('waitFor', '[data-testid="stand-in-role-select"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       let personal = await requestExecutor(
@@ -601,7 +595,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         { userId: USER_ID },
         uiTimeoutMs
       )
-      assert.equal(personal.autoSelect, true)
+      assert.ok(!Object.hasOwn(personal, 'autoSelect'))
       assert.ok(personal.roles.some(role => role.name === '项目协调'))
       personal = await requestExecutor(
         control,
@@ -618,137 +612,56 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         },
         uiTimeoutMs
       )
-      const aiIssue = await requestExecutor(
+      const overlappingIssue = await requestExecutor(
         control,
         'todos.create',
         {
           project_id: project.id,
           todo: {
-            title: '文档说明与代码审查',
+            title: '所有连接的分身分别处理',
             tags: ['review', 'docs'],
             assignee_user_id: USER_ID,
           },
         },
         uiTimeoutMs
       )
-      const aiTask = await waitForExecution(control, aiIssue.id, modelResponseTimeoutMs)
-      const aiTranscript = await requestExecutor(
+      await waitForExecution(control, overlappingIssue.id, modelResponseTimeoutMs, [
+        'review',
+        'docs',
+      ])
+      const beforeReorder = { requests, ...tagRequests }
+      personal = await requestExecutor(
         control,
-        'runtime.tasks.transcript',
-        { taskId: aiTask.taskId, limit: 5 },
+        'runtime.stand_in.personal.save',
+        {
+          userId: USER_ID,
+          settings: { ...personal, roles: [...personal.roles].reverse() },
+        },
         uiTimeoutMs
       )
-      assert.equal(aiTranscript.origin.standInId, 'docs')
-      assert.equal(aiTranscript.origin.selectionMode, 'ai')
-      assert.equal(selectionRequests, 1, 'Only overlapping roles should invoke the selection model')
-      assert.equal(
-        (await requestExecutor(control, 'todos.bindings', { task_id: aiIssue.id }, uiTimeoutMs))
-          .length,
-        1
+      await new Promise(resolve => setTimeout(resolve, 5500))
+      assert.deepEqual(
+        { requests, ...tagRequests },
+        beforeReorder,
+        'Saving roles must not replay completed work'
       )
       const singleIssue = await requestExecutor(
         control,
         'todos.create',
         {
           project_id: project.id,
-          todo: { title: '单角色文档任务', tags: ['docs'], assignee_user_id: USER_ID },
+          todo: { title: '仅文档分身接手', tags: ['docs'], assignee_user_id: USER_ID },
         },
         uiTimeoutMs
       )
-      await waitForExecution(control, singleIssue.id, modelResponseTimeoutMs)
-      assert.equal(selectionRequests, 1, 'A single matching role must not consume selection tokens')
-      invalidSelection = true
-      const followingIssue = await requestExecutor(
-        control,
-        'todos.create',
-        { project_id: project.id, todo: { title: '其他任务不受角色选择失败影响', tags: ['docs'] } },
-        uiTimeoutMs
-      )
-      const failedIssue = await requestExecutor(
-        control,
-        'todos.create',
-        {
-          project_id: project.id,
-          todo: {
-            title: '角色选择失败后的恢复',
-            tags: ['review', 'docs'],
-            assignee_user_id: USER_ID,
-          },
-        },
-        uiTimeoutMs
-      )
-      const deadline = Date.now() + modelResponseTimeoutMs
-      let failedSettings
-      while (Date.now() < deadline) {
-        failedSettings = await requestExecutor(
-          control,
-          'runtime.stand_in.personal.get',
-          { userId: USER_ID },
-          uiTimeoutMs
-        )
-        if (failedSettings.selectionErrors?.some(item => item.issueId === failedIssue.id)) break
-        await new Promise(resolve => setTimeout(resolve, 200))
-      }
-      assert.ok(
-        failedSettings?.selectionErrors?.some(item => item.issueId === failedIssue.id),
-        'Selection failure must be visible to the user'
-      )
-      await new Promise(resolve => setTimeout(resolve, 5500))
-      assert.equal(
-        selectionRequests,
-        2,
-        'A cached failure must not spend tokens on each polling cycle'
-      )
-      assert.equal(
-        (await requestExecutor(control, 'todos.bindings', { task_id: failedIssue.id }, uiTimeoutMs))
-          .length,
-        0
-      )
-      await requestExecutor(
-        control,
-        'todos.update',
-        {
-          project_id: project.id,
-          task_id: followingIssue.id,
-          todo: {
-            version: followingIssue.version,
-            assignee_user_id: USER_ID,
-            position: { before_item_id: null },
-          },
-        },
-        uiTimeoutMs
-      )
-      await waitForExecution(control, followingIssue.id, modelResponseTimeoutMs)
-      assert.equal(
-        selectionRequests,
-        2,
-        'A failed decision must not block subsequent single-role assignments'
-      )
-      await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
-        requirements: false,
-      })
-      await control.command('waitFor', '[data-testid="stand-in-selection-errors"]', {
-        text: '角色选择失败后的恢复',
-      })
-      await captureScreenshot(
-        control,
-        'stand-in-10-selection-failure-recovery.png',
-        '[data-testid="stand-in-settings"]'
-      )
-      invalidSelection = false
-      await control.command('clickWhenEnabled', '[data-testid="stand-in-selection-retry"]')
-      await waitForExecution(control, failedIssue.id, modelResponseTimeoutMs)
-      assert.equal(selectionRequests, 3)
+      await waitForExecution(control, singleIssue.id, modelResponseTimeoutMs, ['docs'])
       personal = await requestExecutor(
         control,
         'runtime.stand_in.personal.get',
         { userId: USER_ID },
         uiTimeoutMs
       )
-      assert.equal(personal.selectionErrors.length, 0)
-      await control.command('waitFor', '[data-testid="stand-in-settings"]')
-      await control.command('click', '[data-testid="stand-in-cancel"]')
-      await control.command('waitFor', `${CONTENT} [data-testid="stand-in-open"]`)
+      assert.ok(!Object.hasOwn(personal, 'selectionErrors'))
       await requestExecutor(
         control,
         'runtime.stand_in.personal.save',
@@ -785,19 +698,76 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
+      await control.command('click', '[data-testid="stand-in-overview-role-default"]')
       await control.command('waitFor', '[data-testid="stand-in-activity"]', { text: PROJECT })
       await captureScreenshot(control, 'stand-in-project-05-overview.png')
+      await control.command('click', `[data-testid="stand-in-overview-role-${newRole.id}"]`)
       await control.command('click', '[data-testid="stand-in-settings-open"]')
-      await control.command('waitFor', '[data-testid="stand-in-role-select"]')
-      await control.command('select', '[data-testid="stand-in-role-select"]', { value: newRole.id })
+      await control.command('waitFor', '[data-testid="stand-in-role-name"]')
+      assert.equal(
+        await control.command('getElementCount', '[data-testid="stand-in-role-select"]'),
+        '0'
+      )
+      assert.equal(
+        await control.command('getValue', '[data-testid="stand-in-role-name"]'),
+        newRole.name
+      )
       assert.equal(
         await control.command('getValue', '[data-testid="stand-in-prompt"]'),
         newRole.prompt
       )
       await captureScreenshot(control, 'stand-in-project-04-personal-ownership.png')
+      const renamed = '项目代码审查'
+      await control.command('fill', '[data-testid="stand-in-role-name"]', { value: renamed })
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
+      await control.command('waitFor', `[data-testid="stand-in-overview-role-${newRole.id}"]`, {
+        text: renamed,
+      })
+      const updated = await requestExecutor(
+        control,
+        'runtime.stand_in.personal.get',
+        { userId: USER_ID },
+        uiTimeoutMs
+      )
+      assert.deepEqual(
+        updated.roles,
+        created.roles.map(role => ({
+          ...role,
+          name: role.id === newRole.id ? renamed : role.name,
+          version: role.version + 1,
+        }))
+      )
+      assert.equal(
+        await control.command('getText', '[data-testid="stand-in-settings-open"]'),
+        '设置'
+      )
+      await control.command('click', '[data-testid="stand-in-settings-open"]')
+      await control.command('waitFor', '[data-testid="stand-in-role-name"]')
+      assert.equal(await control.command('getValue', '[data-testid="stand-in-role-name"]'), renamed)
+      await control.command('fill', '[data-testid="stand-in-role-name"]', { value: '未保存的名字' })
+      await control.command('click', '[data-testid="stand-in-profile-backdrop"]')
+      await control.command('waitFor', '[data-testid="stand-in-discard"]')
+      await control.command('click', '[data-testid="stand-in-keep-editing"]')
+      assert.equal(
+        await control.command('getValue', '[data-testid="stand-in-role-name"]'),
+        '未保存的名字'
+      )
+      await control.command('click', '[data-testid="stand-in-profile-backdrop"]')
+      await control.command('click', '[data-testid="stand-in-discard"]')
+      await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
+      await control.command('click', '[data-testid="stand-in-memory-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-memory-add"]')
+      const scopes = await control.command('getText', '[data-testid="stand-in-memory-scope"]')
+      assert.ok(scopes.includes(`${renamed}（与你聊天时）`), scopes)
+      assert.ok(scopes.includes(`项目 · ${PROJECT}`), scopes)
+      assert.ok(!scopes.includes('standIn.'), scopes)
+      assert.ok(!scopes.includes(`项目 · ${project.id}`), scopes)
+      await control.command('click', '[data-testid="stand-in-memory-cancel"]')
+      await control.command('click', '[data-testid="stand-in-memory-close"]')
     },
     diagnostics() {
-      return { project: PROJECT, requests, agentRequests, selectionRequests, tagRequests }
+      return { project: PROJECT, requests, agentRequests, tagRequests }
     },
   }
 }

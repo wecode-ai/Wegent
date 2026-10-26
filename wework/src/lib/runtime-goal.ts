@@ -23,6 +23,25 @@ export function visibleRuntimeGoal(goal: RuntimeGoal | null | undefined): Runtim
   return isVisibleRuntimeGoal(goal) ? goal : null
 }
 
+export function reconcileRuntimeGoal(
+  current: RuntimeGoal | null,
+  next: RuntimeGoal | null
+): RuntimeGoal | null {
+  if (!next || !current) return next
+  // Native Goals use second precision; a matching native creation must own its
+  // optimistic millisecond seed without admitting snapshots of an older Goal.
+  if (
+    current.threadId === 'pending' &&
+    next.threadId !== 'pending' &&
+    next.objective === current.objective &&
+    next.tokenBudget === current.tokenBudget &&
+    next.createdAt >= Math.floor(current.createdAt / 1000) * 1000
+  ) {
+    return next
+  }
+  return next.updatedAt < current.updatedAt ? current : next
+}
+
 export function updateRuntimeGoalContinuation(
   current: RuntimeGoalContinuationPayload | null,
   event:
@@ -79,29 +98,6 @@ export function projectRuntimeGoalContinuing(
       ? activeTurnId === input.continuation.turnId
       : isRuntimeGoalContinuationTurn(input.messages, assistant)
   return !(assistant && matchesContinuation && hasVisibleAssistantProjection(assistant))
-}
-
-export function shouldReconcileActiveRuntimeGoalTranscript({
-  goalContinuing,
-  messages,
-  activeAssistantMessage,
-}: {
-  goalContinuing: boolean
-  messages: WorkbenchMessage[]
-  activeAssistantMessage: WorkbenchMessage | null
-}): boolean {
-  if (!goalContinuing || !activeAssistantMessage) return false
-
-  const activeTurnId = activeAssistantMessage.turnId || activeAssistantMessage.subtaskId
-  if (!activeTurnId) return true
-  return !messages.some(
-    message =>
-      message.id !== activeAssistantMessage.id &&
-      (message.turnId || message.subtaskId) === activeTurnId &&
-      message.role === 'assistant' &&
-      message.status !== 'streaming' &&
-      hasVisibleAssistantProjection(message)
-  )
 }
 
 function hasVisibleAssistantProjection(message: WorkbenchMessage): boolean {

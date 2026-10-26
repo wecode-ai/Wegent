@@ -265,6 +265,67 @@ describe("createCloudRuntimeIpcClient", () => {
     timeoutSpy.mockRestore();
   });
 
+  it("allows a paginated transcript search to finish after the ordinary history timeout", async () => {
+    vi.useFakeTimers();
+    const timeoutSpy = vi.spyOn(window, "setTimeout");
+    const result = { matches: [], totalMatches: 0, isCapped: false };
+    let acknowledge:
+      | ((ack: { ok: true; result: typeof result }) => void)
+      | undefined;
+    socket.emit.mockImplementation((_event, payload, callback) => {
+      expect(payload).toMatchObject({
+        method: "runtime.tasks.transcript.search",
+        timeout_seconds: 120,
+      });
+      acknowledge = callback;
+    });
+    const client = createCloudRuntimeIpcClient({
+      socketBaseUrl: "https://cloud.example.com",
+      socketPath: "/socket.io",
+      getToken: () => "token",
+    });
+
+    try {
+      const request = client.request(
+        "runtime.tasks.transcript.search",
+        { query: "needle" },
+        "device-1",
+      );
+      const completed = expect(request).resolves.toEqual(result);
+      await vi.advanceTimersByTimeAsync(30_001);
+      expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 130_000);
+      acknowledge?.({ ok: true, result });
+      await completed;
+    } finally {
+      timeoutSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds transcript search acknowledgement waits even when the relay never responds", async () => {
+    vi.useFakeTimers();
+    const client = createCloudRuntimeIpcClient({
+      socketBaseUrl: "https://cloud.example.com",
+      socketPath: "/socket.io",
+      getToken: () => "token",
+    });
+
+    try {
+      const request = client.request(
+        "runtime.tasks.transcript.search",
+        { query: "needle" },
+        "device-1",
+      );
+      const timedOut = expect(request).rejects.toThrow(
+        "runtime.tasks.transcript.search timed out",
+      );
+      await vi.advanceTimersByTimeAsync(130_000);
+      await timedOut;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("caps device command timeouts at the executor maximum", async () => {
     socket.emit.mockImplementation((_event, payload, ack) => {
       expect(payload.timeout_seconds).toBe(600);

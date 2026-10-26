@@ -12,6 +12,8 @@ mod cargo_cache;
 mod claude_code;
 mod claude_options;
 mod codex;
+#[cfg(test)]
+pub(crate) use codex::LaunchEnvironment as CodexLaunchEnvironment;
 mod codex_log_db;
 mod dify;
 pub(crate) mod environment_setup;
@@ -56,9 +58,9 @@ pub use codex::{
     run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
     CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerEngine,
     CodexAppServerTurn, CodexAppServerTurnOptions, CodexCancellationState, CodexIdleMutationError,
-    CodexNotificationSender, CodexRequestUserInputReceiver, CodexResponseValueOrigin,
-    CodexThreadStartedCallback, CodexTurnInterrupter, CODEX_APP_SERVER_EXECUTOR_SHUTDOWN,
-    CODEX_APP_SERVER_TURN_CANCELLED,
+    CodexNotification, CodexNotificationSender, CodexRequestUserInputReceiver,
+    CodexResponseValueOrigin, CodexThreadStartedCallback, CodexTurnInterrupter,
+    CODEX_APP_SERVER_EXECUTOR_SHUTDOWN, CODEX_APP_SERVER_TURN_CANCELLED,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;

@@ -42,6 +42,10 @@ import {
   REQUEST_USER_INPUT_ASYNC_COMPLETION_TEXT,
   REQUEST_USER_INPUT_ASYNC_PROMPT,
   REQUEST_USER_INPUT_ASYNC_QUESTION,
+  REQUEST_USER_INPUT_FREE_TEXT_PROMPT,
+  REQUEST_USER_INPUT_FREE_TEXT_QUESTION,
+  REQUEST_USER_INPUT_FREE_TEXT_ANSWER,
+  REQUEST_USER_INPUT_FREE_TEXT_COMPLETE,
   REQUEST_USER_INPUT_ASYNC_WAITING_TEXT,
   RUNNING_FORK_COMPLETION_TEXT,
   RUNNING_FORK_FOLLOW_UP_PROMPT,
@@ -242,6 +246,58 @@ async function setCatalogOverride(executorHome, slug, fields) {
   )
   // Codex caches the served catalog; drop it so the new entry is picked up.
   await rm(join(executorHome, 'codex', 'models_cache.json'), { force: true })
+}
+
+export async function verifyFreeTextRequestUserInput({ composerSelector, control, executorHome }) {
+  await setCatalogOverride(executorHome, DEFAULT_MODEL_ID, {
+    experimental_supported_tools: ['request_user_input_async'],
+  })
+  control.setScenario('request_user_input_async')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (snapshot.testIds.includes('plan-mode-pill')) {
+    await control.command('click', '[data-testid="cancel-plan-mode-button"]')
+  }
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    REQUEST_USER_INPUT_FREE_TEXT_PROMPT,
+    'request_user_input_async'
+  )
+  const card = '[data-testid="request-user-input-card"]'
+  const questions = `${card} [data-testid="request-user-input-questions"]`
+  const prompt = `${card} [data-testid="request-user-input-question-question_1"]`
+  const input = `${card} [data-testid="request-user-input-custom-question_1"]`
+  await control.command('waitFor', questions, {
+    text: REQUEST_USER_INPUT_FREE_TEXT_QUESTION,
+    visible: true,
+  })
+  assert.notEqual(
+    await control.command('getAttribute', input, { value: 'placeholder' }),
+    REQUEST_USER_INPUT_FREE_TEXT_QUESTION,
+    'The question must be visible text instead of an input placeholder'
+  )
+  const [questionMetrics] = JSON.parse(await control.command('getElementMetrics', prompt))
+  const [inputMetrics] = JSON.parse(await control.command('getElementMetrics', input))
+  assert.ok(questionMetrics.height > inputMetrics.height, 'The long question must wrap')
+  assert.ok(
+    questionMetrics.scrollWidth <= questionMetrics.clientWidth + 1,
+    'The question must fit horizontally without clipping'
+  )
+  await control.command('fill', input, { value: REQUEST_USER_INPUT_FREE_TEXT_ANSWER })
+  await control.command('waitFor', questions, {
+    text: REQUEST_USER_INPUT_FREE_TEXT_QUESTION,
+    visible: true,
+  })
+  await captureVerificationScreenshot(control, 'request-user-input-free-text.png')
+  await control.command('click', `${card} [data-testid="request-user-input-submit-button"]`)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: REQUEST_USER_INPUT_FREE_TEXT_COMPLETE,
+    visible: true,
+  })
+  assert.equal(Number(await control.command('getElementCount', card)), 0)
 }
 
 export async function verifyAsyncRequestUserInput({ composerSelector, control, executorHome }) {
@@ -1071,7 +1127,8 @@ async function verifyRunningFollowUpFork({
   }
 
   await ensureTaskRowVisible(control, sourceTaskRowTestId)
-  await control.command('click', `[data-testid="${sourceTaskRowTestId}"]`)
+  // Completing the held turn can reorder the preview between the snapshot and click.
+  await control.command('clickWhenEnabled', `[data-testid="${sourceTaskRowTestId}"]`)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: RUNNING_FORK_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

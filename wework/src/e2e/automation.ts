@@ -29,13 +29,18 @@ import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
+import { sendNativeKeyAndWait } from './native-key-acknowledgement'
+import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   getConversationDiagnosticsSnapshot,
   setConversationFrameProbeEnabled,
   startConversationDiagnosticCapture,
 } from '@wegent/collaboration/conversation/conversationDiagnostics'
 import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
+import { readConversationSearchContent } from '@wegent/collaboration/conversation'
+import { matchConversationText } from '@wegent/chat-core/conversation-search'
 import { getComposerApps } from '@/components/chat/composer/composerAppsSnapshot'
 import {
   getRuntimeConversationCacheStats,
@@ -1104,41 +1109,51 @@ async function pressDesktopControlKey(selector: string, key: string): Promise<st
 async function pressNativeDesktopControlKey(
   selector: string,
   key: string,
-  phase: 'press' | 'down' | 'up' = 'press'
+  phase: 'press' | 'down' | 'up' = 'press',
+  measurement?: { selector: string }
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
+  const startedAt = Date.now()
+  const trace = (stage: string) =>
+    console.info(
+      `[desktop-e2e-key] ${JSON.stringify({ stage, key, phase, windowLabel, elapsedMs: Date.now() - startedAt })}`
+    )
+  trace('focus-start')
   await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
     windowLabel,
   })
-  await waitForDesktopControlTick()
+  trace('focus-complete')
   const element = findDesktopControlElements(selector)[0]
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
   element.focus()
   if (document.activeElement !== element) throw new Error('Keyboard target could not receive focus')
-  const received: KeyboardEvent[] = []
   const eventType = phase === 'up' ? 'keyup' : 'keydown'
-  const recordKey = (event: KeyboardEvent) => received.push(event)
+  const expectedKey = parseDesktopControlKey(key).key
+  const viewportTarget = measurement ? findDesktopControlElements(measurement.selector)[0] : null
+  if (measurement && !viewportTarget) throw new Error('Native viewport target is unavailable')
+  const observation = viewportTarget
+    ? createNativeKeyObservation(element, () => readNativeTerminalViewport(viewportTarget))
+    : null
+  const recordKey = (event: KeyboardEvent) => {
+    if (event.key === expectedKey) observation?.record(event)
+  }
   window.addEventListener(eventType, recordKey, true)
   try {
-    await invokeDesktopHost('e2e.pressKey', {
-      windowLabel,
-      key,
-      phase,
-      focus: false,
-    })
-    await waitForDesktopControlTick()
-    if (!received.some(event => event.isTrusted && event.target === element)) {
-      throw new Error(
-        `Native ${eventType} did not reach its target: windowFocused=${document.hasFocus()}, ` +
-          `active=${document.activeElement?.getAttribute('data-testid') ?? ''}, ` +
-          `received=${received.map(event => event.key).join(',')}`
-      )
-    }
+    trace('key-start')
+    await sendNativeKeyAndWait(element, phase, () =>
+      invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase, focus: false })
+    )
+    trace('key-observed')
   } finally {
     window.removeEventListener(eventType, recordKey, true)
   }
-  return document.activeElement?.getAttribute('data-testid') ?? ''
+  return observation && viewportTarget
+    ? JSON.stringify({
+        viewportBefore: observation.result(),
+        viewportAfter: readNativeTerminalViewport(viewportTarget),
+      })
+    : (document.activeElement?.getAttribute('data-testid') ?? '')
 }
 
 let activeDesktopControlPointer: {
@@ -1357,6 +1372,16 @@ function endDesktopControlDataTransfer(command: DesktopControlCommand): string {
 function dragDesktopControlDataTransfer(command: DesktopControlCommand): string {
   startDesktopControlDataTransfer(command)
   return endDesktopControlDataTransfer(command)
+}
+
+function hoverDesktopControlDataTransfer(command: DesktopControlCommand): string {
+  const activeDrag = activeDesktopControlDataTransfer
+  if (!activeDrag) throw new Error('No data-transfer drag is active')
+  const target = findDesktopControlElements(command.selector)[0]
+  if (!target) throw new Error(`Unable to find selector "${command.selector}"`)
+  dispatchDesktopControlDragEvent(target, 'dragenter', activeDrag.transfer)
+  dispatchDesktopControlDragEvent(target, 'dragover', activeDrag.transfer)
+  return target.textContent?.trim() ?? ''
 }
 
 function contextMenuDesktopControlElement(selector: string): string {
@@ -2000,6 +2025,27 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
+    case 'getLocalRuntimeTranscript':
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.tasks.transcript', JSON.parse(command.value ?? '{}'))
+      )
+    case 'answerRuntimeUserInputDirectly': {
+      const { taskId, requestUserInputResponse } = JSON.parse(command.value ?? '{}')
+      if (
+        typeof taskId !== 'string' ||
+        !taskId.trim() ||
+        !requestUserInputResponse ||
+        typeof requestUserInputResponse !== 'object' ||
+        Array.isArray(requestUserInputResponse)
+      ) {
+        throw new Error(
+          'answerRuntimeUserInputDirectly requires taskId and requestUserInputResponse'
+        )
+      }
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.tasks.send', { taskId, requestUserInputResponse })
+      )
+    }
     case 'restartLocalCodexAppServerIfIdle':
       return JSON.stringify(
         await requestLocalExecutor('runtime.codex.app_server.restart', { ifIdle: true })
@@ -2429,6 +2475,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return startDesktopControlDataTransfer(command)
     case 'dragDataTransferEnd':
       return endDesktopControlDataTransfer(command)
+    case 'dragDataTransferOver':
+      return hoverDesktopControlDataTransfer(command)
     case 'contextMenu':
       return contextMenuDesktopControlElement(command.selector)
     case 'doubleClick':
@@ -2476,6 +2524,43 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'getConversationSearchHighlightMetrics': {
+      const containers = findDesktopControlElements(command.selector)
+        .map(element => ({ element, ...readConversationSearchContent(element) }))
+        .filter(({ text }) => text.trim() === command.text?.trim())
+      const query =
+        document.querySelector<HTMLInputElement>('[data-testid="conversation-find-input"]')
+          ?.value ?? ''
+      const highlights = CSS.highlights as unknown as Iterable<[string, Iterable<Range>]>
+      const ranges = Array.from(highlights)
+        .filter(([name]) => /^conversation-search-.+-active$/.test(name))
+        .flatMap(([, highlight]) => Array.from(highlight))
+        .flatMap(range => {
+          const container = containers.find(
+            ({ element }) =>
+              element.contains(range.startContainer) && element.contains(range.endContainer)
+          )
+          if (range.collapsed || !container) return []
+          const boundaryOffset = (node: Node, offset: number) => {
+            for (const entry of container.nodes) {
+              if (entry.node === node) return entry.start + offset
+              const sourceRange = document.createRange()
+              sourceRange.selectNodeContents(entry.node)
+              if (sourceRange.comparePoint(node, offset) <= 0) return entry.start
+            }
+            return container.text.length
+          }
+          const start = boundaryOffset(range.startContainer, range.startOffset)
+          const end = boundaryOffset(range.endContainer, range.endOffset)
+          const occurrence = matchConversationText(container.text, query).findIndex(
+            match => match.start === start && match.end === end
+          )
+          if (occurrence < 0) return []
+          const { top, bottom, left, right, width, height } = range.getBoundingClientRect()
+          return [{ text: range.toString(), occurrence, top, bottom, left, right, width, height }]
+        })
+      return JSON.stringify({ query, ranges })
+    }
     case 'startElementMetricsSampling': {
       const durationMs = Number(command.value)
       if (!Number.isFinite(durationMs) || durationMs <= 0) {
@@ -3115,6 +3200,35 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return JSON.stringify(state.marketplaceItems.map(item => String(item.id)))
     }
+    case 'getPluginSyncDiagnostics': {
+      const deviceId = command.value?.trim()
+      if (!deviceId) throw new Error('getPluginSyncDiagnostics requires a device id')
+      const { hasInFlightPluginDeviceSync } =
+        await import('@/features/plugins/pluginDeviceAutoSync')
+      const { getLocalExecutorCloudConnectionStatus } =
+        await import('@/features/cloud-connection/localExecutorCloudConnectionStatus')
+      const backend = await requestLocalExecutor<{ configured: boolean; connected: boolean }>(
+        'executor.backend.status'
+      )
+      return JSON.stringify({
+        deviceId,
+        backend: { configured: backend.configured, connected: backend.connected },
+        rendererConnected: getLocalExecutorCloudConnectionStatus().connected,
+        inFlight: hasInFlightPluginDeviceSync(deviceId),
+        localCatalogReads: ['started', 'completed', 'failed']
+          .flatMap(phase =>
+            performance
+              .getEntriesByName(`wework:plugin-local-catalog:${phase}`, 'mark')
+              .map(entry => ({
+                phase,
+                time: entry.startTime,
+                startedAt:
+                  phase === 'started' ? entry.startTime : (entry as PerformanceMark).detail,
+              }))
+          )
+          .sort((left, right) => left.time - right.time),
+      })
+    }
     case 'getComposerFocusSnapshot': {
       const activeElement = document.activeElement
       const inputs = findDesktopControlElements('[data-testid="chat-message-input"]').map(input => {
@@ -3247,7 +3361,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return pressDesktopControlKey(command.selector, command.key ?? '')
     }
     case 'nativePress': {
-      return pressNativeDesktopControlKey(command.selector, command.key ?? '')
+      return pressNativeDesktopControlKey(
+        command.selector,
+        command.key ?? '',
+        'press',
+        command.target ? { selector: command.target } : undefined
+      )
     }
     case 'nativeKeyDownOnly': {
       return pressNativeDesktopControlKey(command.selector, command.key ?? '', 'down')
@@ -3304,13 +3423,37 @@ async function postDesktopControlStarted(
   command: DesktopControlCommand,
   clientId: string
 ): Promise<void> {
-  const response = await fetch(`${url}/started`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-    body: JSON.stringify({ id: command.id, clientId }),
-  })
+  const startedAt = Date.now()
+  let lastTick = startedAt
+  let maxEventLoopLagMs = 0
+  const probe = window.setInterval(() => {
+    maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
+    lastTick = Date.now()
+  }, 100)
+  let response: Response
+  try {
+    response = await fetch(`${url}/started`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
+      body: JSON.stringify({ id: command.id, clientId }),
+    })
+  } finally {
+    window.clearInterval(probe)
+    maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
+  }
   if (!response.ok) {
     throw new Error(`Desktop E2E control start acknowledgement failed with ${response.status}`)
+  }
+  if (Date.now() - startedAt > 1000) {
+    logRuntimeTaskCreateStage('desktop-control-slow-start-acknowledgement', {
+      commandId: command.id,
+      action: command.action,
+      startedAt,
+      elapsedMs: Date.now() - startedAt,
+      maxEventLoopLagMs,
+      serverReceivedAt: response.headers.get('X-Wework-Control-Received-At'),
+      visibility: document.visibilityState,
+    })
   }
 }
 
@@ -3343,7 +3486,10 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         throw new Error(`Desktop E2E control command failed with ${response.status}`)
       }
       const command = (await response.json()) as DesktopControlCommand
+      const diagnostic = { commandId: command.id, action: command.action, clientId }
+      logRuntimeTaskCreateStage('desktop-control-received', diagnostic)
       await postDesktopControlStarted(url, command, clientId)
+      logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic)
       let result: DesktopControlResult
       try {
         const value = await executeDesktopControlCommand(command)
@@ -3357,14 +3503,20 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         }
       }
       try {
+        logRuntimeTaskCreateStage('desktop-control-executed', { ...diagnostic, ok: result.ok })
         await postDesktopControlResult(url, result)
+        logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic)
       } catch (error) {
-        console.error('[Wework] Desktop E2E result acknowledgement failed:', {
-          commandId: command.id,
-          action: command.action,
-          actionSucceeded: result.ok,
-          error: error instanceof Error ? error.message : String(error),
-        })
+        console.error(
+          '[Wework] Desktop E2E result acknowledgement failed:',
+          JSON.stringify({
+            commandId: command.id,
+            action: command.action,
+            actionSucceeded: result.ok,
+            actionError: result.error,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        )
         throw error
       }
       if (result.ok) {

@@ -7,6 +7,112 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn stand_in_approvals_never_grant_session_or_command_rule_permissions() {
+    let mut message = json!({"id":1,"method":"item/commandExecution/requestApproval","params":{"availableDecisions":["accept","acceptForSession",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["touch"]}}]}});
+    restrict_stand_in_approval(&mut message);
+    for answer in [
+        "allow_session",
+        "allow_execpolicy:2",
+        "apply_network_policy:0",
+    ] {
+        let result = codex_approval_result(
+            &message,
+            &json!({"answers":{"__codex_approval":{"answers":[answer]}}}),
+        )
+        .unwrap();
+        assert_eq!(result["decision"], "decline");
+    }
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({"answers":{"__codex_approval":{"answers":["allow_once"]}}})
+        )
+        .unwrap()["decision"],
+        "accept"
+    );
+}
+
+#[test]
+fn stand_in_confirmation_overrides_server_and_per_tool_auto_approval() {
+    let root = tempfile::tempdir().unwrap();
+    let request = serde_json::from_value(
+        json!({"origin":{"type":"dingtalk_work","initiatedBy":"stand_in","askBeforeAct":true}}),
+    )
+    .unwrap();
+    let overrides = vec![
+        "mcp_servers.business.default_tools_approval_mode=\"approve\"".into(),
+        "mcp_servers.business.tools.send.approval_mode=\"approve\"".into(),
+        "mcp_servers.wework_stand_in.url=\"http://127.0.0.1/stand-in/mcp\"".into(),
+    ];
+    let result =
+        stand_in_mcp_approval_overrides(&request, root.path(), &overrides, &Map::new()).unwrap();
+    assert!(result.contains(&"mcp_servers.business.default_tools_approval_mode=\"writes\"".into()));
+    assert!(result.contains(&"mcp_servers.business.tools.send.approval_mode=\"writes\"".into()));
+    assert!(result
+        .contains(&"mcp_servers.wework_stand_in.default_tools_approval_mode=\"writes\"".into()));
+    let identity = serde_json::from_value(json!({"origin":{"type":"stand_in_identity","initiatedBy":"stand_in_identity","askBeforeAct":true}})).unwrap();
+    let result =
+        stand_in_mcp_approval_overrides(&identity, root.path(), &overrides, &Map::new()).unwrap();
+    assert!(result
+        .contains(&"mcp_servers.wework_stand_in.default_tools_approval_mode=\"approve\"".into()));
+    assert!(result.contains(&"mcp_servers.business.default_tools_approval_mode=\"writes\"".into()));
+}
+
+#[test]
+fn stand_in_confirmation_covers_mcp_servers_in_default_and_named_homes() {
+    let _environment = environment::LaunchEnvironment::new();
+    for (team_id, origin_type) in [
+        (0, "dingtalk_work"),
+        (12, "dingtalk_work"),
+        (0, "connection_work"),
+        (12, "connection_work"),
+    ] {
+        let request: ExecutionRequest = serde_json::from_value(json!({
+            "user_name":"synthetic", "team_namespace":"default", "team_name":"review",
+            "team_id":team_id, "bot":[{"id":31,"shell_type":"Codex"}],
+            "origin":{"type":origin_type,"initiatedBy":"stand_in","askBeforeAct":true,"userId":7,"deviceId":"mac","standInId":"default","workId":"work"}
+        }))
+        .unwrap();
+        let home =
+            crate::agents::instance_home::request_home(&request).unwrap_or_else(wework_codex_home);
+        fs::create_dir_all(&home).unwrap();
+        fs::write(
+            home.join("config.toml"),
+            r#"
+[mcp_servers.home_only]
+command = "node"
+default_tools_approval_mode = "approve"
+[mcp_servers.home_only.tools.send]
+approval_mode = "approve"
+"#,
+        )
+        .unwrap();
+        let config = build_codex_launch_config(&request).unwrap();
+        let current_home =
+            crate::agents::instance_home::request_home(&request).unwrap_or_else(wework_codex_home);
+        assert_eq!(
+            home, current_home,
+            "The launch must use the same isolated Home as its fixture"
+        );
+        assert!(
+            fs::read_to_string(home.join("config.toml"))
+                .unwrap()
+                .contains("home_only"),
+            "The synthetic MCP fixture was overwritten during launch configuration"
+        );
+        assert!(config
+            .config_overrides
+            .contains(&"mcp_servers.home_only.default_tools_approval_mode=\"writes\"".into()));
+        assert!(config
+            .config_overrides
+            .contains(&"mcp_servers.home_only.tools.send.approval_mode=\"writes\"".into()));
+        assert!(!config
+            .config_overrides
+            .contains(&"mcp_servers.home_only.enabled=false".into()));
+    }
+}
+
+#[test]
 fn named_home_rpc_clients_preserve_process_isolation() {
     let _environment = environment::LaunchEnvironment::new();
     let root = PathBuf::from(env::var("WEGENT_WORKBENCH_HOME").unwrap());
@@ -448,8 +554,14 @@ async fn notification_hub_keeps_global_and_thread_scoped_delivery() {
 
     hub.send(message.clone());
 
-    assert_eq!(all.recv().await.unwrap(), message);
-    assert_eq!(thread_a.recv().await.unwrap(), message);
+    let global = all.recv().await.unwrap();
+    let scoped = thread_a.recv().await.unwrap();
+    assert_eq!(*global, message);
+    assert_eq!(*scoped, message);
+    assert!(global.claim_runtime_delivery());
+    assert!(!scoped.claim_runtime_delivery());
+    hub.send(message.clone());
+    assert!(thread_a.recv().await.unwrap().claim_runtime_delivery());
     assert!(thread_b.try_recv().is_err());
 }
 
@@ -881,7 +993,7 @@ async fn mcp_shared_unsupported_elicitation_does_not_wait_for_invisible_input() 
     .unwrap()
     .unwrap()
     .unwrap();
-    assert_eq!(result["action"], "decline");
+    assert_eq!(result.result["action"], "decline");
 }
 
 #[tokio::test]
@@ -905,7 +1017,8 @@ async fn mcp_shared_url_elicitation_routes_consent_without_auto_approval() {
             .await
             .unwrap()
             .unwrap()
-            .unwrap(),
+            .unwrap()
+            .map(|outcome| outcome.result),
         Some(json!({"action": "cancel"}))
     );
 }
@@ -3744,6 +3857,41 @@ fn codex_thread_plan_selects_resume_when_fork_is_absent() {
 }
 
 #[test]
+fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
+    let mut request = ExecutionRequest::default();
+    let plan = codex_thread_plan(
+        None,
+        None,
+        None,
+        Some("existing"),
+        &request,
+        &CodexLaunchConfig::default(),
+    );
+    assert_eq!(config_reload_resume_thread_id(&plan, &request), None);
+    for identity in ["stand_in", "stand_in_identity"] {
+        request.extra.insert(
+            "origin".into(),
+            json!({"initiatedBy":identity,"askBeforeAct":true}),
+        );
+        assert_eq!(
+            config_reload_resume_thread_id(&plan, &request),
+            Some("existing")
+        );
+    }
+    request.extra.get_mut("origin").unwrap()["askBeforeAct"] = json!(false);
+    assert_eq!(config_reload_resume_thread_id(&plan, &request), None);
+    let direct = codex_thread_plan(
+        Some("existing"),
+        None,
+        None,
+        None,
+        &request,
+        &CodexLaunchConfig::default(),
+    );
+    assert_eq!(config_reload_resume_thread_id(&direct, &request), None);
+}
+
+#[test]
 fn codex_thread_plan_starts_new_thread_without_identifiers() {
     let plan = codex_thread_plan(
         None,
@@ -5448,4 +5596,174 @@ async fn named_home_action_protects_only_its_request_scoped_process() {
         })
         .await;
     assert_eq!(scoped.restart_if_idle().await, Ok(()));
+}
+
+#[test]
+fn stand_in_mcp_confirmation_waits_for_one_time_input() {
+    let mut message = json!({"id":75,"method":"item/tool/requestUserInput","params":{
+        "questions":[{"id":"mcp_tool_call_approval_reply","options":[
+            {"label":"Allow"},{"label":"Allow for this session"},{"label":"Cancel"}
+        ]}]
+    }});
+    assert!(!codex_notification_requires_user_input(&message));
+    restrict_stand_in_approval(&mut message);
+    assert!(codex_notification_requires_user_input(&message));
+    assert_eq!(
+        message["params"]["questions"][0]["options"],
+        json!([{"label":"Allow"},{"label":"Cancel"}])
+    );
+    for answer in ["Allow", "Allow for this session", "Cancel"] {
+        let mut response = json!({"answers":{"mcp_tool_call_approval_reply":{"answers":[answer]}}});
+        restrict_stand_in_mcp_answer(&mut response, "Cancel");
+        assert_eq!(
+            response["answers"]["mcp_tool_call_approval_reply"]["answers"],
+            json!([if answer == "Allow" { "Allow" } else { "Cancel" }])
+        );
+    }
+}
+
+#[test]
+fn stand_in_mcp_elicitation_confirmation_removes_persistent_approval() {
+    let mut message = json!({"method":"mcpServer/elicitation/request","params":{
+        "mode":"form","serverName":"wework_stand_in","message":"Allow reply?",
+        "requestedSchema":{"type":"object","properties":{}},
+        "_meta":{"codex_approval_kind":"mcp_tool_call","persist":["session","always"]}
+    }});
+    restrict_stand_in_approval(&mut message);
+    assert!(codex_notification_requires_user_input(&message));
+    let payload = mcp_server_elicitation_request_user_input_params(&message["params"]).unwrap();
+    assert_eq!(
+        payload["questions"][0]["options"].as_array().unwrap().len(),
+        2
+    );
+}
+
+#[test]
+fn source_content_safety_applies_to_each_tool_enabled_thread_entry() {
+    for origin in [
+        json!({"type":"dingtalk_work"}),
+        json!({"type":"issue_dispatch"}),
+        json!({"type":"stand_in_identity"}),
+        Value::Null,
+    ] {
+        let mut request = ExecutionRequest::default();
+        request.extra.insert("origin".into(), origin);
+        let launch = CodexLaunchConfig::default();
+        for params in [
+            thread_start_params(&request, &launch),
+            thread_resume_params("thread-1", &request, &launch),
+            thread_fork_params("thread-1", None, &request, &launch),
+        ] {
+            let instructions = params["developerInstructions"].as_str().unwrap();
+            assert!(instructions.contains(external_work::SOURCE_CONTENT_INSTRUCTIONS));
+        }
+    }
+}
+
+#[test]
+fn stand_in_launch_requests_native_confirmation_without_a_chat_round_trip() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "origin".into(),
+        json!({"initiatedBy":"stand_in","askBeforeAct":true}),
+    );
+    let launch = CodexLaunchConfig::default();
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("thread-1", &request, &launch),
+        thread_fork_params("thread-1", None, &request, &launch),
+    ] {
+        let instructions = params["developerInstructions"].as_str().unwrap();
+        assert!(instructions.contains("Do not ask the user to type yes"));
+        assert!(instructions.contains("A chat reply never grants execution permission"));
+    }
+    assert_eq!(
+        codex_runtime_permission_profile(&request),
+        CODEX_READ_ONLY_PERMISSION_PROFILE
+    );
+    assert!(!codex_auto_approve_mcp_tool_calls(&request));
+}
+
+#[test]
+fn stand_in_mcp_answers_decline_malformed_entries_without_panicking() {
+    for malformed in [
+        Value::Null,
+        json!(true),
+        json!(42),
+        json!("Allow"),
+        json!([]),
+        json!({"answers":"Allow"}),
+        json!({"answers":["Allow", "Cancel"]}),
+    ] {
+        let mut response = json!({"answers":{"approval":malformed}});
+        restrict_stand_in_mcp_answer(&mut response, "Cancel");
+        assert_eq!(
+            response,
+            json!({"answers":{"approval":{"answers":["Cancel"]}}})
+        );
+    }
+}
+
+#[tokio::test]
+async fn stand_in_elicitation_preserves_deadline_and_rejects_persistent_answers() {
+    let mut message = json!({"id": 71, "method":"mcpServer/elicitation/request","params":{
+        "mode":"form","serverName":"wework_stand_in","message":"Allow reply?",
+        "requestedSchema":{"type":"object","properties":{}},
+        "_meta":{"codex_approval_kind":"mcp_tool_call","persist":["session","always"]}
+    }});
+    elicitation::prepare(&mut message);
+    let deadline = message["params"]["expiresAtUnixMs"].clone();
+    restrict_stand_in_approval(&mut message);
+    assert_eq!(message["params"]["expiresAtUnixMs"], deadline);
+    for (answer, action) in [("Allow", "accept"), ("Allow for this session", "decline")] {
+        let (sender, mut receiver) = mpsc::channel(1);
+        sender
+            .send(json!({"answers":{"__mcp_approval":{"answers":[answer]}}}))
+            .await
+            .unwrap();
+        let result = receive_mcp_server_elicitation_response(&message, Some(&mut receiver), false)
+            .await
+            .unwrap();
+        assert_eq!(result.result["action"], action);
+        assert!(result.result["_meta"]["persist"].is_null());
+    }
+    message["params"]["expiresAtUnixMs"] = json!(0);
+    let (_sender, mut receiver) = mpsc::channel(1);
+    let result = receive_mcp_server_elicitation_response(&message, Some(&mut receiver), false)
+        .await
+        .unwrap();
+    assert_eq!(result.result["action"], "cancel");
+    assert_eq!(result.status, "expired");
+}
+
+#[tokio::test]
+async fn expired_native_approval_emits_expiry_without_waiting_for_an_answer() {
+    let client = CodexAppServerClient::new("unused-expired-approval");
+    let (_answer_tx, answer_rx) = mpsc::channel(1);
+    let router = InteractionAnswerRouter::new(answer_rx);
+    let (notifications, mut received) = mpsc::unbounded_channel();
+    let (errors, _error_rx) = mpsc::unbounded_channel();
+    let request = json!({"id":91,"method":"item/commandExecution/requestApproval","params":{
+        "threadId":"thread", "turnId":"turn", "itemId":"command", "expiresAtUnixMs":0
+    }});
+    spawn_shared_approval_response(
+        &client,
+        &request,
+        Some(router),
+        errors,
+        Some(notifications.downgrade()),
+    )
+    .unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(5), received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(event["method"], "wegent/approval/settled");
+    assert_eq!(event["params"]["interactionStatus"], "expired");
+    assert_eq!(event["params"]["expiresAtUnixMs"], 0);
+    assert_eq!(event["params"]["approvalMethod"], request["method"]);
+    assert_eq!(
+        codex_approval_result(&request, &json!({})).unwrap()["decision"],
+        "decline"
+    );
 }

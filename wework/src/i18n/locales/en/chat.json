@@ -3,7 +3,9 @@
     "label": "Find in chat",
     "placeholder": "Search chat…",
     "loading": "Searching history…",
-    "history_failed": "History unavailable · Retry"
+    "request_failed": "Search failed · Retry",
+    "load_failed": "History unavailable · Retry",
+    "locate_failed": "Result unavailable · Search again"
   },
   "history": {
     "load_failed": "Could not load conversation history",

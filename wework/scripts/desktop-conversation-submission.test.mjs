@@ -157,6 +157,7 @@ test('starts the message-order UI budget after its model response has finished',
       scenarioWaiters: new Map(),
       fatalErrorPromise: new Promise(() => {}),
       async command(action, _selector, options = {}) {
+        if (action === 'fill') return options.value
         if (action === 'clickWhenEnabled') {
           setTimeout(() => {
             this.recordScenarioRequest('message_order_follow_up', { followUpNumber: 22 })
@@ -186,7 +187,9 @@ test('starts the message-order UI budget after its model response has finished',
 
 test('rejects a model response recorded for a different message-order turn', async () => {
   const control = {
-    command: vi.fn(async () => ''),
+    command: vi.fn(async (action, _selector, options = {}) =>
+      action === 'fill' ? options.value : ''
+    ),
     awaitScenarioRequestCount: vi.fn(async () => ({ followUpNumber: 21 })),
   }
   await assert.rejects(sendOrderFollowUp(control, 22, 10_000, 30_000), /different follow-up turn/)

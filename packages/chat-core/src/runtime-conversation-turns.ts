@@ -1,5 +1,6 @@
 export {
   mergeRuntimeConversationTurns,
+  hydrateRuntimeConversationTurns,
   reduceRuntimeConversationTurns,
   projectRuntimeConversationTurns,
   appendRuntimeConversationGuidance,

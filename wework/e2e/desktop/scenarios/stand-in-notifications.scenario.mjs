@@ -1,4 +1,7 @@
 import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
+import { verifyLocalStandInStatuses } from '../modules/stand-in-status-flows.mjs'
+import { createStandInFailureRegression } from '../modules/stand-in-failure-notification.mjs'
+import { createSubscriptionConfigRegression } from '../modules/stand-in-subscription-config.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -29,12 +32,27 @@ export async function openStandInNotifications(control) {
   await control.command('click', category)
 }
 
-export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, captureScreenshot }) {
+export function createDesktopScenario({
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  captureScreenshot,
+  workspacePath,
+}) {
+  const failureRegression = createStandInFailureRegression()
+  const subscriptionRegression = createSubscriptionConfigRegression()
   return {
+    prepareApp: subscriptionRegression.prepareApp,
+    attachServer: subscriptionRegression.attachServer,
+    cleanup: subscriptionRegression.cleanup,
     async handleHttp(request, response, url) {
-      if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
+      if (
+        request.method !== 'POST' ||
+        !['/responses', '/v1/responses', '/backend-api/codex/responses'].includes(url.pathname)
+      )
         return false
       const body = await readRequestBody(request)
+      subscriptionRegression.acceptsModelRequest(request, url, body)
+      if (failureRegression.handleHttp(body, response)) return true
       const id = `notification-${Date.now()}`
       const result = JSON.stringify(body).includes(FOLLOW_UP)
         ? '已按补充要求完成检查。'
@@ -230,9 +248,20 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
         text: issue.id,
       })
+      await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`)
       assert.equal(
         await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
         '在通知内继续处理分身任务'
+      )
+      await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
+      await verifyLocalStandInStatuses(control, project.id, uiTimeoutMs, modelResponseTimeoutMs)
+      await failureRegression.verify(control, project.id, uiTimeoutMs, modelResponseTimeoutMs)
+      await subscriptionRegression.verify(
+        control,
+        project.id,
+        workspacePath,
+        uiTimeoutMs,
+        modelResponseTimeoutMs
       )
     },
   }

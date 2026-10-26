@@ -1551,7 +1551,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
         onReady={handleReady}
         host={{
           renderStandInPage: ({ projects, onClose }) =>
-            personalSettingsTarget ? (
+            personalSettingsTarget && personalSettingsTarget.roleId !== '@primary' ? (
               <StandInSettingsPage
                 api={platformApi}
                 projects={projects}
@@ -1565,12 +1565,15 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               />
             ) : (
               <StandInOverviewPage
+                active={props.workspaceActive ?? true}
+                initialPrimaryProfile={personalSettingsTarget?.roleId === '@primary'}
+                initialDeviceId={personalSettingsTarget?.deviceId}
                 api={platformApi}
                 projects={projects}
                 services={props.services}
                 devices={props.devices ?? []}
                 userId={Number(props.user.id)}
-                onCancel={onClose}
+                onCancel={personalSettingsTarget ? returnFromPersonalSettings : onClose}
                 onOpenTask={props.onOpenRuntimeTask}
               />
             ),
@@ -1578,14 +1581,16 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             const enabled = standInProjects.has(
               `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
             )
+            if (!enabled) return null
+
             return (
               <span
                 className="collaboration-project-sidebar-badge flex shrink-0 text-text-secondary"
-                title={t(enabled ? 'standIn.project_enabled' : 'standIn.auto_off')}
-                aria-label={t(enabled ? 'standIn.project_enabled' : 'standIn.auto_off')}
-                data-testid={enabled ? `stand-in-project-${project.id}` : undefined}
+                title={t('standIn.project_enabled')}
+                aria-label={t('standIn.project_enabled')}
+                data-testid={`stand-in-project-${project.id}`}
               >
-                <StandInIcon enabled={enabled} className="h-6 w-6" />
+                <StandInIcon enabled className="h-4 w-4" />
               </span>
             )
           },
@@ -1597,15 +1602,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             authenticated: cloudConnection.isConnected,
             requestLogin: () => setCloudLoginOpen(true),
           },
-          renderIssueComposer: composerProps => (
-            <WeworkIssueHomeComposer
-              {...composerProps}
-              api={platformApi}
-              userId={Number(props.user.id)}
-              services={props.services}
-              devices={props.devices ?? []}
-            />
-          ),
+          renderIssueComposer: composerProps => <WeworkIssueHomeComposer {...composerProps} />,
           loadProjectCollaborationGroupGenerationModels: async () => {
             const response = await props.services.modelApi.listModels()
             const models = response.data.filter(

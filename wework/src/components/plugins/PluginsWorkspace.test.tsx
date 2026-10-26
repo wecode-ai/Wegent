@@ -9,7 +9,10 @@ import {
 } from '@/api/local/codexPlugins'
 import * as codexPlugins from '@/api/local/codexPlugins'
 import { clearLocalConnectorAuthHealthCache } from '@/api/local/localConnectorAuth'
-import { clearPluginDeviceAutoSyncAttempts } from '@/features/plugins/pluginDeviceAutoSync'
+import {
+  clearPluginDeviceAutoSyncAttempts,
+  hasInFlightPluginDeviceSync,
+} from '@/features/plugins/pluginDeviceAutoSync'
 import {
   resetLocalExecutorCloudConnectionStatus,
   setLocalExecutorCloudConnectionStatus,
@@ -26,6 +29,7 @@ import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
 import * as refreshReconciliation from '@/features/plugins/pluginRefreshReconciliation'
 import { CodexAuthorizationTimeoutError } from '@/features/plugins/codexConnectorAuthorization'
+import { PLUGIN_AUTO_UPDATE_COMPLETED_EVENT } from '@/features/plugins/PluginAutoUpdateCoordinator'
 
 const telemetryMocks = vi.hoisted(() => ({
   track: vi.fn(),
@@ -3430,6 +3434,20 @@ describe('PluginsWorkspace', () => {
       await userEvent.click(await screen.findByTestId('plugin-connection-manage-connector:github'))
   }
 
+  test('keeps an installed GitHub plugin installed when inventory refreshes during login consent', async () => {
+    await openGithubConnection(async () => ({ status: 'need_login' }))
+    expect(await screen.findByTestId('plugin-github-cli-auth-dialog')).toBeInTheDocument()
+    await act(async () => {
+      window.dispatchEvent(new Event(PLUGIN_AUTO_UPDATE_COMPLETED_EVENT))
+    })
+    await userEvent.click(screen.getByTestId('connector-auth-cancel'))
+    await waitFor(() => {
+      const manage = screen.getByTestId('plugin-connection-manage-connector:github')
+      expect(manage).toHaveTextContent('登录')
+      expect(manage).toBeEnabled()
+    })
+  })
+
   test('uses the shared logout row for an already connected GitHub CLI account', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     const health = vi.fn().mockResolvedValue({ status: 'ok' })
@@ -4807,7 +4825,6 @@ describe('PluginsWorkspace', () => {
       .spyOn(codexPlugins, 'createLocalCodexPluginApi')
       .mockReturnValue(currentApi)
     let view: ReturnType<typeof render> | undefined
-
     try {
       view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken={cloudToken} />)
 
@@ -4826,9 +4843,17 @@ describe('PluginsWorkspace', () => {
       })
 
       await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
+      expect(hasInFlightPluginDeviceSync(deviceId)).toBe(true)
       expect(readCurrentCatalog).not.toHaveBeenCalled()
 
-      releaseSyncGate?.()
+      // Disconnecting clears the UI's pending hint, but the package request is
+      // still running and must retain priority over local catalog reconciliation.
+      act(() => {
+        setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
+      })
+      expect(readCurrentCatalog).not.toHaveBeenCalled()
+
+      await act(async () => releaseSyncGate?.())
       await waitFor(() =>
         expect(readCurrentCatalog).toHaveBeenCalledWith({
           mergeAllMarketplaces: true,
@@ -4836,12 +4861,14 @@ describe('PluginsWorkspace', () => {
           refresh: true,
         })
       )
+      expect(hasInFlightPluginDeviceSync(deviceId)).toBe(false)
     } finally {
       await act(async () => {
         view?.unmount()
         resolveInstalled?.({ marketplaces: [] })
         releaseSyncGate?.()
       })
+      readCurrentCatalog.mockRestore()
       createApi.mockRestore()
     }
   })

@@ -2,11 +2,15 @@ import {
   processingBlocks,
   assistantTextContent,
   preserveProcessingBlockTiming,
+  completeRuntimeTurnTiming,
 } from "./runtime-turn-helpers";
 import { preserveRequestUserInputResponse } from "./runtime-user-input";
 import { commandExecutionPayload } from "./command-execution";
 
-import { getLatestThinkingContent } from "./workbench-message-reducer";
+import {
+  getLatestThinkingContent,
+  nestWorkbenchProcessingBlocks,
+} from "./workbench-message-reducer";
 
 import type {
   ProcessingBlock,
@@ -18,6 +22,14 @@ export function mergeRuntimeConversationTurn(
   local: RuntimeConversationTurn,
   snapshot: RuntimeConversationTurn,
 ): RuntimeConversationTurn {
+  // A user-only read can finish after turn/start. It cannot retract the native
+  // identity or lifecycle already observed by the live stream.
+  if (snapshot.id === null && local.id !== null) {
+    return {
+      ...local,
+      items: mergeRuntimeConversationItems(snapshot.items, local.items),
+    };
+  }
   const preserveLocalTerminal =
     isTerminalTurnStatus(local.status) &&
     isUnsettledTurnStatus(snapshot.status);
@@ -38,6 +50,19 @@ export function mergeRuntimeConversationTurn(
   const preserveStreamingThinking =
     snapshot.status === "streaming" &&
     assistantTextContent(local.items) === assistantTextContent(snapshot.items);
+  const timing = isTerminalTurnStatus(local.status)
+    ? {
+        startedAt: local.startedAt ?? snapshot.startedAt,
+        durationMs: local.durationMs ?? snapshot.durationMs,
+        completedAt: local.completedAt ?? snapshot.completedAt,
+      }
+    : isTerminalTurnStatus(snapshot.status) && local.startedAt !== undefined
+      ? completeRuntimeTurnTiming(local, snapshot)
+      : {
+          startedAt: local.startedAt ?? snapshot.startedAt,
+          durationMs: snapshot.durationMs,
+          completedAt: snapshot.completedAt,
+        };
   return {
     ...local,
     ...snapshot,
@@ -45,7 +70,12 @@ export function mergeRuntimeConversationTurn(
       snapshot.clientUserMessageId ?? local.clientUserMessageId,
     runtimeMessageIndex: earliestRuntimeMessageIndex(local, snapshot),
     itemMerge: undefined,
-    items,
+    items: orderRuntimeConversationItems(items),
+    position:
+      Math.min(local.position ?? Infinity, snapshot.position ?? Infinity) ===
+      Infinity
+        ? undefined
+        : Math.min(local.position ?? Infinity, snapshot.position ?? Infinity),
     fileChanges:
       local.fileChanges &&
       snapshot.fileChanges &&
@@ -61,20 +91,7 @@ export function mergeRuntimeConversationTurn(
       preserveLocalTerminal || preserveLocalFailure
         ? local.status
         : snapshot.status,
-    // Preserve higher-precision live timestamps when reading native history.
-    startedAt: local.startedAt ?? snapshot.startedAt,
-    durationMs:
-      preserveLocalTerminal || preserveLocalFailure
-        ? local.durationMs
-        : isTerminalTurnStatus(local.status) && local.status === snapshot.status
-          ? (local.durationMs ?? snapshot.durationMs)
-          : snapshot.durationMs,
-    completedAt:
-      preserveLocalTerminal || preserveLocalFailure
-        ? local.completedAt
-        : isTerminalTurnStatus(local.status) && local.status === snapshot.status
-          ? (local.completedAt ?? snapshot.completedAt)
-          : snapshot.completedAt,
+    ...timing,
     error:
       preserveLocalTerminal || preserveLocalFailure
         ? local.error
@@ -153,6 +170,7 @@ export function earliestRuntimeMessageIndex(
 
 export function orderRuntimeConversationTurns(
   turns: RuntimeConversationTurn[],
+  sources: RuntimeConversationTurn[][] = [turns],
 ): RuntimeConversationTurn[] {
   const pendingOptimisticTurns = turns.filter((turn) => turn.id === null);
   const indexedTurns = turns
@@ -163,7 +181,12 @@ export function orderRuntimeConversationTurns(
       timestamp: runtimeConversationTurnTimestamp(turn),
     }));
   let orderedTurns: RuntimeConversationTurn[];
-  if (
+  if (indexedTurns.some(({ turn }) => turn.position !== undefined)) {
+    orderedTurns = orderNativePositionEntries(
+      indexedTurns.map(({ turn }) => turn),
+      observedNativePositionAnchors(turns, sources),
+    );
+  } else if (
     indexedTurns.every(({ turn }) => turn.runtimeMessageIndex !== undefined)
   ) {
     orderedTurns = indexedTurns
@@ -210,16 +233,38 @@ export function mergeRuntimeConversationItems(
   snapshotItems: RuntimeConversationItem[],
   preserveLocalTerminal = false,
 ): RuntimeConversationItem[] {
-  const reconciledLocalItems = removeEquivalentAssistantTextItems(
-    localItems,
-    snapshotItems,
+  const positionedIds = new Set(
+    snapshotItems
+      .filter((item) => item.position !== undefined)
+      .map((item) => item.id),
   );
-  const localById = new Map(
-    reconciledLocalItems.map((item) => [item.id, item]),
+  const snapshotUserIds = new Map(
+    snapshotItems.flatMap((item) =>
+      item.type === "user_message" ? [[item.message.id, item.id] as const] : [],
+    ),
   );
+  const localUsers = new Map(
+    localItems.flatMap((item) =>
+      item.type === "user_message" ? [[item.message.id, item] as const] : [],
+    ),
+  );
+  const reconciledLocalItems =
+    positionedIds.size > 0
+      ? localItems
+      : removeEquivalentAssistantTextItems(localItems, snapshotItems);
+  const canonicalLocalItems = reconciledLocalItems.filter(
+    (item) =>
+      item.type !== "user_message" ||
+      !snapshotUserIds.has(item.message.id) ||
+      snapshotUserIds.get(item.message.id) === item.id,
+  );
+  const localById = new Map(canonicalLocalItems.map((item) => [item.id, item]));
   const mergedSnapshotItems = snapshotItems.map((item) =>
     mergeRuntimeConversationItem(
-      localById.get(item.id),
+      localById.get(item.id) ??
+        (item.type === "user_message"
+          ? localUsers.get(item.message.id)
+          : undefined),
       item,
       preserveLocalTerminal,
     ),
@@ -227,10 +272,92 @@ export function mergeRuntimeConversationItems(
   const snapshotById = new Map(
     mergedSnapshotItems.map((item) => [item.id, item]),
   );
-  const mergedLocalItems = reconciledLocalItems.map(
+  const mergedLocalItems = canonicalLocalItems.map(
     (item) => snapshotById.get(item.id) ?? item,
   );
-  return insertMissingSnapshotItems(mergedLocalItems, mergedSnapshotItems);
+  const items = insertMissingSnapshotItems(
+    mergedLocalItems,
+    mergedSnapshotItems,
+  );
+  const anchors = observedNativePositionAnchors(items, [
+    canonicalLocalItems,
+    snapshotItems,
+  ]);
+  return orderRuntimeConversationItems(items, anchors);
+}
+
+function observedNativePositionAnchors<
+  T extends { id: string | null; position?: number },
+>(entries: T[], sources: T[][]): Map<string, number> {
+  const positions = new Map(
+    entries.flatMap((entry) =>
+      entry.id === null || entry.position === undefined
+        ? []
+        : [[entry.id, entry.position] as const],
+    ),
+  );
+  const anchors = new Map<string, number>();
+  // Only original source sequences witness adjacency, never the merged union.
+  for (const source of sources) {
+    let nextPosition = Infinity;
+    for (let index = source.length - 1; index >= 0; index--) {
+      const id = source[index].id;
+      if (id === null) continue;
+      const position = positions.get(id);
+      if (position !== undefined) nextPosition = position;
+      else if (nextPosition !== Infinity || !anchors.has(id))
+        anchors.set(id, nextPosition);
+    }
+  }
+  return anchors;
+}
+
+/** Persisted positions are authoritative; items still in flight remain provisional. */
+export function orderRuntimeConversationItems(
+  items: RuntimeConversationItem[],
+  observedAnchors?: ReadonlyMap<string, number>,
+): RuntimeConversationItem[] {
+  if (!items.some((item) => item.position !== undefined)) return items;
+  const anchors = new Map(
+    observedAnchors ?? observedNativePositionAnchors(items, [items]),
+  );
+  for (const item of items) {
+    if (
+      item.type === "user_message" &&
+      !item.message.runtimeGuidance &&
+      item.position === undefined
+    )
+      anchors.set(item.id, -Infinity);
+  }
+  return orderNativePositionEntries(items, anchors);
+}
+
+function orderNativePositionEntries<
+  T extends { id: string | null; position?: number },
+>(entries: T[], anchors: ReadonlyMap<string, number>): T[] {
+  let nextPosition = Infinity;
+  const ordered = entries.map((entry, index) => ({
+    entry,
+    index,
+    anchor: Infinity,
+  }));
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const item = ordered[index];
+    if (item.entry.position !== undefined) nextPosition = item.entry.position;
+    item.anchor =
+      item.entry.position ??
+      (item.entry.id === null ? undefined : anchors.get(item.entry.id)) ??
+      nextPosition;
+  }
+  return ordered
+    .sort(
+      (left, right) =>
+        left.anchor - right.anchor ||
+        Number(left.entry.position !== undefined) -
+          Number(right.entry.position !== undefined) ||
+        left.index - right.index,
+    )
+    .map(({ entry }) => entry);
 }
 
 export function removeEquivalentAssistantTextItems(
@@ -467,14 +594,43 @@ export function assistantTextRepresentationContent(
 
 export function mergeRuntimeConversationItem(
   local: RuntimeConversationItem | undefined,
+  snapshot: Extract<RuntimeConversationItem, { type: "block" }>,
+  preserveLocalTerminal: boolean,
+): Extract<RuntimeConversationItem, { type: "block" }>;
+export function mergeRuntimeConversationItem(
+  local: RuntimeConversationItem | undefined,
+  snapshot: RuntimeConversationItem,
+  preserveLocalTerminal: boolean,
+): RuntimeConversationItem;
+export function mergeRuntimeConversationItem(
+  local: RuntimeConversationItem | undefined,
   snapshot: RuntimeConversationItem,
   preserveLocalTerminal: boolean,
 ): RuntimeConversationItem {
+  snapshot = { ...snapshot, position: snapshot.position ?? local?.position };
+  if (local?.type === "user_message" && snapshot.type === "user_message") {
+    return { ...snapshot, message: { ...local.message, ...snapshot.message } };
+  }
   if (local?.type !== "block" || snapshot.type !== "block") return snapshot;
-  const snapshotBlock = preserveToolOutput(
+  let snapshotBlock = preserveToolOutput(
     local.block,
     preserveRequestUserInputResponse(local.block, snapshot.block),
   );
+
+  if (
+    local.block.type === "subagent" &&
+    snapshotBlock.type === "subagent" &&
+    !(
+      local.block.agentThreadId &&
+      snapshotBlock.agentThreadId &&
+      local.block.agentThreadId !== snapshotBlock.agentThreadId
+    )
+  ) {
+    snapshotBlock = nestWorkbenchProcessingBlocks([
+      local.block,
+      snapshotBlock,
+    ])[0];
+  }
 
   if (
     preserveLocalTerminal &&

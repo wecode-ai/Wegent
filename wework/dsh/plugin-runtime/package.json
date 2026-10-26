@@ -10,12 +10,22 @@
       "types": "./index.d.ts",
       "default": "./index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./connections": {
+      "types": "./connections.d.ts",
+      "default": "./connections.js"
+    },
+    "./connection-dependencies": "./connection-dependencies.js",
+    "./connection-tools": "./connection-tools.js"
   },
   "files": [
     "cordis.patch.yml",
     "index.d.ts",
-    "index.js"
+    "index.js",
+    "connections.js",
+    "connections.d.ts",
+    "connection-dependencies.js",
+    "connection-tools.js"
   ],
   "dsh": {
     "bundle": {
@@ -24,5 +34,8 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.4"
+  },
+  "dependencies": {
+    "semver": "7.8.5"
   }
 }

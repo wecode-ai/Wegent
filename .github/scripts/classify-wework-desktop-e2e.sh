@@ -3,8 +3,10 @@
 set -euo pipefail
 
 core_segments=(
+  voice-input
   remote-device-onboarding
   workspace-tabs
+  notification-tab-navigation
   collaboration-shared-core
   collaboration-issue-task-discovery
   collaboration-app-queue-identity
@@ -17,12 +19,21 @@ core_segments=(
   collaboration-group-onboarding
   collaboration-local-agent-dispatch
   stand-in
+  stand-in-identities
+  stand-in-connections
+  stand-in-mcp
+  stand-in-cli
+  stand-in-plugin-bridge
+  stand-in-action-confirmation
+  stand-in-list-confirmation
+  stand-in-profile
   stand-in-workspace
   stand-in-controls
   stand-in-project-enable
   stand-in-cloud
   stand-in-notifications
 
+  stand-in-assignment-notifications
   stand-in-personal-task
   stand-in-permissions
   collaboration-remote-agent-dispatch
@@ -105,6 +116,7 @@ core_segments=(
   streaming-timers
   streaming-scroll
   streaming-message-order
+  streaming-conversation-switching
   streaming-subagents
   background-terminals
   collaboration-issue-badges
@@ -201,14 +213,14 @@ cloud_shards=(
 # workspace-tabs uses its successful 116-second baseline from run 39920301020.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,task-status-sync,goal-state-sync,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login
+  core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,streaming-conversation-switching,task-status-sync,goal-state-sync,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login,notification-tab-navigation
   project-assignment-notification,resilience,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle
-  window-lifecycle,model-routing,collaboration-app-queue-identity,stand-in,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,permission-modes,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
-  collaboration-board-sorting,component-update,environment-panel-scroll,running-conversation-history,workspace-tabs,collaboration-board-move-recovery,collaboration-home-preload,task-board-bulk-actions,core-dsh-plugin-management,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy
+  window-lifecycle,model-routing,collaboration-app-queue-identity,stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,permission-modes,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
+  collaboration-board-sorting,component-update,environment-panel-scroll,running-conversation-history,workspace-tabs,collaboration-board-move-recovery,collaboration-home-preload,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy
   claude-runtime,device-artifact-declaration,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery
   harness-app-lifecycle,task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference
-  conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome
+  conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome
   split-workbench
   collaboration-shared-core
 )
@@ -364,6 +376,7 @@ select_rendering_checkpoints() {
   select_target "core:streaming-timers"
   select_target "core:streaming-scroll"
   select_target "core:streaming-message-order"
+  select_target "core:streaming-conversation-switching"
   select_target "core:streaming-subagents"
 }
 
@@ -379,10 +392,19 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:project-assignment-notification"
   select_target "core:collaboration-local-agent-dispatch"
   select_target "core:stand-in"
+  select_target "core:stand-in-identities"
+  select_target "core:stand-in-connections"
+  select_target "core:stand-in-mcp"
+  select_target "core:stand-in-cli"
+  select_target "core:stand-in-plugin-bridge"
+  select_target "core:stand-in-action-confirmation"
+  select_target "core:stand-in-list-confirmation"
+  select_target "core:stand-in-profile"
   select_target "core:stand-in-workspace"
   select_target "core:stand-in-controls"
   select_target "core:stand-in-project-enable"
   select_target "core:stand-in-cloud"
+  select_target "core:stand-in-assignment-notifications"
   select_target "core:stand-in-personal-task"
   select_target "core:stand-in-permissions"
   select_target "core:collaboration-remote-agent-dispatch"
@@ -423,7 +445,8 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/scenarios/streaming-text.scenario.mjs | \
-      wework/e2e/desktop/modules/streaming-text-*)
+      wework/e2e/desktop/modules/streaming-text-* | \
+      wework/e2e/desktop/modules/streaming-conversation-switching.mjs)
       select_rendering_checkpoints
       return
       ;;
@@ -458,6 +481,17 @@ classify_wework_path() {
       wework/e2e/desktop/scenarios/system-proxy.scenario.mjs)
       select_target "core:system-proxy"
       select_target "core:system-pac"
+      return
+      ;;
+    wework/e2e/desktop/modules/terminal-history-search.mjs | \
+      wework/e2e/desktop/modules/cached-history-search.mjs | \
+      wework/e2e/desktop/modules/conversation-search-contract.mjs)
+      select_target "core:running-conversation-history"
+      select_target "cloud:conversation-state"
+      return
+      ;;
+    wework/e2e/desktop/modules/cloud-history-search.mjs)
+      select_target "cloud:conversation-state"
       return
       ;;
     # Cloud device restart and upgrade actions require the managed Nevis fixture.
@@ -587,6 +621,12 @@ classify_wework_path() {
         select_target "core:temporary-chat"
         select_target "core:background-terminals"
       fi
+      return
+      ;;
+
+    wework/dsh/voice-input/* | \
+      wework/e2e/desktop/scenarios/voice-input.scenario.mjs)
+      select_target "core:voice-input"
       return
       ;;
 
@@ -723,17 +763,25 @@ classify_wework_path() {
       ;;
 
     wework/e2e/desktop/scenarios/goal-state-sync.scenario.mjs | \
+    wework/e2e/desktop/scenarios/goal-stream-order.scenario.mjs | \
       wework/e2e/desktop/scenarios/goal-output-identity.scenario.mjs | \
       wework/src/features/workbench/runtimeTaskLifecycle/goalSynchronization*)
       select_target "core:goal-state-sync"
       return
       ;;
 
+    wework/e2e/desktop/scenarios/notification-tab-navigation.scenario.mjs)
+      select_target "core:notification-tab-navigation"
+      return
+      ;;
+
     wework/src/features/notifications/* | \
       wework/e2e/desktop/scenarios/stand-in-notifications.scenario.mjs)
+      select_target "core:stand-in-assignment-notifications"
       select_target "core:stand-in-notifications"
       select_target "core:stand-in-cloud"
       select_target "core:project-assignment-notification"
+      select_target "core:notification-tab-navigation"
       return
       ;;
 
@@ -743,6 +791,7 @@ classify_wework_path() {
       wework/src/features/workbench/runtimeTaskReminders*)
       select_target "core:goal-lifecycle"
       if [[ "$path" == wework/src/features/workbench/runtimeTaskReminders* ]]; then
+        select_target "core:stand-in-assignment-notifications"
         select_target "core:stand-in-notifications"
         select_target "core:stand-in-cloud"
       fi
@@ -813,20 +862,47 @@ classify_wework_path() {
       select_target "core:collaboration-group-onboarding"
       return
       ;;
+    wework/e2e/desktop/scenarios/stand-in-identities.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-action-confirmation.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-list-confirmation.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-profile.scenario.mjs|wework/src/features/todo/StandInConnectionSettings*|wework/src/features/todo/StandInDeviceSelect*|wework/src/features/todo/StandInMemory*|wework/src/features/todo/StandInConversation*|wework/src/features/todo/StandInWork*|wework/src/features/todo/StandInPrimaryProfile*|wework/src/features/todo/StandInProposal*|wework/src/features/todo/StandInDingTalkConnections*|wework/src/features/todo/StandInSourceConnections*|wework/e2e/desktop/scenarios/stand-in-connections.scenario.mjs|wework/dsh/connection-*/*|wework/dsh/plugin-runtime/connections*|wework/dsh/plugin-runtime/connection-dependencies*|wework/dsh/plugin-runtime/connection-tools*|executor/src/runtime_work/connection_cli.rs|executor/src/runtime_work/connection_dependencies.rs|wework/e2e/desktop/scenarios/stand-in-cli.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-plugin-bridge.scenario.mjs|wework/e2e/desktop/fixtures/connection-source/*|executor/src/agents/codex/connection_mcp.rs|executor/src/runtime_work/connection_mcp*|wework/e2e/desktop/scenarios/stand-in-mcp.scenario.mjs|executor/src/runtime_work/connection_host.rs|executor/src/runtime_work/handler/connections.rs|wework/src/features/todo/useStandInInbox*|executor/src/runtime_work/handler/stand_in_conversations.rs|executor/src/runtime_work/handler/stand_in_dingtalk_work.rs|executor/src/runtime_work/handler/stand_in_work.rs|executor/src/runtime_work/handler/stand_in_ingress.rs|executor/src/task_runtime/stand_in_memories.rs|executor/src/runtime_work/handler/stand_in_memory.rs|executor/src/task_runtime/stand_in_inbox.rs|executor/src/task_runtime/stand_in_proposals.rs)
+      select_target "core:stand-in-identities"
+      select_target "core:stand-in-connections"
+      select_target "core:stand-in-mcp"
+      select_target "core:stand-in-cli"
+      select_target "core:stand-in-plugin-bridge"
+      select_target "core:stand-in-action-confirmation"
+      select_target "core:stand-in-list-confirmation"
+      select_target "core:stand-in-profile"
+      select_target "core:stand-in"
+      select_target "core:stand-in-workspace"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/stand-in-assignment-notifications.scenario.mjs)
+      select_target "core:stand-in-assignment-notifications"
+      return
+      ;;
     wework/e2e/desktop/scenarios/stand-in-personal-task.scenario.mjs)
       select_target "core:stand-in-personal-task"
       return
       ;;
+
     wework/e2e/desktop/scenarios/stand-in-permissions.scenario.mjs)
       select_target "core:stand-in-permissions"
       return
       ;;
     wework/e2e/desktop/scenarios/stand-in-project-enable.scenario.mjs|wework/src/features/todo/StandInOverviewPage*|wework/src/features/todo/StandInProjectSetup*|wework/src/features/todo/usePersonalStandIn*|wework/src/api/personalStandIn.ts|wework/e2e/desktop/scenarios/stand-in-controls.scenario.mjs|wework/e2e/desktop/scenarios/stand-in.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-cloud.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-workspace.scenario.mjs|wework/src/features/todo/StandInComposer*|wework/src/features/todo/StandInSettingsPage*|wework/src/features/todo/useStandInModels*|wework/src/features/todo/IssueStandInControl*|wework/src/features/todo/StandInIcon.tsx|wework/src/features/todo/useStandInProjects.ts|wework/src/features/todo/useStandInProjects.test.tsx|wework/src/features/todo/StandInPopover.tsx|wework/src/features/todo/StandInPopover.test.tsx|wework/src/api/standIn.ts|wework/src/api/standIn.test.ts|executor/src/runtime_work/handler/stand_in.rs|executor/src/task_runtime/stand_in.rs)
       select_target "core:stand-in"
+      select_target "core:stand-in-identities"
+      select_target "core:stand-in-connections"
+      select_target "core:stand-in-mcp"
+      select_target "core:stand-in-cli"
+      select_target "core:stand-in-plugin-bridge"
+      select_target "core:stand-in-action-confirmation"
+      select_target "core:stand-in-list-confirmation"
+      select_target "core:stand-in-profile"
       select_target "core:stand-in-workspace"
       select_target "core:stand-in-controls"
       select_target "core:stand-in-project-enable"
       select_target "core:stand-in-cloud"
+      select_target "core:stand-in-assignment-notifications"
       select_target "core:stand-in-personal-task"
       select_target "core:stand-in-permissions"
       return
@@ -997,6 +1073,9 @@ classify_wework_path() {
       if [[ "$path" == wework/src/api/local/localServices* || \
         "$path" == wework/src/api/hybrid/hybridServices* ]]; then
         select_target "core:background-terminals"
+      fi
+      if [[ "$path" == wework/src/api/hybrid/hybridServices* ]]; then
+        select_target "core:stand-in-assignment-notifications"
       fi
       if [[ "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
         select_target "core:send-key-preference"
@@ -1291,6 +1370,11 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    packages/chat-core/test-fixtures/conversation-search-contract.json)
+      select_target "core:running-conversation-history"
+      select_target "cloud:conversation-state"
+      return
+      ;;
     wework/e2e/desktop/scenarios/plugin-runtime-path-recovery.scenario.mjs | \
       wework/e2e/desktop/modules/plugin-runtime-path-fixture.mjs | \
       wework/scripts/plugin-runtime-path-fixture.test.mjs)
@@ -1386,11 +1470,16 @@ classify_path() {
       wework/e2e/desktop/modules/plugin-registration-coordination.mjs | \
       wework/e2e/desktop/support/registration-capabilities.py | \
       wework/e2e/desktop/modules/plugin-write-coordination.mjs | \
+      wework/e2e/desktop/modules/plugin-sync-disconnect.mjs | \
       wework/e2e/desktop/modules/plugin-write-lease.mjs | \
-      wework/e2e/desktop/support/plugin-write-lease.py | \
-      wework/scripts/plugin-fault-proxy.test.mjs | \
+      wework/e2e/desktop/support/plugin-write-lease.py)
+      select_uninstall_checkpoints
+      return
+      ;;
+    wework/scripts/plugin-fault-proxy.test.mjs | \
       wework/e2e/desktop/modules/transport-fault-proxy*)
       select_uninstall_checkpoints
+      select_target "cloud:conversation-state"
       if [[ "$path" == wework/e2e/desktop/modules/transport-fault-proxy* ]]; then
         select_target "core:collaboration-board-move-recovery"
       fi
@@ -1400,8 +1489,13 @@ classify_path() {
       select_target "cloud:plugin-composer-long-list"
       return
       ;;
-    wework/e2e/desktop/scenarios/plugin-toggle-persistence.scenario.mjs | \
-      wework/e2e/desktop/modules/plugin-inventory-state.mjs)
+    wework/e2e/desktop/scenarios/plugin-toggle-persistence.scenario.mjs)
+      select_target "cloud:plugin-toggle-persistence"
+      return
+      ;;
+    wework/e2e/desktop/modules/plugin-inventory-state.mjs | \
+      wework/scripts/plugin-inventory-state.test.mjs)
+      select_target "cloud:plugin-runtime-path-recovery"
       select_target "cloud:plugin-toggle-persistence"
       return
       ;;

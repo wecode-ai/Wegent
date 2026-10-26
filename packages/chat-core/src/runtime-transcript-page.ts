@@ -1,3 +1,8 @@
+import { seedRuntimeConversationTurns } from "./runtime-turn-updates";
+import {
+  mergeRuntimeConversationTurns,
+  projectRuntimeConversationTurns,
+} from "./runtime-turns";
 import type {
   RuntimeName,
   RuntimeContextUsage,
@@ -17,6 +22,8 @@ export interface LoadedTranscriptRange {
   end: number;
 }
 export interface RuntimePaneTranscript {
+  supersededTurnIds?: string[];
+  threadId?: string | null;
   historyUnavailable?: boolean;
   runtime?: RuntimeName;
   messages: WorkbenchMessage[];
@@ -36,12 +43,35 @@ export interface RuntimePaneTranscript {
 export function projectRuntimePaneTranscript(
   transcript: RuntimeTranscriptResponse,
 ): RuntimePaneTranscript {
+  const messages = runtimeMessagesToWorkbenchMessages(
+    transcript.messages ?? [],
+  );
+  let turns = mergeRuntimeConversationTurns(
+    runtimeTranscriptTurnsToConversationTurns(transcript.turns ?? []),
+    runtimeTranscriptTurnsToConversationTurns(transcript.runtimeTurns ?? []),
+  );
+  // Legacy previews own a user presentation but have no provider turn identity.
+  // Represent them in the same store without inventing a native turn.
+  if (
+    turns.length === 0 &&
+    messages.every((message) => message.role === "user")
+  ) {
+    turns = seedRuntimeConversationTurns(messages, []).map((turn) => ({
+      ...turn,
+      status: "done",
+    }));
+  }
   return {
+    supersededTurnIds: transcript.supersededTurnIds ?? [],
+    threadId: transcript.threadId,
     historyUnavailable: transcript.historyUnavailable,
     runtime: transcript.runtime,
     running: transcript.running,
-    messages: runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
-    turns: runtimeTranscriptTurnsToConversationTurns(transcript.turns ?? []),
+    messages:
+      Array.isArray(transcript.runtimeTurns) && turns.length > 0
+        ? projectRuntimeConversationTurns(turns)
+        : messages,
+    turns,
     contextUsage: transcript.contextUsage ?? null,
     turnNavigation: transcript.turnNavigation ?? [],
     fullContent: transcript.fullContent === true,

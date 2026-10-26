@@ -347,7 +347,12 @@ async def upload_plugin(
         filename=file.filename or "plugin.zip",
         enabled=enabled,
     )
-    await sync_global_capabilities(db, user_id, require_device_success=False)
+    await sync_global_capabilities(
+        db,
+        user_id,
+        required_installed_kind_id=int(installed.metadata["labels"]["id"]),
+        require_device_success=False,
+    )
     return installed
 
 
@@ -548,12 +553,7 @@ async def install_marketplace_plugin(
     db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceInstallResponse:
-    """Install a marketplace plugin for the current user.
-
-    Account Kind creation is authoritative. Global device sync is best-effort:
-    a full replace can fail because of an unrelated plugin while the new install
-    is already desired; do not 502 and leave the marketplace UI stuck.
-    """
+    """Save the authoritative install and synchronize the affected plugin."""
     user_id = current_user.id
     db.close()
     plugin = await run_plugin_operation(
