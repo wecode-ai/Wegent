@@ -20,16 +20,16 @@ import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 const PROMPT = 'WEWORK_CATALOG_CONTEXT_500K'
 
 function catalogRestartCompleted(log) {
-  const write =
-    /app IPC request finished .* method=runtime\.codex\.catalog\.overrides\.write[^\n]* ok=true/.exec(
+  const mutation =
+    /app IPC request finished .* method=runtime\.codex\.catalog\.overrides\.(?:write|delete)[^\n]* ok=true/.exec(
       log
     )
-  if (!write) return false
-  const afterWrite = log.slice(write.index + write[0].length)
-  for (const start of afterWrite.matchAll(
+  if (!mutation) return false
+  const afterMutation = log.slice(mutation.index + mutation[0].length)
+  for (const start of afterMutation.matchAll(
     /app IPC request started request_id=(\S+) method=runtime\.codex\.app_server\.restart/g
   )) {
-    const pending = afterWrite.slice(start.index + start[0].length)
+    const pending = afterMutation.slice(start.index + start[0].length)
     const finishedAt = pending.indexOf(
       `app IPC request finished request_id=${start[1]} method=runtime.codex.app_server.restart `
     )
@@ -48,12 +48,13 @@ function catalogRestartCompleted(log) {
   return false
 }
 
-async function waitForCatalogRestart(control, executorLogPath, fromOffset) {
+export async function waitForCatalogRestart(control, executorLogPath, fromOffset) {
   const startedAt = Date.now()
   let confirmed = false
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
     const snapshot = JSON.parse(await control.command('snapshot', 'body'))
     assert.ok(!snapshot.testIds.includes('codex-catalog-error'), snapshot.text)
+    assert.ok(!snapshot.testIds.includes('codex-catalog-editor-error'), snapshot.text)
     const confirmation = snapshot.testIds.includes('local-model-catalog-restart-dialog')
     if (confirmation && !confirmed) {
       await control.command(
@@ -147,9 +148,10 @@ export function createCatalogContextVerification({
         value: '500000',
       })
       const executorLogPath = join(resultDir, 'executor.log')
-      // A customized row confirms persistence before the optional restart confirmation.
+      // Observe the mutation and restart before accepting the saved editor state.
       const restartLogOffset = (await readFile(executorLogPath, 'utf8')).length
       await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
+      await waitForCatalogRestart(control, executorLogPath, restartLogOffset)
       await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
         visible: false,
       })
@@ -158,7 +160,6 @@ export function createCatalogContextVerification({
         `[data-testid="codex-official-model-row-openai-${modelId}"]`,
         { text: '已自定义' }
       )
-      await waitForCatalogRestart(control, executorLogPath, restartLogOffset)
       await control.command('navigate', 'body', { value: '/' })
       await createSingleRootLocalProject(control, workspacePath, 'catalog-context-500k')
       await selectE2EModel(control, modelId, modelLabel, '', 'openai')
