@@ -10,6 +10,7 @@ export async function watchDevelopmentBuild({
   build,
   onError,
   debounceMs = 350,
+  pollIntervalMs = 1000,
 }) {
   const watchers = []
   let closed = false
@@ -81,10 +82,25 @@ export async function watchDevelopmentBuild({
     running = undefined
   }
   if (pending) schedule()
+  // fs.watch is advisory: macOS FSEvents coalesces bursts and can drop changes
+  // entirely. Reconcile the input snapshot on an interval so a missed event
+  // never leaves the development build running stale sources.
+  const reconcile = setInterval(() => {
+    if (closed) return
+    try {
+      const changed =
+        directories.some(directory => inputChanged(directory, directory)) ||
+        files.some(file => inputChanged(file, path.dirname(file)))
+      if (changed) schedule()
+    } catch (error) {
+      onError(error)
+    }
+  }, pollIntervalMs)
   return {
     async close() {
       closed = true
       clearTimeout(timer)
+      clearInterval(reconcile)
       for (const watcher of watchers) watcher.close()
       await running
     },
