@@ -900,7 +900,9 @@ export function TodoEditor(props: TodoEditorProps) {
   const taskBindingsRequestIdRef = useRef(0);
   const deliveriesRequestIdRef = useRef(0);
   const currentDeliveryIdRef = useRef(item?.current_delivery_id);
-  currentDeliveryIdRef.current = item?.current_delivery_id;
+  useLayoutEffect(() => {
+    currentDeliveryIdRef.current = item?.current_delivery_id;
+  }, [item?.current_delivery_id]);
   const currentDeliveryRequestIdRef = useRef(0);
   const selectedDeliveryRequestIdRef = useRef(0);
   const attachmentsRequestIdRef = useRef(0);

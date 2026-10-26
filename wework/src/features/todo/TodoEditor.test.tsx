@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { startTransition, Suspense, useState } from 'react'
 import '@/i18n'
 import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
 import { TodoEditor } from './TodoEditor'
@@ -1269,6 +1270,80 @@ describe('TodoEditor external item sync', () => {
       )
     }
   )
+
+  it('retains the committed delivery when a newer render suspends', async () => {
+    const currentDelivery = {
+      id: 'delivery-current',
+      loop_item_id: baseItem.id,
+      created_by_user_id: 1,
+      source_task_binding_id: null,
+      source_task_snapshot: null,
+      status: 'delivered',
+      created_at: '2026-09-15T13:55:16Z',
+      delivered_at: '2026-09-15T13:55:16Z',
+      markdown: 'Committed delivery',
+      chat: null,
+      assets: [],
+      fulfillments: [],
+    }
+    const olderDelivery = { ...currentDelivery, id: 'delivery-older', markdown: 'Older delivery' }
+    const deliveryList = deferred<{ items: (typeof currentDelivery)[] }>()
+    const suspended = deferred<void>()
+    const deliveryApi = {
+      ...api,
+      listDeliveries: vi.fn(() => deliveryList.promise),
+      getDelivery: vi.fn(async () => currentDelivery),
+    } as never
+    let beginUpdate = () => {}
+    let attemptedSuspendedRender = false
+    function SuspendGate({ pending }: { pending: boolean }) {
+      if (pending) {
+        attemptedSuspendedRender = true
+        throw suspended.promise
+      }
+      return null
+    }
+    function Harness() {
+      const [pending, setPending] = useState(false)
+      beginUpdate = () => startTransition(() => setPending(true))
+      const item = {
+        ...baseItem,
+        current_delivery_id: pending ? 'delivery-uncommitted' : currentDelivery.id,
+      }
+      return (
+        <Suspense fallback={<div data-testid="pending-delivery-render" />}>
+          <TodoEditor
+            mode="edit"
+            presentation="workspace-panel"
+            item={item}
+            project={project}
+            allItems={[item]}
+            onUpdated={vi.fn()}
+            onClose={vi.fn()}
+            api={deliveryApi}
+          />
+          <SuspendGate pending={pending} />
+        </Suspense>
+      )
+    }
+    render(<Harness />)
+    expect(
+      await screen.findByTestId('todo-detail-open-delivery-delivery-current')
+    ).toHaveTextContent('Committed delivery')
+    await act(async () => beginUpdate())
+    expect(attemptedSuspendedRender).toBe(true)
+    expect(screen.queryByTestId('pending-delivery-render')).not.toBeInTheDocument()
+    await act(async () => {
+      deliveryList.resolve({ items: [olderDelivery] })
+      await deliveryList.promise
+    })
+    expect(screen.getByTestId('todo-detail-open-delivery-delivery-current')).toHaveTextContent(
+      'Committed delivery'
+    )
+    expect(screen.getByTestId('todo-detail-open-delivery-delivery-older')).toHaveTextContent(
+      'Older delivery'
+    )
+  })
 
   it('hydrates placeholder fields when the same issue version finishes loading', () => {
     const placeholder = { ...baseItem, title: '', description: '' }
