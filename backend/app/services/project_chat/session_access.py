@@ -8,7 +8,7 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import ProjectChatCommentExecution
-from app.schemas.runtime_work import RuntimeTaskAddress, RuntimeTranscriptRequest
+from app.schemas.runtime_work import RuntimeSessionReadRequest, RuntimeTaskAddress
 from app.services.device.identity import owned_device_aliases, same_owned_device
 from app.services.loop_item_executions.runtime_identity import (
     execution_conversation_task_id,
@@ -22,7 +22,7 @@ from app.services.project_chat.service import project_chat_service
 
 
 def _session_executions(
-    db: Session, request: RuntimeTranscriptRequest
+    db: Session, request: RuntimeSessionReadRequest
 ) -> list[LoopItemExecution]:
     scope = request.project_session
     assert scope is not None
@@ -49,7 +49,7 @@ def _session_executions(
     ]
 
 
-def _member_session_owners(db: Session, request: RuntimeTranscriptRequest) -> set[int]:
+def _member_session_owners(db: Session, request: RuntimeSessionReadRequest) -> set[int]:
     scope = request.project_session
     assert scope is not None
     activities = (
@@ -89,7 +89,7 @@ def _member_session_owners(db: Session, request: RuntimeTranscriptRequest) -> se
 
 
 def resolve_project_transcript(
-    db: Session, user_id: int, request: RuntimeTranscriptRequest
+    db: Session, user_id: int, request: RuntimeSessionReadRequest
 ) -> tuple[int, RuntimeTaskAddress]:
     """Grant access to one recorded session, never to the owner's device catalog."""
     scope = request.project_session

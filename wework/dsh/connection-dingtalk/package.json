@@ -1,0 +1,137 @@
+{
+  "name": "@wegent/dsh-connection-dingtalk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@wegent/dsh-connection-runtime": "0.1.0"
+  },
+  "wework": {
+    "connections": {
+      "apiVersion": 1,
+      "dependencies": {
+        "dingtalk": {
+          "kind": "codexPlugin",
+          "source": {
+            "marketplaceId": "wegent",
+            "pluginId": "dingtalk@wegent"
+          },
+          "version": "*"
+        }
+      },
+      "providers": [
+        {
+          "id": "dingtalk",
+          "displayName": "钉钉",
+          "uses": [
+            "dingtalk"
+          ],
+          "collectionModes": [
+            "poll"
+          ],
+          "resourceKinds": [
+            "group",
+            "direct"
+          ],
+          "eventTypes": [
+            "message.received"
+          ],
+          "authTarget": {
+            "pluginKey": "dingtalk",
+            "connectorSlug": "dingtalk"
+          },
+          "resourceLabels": {
+            "group": "群聊中 @我",
+            "direct": "私聊消息"
+          },
+          "locales": {
+            "en": {
+              "displayName": "DingTalk",
+              "resourceLabels": {
+                "group": "Group mentions",
+                "direct": "Direct messages"
+              }
+            }
+          },
+          "cliReadTools": {
+            "dingtalk": {
+              "connectorSlug": "dingtalk",
+              "outputArgs": [
+                "--format",
+                "json"
+              ],
+              "operations": {
+                "listProfiles": {
+                  "command": [
+                    "profile",
+                    "list"
+                  ],
+                  "parameters": {}
+                },
+                "searchGroups": {
+                  "command": [
+                    "chat",
+                    "search"
+                  ],
+                  "parameters": {
+                    "query": "--query",
+                    "profile": "--profile",
+                    "cursor": "--cursor"
+                  }
+                },
+                "searchUsers": {
+                  "command": [
+                    "contact",
+                    "user",
+                    "search"
+                  ],
+                  "parameters": {
+                    "query": "--query",
+                    "profile": "--profile"
+                  }
+                },
+                "listMentions": {
+                  "command": [
+                    "chat",
+                    "message",
+                    "list-mentions"
+                  ],
+                  "parameters": {
+                    "group": "--group",
+                    "start": "--start",
+                    "end": "--end",
+                    "limit": "--limit",
+                    "cursor": "--cursor",
+                    "profile": "--profile"
+                  }
+                },
+                "searchMessages": {
+                  "command": [
+                    "chat",
+                    "message",
+                    "search-advanced"
+                  ],
+                  "parameters": {
+                    "senderIds": "--sender-ids",
+                    "start": "--start",
+                    "end": "--end",
+                    "limit": "--limit",
+                    "cursor": "--cursor",
+                    "profile": "--profile"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

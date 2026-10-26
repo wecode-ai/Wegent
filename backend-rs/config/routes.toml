@@ -1013,6 +1013,11 @@ path = "/api/wiki/connections" # app/api/endpoints/external_wiki.py:224
 #methods = ["POST"]
 #path = "/socket.io/" # app/main.py:984
 
+# New APIs implemented directly in Rust.
+[[routes]]
+methods = ["POST"]
+path = "/api/runtime-work/transcript/search"
+
 # Additional recorded METHOD/path cutovers with a registered Rust handler and passing replay.
 [[routes]]
 methods = ["GET"]

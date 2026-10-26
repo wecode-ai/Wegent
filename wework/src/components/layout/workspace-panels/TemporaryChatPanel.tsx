@@ -22,7 +22,11 @@ import {
 import { TemporaryConversationLayout } from '@wegent/collaboration/conversation'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
-import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
+import {
+  RequestUserInputCard,
+  type RequestUserInputPayload,
+} from '@/components/chat/RequestUserInputCard'
+import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
 import {
   applyRequestUserInputResponseToBlock,
   findRequestUserInputPayload,
@@ -111,15 +115,18 @@ interface TemporaryChatPanelProps {
   sendEphemeral?: boolean
   emptyStateText?: string
   placeholder?: string
+  showExecutionTools?: boolean
   allowInitialGoal?: boolean
   expanded?: boolean
   wideComposer?: boolean
   collapseComposerWhenIdle?: boolean
   readOnly?: boolean
+  active?: boolean
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
   projectWorkBarMiddleContext?: ReactNode
   projectWorkBarTrailingContext?: ReactNode
+  composerHeader?: ReactNode
   onRestoreConversation?: () => void
   initialScrollPosition?: 'restore' | 'latest'
   scrollOrigin?: 'top' | 'bottom'
@@ -140,6 +147,7 @@ export function TemporaryChatPanel({
   sendEphemeral = true,
   emptyStateText = '临时聊天不会出现在左侧任务列表。',
   placeholder = '要求后续变更',
+  showExecutionTools = true,
   allowInitialGoal = false,
   expanded = false,
   wideComposer = false,
@@ -149,10 +157,12 @@ export function TemporaryChatPanel({
   showProjectWorkBar = false,
   projectWorkBarMiddleContext,
   projectWorkBarTrailingContext,
+  composerHeader,
   onRestoreConversation,
   initialScrollPosition = 'restore',
   scrollOrigin = 'bottom',
   onOpenRuntimeTask,
+  active = true,
 }: TemporaryChatPanelProps) {
   const { t, i18n } = useTranslation('common')
   const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
@@ -833,6 +843,7 @@ export function TemporaryChatPanel({
     [address, cancelRuntimePaneTask]
   )
 
+  const pendingRequest = pendingRequestUserInputPayload(messages, hiddenRequestUserInputIds)
   return (
     <TemporaryConversationLayout
       messageCount={messages.length}
@@ -846,45 +857,60 @@ export function TemporaryChatPanel({
       onRestoreConversation={onRestoreConversation}
       translate={conversationTranslate}
       composer={
-        readOnly ? null : (
-          <ComposerCatalogContext.Provider value={composerCatalog}>
-            <BufferedChatInput
-              predictionAddress={address}
-              value={input}
-              replaceDraftKey={replaceDraftKey}
-              onChange={setInput}
-              onDraftEdit={() => setError(null)}
-              onSubmit={send}
-              disabled={taskModelIdentityPending}
-              pluginPickerIconOnly
-              requireText
-              error={error}
-              placeholder={placeholder}
-              variant="desktop"
-              collapseWhenIdle={collapseComposerWhenIdle}
-              projectChat={sideChatProjectChat}
-              projectWork={projectWork}
-              showProjectWorkBar={showProjectWorkBar}
-              projectWorkBarMiddleContext={projectWorkBarMiddleContext}
-              projectWorkBarTrailingContext={projectWorkBarTrailingContext}
-              queuedMessages={queuedMessages}
-              onCancelQueuedMessage={cancelQueuedMessage}
-              onSendQueuedAsGuidance={guideQueuedMessage}
-              onEditQueuedMessage={editQueuedMessage}
-              isStreaming={busy}
-              onPause={pause}
-              goalDraftActive={goalDraftActive}
-              onSetGoal={
-                allowInitialGoal && createTask && !address
-                  ? () => {
-                      setGoalDraftActive(true)
-                      setError(null)
-                    }
-                  : undefined
-              }
-              onCancelGoalDraft={() => setGoalDraftActive(false)}
-            />
-          </ComposerCatalogContext.Provider>
+        readOnly || !active ? null : (
+          <>
+            {!pendingRequest && composerHeader}
+            {pendingRequest ? (
+              <RequestUserInputCard
+                key={requestUserInputPayloadKey(pendingRequest)}
+                payload={pendingRequest}
+                messages={messages}
+                onSubmit={submitRequestUserInput}
+                onIgnore={() => void ignoreRequestUserInput(pendingRequest)}
+              />
+            ) : (
+              <ComposerCatalogContext.Provider value={composerCatalog}>
+                <BufferedChatInput
+                  predictionAddress={address}
+                  value={input}
+                  replaceDraftKey={replaceDraftKey}
+                  onChange={setInput}
+                  onDraftEdit={() => setError(null)}
+                  onSubmit={send}
+                  disabled={taskModelIdentityPending}
+                  showExecutionTools={showExecutionTools}
+                  showModelSelector
+                  pluginPickerIconOnly
+                  requireText
+                  error={error}
+                  placeholder={placeholder}
+                  variant="desktop"
+                  collapseWhenIdle={collapseComposerWhenIdle}
+                  projectChat={sideChatProjectChat}
+                  projectWork={projectWork}
+                  showProjectWorkBar={showProjectWorkBar}
+                  projectWorkBarMiddleContext={projectWorkBarMiddleContext}
+                  projectWorkBarTrailingContext={projectWorkBarTrailingContext}
+                  queuedMessages={queuedMessages}
+                  onCancelQueuedMessage={cancelQueuedMessage}
+                  onSendQueuedAsGuidance={guideQueuedMessage}
+                  onEditQueuedMessage={editQueuedMessage}
+                  isStreaming={busy}
+                  onPause={pause}
+                  goalDraftActive={goalDraftActive}
+                  onSetGoal={
+                    allowInitialGoal && createTask && !address
+                      ? () => {
+                          setGoalDraftActive(true)
+                          setError(null)
+                        }
+                      : undefined
+                  }
+                  onCancelGoalDraft={() => setGoalDraftActive(false)}
+                />
+              </ComposerCatalogContext.Provider>
+            )}
+          </>
         )
       }
     >
@@ -925,6 +951,7 @@ export function TemporaryChatPanel({
         onRequestUserInputIgnore={address && !readOnly ? ignoreRequestUserInput : undefined}
         onOpenAssistantPlan={onOpenRuntimeTask ? openRuntimeTask : undefined}
         hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+        hideRequestUserInputBlocks={Boolean(pendingRequest) && !readOnly}
         initialScrollPosition={initialScrollPosition}
         scrollOrigin={scrollOrigin}
       />

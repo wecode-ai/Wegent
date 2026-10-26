@@ -1,3 +1,4 @@
+import { readRawRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 
 import { createSingleRootLocalProject } from '../modules/shared.mjs'
@@ -142,9 +143,7 @@ export function createDesktopScenario({ uiTimeoutMs, workspacePath }) {
       if (!active || request.method !== 'POST') return false
       if (!['/v1/responses', '/responses'].includes(url.pathname)) return false
 
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      const body = Buffer.concat(chunks).toString('utf8')
+      const body = await readRawRequestBody(request)
       if (!body.includes(PLAN_PROMPT)) return false
 
       const responseId = `wework-running-plan-history-${Date.now()}`

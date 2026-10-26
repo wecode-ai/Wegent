@@ -423,6 +423,9 @@ app.on('web-contents-created', (_event, contents) => {
     })
   })
   contents.on('console-message', (_event, level, message, lineNumber, sourceId) => {
+    if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[desktop-e2e-key] ')) {
+      console.info(redactLog(message).slice(0, 1024))
+    }
     if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
       console.warn('[renderer-error]', {
         webContentsId: contents.id,

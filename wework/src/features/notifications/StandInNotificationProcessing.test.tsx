@@ -269,6 +269,36 @@ describe('notification inline handling', () => {
       expect(run).toHaveBeenCalledWith('12', 'ISSUE-1', 1, 'cloud', 'device', 'default')
     )
   })
+
+  it('shows the failed turn error when no model reply was produced', async () => {
+    transcript.mockResolvedValue({
+      workspacePath: '/project',
+      runtime: 'codex',
+      running: false,
+      messages: [{ id: 'prompt', role: 'user', content: 'Review' }],
+      turns: [{ id: 'turn', items: [], status: 'failed', error: 'Workspace config is invalid' }],
+    })
+    render(view('failed'))
+    expect(await screen.findByText('Workspace config is invalid')).toBeVisible()
+    expect(screen.queryByText(/Model reply is ready|模型回复已完成/)).not.toBeInTheDocument()
+    expect(screen.getByTestId('notification-stand-in-retry-assignment')).toBeEnabled()
+  })
+
+  it('leaves the summary empty when a failed execution has neither an error nor a reply', async () => {
+    transcript.mockResolvedValue({
+      workspacePath: '/project',
+      runtime: 'codex',
+      running: false,
+      messages: [{ id: 'prompt', role: 'user', content: 'Review' }],
+      turns: [],
+    })
+    render(view('failed'))
+    await waitFor(() => expect(transcript).toHaveBeenCalledOnce())
+    expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+      'notifications.stand_in_failed'
+    )
+    expect(screen.queryByText(/Model reply is ready|模型回复已完成/)).not.toBeInTheDocument()
+  })
   it('answers the actual pending runtime question with its original request identity', async () => {
     transcript.mockResolvedValue({
       workspacePath: '/project',

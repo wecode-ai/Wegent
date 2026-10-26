@@ -30,7 +30,6 @@ import {
 } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
-import { decodeMarkdownFilePath } from '@/components/chat/assistantMarkdownLinks'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { CloudConnectorAuthCard, ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -4393,7 +4392,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setFileOpenError(null)
       try {
         const trimmedPath = await resolveHomeRelativeWorkspacePath(
-          decodeMarkdownFilePath(path.trim()),
+          path.trim(),
           effectiveWorkspaceTarget?.deviceId ??
             resolveLocalWorkbenchDeviceId(devices, LOCAL_WORKBENCH_DEVICE_ALIAS)!,
           getDeviceHomeDirectory
@@ -5275,6 +5274,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
                     }
                     hasMoreBefore={paneSession.transcriptHasMoreBefore}
+                    onSearchTranscript={paneSession.searchTranscript}
+                    onEnsureSearchMatch={paneSession.ensureSearchMatch}
+                    searchPage={paneSession.searchPage}
+                    onLoadSearchContext={paneSession.loadSearchContext}
+                    onReleaseSearchPage={paneSession.releaseSearchPage}
                     loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
                     turnNavigation={paneSession.turnNavigation}
                     loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
@@ -5413,6 +5417,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         'implementation-plan'
                                       }
                                       payload={pendingRequestUserInput}
+                                      messages={paneMessages}
                                       onSubmit={response => {
                                         const isImplementationPlanRequest =
                                           isImplementationPlanRequestUserInput(

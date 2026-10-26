@@ -455,6 +455,7 @@ pub(super) fn tool_call_id(item: &Value) -> String {
 
 fn tool_name(item: &Value) -> String {
     match item_type(item).as_str() {
+        "autoapprovalreview" => "auto_approval_review".to_owned(),
         "functioncall" | "functioncalloutput" => string_field(item, "name")
             .or_else(|| string_field(item, "tool"))
             .unwrap_or_else(|| "function_call".to_owned()),
@@ -497,7 +498,7 @@ pub(super) fn tool_input(item: &Value) -> Value {
         "customtoolcall" => {
             json!({"input": raw_string_field(item, "input").unwrap_or_default()})
         }
-        "dynamictoolcall" | "toolsearchcall" => {
+        "dynamictoolcall" | "toolsearchcall" | "autoapprovalreview" => {
             item.get("arguments").cloned().unwrap_or(Value::Null)
         }
         "mcptoolcall" | "mcpcall" | "mcptoolcallbegin" | "mcptoolcallend" => item
@@ -557,6 +558,12 @@ fn parse_json_object_string(item: &Value, key: &str) -> Option<Value> {
 
 fn raw_tool_output(item: &Value) -> RawToolOutput<'_> {
     match item_type(item).as_str() {
+        "autoapprovalreview" => RawToolOutput::Value(
+            item.get("output")
+                .or_else(|| item.get("review"))
+                .cloned()
+                .unwrap_or(Value::Null),
+        ),
         "commandexecution" | "shellcall" | "localshellcall" | "execcommandend" => {
             RawToolOutput::String(command_output_ref(item).unwrap_or_default())
         }

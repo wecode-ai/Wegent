@@ -179,12 +179,82 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         (await request(`/v1/cloud-projects/${project.id}/execution-environments`)).items,
         []
       )
-      await requestExecutor(
+      const disabled = await requestExecutor(
         control,
         'runtime.stand_in.save',
         {
           ...params,
           settings: { ...settings, enabled: false },
+        },
+        uiTimeoutMs
+      )
+      await control.command('click', '[data-testid="wework-notifications-button"]')
+      await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
+      for (const status of ['in_review', 'completed']) {
+        const delegated = await request(`/v1/cloud-projects/${project.id}/loop-items`, {
+          title: `Delegate ${status} from the assignment notification`,
+          status,
+          assignee_user_id: user.id,
+        })
+        if (status === 'completed') assert.ok(delegated.completed_at)
+        await control.command('click', '[data-testid="wework-notifications-refresh"]')
+        await control.command(
+          'waitFor',
+          '[data-testid="wework-notifications-refresh"]:not([disabled])'
+        )
+        const inbox = await request('/v1/wework-notifications?category=collaboration')
+        const notice = inbox.items.find(row => row.payload.itemId === delegated.id)
+        assert.ok(notice, 'Assignment notification must exist for every Issue status')
+        const start = `[data-testid="notification-stand-in-start-${notice.id}"]`
+        await control.command('clickWhenEnabled', start)
+        await control.command(
+          'waitFor',
+          `[data-testid="notification-stand-in-status-${notice.id}"]`,
+          {
+            text: '处理完毕',
+            timeoutMs: modelResponseTimeoutMs,
+          }
+        )
+        const binding = await assertCompleted(control, delegated)
+        const repeated = await requestExecutor(
+          control,
+          'runtime.stand_in.run',
+          {
+            ...params,
+            issueId: delegated.id,
+          },
+          uiTimeoutMs
+        )
+        assert.equal(repeated.taskId, binding.task_id)
+      }
+      const enabled = await requestExecutor(
+        control,
+        'runtime.stand_in.save',
+        {
+          ...params,
+          settings: { ...disabled, enabled: true },
+        },
+        uiTimeoutMs
+      )
+      for (const status of ['in_review', 'completed']) {
+        const automatic = await request(`/v1/cloud-projects/${project.id}/loop-items`, {
+          title: `Automatically handle ${status} assignment`,
+          status,
+          assignee_user_id: user.id,
+        })
+        await control.command('click', '[data-testid="wework-notifications-refresh"]')
+        await control.command(
+          'waitFor',
+          '[data-testid="wework-notifications-refresh"]:not([disabled])'
+        )
+        await assertCompleted(control, automatic)
+      }
+      await requestExecutor(
+        control,
+        'runtime.stand_in.save',
+        {
+          ...params,
+          settings: { ...enabled, enabled: false },
         },
         uiTimeoutMs
       )

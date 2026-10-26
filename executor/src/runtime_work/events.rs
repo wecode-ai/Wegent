@@ -463,8 +463,11 @@ impl CodexNotificationEventMapper {
                     );
                 }
             }
-            super::mcp_elicitation::SETTLED_METHOD => {
-                if let Some(item) = super::mcp_elicitation::item(&message) {
+            super::mcp_elicitation::SETTLED_METHOD
+            | super::codex_user_input::APPROVAL_SETTLED_METHOD => {
+                if let Some(item) = super::mcp_elicitation::item(&message)
+                    .or_else(|| super::codex_user_input::request_item(&message))
+                {
                     let block = super::codex_user_input::interaction_block(&item, false);
                     emit_response_event(
                         event_tx,
@@ -2111,11 +2114,31 @@ fn emit_codex_approval_request(
     params: &Value,
     message_request_id: Option<&Value>,
 ) {
+    let Some((block_id, render_payload)) =
+        codex_approval_render_payload(method, params, message_request_id)
+    else {
+        return;
+    };
+    emit_request_user_input_block(
+        event_tx,
+        device_id,
+        local_task_id,
+        request,
+        block_id,
+        render_payload,
+    );
+}
+
+pub(super) fn codex_approval_render_payload(
+    method: &str,
+    params: &Value,
+    message_request_id: Option<&Value>,
+) -> Option<(String, Value)> {
     let approval_kind = match method {
         "item/commandExecution/requestApproval" => "command",
         "item/fileChange/requestApproval" => "file_change",
         "item/permissions/requestApproval" => "permissions",
-        _ => return,
+        _ => return None,
     };
     let item_id = params
         .get("itemId")
@@ -2156,17 +2179,13 @@ fn emit_codex_approval_request(
             object.insert("requestId".to_owned(), request_id.clone());
         }
     }
-    emit_request_user_input_block(
-        event_tx,
-        device_id,
-        local_task_id,
-        request,
-        block_id,
-        render_payload,
-    );
+    Some((block_id, render_payload))
 }
 
 fn codex_approval_options(approval_kind: &str, params: &Value) -> Value {
+    if params["standInSingleApproval"] == true {
+        return json!([{"label":"allow_once","description":""},{"label":"cancel","description":""}]);
+    }
     if approval_kind == "permissions" {
         return Value::Array(
             [

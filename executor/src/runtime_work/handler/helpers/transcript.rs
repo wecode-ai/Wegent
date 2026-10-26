@@ -110,18 +110,6 @@ fn normalize_overload_recovery_messages(messages: &mut [Value], runtime_handle: 
     }
 }
 
-pub(super) fn superseded_transcript_turn_ids(runtime_handle: &Value) -> Vec<&str> {
-    runtime_handle
-        .get("supersededTranscriptTurnIds")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::trim)
-        .filter(|turn_id| !turn_id.is_empty())
-        .collect()
-}
-
 pub(super) fn remove_superseded_transcript_turns(
     messages: &mut Vec<Value>,
     runtime_handle: &Value,
@@ -132,14 +120,22 @@ pub(super) fn remove_superseded_transcript_turns(
     }
 
     messages.retain(|message| {
-        string_field(message, "turnId")
-            .or_else(|| string_field(message, "turn_id"))
-            .or_else(|| string_field(message, "subtaskId"))
-            .or_else(|| string_field(message, "subtask_id"))
-            .map_or(true, |turn_id| {
-                !superseded_turn_ids.contains(&turn_id.as_str())
-            })
+        transcript_message_turn_id(message)
+            .map_or(true, |turn_id| !superseded_turn_ids.contains(&turn_id))
     });
+}
+
+fn superseded_transcript_turn_ids(runtime_handle: &Value) -> HashSet<String> {
+    runtime_handle
+        .get("supersededTranscriptTurnIds")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|turn_id| !turn_id.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 fn merge_latest_completed_transcript_messages(
@@ -355,6 +351,13 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
     })
 }
 
+fn transcript_message_turn_id(message: &Value) -> Option<String> {
+    string_field(message, "turnId")
+        .or_else(|| string_field(message, "turn_id"))
+        .or_else(|| string_field(message, "subtaskId"))
+        .or_else(|| string_field(message, "subtask_id"))
+}
+
 fn transcript_canonical_turns(
     messages: &[Value],
     item_source: TranscriptTurnItemSource,
@@ -367,11 +370,7 @@ fn transcript_canonical_turns(
             .get("messageIndex")
             .or_else(|| message.get("message_index"))
             .and_then(Value::as_u64);
-        let Some(turn_id) = string_field(message, "turnId")
-            .or_else(|| string_field(message, "turn_id"))
-            .or_else(|| string_field(message, "subtaskId"))
-            .or_else(|| string_field(message, "subtask_id"))
-        else {
+        let Some(turn_id) = transcript_message_turn_id(message) else {
             continue;
         };
         let turn_index = if let Some(index) = turn_indexes.get(&turn_id).copied() {
@@ -412,7 +411,11 @@ fn transcript_canonical_turns(
             }
         }
         // Status aliases must describe the same message, not an earlier user item.
-        if let Some(status) = message.get("runtimeStatus").or_else(|| message.get("status")) {
+        if let Some(status) = message
+            .get("runtimeStatus")
+            .filter(|value| !value.is_null())
+            .or_else(|| message.get("status"))
+        {
             turn.insert("runtimeStatus".to_owned(), status.clone());
         }
         let Some(items) = turn.get_mut("items").and_then(Value::as_array_mut) else {
@@ -691,7 +694,7 @@ fn user_message_presentation(payload: &Value) -> Option<Value> {
         .get("source")
         .filter(|value| value.is_object())
         .cloned();
-    let presentation = json!({
+    let mut presentation = json!({
         "clientUserMessageId": client_user_message_id,
         "content": content,
         "attachments": attachments,
@@ -700,6 +703,9 @@ fn user_message_presentation(payload: &Value) -> Option<Value> {
         "references": references,
         "source": source,
     });
+    if bool_field(payload, "restoreUserMessageContent") == Some(true) {
+        presentation["restoreContent"] = json!(true);
+    }
     Some(presentation)
 }
 
@@ -919,16 +925,8 @@ fn attach_user_message_presentations_for_page(
         let attachments = normalized_attachments(presentation.get("attachments"));
         // Provider input is an execution projection, not the user's presentation.
         // Restore native references even when the host routes a plugin to CLI text.
-        let restore_content = !attachments.is_empty()
-            || local_presentation_reference_descriptors(&presentation_content)
-                .iter()
-                .any(|reference| {
-                    reference["href"].as_str().is_some_and(|href| {
-                        is_local_path_reference(href)
-                            || href.starts_with("app://")
-                            || href.starts_with("plugin://")
-                    })
-                });
+        let restore_content = bool_field(&presentation, "restoreContent") == Some(true)
+            || user_presentation_restores_content(&presentation_content, !attachments.is_empty());
         let references = presentation
             .get("references")
             .and_then(Value::as_array)
@@ -954,6 +952,19 @@ fn attach_user_message_presentations_for_page(
             }
         }
     }
+}
+
+fn user_presentation_restores_content(content: &str, has_attachments: bool) -> bool {
+    has_attachments
+        || local_presentation_reference_descriptors(content)
+            .iter()
+            .any(|reference| {
+                reference["href"].as_str().is_some_and(|href| {
+                    is_local_path_reference(href)
+                        || href.starts_with("app://")
+                        || href.starts_with("plugin://")
+                })
+            })
 }
 
 fn presentation_belongs_to_transcript_page(

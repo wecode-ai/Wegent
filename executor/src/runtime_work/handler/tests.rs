@@ -5,6 +5,26 @@
 use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_selection_changed};
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
+
+#[test]
+fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
+    for method in [
+        "runtime.connections.mcp",
+        "runtime.connections.cli",
+        "runtime.connections.host",
+        "runtime.connections.catalog",
+        "runtime.connections.resources",
+        "runtime.connections.dependencies.inventory",
+    ] {
+        assert!(
+            !should_resume_persisted_turns_before_rpc(method),
+            "{method}"
+        );
+    }
+    assert!(should_resume_persisted_turns_before_rpc(
+        "runtime.tasks.start"
+    ));
+}
 use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 
 #[path = "native_history_test_support.rs"]
@@ -34,18 +54,20 @@ mod task_lookup_tests;
 
 #[path = "task_rename_tests.rs"]
 mod task_rename_tests;
+#[path = "transcript_turn_status_tests.rs"]
+mod transcript_turn_status_tests;
 
 #[path = "transcript_status_tests.rs"]
 mod transcript_status_tests;
 
 /// Restores one environment variable when a test finishes.
-struct ScalarEnv {
+pub(super) struct ScalarEnv {
     key: &'static str,
     previous: Option<String>,
 }
 
 impl ScalarEnv {
-    fn set(key: &'static str, value: &str) -> Self {
+    pub(super) fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);
         Self { key, previous }

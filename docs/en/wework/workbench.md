@@ -147,6 +147,10 @@ Selecting a writable text file opens it directly in the editor without a separat
 
 Local file and directory links in an AI response open in the Files tab. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
 
+Codex file citations appear as clickable filenames for presentations, spreadsheets, PDFs, documents, and code. Source citations appear under **Sources**, while deliverables appear under **Outputs**. Code line references open at the requested lines. Page numbers, slide numbers, worksheet ranges, and object labels appear beside the filename; clicking opens the file but does not yet navigate to an Office artifact's internal location. Legacy `【F:path†Lstart-Lend】` references also support code line navigation.
+
+Citation paths preserve literal filenames, including Unicode, spaces, percent signs, and other special characters. Code examples, user messages, and escaped citation syntax remain literal. Follow-up suggestions display their title; their copy action copies the complete prompt for a subsequent message.
+
 Press `Command+J` to open or close the bottom workspace panel. Opening the panel does not create a new terminal automatically. Existing terminals are preserved per task and restored when you return to that task.
 
 Select **+** in the bottom tab bar to choose **Terminal**, **IDE**, or **Desktop**, depending on the active device's capabilities. Terminal starts in the active project or the task's Git worktree. IDE opens in the system default browser. When available, Desktop opens in Wework's built-in browser.
@@ -184,6 +188,8 @@ Conversation panes with a running Terminal or Wework built-in browser remain mou
 A conversation opens at its latest message the first time. Conversations that were at the bottom remain at the bottom, while conversations viewed in the middle restore their distance from the bottom. Long conversations mount only messages near the viewport and reuse measured message heights to limit WebView memory growth while scrolling.
 
 Message, scroll-position, and measured-height caches are bounded. Archiving a task evicts its cached state immediately. If an older entry has already been evicted, Wework reloads the complete transcript from the local runtime when it is opened again.
+
+After restoring a conversation, you can answer an existing MCP form or another runtime request that expects a direct response even while the model catalog is loading or the configured model is unavailable. Sending a new chat message still requires an available model.
 
 ## Use selected response text
 

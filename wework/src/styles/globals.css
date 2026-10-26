@@ -17,6 +17,14 @@
   -webkit-app-region: no-drag;
 }
 
+/* The floating find field uses its text caret as the focus indicator. */
+input.content-find-input,
+input.content-find-input:focus,
+input.content-find-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 body[data-wework-anchor-popover-open] .electron-titlebar-drag-region {
   -webkit-app-region: no-drag;
 }

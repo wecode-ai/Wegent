@@ -3,6 +3,9 @@ export const conversationMessages: Record<
   Record<string, string>
 > = {
   "zh-CN": {
+    'conversation.tool_activity.review_approved': 'AI 审核已通过',
+    'conversation.tool_activity.review_blocked': '操作未执行：AI 审核未通过或未完成',
+    'conversation.tool_activity.review_running': 'AI 正在审核操作…',
     "conversation.request_user_input.expires_in":
       "请在 {{time}} 内回复，超时后需重新发起。",
     "conversation.request_user_input.expired":
@@ -383,6 +386,9 @@ export const conversationMessages: Record<
     "conversation.file_changes.review_failed": "加载文件变更失败",
   },
   en: {
+    'conversation.tool_activity.review_approved': 'AI review approved',
+    'conversation.tool_activity.review_blocked': 'Not executed: AI review denied or incomplete',
+    'conversation.tool_activity.review_running': 'AI is reviewing the action…',
     "conversation.request_user_input.expires_in":
       "Reply within {{time}}. After expiry, request a new confirmation.",
     "conversation.request_user_input.expired":

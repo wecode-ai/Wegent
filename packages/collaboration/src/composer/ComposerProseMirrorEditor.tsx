@@ -149,6 +149,7 @@ export const ComposerProseMirrorEditor = forwardRef<
   const composerDiagnosticIdRef = useRef<number | null>(null);
   const [hasContent, setHasContent] = useState(props.value !== "");
   const [composing, setComposing] = useState(false);
+  // Native events must use the committed UI's callbacks, even while a transition suspends.
   useLayoutEffect(() => {
     callbacksRef.current = resolvedProps;
   });
@@ -549,6 +550,7 @@ export const ComposerProseMirrorEditor = forwardRef<
           composerId,
           key: diagnosticKey,
           code: event.code,
+          keyCode: event.keyCode,
           eventIsComposing: event.isComposing,
           viewIsComposing: view.composing,
           shiftKey: event.shiftKey,

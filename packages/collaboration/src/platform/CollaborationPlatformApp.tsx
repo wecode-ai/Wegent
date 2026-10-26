@@ -3876,7 +3876,7 @@ export function CollaborationPlatformApp({
     content =
       rootView === "stand-in" && host.renderStandInPage ? (
         host.renderStandInPage({
-          projects: domainProjects,
+          projects: state.navigationProjects,
           onClose: () =>
             host.navigate({
               ...host.location,

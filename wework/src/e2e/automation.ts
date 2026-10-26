@@ -39,6 +39,8 @@ import {
   startConversationDiagnosticCapture,
 } from '@wegent/collaboration/conversation/conversationDiagnostics'
 import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
+import { readConversationSearchContent } from '@wegent/collaboration/conversation'
+import { matchConversationText } from '@wegent/chat-core/conversation-search'
 import { getComposerApps } from '@/components/chat/composer/composerAppsSnapshot'
 import {
   getRuntimeConversationCacheStats,
@@ -1111,9 +1113,16 @@ async function pressNativeDesktopControlKey(
   measurement?: { selector: string }
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
+  const startedAt = Date.now()
+  const trace = (stage: string) =>
+    console.info(
+      `[desktop-e2e-key] ${JSON.stringify({ stage, key, phase, windowLabel, elapsedMs: Date.now() - startedAt })}`
+    )
+  trace('focus-start')
   await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
     windowLabel,
   })
+  trace('focus-complete')
   const element = findDesktopControlElements(selector)[0]
   if (!element || element.matches(':disabled')) throw new Error('Keyboard target is unavailable')
   element.scrollIntoView({ block: 'center', inline: 'nearest' })
@@ -1131,9 +1140,11 @@ async function pressNativeDesktopControlKey(
   }
   window.addEventListener(eventType, recordKey, true)
   try {
+    trace('key-start')
     await sendNativeKeyAndWait(element, phase, () =>
       invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase, focus: false })
     )
+    trace('key-observed')
   } finally {
     window.removeEventListener(eventType, recordKey, true)
   }
@@ -1361,6 +1372,16 @@ function endDesktopControlDataTransfer(command: DesktopControlCommand): string {
 function dragDesktopControlDataTransfer(command: DesktopControlCommand): string {
   startDesktopControlDataTransfer(command)
   return endDesktopControlDataTransfer(command)
+}
+
+function hoverDesktopControlDataTransfer(command: DesktopControlCommand): string {
+  const activeDrag = activeDesktopControlDataTransfer
+  if (!activeDrag) throw new Error('No data-transfer drag is active')
+  const target = findDesktopControlElements(command.selector)[0]
+  if (!target) throw new Error(`Unable to find selector "${command.selector}"`)
+  dispatchDesktopControlDragEvent(target, 'dragenter', activeDrag.transfer)
+  dispatchDesktopControlDragEvent(target, 'dragover', activeDrag.transfer)
+  return target.textContent?.trim() ?? ''
 }
 
 function contextMenuDesktopControlElement(selector: string): string {
@@ -2454,6 +2475,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return startDesktopControlDataTransfer(command)
     case 'dragDataTransferEnd':
       return endDesktopControlDataTransfer(command)
+    case 'dragDataTransferOver':
+      return hoverDesktopControlDataTransfer(command)
     case 'contextMenu':
       return contextMenuDesktopControlElement(command.selector)
     case 'doubleClick':
@@ -2501,6 +2524,43 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'getConversationSearchHighlightMetrics': {
+      const containers = findDesktopControlElements(command.selector)
+        .map(element => ({ element, ...readConversationSearchContent(element) }))
+        .filter(({ text }) => text.trim() === command.text?.trim())
+      const query =
+        document.querySelector<HTMLInputElement>('[data-testid="conversation-find-input"]')
+          ?.value ?? ''
+      const highlights = CSS.highlights as unknown as Iterable<[string, Iterable<Range>]>
+      const ranges = Array.from(highlights)
+        .filter(([name]) => /^conversation-search-.+-active$/.test(name))
+        .flatMap(([, highlight]) => Array.from(highlight))
+        .flatMap(range => {
+          const container = containers.find(
+            ({ element }) =>
+              element.contains(range.startContainer) && element.contains(range.endContainer)
+          )
+          if (range.collapsed || !container) return []
+          const boundaryOffset = (node: Node, offset: number) => {
+            for (const entry of container.nodes) {
+              if (entry.node === node) return entry.start + offset
+              const sourceRange = document.createRange()
+              sourceRange.selectNodeContents(entry.node)
+              if (sourceRange.comparePoint(node, offset) <= 0) return entry.start
+            }
+            return container.text.length
+          }
+          const start = boundaryOffset(range.startContainer, range.startOffset)
+          const end = boundaryOffset(range.endContainer, range.endOffset)
+          const occurrence = matchConversationText(container.text, query).findIndex(
+            match => match.start === start && match.end === end
+          )
+          if (occurrence < 0) return []
+          const { top, bottom, left, right, width, height } = range.getBoundingClientRect()
+          return [{ text: range.toString(), occurrence, top, bottom, left, right, width, height }]
+        })
+      return JSON.stringify({ query, ranges })
+    }
     case 'startElementMetricsSampling': {
       const durationMs = Number(command.value)
       if (!Number.isFinite(durationMs) || durationMs <= 0) {
@@ -3447,12 +3507,16 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         await postDesktopControlResult(url, result)
         logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic)
       } catch (error) {
-        console.error('[Wework] Desktop E2E result acknowledgement failed:', {
-          commandId: command.id,
-          action: command.action,
-          actionSucceeded: result.ok,
-          error: error instanceof Error ? error.message : String(error),
-        })
+        console.error(
+          '[Wework] Desktop E2E result acknowledgement failed:',
+          JSON.stringify({
+            commandId: command.id,
+            action: command.action,
+            actionSucceeded: result.ok,
+            actionError: result.error,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        )
         throw error
       }
       if (result.ok) {

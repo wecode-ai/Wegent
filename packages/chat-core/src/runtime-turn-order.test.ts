@@ -51,3 +51,67 @@ describe("latest-page reconciliation with itemless historical turns", () => {
     },
   );
 });
+
+describe("native positions mixed with streamed turns", () => {
+  const streamed = (id: string): RuntimeConversationTurn => ({
+    id,
+    status: "streaming",
+    items: [{ id: `${id}-text`, type: "assistant_text", content: id }],
+  });
+
+  it("keeps earlier streamed goal turns before a positioned latest page", () => {
+    const local = [
+      { ...streamed("initial"), position: 1 },
+      streamed("continued-1"),
+      streamed("continued-2"),
+      streamed("continued-3"),
+      streamed("latest"),
+    ];
+    const page = [
+      { ...streamed("continued-3"), position: 40 },
+      { ...streamed("latest"), position: 50 },
+    ];
+    const merged = mergeRuntimeConversationTurns(local, page);
+    expect(merged.map((turn) => turn.id)).toEqual(local.map((turn) => turn.id));
+    expect(merged.at(-1)?.items[0]).toMatchObject({ content: "latest" });
+    expect(
+      merged
+        .filter((turn) => turn.position !== undefined)
+        .map((turn) => turn.position),
+    ).toEqual([1, 40, 50]);
+    expect(
+      mergeRuntimeConversationTurns(merged, page).map((turn) => turn.id),
+    ).toEqual(local.map((turn) => turn.id));
+  });
+
+  it("retains a live tail after native history, even when history inserts unseen turns", () => {
+    const local = [streamed("known"), streamed("live")];
+    const page = [
+      { ...streamed("known"), position: 10 },
+      { ...streamed("discovered"), position: 20 },
+    ];
+    expect(
+      mergeRuntimeConversationTurns(local, page).map((turn) => turn.id),
+    ).toEqual(["known", "discovered", "live"]);
+  });
+
+  it("keeps observed neighbors when native identity reconciles a streamed turn alias", () => {
+    const alias = streamed("alias");
+    const local = [streamed("gap"), alias];
+    const page = [{ ...alias, id: "native", position: 30 }];
+    expect(
+      mergeRuntimeConversationTurns(local, page).map((turn) => turn.id),
+    ).toEqual(["gap", "native"]);
+  });
+
+  it("uses native positions to correct positioned turns without moving an observed gap to the tail", () => {
+    const local = [streamed("first"), streamed("gap"), streamed("last")];
+    const page = [
+      { ...streamed("first"), position: 10 },
+      { ...streamed("last"), position: 30 },
+    ];
+    expect(
+      mergeRuntimeConversationTurns(local, page).map((turn) => turn.id),
+    ).toEqual(["first", "gap", "last"]);
+  });
+});

@@ -531,6 +531,17 @@ function emptyRuntimePaneMemoryDiagnostics(): RuntimePaneMemoryDiagnostics {
   }
 }
 
+function runtimeTaskThreadId(
+  task: Pick<RuntimeTaskAddress, 'threadId' | 'runtimeHandle'>
+): string | null {
+  const threadId = [
+    task.threadId,
+    task.runtimeHandle?.threadId,
+    task.runtimeHandle?.thread_id,
+  ].find(value => typeof value === 'string' && value.trim())
+  return typeof threadId === 'string' ? threadId.trim() : null
+}
+
 function sanitizeRuntimeTaskAddress(
   address: RuntimeTaskAddress | null
 ): RuntimeTaskAddressDebug | null {
@@ -539,7 +550,7 @@ function sanitizeRuntimeTaskAddress(
   return {
     deviceId: address.deviceId,
     taskId: address.taskId,
-    threadId: address.threadId ?? null,
+    threadId: runtimeTaskThreadId(address),
     workspacePath: address.workspacePath ?? null,
     hasRuntimeHandle: Boolean(address.runtimeHandle),
     runtimeHandleKeys: address.runtimeHandle ? Object.keys(address.runtimeHandle).sort() : [],
@@ -553,14 +564,9 @@ function sanitizeRuntimeTaskSummary(
 ): RuntimeTaskSummaryDebug | null {
   if (!task) return null
   const runtimeHandleEstimate = estimateApproxChars(task.runtimeHandle)
-  const runtimeHandleThreadId = [task.runtimeHandle?.threadId, task.runtimeHandle?.thread_id].find(
-    value => typeof value === 'string' && value.trim()
-  )
   return {
     taskId: task.taskId,
-    threadId:
-      task.threadId ??
-      (typeof runtimeHandleThreadId === 'string' ? runtimeHandleThreadId.trim() : null),
+    threadId: runtimeTaskThreadId(task),
     workspacePath: task.workspacePath,
     workspaceKind: task.workspaceKind ?? null,
     worktreeId: task.worktreeId ?? null,

@@ -88,6 +88,7 @@ function ScrollableMessagePaneContent({
   autoScrollSuspended = false,
   searchTarget,
   searchNavigationPaused = false,
+  onSearchNavigationFailure,
   onLoadMoreBefore,
   onLoadTurnNavigationItem,
   onLoadTranscriptGap,
@@ -199,6 +200,7 @@ function ScrollableMessagePaneContent({
     contentRef,
     scrollRef,
     onNavigationTargetChange: handleTurnNavigationScrollTargetChange,
+    onNavigationFailure: onSearchNavigationFailure,
   })
   useLayoutEffect(() => {
     const isInitialRender = !hasRenderedRef.current
