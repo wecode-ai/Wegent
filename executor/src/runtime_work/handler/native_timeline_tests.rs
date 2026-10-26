@@ -4,6 +4,142 @@
 use super::*;
 
 #[tokio::test]
+async fn native_timeline_keeps_a_newly_admitted_turn_live_before_its_first_notification() {
+    let (mut handler, root) = native_handler("native-admission-before-notification");
+    install_admitted_turn(&handler, &root, "old", false);
+    let (cancel, _cancelled) = oneshot::channel();
+    let (_stop, stopped) = oneshot::channel();
+    handler.start_local_task_execution("task-1".to_owned(), cancel, stopped);
+
+    let response = read_and_stop(&mut handler).await.unwrap();
+
+    assert_eq!(response["running"], true);
+    assert_eq!(response["turns"][0]["id"], "current");
+    assert_eq!(response["turns"][0]["status"], "streaming");
+    assert!(response["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|message| message["stoppedNotice"] != true));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn native_timeline_admission_never_revives_a_stopped_or_previously_observed_turn() {
+    for (label, active, stop_requested, previous, completed) in [
+        ("inactive", false, false, "old", false),
+        ("stop-requested", true, true, "old", false),
+        ("previous-turn", true, false, "current", false),
+        ("native-completion", true, false, "old", true),
+    ] {
+        let (mut handler, root) = native_handler(&format!("native-admission-{label}"));
+        install_admitted_turn(&handler, &root, previous, completed);
+        let (cancel, _cancelled) = oneshot::channel();
+        let (_stop, stopped) = oneshot::channel();
+        if active {
+            handler.start_local_task_execution("task-1".to_owned(), cancel, stopped);
+            if stop_requested {
+                handler
+                    .active_local_executions
+                    .lock()
+                    .unwrap()
+                    .get_mut("task-1")
+                    .unwrap()
+                    .stop_requested = true;
+            }
+        }
+
+        let response = read_and_stop(&mut handler).await.unwrap();
+
+        assert_eq!(response["turns"][0]["status"], "cancelled", "{label}");
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn native_timeline_admission_keeps_an_older_page_stopped() {
+    let (handler, root) = native_handler("native-admission-older-page");
+    install_admitted_turn(&handler, &root, "old", false);
+    let (cancel, _cancelled) = oneshot::channel();
+    let (_stop, stopped) = oneshot::channel();
+    handler.start_local_task_execution("task-1".to_owned(), cancel, stopped);
+    let cursor = format!(
+        "wework-codex-timeline:{}",
+        json!({"cursor":"older-native-page","turns":[]})
+    );
+
+    let response = handler
+        .handle_runtime_rpc(json!({
+            "method":"runtime.tasks.transcript",
+            "payload":{"taskId":"task-1", "beforeCursor":cursor}
+        }))
+        .await
+        .unwrap();
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
+
+    assert_eq!(response["turns"][0]["status"], "cancelled");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn native_timeline_admission_does_not_replace_a_native_failure() {
+    let (mut handler, root) = native_handler("native-admission-native-failure");
+    install_admitted_turn(&handler, &root, "old", false);
+    fs::write(
+        root.join("thread_turns_list.json"),
+        json!({"data":[{
+            "id":"current","status":"failed","error":{"message":"Model rejected the request"},
+            "items":[]
+        }]})
+        .to_string(),
+    )
+    .unwrap();
+    let (cancel, _cancelled) = oneshot::channel();
+    let (_stop, stopped) = oneshot::channel();
+    handler.start_local_task_execution("task-1".to_owned(), cancel, stopped);
+
+    let response = read_and_stop(&mut handler).await.unwrap();
+
+    assert_eq!(response["turns"][0]["status"], "failed");
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn install_admitted_turn(
+    handler: &RuntimeWorkRpcHandler,
+    root: &Path,
+    previous: &str,
+    completed: bool,
+) {
+    handler.store.update_task("task-1", |link| {
+        link.runtime_handle["lastTurnId"] = json!(previous);
+    });
+    fs::write(
+        root.join("thread_turns_list.json"),
+        json!({"data":[{"id":"current","status":"interrupted","items":[]}]}).to_string(),
+    )
+    .unwrap();
+    let mut entries = vec![
+        json!({"type":"turnStarted","position":1,"turnId":"current"}),
+        json!({"type":"item","position":2,"turnId":"current","item":{
+            "id":"user","type":"userMessage","content":[{"type":"text","text":"New goal"}]
+        }}),
+    ];
+    if completed {
+        entries.push(json!({"type":"turnCompleted","position":3,
+            "turnId":"current","status":"interrupted"}));
+    }
+    fs::write(
+        root.join("thread_timeline_list.json"),
+        json!({"data":entries,"nextCursor":null}).to_string(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
 async fn native_timeline_keeps_an_active_open_turn_running_without_unpersisted_items() {
     for completed_item in [false, true] {
         let (mut handler, root) = native_handler(if completed_item {
