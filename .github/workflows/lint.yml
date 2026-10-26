@@ -69,7 +69,7 @@ jobs:
       - name: Set up Python 3.11 and uv
         uses: ./.github/actions/setup-python-uv-cache
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         working-directory: ./backend
@@ -96,7 +96,7 @@ jobs:
       - name: Set up Python 3.12 and uv
         uses: ./.github/actions/setup-python-uv-cache
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dependencies
         working-directory: ./knowledge_engine
@@ -175,6 +175,9 @@ jobs:
       - name: Test CI cache policy
         run: .github/scripts/test-ci-cache-policy.sh
 
+      - name: Test shared E2E runtime revisions
+        run: bash .github/scripts/test-wework-core-e2e-runtimes.sh
+
       - name: Test CI resource logging
         run: node --test .github/scripts/run-with-resource-logging.test.mjs
 
@@ -226,7 +229,16 @@ jobs:
   lint-summary:
     name: Lint Summary
     runs-on: ubuntu-latest
-    needs: [changes, lint-backend, lint-knowledge-engine, lint-frontend, lint-wework, check-settings-config, check-alembic-heads]
+    needs:
+      [
+        changes,
+        lint-backend,
+        lint-knowledge-engine,
+        lint-frontend,
+        lint-wework,
+        check-settings-config,
+        check-alembic-heads,
+      ]
     if: always() && !cancelled() && github.event_name != 'merge_group'
 
     steps:

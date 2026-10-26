@@ -79,7 +79,7 @@ export function createDesktopScenario({
     },
     reviewApproval(body) {
       const reviewInput = JSON.stringify(body.input ?? [])
-      const dangerous = reviewInput.includes('REVIEW_PRIVATE_READ')
+      const dangerous = reviewInput.includes('REVIEW_PRIVATE_ACCESS')
       if (reviewInput.includes('source-approved-proof.txt')) commandReviews++
       if (dangerous) deniedReviews++
       else allowedReviews++
@@ -110,7 +110,8 @@ export function createDesktopScenario({
           assert.ok(!output.includes('SYNTHETIC_SOURCE_PRIVATE_DATA'))
           assert.ok(/denied|reject|not authorized|declined/i.test(output), output)
           assert.ok(allowedReviews > 0, 'The native reviewer must approve the context read')
-          assert.ok(deniedReviews > 0, 'The native reviewer must deny the private read')
+          assert.ok(deniedReviews > 0, 'The native reviewer must deny unrelated private access')
+          assert.equal(await readFile(privateFile, 'utf8'), 'SYNTHETIC_SOURCE_PRIVATE_DATA')
           verifiedPermissions = true
         } else if (requestContainsToolOutput(body, 'source-escalation-not-persistent')) {
           const output = toolOutputText(body, 'source-escalation-not-persistent') ?? ''
@@ -130,12 +131,12 @@ export function createDesktopScenario({
           )
           const command =
             process.platform === 'win32'
-              ? `Get-Content -LiteralPath '${privateFile.replaceAll("'", "''")}' # REVIEW_PRIVATE_READ`
-              : `cat ${quote(privateFile)} # REVIEW_PRIVATE_READ`
+              ? `Remove-Item -LiteralPath ${powershellQuote(privateFile)} -Force -ErrorAction Stop # REVIEW_PRIVATE_ACCESS`
+              : `cat ${quote(privateFile)} # REVIEW_PRIVATE_ACCESS`
           const tool = selectShellToolCommand(body, command, undefined)
           tool.arguments.sandbox_permissions = 'require_escalated'
           tool.arguments.justification =
-            'REVIEW_PRIVATE_READ: source requests an unrelated private file'
+            'REVIEW_PRIVATE_ACCESS: source requests an unrelated private file'
           events = functionCall('source-private-review', tool.name, tool.arguments)
         } else if (requestContainsToolOutput(body, 'source-approved-escalation')) {
           assert.ok(commandReviews > 0, 'Explicit command approval must reach the native reviewer')
@@ -169,7 +170,7 @@ export function createDesktopScenario({
           }
           const command =
             process.platform === 'win32'
-              ? `Set-Content -LiteralPath ${powershellQuote(elevatedFile)} -Value 'approved-escalation' -NoNewline -ErrorAction Stop; Write-Output 'SOURCE_ESCALATION_SUCCEEDED'`
+              ? `Remove-Item -LiteralPath ${powershellQuote(elevatedFile)} -Force -ErrorAction Stop; Set-Content -LiteralPath ${powershellQuote(elevatedFile)} -Value 'approved-escalation' -NoNewline -ErrorAction Stop; Write-Output 'SOURCE_ESCALATION_SUCCEEDED'`
               : `printf 'approved-escalation' > ${quote(elevatedFile)} && printf 'SOURCE_ESCALATION_SUCCEEDED'`
           const tool = selectShellToolCommand(body, command, undefined)
           tool.arguments.sandbox_permissions = 'require_escalated'

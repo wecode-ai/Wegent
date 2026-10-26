@@ -6,8 +6,67 @@ import {
   CHECKPOINT_TASK_COMPLETION_TEXT,
   CHECKPOINT_TASK_PROMPT,
   DEFAULT_STEP_TIMEOUT_MS,
+  join,
+  resultDir,
   selectE2EModel,
+  writeFile,
 } from './shared.mjs'
+
+async function verifyAssociationDialogLayout(control, existingItem) {
+  const search = '[data-testid="task-board-association-search"]'
+  const item = `[data-testid="task-board-association-item-${existingItem.id}"]`
+  await control.command(
+    'waitFor',
+    '[data-testid="task-board-association-list"][aria-busy="false"]',
+    {
+      visible: true,
+      stableMs: 100,
+    }
+  )
+  await control.command('fill', search, { value: 'NO_MATCH_ASSOCIATION_LAYOUT' })
+  await control.command('waitFor', '[data-testid="task-board-association-empty"]', {
+    visible: true,
+    stableMs: 100,
+  })
+  await control.command('fill', search, { value: existingItem.id })
+  await control.command('waitFor', item, { visible: true, stableMs: 100 })
+  await control.command('fill', search, { value: '' })
+  await control.command('waitFor', '[data-testid="task-board-association-list"] button', {
+    visible: true,
+    stableMs: 100,
+  })
+  const scrollTop = Number(
+    await control.command('scrollToBottomAsUser', '[data-testid="task-board-association-list"]')
+  )
+  assert.ok(scrollTop > 0, 'The long task list fixture must overflow')
+  await control.command('waitFor', '[data-testid="task-board-association-create"]', {
+    visible: true,
+    stableMs: 100,
+  })
+  await control.command('fill', search, { value: existingItem.id })
+  await control.command('waitFor', item, { visible: true, stableMs: 100 })
+
+  const sample = JSON.parse(await control.command('stopElementMetricsSampling', 'body'))
+  await writeFile(
+    join(resultDir, 'task-board-association-layout-frames.json'),
+    JSON.stringify(sample, null, 2)
+  )
+  const frames = sample.frames.filter(frame => frame.elements.length > 0)
+  assert.ok(frames.length > 2, 'Dialog stability requires multiple rendered frames')
+  const baseline = frames[0].elements
+  for (const frame of frames) {
+    assert.equal(frame.elements.length, 3, 'The dialog, search and create button must stay mounted')
+    frame.elements.forEach((element, index) => {
+      assert.equal(element.identity, baseline[index].identity, 'Dialog controls must not remount')
+      for (const property of ['left', 'top', 'width', 'height']) {
+        assert.ok(
+          Math.abs(element[property] - baseline[index][property]) <= 1,
+          `Dialog control ${index} changed ${property} during loading, filtering or scrolling`
+        )
+      }
+    })
+  }
+}
 
 async function waitForBinding(control, projectId, itemId) {
   const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
@@ -58,7 +117,7 @@ async function verifyDraft(control, project, existingItem) {
   const tabId = tab.slice('workspace-tab-'.length)
   const content = `[data-testid="workspace-tab-content-${tabId}"]`
   const composer = `${content} [data-testid="chat-message-input"][contenteditable="true"]`
-  const chooseProject = async () => {
+  const chooseProject = async (verifyLayout = false) => {
     const projectPicker = `${content} button[data-testid="project-space-context-pill"]`
     await control.command('waitFor', projectPicker, { visible: true })
     await control.command('click', projectPicker)
@@ -67,14 +126,23 @@ async function verifyDraft(control, project, existingItem) {
       '[data-testid="work-item-context-menu"] [data-testid^="work-item-workspace-option-"]',
       { text: project.name, value: 'draft-target-project', timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
     )
+    if (verifyLayout) {
+      await control.command('startElementMetricsSampling', content, {
+        value: String(DEFAULT_STEP_TIMEOUT_MS),
+        target: ['dialog', 'search', 'create']
+          .map(id => `[data-testid="task-board-association-${id}"]`)
+          .join(', '),
+      })
+    }
     await control.command('click', '[data-e2e-anchor-id="draft-target-project"]')
     await control.command('waitFor', '[data-testid="task-board-association-dialog"]', {
       text: project.name,
       visible: true,
     })
+    if (verifyLayout) await verifyAssociationDialogLayout(control, existingItem)
   }
   await control.command('waitFor', composer, { visible: true })
-  await chooseProject()
+  await chooseProject(Boolean(existingItem))
   if (existingItem) {
     await control.command(
       'waitFor',
@@ -159,5 +227,40 @@ export async function verifyNewTaskBoardAssociation(control, projectName, issueT
   const existingItem = items.find(value => value.title === issueTitle)
   assert.ok(existingItem, 'The existing Issue fixture is missing')
   await verifyDraft(control, project, null)
-  await verifyDraft(control, project, existingItem)
+  const layoutFixtures = []
+  try {
+    for (let index = 0; index < 12; index += 1) {
+      layoutFixtures.push(
+        await requestExecutor(
+          control,
+          'todos.create',
+          {
+            project_id: project.id,
+            todo: { title: `Association layout fixture ${index}`, status: 'pending' },
+          },
+          DEFAULT_STEP_TIMEOUT_MS
+        )
+      )
+    }
+    await verifyDraft(control, project, existingItem)
+  } finally {
+    for (const fixture of layoutFixtures) {
+      await requestExecutor(
+        control,
+        'todos.update',
+        {
+          project_id: project.id,
+          task_id: fixture.id,
+          todo: { version: fixture.version, status: 'completed' },
+        },
+        DEFAULT_STEP_TIMEOUT_MS
+      )
+      await requestExecutor(
+        control,
+        'todos.archive',
+        { project_id: project.id, task_id: fixture.id },
+        DEFAULT_STEP_TIMEOUT_MS
+      )
+    }
+  }
 }

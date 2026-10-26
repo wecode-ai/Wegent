@@ -2,21 +2,27 @@ import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
 import {
   expandCollaborationWorkspace,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
+  codexRequestKind,
   createSse,
+  isReplyPredictionRequest,
+  mcpToolRequestEvents,
   readRequestBody,
+  requestContainsToolOutput,
   responseCompleted,
   responseCreated,
 } from '../modules/response-protocol.mjs'
+import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
+import { selectE2EModel } from '../modules/shared.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPLETE = 'PERSONAL_STAND_IN_COMPLETE'
+const COLLABORATION = 'ISSUE_COLLABORATION_WITHOUT_EXTRA_CONFIRMATION'
 const scoped = id => `${CONTENT} [data-testid="${id}"]`
 
 export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
@@ -31,6 +37,70 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   const completed = []
   let savedSettings
   let assignmentDiagnostics
+  let returnToUser
+  const collaborationRuns = new Map()
+  const completedCollaborationIssues = []
+
+  function collaborationEvents(body, issue) {
+    const input = JSON.stringify(body.input ?? [])
+    assert.doesNotMatch(
+      input,
+      /private AI task|Only change shared Issue|immutable execution context/
+    )
+    const run = collaborationRuns.get(issue.id) ?? { step: 0 }
+    collaborationRuns.set(issue.id, run)
+    const steps = [
+      { name: 'get_current_context', args: {} },
+      {
+        name: 'add_board_item_comment',
+        args: { space_id: String(project.id), item_id: issue.id, body: COLLABORATION },
+      },
+      {
+        name: 'assign_board_item',
+        args: {
+          space_id: String(project.id),
+          item_id: issue.id,
+          assignee_type: 'user',
+          assignee_id: String(returnToUser.id),
+        },
+      },
+    ]
+    const callId = () => `issue-collaboration-${issue.id}-${run.step}`
+    if (requestContainsToolOutput(body, callId())) {
+      const value = JSON.parse(readMcpToolOutput(body, callId()))
+      if (run.step === 0) {
+        assert.equal(value.space_id, String(project.id))
+        assert.equal(value.item_id, issue.id)
+      }
+      assert.ok(!value.error && !value.isError, JSON.stringify(value))
+      run.step++
+    }
+    if (run.step === steps.length) return [assistantMessage(COMPLETE)]
+    const step = steps[run.step]
+    return mcpToolRequestEvents(body, {
+      toolName: step.name,
+      argumentsValue: step.args,
+      directToolName: (body.tools ?? [])
+        .map(tool => tool.name)
+        .find(name => name?.endsWith(`__${step.name}`)),
+      searchCallId: `${callId()}-search`,
+      toolCallId: callId(),
+    }).events
+  }
+
+  async function assertCollaboration(issue) {
+    assert.equal(
+      collaborationRuns.get(issue.id)?.step,
+      3,
+      'All real collaboration tools must finish'
+    )
+    const persisted = await request(`/v1/loop-items/${issue.id}`)
+    assert.equal(persisted.assignee_user_id, returnToUser.id)
+    const comments = await request(
+      `/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`
+    )
+    assert.equal(comments.filter(comment => comment.body === COLLABORATION).length, 1)
+  }
 
   async function request(path, body, token = cloud.authToken, method = body ? 'POST' : 'GET') {
     const response = await fetch(`${cloud.backendUrl}/api${path}`, {
@@ -89,6 +159,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         auth_source: 'password',
       })
       ownerToken = (await request('/auth/login', { user_name: userName, password })).access_token
+      returnToUser = await request('/users/me', undefined, ownerToken)
       workspace = await request(
         '/v1/workspaces',
         { name: `Personal stand-in ${process.pid}` },
@@ -107,7 +178,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         ownerToken
       )
       manualIssue = await request(`/v1/cloud-projects/${project.id}/loop-items`, {
-        title: 'Manual personal task without project preparation',
+        title: `${COLLABORATION} manual task`,
       })
     },
     setCloudEnvironment(value) {
@@ -116,12 +187,33 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
-      await readRequestBody(req)
+      const body = await readRequestBody(req)
+      if (isReplyPredictionRequest(body)) return false
+      const kind = codexRequestKind(body)
+      const input = JSON.stringify(body.input ?? [])
+      const collaborationIssue = ['prewarm', 'compaction'].includes(kind)
+        ? undefined
+        : [manualIssue, ...completedCollaborationIssues].find(
+            issue => issue && input.includes(issue.title)
+          )
+      if (collaborationIssue)
+        console.log(
+          '[e2e] Issue collaboration model request',
+          JSON.stringify({ kind, tools: (body.tools ?? []).map(tool => tool.name ?? tool.type) })
+        )
+      if (collaborationIssue?.id === manualIssue.id) {
+        assert.ok(
+          input.includes(
+            'Collaboration actions within that scope do not require separate user confirmation'
+          )
+        )
+      }
+      const events = collaborationIssue
+        ? collaborationEvents(body, collaborationIssue)
+        : [assistantMessage(COMPLETE)]
       const id = `personal-stand-in-${Date.now()}`
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-      response.end(
-        createSse([responseCreated(id), assistantMessage(COMPLETE), responseCompleted(id)])
-      )
+      response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
       return true
     },
     async verify(control) {
@@ -164,13 +256,29 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         }
       )
       await assertCompleted(control, manualIssue)
+      await assertCollaboration(manualIssue)
       await control.command('click', scoped('ai-chat-modal-close'))
       await control.command('click', scoped('cloud-todo-detail-close'))
       await openProjectStandIn(control, scoped('stand-in-open'), { connect: true })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('fill', '[data-testid="stand-in-prompt"]', {
-        value: 'Handle my assignments locally',
+        value: 'Review my assigned Issues, post the result and return them to the project owner.',
       })
+      const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
+      const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
+      assert.ok(model, 'The stand-in must use the registered E2E Codex model')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-advanced-open"]')
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="stand-in-settings"] [data-testid="model-selector-button"]'
+      )
+      const modelKey = JSON.stringify([model.runtime, model.provider, model.model_id])
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid=${JSON.stringify(`model-option-${modelKey}`)}]`
+      )
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
+      await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       const params = { projectId: String(project.id), userId: user.id, projectStore: 'cloud' }
@@ -178,10 +286,12 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       savedSettings = settings
       assert.equal(settings.enabled, true)
       const issue = await request(`/v1/cloud-projects/${project.id}/loop-items`, {
-        title: 'Stand-in personal task without project preparation',
+        title: `${COLLABORATION} stand-in task`,
         assignee_user_id: user.id,
       })
+      completedCollaborationIssues.push(issue)
       await assertCompleted(control, issue)
+      await assertCollaboration(issue)
       assert.deepEqual(
         (await request(`/v1/cloud-projects/${project.id}/execution-environments`)).items,
         []

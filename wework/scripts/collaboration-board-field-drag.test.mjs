@@ -10,7 +10,27 @@ vi.mock('../e2e/desktop/modules/workspace-flows.mjs', () => ({
   reloadMainWindow: async control => control.resetScroll(),
 }))
 
-import { verifyReadOnlyBoardDrag } from '../e2e/desktop/modules/collaboration-board-field-drag.mjs'
+import {
+  assertLaneOrder,
+  verifyReadOnlyBoardDrag,
+} from '../e2e/desktop/modules/collaboration-board-field-drag.mjs'
+
+test('checks manual lane order after bringing each card into the viewport', async () => {
+  let visible = null
+  const control = {
+    async command(action, selector, options = {}) {
+      if (action === 'scrollIntoView') visible = selector
+      if (action === 'waitFor' && options.visible) assert.equal(visible, selector)
+      if (action === 'getTestIdOrder')
+        return JSON.stringify(['cloud-todo-card-anchor', 'cloud-todo-card-moving'])
+      return ''
+    },
+  }
+  await assertLaneOrder(control, selector => selector, 'priority-low', ['anchor', 'moving'])
+  await assert.rejects(
+    assertLaneOrder(control, selector => selector, 'priority-low', ['moving', 'anchor'])
+  )
+})
 
 test('scrolls the Viewer card into view after grouping and reload', async () => {
   let visibleCard = null
