@@ -87,6 +87,21 @@ async function waitForCount(control, selector, expected, message, timeoutMs) {
   assert.fail(`${message}: observed=${latest}`)
 }
 
+async function waitForConversationMessages(control, address, expectedLength, message, timeoutMs) {
+  const startedAt = Date.now()
+  let latest = []
+  while (Date.now() - startedAt < timeoutMs) {
+    latest = JSON.parse(
+      await control.command('getRuntimeConversationMessages', 'body', {
+        value: JSON.stringify(address),
+      })
+    )
+    if (latest.length === expectedLength) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`${message}: observed=${latest.length}`)
+}
+
 async function waitForRequestHold(control) {
   const held = JSON.parse(await control.command('awaitLocalExecutorRequestHold', 'body'))
   assert.ok(held?.heldCount > 0, `The request hold was never entered: ${JSON.stringify(held)}`)
@@ -472,6 +487,13 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         archiveRow,
         0,
         'The task was not archived while the input answer acceptance was pending',
+        taskTimeoutMs
+      )
+      await waitForConversationMessages(
+        control,
+        archiveAddress,
+        0,
+        'The archived conversation cache was not cleared',
         taskTimeoutMs
       )
       await startNewChat(control, ACTIVE_COMPOSER_SELECTOR, taskTimeoutMs)
