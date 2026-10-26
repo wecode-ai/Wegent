@@ -5,7 +5,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
-import { webApi } from '../../utils/collaboration-test-support'
+import { dragCollaborationIssueToColumn, webApi } from '../../utils/collaboration-test-support'
 
 interface Resource {
   id: string
@@ -19,22 +19,7 @@ interface ScheduledProject {
 }
 
 async function dragIssueToLane(page: Page, issueId: string, source: string, target: string) {
-  const card = page
-    .getByTestId(`cloud-todo-column-${source}`)
-    .getByTestId(`cloud-todo-card-${issueId}`)
-  const lane = page.getByTestId(`cloud-todo-column-dropzone-${target}-content`)
-  await card.scrollIntoViewIfNeeded()
-  await lane.scrollIntoViewIfNeeded()
-  const from = await card.boundingBox()
-  const to = await lane.boundingBox()
-  expect(from).not.toBeNull()
-  expect(to).not.toBeNull()
-  await page.mouse.move(from!.x + from!.width / 2, from!.y + from!.height / 2)
-  await page.mouse.down()
-  await page.mouse.move(from!.x + from!.width / 2 + 10, from!.y + from!.height / 2, { steps: 3 })
-  await expect(page.getByTestId('project-board-drag-overlay')).toBeVisible()
-  await page.mouse.move(to!.x + to!.width / 2, to!.y + Math.min(40, to!.height / 2), { steps: 10 })
-  await page.mouse.up()
+  return dragCollaborationIssueToColumn(page, issueId, target, source)
 }
 
 const projectTest = test.extend<{ scheduledProject: ScheduledProject }>({
@@ -135,7 +120,7 @@ projectTest(
     await page.goto(path)
     await dragIssueToLane(page, created.id, 'inbox', 'in_progress')
     await expect(page.getByTestId('collaboration-board').getByRole('alert')).toContainText(
-      '机器人没有符合配置且获项目授权的执行环境'
+      /机器人没有符合配置且获项目授权的执行环境|No project-authorized execution environment matches this agent/
     )
     await expect(
       page.getByTestId('cloud-todo-column-inbox').getByTestId(`cloud-todo-card-${created.id}`)
@@ -155,7 +140,9 @@ projectTest(
       .click()
     await page.getByTestId('cloud-todo-detail-status').selectOption('in_progress')
     await page.getByTestId('cloud-todo-save').click()
-    await expect(page.getByTestId('cloud-todo-save-error')).toContainText('项目授权')
+    await expect(page.getByTestId('cloud-todo-save-error')).toContainText(
+      /项目授权|project-authorized/
+    )
     await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('inbox')
   }
 )
@@ -956,7 +943,7 @@ projectTest(
     await expect(page.getByTestId('board-view-editor')).toHaveCount(0)
     await page.getByTestId('board-view-picker').click()
     await expect(page.getByTestId(`board-view-${view.id}`)).toHaveCount(0)
-    await expect(page.getByTestId('board-view-default')).toContainText('默认')
+    await expect(page.getByTestId('board-view-default')).toContainText(/默认|Default/)
     await expectItem('completed', ['shared', 'beta'])
   }
 )

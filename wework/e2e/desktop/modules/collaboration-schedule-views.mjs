@@ -13,11 +13,29 @@ function addDays(value, days) {
   return next
 }
 
-function nextMonday() {
-  const today = new Date()
-  today.setHours(12, 0, 0, 0)
-  const daysUntilMonday = (8 - today.getDay()) % 7 || 7
-  return addDays(today, daysUntilMonday)
+export function collaborationScheduleDates(today = new Date()) {
+  const anchor = new Date(today)
+  anchor.setHours(12, 0, 0, 0)
+  const firstOfMonth = new Date(anchor.getFullYear(), anchor.getMonth(), 1, 12)
+  const gridEnd = addDays(firstOfMonth, 41 - ((firstOfMonth.getDay() + 6) % 7))
+  const currentMonday = addDays(anchor, -((anchor.getDay() + 6) % 7))
+  // Keep both calendar ranges visible; Gantt starts at the current week.
+  const initialStart = addDays(currentMonday, addDays(currentMonday, 9) > gridEnd ? -7 : 0)
+  const initialEnd = addDays(initialStart, 2)
+  const calendarStart = addDays(initialStart, 7)
+  const calendarEnd = addDays(calendarStart, 2)
+  const resizedEnd = addDays(calendarEnd, 1)
+  return Object.fromEntries(
+    Object.entries({
+      initialStart,
+      initialEnd,
+      calendarStart,
+      calendarEnd,
+      resizedEnd,
+      movedStart: calendarEnd,
+      movedEnd: addDays(resizedEnd, 2),
+    }).map(([key, value]) => [key, dateKey(value)])
+  )
 }
 
 async function waitForAttributeIncludes(
@@ -48,24 +66,7 @@ export async function verifyCollaborationScheduleViews({
   await control.command('setMainWindowSize', 'body', {
     value: JSON.stringify({ width: 1440, height: 900 }),
   })
-  const initialStart = nextMonday()
-  const initialEnd = addDays(initialStart, 2)
-  const calendarStart = addDays(initialStart, 7)
-  const calendarEnd = addDays(calendarStart, 2)
-  const resizedEnd = addDays(calendarEnd, 1)
-  const movedStart = calendarEnd
-  const movedEnd = addDays(resizedEnd, 2)
-  const keys = Object.fromEntries(
-    Object.entries({
-      initialStart,
-      initialEnd,
-      calendarStart,
-      calendarEnd,
-      resizedEnd,
-      movedStart,
-      movedEnd,
-    }).map(([key, value]) => [key, dateKey(value)])
-  )
+  const keys = collaborationScheduleDates()
 
   await control.command('click', scoped('[aria-label="时间范围"]'))
   await control.command('waitFor', '[data-testid="cloud-todo-detail-start-date"]', {

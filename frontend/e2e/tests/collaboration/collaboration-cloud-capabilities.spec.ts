@@ -6,6 +6,7 @@ import { expect, test, type Browser, type Page } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import {
+  dragCollaborationIssueToColumn,
   openBlankProjectCreation,
   selectCollaborationProjectView,
   webApi,
@@ -301,37 +302,7 @@ async function selectGroupBy(
 }
 
 async function dragIssueTo(page: Page, issueId: string, columnKey: string): Promise<void> {
-  const source = page.getByTestId(`collaboration-issue-${issueId}`)
-  const target = page.getByTestId(`cloud-todo-column-dropzone-${columnKey}`)
-  await expect(source).toBeVisible()
-  await expect(target).toBeAttached()
-
-  const mutationResponse = page.waitForResponse(response => {
-    const pathname = new URL(response.url()).pathname
-    return (
-      ['PATCH', 'POST'].includes(response.request().method()) &&
-      (pathname.includes(`/loop-items/${encodeURIComponent(issueId)}`) ||
-        pathname.endsWith('/loop-items/reorder'))
-    )
-  })
-  const handle = page.getByTestId(`cloud-todo-card-${issueId}`)
-  await handle.scrollIntoViewIfNeeded()
-  const sourceBox = await handle.boundingBox()
-  expect(sourceBox).not.toBeNull()
-  await page.mouse.move(sourceBox!.x + 20, sourceBox!.y + 20)
-  await page.mouse.down()
-  try {
-    await page.mouse.move(sourceBox!.x + 30, sourceBox!.y + 20)
-    await expect(page.getByTestId('project-board-drag-overlay')).toBeVisible()
-    await target.scrollIntoViewIfNeeded()
-    const targetBox = await target.boundingBox()
-    expect(targetBox).not.toBeNull()
-    await page.mouse.move(targetBox!.x + targetBox!.width / 2, targetBox!.y + 10, { steps: 10 })
-    await expect(page.getByTestId(`cloud-todo-column-drag-hint-${columnKey}`)).toBeVisible()
-  } finally {
-    await page.mouse.up()
-  }
-  const response = await mutationResponse
+  const response = await dragCollaborationIssueToColumn(page, issueId, columnKey)
   expect(response.ok(), `Board mutation failed: ${await response.text()}`).toBe(true)
 }
 
