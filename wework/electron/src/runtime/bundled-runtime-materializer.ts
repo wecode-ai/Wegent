@@ -27,6 +27,7 @@ export type BundledRuntimeRole = 'core' | 'workbench'
 interface MaterializeRuntimeOptions {
   versionRequirement?: string
   fetch?: typeof fetch
+  onEntry?: (relativePath: string) => void
 }
 
 export async function materializeBundledRuntimes(
@@ -77,7 +78,13 @@ export async function materializeBundledRuntimes(
   }
   await mkdir(cacheRoot, { recursive: true, mode: 0o700 })
   for (const runtime of selectedRuntimes) {
-    await materializeRuntime(resourceRoot, cacheRoot, runtime, options.fetch ?? cloudFetch)
+    await materializeRuntime(
+      resourceRoot,
+      cacheRoot,
+      runtime,
+      options.fetch ?? cloudFetch,
+      options.onEntry
+    )
   }
   await writeRuntimeCatalog(cacheRoot, runtimes)
   return cacheRoot
@@ -100,7 +107,8 @@ async function materializeRuntime(
   resourceRoot: string,
   cacheRoot: string,
   runtime: RuntimeDescriptor,
-  fetchImpl: typeof fetch
+  fetchImpl: typeof fetch,
+  onEntry?: (relativePath: string) => void
 ): Promise<void> {
   validateDescriptor(runtime)
   const target = join(cacheRoot, runtime.sourceFingerprint)
@@ -109,7 +117,7 @@ async function materializeRuntime(
     target,
     async content => {
       const archive = await resolveRuntimeArchive(resourceRoot, cacheRoot, runtime, fetchImpl)
-      await extractArchive(archive, content)
+      await extractArchive(archive, content, onEntry)
       if (!(await runtimeMatches(content, runtime))) {
         throw new Error(`Bundled DSH runtime identity is invalid: ${runtime.assetName}`)
       }
@@ -118,9 +126,26 @@ async function materializeRuntime(
   )
 }
 
-async function extractArchive(archive: string, destination: string): Promise<void> {
+async function extractArchive(
+  archive: string,
+  destination: string,
+  onEntry?: (relativePath: string) => void
+): Promise<void> {
   try {
-    await extract({ cwd: destination, file: archive, strict: true })
+    await extract({
+      cwd: destination,
+      file: archive,
+      strict: true,
+      ...(onEntry
+        ? {
+            onentry: entry => {
+              if (entry.type !== 'File' && entry.type !== 'OldFile') return
+              const relativePath = entry.path.replace(/^\.\//, '')
+              if (relativePath) onEntry(relativePath)
+            },
+          }
+        : {}),
+    })
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     throw new Error(`Bundled DSH runtime extraction failed: ${detail}`, { cause: error })

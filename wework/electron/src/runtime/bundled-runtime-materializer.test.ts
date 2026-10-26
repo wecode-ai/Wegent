@@ -145,6 +145,27 @@ describe('materializeBundledRuntimes', () => {
       process.env.PATH = originalPath
     }
   })
+
+  test('reports archive entries while unpacking a runtime', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-runtime-materializer-'))
+    roots.push(root)
+    const resources = join(root, 'resources')
+    const cache = join(root, 'cache')
+    await mkdir(resources)
+    const core = await runtimeArchive(resources, 'core', '0.1.1-rc.2', 'a')
+    const workbench = await runtimeArchive(resources, 'workbench', '0.1.0-rc.8', 'b')
+    await writeFile(
+      join(resources, 'runtimes.json'),
+      JSON.stringify({ runtimes: [core, workbench] })
+    )
+    const entries: string[] = []
+
+    await materializeBundledRuntimes(resources, cache, ['core'], {
+      onEntry: entry => entries.push(entry),
+    })
+
+    expect(entries).toContain('runtime.json')
+  })
 })
 
 async function runtimeArchive(

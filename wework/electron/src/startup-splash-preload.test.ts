@@ -18,6 +18,8 @@ describe('startup splash preload', () => {
     expect(source).toContain("'startup-recovery:recover-workbench'")
     expect(source).toContain("'startup-recovery:reset-app-state'")
     expect(source).toContain("'startup-recovery:disable-plugin'")
+    expect(source).toContain("'weworkStartupProgress'")
+    expect(source).toContain("'startup-progress:update'")
     expect(source).not.toContain('webUtils')
   })
 })

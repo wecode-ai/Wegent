@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { telemetryEvents } from '../modules/response-protocol.mjs'
 import { verifyStartupRecovery } from '../modules/startup-recovery.mjs'
+import { verifyStartupSplashProgress } from '../modules/startup-splash-progress.mjs'
 
 const SPLASH_CLOSE_TIMEOUT_MS = 10_000
 const SPLASH_CLOSE_POLL_INTERVAL_MS = 50
@@ -14,9 +15,10 @@ function parseStartupEvents(appLog) {
     const body = match[1]
     const step = body.match(/\bstep:\s*'([^']+)'/)?.[1]
     const status = body.match(/\bstatus:\s*'([^']+)'/)?.[1]
+    const stage = body.match(/\bstage:\s*'([^']+)'/)?.[1]
     const elapsedMs = Number(body.match(/\belapsedMs:\s*(\d+)/)?.[1])
     if (step && status && Number.isFinite(elapsedMs)) {
-      events.push({ step, status, elapsedMs })
+      events.push({ step, status, elapsedMs, ...(stage ? { stage } : {}) })
     }
   }
   return events
@@ -71,6 +73,10 @@ export async function createDesktopScenario({ resultDir }) {
     },
 
     async verify(control) {
+      await verifyStartupSplashProgress({
+        appBinary: process.env.WEWORK_E2E_APP_BIN,
+        resultDir,
+      })
       await verifyStartupRecovery({ appBinary: process.env.WEWORK_E2E_APP_BIN, resultDir })
       const snapshot = await waitForClosedStartupSplash(control)
       assert.deepEqual(
@@ -99,6 +105,25 @@ export async function createDesktopScenario({ resultDir }) {
         'The startup stages were logged out of order'
       )
       const runtimeStartupEvents = parseStartupEvents(appLog)
+      const expectedProgressStages = [
+        'launch',
+        'shell',
+        'components',
+        'runtime-files',
+        'cli',
+        'workspace',
+        'services',
+        'core-dsh',
+        'renderer',
+      ]
+      const progressStages = runtimeStartupEvents
+        .filter(event => event.step === 'startup-progress' && event.status === 'started')
+        .map(event => event.stage)
+      assert.deepEqual(
+        progressStages,
+        expectedProgressStages,
+        'The startup splash did not receive every real startup stage in order'
+      )
       const corePrepareStarted = startupEventIndex(
         runtimeStartupEvents,
         'core-dsh-prepare',

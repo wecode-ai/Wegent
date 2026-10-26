@@ -90,6 +90,7 @@ import {
   startupSplashBlocksMainWindowActivation,
   type StartupSplashTheme,
 } from './host/startup-splash.js'
+import { StartupProgressReporter } from './host/startup-progress.js'
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
 import { clearStartupRuntimeFiles, clearStartupUserFiles } from './host/startup-recovery-files.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
@@ -328,6 +329,13 @@ let rendererStorage: RendererStorageStore | null = null
 let cloudCredentials: CloudCredentialService | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
+const startupProgress = new StartupProgressReporter(update => {
+  logStartupStep('startup-progress', 'started', {
+    stage: update.stage.id,
+    index: update.index,
+  })
+  startupSplash?.updateProgress(update)
+})
 let startupRecovery: StartupRecoveryService | null = null
 let startupRuntimeEnvironment: NodeJS.ProcessEnv | null = null
 let componentUpdates: DesktopComponentUpdateController | null = null
@@ -824,6 +832,7 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
       const sourceRoot = process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
       if (sourceRoot) targetUrl.searchParams.set('weworkDevWorktree', sourceRoot)
     }
+    startupProgress.report('renderer')
     await contents.loadURL(targetUrl.toString(), {
       extraHeaders: 'X-Wework-Window-Label: main',
     })
@@ -1304,6 +1313,9 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
           return startupSplashWindow.webContents.executeJavaScript(code)
         },
         isDestroyed: () => startupSplashWindow?.webContents.isDestroyed() ?? true,
+        send: (channel, payload) => {
+          startupSplashWindow?.webContents.send(channel, payload)
+        },
       },
     },
     theme: startupTheme,
@@ -1318,6 +1330,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   startupSplashWindow.on('closed', () => {
     startupSplashWindow = null
   })
+  startupProgress.report('launch')
   mainWindow.on('focus', () => {
     mainWindow?.webContents.send('window:focus-changed', true)
   })
@@ -1351,6 +1364,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   await startupSplash.show()
   logStartupStep('startup-splash-show', 'completed')
   logStartupStep('main-shell-load', 'started')
+  startupProgress.report('shell')
   await mainShellLoading
   logStartupStep('main-shell-load', 'completed')
   logStartupStep('windows-create', 'completed')
@@ -1826,6 +1840,7 @@ async function configureDesktopRuntime(): Promise<void> {
     embeddedBrowser,
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
+  startupProgress.report('services')
   logStartupStep('embedded-browser-bridge', 'started')
   environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = await embeddedBrowserBridge.start()
   logStartupStep('embedded-browser-bridge', 'completed')
@@ -2238,6 +2253,7 @@ function startDesktopRuntime(): Promise<void> {
   runtimeStartPromise = (async () => {
     await configureDesktopRuntime()
     logStartupStep('core-dsh-start', 'started')
+    startupProgress.report('core-dsh')
     await desktopRuntime?.start()
     logStartupStep('core-dsh-start', 'completed')
     trayNativeStatus?.start()
@@ -2430,6 +2446,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     !packagedApplication && configuredComponentResourcesRoot
       ? resolve(configuredComponentResourcesRoot)
       : resourcesRoot
+  startupProgress.report('components')
   logStartupStep('desktop-components-prepare', 'started')
   const preparedComponents = await prepareDesktopComponents({
     isPackaged: packagedApplication,
@@ -2439,6 +2456,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
           ...process.env,
           WEWORK_EXECUTOR_PATH: process.env.WEWORK_EXECUTOR_PATH?.trim() || path,
         }),
+      onScanFile: file => startupProgress.reportActivity('scan', file),
       log: event => appUpdateLogger.info(event),
       resourcesRoot: componentResourcesRoot,
       dataDirectory: app.getPath('userData'),
@@ -2458,18 +2476,22 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   )
   const configuredRuntimeRoot = process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
   logStartupStep('core-runtime-materialize', 'started')
-  const runtimeRoot = configuredRuntimeRoot
-    ? configuredRuntimeRoot
-    : components
-      ? await materializeBundledRuntimes(components.coreDsh, packagedHarnessRuntimePaths().cache, [
-          'core',
-        ])
-      : developmentRuntimeRoot
+  let runtimeRoot = configuredRuntimeRoot || developmentRuntimeRoot
+  if (!configuredRuntimeRoot && components) {
+    startupProgress.report('runtime-files')
+    runtimeRoot = await materializeBundledRuntimes(
+      components.coreDsh,
+      packagedHarnessRuntimePaths().cache,
+      ['core'],
+      { onEntry: file => startupProgress.reportActivity('unpack', file) }
+    )
+  }
   logStartupStep('core-runtime-materialize', 'completed')
   logStartupStep('node-runtime-prepare', 'started')
   const nodeRuntime = await electronNodeRuntime()
   logStartupStep('node-runtime-prepare', 'completed')
   const cliBin = join(app.getPath('userData'), 'runtime', 'wework-cli-bin')
+  startupProgress.report('cli')
   logStartupStep('wework-cli-install', 'started')
   await installWeworkCli(
     cliBin,
@@ -2507,6 +2529,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     .filter(Boolean)
     .join(delimiter)
   logStartupStep('wework-cli-install', 'completed')
+  startupProgress.report('workspace')
   logStartupStep('workbench-environment', 'started')
   const environment = await prepareWorkbenchEnvironment({
     environment: {

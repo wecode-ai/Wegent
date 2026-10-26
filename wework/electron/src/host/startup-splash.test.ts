@@ -12,6 +12,7 @@ import {
   type StartupSplashTheme,
   type StartupSplashWindow,
 } from './startup-splash.js'
+import { STARTUP_PROGRESS_CHANNEL } from './startup-progress.js'
 
 describe('startup readiness notifications', () => {
   test('presents the main window only once across concurrent and later notifications', async () => {
@@ -59,6 +60,7 @@ class FakeSplashWindow implements StartupSplashWindow {
     })),
     executeJavaScript: vi.fn(async () => true),
     isDestroyed: vi.fn(() => false),
+    send: vi.fn(),
   }
 
   on(event: 'close', listener: (event: { preventDefault: () => void }) => void): void {
@@ -103,6 +105,7 @@ class FakeSplashElement {
   }
   readonly dataset: Record<string, string> = {}
   readonly listeners = new Map<string, () => void>()
+  readonly style: Record<string, string> = {}
   disabled = false
   hidden = true
   textContent = ''
@@ -137,12 +140,19 @@ describe('StartupSplash', () => {
     expect(html).toContain('class="ambient-workflow"')
     expect(html).toContain('stage-corner-top-left')
     expect(html).toContain('id="morph-primary"')
-    expect(html).toContain('class="stage-indicator"')
     expect(html).toContain('class="robot"')
     expect(html).toContain('class="human"')
     expect(html).toContain('class="human-working-arm"')
     expect(html).toContain('class="robot-working-arm"')
-    expect(html).toContain('aria-valuemax="3"')
+    expect(html).toContain('id="splash-progress"')
+    expect(html).toContain('aria-valuemax="100"')
+    expect(html).toContain('id="splash-activity"')
+    expect(html).toContain('aria-hidden="true"')
+    expect(html).toContain('id="splash-step-count"')
+    expect(html).toContain('id="splash-elapsed"')
+    expect(html).toContain('id="startup-slow"')
+    expect(html).toContain('id="startup-timeout"')
+    expect(html).toContain('id="startup-failure"')
     expect(html).toContain('id="startup-recover"')
     expect(html).toContain('id="startup-reset-open"')
     expect(html).toContain('id="startup-confirmation"')
@@ -150,17 +160,21 @@ describe('StartupSplash', () => {
     expect(styles).toContain('@keyframes human-bob')
     expect(styles).toContain('@keyframes splash-enter')
     expect(styles).toContain('@keyframes ambient-line-arrive')
+    expect(styles).toContain('@keyframes progress-breathe')
+    expect(styles).toContain('.startup-progress-fill')
     expect(html).toContain('document.documentElement.dataset.theme = theme')
     expect(styles).toContain(":root[data-theme='dark']")
     expect(styles).toContain('@media (prefers-reduced-motion: reduce)')
-    expect(script).toContain('const stages =')
+    expect(script).toContain('const SLOW_AFTER_MS = 30_000')
+    expect(script).toContain('stageTimeoutMs()')
+    expect(script).toContain('weworkStartupProgress')
     expect(script).toContain('requestAnimationFrame(animateMorph)')
     expect(script).toContain("navigator.language.toLowerCase().startsWith('zh')")
-    expect(script).toContain("stageIndicator.setAttribute('aria-valuenow'")
-    expect(script).toContain('启动时间比预期稍长')
-    expect(script).toContain('仍在加载任务列表，请稍候…')
-    expect(script).toContain('}, 10_000)')
-    expect(script).toContain('}, 30_000)')
+    expect(script).toContain("progressElement.setAttribute('aria-valuenow'")
+    expect(script).toContain('启动比预期慢')
+    expect(script).not.toContain('启动超时')
+    expect(script).toContain('首次启动可能较慢')
+    expect(script).toContain('正在准备本地环境…')
     expect(script).toContain("'wework-startup-error'")
     expect(script).toContain("runRecoveryAction('retry')")
     expect(script).toContain("showConfirmation('recover')")
@@ -244,6 +258,110 @@ describe('StartupSplash', () => {
     expect(retry).not.toHaveBeenCalled()
   })
 
+  test('shows slow and timeout states for the active startup stage', async () => {
+    const electronRoot =
+      basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
+    const script = await readFile(
+      join(electronRoot, 'src', 'shell', 'startup-splash', 'splash.js'),
+      'utf8'
+    )
+    const elements = new Map<string, FakeSplashElement>()
+    const element = (selector: string) => {
+      const existing = elements.get(selector)
+      if (existing) return existing
+      const created = new FakeSplashElement()
+      elements.set(selector, created)
+      return created
+    }
+    let progressListener: ((update: unknown) => void) | undefined
+    const interval = vi.fn()
+
+    runInNewContext(script, {
+      document: {
+        activeElement: null,
+        body: element('body'),
+        documentElement: element('documentElement'),
+        querySelector: (selector: string) => element(selector),
+        querySelectorAll: () => [],
+      },
+      HTMLElement: FakeSplashElement,
+      navigator: { language: 'en-US' },
+      performance: { now: () => 0 },
+      requestAnimationFrame: vi.fn(),
+      window: {
+        addEventListener: vi.fn(),
+        matchMedia: () => ({ matches: true }),
+        requestAnimationFrame: vi.fn(),
+        setInterval: interval,
+        setTimeout: vi.fn(),
+        weworkStartupProgress: {
+          onUpdate: (listener: (update: unknown) => void) => {
+            progressListener = listener
+          },
+        },
+      },
+    })
+
+    const update = (index: number, elapsedMs: number, timeoutMs: number) => ({
+      index,
+      total: 9,
+      completedWeight: index * 10,
+      startedAt: Date.now() - elapsedMs,
+      stage: {
+        id: `stage-${index}`,
+        label: { en: `Stage ${index}`, zh: `步骤 ${index}` },
+        detail: { en: `Working on stage ${index}`, zh: `正在处理步骤 ${index}` },
+        weight: 10,
+        expectedMs: 1_000,
+        timeoutMs,
+      },
+    })
+
+    expect(progressListener).toBeTypeOf('function')
+    progressListener?.(update(1, 5_000, 60_000))
+    expect(element('#startup-slow').hidden).toBe(true)
+    expect(element('#startup-timeout').hidden).toBe(true)
+    expect(element('#splash-title').textContent).toBe("We're preparing your workbench")
+    expect(element('#splash-step-count').textContent).toBe('Step 2 of 9 · Stage 1')
+    expect(element('#splash-activity').textContent).toBe('Working on stage 1')
+
+    progressListener?.({
+      ...update(1, 1_000, 60_000),
+      activity: { kind: 'scan', path: 'plugins/foo/bar/index.js' },
+    })
+    expect(element('#splash-activity').textContent).toBe('Scanning plugins/foo/bar/index.js')
+
+    progressListener?.({
+      ...update(1, 1_000, 60_000),
+      activity: { kind: 'scan', path: `plugins/${'segment/'.repeat(10)}index.js` },
+    })
+    const shortenedActivity = element('#splash-activity').textContent
+    expect(shortenedActivity.startsWith('Scanning …/')).toBe(true)
+    expect(shortenedActivity.endsWith('index.js')).toBe(true)
+    expect(shortenedActivity.length).toBeLessThanOrEqual(60)
+
+    progressListener?.(update(1, 31_000, 60_000))
+    expect(element('#startup-slow').hidden).toBe(false)
+    expect(element('#startup-timeout').hidden).toBe(true)
+    expect(element('#splash-title').textContent).toBe('Startup is taking longer than expected')
+
+    progressListener?.(update(1, 61_000, 60_000))
+    expect(element('#startup-slow').hidden).toBe(true)
+    expect(element('#startup-timeout').hidden).toBe(false)
+    expect(element('#startup-timeout-title').textContent).toBe('First startup can take longer')
+    expect(element('#splash-title').textContent).toBe('Startup is taking longer than expected')
+    expect(element('#startup-recovery').hidden).toBe(true)
+
+    progressListener?.(update(2, 1_000, 60_000))
+    expect(element('#startup-slow').hidden).toBe(true)
+    expect(element('#startup-timeout').hidden).toBe(true)
+    expect(element('#startup-recovery').hidden).toBe(true)
+    expect(element('#splash-title').textContent).toBe("We're preparing your workbench")
+    expect(element('#splash-step-count').textContent).toBe('Step 3 of 9 · Stage 2')
+    expect(element('#splash-activity').textContent).toBe('Working on stage 2')
+    expect(interval).toHaveBeenCalledWith(expect.any(Function), 100)
+  })
+
   test('shows the branded animation in the main startup window and records its timeline', async () => {
     const { show, target } = createFixture()
 
@@ -275,6 +393,56 @@ describe('StartupSplash', () => {
     const snapshot = await show()
 
     expect(snapshot.theme).toBe('dark')
+  })
+
+  test('replays the latest startup stage once the splash is visible', async () => {
+    const { show, splash, target } = createFixture()
+    const update = {
+      index: 2,
+      total: 9,
+      completedWeight: 10,
+      startedAt: 1_000,
+      stage: {
+        id: 'components',
+        label: { en: 'Checking local components', zh: '检查本地组件' },
+        detail: { en: 'Scanning local component files…', zh: '正在扫描本地组件文件…' },
+        weight: 15,
+        expectedMs: 2_500,
+        timeoutMs: 60_000,
+      },
+    }
+
+    splash.updateProgress(update)
+    expect(target.webContents.send).not.toHaveBeenCalled()
+
+    await show()
+
+    expect(target.webContents.send).toHaveBeenCalledOnce()
+    expect(target.webContents.send).toHaveBeenCalledWith(STARTUP_PROGRESS_CHANNEL, update)
+  })
+
+  test('mirrors later startup stages while the splash is visible', async () => {
+    const { show, splash, target } = createFixture()
+    await show()
+    target.webContents.send.mockClear()
+    const update = {
+      index: 3,
+      total: 9,
+      completedWeight: 25,
+      startedAt: 2_000,
+      stage: {
+        id: 'runtime-files',
+        label: { en: 'Preparing the runtime', zh: '准备运行环境' },
+        detail: { en: 'Verifying and unpacking runtime files…', zh: '正在校验并解压运行环境…' },
+        weight: 15,
+        expectedMs: 4_000,
+        timeoutMs: 120_000,
+      },
+    }
+
+    splash.updateProgress(update)
+
+    expect(target.webContents.send).toHaveBeenCalledWith(STARTUP_PROGRESS_CHANNEL, update)
   })
 
   test('notifies the splash renderer when startup fails', async () => {

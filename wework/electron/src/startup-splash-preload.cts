@@ -6,3 +6,11 @@ contextBridge.exposeInMainWorld('weworkStartupRecovery', {
   resetAppState: () => ipcRenderer.invoke('startup-recovery:reset-app-state'),
   disablePlugin: (name: string) => ipcRenderer.invoke('startup-recovery:disable-plugin', name),
 })
+
+contextBridge.exposeInMainWorld('weworkStartupProgress', {
+  onUpdate: (listener: (update: unknown) => void) => {
+    ipcRenderer.on('startup-progress:update', (_event: unknown, update: unknown) =>
+      listener(update)
+    )
+  },
+})
