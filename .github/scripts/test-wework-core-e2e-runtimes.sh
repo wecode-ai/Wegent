@@ -24,9 +24,14 @@ ruby -ryaml -e '
   raise "OCI wait must leave time within the consumer deadline" unless oci_seconds < consumer_seconds
   [["pull_request", "fork/Wegent", true, false],
    ["pull_request", "wecode-ai/Wegent", false, true],
+   ["merge_group", "", false, true],
+   ["schedule", "", false, true],
    ["workflow_dispatch", "", false, true]].each do |event, head, expected_source, expected_publish|
+    expected_sha = event == "pull_request" ? "pr-head-sha" : "workflow-sha"
     values = {"github.event_name" => event, "github.event.pull_request.head.repo.full_name" => head,
-              "github.repository" => "wecode-ai/Wegent", "steps.image-check.outputs.exists" => "false"}
+              "github.repository" => "wecode-ai/Wegent", "steps.image-check.outputs.exists" => "false",
+              "github.event.pull_request.head.sha" => event == "pull_request" ? expected_sha : nil,
+              "github.sha" => "workflow-sha"}
     evaluate = lambda do |expression|
       expression = expression.gsub(/\$\{\{|\}\}/, "")
       values.each { |key, value| expression = expression.gsub(key, value.inspect) }
@@ -35,6 +40,18 @@ ruby -ryaml -e '
     raise "wrong runtime source for #{event}/#{head}" unless evaluate.call(source) == expected_source
     raise "wrong Executor artifact source for #{event}/#{head}" unless evaluate.call(artifact) == expected_source
     raise "wrong package publication for #{event}/#{head}" unless evaluate.call(publish) == expected_publish
+    artifact_sha = step.fetch("env").fetch("EXECUTOR_HEAD_SHA")
+    raise "wrong Executor artifact revision for #{event}" unless evaluate.call(artifact_sha) == expected_sha
+    [workflow, consumer_workflow].each do |definition|
+      definition.fetch("jobs").each do |name, job|
+        job.fetch("steps", []).select { |candidate| candidate["uses"]&.start_with?("actions/checkout@") }.each do |checkout|
+          ref = checkout.fetch("with").fetch("ref")
+          unless evaluate.call(ref) == expected_sha
+            raise "#{name} checks out a different revision from the Executor artifact for #{event}"
+          end
+        end
+      end
+    end
   end
 ' "$script_dir/../actions/build-wework-core-e2e/action.yml" "$script_dir/../workflows/e2e-tests.yml" "$script_dir/../workflows/wework-e2e.yml"
 ruby -ryaml -e '
