@@ -169,32 +169,80 @@ mod tests {
         }
     }
 
-    #[test]
-    fn cp04_cp07_cp20_guest_response_keeps_parent_navigation_without_space_authority() {
-        let access = AuthorizedProject {
+    fn restricted_project_access(
+        priority: i64,
+        workspace_priority: Option<i64>,
+        sources: Vec<Value>,
+    ) -> AuthorizedProject {
+        AuthorizedProject {
             project: ProjectListRow {
                 id: "1001".to_owned(),
                 public_id: Some("project-public".to_owned()),
                 project_key: Some("CP".to_owned()),
-                name: Some("Guest project".to_owned()),
+                name: Some("Restricted project".to_owned()),
                 description: None,
-                created_by_user_id: 8,
+                created_by_user_id: 7,
                 status: "active".to_owned(),
                 version: 1,
                 created_at: None,
                 updated_at: None,
                 metadata: Some(Json(json!({"membership_mode": "restricted"}).into())),
             },
-            priority: 2,
+            priority,
             workspace: WorkspaceContext {
                 id: "42".to_owned(),
                 public_id: "parent-public".to_owned(),
                 name: "Parent".to_owned(),
             },
-            workspace_priority: None,
-            sources: vec![json!({"type": "direct", "role": "Developer"})],
-            public: true,
-        };
+            workspace_priority,
+            sources,
+            public: false,
+        }
+    }
+
+    #[test]
+    fn cp02_cp06_cp13_cp20_administration_response_preserves_authorization_sources() {
+        for (workspace_priority, workspace_role, sources) in [
+            (
+                Some(0),
+                json!("Owner"),
+                json!([{"type": "workspace", "workspace_id": "42", "role": "Maintainer"}]),
+            ),
+            (
+                Some(1),
+                json!("Maintainer"),
+                json!([{"type": "workspace", "workspace_id": "42", "role": "Maintainer"}]),
+            ),
+            (
+                None,
+                Value::Null,
+                json!([{"type": "direct", "role": "Maintainer"}]),
+            ),
+        ] {
+            let access = restricted_project_access(
+                1,
+                workspace_priority,
+                sources.as_array().unwrap().clone(),
+            );
+            let body = serde_json::to_value(access.response(7, "project-creator")).unwrap();
+            assert_eq!(body["access_role"], "Maintainer");
+            assert_eq!(body["workspace_access_role"], workspace_role);
+            assert_eq!(body["permission_sources"], sources);
+            assert_eq!(body["membership_mode"], "restricted");
+            assert_eq!(body["workspace_context"]["id"], "42");
+            assert_eq!(body["public_access"], Value::Null);
+        }
+    }
+
+    #[test]
+    fn cp04_cp07_cp20_guest_response_keeps_parent_navigation_without_space_authority() {
+        let mut access = restricted_project_access(
+            2,
+            None,
+            vec![json!({"type": "direct", "role": "Developer"})],
+        );
+        access.project.created_by_user_id = 8;
+        access.public = true;
         let body = serde_json::to_value(access.response(7, "guest")).unwrap();
         assert_eq!(body["access_role"], "Developer");
         assert_eq!(body["workspace_context"]["id"], "42");

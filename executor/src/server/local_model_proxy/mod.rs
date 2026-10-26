@@ -15,6 +15,7 @@ mod fork;
 mod harness_protocol;
 mod history;
 mod image_budget;
+mod long_context;
 mod passthrough_stream;
 mod request_policy;
 mod vision;
@@ -117,6 +118,10 @@ pub(crate) struct LocalModelProxyUpstream {
     pub model_id: Option<String>,
     pub routing_model_id: Option<String>,
     pub max_output_tokens: Option<u64>,
+    /// Model context window used to size the normalized prompt-too-long error
+    /// reported to a harness client.
+    #[serde(default)]
+    pub model_context_window: Option<u64>,
 }
 
 pub(crate) fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream) -> String {
@@ -189,6 +194,17 @@ struct ResponsesToolCapabilities {
 }
 
 impl LocalModelProxyUpstream {
+    fn resolved_request_url(&self) -> String {
+        self.request_url.clone().unwrap_or_else(|| {
+            let path = match self.api_format.as_str() {
+                "anthropic-messages" => "/messages",
+                "openai-chat-completions" => "/chat/completions",
+                _ => "/responses",
+            };
+            format!("{}{path}", self.base_url.trim_end_matches('/'))
+        })
+    }
+
     fn responses_tool_capabilities(&self) -> ResponsesToolCapabilities {
         if self.codex_request_mode == CodexRequestMode::Standard {
             return ResponsesToolCapabilities {
@@ -282,6 +298,12 @@ pub(crate) fn upstream_from_model_config(
         max_output_tokens: model_config
             .get("max_output_tokens")
             .or_else(|| model_config.get("maxOutputTokens"))
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0),
+        model_context_window: model_config
+            .get("model_context_window")
+            .or_else(|| model_config.get("context_window"))
+            .or_else(|| model_config.get("contextWindow"))
             .and_then(Value::as_u64)
             .filter(|value| *value > 0),
     }))
@@ -668,10 +690,7 @@ async fn handle_harness_messages(
         registered.last_used = Instant::now();
         registered.upstream.clone()
     };
-    let request_url = upstream
-        .request_url
-        .clone()
-        .unwrap_or_else(|| format!("{}/responses", upstream.base_url.trim_end_matches('/')));
+    let request_url = upstream.resolved_request_url();
     let request_body = harness_protocol::adapt_messages_request(
         &body,
         &upstream.api_format,
@@ -716,6 +735,38 @@ async fn handle_harness_messages(
             status: StatusCode::BAD_GATEWAY,
             detail: format!("Failed to read harness model error response: {error}"),
         })?;
+        if let Some(normalized) = long_context::normalize_context_overflow(
+            status.as_u16(),
+            &response_body,
+            request_body.len(),
+            upstream.model_context_window,
+        ) {
+            log_executor_event(
+                "harness model proxy context overflow normalized",
+                &[
+                    ("api_format", upstream.api_format.clone()),
+                    ("upstream_status", status.as_u16().to_string()),
+                    (
+                        "upstream_body",
+                        super::truncate_log_value(&String::from_utf8_lossy(&response_body), 2048),
+                    ),
+                    (
+                        "message",
+                        normalized["error"]["message"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_owned(),
+                    ),
+                ],
+            );
+            let mut response = Response::new(Body::from(normalized.to_string()));
+            *response.status_mut() = StatusCode::BAD_REQUEST;
+            response.headers_mut().insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            );
+            return Ok(response);
+        }
         let mut response = Response::new(Body::from(response_body));
         *response.status_mut() = status;
         if let Some(value) = content_type.and_then(|value| HeaderValue::from_str(&value).ok()) {
@@ -875,10 +926,7 @@ async fn handle_for_token(
         )
     };
     log_stale_requested_model(&upstream, &body);
-    let request_url = upstream
-        .request_url
-        .clone()
-        .unwrap_or_else(|| format!("{}/responses", upstream.base_url.trim_end_matches('/')));
+    let request_url = upstream.resolved_request_url();
     let normalized_inter_agent_content = 0;
     let request_body = if text_only {
         text_only_request(&body)?
@@ -2462,6 +2510,7 @@ mod tests {
             routing_model_id: None,
             codex_request_mode: Default::default(),
             max_output_tokens: None,
+            model_context_window: None,
         };
         let mut incoming_headers = HeaderMap::new();
         incoming_headers.insert(
@@ -2570,10 +2619,14 @@ mod tests {
 
     #[test]
     fn normalizes_provider_api_format_aliases_before_proxy_registration() {
-        for (configured, expected) in [
-            ("responses", "openai-responses"),
-            ("chat/completions", "openai-chat-completions"),
-            ("messages", "anthropic-messages"),
+        for (configured, expected, path) in [
+            ("responses", "openai-responses", "/responses"),
+            (
+                "chat/completions",
+                "openai-chat-completions",
+                "/chat/completions",
+            ),
+            ("messages", "anthropic-messages", "/messages"),
         ] {
             let upstream = upstream_from_model_config(&json!({
                 "base_url": "https://example.com",
@@ -2583,10 +2636,31 @@ mod tests {
             .expect("model config should produce an upstream");
 
             assert_eq!(upstream.api_format, expected);
+            assert_eq!(
+                upstream.resolved_request_url(),
+                format!("https://example.com{path}")
+            );
             assert_eq!(upstream.native_tool_search, expected == "openai-responses");
             assert_eq!(
                 upstream.native_namespace_tools,
                 expected == "openai-responses"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_provider_url_takes_precedence_over_the_protocol_default() {
+        for field in ["responses_url", "responsesUrl", "request_url", "requestUrl"] {
+            let mut config = json!({
+                "base_url": "https://example.com/v1/",
+                "upstream_api_format": "anthropic-messages",
+            });
+            config[field] = json!("https://provider.example.com/custom/messages");
+            let upstream = upstream_from_model_config(&config).unwrap().unwrap();
+
+            assert_eq!(
+                upstream.resolved_request_url(),
+                "https://provider.example.com/custom/messages"
             );
         }
     }
@@ -2710,6 +2784,7 @@ mod tests {
             routing_model_id: Some("wework-gpt-5.6-sol".to_owned()),
             codex_request_mode: Default::default(),
             max_output_tokens: None,
+            model_context_window: None,
         };
         let body = serde_json::to_vec(&json!({
             "model": "wework-gpt-5.6-sol",
@@ -2769,6 +2844,7 @@ mod tests {
                 routing_model_id: Some("wework-kimi-k3".to_owned()),
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         mark_model_switch(&token);
@@ -2811,6 +2887,7 @@ mod tests {
                 routing_model_id: Some("wework-kimi-k3".to_owned()),
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
             body,
             routing.model_switched,
@@ -2871,6 +2948,7 @@ mod tests {
                 routing_model_id: Some("wework-kimi-k3".to_owned()),
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         mark_model_switch(&token);
@@ -2916,6 +2994,7 @@ mod tests {
             routing_model_id: Some("wework-kimi-k3".to_owned()),
             codex_request_mode: Default::default(),
             max_output_tokens: None,
+            model_context_window: None,
         };
         let body = serde_json::to_vec(&json!({
             "model": "stale-codex-model",
@@ -2952,6 +3031,7 @@ mod tests {
             routing_model_id: Some("wework-gpt-5.6-sol".to_owned()),
             codex_request_mode: Default::default(),
             max_output_tokens: None,
+            model_context_window: None,
         };
         let body = serde_json::to_vec(&json!({
             "model": "wework-gpt-5.6-sol",
@@ -2986,6 +3066,7 @@ mod tests {
             routing_model_id: Some("wework-gpt-5.6-sol".to_owned()),
             codex_request_mode: Default::default(),
             max_output_tokens: None,
+            model_context_window: None,
         };
         let body = serde_json::to_vec(&json!({
             "model": "wework-gpt-5.6-sol",
@@ -3474,6 +3555,7 @@ mod tests {
             routing_model_id: Some("wework-gpt-5.6-luna".to_owned()),
             codex_request_mode: Default::default(),
             max_output_tokens: None,
+            model_context_window: None,
         };
         let token = register("stable-task-route", initial);
         let original_history = registry()
@@ -3498,6 +3580,7 @@ mod tests {
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
             codex_request_mode: Default::default(),
             max_output_tokens: None,
+            model_context_window: None,
         };
         let repeated_token = register("stable-task-route", updated.clone());
 
@@ -3553,6 +3636,7 @@ mod tests {
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
             codex_request_mode: Default::default(),
             max_output_tokens: None,
+            model_context_window: None,
         };
         let task_a = register("stable-random-token-task-a", upstream.clone());
         let repeated_task_a = register("stable-random-token-task-a", upstream.clone());
@@ -3596,6 +3680,7 @@ mod tests {
                 routing_model_id: Some("wework-gpt-5.6-luna".to_owned()),
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         {
@@ -3632,6 +3717,7 @@ mod tests {
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         assert_eq!(repeated_token, token);
@@ -3677,6 +3763,7 @@ mod tests {
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
             codex_request_mode: Default::default(),
             max_output_tokens: None,
+            model_context_window: None,
         };
 
         assert_eq!(
@@ -3701,6 +3788,7 @@ mod tests {
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
             codex_request_mode: Default::default(),
             max_output_tokens: None,
+            model_context_window: None,
         };
 
         assert_eq!(
@@ -3727,6 +3815,7 @@ mod tests {
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         bind_thread(&token, "thread-bound-root").expect("root thread should bind");
@@ -3774,6 +3863,7 @@ mod tests {
                 routing_model_id: Some("routing-model".to_owned()),
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         bind_fork_thread(&token, "forked-thread").expect("forked thread should bind");
@@ -3815,6 +3905,7 @@ mod tests {
                 routing_model_id: Some("gpt-5.6-luna".to_owned()),
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         bind_thread(&token, "generic-bound-thread-root").expect("root thread should bind");
@@ -3853,6 +3944,7 @@ mod tests {
                 routing_model_id: Some("gpt-5.6-luna".to_owned()),
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         bind_thread(&token, "stale-token-thread").expect("root thread should bind");
@@ -3902,6 +3994,7 @@ mod tests {
             routing_model_id: Some("gpt-5.6-luna".to_owned()),
             codex_request_mode: Default::default(),
             max_output_tokens: None,
+            model_context_window: None,
         };
         let first = register("generic-ambiguous-thread-task-a", upstream.clone());
         let second = register("generic-ambiguous-thread-task-b", upstream);
@@ -3944,6 +4037,7 @@ mod tests {
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         bind_thread(&token, "missing-metadata-thread-root").expect("root thread should bind");
@@ -4011,6 +4105,7 @@ mod tests {
                 routing_model_id: None,
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         let mut headers = HeaderMap::new();
@@ -4119,6 +4214,7 @@ mod tests {
                 routing_model_id: None,
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         let request = json!({
@@ -4155,6 +4251,89 @@ mod tests {
             body_rx.recv().await.expect("captured upstream body"),
             None,
             "the upstream must accept the encoded tool call/output group"
+        );
+
+        unregister_harness(&token);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn harness_route_strips_long_context_suffix_and_normalizes_overflow() {
+        let (body_tx, mut body_rx) = mpsc::channel(1);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/v1/messages",
+                    post(move |Json(body): Json<Value>| {
+                        let body_tx = body_tx.clone();
+                        async move {
+                            let _ = body_tx.send(body).await;
+                            (
+                                StatusCode::BAD_REQUEST,
+                                Json(json!({
+                                    "error": {
+                                        "code": "InvalidParameter",
+                                        "message": "Input exceeds the context limit (1048568 tokens). Please shorten the input."
+                                    }
+                                })),
+                            )
+                        }
+                    }),
+                ),
+            )
+            .await
+            .expect("upstream server");
+        });
+        let token = register_harness(
+            "harness-context-overflow-test",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: Some(format!("http://{address}/v1/messages")),
+                api_format: "anthropic-messages".to_owned(),
+                convert_custom_tools: false,
+                native_tool_search: false,
+                native_namespace_tools: false,
+                api_key: "upstream-secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: None,
+                codex_request_mode: Default::default(),
+                max_output_tokens: None,
+                model_context_window: Some(1_000_000),
+            },
+        );
+        let request = json!({
+            "model": "deepseek-v4.1-flash[1m]",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        let response = handle_harness_messages(
+            Path(token.clone()),
+            proxy_headers(&token),
+            Bytes::from(serde_json::to_vec(&request).expect("request body")),
+        )
+        .await
+        .expect("harness response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let upstream_body = body_rx.recv().await.expect("captured upstream body");
+        assert_eq!(upstream_body["model"], "deepseek-v4.1-flash");
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        let normalized: Value = serde_json::from_slice(&body).expect("normalized error");
+        assert_eq!(normalized["type"], "error");
+        assert_eq!(normalized["error"]["type"], "invalid_request_error");
+        assert_eq!(
+            normalized["error"]["message"],
+            "prompt is too long: 1048568 tokens > 1000000 maximum"
         );
 
         unregister_harness(&token);
@@ -4214,6 +4393,7 @@ mod tests {
                 routing_model_id: None,
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
 
@@ -4277,6 +4457,7 @@ mod tests {
                 routing_model_id: None,
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
 
@@ -4339,6 +4520,7 @@ mod tests {
                 routing_model_id: Some("gpt-5.6-luna".to_owned()),
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         {
@@ -4365,6 +4547,7 @@ mod tests {
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         assert_eq!(repeated_token, token);
@@ -4443,6 +4626,7 @@ mod tests {
                 routing_model_id: None,
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         let mut headers = HeaderMap::new();
@@ -4533,6 +4717,7 @@ mod tests {
                 routing_model_id: None,
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         let response = handle(
@@ -4633,6 +4818,7 @@ mod tests {
                 routing_model_id: None,
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
 
@@ -4849,6 +5035,7 @@ mod tests {
                 routing_model_id: None,
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
 
@@ -4993,6 +5180,7 @@ mod tests {
                 routing_model_id: None,
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
 
@@ -5191,6 +5379,7 @@ mod tests {
                 routing_model_id: None,
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
 
@@ -5334,6 +5523,7 @@ mod tests {
                 routing_model_id: None,
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         let response = handle(
@@ -5581,6 +5771,7 @@ mod tests {
                 routing_model_id: None,
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         let mut headers = HeaderMap::new();
@@ -5643,6 +5834,7 @@ mod tests {
                 routing_model_id: None,
                 codex_request_mode: Default::default(),
                 max_output_tokens: None,
+                model_context_window: None,
             },
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

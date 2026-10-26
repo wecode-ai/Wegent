@@ -13,6 +13,34 @@ REASONING_VALUES = {
 CODEX_REQUEST_MODES = {"auto", "standard", "passthrough"}
 
 
+def positive_token_limit(value: Any) -> int | None:
+    """Parse a positive token count without accepting booleans."""
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def wework_model_token_limits(
+    model_spec: dict[str, Any], provider_config: dict[str, Any]
+) -> dict[str, int]:
+    """Resolve executor budgets from current CRD fields and legacy limits."""
+    limits = {}
+    for source_key, legacy_key, target_key in (
+        ("context_window", "contextWindow", "model_context_window"),
+        ("max_output_tokens", "maxOutputTokens", "max_output_tokens"),
+    ):
+        value = positive_token_limit(provider_config.get(source_key))
+        if value is None:
+            value = positive_token_limit(model_spec.get(legacy_key))
+        if value is not None:
+            limits[target_key] = value
+    return limits
+
+
 def wework_model_catalog_config(model_config: dict[str, Any]) -> dict[str, Any]:
     """Omit invalid request modes from catalog metadata without changing the CRD."""
     mode = model_config.get("codex_request_mode")
