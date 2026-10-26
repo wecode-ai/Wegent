@@ -9,7 +9,6 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
 const PANEL = '[data-testid="stand-in-primary-profile"]'
-const USER = 9001
 const models = [
   { name: 'catalog-kimi-intranet', label: '内网:Kimi-K3' },
   { name: 'catalog-kimi-public', label: '公网:Kimi-K3' },
@@ -20,6 +19,7 @@ const selector = id => `[data-testid=${JSON.stringify(id)}]`
 /** Compare the ordinary picker and stand-in picker against the same real Backend catalog. */
 export function createDesktopScenario({ uiTimeoutMs }) {
   let cloud
+  let userId
   const createdIds = []
   const request = (path, options = {}) =>
     fetchJson(`${cloud.backendUrl}${path}`, {
@@ -34,6 +34,9 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     async prepareCloud(environment) {
       cloud = environment
       await request('/api/admin/setup-complete', { method: 'POST' })
+      const user = await request('/api/users/me')
+      userId = user.id
+      assert.ok(Number.isInteger(userId), 'The real Backend must identify the signed-in user')
       const catalog = await request('/api/admin/public-models?limit=1000')
       const upstream = catalog.items.find(model => model.name === CLOUD_PUBLIC_MODEL_NAME)
       assert.ok(upstream, 'The real Backend must expose its upstream model fixture')
@@ -65,7 +68,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     },
     async verify(control) {
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
-      const initial = await rpc('runtime.stand_in.personal.get', { userId: USER })
+      const initial = await rpc('runtime.stand_in.personal.get', { userId })
       const errors = []
       try {
         const ordinaryTrigger = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
@@ -102,7 +105,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           })
           await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
           await control.command('waitFor', PANEL, { visible: false })
-          const saved = await rpc('runtime.stand_in.personal.get', { userId: USER })
+          const saved = await rpc('runtime.stand_in.personal.get', { userId })
           assert.deepEqual(saved.primary.model.cloud_model, {
             name: model.name,
             type: 'public',
@@ -126,9 +129,9 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       } finally {
         const cleanup = await Promise.allSettled([
           (async () => {
-            const latest = await rpc('runtime.stand_in.personal.get', { userId: USER })
+            const latest = await rpc('runtime.stand_in.personal.get', { userId })
             await rpc('runtime.stand_in.personal.save', {
-              userId: USER,
+              userId,
               settings: { ...initial, version: latest.version },
             })
           })(),
