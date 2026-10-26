@@ -10,6 +10,7 @@ import {
   isRuntimeGoalSnapshotCurrent,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
   runtimeConversationKey,
+  syncRuntimeConversationDeviceAliases,
 } from '../runtimeConversationCache'
 import { subscribeSystemResume } from '@/desktop/systemResume'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
@@ -79,6 +80,15 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     [services]
   )
   const recoverRuntimeConnections = services.recoverRuntimeConnections
+
+  useEffect(
+    () =>
+      services.subscribeRuntimeDevices?.(devices => {
+        store.syncDevices(devices)
+        syncRuntimeConversationDeviceAliases(devices)
+      }),
+    [services, store]
+  )
 
   useEffect(() => {
     let disposed = false

@@ -38,6 +38,7 @@ import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
 import type {
   Attachment,
+  DeviceInfo,
   ModelOptions,
   ModelSelectionConfig,
   ModelType,
@@ -276,6 +277,8 @@ export interface WorkbenchServices {
     }) => Promise<string>
   }
   chatStream: ReturnType<typeof createChatStream>
+  /** Includes validated transport aliases discovered outside visible device refreshes. */
+  subscribeRuntimeDevices?: (listener: (devices: DeviceInfo[]) => void) => () => void
   cloudBackgroundApi?: {
     listTeams?: ReturnType<typeof createTeamApi>['listTeams']
     listDevices?: ReturnType<typeof createDeviceApi>['listDevices']

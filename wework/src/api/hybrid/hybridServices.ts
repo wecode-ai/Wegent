@@ -422,6 +422,11 @@ export function createHybridWorkbenchServices(
   const localRuntimeProjectKeys = new Set<string>()
   let rememberedCloudDevices: DeviceInfo[] = []
   let rememberedAppDeviceRegistrations: DeviceInfo[] = []
+  const runtimeDeviceListeners = new Set<(devices: RuntimeDeviceInfo[]) => void>()
+  const publishRuntimeDevices = () => {
+    const devices = mergeKnownDevices(rememberedLocalDevices, rememberedCloudDevices)
+    runtimeDeviceListeners.forEach(listener => listener(devices))
+  }
   let rememberedCloudDevicesRevision = 0
   let nextCloudDevicesRevision = 1
   let unscopedCloudDevicesRequest: Promise<DeviceInfo[]> | null = null
@@ -477,6 +482,7 @@ export function createHybridWorkbenchServices(
       }
     })
     observeProjectPluginDevices()
+    publishRuntimeDevices()
   }
   const revokeLocalRuntimeIdentity = () => {
     rememberedLocalDevices = []
@@ -485,6 +491,7 @@ export function createHybridWorkbenchServices(
     localRuntimeInstanceIds.clear()
     localRuntimeProjectKeys.clear()
     projectDevicePluginApis.forEach(api => api.invalidate?.())
+    publishRuntimeDevices()
   }
   const getLocalRuntimeSidebarIdentity = async () => {
     let identity: LocalRuntimeSidebarIdentity | null
@@ -518,6 +525,7 @@ export function createHybridWorkbenchServices(
     rememberedAppDeviceRegistrations = appDeviceRegistrations
     rememberedCloudDevicesRevision = revision
     observeProjectPluginDevices()
+    publishRuntimeDevices()
   }
   const rememberLocalRuntimeWorkDevices = (work: RuntimeWorkListResponse) => {
     work.projects.forEach(project => {
@@ -1848,6 +1856,13 @@ export function createHybridWorkbenchServices(
       resolveDevice: resolveExecutorDevice,
     }),
     chatStream: hybridChatStream,
+    subscribeRuntimeDevices(listener) {
+      runtimeDeviceListeners.add(listener)
+      listener(mergeKnownDevices(rememberedLocalDevices, rememberedCloudDevices))
+      return () => {
+        runtimeDeviceListeners.delete(listener)
+      }
+    },
     async recoverRuntimeConnections() {
       projectDevicePluginApis.forEach(api => api.invalidate?.())
       await Promise.all([

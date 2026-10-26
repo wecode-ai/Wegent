@@ -1,6 +1,6 @@
 import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import type { RuntimeTranscriptResponse, RuntimeWorkListResponse } from '@/types/api'
+import type { DeviceInfo, RuntimeTranscriptResponse, RuntimeWorkListResponse } from '@/types/api'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { WorkbenchServices } from '../workbenchServices'
 import {
@@ -16,6 +16,62 @@ import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 import { RuntimeTaskLifecycleStreamCoordinator } from './RuntimeTaskLifecycleStreamCoordinator'
 
 describe('RuntimeTaskLifecycleStreamCoordinator', () => {
+  test('settles a queued reply session after its APP alias is discovered', async () => {
+    const store = new RuntimeTaskLifecycleStore('late-app-alias')
+    const canonical = runtimeTaskAddress()
+    const alias = { ...canonical, deviceId: 'app-record-73' }
+    store.turnStarted(canonical, 'turn-1')
+    store.syncTranscript(alias, runtimeTranscript(true))
+    let streamHandlers: ChatStreamHandlers = {}
+    let publishDevices: ((devices: DeviceInfo[]) => void) | undefined
+    const unsubscribe = vi.fn()
+    const services = {
+      subscribeRuntimeDevices: vi.fn(listener => {
+        publishDevices = listener
+        return unsubscribe
+      }),
+      chatStream: {
+        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+          streamHandlers = handlers
+          return vi.fn()
+        }),
+      },
+      executorClient: {
+        runtime: {
+          listRuntimeWork: vi.fn(),
+          getRuntimeTranscript: vi.fn().mockResolvedValue(runtimeTranscript(false)),
+        },
+      },
+    } as unknown as WorkbenchServices
+    const view = render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    expect(publishDevices).toBeTypeOf('function')
+    act(() => {
+      publishDevices!([
+        {
+          id: 0,
+          device_id: canonical.deviceId,
+          socket_device_id: alias.deviceId,
+          name: 'Current App',
+          device_type: 'local',
+          status: 'online',
+          is_default: true,
+        },
+      ])
+    })
+    await act(async () => {
+      streamHandlers.onChatDone?.({
+        taskId: canonical.taskId,
+        deviceId: canonical.deviceId,
+        subtaskId: 'turn-1',
+        result: {},
+      })
+    })
+    await waitFor(() => expect(store.getTask(alias)?.derived.isBusy).toBe(false))
+    expect(store.getTask(alias)?.key).toBe(store.getTask(canonical)?.key)
+    view.unmount()
+    expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
   afterEach(() => {
     vi.useRealTimers()
     clearRuntimeConversationCacheForTests()

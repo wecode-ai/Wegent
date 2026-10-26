@@ -57,6 +57,7 @@ const { runtimeWorkMock, devicesMock, agentsMock, openExternalUrlMock, lifecycle
   }))
 
 const replyQueueStoreMock = vi.hoisted(() => ({ value: null as TaskReplyQueueStore | null }))
+const lifecycleStoreMock = vi.hoisted(() => ({ value: null as RuntimeTaskLifecycleStore | null }))
 vi.mock('./taskReplyQueue', () => ({
   get taskReplyQueueStore() {
     return replyQueueStoreMock.value
@@ -66,6 +67,7 @@ vi.mock('./taskReplyQueue', () => ({
 vi.mock('@/features/workbench/runtimeTaskLifecycle', async importOriginal => ({
   ...(await importOriginal<typeof import('@/features/workbench/runtimeTaskLifecycle')>()),
   useRuntimeTaskLifecycleStoreSnapshot: () => lifecycleSnapshotMock.value,
+  useRuntimeTaskLifecycleStore: () => lifecycleStoreMock.value,
   useRuntimeTaskLifecycle: (address: { deviceId: string; taskId: string } | undefined) =>
     address
       ? (lifecycleSnapshotMock.value.tasks.get(`${address.deviceId}:${address.taskId}`) ?? null)
@@ -261,6 +263,7 @@ describe('TaskActivityView', () => {
     runtimeWorkMock.value = null
     devicesMock.value = []
     lifecycleSnapshotMock.value = { tasks: new Map() }
+    lifecycleStoreMock.value = new RuntimeTaskLifecycleStore('activity-test')
     createProjectRuntimeTask.mockReset()
     sendRuntimePaneMessage.mockReset()
     sendRuntimePaneMessage.mockResolvedValue(true)
@@ -4647,7 +4650,7 @@ describe('TaskActivityView', () => {
     )
   })
 
-  it.each(['message', 'runtime'])(
+  it.each(['message', 'runtime', 'runtime-alias'])(
     'queues a card reply and sends it after %s completion',
     async source => {
       const user = userEvent.setup()
@@ -4735,7 +4738,21 @@ describe('TaskActivityView', () => {
         act(() => emitMessage?.({ ...runningAgentMessage, status: 'completed' }))
       } else {
         const lifecycle = new RuntimeTaskLifecycleStore('queue-test')
-        lifecycle.syncRuntimeTask(runningAgentMessage.runtimeAddress!, {
+        const address = runningAgentMessage.runtimeAddress!
+        const canonical =
+          source === 'runtime-alias' ? { ...address, deviceId: 'canonical-device' } : address
+        lifecycle.syncDevices([
+          {
+            id: 0,
+            device_id: canonical.deviceId,
+            socket_device_id: address.deviceId,
+            name: 'Current App',
+            device_type: 'local',
+            status: 'online',
+            is_default: true,
+          },
+        ])
+        lifecycle.syncRuntimeTask(canonical, {
           taskId: 'parent-session-1',
           title: 'Done',
           runtime: 'codex',
@@ -4745,6 +4762,7 @@ describe('TaskActivityView', () => {
           completedAt: '2026-08-03T00:01:00Z',
         })
         lifecycleSnapshotMock.value = lifecycle.getSnapshot()
+        lifecycleStoreMock.value = lifecycle
         rerender(cloneElement(view))
       }
 
