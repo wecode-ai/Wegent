@@ -26,10 +26,12 @@ test.each([
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(fixture.today)
   let monthAdvances = 0
+  const calendarDaysWaited: string[] = []
+  const initialStart = fixture.initialRange.split(' → ')[0]
   const dragReached = new Error('Calendar is ready for the drag assertion')
   const targetVisible = () => (fixture.initiallyVisible ? monthAdvances === 0 : monthAdvances === 1)
   const control = {
-    async command(action: string, selector: string) {
+    async command(action: string, selector: string, options?: { target?: string }) {
       if (
         action === 'click' &&
         (selector.includes('collaboration-schedule-next') || selector.includes('下一个月'))
@@ -39,10 +41,15 @@ test.each([
       if (action === 'getElementCount') return targetVisible() ? 1 : 0
       if (action === 'getAttribute') return fixture.initialRange
       if (action === 'waitFor' && selector.includes('collaboration-calendar-day-')) {
-        expect(selector).toContain(fixture.target)
+        calendarDaysWaited.push(selector)
         expect(targetVisible(), 'The target day must remain in the displayed month grid').toBe(true)
       }
       if (action === 'drag') {
+        expect(calendarDaysWaited).toEqual([
+          `[data-testid="collaboration-calendar-day-${initialStart}"]`,
+          `[data-testid="collaboration-calendar-day-${fixture.target}"]`,
+        ])
+        expect(options?.target).toBe(`[data-testid="collaboration-calendar-day-${fixture.target}"]`)
         expect(targetVisible()).toBe(true)
         throw dragReached
       }
