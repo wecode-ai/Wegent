@@ -1,7 +1,8 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import { RightWorkspacePanel } from './RightWorkspacePanel'
+import { FileWorkspacePanel } from './FileWorkspacePanel'
 import { workspaceFileTabId } from './workspaceFileTabs'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 
@@ -268,6 +269,148 @@ describe('RightWorkspacePanel file tab labels', () => {
 })
 
 describe('RightWorkspacePanel file tab loading', () => {
+  test.each(['resolve', 'reject'])(
+    'does not replace a newer file when an older parent listing finishes with %s',
+    async outcome => {
+      const target: WorkspaceTarget = {
+        deviceId: 'fixture-device',
+        path: '/fixture/repo',
+        source: 'project',
+        workspaceSource: 'local',
+      }
+      let finishListing!: () => void
+      const staleListing = new Promise<{ path: string; entries: [] }>((resolve, reject) => {
+        finishListing = () => {
+          if (outcome === 'reject') reject(new Error('Old directory failed'))
+          else resolve({ path: '/fixture/repo/slow', entries: [] })
+        }
+      })
+      const api = {
+        listWorkspaceEntries: vi.fn(async (_deviceId: string, path: string) =>
+          path.endsWith('/slow') ? staleListing : { path, entries: [] }
+        ),
+        readWorkspaceTextFile: vi.fn(async (_deviceId: string, path: string) => ({
+          path,
+          name: path.split('/').at(-1)!,
+          content: path,
+          editable: true,
+          revision: path,
+          truncated: false,
+          size: path.length,
+        })),
+        writeWorkspaceTextFile: vi.fn(),
+      }
+      const panel = (path: string, id: number) => (
+        <FileWorkspacePanel target={target} workspaceFileApi={api} openFileRequest={{ path, id }} />
+      )
+      const { rerender } = render(panel('/fixture/repo/slow/first.ts', 1))
+      await waitFor(() =>
+        expect(api.listWorkspaceEntries).toHaveBeenCalledWith(
+          target.deviceId,
+          '/fixture/repo/slow',
+          target.path
+        )
+      )
+      const latest = '/fixture/repo/fast/second.ts'
+      rerender(panel(latest, 2))
+      await waitFor(() =>
+        expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(latest)
+      )
+      await act(async () => finishListing())
+      expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(latest)
+      expect(api.readWorkspaceTextFile.mock.calls.map(([, path]) => path)).toEqual([latest])
+    }
+  )
+
+  test('keeps browsing a new directory after restoring a saved directory', async () => {
+    const target: WorkspaceTarget = {
+      deviceId: 'fixture-device',
+      path: '/fixture/repo',
+      source: 'project',
+      workspaceSource: 'local',
+    }
+    const directory = { name: 'a', path: '/fixture/repo/a', isDirectory: true, size: 0 }
+    const child = { ...directory, name: 'b', path: '/fixture/repo/a/b' }
+    const api = {
+      listWorkspaceEntries: vi.fn(async (_deviceId: string, path: string) => ({
+        path,
+        entries: path === target.path ? [directory] : path === directory.path ? [child] : [],
+      })),
+      readWorkspaceTextFile: vi.fn(),
+    }
+    render(
+      <FileWorkspacePanel
+        target={target}
+        workspaceFileApi={api}
+        initialSelection={{ path: directory.path, isDirectory: true }}
+      />
+    )
+    const tree = await screen.findByTestId('workspace-file-tree-pierre')
+    const row = await waitFor(() => {
+      const element = tree.shadowRoot?.querySelector<HTMLElement>('[data-item-path="a/b/"]')
+      expect(element).not.toBeNull()
+      return element!
+    })
+    await act(async () => {
+      fireEvent.click(row)
+    })
+    expect(api.listWorkspaceEntries).toHaveBeenCalledWith(target.deviceId, child.path, target.path)
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('workspace-file-refresh-button'))
+    })
+    expect(api.listWorkspaceEntries.mock.calls.at(-1)?.[1]).toBe(child.path)
+    expect(api.readWorkspaceTextFile).not.toHaveBeenCalled()
+  })
+
+  test('restores the original file after returning from an additional file tab', async () => {
+    const target: WorkspaceTarget = {
+      deviceId: 'fixture-device',
+      path: '/fixture/repo',
+      source: 'project',
+      workspaceSource: 'local',
+    }
+    const first = '/fixture/repo/first.ts'
+    const second = '/fixture/repo/second.ts'
+    const api = {
+      listWorkspaceEntries: vi.fn().mockResolvedValue({ path: target.path, entries: [] }),
+      readWorkspaceTextFile: vi.fn(async (_deviceId: string, path: string) => ({
+        path,
+        name: path.split('/').at(-1)!,
+        content: path === first ? 'export const first = true' : 'export const second = true',
+        editable: true,
+        revision: path,
+        truncated: false,
+        size: 25,
+      })),
+      writeWorkspaceTextFile: vi.fn(),
+    }
+    const selection = { path: first, isDirectory: false }
+    const panel = (additional: boolean) => (
+      <FileWorkspacePanel
+        target={target}
+        workspaceFileApi={api}
+        initialSelection={additional ? null : selection}
+        openFileRequest={additional ? { id: 1, path: second } : null}
+      />
+    )
+    const { rerender } = render(panel(false))
+    const expectContent = async (content: string) => {
+      await waitFor(() =>
+        expect(screen.getByTestId('workspace-file-editor')).toHaveTextContent(content)
+      )
+    }
+    await expectContent('export const first = true')
+    rerender(panel(true))
+    await expectContent('export const second = true')
+    rerender(panel(false))
+    await expectContent('export const first = true')
+    expect(api.readWorkspaceTextFile.mock.calls.map(([, path]) => path)).toEqual([
+      first,
+      second,
+      first,
+    ])
+  })
+
   test('keeps the current file visible while an active file tab loads', async () => {
     const target: WorkspaceTarget = {
       deviceId: 'fixture-device',

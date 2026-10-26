@@ -6,6 +6,17 @@ afterEach(() => vi.useRealTimers())
 
 test.each([
   {
+    today: '2026-10-19T12:00:00',
+    target: '2026-11-02',
+    navigationCount: 0,
+    ranges: [
+      '2026-10-26 → 2026-10-28',
+      '2026-11-02 → 2026-11-04',
+      '2026-11-02 → 2026-11-05',
+      '2026-11-04 → 2026-11-07',
+    ],
+  },
+  {
     today: '2026-10-26T12:00:00',
     target: '2026-11-09',
     navigationCount: 1,
@@ -27,19 +38,36 @@ test.each([
       '2026-10-21 → 2026-10-24',
     ],
   },
+  {
+    today: '2026-12-28T12:00:00',
+    target: '2027-01-11',
+    navigationCount: 1,
+    ranges: [
+      '2027-01-04 → 2027-01-06',
+      '2027-01-11 → 2027-01-13',
+      '2027-01-11 → 2027-01-14',
+      '2027-01-13 → 2027-01-16',
+    ],
+  },
 ])('keeps the target date visible when scheduling from $today', async fixture => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date(fixture.today))
   let navigations = 0
   let rangeIndex = 0
+  const expectedDays = new Set([fixture.ranges[0].slice(0, 10), fixture.target])
+  const checkedDays = new Set()
   const target = `collaboration-calendar-day-${fixture.target}`
   const control = {
     async command(action, selector, options) {
       if (action === 'getElementCount' && selector.includes(target))
         return String(navigations === fixture.navigationCount ? 1 : 0)
       if (action === 'click' && /collaboration-schedule-next|下一个月/.test(selector)) navigations++
-      if (action === 'waitFor' && selector.includes(target))
+      if (action === 'waitFor' && selector.includes('collaboration-calendar-day-')) {
+        const day = selector.match(/collaboration-calendar-day-([\d-]+)/)?.[1] ?? ''
+        assert.ok(expectedDays.has(day), 'Only the initial and target days should be checked')
+        checkedDays.add(day)
         assert.equal(navigations, fixture.navigationCount, 'The target month was overshot')
+      }
       if (action === 'getAttribute')
         return options.value === 'aria-sort' ? 'ascending' : fixture.ranges[rangeIndex]
       if (action === 'drag' || action === 'dragBy') rangeIndex++
@@ -59,5 +87,6 @@ test.each([
   })
 
   expect(navigations).toBe(fixture.navigationCount)
+  expect(checkedDays).toEqual(expectedDays)
   expect(rangeIndex).toBe(3)
 })
