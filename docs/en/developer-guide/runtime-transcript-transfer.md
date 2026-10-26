@@ -36,14 +36,49 @@ sequenceDiagram
   the original response for absent versions and version 1. Unknown versions fail explicitly.
 - A new client accepts a legacy response when an old Executor ignores the additional field.
   The old Executor's payload limit still applies. Both client and Executor need the update
-  for chunked transfer. The backend forwards the existing RPC without a new public API.
-- The main conversation pane defaults to the latest 5 turns. For protocol 2, the Executor
+  for chunked transfer. Issue panes using HTTP also require backend support for protocol 2
+  request fields and chunk responses on the existing `POST /api/runtime-work/transcript`.
+- The main conversation and Issue panes share the transcript client, loading the latest
+  5 turns and using cursors for older pages. For protocol 2, the Executor
   defaults an unspecified page size to 5. Explicit `limit` values retain the existing
   pagination behavior, including navigation and test overrides.
 - Existing Codex turn/item cursors, provider compatibility and live merging retain their
   semantics. Protocol 2 projects full tool content for the page it reads;
   `fullContent: false` still means that only a page was loaded. Exports use
   `includeFullContent: true` and no longer silently stop at 500 turns.
+
+### Issue pane HTTP transport
+
+Issue conversations carrying `projectSession` read through the existing HTTP endpoint.
+For every chunk, the backend checks project access and the Issue's persistent session
+binding, then forwards the RPC using the bound device, task and session address.
+It preserves `transcriptProtocolVersion`, `transcriptTransfer`, pagination and refresh
+fields. The response model retains chunk fields for the shared client's validation and
+decompression. Revoking access during a transfer fails the request without publishing
+a partial page.
+
+```mermaid
+sequenceDiagram
+    participant UI as Issue pane
+    participant Client as Shared transcript client
+    participant API as Backend HTTP endpoint
+    participant Runtime as Bound Executor
+    UI->>Client: Load history page
+    loop First and subsequent chunks
+        Client->>API: projectSession, protocol 2, page or chunk cursor
+        API->>API: Check project access and persistent session binding
+        API->>Runtime: Request transcript using bound address
+        Runtime-->>API: Protocol 2 chunk
+        API-->>Client: Preserve complete chunk fields
+    end
+    Client-->>UI: Validate and restore complete history page
+    UI->>UI: Merge history and retain older-page cursor
+```
+
+Failed pagination preserves visible messages and the current cursor, so retry reads
+the same page. Closing or switching the pane prevents stale requests from updating
+another conversation. Every chunk carries the original `projectSession` through HTTP
+project authorization.
 
 Each response contains `success: true`, `transcriptProtocolVersion: 2`, and `transfer`:
 
@@ -116,8 +151,11 @@ context continuation and restoration run through the existing local
 Tests cover Rust transport and Codex pagination, the shared TypeScript decoder, desktop IPC
 and conversation UI. The existing registered `running-conversation-history` desktop
 checkpoint includes high-entropy tool output and checks restart hydration, complete tool
-history and multipart snapshot content through its existing CI entry point. Run E2E and
-`ai:verify` only when explicitly requested.
+history and multipart snapshot content through its existing CI entry point. HTTP and project
+authorization tests cover chunk fields, invalid requests and access revocation during a
+transfer. The `collaboration-issue-task-discovery` checkpoint reads oversized tool output
+through the project HTTP path without loss and reopens the Issue pane after reload.
+Run E2E and `ai:verify` only when explicitly requested.
 
 ### Real history validation (2026-10-09)
 

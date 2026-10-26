@@ -54,7 +54,7 @@ export function WebSearchSourcesChip({
         <button
           type="button"
           data-testid="web-search-sources-chip"
-          className="inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+          className="inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
         >
           <WebSearchFavicon
             iconUrl={primarySource.iconUrl}

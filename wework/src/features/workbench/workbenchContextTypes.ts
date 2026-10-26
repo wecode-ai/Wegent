@@ -269,6 +269,7 @@ export interface WorkbenchContextValue {
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setInput: (value: string) => void
     setInputForScope: (scopeKey: string, value: string) => void
+    getInputRevisionForScope: (scopeKey: string) => number
     setComposerError?: (error: string | null) => void
     setComposerErrorForScope?: (scopeKey: string, error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void

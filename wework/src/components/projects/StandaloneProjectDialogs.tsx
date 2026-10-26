@@ -319,7 +319,7 @@ export function StandaloneBlankProjectDialog({
               void submit()
             }
           }}
-          className="mt-5 h-12 w-full rounded-xl border border-border bg-transparent px-4 text-base text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 disabled:opacity-50"
+          className="mt-5 h-12 w-full rounded-xl border border-border bg-transparent px-4 text-base text-text-primary outline-none keyboard:focus:border-primary keyboard:focus:ring-2 keyboard:focus:ring-primary/10 disabled:opacity-50"
         />
         {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
         <div className="mt-5 flex justify-end gap-3">
@@ -1147,7 +1147,7 @@ export function StandaloneFolderProjectDialog({
                     }
                     setGitError(null)
                   }}
-                  className="flex w-full items-start gap-3 rounded-xl border border-border bg-background p-3 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                  className="flex w-full items-start gap-3 rounded-xl border border-border bg-background p-3 text-left hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
                 >
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-text-primary">
                     <Icon className="h-4 w-4" />
@@ -1215,7 +1215,7 @@ export function StandaloneFolderProjectDialog({
                       setGitError(null)
                     }}
                     placeholder="https://github.com/owner/repository.git"
-                    className="mt-2 h-11 w-full rounded-[10px] border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60 sm:h-10"
+                    className="mt-2 h-11 w-full rounded-[10px] border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-60 sm:h-10"
                   />
                 </label>
                 <div className="mt-4">
@@ -1235,7 +1235,7 @@ export function StandaloneFolderProjectDialog({
                         setGitParentPath(event.target.value)
                         setGitError(null)
                       }}
-                      className="h-11 min-w-0 flex-1 rounded-[10px] border border-border bg-background px-3 font-mono text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60 sm:h-10"
+                      className="h-11 min-w-0 flex-1 rounded-[10px] border border-border bg-background px-3 font-mono text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-60 sm:h-10"
                     />
                     <button
                       type="button"
@@ -1285,7 +1285,7 @@ export function StandaloneFolderProjectDialog({
                         'workbench.remote_project_git_branch_placeholder',
                         '留空使用默认分支'
                       )}
-                      className="h-11 w-full rounded-[10px] border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60 sm:h-10"
+                      className="h-11 w-full rounded-[10px] border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-60 sm:h-10"
                     />
                   </label>
                 )}

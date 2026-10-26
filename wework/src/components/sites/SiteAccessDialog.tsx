@@ -177,7 +177,7 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
             aria-label={t('close', '关闭')}
             disabled={saving}
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-50"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-50"
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -237,7 +237,7 @@ export function SiteAccessDialog({ api, site, onClose }: SiteAccessDialogProps) 
                   rows={3}
                   maxLength={8192}
                   placeholder={t('access_custom_subjects_placeholder', '例如 alice, bob')}
-                  className="mt-2 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-focus/70 focus:ring-2 focus:ring-focus/15 disabled:opacity-60"
+                  className="mt-2 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-muted keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15 disabled:opacity-60"
                   onChange={event => {
                     setSubjectsText(event.target.value)
                     setSaved(false)
