@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
-import { collaborationScheduleDates } from '../e2e/desktop/modules/collaboration-schedule-views.mjs'
+import { afterEach, test, vi } from 'vitest'
+import {
+  collaborationScheduleDates,
+  verifyCollaborationScheduleViews,
+} from '../e2e/desktop/modules/collaboration-schedule-views.mjs'
+
+afterEach(() => vi.useRealTimers())
 
 function addDays(date, days) {
   const next = new Date(date)
@@ -47,3 +52,81 @@ test('the failing end-of-month Monday drags to the next visible week', () => {
     movedEnd: '2026-11-07',
   })
 })
+
+test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
+  'the schedule scenario uses its generated dates throughout the flow on %s',
+  async clock => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(clock))
+    const keys = collaborationScheduleDates()
+    const calls = []
+    const captures = []
+    let range = `${keys.initialStart} → ${keys.initialEnd}`
+    let sorted = false
+    const control = {
+      async command(action, selector, options = {}) {
+        calls.push({ action, selector, options })
+        if (action === 'getAttribute') {
+          if (options.value === 'title') return range
+          assert.equal(options.value, 'aria-sort')
+          assert.ok(sorted, 'The scenario must click the sort control before checking it')
+          return 'ascending'
+        }
+        if (action === 'getValue') return 'status'
+        if (action === 'getComputedStyleValue') return 'ew-resize'
+        if (action === 'getText') return '开始时间 结束时间'
+        if (action === 'drag') {
+          if (selector.includes('collaboration-calendar-issue-')) {
+            assert.equal(
+              options.target,
+              `[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`
+            )
+            range = `${keys.calendarStart} → ${keys.calendarEnd}`
+          } else {
+            assert.ok(selector.includes('collaboration-gantt-issue-'))
+            assert.ok(options.target.endsWith(`[data-testid$="-day-${keys.movedStart}"]`))
+            range = `${keys.movedStart} → ${keys.movedEnd}`
+          }
+          return
+        }
+        if (action === 'dragBy') {
+          assert.ok(selector.includes('-end-handle'))
+          assert.deepEqual(JSON.parse(options.value), { x: 20, y: 0 })
+          range = `${keys.calendarStart} → ${keys.resizedEnd}`
+          return
+        }
+        if (action === 'click' && selector.includes('collaboration-issue-table-sort-title')) {
+          sorted = true
+        }
+        assert.ok(
+          [
+            'setMainWindowSize',
+            'click',
+            'waitFor',
+            'fill',
+            'clickWhenEnabled',
+            'select',
+            'hover',
+          ].includes(action),
+          `Unexpected control action: ${action}`
+        )
+      },
+    }
+    await verifyCollaborationScheduleViews({
+      capture: async (_, name) => captures.push(name),
+      control,
+      issueTitle: 'Schedule regression',
+      scoped: selector => selector,
+      timeoutMs: 1000,
+    })
+    assert.equal(range, `${keys.movedStart} → ${keys.movedEnd}`)
+    assert.equal(calls.filter(call => call.action === 'drag').length, 2)
+    assert.equal(calls.filter(call => call.action === 'dragBy').length, 1)
+    assert.equal(captures.length, 3)
+    assert.equal(
+      calls.some(call => /collaboration-schedule-next|下一个月/.test(call.selector)),
+      false,
+      'Generated source and target dates must stay visible together without month navigation'
+    )
+  }
+)
