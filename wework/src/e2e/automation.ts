@@ -2056,7 +2056,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!address.deviceId || !address.taskId) {
         throw new Error('cancelRuntimeTaskDirectly requires deviceId and taskId')
       }
-      return JSON.stringify(await requestLocalExecutor('runtime.tasks.cancel', address))
+      return JSON.stringify(await requestLocalExecutor('runtime.tasks.cancel', { ...address }))
     }
     case 'restartLocalCodexAppServerIfIdle':
       return JSON.stringify(
