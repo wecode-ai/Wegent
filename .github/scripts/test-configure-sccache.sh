@@ -27,20 +27,16 @@ set -euo pipefail
 [[ "$SCCACHE_BASEDIRS" == '/test/workspace' ]]
 [[ "$SCCACHE_GHA_VERSION" == 'wegent-sccache-v1-Linux-X64' ]]
 [[ "${SCCACHE_IDLE_TIMEOUT-unset}" == 0 ]]
-printf '%s\n' "${SCCACHE_GHA_RW_MODE-unset}" >> "$SCCACHE_TEST_CALLS"
+printf '%s:%s\n' "$*" "${SCCACHE_GHA_RW_MODE-unset}" >> "$SCCACHE_TEST_CALLS"
 case "$*" in
-  --show-stats)
-    exit 0
-    ;;
-  --start-server)
+  --show-stats) exit 0 ;;
+  'rustc -vV')
     if [[ "$SCCACHE_TEST_EXIT" != 0 ]]; then
-      echo 'cache startup failed: ?sig=synthetic-cache-token' >&2
+      echo "cache-server-sensitive-detail ?sig=synthetic-cache-token" >&2
     fi
     exit "$SCCACHE_TEST_EXIT"
     ;;
-  *)
-    exit 64
-    ;;
+  *) exit 99 ;;
 esac
 SH
 chmod +x "$test_dir/bin/sccache"
@@ -56,7 +52,7 @@ run_case() {
     RUNNER_OS=Linux RUNNER_ARCH=X64 GITHUB_ENV="$test_dir/$name.env" \
     SCCACHE_TEST_EXIT="$startup_exit" SCCACHE_TEST_CALLS="$test_dir/$name.calls" \
     bash "$test_dir/configure.sh" > "$test_dir/$name.log" 2>&1
-  [[ "$(cat "$test_dir/$name.calls")" == "$expected_mode" ]]
+  [[ "$(cat "$test_dir/$name.calls")" == "rustc -vV:$expected_mode" ]]
   if [[ "$startup_exit" == 0 ]]; then
     grep -Fxq 'RUSTC_WRAPPER=sccache' "$test_dir/$name.env"
     grep -Fxq 'SCCACHE_GHA_ENABLED=true' "$test_dir/$name.env"
@@ -72,6 +68,7 @@ run_case() {
       printf 'Unavailable cache server must not enable a Rust compiler wrapper\n' >&2
       return 1
     fi
+    ! grep -Fq 'cache-server-sensitive-detail' "$test_dir/$name.log"
     grep -Fq 'continuing without Rust compiler caching' "$test_dir/$name.log"
   fi
   ! grep -Fq 'synthetic-cache-token' "$test_dir/$name.log"

@@ -88,9 +88,9 @@ export function createDesktopScenario(options) {
         value: '300001',
       })
       const executorLogPath = join(options.resultDir, 'executor.log')
-      const restartLogOffset = (await readFile(executorLogPath, 'utf8')).length
+      const saveLogOffset = (await readFile(executorLogPath, 'utf8')).length
       await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
-      await waitForCatalogRestart(control, executorLogPath, restartLogOffset)
+      await waitForCatalogRestart(control, executorLogPath, saveLogOffset)
       await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
         visible: false,
       })
