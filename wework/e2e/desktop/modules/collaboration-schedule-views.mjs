@@ -13,11 +13,17 @@ function addDays(value, days) {
   return next
 }
 
-function nextMonday() {
-  const today = new Date()
+export function scheduleStartDate(now = new Date()) {
+  const today = new Date(now)
   today.setHours(12, 0, 0, 0)
-  const daysUntilMonday = (8 - today.getDay()) % 7 || 7
-  return addDays(today, daysUntilMonday)
+  const monday = addDays(today, -((today.getDay() + 6) % 7))
+  const first = new Date(today.getFullYear(), today.getMonth(), 1, 12)
+  const leadingDays = (first.getDay() + 6) % 7
+  const calendarEnd = addDays(first, 41 - leadingDays)
+  // Keep the complete seven-day drag inside the month grid and the Gantt window.
+  return [7, 0, -7]
+    .map(offset => addDays(monday, offset))
+    .find(start => addDays(start, 9) <= calendarEnd)
 }
 
 async function waitForAttributeIncludes(
@@ -48,7 +54,7 @@ export async function verifyCollaborationScheduleViews({
   await control.command('setMainWindowSize', 'body', {
     value: JSON.stringify({ width: 1440, height: 900 }),
   })
-  const initialStart = nextMonday()
+  const initialStart = scheduleStartDate()
   const initialEnd = addDays(initialStart, 2)
   const calendarStart = addDays(initialStart, 7)
   const calendarEnd = addDays(calendarStart, 2)
