@@ -452,6 +452,8 @@ Claude Code、Agno 运行时和 Codex 任务 shell 都会收到一组任务身�
 
 运行凭证和 Socket 登录凭证分别管理。`executor.backend.configure` 只更新 `runtime_auth_token` 时，会更新共享的 `ConnectionConfig` 内存快照并保留已注册的 Socket 连接；RuntimeWork RPC 和 `task:execute` 都从这份快照为后续执行补齐凭证。这样，页面重载或定时刷新运行凭证不会断开连接，让历史读取请求落到旧 Socket。Backend URL、Socket URL、登录凭证或注册设备类型变化时，执行器仍会断开旧连接并重新注册。
 
+Wework 从本地存储或桌面偏好恢复云端连接时，保留此前解析并保存的 Socket 地址，避免在服务器配置请求完成前临时切回 Backend 地址。用户显式覆盖和当前安装包中的 Socket 配置仍具有更高优先级；服务器重新声明地址后，连接按最新声明更新。
+
 项目模式下访问 Claude 或 Codex 模型 API 时，executor 会在直接启动的运行时上下文中加入 `wecode-project: <project_id>` 请求头，并补齐 `wecode-action: wegent`、`wecode-source: wegent-local`、`wecode-executor: <runtime>` 来源标识，其中 Claude Code 使用 `claudecode`，Codex 使用 `codex`。Claude Code 本地模式会先合并 executor 启动进程环境和运行时环境里已有的 `ANTHROPIC_CUSTOM_HEADERS`，再追加 project 标识，并同时写入 `ANTHROPIC_CUSTOM_HEADERS` 与 `DEFAULT_HEADERS`/`default_headers` 环境变量，保证直接 Claude Code 子进程和下游模型网关读取到一致的 header 集合；Codex 在 Wegent 管理 provider 配置时写入 provider 的 `http_headers`，使用个人 Codex 配置且显式指定 provider 时也会对该 provider 注入同一 project 请求头。
 
 ### 聊天任务设备解析与 Claude Code 启动上下文
