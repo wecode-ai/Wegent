@@ -5,7 +5,10 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
-import { createCatalogContextVerification } from './codex-catalog-context.mjs'
+import {
+  createCatalogContextVerification,
+  waitForCatalogRestart,
+} from './codex-catalog-context.mjs'
 
 const MODEL_ID = 'gpt-5.5'
 const EDIT = `[data-testid="codex-catalog-edit-openai-${MODEL_ID}"]`
@@ -84,7 +87,10 @@ export function createDesktopScenario(options) {
       await control.command('fill', '[data-testid="local-model-context-window-input"]', {
         value: '300001',
       })
+      const executorLogPath = join(options.resultDir, 'executor.log')
+      const saveLogOffset = (await readFile(executorLogPath, 'utf8')).length
       await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
+      await waitForCatalogRestart(control, executorLogPath, saveLogOffset)
       await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
         visible: false,
       })
@@ -111,7 +117,9 @@ export function createDesktopScenario(options) {
         '[data-testid="codex-model-provider-toggle-openai"]'
       )
       await control.command('waitFor', ROW, { text: '已自定义' })
+      const restoreLogOffset = (await readFile(executorLogPath, 'utf8')).length
       await control.command('clickWhenEnabled', RESTORE)
+      await waitForCatalogRestart(control, executorLogPath, restoreLogOffset)
       await waitForSnapshot(
         control,
         snapshot =>
