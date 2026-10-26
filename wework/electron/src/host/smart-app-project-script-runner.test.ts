@@ -35,16 +35,23 @@ describe('runSmartAppProjectScripts', () => {
       )
       const pnpmEntry = process.env.npm_execpath
       if (!pnpmEntry) throw new Error('Run this regression through pnpm test')
+      // pnpm can expose either a Node script or a standalone native executable.
+      const pnpmIsScript = /\.[cm]?js$/i.test(pnpmEntry)
       const result = await runSmartAppProjectScripts({
         ...options(root),
         scripts: { typecheck: 'check', test: 'check', build: 'check' },
         resolveCommand: async () => ({
-          command: process.execPath,
-          argsPrefix: [pnpmEntry, '--pm-on-fail=error'],
+          command: pnpmIsScript ? process.execPath : pnpmEntry,
+          argsPrefix: [...(pnpmIsScript ? [pnpmEntry] : []), '--pm-on-fail=error'],
           environment: { PATH: process.env.PATH, CI: 'true' },
         }),
       })
-      expect(result.issues).toEqual([])
+      const failureLogs = await Promise.all(
+        result.scripts
+          .filter(script => script.status === 'failed')
+          .map(script => readFile(join(root, script.logPath), 'utf8'))
+      )
+      expect(result.issues, failureLogs.join('\n')).toEqual([])
       expect(result.scripts.map(script => script.status)).toEqual(['passed', 'passed', 'passed'])
       await expect(readFile(join(host, 'pnpm-lock.yaml'))).rejects.toMatchObject({ code: 'ENOENT' })
     }
