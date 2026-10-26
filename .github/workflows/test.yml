@@ -25,7 +25,6 @@ concurrency:
 jobs:
   changes:
     name: Detect CI Changes
-    if: github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.classify.outputs.backend }}
@@ -47,11 +46,16 @@ jobs:
       - name: Classify changed paths
         id: classify
         env:
+          EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           FORCE_ALL: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all') }}
         run: |
-          if [[ "$FORCE_ALL" == "true" ]]; then
+          if [[ "$EVENT_NAME" == "merge_group" ]]; then
+            # Always verify Backend and Rust against the queued merge commit.
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            echo "backend_rs=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$FORCE_ALL" == "true" ]]; then
             # ci:all is the explicit full-regression path.
             .github/scripts/classify-ci-changes.sh --all
           else
@@ -68,6 +72,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Python 3.11 and uv
         uses: ./.github/actions/setup-python-uv-cache
@@ -91,7 +97,22 @@ jobs:
         working-directory: ./backend
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v
+        run: |
+          set -o pipefail
+          mkdir -p ../.ci-artifacts/backend-tests
+          git rev-parse HEAD > ../.ci-artifacts/backend-tests/sha.txt
+          echo 'uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v --junitxml=../.ci-artifacts/backend-tests/results.xml' > ../.ci-artifacts/backend-tests/command.txt
+          uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v \
+            --junitxml=../.ci-artifacts/backend-tests/results.xml \
+            2>&1 | tee ../.ci-artifacts/backend-tests/pytest.log
+
+      - name: Upload backend test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-evidence
+          path: .ci-artifacts/backend-tests/
+          if-no-files-found: error
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -112,9 +133,19 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Configure backend Rust target directory
         run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/backend-rs-target" >> "$GITHUB_ENV"
+
+      - name: Set up Python and uv for gateway tests
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.11"
+
+      - name: Prepare stdlib-only Python environment for gateway tests
+        run: uv venv --python 3.11 backend/.venv
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
@@ -128,9 +159,25 @@ jobs:
         working-directory: backend-rs
         run: cargo fmt --check
 
+      - name: Record signal runtime for gateway tests
+        run: /bin/kill --version
+
       - name: Run Rust backend tests
         working-directory: backend-rs
-        run: cargo test --locked
+        run: |
+          set -o pipefail
+          mkdir -p ../.ci-artifacts/backend-rs-tests
+          git rev-parse HEAD > ../.ci-artifacts/backend-rs-tests/sha.txt
+          echo 'cargo test --locked' > ../.ci-artifacts/backend-rs-tests/command.txt
+          cargo test --locked 2>&1 | tee ../.ci-artifacts/backend-rs-tests/cargo-test.log
+
+      - name: Upload Rust backend test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-rs-test-evidence
+          path: .ci-artifacts/backend-rs-tests/
+          if-no-files-found: error
 
       - name: Check Rust backend lints
         working-directory: backend-rs
@@ -702,10 +749,12 @@ jobs:
         test-wegent-cli,
         test-wegent-cli-integration,
       ]
-    if: always() && !cancelled() && github.event_name != 'merge_group'
+    if: always() && !cancelled()
 
     steps:
       - name: Check test results
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           echo "All test jobs completed"
           assert_result() {
@@ -719,6 +768,11 @@ jobs:
           }
 
           [[ "${{ needs.changes.result }}" == "success" ]]
+          if [[ "$EVENT_NAME" == "merge_group" ]]; then
+            # Missing outputs must not turn required merge checks into skips.
+            [[ "${{ needs.changes.outputs.backend }}" == "true" ]]
+            [[ "${{ needs.changes.outputs.backend_rs }}" == "true" ]]
+          fi
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-backend.result }}" "Backend tests"
           assert_result "${{ needs.changes.outputs.backend_rs }}" "${{ needs.test-backend-rs.result }}" "Backend Rust tests"
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-plugin-auth-mysql.result }}" "Plugin auth MySQL transactions"
@@ -731,12 +785,3 @@ jobs:
           assert_result "${{ needs.changes.outputs.wework }}" "${{ needs.test-wework.result }}" "Wework tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli.result }}" "wegent CLI tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli-integration.result }}" "wegent CLI integration tests"
-
-  merge-queue-summary:
-    name: Test Summary
-    if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Confirm E2E-only merge queue
-        run: echo "Unit tests are completed before the merge queue"
