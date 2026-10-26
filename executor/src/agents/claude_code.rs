@@ -33,7 +33,6 @@ const CLAUDE_MAX_OUTPUT_TOKENS_ENV: &str = "CLAUDE_CODE_MAX_OUTPUT_TOKENS";
 const CLAUDE_MODEL_ENV: &str = "ANTHROPIC_MODEL";
 const LONG_CONTEXT_MODEL_SUFFIXES: [&str; 2] = ["[1m]", "+1m"];
 const DEFAULT_CLAUDE_MAX_OUTPUT_TOKENS: u64 = 96_000;
-const MIN_CLAUDE_MAX_OUTPUT_TOKENS: u64 = 16_000;
 const LONG_CONTEXT_MODEL_WINDOW: u64 = 1_000_000;
 const LONG_CONTEXT_AUTO_COMPACT_WINDOW: u64 = 800_000;
 /// Input cap of the upstream Anthropic-compatible route; keep the auto-compact
@@ -534,8 +533,7 @@ fn claude_context_budget(
     model_id: Option<&str>,
 ) -> Option<ClaudeContextBudget> {
     let (model_window, source) = resolved_claude_context_window(request)?;
-    let max_output_tokens =
-        claude_max_output_tokens(request).min((model_window / 2).max(MIN_CLAUDE_MAX_OUTPUT_TOKENS));
+    let max_output_tokens = claude_max_output_tokens(request).min((model_window / 2).max(1));
     let long_context = model_window >= LONG_CONTEXT_MODEL_WINDOW && model_id.is_some();
     let auto_compact_window = LONG_CONTEXT_AUTO_COMPACT_WINDOW.min(
         UPSTREAM_CONTEXT_HARD_CAP
@@ -645,10 +643,7 @@ fn claude_max_output_tokens(request: &ExecutionRequest) -> u64 {
                 .and_then(|value| positive_count(&Value::String(value)))
         })
         .unwrap_or(DEFAULT_CLAUDE_MAX_OUTPUT_TOKENS)
-        .clamp(
-            MIN_CLAUDE_MAX_OUTPUT_TOKENS,
-            DEFAULT_CLAUDE_MAX_OUTPUT_TOKENS,
-        )
+        .min(DEFAULT_CLAUDE_MAX_OUTPUT_TOKENS)
 }
 
 fn claude_model_max_output_tokens(model_config: &Value) -> Option<u64> {

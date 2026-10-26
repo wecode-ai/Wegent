@@ -126,11 +126,9 @@ def _normalize_context_overflow(
     if not any(marker in lowered for marker in CONTEXT_OVERFLOW_MARKERS):
         return None
 
-    match = TOKEN_COUNT_PATTERN.search(text)
-    actual_tokens = (
-        int(match.group(1))
-        if match
-        else max(request_body_length // CONTEXT_OVERFLOW_CHARS_PER_TOKEN, 1)
+    actual_tokens = max(
+        (int(match.group(1)) for match in TOKEN_COUNT_PATTERN.finditer(text)),
+        default=max(request_body_length // CONTEXT_OVERFLOW_CHARS_PER_TOKEN, 1),
     )
     # Claude Code needs positive counts with actual > limit to size compaction.
     actual_tokens = max(actual_tokens, 2)

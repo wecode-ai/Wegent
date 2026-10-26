@@ -194,6 +194,17 @@ struct ResponsesToolCapabilities {
 }
 
 impl LocalModelProxyUpstream {
+    fn resolved_request_url(&self) -> String {
+        self.request_url.clone().unwrap_or_else(|| {
+            let path = match self.api_format.as_str() {
+                "anthropic-messages" => "/messages",
+                "openai-chat-completions" => "/chat/completions",
+                _ => "/responses",
+            };
+            format!("{}{path}", self.base_url.trim_end_matches('/'))
+        })
+    }
+
     fn responses_tool_capabilities(&self) -> ResponsesToolCapabilities {
         if self.codex_request_mode == CodexRequestMode::Standard {
             return ResponsesToolCapabilities {
@@ -679,10 +690,7 @@ async fn handle_harness_messages(
         registered.last_used = Instant::now();
         registered.upstream.clone()
     };
-    let request_url = upstream
-        .request_url
-        .clone()
-        .unwrap_or_else(|| format!("{}/responses", upstream.base_url.trim_end_matches('/')));
+    let request_url = upstream.resolved_request_url();
     let request_body = harness_protocol::adapt_messages_request(
         &body,
         &upstream.api_format,
@@ -918,10 +926,7 @@ async fn handle_for_token(
         )
     };
     log_stale_requested_model(&upstream, &body);
-    let request_url = upstream
-        .request_url
-        .clone()
-        .unwrap_or_else(|| format!("{}/responses", upstream.base_url.trim_end_matches('/')));
+    let request_url = upstream.resolved_request_url();
     let normalized_inter_agent_content = 0;
     let request_body = if text_only {
         text_only_request(&body)?
@@ -2614,10 +2619,14 @@ mod tests {
 
     #[test]
     fn normalizes_provider_api_format_aliases_before_proxy_registration() {
-        for (configured, expected) in [
-            ("responses", "openai-responses"),
-            ("chat/completions", "openai-chat-completions"),
-            ("messages", "anthropic-messages"),
+        for (configured, expected, path) in [
+            ("responses", "openai-responses", "/responses"),
+            (
+                "chat/completions",
+                "openai-chat-completions",
+                "/chat/completions",
+            ),
+            ("messages", "anthropic-messages", "/messages"),
         ] {
             let upstream = upstream_from_model_config(&json!({
                 "base_url": "https://example.com",
@@ -2627,10 +2636,31 @@ mod tests {
             .expect("model config should produce an upstream");
 
             assert_eq!(upstream.api_format, expected);
+            assert_eq!(
+                upstream.resolved_request_url(),
+                format!("https://example.com{path}")
+            );
             assert_eq!(upstream.native_tool_search, expected == "openai-responses");
             assert_eq!(
                 upstream.native_namespace_tools,
                 expected == "openai-responses"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_provider_url_takes_precedence_over_the_protocol_default() {
+        for field in ["responses_url", "responsesUrl", "request_url", "requestUrl"] {
+            let mut config = json!({
+                "base_url": "https://example.com/v1/",
+                "upstream_api_format": "anthropic-messages",
+            });
+            config[field] = json!("https://provider.example.com/custom/messages");
+            let upstream = upstream_from_model_config(&config).unwrap().unwrap();
+
+            assert_eq!(
+                upstream.resolved_request_url(),
+                "https://provider.example.com/custom/messages"
             );
         }
     }

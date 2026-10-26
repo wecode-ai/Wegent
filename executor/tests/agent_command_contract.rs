@@ -397,7 +397,7 @@ fn claude_command_preserves_existing_long_context_suffix() {
 }
 
 #[test]
-fn claude_command_defaults_and_clamps_long_context_output_budget() {
+fn claude_command_defaults_and_caps_long_context_output_budget() {
     let _lock = env_lock();
     let _process_context = EnvGuard::remove("CLAUDE_CODE_MAX_CONTEXT_TOKENS");
     let _process_output = EnvGuard::remove("CLAUDE_CODE_MAX_OUTPUT_TOKENS");
@@ -406,11 +406,20 @@ fn claude_command_defaults_and_clamps_long_context_output_budget() {
         (None, "96000"),
         (Some(json!(0)), "96000"),
         (Some(json!("invalid")), "96000"),
-        (Some(json!(8_000)), "16000"),
+        (Some(json!(1)), "1"),
+        (Some(json!(8_000)), "8000"),
+        (Some(json!("8000")), "8000"),
+        (Some(json!(16_000)), "16000"),
         (Some(json!(500_000)), "96000"),
     ];
 
     for (max_output_tokens, expected) in cases {
+        let configured_limit = max_output_tokens.as_ref().and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+                .filter(|value| *value > 0)
+        });
         let mut model_config = json!({
             "model_id": "deepseek-v4.1-flash",
             "context_window": 1_000_000,
@@ -430,6 +439,12 @@ fn claude_command_defaults_and_clamps_long_context_output_budget() {
             spec.envs().get("CLAUDE_CODE_MAX_OUTPUT_TOKENS").unwrap(),
             expected
         );
+        if let Some(configured_limit) = configured_limit {
+            let output_limit: u64 = spec.envs()["CLAUDE_CODE_MAX_OUTPUT_TOKENS"]
+                .parse()
+                .unwrap();
+            assert!(output_limit <= configured_limit);
+        }
         assert_eq!(
             spec.envs().get("CLAUDE_CODE_AUTO_COMPACT_WINDOW").unwrap(),
             "800000"

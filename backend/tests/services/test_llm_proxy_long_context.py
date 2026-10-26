@@ -122,6 +122,28 @@ def test_normalized_context_overflow_always_reports_actual_above_limit(
     assert int(actual) > int(limit.removesuffix(" maximum")) > 0
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "maximum context length is 128000 tokens; your messages resulted in 130000 tokens",
+        "input is too long: 130000 tokens exceed 128000 tokens",
+    ],
+)
+def test_normalized_context_overflow_uses_largest_token_count(body: str) -> None:
+    """Use the requested input size when the provider lists its limit first."""
+    normalized = _normalize_context_overflow(
+        status_code=400,
+        body=body.encode(),
+        request_body_length=0,
+        context_window=128_000,
+    )
+
+    assert normalized is not None
+    assert normalized["error"]["message"] == (
+        "prompt is too long: 130000 tokens > 128000 maximum"
+    )
+
+
 def _proxy_request(model_name: str, user_id: int, path: str = "messages") -> MagicMock:
     """Build an authenticated gateway request without external services."""
     request_mock = MagicMock(spec=Request)

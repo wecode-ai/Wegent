@@ -98,9 +98,9 @@ fn extract_token_count(text: &str) -> Option<u64> {
         Regex::new(r"(?i)(\d{3,})\s*tokens?\b").expect("token count pattern is valid")
     });
     pattern
-        .captures(text)
-        .and_then(|captures| captures.get(1))
-        .and_then(|count| count.as_str().parse().ok())
+        .captures_iter(text)
+        .filter_map(|captures| captures.get(1)?.as_str().parse().ok())
+        .max()
 }
 
 #[cfg(test)]
@@ -164,6 +164,23 @@ mod tests {
             normalized["error"]["message"],
             "prompt is too long: 200000 tokens > 199999 maximum"
         );
+    }
+
+    #[test]
+    fn uses_largest_parseable_token_count_for_actual_input() {
+        for body in [
+            "maximum context length is 128000 tokens; your messages resulted in 130000 tokens",
+            "input is too long: 130000 tokens exceed 128000 tokens",
+            "maximum context length: 999999999999999999999999 tokens; requested 130000 tokens",
+        ] {
+            let normalized = normalize_context_overflow(400, body.as_bytes(), 0, Some(128_000))
+                .expect("overflow");
+
+            assert_eq!(
+                normalized["error"]["message"],
+                "prompt is too long: 130000 tokens > 128000 maximum"
+            );
+        }
     }
 
     #[test]
