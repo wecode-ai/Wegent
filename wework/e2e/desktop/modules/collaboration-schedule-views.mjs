@@ -96,6 +96,17 @@ export async function verifyCollaborationScheduleViews({
     visible: true,
     timeoutMs,
   })
+  const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
+  // Future schedule dates can fall outside the current month's six-week grid.
+  if (Number(await control.command('getElementCount', calendarTarget)) === 0) {
+    await control.command('click', scoped('[data-testid="collaboration-schedule-next"]'))
+  }
+  for (const key of [keys.initialStart, keys.calendarStart]) {
+    await control.command('waitFor', scoped(`[data-testid="collaboration-calendar-day-${key}"]`), {
+      visible: true,
+      timeoutMs,
+    })
+  }
   await control.command('select', scoped('[data-testid="collaboration-calendar-status-filter"]'), {
     value: 'inbox',
   })
@@ -140,7 +151,7 @@ export async function verifyCollaborationScheduleViews({
   )
   await capture(control, 'offline-local-project-space-02-calendar-schedule.png')
   await control.command('drag', `${calendarBar} > button:not([data-testid])`, {
-    target: scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`),
+    target: calendarTarget,
     timeoutMs,
   })
   await waitForAttributeIncludes(
