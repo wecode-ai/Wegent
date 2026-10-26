@@ -258,8 +258,18 @@ class AttachmentUploadReplica(unittest.TestCase):
 if __name__ == "__main__":
     report = Path(os.environ["E2E_REPORT_DIR"]).resolve()
     report.mkdir(parents=True, exist_ok=True)
+    repository = Path(__file__).resolve().parents[3]
     actual_sha = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], text=True
+        [
+            "git",
+            "-c",
+            f"safe.directory={repository}",
+            "-C",
+            str(repository),
+            "rev-parse",
+            "HEAD",
+        ],
+        text=True,
     ).strip()
     assert actual_sha == os.environ["E2E_EXPECTED_SHA"], "unexpected E2E checkout"
     result = unittest.TextTestRunner(verbosity=2).run(
