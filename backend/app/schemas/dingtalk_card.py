@@ -73,9 +73,9 @@ class DingTalkChatCardConfig(BaseModel):
 class DingTalkNotificationCardConfig(BaseModel):
     """The AI card a DingTalk channel pushes task notifications as.
 
-    The block is only present when the channel opted into cards; the template
-    defaults to DingTalk's built-in one so enabling cards needs no card of the
-    operator's own.
+    Carrying the block opts the channel into Wework IM pushes; a channel
+    without it receives none. The template defaults to DingTalk's built-in one
+    so enabling pushes needs no card of the operator's own.
     """
 
     model_config = ConfigDict(extra="forbid")

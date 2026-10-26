@@ -275,7 +275,26 @@ async def _deliver_notification_payload(
     if not channels["im"]:
         return
     try:
-        sessions = await im_session_service.list_user_sessions(db, user_id=user_id)
+        sessions = [
+            session
+            for session in await im_session_service.list_user_sessions(
+                db, user_id=user_id
+            )
+            if session.user_id == user_id
+        ]
+        eligible_sessions = im_notification_dispatcher.notification_sessions(
+            db, sessions
+        )
+        if not eligible_sessions:
+            if sessions:
+                logger.info(
+                    "Wework IM delivery skipped: connected channels lack a "
+                    "notification card: id=%s user_id=%s",
+                    notification_id,
+                    user_id,
+                )
+            return
+        sessions = eligible_sessions
         payload = (
             notification["payload"]
             if isinstance(notification.get("payload"), dict)
@@ -288,8 +307,6 @@ async def _deliver_notification_payload(
             payload=payload,
         )
         for session in sessions:
-            if session.user_id != user_id:
-                continue
             result = await im_notification_dispatcher.send_notification(
                 db,
                 session,
