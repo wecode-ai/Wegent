@@ -4655,6 +4655,24 @@ async fn codex_app_server_restart_requires_confirmation_for_active_turns() {
 }
 
 #[tokio::test]
+async fn codex_model_discovery_waits_for_app_server_restart() {
+    let (handler, root) = isolated_runtime_work_handler("catalog-restart-serialization");
+    let restart_guard = codex_app_server_restart_gate().lock().await;
+    {
+        let discovery = handler.list_codex_models(json!({"includeHidden": true}));
+        tokio::pin!(discovery);
+        let waiting = tokio::time::timeout(Duration::from_millis(100), &mut discovery).await;
+        assert!(
+            waiting.is_err(),
+            "model discovery bypassed the restart gate"
+        );
+    }
+
+    drop(restart_guard);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn codex_instructions_write_rejects_non_string_payload() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
 
