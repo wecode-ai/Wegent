@@ -1403,7 +1403,7 @@
       "enabled": "Send task notifications as cards",
       "template_id": "Notification card template ID (optional)",
       "template_placeholder": "A verified DingTalk card template ID",
-      "help": "Empty uses DingTalk's built-in markdown card (body plus buttons), so the bot needs no card of its own. A template of your own renders your fields; a card that cannot be delivered falls back to a text notification."
+      "help": "When on, this channel receives Wework notifications and pushes them as cards; when off, no IM notification is sent (the in-app inbox is unaffected). Empty uses DingTalk's built-in markdown card (body plus buttons), so the bot needs no card of its own. A template of your own renders your fields; a card that cannot be delivered falls back to a text notification."
     },
     "title": "IM Channel Management",
     "description": "Manage IM platform integrations (DingTalk, Weibo, Telegram, Discord)",

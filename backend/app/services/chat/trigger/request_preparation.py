@@ -6,7 +6,7 @@
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 from fastapi import HTTPException, status
 
@@ -29,6 +29,7 @@ from app.services.video_generation_params import apply_video_generation_params
 from app.services.wework_model_config import (
     merge_model_reasoning,
     wework_model_config_options,
+    wework_model_token_limits,
 )
 from shared.codex_model_catalog import (
     codex_catalog_model_id_for_upstream,
@@ -602,6 +603,10 @@ def _build_cloud_gateway_model_config(
         },
         "runtime_config": {"codex": {"use_user_config": False, "configured": True}},
     }
+    # The executor derives the Claude Code auto-compact budget from these
+    # values, so they must come from the Model CRD instead of relying on
+    # client-side model options that a web-started task never sends.
+    config.update(wework_model_token_limits(model_spec or {}, provider_config))
     config.update(model_options)
     return config
 

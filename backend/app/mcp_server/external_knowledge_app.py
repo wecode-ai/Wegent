@@ -53,16 +53,13 @@ def build_external_knowledge_mcp_app(
         async with external_knowledge_mcp_server.session_manager.run():
             yield
 
-    document_file_methods = (
-        ["HEAD"] if mount_path == "/api/mcp/knowledge-external" else ["GET"]
-    )
     routes = [
         Route("/health", _health_check, methods=["GET"]),
         Route("/", _root_metadata(mount_path), methods=["GET"]),
         Route(
             "/documents/{document_id:int}/file",
             _document_file,
-            methods=document_file_methods,
+            methods=["GET"],
         ),
         Route(
             EXTERNAL_KNOWLEDGE_MCP_TRANSPORT_PATH,

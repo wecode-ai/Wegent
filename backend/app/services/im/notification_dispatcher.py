@@ -190,18 +190,13 @@ class IMNotificationDispatcher:
     ) -> dict[str, Any]:
         """Send one inbox notification, linking it when the channel supports it.
 
-        Each channel renders the notification its own way: DingTalk bolds the
-        headline above the links, or draws a card when the channel asked for
-        one, while other channels receive the text followed by the addresses. A
-        notification can offer more than one destination — the web board and the
-        Wework deep link — so the links travel as a list.
+        DingTalk draws a card when the channel asked for one; a notification
+        without links still uses that card. A notification can offer more than
+        one destination — the web board and the Wework deep link — so the links
+        travel as a list.
         """
 
         text = push.plain_text()
-        if not links:
-            return await self.send_text(
-                db, session, notification_message(push.headline, text)
-            )
         try:
             channel = self._get_channel(db, session.channel_id)
             if channel is None:
@@ -224,14 +219,13 @@ class IMNotificationDispatcher:
                     headline=push.headline,
                     push=push,
                 )
-            return await self.send_text(
-                db,
-                session,
-                f"{notification_message(push.headline, text)}\n\n{_plain_links(links)}",
-            )
+            message = notification_message(push.headline, text)
+            if links:
+                message = f"{message}\n\n{_plain_links(links)}"
+            return await self.send_text(db, session, message)
         except Exception as exc:
             logger.exception(
-                "[IMNotificationDispatcher] Failed to send notification link: "
+                "[IMNotificationDispatcher] Failed to send notification: "
                 "session_key=%s channel_type=%s",
                 session.session_key,
                 session.channel_type,
@@ -242,6 +236,41 @@ class IMNotificationDispatcher:
                 "channel_type": session.channel_type,
                 "error": str(exc),
             }
+
+    def notification_sessions(
+        self,
+        db: Session,
+        sessions: Sequence[IMPrivateSession],
+    ) -> list[IMPrivateSession]:
+        """Keep sessions whose channel opted into Wework notification cards.
+
+        A Messager channel opts in by carrying ``notification_card`` in its
+        spec; the same block selects the card template. Channels without it do
+        not receive Wework IM pushes, so a recipient connected to several bots
+        only hears from the one configured for notifications.
+        """
+
+        channel_ids = {session.channel_id for session in sessions}
+        if not channel_ids:
+            return []
+        channels = (
+            db.query(Kind)
+            .filter(
+                Kind.id.in_(channel_ids),
+                Kind.kind == MESSAGER_KIND,
+                Kind.user_id == MESSAGER_USER_ID,
+                Kind.is_active == True,
+            )
+            .all()
+        )
+        enabled_channel_ids = {
+            channel.id
+            for channel in channels
+            if _notification_card_template(_channel_config(channel))
+        }
+        return [
+            session for session in sessions if session.channel_id in enabled_channel_ids
+        ]
 
     async def _runtime_notification_sessions(
         self,
@@ -449,9 +478,8 @@ class IMNotificationDispatcher:
     ) -> dict[str, Any] | None:
         """Deliver one notification as an AI card, or nothing when that fails.
 
-        A channel that never opted into cards keeps its markdown push, and so
-        does one whose card the tenant cannot deliver — the notification itself
-        matters more than its shape.
+        A channel whose card the tenant cannot deliver still gets the markdown
+        notification; the notification itself matters more than its shape.
         """
 
         from app.services.channels.dingtalk.notification_card import card_param_map
@@ -565,12 +593,14 @@ class IMNotificationDispatcher:
         }
 
 
-def _get_channel_config(channel: Kind) -> dict[str, Any]:
+def _channel_config(channel: Kind) -> dict[str, Any]:
     spec = channel.json.get("spec", {}) if isinstance(channel.json, dict) else {}
     config = spec.get("config", {}) if isinstance(spec, dict) else {}
-    if not isinstance(config, dict):
-        return {}
-    return _decrypt_config(config)
+    return config if isinstance(config, dict) else {}
+
+
+def _get_channel_config(channel: Kind) -> dict[str, Any]:
+    return _decrypt_config(_channel_config(channel))
 
 
 def _decrypt_config(config: dict[str, Any]) -> dict[str, Any]:

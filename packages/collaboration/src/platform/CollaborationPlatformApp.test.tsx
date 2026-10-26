@@ -1608,6 +1608,31 @@ describe("CollaborationPlatformApp real component flow", () => {
     },
   );
 
+  it("keeps a collapsed selected workspace collapsed when navigation refreshes", async () => {
+    const { api } = createApi();
+    const start = { ...initialLocation, workspaceId: workspace.id };
+    const toggle = () =>
+      byTestId(`collaboration-workspace-toggle-${workspace.id}`);
+
+    await render(<PlatformHarness api={api} start={start} />);
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+
+    await click(toggle());
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+
+    await render(
+      <PlatformHarness
+        api={api}
+        refreshKey="navigation-refresh"
+        start={start}
+      />,
+    );
+    await flush();
+
+    expect(api.workspaces.list).toHaveBeenCalledTimes(2);
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("enters a cached local workspace without retrying an unavailable cloud source", async () => {
     const localWorkspace = {
       ...workspace,

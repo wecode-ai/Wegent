@@ -33,6 +33,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Classify changed paths
@@ -61,6 +62,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
@@ -120,6 +123,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Resolve Platform E2E image
         id: image
@@ -188,6 +193,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Resolve Backend Rust E2E runtime
         id: runtime
@@ -321,6 +328,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Resolve Executor E2E registry access
         id: access
@@ -545,6 +554,8 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
@@ -864,6 +875,46 @@ jobs:
           uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
           uv run --no-sync python tests/e2e/dingtalk_notification_card_context.py
 
+      - name: Run knowledge Python gateway API E2E
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/0
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ALGORITHM: HS256
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "true"
+          E2E_API_URL: http://localhost:8000
+          WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
+          E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/knowledge-python-gateway
+          E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          E2E_PYTHON_LOG: ${{ github.workspace }}/backend/backend.log
+          ATTACHMENT_S3_ENDPOINT: minio:9000
+          ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
+          ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
+          ATTACHMENT_S3_USE_SSL: "false"
+          PYTHONPATH: ..:.
+        run: |
+          set -o pipefail
+          mkdir -p "$E2E_REPORT_DIR"
+          export E2E_TEST_SHA="$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)"
+          printf '%s\n' "$E2E_TEST_SHA" > "$E2E_REPORT_DIR/sha.txt"
+          printf '%s\n' "$E2E_EXPECTED_SHA" > "$E2E_REPORT_DIR/expected-sha.txt"
+          test "$E2E_TEST_SHA" = "$E2E_EXPECTED_SHA"
+          uv run --no-sync python tests/e2e/knowledge_python_gateway.py \
+            2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
+
+      - name: Upload knowledge Python gateway API E2E report
+        if: always() && matrix.shardIndex == 1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: knowledge-python-gateway-api-e2e
+          path: .ci-artifacts/knowledge-python-gateway/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Run knowledge remote index E2E
         if: matrix.shardIndex == 1
         working-directory: ./backend
@@ -1122,6 +1173,8 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
@@ -1349,6 +1402,7 @@ jobs:
           DEVICE_NAME: E2E ClaudeCode Device
           DEVICE_TYPE: app
           BIND_SHELL: claudecode
+          CLAUDE_BINARY_PATH: ${{ github.workspace }}/.github/claude-code-cli/node_modules/.bin/claude
           WEGENT_EXECUTOR_HOME: ${{ runner.temp }}/wegent-executor
           LOCAL_WORKSPACE_ROOT: ${{ runner.temp }}/wegent-workspace
           WORKSPACE_ROOT: ${{ runner.temp }}/wegent-workspace
@@ -1366,6 +1420,34 @@ jobs:
             executor/target/release/wegent-executor \
             executor/local-executor.log \
             executor/local-executor.pid
+
+      - name: Start Claude Code Compaction Executor
+        env:
+          EXECUTOR_MODE: local
+          WEGENT_BACKEND_URL: http://localhost:8000
+          DEVICE_ID: e2e-claudecode-compaction-device
+          DEVICE_NAME: E2E Claude Code Compaction Device
+          DEVICE_TYPE: local
+          DEVICE_SESSION_GATEWAY_PORT: "17889"
+          BIND_SHELL: claudecode
+          WEGENT_EXECUTOR_HOME: ${{ runner.temp }}/wegent-compaction-executor
+          WEGENT_CLAUDE_HOME: ${{ runner.temp }}/wegent-compaction-executor/claude
+          LOCAL_WORKSPACE_ROOT: ${{ runner.temp }}/wegent-compaction-workspace
+          WORKSPACE_ROOT: ${{ runner.temp }}/wegent-compaction-workspace
+          LOCAL_HEARTBEAT_INTERVAL: "5"
+          LOG_LEVEL: info
+          CLAUDE_BINARY_PATH: ${{ github.workspace }}/.github/claude-code-cli/node_modules/.bin/claude
+          CODEX_BINARY_PATH: ${{ github.workspace }}/wework/resources/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
+          CODEX_HOME: ${{ runner.temp }}/wegent-compaction-executor/codex
+          WEGENT_CODEX_HOME: ${{ runner.temp }}/wegent-compaction-executor/codex
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+          CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: "1"
+          CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1"
+        run: |
+          .github/scripts/start-local-e2e-executor.sh \
+            executor/target/release/wegent-executor \
+            executor/compaction-executor.log \
+            executor/compaction-executor.pid
 
       - name: Start Executor Manager
         working-directory: ./executor_manager
@@ -1470,10 +1552,12 @@ jobs:
       - name: Stop Local ClaudeCode Executor
         if: always()
         run: |
-          if [ -f executor/local-executor.pid ]; then
-            kill $(cat executor/local-executor.pid) 2>/dev/null || true
-            rm executor/local-executor.pid
-          fi
+          for pid_file in executor/local-executor.pid executor/compaction-executor.pid; do
+            if [ -f "$pid_file" ]; then
+              kill "$(cat "$pid_file")" 2>/dev/null || true
+              rm "$pid_file"
+            fi
+          done
 
       - name: Stop frontend dev server
         if: always()
@@ -1553,6 +1637,7 @@ jobs:
             frontend/next-dev.log
             frontend/mock-model-server.log
             executor/local-executor.log
+            executor/compaction-executor.log
             executor_manager/executor_manager.log
             executor_manager/container-logs/
           retention-days: 7
