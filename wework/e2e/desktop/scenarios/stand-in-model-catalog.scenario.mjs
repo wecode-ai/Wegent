@@ -1,0 +1,150 @@
+import assert from 'node:assert/strict'
+import {
+  ACTIVE_WORKBENCH_SELECTOR,
+  CLOUD_PUBLIC_MODEL_NAME,
+  ensureModelOptionVisible,
+  fetchJson,
+} from '../modules/shared.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+
+const PANEL = '[data-testid="stand-in-primary-profile"]'
+const USER = 9001
+const models = [
+  { name: 'catalog-kimi-intranet', label: '内网:Kimi-K3' },
+  { name: 'catalog-kimi-public', label: '公网:Kimi-K3' },
+  { name: 'catalog-kimi-unmarked', label: 'Kimi-K3' },
+]
+const selector = id => `[data-testid=${JSON.stringify(id)}]`
+
+/** Compare the ordinary picker and stand-in picker against the same real Backend catalog. */
+export function createDesktopScenario({ uiTimeoutMs }) {
+  let cloud
+  const createdIds = []
+  const request = (path, options = {}) =>
+    fetchJson(`${cloud.backendUrl}${path}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${cloud.authToken}`,
+        'Content-Type': 'application/json',
+      },
+    })
+  return {
+    requiresCloudEnvironment: true,
+    async prepareCloud(environment) {
+      cloud = environment
+      await request('/api/admin/setup-complete', { method: 'POST' })
+      const catalog = await request('/api/admin/public-models?limit=1000')
+      const upstream = catalog.items.find(model => model.name === CLOUD_PUBLIC_MODEL_NAME)
+      assert.ok(upstream, 'The real Backend must expose its upstream model fixture')
+      for (const model of models) {
+        const created = await request('/api/admin/public-models', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: model.name,
+            namespace: 'default',
+            json: {
+              apiVersion: 'agent.wecode.io/v1',
+              kind: 'Model',
+              metadata: { name: model.name, namespace: 'default', displayName: model.label },
+              spec: {
+                protocol: 'openai-responses',
+                apiFormat: 'responses',
+                modelType: 'llm',
+                isVisible: true,
+                isWeworkAvailable: true,
+                modelConfig: {
+                  env: { ...upstream.json.spec.modelConfig.env, model_id: 'kimi-k3' },
+                },
+              },
+            },
+          }),
+        })
+        createdIds.push(created.id)
+      }
+    },
+    async verify(control) {
+      const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
+      const initial = await rpc('runtime.stand_in.personal.get', { userId: USER })
+      const errors = []
+      try {
+        const ordinaryTrigger = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
+        for (const model of models) {
+          await ensureModelOptionVisible(
+            control,
+            `model-option-${model.name}`,
+            ordinaryTrigger,
+            null
+          )
+          await control.command('waitFor', selector(`model-option-${model.name}`), {
+            text: model.label,
+          })
+          await control.command('press', 'body', { key: 'Escape' })
+        }
+        await ensureExperimentalFeaturesEnabled(control)
+        await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+        await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
+        for (const model of models) {
+          await control.command('click', '[data-testid="stand-in-settings-open"]')
+          await control.command('waitFor', PANEL)
+          const key = JSON.stringify(['codex', 'cloud', 'public', 'default', 0, model.name])
+          const optionId = `model-option-${key}`
+          await ensureModelOptionVisible(
+            control,
+            optionId,
+            `${PANEL} [data-testid="model-selector-button"]`,
+            null
+          )
+          await control.command('waitFor', selector(optionId), { text: model.label })
+          await control.command('clickWhenEnabled', selector(optionId))
+          await control.command('waitFor', `${PANEL} [data-testid="model-selector-button"]`, {
+            text: model.label,
+          })
+          await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
+          await control.command('waitFor', PANEL, { visible: false })
+          const saved = await rpc('runtime.stand_in.personal.get', { userId: USER })
+          assert.deepEqual(saved.primary.model.cloud_model, {
+            name: model.name,
+            type: 'public',
+            namespace: 'default',
+            resource_user_id: 0,
+          })
+          assert.deepEqual(Object.keys(saved.primary.model).sort(), [
+            'cloud_model',
+            'model_id',
+            'provider',
+            'runtime',
+            'source',
+          ])
+          assert.equal(saved.primary.model.runtime, 'codex')
+          assert.equal(saved.primary.model.source, 'cloud')
+          assert.equal(saved.primary.model.model_id, 'kimi-k3')
+        }
+      } catch (error) {
+        errors.push(error)
+      } finally {
+        const cleanup = await Promise.allSettled([
+          (async () => {
+            const latest = await rpc('runtime.stand_in.personal.get', { userId: USER })
+            await rpc('runtime.stand_in.personal.save', {
+              userId: USER,
+              settings: { ...initial, version: latest.version },
+            })
+          })(),
+          ...createdIds.map(async id => {
+            const response = await fetch(`${cloud.backendUrl}/api/admin/public-models/${id}`, {
+              method: 'DELETE',
+              headers: { Authorization: `Bearer ${cloud.authToken}` },
+            })
+            assert.equal(response.status, 204, 'Catalog fixture cleanup must return 204')
+          }),
+        ])
+        errors.push(
+          ...cleanup.filter(result => result.status === 'rejected').map(result => result.reason)
+        )
+      }
+      if (errors.length)
+        throw new AggregateError(errors, 'Shared model catalog verification failed')
+    },
+  }
+}

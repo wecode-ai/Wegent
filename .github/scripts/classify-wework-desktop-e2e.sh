@@ -302,39 +302,35 @@ validate_cloud_shards() {
 validate_cloud_shards
 
 validate_registered_checkpoint_coverage() {
-  declare -A covered=()
-  local segment
-  for segment in \
-    "${core_segments[@]}" \
-    "${cloud_segments[@]}" \
-    "${formal_release_segments[@]}"; do
-    covered["$segment"]=true
-  done
-
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   local repository_root
   repository_root="$(cd "$script_dir/../.." && pwd)"
-  local registered_checkpoints
-  if ! registered_checkpoints="$(
+  if ! (
     cd "$repository_root"
-    node --input-type=module -e \
-      "import { DESKTOP_CHECKPOINTS, DESKTOP_CHECKPOINT_GROUPS } from './wework/e2e/desktop/checkpoints.mjs'; console.log(DESKTOP_CHECKPOINTS.filter(name => !DESKTOP_CHECKPOINT_GROUPS.has(name)).join('\\n'))"
-  )"; then
+    node --input-type=module -e '
+      import {
+        DESKTOP_CHECKPOINTS,
+        DESKTOP_CHECKPOINT_GROUPS,
+        expandDesktopCheckpoints,
+      } from "./wework/e2e/desktop/checkpoints.mjs"
+      const registered = DESKTOP_CHECKPOINTS.filter(name => !DESKTOP_CHECKPOINT_GROUPS.has(name))
+      if (!registered.length) {
+        console.error("Registered desktop checkpoint catalog is empty")
+        process.exit(1)
+      }
+      const covered = new Set(expandDesktopCheckpoints(process.argv.slice(1)))
+      for (const checkpoint of registered) {
+        if (!covered.has(checkpoint)) {
+          console.error(`Registered desktop checkpoint missing from CI catalogs: ${checkpoint}`)
+          process.exit(1)
+        }
+      }
+    ' -- "${core_segments[@]}" "${cloud_segments[@]}" "${formal_release_segments[@]}"
+  ); then
     printf 'Could not load registered desktop checkpoints\n' >&2
     return 1
   fi
-  if [[ -z "$registered_checkpoints" ]]; then
-    printf 'Registered desktop checkpoint catalog is empty\n' >&2
-    return 1
-  fi
-  local registered
-  while IFS= read -r registered; do
-    if [[ -z "${covered[$registered]+set}" ]]; then
-      printf 'Registered desktop checkpoint missing from CI catalogs: %s\n' "$registered" >&2
-      return 1
-    fi
-  done <<< "$registered_checkpoints"
 }
 
 validate_registered_checkpoint_coverage
