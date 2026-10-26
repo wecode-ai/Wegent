@@ -1122,7 +1122,7 @@ function ChatAreaContent({
 
   // Get project info when in project context
   const projectIdFromUrl = getSearchParam(searchParams, 'projectId')
-  const { projects, projectTaskPages, loadProjectTasks } = useProjectContext()
+  const { projects, loadAllProjectTasks } = useProjectContext()
   const enableTaskMentions =
     effectiveTaskType === 'chat' || effectiveTaskType === 'code' || effectiveTaskType === 'task'
   const mentionTasks = useMemo(
@@ -1135,12 +1135,9 @@ function ChatAreaContent({
   )
   const loadMentionProjectTasks = useCallback(() => {
     projects.forEach(project => {
-      const page = projectTaskPages[project.id]
-      if (project.task_count > 0 && !page?.loaded && !page?.loading && !page?.error) {
-        void loadProjectTasks(project.id)
-      }
+      if (project.task_count > 0) void loadAllProjectTasks(project.id)
     })
-  }, [loadProjectTasks, projectTaskPages, projects])
+  }, [loadAllProjectTasks, projects])
 
   const activeProject = useMemo(() => {
     if (!projectIdFromUrl) return null

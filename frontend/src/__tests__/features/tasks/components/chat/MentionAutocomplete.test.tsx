@@ -151,7 +151,7 @@ describe('task conversation mentions', () => {
   it('requests project task candidates when the task mention menu opens', () => {
     const onOpen = jest.fn()
 
-    render(
+    const view = render(
       <MentionAutocomplete
         team={null}
         enableTaskMentions
@@ -164,6 +164,35 @@ describe('task conversation mentions', () => {
     )
 
     expect(onOpen).toHaveBeenCalledTimes(1)
+
+    const reopened = jest.fn()
+    view.rerender(
+      <MentionAutocomplete
+        team={null}
+        enableTaskMentions
+        onOpen={reopened}
+        onSelect={jest.fn()}
+        onSelectTask={jest.fn()}
+        onClose={jest.fn()}
+        position={{ top: 100, bottom: 126, left: 0 }}
+      />
+    )
+    expect(onOpen).toHaveBeenCalledTimes(1)
+    expect(reopened).not.toHaveBeenCalled()
+
+    view.unmount()
+    render(
+      <MentionAutocomplete
+        team={null}
+        enableTaskMentions
+        onOpen={reopened}
+        onSelect={jest.fn()}
+        onSelectTask={jest.fn()}
+        onClose={jest.fn()}
+        position={{ top: 100, bottom: 126, left: 0 }}
+      />
+    )
+    expect(reopened).toHaveBeenCalledTimes(1)
   })
 
   it('keeps the group agent as the default @ selection', () => {

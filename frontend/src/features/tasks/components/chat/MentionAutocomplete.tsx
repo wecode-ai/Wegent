@@ -111,6 +111,8 @@ export default function MentionAutocomplete({
 }: MentionAutocompleteProps) {
   const { t } = useTranslation()
   const menuRef = useRef<HTMLDivElement>(null)
+  const onOpenRef = useRef(onOpen)
+  onOpenRef.current = onOpen
   const [selectedIndex, setSelectedIndex] = useState(0)
   const selectedIndexRef = useRef(selectedIndex)
   selectedIndexRef.current = selectedIndex
@@ -132,9 +134,9 @@ export default function MentionAutocomplete({
 
   useEffect(() => {
     if (enableTaskMentions) {
-      onOpen?.()
+      onOpenRef.current?.()
     }
-  }, [enableTaskMentions, onOpen])
+  }, [enableTaskMentions])
 
   useEffect(() => {
     const normalizedQuery = query.trim()

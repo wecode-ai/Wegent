@@ -46,6 +46,7 @@ struct TaskSearchCandidate {
 
 struct OwnedTaskSearchBatch {
     total: i64,
+    scanned: i64,
     tasks: Vec<TaskSearchCandidate>,
 }
 
@@ -86,6 +87,7 @@ impl OwnedTaskSearchSource for StoreOwnedTaskSearchSource<'_> {
             .collect();
         Ok(OwnedTaskSearchBatch {
             total: page.total,
+            scanned: page.ids.len() as i64,
             tasks,
         })
     }
@@ -207,8 +209,7 @@ async fn search_owned_task_ids<S: OwnedTaskSearchSource + ?Sized>(
         let batch = source
             .batch(user_id, offset, SEARCH_SCAN_BATCH_SIZE)
             .await?;
-        let batch_len = batch.tasks.len() as i64;
-        if batch_len == 0 {
+        if batch.scanned == 0 {
             break;
         }
         for task in &batch.tasks {
@@ -220,7 +221,7 @@ async fn search_owned_task_ids<S: OwnedTaskSearchSource + ?Sized>(
             }
             matched_total += 1;
         }
-        offset += batch_len;
+        offset += batch.scanned;
         if offset >= batch.total {
             break;
         }
@@ -271,6 +272,7 @@ mod tests {
                 .min(self.tasks.len());
             Ok(OwnedTaskSearchBatch {
                 total: self.tasks.len() as i64,
+                scanned: (end - start) as i64,
                 tasks: self.tasks[start..end]
                     .iter()
                     .map(|task| TaskSearchCandidate {
@@ -382,6 +384,54 @@ mod tests {
             .unwrap();
         assert_eq!(result.total, 1);
         assert_eq!(result.ids, vec![7]);
+    }
+
+    struct PageOnlyOwnedTaskSearchSource {
+        page_size: i64,
+        total: i64,
+        matched_task: TaskSearchCandidate,
+    }
+
+    #[async_trait]
+    impl OwnedTaskSearchSource for PageOnlyOwnedTaskSearchSource {
+        async fn batch(
+            &self,
+            _user_id: i64,
+            skip: i64,
+            _limit: i64,
+        ) -> MysqlResult<OwnedTaskSearchBatch> {
+            if skip == 0 {
+                return Ok(OwnedTaskSearchBatch {
+                    total: self.total,
+                    scanned: self.page_size,
+                    tasks: Vec::new(),
+                });
+            }
+            Ok(OwnedTaskSearchBatch {
+                total: self.total,
+                scanned: 1,
+                tasks: vec![TaskSearchCandidate {
+                    id: self.matched_task.id,
+                    json: self.matched_task.json.clone(),
+                }],
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn advances_by_scanned_ids_when_page_rows_are_missing() {
+        let source = PageOnlyOwnedTaskSearchSource {
+            page_size: SEARCH_SCAN_BATCH_SIZE,
+            total: SEARCH_SCAN_BATCH_SIZE + 1,
+            matched_task: search_candidate(9, "must be found"),
+        };
+
+        let result = search_owned_task_ids(&source, 1555, "must be found", 0, 20)
+            .await
+            .unwrap();
+
+        assert_eq!(result.total, 1);
+        assert_eq!(result.ids, vec![9]);
     }
 }
 
