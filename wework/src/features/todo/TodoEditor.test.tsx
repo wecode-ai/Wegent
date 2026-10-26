@@ -479,9 +479,7 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    expect(await screen.findByTestId('todo-detail-deliveries')).toHaveTextContent(
-      '交付结果 · 1 个附件'
-    )
+    expect(await screen.findByTestId('todo-detail-deliveries')).toHaveTextContent('1 个附件')
   })
 
   it('fails closed for cloud Issue editing when can_edit is missing', async () => {
@@ -1185,7 +1183,13 @@ describe('TodoEditor external item sync', () => {
       created_at: '2026-09-15T13:55:16Z',
       delivered_at: '2026-09-15T13:55:16Z',
       markdown: '',
-      chat: null,
+      chat: {
+        scope: 'selected',
+        messages: [
+          { role: 'user', content: '请分析下载原因' },
+          { role: 'assistant', content: '**结论**：来自定时任务。' },
+        ],
+      },
       assets: [
         {
           id: 'asset-1',
@@ -1228,9 +1232,7 @@ describe('TodoEditor external item sync', () => {
       })
     )
 
-    expect(await screen.findByTestId('todo-detail-deliveries')).toHaveTextContent(
-      '交付结果 · 1 个附件'
-    )
+    expect(await screen.findByTestId('todo-detail-deliveries')).toHaveTextContent('1 个附件')
     expect(deliveryApi.getDelivery).toHaveBeenCalledWith(currentDelivery.id)
 
     await act(async () => {
@@ -1238,7 +1240,24 @@ describe('TodoEditor external item sync', () => {
       await initialDeliveryList.promise
     })
 
-    expect(screen.getByTestId('todo-detail-deliveries')).toHaveTextContent('交付结果 · 1 个附件')
+    expect(screen.getByTestId('todo-detail-deliveries')).toHaveTextContent('1 个附件')
+
+    await userEvent.click(screen.getByTestId('todo-detail-open-delivery-delivery-1'))
+    const chat = await screen.findByTestId('todo-detail-delivery-chat')
+    const deliveryPanel = screen.getByTestId('todo-detail-delivery-panel')
+    expect(deliveryPanel).toHaveClass('task-detail-workspace-panel-shell', 'relative', 'h-full')
+    expect(deliveryPanel).not.toHaveClass('fixed')
+    expect(screen.queryByText('无交付说明')).not.toBeInTheDocument()
+    expect(chat).toHaveTextContent('请分析下载原因')
+    expect(chat).toHaveTextContent('结论：来自定时任务。')
+    expect(within(chat).getByText('结论').tagName).toBe('STRONG')
+    expect(screen.getByText('result.txt')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '返回' }))
+    await userEvent.click(screen.getByTestId('todo-detail-open-delivery-delivery-1'))
+    expect(await screen.findByTestId('todo-detail-delivery-chat')).toHaveTextContent(
+      '结论：来自定时任务。'
+    )
   })
 
   it('hydrates placeholder fields when the same issue version finishes loading', () => {

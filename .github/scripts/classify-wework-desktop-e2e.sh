@@ -8,6 +8,7 @@ core_segments=(
   workspace-tabs
   notification-tab-navigation
   collaboration-shared-core
+  collaboration-deliveries
   collaboration-issue-task-discovery
   collaboration-app-queue-identity
   collaboration-issue-archive
@@ -220,7 +221,7 @@ core_shards=(
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference
   conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome
   split-workbench
-  collaboration-shared-core
+  collaboration-shared-core,collaboration-deliveries
 )
 
 validate_core_shards() {
@@ -1602,6 +1603,11 @@ classify_path() {
       backend/tests/services/test_runtime_work_service.py | \
       docker/device/Dockerfile)
       select_cloud_worktree_checkpoints
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-deliveries.scenario.mjs | \
+      packages/collaboration/src/issue-detail/IssueDelivery* | \
+      packages/collaboration/src/issue-detail/deliveryMessages*)
+      select_target "core:collaboration-deliveries"
       ;;
     packages/collaboration/src/platform/WorkspaceResourceConfiguration* | \
       packages/collaboration/src/project-agent-config/* | \
