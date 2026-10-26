@@ -125,6 +125,7 @@ export async function verifyHarnessAppModels(
   const sessionId = await exerciseModelRoutes(control, installation, {
     resultDir,
     screenshotName: 'harness-apps-13-multi-model-routes.png',
+    captureScreenshot,
   })
 
   // A failed launch must release the routes it registered before DSH started,
@@ -187,6 +188,7 @@ export async function verifyHarnessAppModels(
   await exerciseModelRoutes(control, reopened, {
     resultDir,
     screenshotName: 'harness-apps-14-reopened-model-routes.png',
+    captureScreenshot,
   })
 
   const reopenedTabId = await harnessAppTabId(control, INSTALLED_APP_ID)
@@ -301,7 +303,11 @@ async function startInstalledHarnessApp(
   return waitForRunningInstallation(electronUserDataDirectory, installationId, 30_000)
 }
 
-async function exerciseModelRoutes(control, installation, { resultDir, screenshotName }) {
+async function exerciseModelRoutes(
+  control,
+  installation,
+  { resultDir, screenshotName, captureScreenshot }
+) {
   const models = await dshRequest(installation.webUrl, 'llm.models', {})
   const defaultProvider = models.groups.find(group => group.id === 'wework-local')
   assert.ok(defaultProvider, 'DSH did not expose the original default model provider')
