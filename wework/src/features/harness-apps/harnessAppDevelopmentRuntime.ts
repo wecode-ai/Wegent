@@ -8,13 +8,10 @@ import {
   storeHarnessAppContextToken,
   storeHarnessAppDecisionToken,
   storeHarnessAppProxyToken,
-  takeHarnessAppAdditionalProxyTokens,
-  takeHarnessAppContextToken,
-  takeHarnessAppDecisionToken,
-  takeHarnessAppProxyToken,
   unregisterHarnessAppTab,
 } from './harnessAppTabs'
 import { registerAdditionalHarnessAppModels } from './harnessAppModelRoutes'
+import { releaseHarnessAppRoutes } from './harnessAppRoutes'
 
 type LocalHarnessModelApi = NonNullable<WorkbenchServices['localHarnessModelApi']>
 type LocalDecisionRouterApi = NonNullable<WorkbenchServices['localDecisionRouterApi']>
@@ -27,25 +24,6 @@ interface StartHarnessAppDevelopmentRuntimeInput {
   missingWebUrlMessage: string
 }
 
-async function releaseHarnessAppRuntimeTokens(
-  installationId: string,
-  localHarnessModelApi?: LocalHarnessModelApi,
-  localDecisionRouterApi?: LocalDecisionRouterApi
-): Promise<void> {
-  const [proxyToken, additionalProxyTokens, contextToken, decisionToken] = await Promise.all([
-    takeHarnessAppProxyToken(installationId),
-    takeHarnessAppAdditionalProxyTokens(installationId),
-    takeHarnessAppContextToken(installationId),
-    takeHarnessAppDecisionToken(installationId),
-  ])
-  await Promise.allSettled([
-    proxyToken ? localHarnessModelApi?.unregisterProxy(proxyToken) : undefined,
-    ...additionalProxyTokens.map(token => localHarnessModelApi?.unregisterProxy(token)),
-    contextToken ? localHarnessModelApi?.unregisterContext(contextToken) : undefined,
-    decisionToken ? localDecisionRouterApi?.unregister(decisionToken) : undefined,
-  ])
-}
-
 export async function stopHarnessAppDevelopmentRuntime(
   installationId: string,
   localHarnessModelApi?: LocalHarnessModelApi,
@@ -53,7 +31,7 @@ export async function stopHarnessAppDevelopmentRuntime(
 ): Promise<void> {
   await harnessAppsApi.stop(installationId)
   unregisterHarnessAppTab(installationId)
-  await releaseHarnessAppRuntimeTokens(installationId, localHarnessModelApi, localDecisionRouterApi)
+  await releaseHarnessAppRoutes(installationId, localHarnessModelApi, localDecisionRouterApi)
 }
 
 export async function startHarnessAppDevelopmentRuntime({
@@ -135,11 +113,7 @@ export async function startHarnessAppDevelopmentRuntime({
     if (started) {
       await harnessAppsApi.stop(installation.id).catch(() => undefined)
       unregisterHarnessAppTab(installation.id)
-      await releaseHarnessAppRuntimeTokens(
-        installation.id,
-        localHarnessModelApi,
-        localDecisionRouterApi
-      )
+      await releaseHarnessAppRoutes(installation.id, localHarnessModelApi, localDecisionRouterApi)
     }
     if (launch?.proxyToken && !proxyTokenStored) {
       await localHarnessModelApi?.unregisterProxy(launch.proxyToken).catch(() => undefined)
