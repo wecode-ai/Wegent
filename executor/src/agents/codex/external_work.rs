@@ -75,7 +75,7 @@ fn grant_runtime_files(filesystem: &mut Value, binary: &Path) {
 
 pub(super) fn permission_config(request: &ExecutionRequest) -> Map<String, Value> {
     let mut config = Map::new();
-    if !applies(request) {
+    if !applies(request) || cfg!(windows) {
         return config;
     }
     // An explicit deny keeps native approvals from dropping the filesystem boundary.
@@ -109,7 +109,9 @@ pub(super) fn permission_config(request: &ExecutionRequest) -> Map<String, Value
 
 pub(super) fn profile(request: &ExecutionRequest) -> Option<&'static str> {
     applies(request).then(|| {
-        if crate::runtime_work::stand_in_requires_confirmation(request) {
+        if cfg!(windows) {
+            CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+        } else if crate::runtime_work::stand_in_requires_confirmation(request) {
             SOURCE_READ_PROFILE
         } else {
             SOURCE_PROJECT_PROFILE
@@ -135,11 +137,6 @@ pub(super) fn configure(
     )?;
     config.config_overrides.extend(overrides);
     config.thread_config.extend(permission_config(request));
-    // Root-deny profiles require MXC. Both restricted-token backends reject
-    // this boundary; never replace it with full-disk read or unsandboxed access.
-    config
-        .thread_config
-        .insert("windows.sandbox".into(), json!("mxc"));
     config
         .thread_config
         .insert("approvals_reviewer".into(), json!(reviewer(request)));
@@ -238,20 +235,27 @@ mod tests {
         configure(&request(false), &mut launch, root.path()).unwrap();
         let mut params = Map::new();
         append_thread_launch_params(&mut params, &launch);
-        assert_eq!(
-            params["config"]["permissions.wework-source-project.network.enabled"],
-            true
-        );
         assert_eq!(params["config"]["approvals_reviewer"], "auto_review");
-        assert_eq!(params["config"]["windows.sandbox"], "mxc");
-        assert_eq!(
-            codex_runtime_approval_policy(&request(false))["granular"]["sandbox_approval"],
-            true
-        );
-        assert_eq!(
-            params["config"]["permissions.wework-source-project.filesystem"][":root"],
-            "deny"
-        );
+        assert!(params["config"].get("windows.sandbox").is_none());
+        if cfg!(windows) {
+            assert!(params["config"]
+                .get("permissions.wework-source-project.filesystem")
+                .is_none());
+            assert_eq!(codex_runtime_approval_policy(&request(false)), "untrusted");
+        } else {
+            assert_eq!(
+                params["config"]["permissions.wework-source-project.network.enabled"],
+                true
+            );
+            assert_eq!(
+                codex_runtime_approval_policy(&request(false))["granular"]["sandbox_approval"],
+                true
+            );
+            assert_eq!(
+                params["config"]["permissions.wework-source-project.filesystem"][":root"],
+                "deny"
+            );
+        }
         assert_eq!(
             params["config"]["mcp_servers.internal.default_tools_approval_mode"],
             "prompt"
@@ -263,16 +267,20 @@ mod tests {
         assert!(params["config"]
             .get("mcp_servers.internal.enabled")
             .is_none());
-        assert_ne!(
+        assert_eq!(
             codex_runtime_permission_profile(&request(false)),
-            CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+            if cfg!(windows) {
+                CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+            } else {
+                SOURCE_PROJECT_PROFILE
+            }
         );
         assert!(!codex_auto_approve_mcp_tool_calls(&request(false)));
         assert_eq!(reviewer(&request(true)), "user");
     }
 
     #[test]
-    fn issue_and_stand_in_runs_keep_root_deny_with_the_supporting_windows_backend() {
+    fn issue_and_stand_in_permissions_follow_the_platform_execution_contract() {
         let root = tempfile::tempdir().unwrap();
         let requests = [
             serde_json::from_value(json!({"origin":{"type":"issue_dispatch"}})).unwrap(),
@@ -287,17 +295,23 @@ mod tests {
                 thread_resume_params("thread", &request, &launch),
                 thread_fork_params("thread", None, &request, &launch),
             ] {
-                assert_eq!(params["config"]["windows.sandbox"], "mxc");
+                assert!(params["config"].get("windows.sandbox").is_none());
                 for profile in [SOURCE_READ_PROFILE, SOURCE_PROJECT_PROFILE] {
-                    assert_eq!(
-                        params["config"][format!("permissions.{profile}.filesystem")][":root"],
-                        "deny"
-                    );
+                    let key = format!("permissions.{profile}.filesystem");
+                    if cfg!(windows) {
+                        assert!(params["config"].get(&key).is_none());
+                    } else {
+                        assert_eq!(params["config"][&key][":root"], "deny");
+                    }
                 }
-                assert_ne!(
-                    params["permissions"],
-                    CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+                assert_eq!(
+                    params["permissions"] == CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+                    cfg!(windows)
                 );
+                assert!(!codex_auto_approve_mcp_tool_calls(&request));
+                if cfg!(windows) {
+                    assert_eq!(params["approvalPolicy"], "untrusted");
+                }
             }
         }
         let mut ordinary = CodexLaunchConfig::default();
@@ -317,10 +331,14 @@ mod tests {
                 turn_start_params("thread", &request, &launch, vec![]),
             ] {
                 assert_eq!(params["approvalsReviewer"], reviewer(&request));
-                assert_ne!(
-                    params["permissions"],
-                    CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+                assert_eq!(
+                    params["permissions"] == CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+                    cfg!(windows)
                 );
+                assert!(!codex_auto_approve_mcp_tool_calls(&request));
+                if cfg!(windows) {
+                    assert_eq!(params["approvalPolicy"], "untrusted");
+                }
             }
         }
         assert!(thread_start_params(&ExecutionRequest::default(), &launch)

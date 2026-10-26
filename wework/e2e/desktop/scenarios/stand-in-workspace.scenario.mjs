@@ -45,12 +45,15 @@ export function createDesktopScenario({
 }) {
   const privateFile = join(dirname(workspacePath), 'source-private-proof.txt')
   let networkProbeRequests = 0
-  let verifiedSandbox = false
+  let verifiedPermissions = false
   let allowedReviews = 0
   let deniedReviews = 0
+  let commandReviews = 0
   return {
     reviewApproval(body) {
-      const dangerous = JSON.stringify(body.input ?? []).includes('REVIEW_PRIVATE_READ')
+      const reviewInput = JSON.stringify(body.input ?? [])
+      const dangerous = reviewInput.includes('REVIEW_PRIVATE_READ')
+      if (reviewInput.includes('source-sandbox-proof.txt')) commandReviews++
       if (dangerous) deniedReviews++
       else allowedReviews++
       return {
@@ -81,11 +84,18 @@ export function createDesktopScenario({
           assert.ok(/denied|reject|not authorized|declined/i.test(output), output)
           assert.ok(allowedReviews > 0, 'The native reviewer must approve the context read')
           assert.ok(deniedReviews > 0, 'The native reviewer must deny the private read')
-          verifiedSandbox = true
+          verifiedPermissions = true
         } else if (requestContainsToolOutput(body, 'source-sandbox-probe')) {
           const output = toolOutputText(body, 'source-sandbox-probe') ?? ''
-          assert.ok(output.includes('SOURCE_PRIVATE_BLOCKED'), output)
-          assert.ok(!output.includes('SOURCE_PRIVATE_ALLOWED'), output)
+          if (process.platform === 'win32') {
+            assert.ok(commandReviews > 0, 'Unsandboxed Windows commands must retain native review')
+          }
+          const expectedAccess =
+            process.platform === 'win32' ? 'SOURCE_PRIVATE_ALLOWED' : 'SOURCE_PRIVATE_BLOCKED'
+          const unexpectedAccess =
+            process.platform === 'win32' ? 'SOURCE_PRIVATE_BLOCKED' : 'SOURCE_PRIVATE_ALLOWED'
+          assert.ok(output.includes(expectedAccess), output)
+          assert.ok(!output.includes(unexpectedAccess), output)
           const quote = value => "'" + value.replaceAll("'", "'\\''") + "'"
           const command =
             process.platform === 'win32'
@@ -331,7 +341,7 @@ export function createDesktopScenario({
         await new Promise(resolve => setTimeout(resolve, 200))
       }
       assert.equal(task?.status, 'done', JSON.stringify(task))
-      assert.equal(verifiedSandbox, true)
+      assert.equal(verifiedPermissions, true)
       assert.equal(networkProbeRequests, 1)
       assert.equal(
         await readFile(join(task.workspacePath, 'source-sandbox-proof.txt'), 'utf8'),
