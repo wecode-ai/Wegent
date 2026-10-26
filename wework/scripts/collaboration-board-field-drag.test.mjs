@@ -1,0 +1,48 @@
+import assert from 'node:assert/strict'
+import { test, vi } from 'vitest'
+
+vi.mock('../e2e/desktop/modules/collaboration-board-personal-view.mjs', () => ({
+  openProjectBoard: async () => {},
+  selectProjectBoardGrouping: async control => control.resetScroll(),
+  selectProjectBoardSort: async () => {},
+}))
+vi.mock('../e2e/desktop/modules/workspace-flows.mjs', () => ({
+  reloadMainWindow: async control => control.resetScroll(),
+}))
+
+import { verifyReadOnlyBoardDrag } from '../e2e/desktop/modules/collaboration-board-field-drag.mjs'
+
+test('scrolls the Viewer card into view after grouping and reload', async () => {
+  let visibleCard = null
+  let drags = 0
+  let reads = 0
+  const control = {
+    resetScroll() {
+      visibleCard = null
+    },
+    async command(action, selector, options) {
+      if (action === 'scrollIntoView') visibleCard = selector
+      else if (action === 'waitFor' && options.visible) {
+        assert.equal(visibleCard, selector, 'The Viewer card is outside the viewport')
+      } else if (action === 'getAttribute') return ''
+      else if (action === 'drag') {
+        assert.equal(visibleCard, selector)
+        drags += 1
+      } else assert.equal(action, 'waitFor')
+      return ''
+    },
+  }
+  await verifyReadOnlyBoardDrag(control, {
+    scoped: selector => selector,
+    request: async () => {
+      reads += 1
+      return { version: 1, sort_order: 0, status: 'inbox', priority: 'low' }
+    },
+    project: { id: 1 },
+    issues: [{ id: 'viewer' }, { id: 'owner' }],
+    reader: { id: 2 },
+    owner: { id: 3 },
+  })
+  assert.equal(drags, 4)
+  assert.equal(reads, 8)
+})
