@@ -139,8 +139,14 @@ export async function verifyCollaborationScheduleViews({
     timeoutMs
   )
   await capture(control, 'offline-local-project-space-02-calendar-schedule.png')
+  const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
+  // The drag target can fall beyond the current six-week month grid.
+  if (Number(await control.command('getElementCount', calendarTarget)) === 0) {
+    await control.command('click', scoped('[data-testid="collaboration-schedule-next"]'))
+    await control.command('waitFor', calendarTarget, { visible: true, timeoutMs })
+  }
   await control.command('drag', `${calendarBar} > button:not([data-testid])`, {
-    target: scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`),
+    target: calendarTarget,
     timeoutMs,
   })
   await waitForAttributeIncludes(
