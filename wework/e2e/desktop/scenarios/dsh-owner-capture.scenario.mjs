@@ -155,11 +155,14 @@ export function createDesktopScenario({ resultDir }) {
           'utf8'
         )
       } finally {
-        await invoke(control, origin, 'smartApps.stop', { installationId: workbench.id })
-        await invoke(control, origin, 'smartApps.delete', {
-          installationId: workbench.id,
-          deleteData: true,
-        })
+        try {
+          await invoke(control, origin, 'smartApps.stop', { installationId: workbench.id })
+        } finally {
+          await invoke(control, origin, 'smartApps.delete', {
+            installationId: workbench.id,
+            deleteData: true,
+          })
+        }
       }
     },
   }
