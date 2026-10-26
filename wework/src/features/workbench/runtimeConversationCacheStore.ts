@@ -50,6 +50,7 @@ export const projectedMessagesByConversation = new Map<
 export const metadataByConversation = new Map<string, RuntimeConversationMetadata>()
 const listenersByConversation = new Map<string, Set<Subscription>>()
 const retainingListenersByConversation = new Map<string, Set<Subscription>>()
+const archivedConversationKeys = new Set<string>()
 export const hydrationByConversation = new Map<
   string,
   { token: symbol; bufferedActions: RuntimePaneMessageAction[] }
@@ -288,6 +289,7 @@ export function notifyRuntimeConversation(key: string, action?: RuntimePaneMessa
 }
 
 export function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTurn[]): void {
+  if (archivedConversationKeys.has(key)) return
   projectedMessagesByConversation.delete(key)
   cacheBoundedEntry(turnsByConversation, key, turns, evictedKey => {
     projectedMessagesByConversation.delete(evictedKey)
@@ -302,6 +304,7 @@ export function cacheRuntimeConversationQueuedMessagesByKey(
   key: string,
   messages: RuntimePaneQueuedMessage[]
 ): void {
+  if (archivedConversationKeys.has(key)) return
   if (messages.length === 0) {
     queuedMessagesByConversation.delete(key)
     scheduleTerminalConversationEviction(key)
@@ -350,6 +353,14 @@ export function evictRuntimeConversationKey(key: string): void {
   evictConversationViewport(key)
 }
 
+export function markRuntimeConversationArchived(key: string): void {
+  archivedConversationKeys.add(key)
+}
+
+export function unmarkRuntimeConversationArchived(key: string): void {
+  archivedConversationKeys.delete(key)
+}
+
 export function getRuntimeConversationCacheStats() {
   return { messageEntries: turnsByConversation.size, ...getConversationViewportCacheStats() }
 }
@@ -361,6 +372,7 @@ export function clearRuntimeConversationCacheStore(): void {
     entries.clear()
   }
   canonicalDeviceIdByAlias.clear()
+  archivedConversationKeys.clear()
   revisionByValue = new WeakMap()
   nextRevision = 1
   clearConversationViewportCache()
