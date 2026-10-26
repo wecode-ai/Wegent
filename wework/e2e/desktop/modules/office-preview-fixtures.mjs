@@ -30,8 +30,8 @@ async function createOfficePackage(path, main, files, types) {
   })
 }
 
-async function createPresentation(path) {
-  const pages = Array.from({ length: 8 }, (_, index) => index + 1)
+async function createPresentation(path, pageCount = 8) {
+  const pages = Array.from({ length: pageCount }, (_, index) => index + 1)
   const files = {
     'ppt/presentation.xml': `<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="${OFFICE_RELATIONSHIPS}">
       <p:sldIdLst>${pages.map(page => `<p:sldId id="${255 + page}" r:id="rId${page}"/>`).join('')}</p:sldIdLst>
@@ -52,7 +52,7 @@ async function createPresentation(path) {
           <p:spPr><a:xfrm><a:off x="457200" y="457200"/><a:ext cx="8229600" cy="1371600"/></a:xfrm>
             <a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
           <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="3200"/>
-            <a:t>PPT PAGE ${page} OF 8</a:t></a:r></a:p></p:txBody>
+            <a:t>PPT PAGE ${page} OF ${pageCount}</a:t></a:r></a:p></p:txBody>
         </p:sp>
       </p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
     </p:sld>`
@@ -111,6 +111,7 @@ async function createWorkbook(path) {
 
 export async function createOfficePreviewFixtures(directory) {
   await createPresentation(join(directory, 'slides.pptx'))
+  await createPresentation(join(directory, 'long-slides.pptx'), 32)
   await createDocument(join(directory, 'document.docx'))
   await createWorkbook(join(directory, 'workbook.xlsx'))
 }

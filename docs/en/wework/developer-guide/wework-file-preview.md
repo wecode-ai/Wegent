@@ -18,7 +18,9 @@ PowerPoint renders a continuous slide list. Its file viewer must provide a scrol
 
 Returning to the original file tab after opening another file must restore the original tab's saved file. Do not permanently consume the initial selection after the first open, or reread a file that is already selected.
 
-The desktop CI `office-file-preview` checkpoint generates real eight-slide PPTX, 180-paragraph DOCX, and two-sheet XLSX fixtures. It checks last-page visibility, returning to the top, both Excel scroll axes, worksheet switching, and restoring the original PPT tab. Run it independently with `pnpm --filter wework e2e:desktop --segment office-file-preview`. Fixture data and screenshots stay in local test results.
+After switching away from a task and returning, restore the file panel from the saved file target. Standalone tasks have no project association, so project presence must not determine whether their open files can be displayed, including while a task is running. Stale directory requests must not replace a more recently selected file.
+
+The desktop CI `office-file-preview` checkpoint generates real eight-slide and 32-slide PPTX, 180-paragraph DOCX, and two-sheet XLSX fixtures. It checks last-page visibility, returning to the top, both Excel scroll axes, worksheet switching, restoring the original PPT tab, and preview restoration after switching project tasks and running standalone tasks. Run it independently with `pnpm --filter wework e2e:desktop --segment office-file-preview`. Fixture data and screenshots stay in local test results.
 
 Isolated verification supports `ai:verify wheel --session <session-path> --selector '<selector>' --value '{"deltaX":800,"deltaY":1200}'`. This command dispatches pixel wheel input to test renderer-owned scrolling without forcing DOM scroll positions. It complements native keyboard paging and assertions about visible content.
 

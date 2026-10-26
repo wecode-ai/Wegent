@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict'
 import { createOfficePreviewFixtures } from '../modules/office-preview-fixtures.mjs'
 import { createLocalProject } from '../modules/streaming-text-fixture.mjs'
+import { selectE2EModel } from '../modules/shared.mjs'
+import {
+  assistantMessage,
+  createSse,
+  handleEmptyReplyPrediction,
+  readRequestBody,
+  responseCompleted,
+  responseCreated,
+} from '../modules/response-protocol.mjs'
 
 const COMPOSER =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"] [data-testid="chat-message-input"]'
@@ -8,6 +17,7 @@ const VIEWER = '.wework-workspace-file-viewer'
 const FILE_TABS = '[role="tab"][data-testid^="right-workspace-file-tab"]'
 const EXCEL_STAGE = '.excel-wrapper .e-virt-table-stage'
 const EXCEL_LAYER = '.excel-wrapper .excel-image-layer'
+const TASK_PROMPT = 'OFFICE_PREVIEW_TASK_'
 
 async function waitForValue(read, predicate, description, timeoutMs) {
   const deadline = Date.now() + timeoutMs
@@ -133,18 +143,109 @@ async function verifyOriginalTabRestoration(control, captureScreenshot) {
   await captureScreenshot(control, 'office-preview-original-ppt-restored.png')
 }
 
+async function createTask(control, name, timeoutMs) {
+  await selectE2EModel(control)
+  await control.command('fill', COMPOSER, { value: `${TASK_PROMPT}${name}` })
+  await control.command('press', COMPOSER, { key: 'Enter' })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: `${TASK_PROMPT}${name}_READY`,
+    timeoutMs,
+  })
+  const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  assert.ok(debug.workbench.currentRuntimeTask?.taskId, 'The Office task must really start')
+  return debug.workbench.currentRuntimeTask.taskId
+}
+
+async function verifyTaskSwitch(control, originalTaskId, captureScreenshot, timeoutMs) {
+  await openFromTree(control, 'long-slides.pptx')
+  await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 32' })
+  await control.command('scrollToBottomAsUser', VIEWER)
+  await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 32 OF 32' })
+  await assertLastContentVisible(control, VIEWER, '.pptx-render-surface .slide', timeoutMs)
+  await captureScreenshot(control, 'office-preview-ppt-before-task-switch.png')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', COMPOSER)
+  const otherTaskId = await createTask(control, 'B', timeoutMs)
+  assert.notEqual(otherTaskId, originalTaskId)
+  await control.command('click', `[data-testid="runtime-local-task-row-${originalTaskId}"]`)
+  await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 32' })
+  await control.command('scrollToBottomAsUser', VIEWER)
+  await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 32 OF 32' })
+  const slides = await metrics(control, '.pptx-render-surface .slide')
+  assert.ok(slides.length > 0, 'Returning to the task must restore rendered slides')
+  assert.ok(slides[0].width > 0 && slides[0].height > 0, 'Restored slides must have visible size')
+  await assertLastContentVisible(control, VIEWER, '.pptx-render-surface .slide', timeoutMs)
+  await captureScreenshot(control, 'office-preview-ppt-after-task-switch.png')
+}
+
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+  let runningResponse
   return {
+    async handleHttp(request, response, url) {
+      if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
+        return false
+      const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
+      const text = JSON.stringify(body)
+      const task = text.includes(`${TASK_PROMPT}RUN`)
+        ? 'RUN'
+        : text.includes(`${TASK_PROMPT}B`)
+          ? 'B'
+          : 'A'
+      const id = `office-preview-${task}-${Date.now()}`
+      response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+      if (task === 'RUN') {
+        response.write(
+          createSse([
+            responseCreated(id),
+            assistantMessage(
+              `${TASK_PROMPT}RUN_READY\n\n[Office presentation](${workspacePath}/slides.pptx)`
+            ),
+          ])
+        )
+        runningResponse = { response, id }
+        return true
+      }
+      response.end(
+        createSse([
+          responseCreated(id),
+          assistantMessage(
+            `${TASK_PROMPT}${task}_READY\n\n[Office presentation](${workspacePath}/slides.pptx)`
+          ),
+          responseCompleted(id),
+        ])
+      )
+      return true
+    },
     async verify(control) {
       await createOfficePreviewFixtures(workspacePath)
       await createLocalProject(control, workspacePath, uiTimeoutMs)
-      const primary = process.platform === 'darwin' ? 'Meta' : 'Control'
-      await control.command('nativePress', COMPOSER, { key: `${primary}+Alt+F` })
-      await control.command('waitFor', '[data-testid="workspace-file-tree-pierre"]')
+      const originalTaskId = await createTask(control, 'A', uiTimeoutMs)
+      await control.command('click', '[data-testid="assistant-markdown-link"]')
+      await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 8' })
       await verifyPresentation(control, captureScreenshot, uiTimeoutMs)
       await verifyDocument(control, captureScreenshot, uiTimeoutMs)
       await verifyWorkbook(control, captureScreenshot, uiTimeoutMs)
       await verifyOriginalTabRestoration(control, captureScreenshot)
+      await verifyTaskSwitch(control, originalTaskId, captureScreenshot, uiTimeoutMs)
+      await control.command('click', '[data-testid="runtime-chat-section-new-chat-button"]')
+      const runningTaskId = await createTask(control, 'RUN', uiTimeoutMs)
+      const runningDebug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      assert.equal(runningDebug.workbench.lifecycleCurrentTaskRunning, true)
+      const runningPath = runningDebug.workbench.currentRuntimeTask.workspacePath
+      assert.ok(runningPath, 'A standalone task must own a workspace')
+      await control.command('click', '[data-testid="assistant-markdown-link"]')
+      await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 8' })
+      await verifyPresentation(control, captureScreenshot, uiTimeoutMs)
+      await control.command('click', `[data-testid="runtime-local-task-row-${originalTaskId}"]`)
+      await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 32' })
+      await control.command('click', `[data-testid="runtime-local-task-row-${runningTaskId}"]`)
+      await control.command('waitFor', '[data-testid="workspace-file-toolbar"]')
+      await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 1 OF 8' })
+      await verifyPresentation(control, captureScreenshot, uiTimeoutMs)
+      await captureScreenshot(control, 'office-preview-running-task-restored.png')
+      assert.ok(runningResponse, 'The standalone task response must remain active')
+      runningResponse.response.end(createSse([responseCompleted(runningResponse.id)]))
     },
   }
 }

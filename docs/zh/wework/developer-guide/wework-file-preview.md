@@ -18,7 +18,9 @@ PowerPoint 以连续幻灯片列表显示，文件查看器必须提供受面板
 
 切换到其他文件标签后，再回到最初的文件标签，必须重新显示该标签保存的文件。初始选择不能在第一次打开后永久丢弃；当前已选中同一文件时也不应重复读取。
 
-桌面 CI 的 `office-file-preview` 检查点会生成真实的 8 页 PPTX、180 段 DOCX 和含两个工作表的 XLSX，验证末页可达、返回顶部、Excel 双向滚动、工作表切换，以及返回原 PPT 标签。运行 `pnpm --filter wework e2e:desktop --segment office-file-preview` 可单独验证，测试数据与截图保留在本地测试结果中。
+从任务切走后再切回，文件面板必须根据已保存文件的来源恢复。独立任务没有项目归属，不能用项目是否存在决定已打开的文件是否可显示；运行中的任务同样适用。已过期的目录请求也不能覆盖后来选择的文件。
+
+桌面 CI 的 `office-file-preview` 检查点会生成真实的 8 页及 32 页 PPTX、180 段 DOCX 和含两个工作表的 XLSX，验证末页可达、返回顶部、Excel 双向滚动、工作表切换、返回原 PPT 标签，以及项目任务和运行中的独立任务切换后的预览恢复。运行 `pnpm --filter wework e2e:desktop --segment office-file-preview` 可单独验证，测试数据与截图保留在本地测试结果中。
 
 隔离桌面验证支持 `ai:verify wheel --session <session-path> --selector '<selector>' --value '{"deltaX":800,"deltaY":1200}'`。该命令只向目标派发像素单位的滚轮输入，用于验证渲染器自行管理的滚动；它不会强行设置 DOM 滚动位置，不能替代原生键盘翻页和实际可见内容断言。
 

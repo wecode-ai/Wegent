@@ -559,6 +559,7 @@ export function FileWorkspacePanel({
         return
       }
 
+      const listingRequestId = ++fileRequestSequence.current
       const parentListStartedAt = performance.now()
       logFilePreviewDiagnostic(traceId, 'parent_tree_start', pathMetadata)
       void listWorkspaceEntries(
@@ -567,6 +568,7 @@ export function FileWorkspacePanel({
         stableTarget.path
       ).then(
         result => {
+          if (fileRequestSequence.current !== listingRequestId) return
           logFilePreviewDiagnostic(traceId, 'parent_tree_end', {
             ...pathMetadata,
             durationMs: filePreviewElapsedMs(parentListStartedAt),
@@ -581,6 +583,7 @@ export function FileWorkspacePanel({
           openAsFile()
         },
         error => {
+          if (fileRequestSequence.current !== listingRequestId) return
           logFilePreviewDiagnostic(traceId, 'parent_tree_failed', {
             ...pathMetadata,
             durationMs: filePreviewElapsedMs(parentListStartedAt),
@@ -730,7 +733,8 @@ export function FileWorkspacePanel({
       !stableTarget ||
       openFileRequest?.path ||
       !initialSelection?.path ||
-      selectedFilePath === initialSelection.path
+      (initialSelection.isDirectory ? activeDirectoryPath : selectedFilePath) ===
+        initialSelection.path
     ) {
       return
     }
@@ -745,6 +749,7 @@ export function FileWorkspacePanel({
       cancelled = true
     }
   }, [
+    activeDirectoryPath,
     initialSelection?.isDirectory,
     initialSelection?.path,
     openFilePath,
