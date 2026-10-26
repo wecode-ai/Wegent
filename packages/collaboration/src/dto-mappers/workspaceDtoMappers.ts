@@ -130,6 +130,10 @@ export function mapWorkspaceDeliveryDto(
   const markdown = row.markdown;
   return {
     id: String(row.id),
+    createdByUserId:
+      row.created_by_user_id == null && row.createdByUserId == null
+        ? null
+        : Number(row.created_by_user_id ?? row.createdByUserId),
     issueId: String(row.loop_item_id ?? row.issueId ?? ""),
     status: row.status === "delivered" ? "delivered" : "draft",
     ...(markdown === undefined ? {} : { markdown: String(markdown) }),
