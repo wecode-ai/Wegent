@@ -17,6 +17,7 @@ const CATEGORY_GRID_BREAKPOINT_PX = 1050
 export function CategoryBrowseDialog({
   section,
   isLoggedIn,
+  isReconciling,
   installingMarketplacePluginIds,
   uninstallingPluginIds,
   allowPendingRetry,
@@ -27,6 +28,7 @@ export function CategoryBrowseDialog({
 }: {
   section: MarketplaceCategorySection
   isLoggedIn: boolean
+  isReconciling: boolean
   installingMarketplacePluginIds: Set<string | number>
   uninstallingPluginIds: Set<string | number>
   allowPendingRetry: boolean
@@ -156,7 +158,7 @@ export function CategoryBrowseDialog({
             type="button"
             onClick={onClose}
             data-testid="plugins-category-browse-close"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
             aria-label={t('common.close', '关闭')}
           >
             <X className="h-4 w-4" />
@@ -177,6 +179,7 @@ export function CategoryBrowseDialog({
                     key={item.id}
                     item={item}
                     isLoggedIn={isLoggedIn}
+                    isReconciling={isReconciling}
                     isInstalling={installingMarketplacePluginIds.has(item.id)}
                     isUninstalling={uninstallingPluginIds.has(item.installedPluginId ?? item.id)}
                     allowPendingRetry={allowPendingRetry}

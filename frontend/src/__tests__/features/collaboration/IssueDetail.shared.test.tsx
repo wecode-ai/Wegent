@@ -134,6 +134,7 @@ describe('shared IssueDetail', () => {
   const delivery: WorkspaceDelivery = {
     id: 'delivery-1',
     issueId: issue.id,
+    createdByUserId: 5,
     status: 'delivered',
     markdown: '详情交付',
     assets: [],
@@ -1234,8 +1235,11 @@ describe('shared IssueDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: '移除参与者 张三' }))
     await waitFor(() => expect(api.collaborators.remove).toHaveBeenCalledWith(issue.id, 5))
 
-    fireEvent.click(screen.getByRole('button', { name: /交付结果/ }))
-    expect(screen.getByTestId('todo-detail-deliveries')).toHaveTextContent('1 个附件')
+    const deliveryRow = screen.getByTestId('todo-detail-open-delivery-delivery-1')
+    expect(deliveryRow).toHaveTextContent('详情交付')
+    expect(deliveryRow).toHaveTextContent('交付说明 · 1 个附件')
+    expect(deliveryRow).toHaveTextContent('张三 交付')
+    await userEvent.click(deliveryRow)
     expect(await screen.findByText('report.md')).toBeInTheDocument()
     open.mockRestore()
   })

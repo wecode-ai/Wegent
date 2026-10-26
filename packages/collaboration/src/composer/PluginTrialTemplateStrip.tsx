@@ -117,7 +117,7 @@ export function PluginTrialTemplateStrip({
             ? 'plugin-trial-recommendation-apply'
             : 'plugin-trial-template-card'
         }
-        className="group relative flex min-h-10 max-md:min-h-11 w-full items-center gap-2.5 border-b border-border/15 px-3 py-1.5 text-left transition-colors last:border-b-0 hover:bg-blue-500/[0.08] focus-visible:bg-blue-500/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-500"
+        className="group relative flex min-h-10 max-md:min-h-11 w-full items-center gap-2.5 border-b border-border/15 px-3 py-1.5 text-left transition-colors last:border-b-0 hover:bg-blue-500/[0.08] focus-visible:bg-blue-500/[0.08] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-blue-500"
         onClick={() => onApplyTemplate(template)}
         aria-label={t('workbench.plugin_trial_apply_task', '填入任务：{{task}}', {
           task: displayTitle,
@@ -142,7 +142,7 @@ export function PluginTrialTemplateStrip({
         >
           {displayTitle}
         </strong>
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/30 bg-background text-text-secondary transition-colors group-hover:border-blue-500/60 group-hover:bg-blue-500/[0.1] group-hover:text-blue-600 group-focus-visible:border-blue-500/60 group-focus-visible:bg-blue-500/[0.1] group-focus-visible:text-blue-600">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/30 bg-background text-text-secondary transition-colors group-hover:border-blue-500/60 group-hover:bg-blue-500/[0.1] group-hover:text-blue-600 keyboard:group-focus-visible:border-blue-500/60 group-focus-visible:bg-blue-500/[0.1] group-focus-visible:text-blue-600">
           <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
       </button>
@@ -204,7 +204,7 @@ export function PluginTrialTemplateStrip({
             <button
               type="button"
               data-testid="plugin-trial-recommendation-apply"
-              className="group relative flex min-h-10 max-md:min-h-11 w-full items-center gap-2.5 border-b border-border/15 bg-blue-500/[0.04] px-3 py-1.5 text-left transition-colors hover:bg-blue-500/[0.1] focus-visible:bg-blue-500/[0.1] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-500"
+              className="group relative flex min-h-10 max-md:min-h-11 w-full items-center gap-2.5 border-b border-border/15 bg-blue-500/[0.04] px-3 py-1.5 text-left transition-colors hover:bg-blue-500/[0.1] focus-visible:bg-blue-500/[0.1] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-blue-500"
               onClick={applyRecommendation}
             >
               <span
@@ -224,7 +224,7 @@ export function PluginTrialTemplateStrip({
               >
                 {refinedPrompt}
               </strong>
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/30 bg-background text-text-secondary transition-colors group-hover:border-blue-500/60 group-hover:bg-blue-500/[0.1] group-hover:text-blue-600 group-focus-visible:border-blue-500/60 group-focus-visible:bg-blue-500/[0.1] group-focus-visible:text-blue-600">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/30 bg-background text-text-secondary transition-colors group-hover:border-blue-500/60 group-hover:bg-blue-500/[0.1] group-hover:text-blue-600 keyboard:group-focus-visible:border-blue-500/60 group-focus-visible:bg-blue-500/[0.1] group-focus-visible:text-blue-600">
                 <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
               </span>
             </button>
@@ -241,7 +241,7 @@ export function PluginTrialTemplateStrip({
             <button
               type="button"
               data-testid="plugin-trial-recommendation-apply"
-              className="group relative flex min-h-10 max-md:min-h-11 w-full items-center gap-2.5 px-3 py-1.5 text-left transition-colors hover:bg-blue-500/[0.08] focus-visible:bg-blue-500/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+              className="group relative flex min-h-10 max-md:min-h-11 w-full items-center gap-2.5 px-3 py-1.5 text-left transition-colors hover:bg-blue-500/[0.08] focus-visible:bg-blue-500/[0.08] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
               onClick={() => void refine()}
               disabled={!onRefinePrompt || refining}
             >
@@ -262,7 +262,7 @@ export function PluginTrialTemplateStrip({
                   '让 AI 推荐一个适合当前目标的任务'
                 )}
               </strong>
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/30 bg-background text-text-secondary transition-colors group-hover:border-blue-500/60 group-hover:bg-blue-500/[0.1] group-hover:text-blue-600 group-focus-visible:border-blue-500/60 group-focus-visible:bg-blue-500/[0.1] group-focus-visible:text-blue-600">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/30 bg-background text-text-secondary transition-colors group-hover:border-blue-500/60 group-hover:bg-blue-500/[0.1] group-hover:text-blue-600 keyboard:group-focus-visible:border-blue-500/60 group-focus-visible:bg-blue-500/[0.1] group-focus-visible:text-blue-600">
                 <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
               </span>
             </button>

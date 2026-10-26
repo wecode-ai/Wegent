@@ -355,7 +355,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
         <div
           data-testid="local-workspace-titlebar-control"
           className={cn(
-            'group inline-flex h-8 shrink-0 items-center overflow-hidden rounded-[14px] border border-border/60 bg-muted text-text-secondary transition-colors hover:border-border/80 focus-within:ring-2 focus-within:ring-focus/70',
+            'group inline-flex h-8 shrink-0 items-center overflow-hidden rounded-[14px] border border-border/60 bg-muted text-text-secondary transition-colors hover:border-border/80 keyboard:focus-within:ring-2 keyboard:focus-within:ring-focus/70',
             ideLoading && 'cursor-wait opacity-70'
           )}
         >

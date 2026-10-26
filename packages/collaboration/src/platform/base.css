@@ -629,7 +629,9 @@
   outline: none;
 }
 
-.collaboration-project-create-generation-model select:focus {
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-project-create-generation-model
+  select:focus {
   border-color: rgb(var(--color-accent, 59 130 246));
 }
 

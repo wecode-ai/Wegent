@@ -1,5 +1,6 @@
+import { IssueDeliveryRow } from './IssueDeliveryRow'
 import { useId, useRef, useState, type ReactNode } from 'react'
-import { ChevronRight, Package, Plus } from 'lucide-react'
+import { ChevronRight, Plus } from 'lucide-react'
 import type { CollaborationTranslate } from '../i18n'
 import type { CollaborationIssue, CollaborationStatus } from '../types'
 import { isExecutionActive } from './executionStatus'
@@ -10,6 +11,7 @@ import {
 } from './taskBindingPresentation'
 import type {
   SharedIssueDetailDelivery,
+  SharedIssueDetailDeliveryDetail,
   SharedIssueDetailTaskBinding,
   SharedIssueDetailTaskExecutionState,
 } from './createSharedIssueDetailPort'
@@ -245,10 +247,14 @@ export function IssueLinkedTasks({
 
 export function IssueDeliveries({
   deliveries,
+  getDelivery,
+  memberName,
   onOpen,
   translate,
 }: {
   deliveries: SharedIssueDetailDelivery[]
+  getDelivery(id: string): Promise<SharedIssueDetailDeliveryDetail>
+  memberName(id: number): string | null
   onOpen(id: string): void
   translate: CollaborationTranslate
 }) {
@@ -263,24 +269,14 @@ export function IssueDeliveries({
     >
       {expanded =>
         (expanded ? deliveries : deliveries.slice(0, PREVIEW_LIMIT)).map(delivery => (
-          <button
+          <IssueDeliveryRow
             key={delivery.id}
-            type="button"
-            data-testid={`todo-detail-open-delivery-${delivery.id}`}
-            onClick={() => onOpen(delivery.id)}
-            className="task-detail-workspace-sub-row w-full text-left"
-          >
-            <Package className="h-4 w-4 shrink-0 text-text-muted" />
-            <span className="min-w-0 flex-1 truncate">
-              {translate('todo.delivery_result', '交付结果')}
-              {delivery.assets.length > 0
-                ? ` · ${translate('todo.attachment_count', '{{count}} 个附件', { count: delivery.assets.length })}`
-                : ''}
-            </span>
-            <span className="shrink-0 text-xs text-text-muted">
-              {delivery.delivered_at?.slice(0, 10)}
-            </span>
-          </button>
+            delivery={delivery}
+            getDelivery={getDelivery}
+            memberName={memberName}
+            onOpen={onOpen}
+            translate={translate}
+          />
         ))
       }
     </ExecutionListSection>

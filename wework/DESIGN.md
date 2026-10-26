@@ -780,6 +780,12 @@ Every interactive component must account for the applicable states:
 Hover, focus, and selection are distinct. Do not use the same styling and
 semantics for all three.
 
+Blue focus borders, outlines, and rings use the shared `keyboard:` variant;
+gate ring width, inset, and offset together with its color. Pointer focus keeps
+the original border and ordinary shadow. Preserve error feedback and other
+focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
+`:where(html:not([data-input-modality='pointer']))` scope at the paint definition.
+
 - Acknowledge input immediately with pressed, pending, or local state.
 - Keep useful content visible during refresh, reconnect, and long-running work.
 - 设备刷新须分别维护本地结果与云端快照。本地刷新不能清除已加载的云端设备；

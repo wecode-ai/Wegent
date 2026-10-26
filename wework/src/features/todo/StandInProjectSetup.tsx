@@ -43,7 +43,7 @@ export function StandInProjectSetup({
     <div className="space-y-4" data-testid="stand-in-project-setup">
       <label className="block space-y-2">
         <span className="font-medium">{t('standIn.personal.use_stand_in')}</span>
-        <div className="relative rounded-lg border border-border bg-muted/40 hover:bg-muted/60 focus-within:ring-2 focus-within:ring-focus">
+        <div className="relative rounded-lg border border-border bg-muted/40 hover:bg-muted/60 keyboard:focus-within:ring-2 keyboard:focus-within:ring-focus">
           <select
             data-testid="stand-in-project-select"
             value={creating ? '__new' : projectRoleId}
