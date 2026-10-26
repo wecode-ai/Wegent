@@ -899,6 +899,8 @@ export function TodoEditor(props: TodoEditorProps) {
   initialTaskBindingsRef.current = props.initialTaskBindings;
   const taskBindingsRequestIdRef = useRef(0);
   const deliveriesRequestIdRef = useRef(0);
+  const currentDeliveryIdRef = useRef(item?.current_delivery_id);
+  currentDeliveryIdRef.current = item?.current_delivery_id;
   const currentDeliveryRequestIdRef = useRef(0);
   const selectedDeliveryRequestIdRef = useRef(0);
   const attachmentsRequestIdRef = useRef(0);
@@ -977,7 +979,19 @@ export function TodoEditor(props: TodoEditorProps) {
         loadedEditItemIdRef.current !== editItemId
       )
         return;
-      setDeliveries(nextDeliveries);
+      setDeliveries((existing) => {
+        const current = existing.find(
+          (delivery) => delivery.id === currentDeliveryIdRef.current,
+        );
+        return current
+          ? [
+              current,
+              ...nextDeliveries.filter(
+                (delivery) => delivery.id !== current.id,
+              ),
+            ]
+          : nextDeliveries;
+      });
     } catch {
       // Independent detail sources fail closed without hiding available data.
     }
@@ -1188,7 +1202,6 @@ export function TodoEditor(props: TodoEditorProps) {
           loadedEditItemIdRef.current !== editItemId
         )
           return;
-        deliveriesRequestIdRef.current += 1;
         setDeliveries((existing) => [
           currentDelivery,
           ...existing.filter((delivery) => delivery.id !== currentDelivery.id),
