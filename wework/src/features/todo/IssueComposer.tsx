@@ -712,7 +712,7 @@ export function IssueComposer({
                 data-template-content={template.content}
                 disabled={busy}
                 onClick={applyIssueTemplate}
-                className="h-7 rounded-lg bg-muted px-2.5 text-xs text-text-secondary transition hover:bg-text-primary/10 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-40"
+                className="h-7 rounded-lg bg-muted px-2.5 text-xs text-text-secondary transition hover:bg-text-primary/10 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-40"
               >
                 {template.label}
               </button>

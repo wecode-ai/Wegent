@@ -92,7 +92,7 @@ function ArchiveDropdown({
         aria-expanded={open}
         onClick={() => setOpen(current => !current)}
         className={cn(
-          'flex h-8 w-full items-center gap-2 rounded-md border border-border bg-background px-2.5 text-left text-sm text-text-primary outline-none hover:bg-muted focus-visible:border-primary max-md:h-11',
+          'flex h-8 w-full items-center gap-2 rounded-md border border-border bg-background px-2.5 text-left text-sm text-text-primary outline-none hover:bg-muted keyboard:focus-visible:border-primary max-md:h-11',
           triggerClassName
         )}
       >
@@ -190,7 +190,7 @@ export function ArchivedConversationsFilters({
           value={search}
           onChange={event => onSearchChange(event.target.value)}
           placeholder={t('workbench.archived_search_placeholder', '搜索已归档任务')}
-          className="h-8 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm outline-none focus:border-primary max-md:h-11"
+          className="h-8 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm outline-none keyboard:focus:border-primary max-md:h-11"
         />
       </label>
 
