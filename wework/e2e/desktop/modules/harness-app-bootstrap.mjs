@@ -1,5 +1,6 @@
 import {
   LEGACY_INSTALLATION_ID,
+  MODEL_LABEL,
   setExperimentalFeatures,
   waitForElementCount,
 } from './harness-app-fixture.mjs'
@@ -207,16 +208,21 @@ async function verifyLegacyAppRejection(
     timeoutMs: uiTimeoutMs,
   })
   await control.command('navigate', 'body', { value: '/sites?app_type=smart_app&view=owned' })
-  await control.command('waitFor', `[data-testid="harness-app-start-${id}"]`, {
+  const modelSelector = `[data-testid="harness-app-model-${id}"]`
+  await control.command('waitFor', modelSelector, {
+    enabled: true,
     timeoutMs: uiTimeoutMs,
   })
+  await control.command('select', modelSelector, { by: 'label', value: MODEL_LABEL })
   const managementTabId = await control.command(
     'getAttribute',
     '[data-workspace-tab-content][aria-hidden="false"]',
     { value: 'data-workspace-tab-content' }
   )
   assert.ok(managementTabId, 'The legacy fixture management tab was not available')
-  await control.command('click', `[data-testid="harness-app-start-${id}"]`)
+  await control.command('clickWhenEnabled', `[data-testid="harness-app-start-${id}"]`, {
+    timeoutMs: uiTimeoutMs,
+  })
   await control.command('waitFor', `[data-testid="harness-app-launch-${id}"]`, {
     text: 'The trusted Electron host bridge requires DSH 0.2.0-rc.2',
     timeoutMs: 600_000,
