@@ -7689,7 +7689,7 @@ describe('DesktopWorkbenchLayout', () => {
         taskId: 'runtime-subagent-panel',
         threadId: 'thread-1',
       }),
-      { includeFullContent: true }
+      { includeFullContent: true, threadOnly: true }
     )
     expect(screen.getByTestId('right-workspace-panel')).toContainElement(
       screen.getByTestId('subagent-conversation-panel')
@@ -7847,6 +7847,135 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getAllByTestId('project-chat-composer')).toHaveLength(2)
     expect(screen.getByTestId('desktop-floating-composer-card')).toBeInTheDocument()
   })
+
+  test.each(['launcher', 'chat'])(
+    'keeps a pending MCP confirmation visible above the expanded %s panel',
+    async panel => {
+      renderWorkspacePanelLayout({
+        mainWidth: 1000,
+        messages: [
+          {
+            id: 'assistant-publish-confirmation',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-10-22T00:00:00.000Z',
+            blocks: [
+              {
+                id: 'publish-confirmation',
+                type: 'tool',
+                toolName: 'request_user_input',
+                status: 'pending',
+                renderPayload: {
+                  kind: 'request_user_input',
+                  requestId: 0,
+                  interactionScope: 'publish-turn',
+                  interactionKind: 'mcp_form',
+                  interactionStatus: 'pending',
+                  itemId: 'mcp_server_elicitation',
+                  questions: [
+                    {
+                      id: 'decision',
+                      question: '请确认是否正式发布当前编辑结果',
+                      options: [{ label: '确认发布' }, { label: '暂不发布' }],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      })
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      if (panel === 'chat') {
+        await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+      }
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-expanded-button'))
+
+      expect(screen.getAllByTestId('request-user-input-card')).toHaveLength(1)
+      expect(screen.getByTestId('request-user-input-card')).toBeVisible()
+      expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass('z-critical')
+      expect(screen.queryAllByTestId('project-chat-composer')).toHaveLength(
+        panel === 'chat' ? 1 : 0
+      )
+
+      await userEvent.click(screen.getByTestId('request-user-input-option-decision-0'))
+
+      expect(baseProps.onRequestUserInputSubmit).toHaveBeenCalledWith(
+        {
+          requestId: 0,
+          interactionScope: 'publish-turn',
+          itemId: 'mcp_server_elicitation',
+          answers: { decision: { answers: ['确认发布'] } },
+        },
+        { appendUserMessage: false, forceDefaultCollaborationMode: false }
+      )
+    }
+  )
+
+  test.each(['timeout', 'focus'])(
+    'restores the composer after MCP expiry on %s without a runtime settlement event',
+    async trigger => {
+      vi.useFakeTimers()
+      const deadline = Date.now() + 1_000
+      const view = renderWorkspacePanelLayout({
+        messages: [
+          {
+            id: 'assistant-expiring-confirmation',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-10-22T00:00:00.000Z',
+            blocks: [
+              {
+                id: 'expiring-confirmation',
+                type: 'tool',
+                toolName: 'request_user_input',
+                status: 'pending',
+                renderPayload: {
+                  kind: 'request_user_input',
+                  requestId: 0,
+                  interactionScope: 'expiring-turn',
+                  interactionKind: 'mcp_form',
+                  interactionStatus: 'pending',
+                  expiresAtUnixMs: deadline,
+                  questions: [
+                    { id: 'decision', question: '确认发布？', options: [{ label: '确认' }] },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      })
+      try {
+        expect(screen.getByTestId('request-user-input-card')).toBeVisible()
+        expect(screen.queryByTestId('project-chat-composer')).not.toBeInTheDocument()
+
+        await act(async () => {
+          if (trigger === 'focus') {
+            vi.setSystemTime(deadline)
+            fireEvent.focus(window)
+          } else {
+            await vi.advanceTimersByTimeAsync(1_000)
+          }
+        })
+
+        expect(screen.queryByTestId('request-user-input-card')).not.toBeInTheDocument()
+        expect(screen.getByTestId('project-chat-composer')).toBeVisible()
+        expect(baseProps.onRequestUserInputSubmit).not.toHaveBeenCalled()
+        const session = paneSessionMockRef.current as {
+          ignoreRequestUserInput: ReturnType<typeof vi.fn>
+        }
+        expect(session.ignoreRequestUserInput).not.toHaveBeenCalled()
+        expect(screen.getByTestId('request-user-input-expired')).toHaveTextContent('请求已超时')
+      } finally {
+        view.unmount()
+        vi.useRealTimers()
+      }
+    }
+  )
 
   test('shows the workbench background through the right and bottom panels', async () => {
     localStorage.setItem(

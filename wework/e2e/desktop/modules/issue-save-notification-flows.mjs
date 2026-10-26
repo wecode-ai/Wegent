@@ -60,8 +60,9 @@ export async function verifySilentIssueSaves({
   const selectAssignee = async userId => {
     await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-assignee"]`)
     await control.command(
-      'click',
-      `[data-testid="cloud-todo-detail-assignee-option-user:${userId}"]`
+      'clickWhenEnabled',
+      `[data-testid="cloud-todo-detail-assignee-option-user:${userId}"]`,
+      { visible: true }
     )
   }
   const title = `静默保存验收-${process.pid}`

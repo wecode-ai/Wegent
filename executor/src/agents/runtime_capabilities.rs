@@ -442,6 +442,7 @@ fn managed_wework_mcp_required(request: &ExecutionRequest) -> bool {
             .as_deref()
             .is_some_and(|value| !value.trim().is_empty());
     notifications_available
+        || crate::task_runtime::mcp::stand_in_identity(request).is_some()
         || crate::task_runtime::mcp::encoded_space_context_grant(request).is_some()
 }
 
@@ -449,6 +450,15 @@ fn inject_managed_wework_mcps(
     request: &ExecutionRequest,
     mcp_servers: &mut BTreeMap<String, Value>,
 ) -> Result<(), String> {
+    if let Some(config) = crate::task_runtime::mcp::stand_in_mcp_client_config(request)? {
+        mcp_servers.insert(
+            crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME.into(),
+            json!({
+                "type":"http","url":config.url,"headers":config.headers,
+                "timeout":crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS * 1000
+            }),
+        );
+    }
     if let Some(config) = crate::task_runtime::mcp::notifications_mcp_client_config(request)? {
         let headers = config
             .headers

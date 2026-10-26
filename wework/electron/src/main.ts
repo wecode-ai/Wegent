@@ -1,6 +1,7 @@
 import './host/process-output-bootstrap.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
+import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
 
 import {
   app,
@@ -116,7 +117,6 @@ import { resolveSystemProxy } from './host/system-proxy.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
   prepareDesktopComponents,
-  shouldStageDesktopComponentUpdates,
   type DesktopComponentUpdateController,
 } from './runtime/desktop-components.js'
 import {
@@ -331,7 +331,6 @@ let startupSplash: StartupSplash | null = null
 let startupRecovery: StartupRecoveryService | null = null
 let startupRuntimeEnvironment: NodeJS.ProcessEnv | null = null
 let componentUpdates: DesktopComponentUpdateController | null = null
-let startupComponentUpdate: Promise<void> | null = null
 let pluginDevelopment: PluginDevelopmentManager | null = null
 const pluginDevelopmentChildRuntime =
   pluginDevelopmentInstance &&
@@ -428,6 +427,9 @@ app.on('web-contents-created', (_event, contents) => {
     })
   })
   contents.on('console-message', (_event, level, message, lineNumber, sourceId) => {
+    if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[desktop-e2e-key] ')) {
+      console.info(redactLog(message).slice(0, 1024))
+    }
     if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
       console.warn('[renderer-error]', {
         webContentsId: contents.id,
@@ -474,7 +476,7 @@ const appUpdates = new AppUpdateService({
   log: event => appUpdateLogger.info(event),
   prepareUpdate: async (version, channel, onProgress) => {
     if (!componentUpdates) throw new Error('Component update manager is not initialized.')
-    await componentUpdates.stageUpdateForApp(version, channel, false, onProgress)
+    await componentUpdates.stageUpdateForApp(version, channel, onProgress)
     if (desktopDataPaths) {
       const cache = packagedUpdaterCache(
         process.env.HOME?.trim() || app.getPath('home'),
@@ -1274,6 +1276,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       webviewTag: true,
     },
   })
+  installE2ERendererCpuProfiling(mainWindow.webContents)
   startupSplashWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
     width: 1440,
@@ -1738,14 +1741,12 @@ function prepareApplicationShutdown(): Promise<void> {
 }
 
 function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
-  if (!desktopRuntime) return null
+  const runtime = desktopRuntime
+  if (!runtime) return null
   return {
-    open: async launch => {
-      await desktopRuntime?.openWorkbenchRuntime(launch)
-    },
-    close: tabId => desktopRuntime?.closeWorkbenchRuntime(tabId) ?? Promise.resolve(),
-    runningTabIds: () =>
-      new Set(desktopRuntime?.diagnostics().workbenchRuntimes.map(item => item.tabId) ?? []),
+    open: launch => runtime.openWorkbenchRuntime(launch),
+    close: tabId => runtime.closeWorkbenchRuntime(tabId),
+    runningTabIds: () => new Set(runtime.diagnostics().workbenchRuntimes.map(item => item.tabId)),
   }
 }
 
@@ -2257,20 +2258,6 @@ function startDesktopRuntime(): Promise<void> {
     await pluginDevelopmentChildRuntime?.writeState('ready')
     logStartupStep('desktop-runtime-start', 'completed')
     startupTelemetrySuccess.markRuntimeReady()
-    if (!pluginDevelopmentInstance && shouldStageDesktopComponentUpdates(process.env)) {
-      startupComponentUpdate =
-        componentUpdates
-          ?.stageAvailableUpdate()
-          .then(staged => {
-            if (staged) console.log('[components] update staged for the next application restart')
-          })
-          .catch(error => {
-            console.error('[components] update check failed', error)
-          })
-          .finally(() => {
-            startupComponentUpdate = null
-          }) ?? null
-    }
   })()
     .catch(async error => {
       const failurePublished = startupTelemetry.fail('desktop_runtime')
@@ -2347,7 +2334,6 @@ if (hasSingleInstanceLock) {
       cloudCredentials,
       prepareCleanup: async () => {
         await runtimeStartPromise
-        await startupComponentUpdate
         await prepareApplicationShutdown()
         disposeCoreDshViews()
         if (mainWindow && !mainWindow.isDestroyed()) {

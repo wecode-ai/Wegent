@@ -22,7 +22,9 @@ use crate::local::app_ipc::AppIpcError;
 use super::util::string_field;
 use tools::{parse_tool_spec, resolve_auth_tool, LocalAuthToolSpec};
 
+mod connection_tools;
 mod diagnostics;
+pub(crate) use connection_tools::{run_connection_tool, run_plugin_tool};
 mod github_cli;
 mod logout;
 mod tools;
@@ -382,6 +384,11 @@ fn load_local_auth_spec(
     plugin_root: &Path,
     connector_slug: Option<&str>,
 ) -> Result<LocalAuthSpec, AppIpcError> {
+    let manifest = read_plugin_manifest(plugin_root)?;
+    parse_local_auth_spec(&manifest, connector_slug)
+}
+
+fn read_plugin_manifest(plugin_root: &Path) -> Result<Value, AppIpcError> {
     let manifest_path = [
         plugin_root.join(".codex-plugin/plugin.json"),
         plugin_root.join(".claude-plugin/plugin.json"),
@@ -393,6 +400,13 @@ fn load_local_auth_spec(
         .map_err(|error| AppIpcError::new("plugin_manifest_read_failed", error.to_string()))?;
     let manifest: Value = serde_json::from_str(&raw)
         .map_err(|error| AppIpcError::new("plugin_manifest_invalid", error.to_string()))?;
+    Ok(manifest)
+}
+
+fn parse_local_auth_spec(
+    manifest: &Value,
+    connector_slug: Option<&str>,
+) -> Result<LocalAuthSpec, AppIpcError> {
     let connectors = manifest
         .get("connectors")
         .and_then(Value::as_array)

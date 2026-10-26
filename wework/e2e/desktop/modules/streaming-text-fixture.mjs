@@ -1,3 +1,4 @@
+import { readRequestBody as readJson } from './response-protocol.mjs'
 import { selectE2EModel, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL } from './shared.mjs'
 import assert from 'node:assert/strict'
 
@@ -469,12 +470,6 @@ export async function writeSseEvents(response, events) {
   }
 }
 
-export async function readJson(request) {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-}
-
 export function requestContainsPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(PROMPT)
 }
@@ -936,10 +931,17 @@ export async function retainSecondTaskWorkspace(control, timeoutMs) {
 }
 
 export async function sendOrderFollowUp(control, index, uiTimeoutMs, modelResponseTimeoutMs) {
-  await control.command('fill', COMPOSER_SELECTOR, { value: `${ORDER_FOLLOW_UP_PREFIX}_${index}` })
-  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
-    timeoutMs: uiTimeoutMs,
-  })
+  const prompt = `${ORDER_FOLLOW_UP_PREFIX}_${index}`
+  assert.equal(
+    await control.command('fill', COMPOSER_SELECTOR, { value: prompt }),
+    prompt,
+    `Follow-up ${index} was not filled into the active composer`
+  )
+  await control.command(
+    'clickWhenEnabled',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+    { timeoutMs: uiTimeoutMs, visible: true }
+  )
   const response = await control.awaitScenarioRequestCount(
     'message_order_follow_up',
     index,
@@ -951,3 +953,5 @@ export async function sendOrderFollowUp(control, index, uiTimeoutMs, modelRespon
     timeoutMs: uiTimeoutMs,
   })
 }
+
+export { readJson }

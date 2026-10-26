@@ -6,7 +6,12 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { CLOUD_DEVICE_ID } from './shared.mjs'
 import { holdPluginWriteLease } from './plugin-write-lease.mjs'
-import { installFixture, materializedPlugin, until } from './plugin-regression-fixture.mjs'
+import {
+  installFixture,
+  materializedPlugin,
+  pluginApi,
+  until,
+} from './plugin-regression-fixture.mjs'
 
 const run = promisify(execFile)
 const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
@@ -15,6 +20,7 @@ export async function verifyPluginRegistrationCoordination({
   cloud,
   control,
   localDeviceId,
+  deviceProxy,
   evidence,
   timeoutMs,
 }) {
@@ -132,4 +138,130 @@ export async function verifyPluginRegistrationCoordination({
   evidence.push({
     case: 'registration-recovery-replaces-obsolete-capabilities-and-converges-plugin-state',
   })
+  await verifySupersededEmptyRegistration({
+    cloud,
+    deviceProxy,
+    item,
+    old,
+    fresh,
+    manifest,
+    hasCapabilities,
+    remoteHome,
+    evidence,
+    timeoutMs,
+  })
+}
+
+async function verifySupersededEmptyRegistration({
+  cloud,
+  deviceProxy,
+  item,
+  old,
+  fresh,
+  manifest,
+  hasCapabilities,
+  remoteHome,
+  evidence,
+  timeoutMs,
+}) {
+  await pluginApi(cloud, `/plugins/installed/${item.installedId}`, 'DELETE')
+  await until(
+    async () => ({
+      manifest: await manifest(),
+      rows: await cloud.queryDatabase(
+        'SELECT state FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
+        [1, item.installedId, CLOUD_DEVICE_ID]
+      ),
+    }),
+    value => Object.keys(value.manifest.plugins ?? {}).length === 0 && value.rows.length === 0,
+    'The empty-snapshot fixture still has a managed plugin or pending removal',
+    timeoutMs
+  )
+  // Reuse the real downloadable fixtures; neither edit triggers a capability push.
+  await cloud.executeDatabase(
+    'UPDATE kinds SET is_active = 1 WHERE user_id = %s AND namespace = %s AND id IN (%s, %s)',
+    [1, 'default', old.installedSkillId, old.mcpId]
+  )
+  await cloud.executeDatabase(
+    'UPDATE kinds SET is_active = 0 WHERE user_id = %s AND namespace = %s AND id IN (%s, %s)',
+    [1, 'default', fresh.installedSkillId, fresh.mcpId]
+  )
+  assert.ok(!hasCapabilities(await manifest(), old), 'The desired fixture is already installed')
+  const gate = deviceProxy.holdNextCapabilitySync(
+    payload =>
+      (payload.scope ?? 'all') === 'all' &&
+      payload.plugin_sync?.version === 2 &&
+      payload.plugin_sync.complete === true &&
+      payload.plugins?.length === 0 &&
+      payload.skills?.some(skill => skill.name === old.name) &&
+      payload.mcps?.some(mcp => mcp.name === old.name)
+  )
+  try {
+    await cloud.restartCloudExecutor()
+    const held = await until(
+      () => {
+        if (gate.error) throw gate.error
+        return gate.held
+      },
+      Boolean,
+      'The real registration full-all snapshot was not held before Executor delivery',
+      timeoutMs
+    )
+    const reconciliation = await pluginApi(
+      cloud,
+      `/plugins/installed/sync-device?device_id=${encodeURIComponent(CLOUD_DEVICE_ID)}&reconcile=true`,
+      'POST'
+    )
+    const acknowledged = reconciliation.sync.results[0]
+    assert.equal(acknowledged.success, true)
+    assert.equal(acknowledged.scope, 'plugins')
+    assert.deepEqual(acknowledged.plugins, [])
+    assert.equal(acknowledged.plugin_sync.complete, true)
+    assert.ok(acknowledged.plugin_sync.generation > held.pluginSync.generation)
+    const beforeRelease = await manifest()
+    assert.equal(beforeRelease.plugin_sync.complete_generation, acknowledged.plugin_sync.generation)
+    assert.ok(!hasCapabilities(beforeRelease, old), 'The held snapshot reached the Executor early')
+    gate.release()
+    const settled = await until(
+      () => {
+        if (gate.error) throw gate.error
+        return manifest()
+      },
+      value =>
+        gate.acknowledgement &&
+        hasCapabilities(value, old) &&
+        !value.skills?.[fresh.name] &&
+        !value.mcps?.[fresh.name] &&
+        value.plugin_sync?.full_generation === held.pluginSync.generation &&
+        value.plugin_sync?.complete_generation === acknowledged.plugin_sync.generation,
+      'An overtaking empty plugin snapshot dropped the registered Skills/MCP full snapshot',
+      timeoutMs
+    )
+    assert.equal(gate.acknowledgement.success, true)
+    assert.equal(gate.acknowledgement.scope, 'all')
+    assert.deepEqual(gate.acknowledgement.pluginSync, held.pluginSync)
+    assert.ok(
+      gate.acknowledgement.skills.some(
+        skill => skill.name === old.name && skill.status === 'synced'
+      )
+    )
+    for (const field of ['claude_link', 'codex_link']) {
+      const target = resolve(remoteHome, settled.skills[old.name].runtime[field], 'SKILL.md')
+      assert.ok((await readFile(target, 'utf8')).includes(old.name))
+    }
+    assert.deepEqual(settled.mcps[old.name].server, {
+      type: 'stdio',
+      command: 'node',
+      args: ['--version'],
+    })
+    assert.deepEqual(settled.plugins, {})
+    evidence.push({
+      case: 'empty-plugin-snapshot-overtakes-registration-without-dropping-independent-capabilities',
+      registrationGeneration: held.pluginSync.generation,
+      pluginGeneration: acknowledged.plugin_sync.generation,
+      acknowledgement: gate.acknowledgement,
+    })
+  } finally {
+    gate.release()
+  }
 }

@@ -1,8 +1,8 @@
 export {
   AssistantMarkdown,
-  stripUnsupportedContentReferenceCitations,
   type AssistantMarkdownProps,
 } from "./AssistantMarkdown";
+export { stripUnsupportedContentReferenceCitations } from "./assistantAnnotations";
 export {
   MarkdownServicesProvider,
   useMarkdownServices,
@@ -11,3 +11,4 @@ export {
   type MarkdownServices,
   type MarkdownFileOpenOptions,
 } from "./MarkdownServices";
+export { extractAssistantFileCitations } from "./assistantAnnotations";

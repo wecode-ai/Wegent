@@ -67,6 +67,9 @@ RUNTIME_MODEL_CONFIG_METHODS = frozenset(
 )
 RUNTIME_MODEL_CONFIG_KEYS = frozenset({"model_config", "modelConfig"})
 APP_DEVICE_TASK_MESSAGE_METHODS = frozenset({"runtime.tasks.send"})
+APP_DEVICE_TASK_READ_METHODS = frozenset(
+    {"runtime.tasks.transcript", "runtime.tasks.transcript.search"}
+)
 
 
 def _load_remote_runtime_proxy_url(user_id: int) -> str:
@@ -229,7 +232,7 @@ class RuntimeRpcService:
         app_task_reading_allowed = (
             allow_app_device_task_reading
             and route.device_type == DeviceType.APP
-            and method == "runtime.tasks.transcript"
+            and method in APP_DEVICE_TASK_READ_METHODS
         )
         app_catalog_reading_allowed = (
             allow_app_device_catalog_reading

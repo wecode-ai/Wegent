@@ -439,3 +439,12 @@ def test_cp09_cp13_enabled_agents_and_assignment_entry_points(test_client, scope
             test_client.post(path, headers=scope["member"], json=body).status_code
             == 403
         )
+
+
+@pytest.fixture
+def test_client(test_client):
+    """Exercise retained Python HTTP components in an isolated application."""
+    from tests.retained_python_handlers import component_client
+
+    with component_client(test_client, ("project_members", "workspaces")) as client:
+        yield client

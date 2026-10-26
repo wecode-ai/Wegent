@@ -61,6 +61,12 @@ pub trait TaskStore:
     /// is `Task` and it is active.
     async fn get_active_task(&self, task_id: i64) -> MysqlResult<Option<MysqlRow>>;
 
+    /// `task_store.get_regular_active_task`: the task row for `task_id` when
+    /// its kind is `Task`, its namespace is not `system`, and it is the
+    /// regular active state (`TaskKnowledgeBaseService.get_task`, reached by
+    /// both bound-knowledge-base chains).
+    async fn get_regular_active_task(&self, task_id: i64) -> MysqlResult<Option<MysqlRow>>;
+
     /// `task_access_store._get_accessible_task`: the active task row the
     /// access store authorizes a viewer against. Unlike `get_active_task`,
     /// this read is not preceded by the store's legacy owner/migrated-copy
@@ -211,6 +217,15 @@ pub trait TaskStore:
         statuses: &[&str],
     ) -> MysqlResult<Option<MysqlRow>>;
 
+    /// `subtask_store.get_running_assistant_for_user`: the caller's running
+    /// assistant subtask of `task_id` (`role = ASSISTANT`, `status = RUNNING`).
+    /// The source query has no ordering.
+    async fn running_assistant_for_user(
+        &self,
+        task_id: i64,
+        user_id: i64,
+    ) -> MysqlResult<Option<MysqlRow>>;
+
     /// `subtask_store.update_fields` for the cancel flow: mark one subtask
     /// COMPLETED with its partial result. Returns the affected row count.
     async fn update_subtask_completed(
@@ -220,6 +235,20 @@ pub trait TaskStore:
         result_json: &str,
         updated_at: &str,
         completed_at: &str,
+    ) -> MysqlResult<u64>;
+
+    /// `subtask_store.update_fields` for `_cancel_chat_shell_task`: mark one
+    /// running assistant subtask CANCELLED with progress 100.
+    /// `reset_error_message` mirrors the ORM dirty-column check for the
+    /// source's `error_message=""` argument. `task_id` selects the physical
+    /// table on a sharded deployment.
+    async fn update_subtask_cancelled(
+        &self,
+        task_id: i64,
+        subtask_id: i64,
+        updated_at: &str,
+        completed_at: &str,
+        reset_error_message: bool,
     ) -> MysqlResult<u64>;
 
     /// `db.refresh(subtask)`: re-read one subtask row by primary key.

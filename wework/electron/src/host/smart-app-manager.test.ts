@@ -7,7 +7,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as tar from 'tar'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { SmartAppManager } from './smart-app-manager.js'
+import { SmartAppManager, type SmartAppRuntimeHost } from './smart-app-manager.js'
+import * as workbenchDshRuntime from '../runtime/workbench-dsh-runtime.js'
+import { WorkbenchRuntimeManager } from '../runtime/workbench-runtime.js'
 import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
 import type { SmartAppVerificationReport } from './smart-app-verification-types.js'
 
@@ -27,6 +29,61 @@ afterEach(async () => {
 })
 
 describe('SmartAppManager', () => {
+  test('starts on an OS-assigned port and persists the runtime listening URL', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-dynamic-port-'))
+    roots.push(root)
+    const runtimes = new WorkbenchRuntimeManager()
+    const launch = vi
+      .spyOn(workbenchDshRuntime, 'prepareWorkbenchDshLaunch')
+      .mockImplementation(async options => ({
+        command: process.execPath,
+        entry: 'fixture',
+        args: [
+          '-e',
+          `const server = require('node:http').createServer((_, response) => response.end('ready'))
+           server.listen(0, '127.0.0.1', () => console.log('dsh web: http://127.0.0.1:' + server.address().port))`,
+        ],
+        cwd: root,
+        dshHome: root,
+        environment: {},
+        profile: options.manifest.entry.profile,
+        url: `http://127.0.0.1:${options.port}/`,
+        version: '0.1.0-rc.8',
+        sourceFingerprint: 'fixture',
+      }))
+    const manager = createManager(
+      root,
+      undefined,
+      {},
+      {
+        open: input => runtimes.open(input),
+        close: id => runtimes.close(id),
+        runningTabIds: () => new Set(runtimes.list().map(item => item.tabId)),
+      }
+    )
+    try {
+      const archivePath = await createSmartAppArchive(root, validManifest())
+      const preview = await manager.preview(archivePath)
+      const installation = await manager.install({ archivePath, expectedSha256: preview.sha256 })
+      const started = await manager.start({ installationId: installation.id })
+
+      expect(launch).toHaveBeenCalledWith(expect.objectContaining({ port: 0 }))
+      expect(Number(new URL(started.webUrl!).port)).toBeGreaterThan(0)
+      expect(started.webUrl).toBe(runtimes.get(`smart-app:${installation.id}`)?.url)
+      expect(await (await fetch(started.webUrl!)).text()).toBe('ready')
+      expect(await manager.list()).toContainEqual(
+        expect.objectContaining({
+          id: installation.id,
+          state: 'running',
+          webUrl: started.webUrl,
+        })
+      )
+    } finally {
+      await runtimes.stop()
+      launch.mockRestore()
+    }
+  })
+
   test('creates a workbench under Documents/WeworkSmartApps when no parent is selected', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-default-'))
     roots.push(root)
@@ -831,7 +888,12 @@ function createManager(
       report: SmartAppVerificationReport
     }>
   },
-  environment: NodeJS.ProcessEnv = {}
+  environment: NodeJS.ProcessEnv = {},
+  runtimeHost: SmartAppRuntimeHost = {
+    open: vi.fn(),
+    close: vi.fn(),
+    runningTabIds: () => new Set(),
+  }
 ): SmartAppManager {
   return new SmartAppManager({
     dataDirectory: join(root, 'data'),
@@ -840,11 +902,7 @@ function createManager(
     logDirectory: join(root, 'logs'),
     runtimeRoot: join(root, 'runtime'),
     environment,
-    runtimeHost: () => ({
-      open: vi.fn(),
-      close: vi.fn(),
-      runningTabIds: () => new Set(),
-    }),
+    runtimeHost: () => runtimeHost,
     verificationService,
   })
 }

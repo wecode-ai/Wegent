@@ -10,6 +10,7 @@ import type {
   ConversationSummaryResource,
 } from './conversationHostServices'
 import type { WorkbenchMessage } from '@/types/workbench'
+import { extractAssistantFileCitations } from '@wegent/collaboration/markdown'
 
 export function buildConversationOutputs(
   messages: readonly WorkbenchMessage[]
@@ -34,11 +35,31 @@ export function buildConversationOutputs(
     }
     if (message.role !== 'assistant') continue
 
+    const citations = extractAssistantFileCitations(message.content)
+    const sourcePaths = new Set(
+      citations.filter(item => item.purpose === 'source').map(item => item.path)
+    )
+    const outputPaths = new Set(
+      citations.filter(item => item.purpose === 'output').map(item => item.path)
+    )
+    for (const citation of citations) {
+      if (citation.purpose !== 'source') continue
+      const resource = { kind: 'file', path: citation.path } as const
+      addLatest(sources, resourceKey(resource), {
+        id: `file:${citation.path}`,
+        kind: 'file',
+        resource,
+        title: basename(citation.path),
+      })
+    }
+
     for (const reference of getAssistantReferences(
       message.references,
       message.content,
-      message.fileChanges
+      message.fileChanges,
+      citations
     )) {
+      if (sourcePaths.has(reference.path) && !outputPaths.has(reference.path)) continue
       const resource = { kind: 'file', path: reference.path } as const
       addLatest(outputs, resourceKey(resource), {
         id: `file:${reference.path}`,

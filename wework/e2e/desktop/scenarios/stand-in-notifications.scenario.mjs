@@ -1,3 +1,7 @@
+import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
+import { verifyLocalStandInStatuses } from '../modules/stand-in-status-flows.mjs'
+import { createStandInFailureRegression } from '../modules/stand-in-failure-notification.mjs'
+import { createSubscriptionConfigRegression } from '../modules/stand-in-subscription-config.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -14,17 +18,32 @@ import {
 } from '../modules/response-protocol.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const PROJECT = `替身通知-${process.pid}`
+const PROJECT = `分身通知-${process.pid}`
 const MARKER = `STAND_IN_NOTIFICATION_${process.pid}`
 const FOLLOW_UP = `${MARKER}_FOLLOW_UP`
 const selector = id => `[data-testid=${JSON.stringify(id)}]`
 
-export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, captureScreenshot }) {
+export function createDesktopScenario({
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  captureScreenshot,
+  workspacePath,
+}) {
+  const failureRegression = createStandInFailureRegression()
+  const subscriptionRegression = createSubscriptionConfigRegression()
   return {
+    prepareApp: subscriptionRegression.prepareApp,
+    attachServer: subscriptionRegression.attachServer,
+    cleanup: subscriptionRegression.cleanup,
     async handleHttp(request, response, url) {
-      if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
+      if (
+        request.method !== 'POST' ||
+        !['/responses', '/v1/responses', '/backend-api/codex/responses'].includes(url.pathname)
+      )
         return false
       const body = await readRequestBody(request)
+      subscriptionRegression.acceptsModelRequest(request, url, body)
+      if (failureRegression.handleHttp(body, response)) return true
       const id = `notification-${Date.now()}`
       const result = JSON.stringify(body).includes(FOLLOW_UP)
         ? '已按补充要求完成检查。'
@@ -44,7 +63,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
       const project = projects.find(row => row.name === PROJECT)
       assert.ok(project)
-      await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+      await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`, {
+        connect: true,
+      })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-auto"]')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command('fill', '[data-testid="stand-in-prompt"]', { value: MARKER })
@@ -55,7 +76,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         'todos.create',
         {
           project_id: project.id,
-          todo: { title: '在通知内继续处理替身任务', assignee_user_id: 9001 },
+          todo: { title: '在通知内继续处理分身任务', assignee_user_id: 9001 },
         },
         uiTimeoutMs
       )
@@ -93,10 +114,10 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         text: '处理完毕',
       })
       const notificationRow = selector(`wework-notification-${id}`)
-      await control.command('waitFor', notificationRow, { text: '替身处理' })
+      await control.command('waitFor', notificationRow, { text: '分身处理' })
       const rowText = await control.command('getText', notificationRow)
-      assert.ok(rowText.includes('在通知内继续处理替身任务'))
-      assert.ok(!rowText.includes('我的替身'), 'Handling must preserve the original title')
+      assert.ok(rowText.includes('在通知内继续处理分身任务'))
+      assert.ok(!rowText.includes('我的分身'), 'Handling must preserve the original title')
       assert.equal(
         await control.command('getElementCount', selector(`wework-notification-${id}-body`)),
         '0',
@@ -131,6 +152,28 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         await control.command('getElementCount', '[data-testid="wework-notifications-popover"]'),
         '1',
         'Inline follow-up must keep the notification open'
+      )
+      assert.equal(
+        alerts.filter(alert => alert.address?.taskId === binding.task_id).length,
+        2,
+        'Each completed turn must deliver exactly one alert, including after summary refresh'
+      )
+
+      const readyBeforeReload = control.readyCount
+      await control.command('reloadApp', 'body')
+      await control.awaitReadyAfter(readyBeforeReload)
+      await control.command('waitFor', '[data-testid="wework-notifications-button"]')
+      await control.command('click', '[data-testid="wework-notifications-button"]')
+      await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
+      await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
+        text: '处理完毕',
+      })
+      await control.command('waitFor', `${notificationRow}[data-unread="true"]`)
+      const restoredAlerts = JSON.parse(await control.command('getSystemNotifications', 'body'))
+      assert.equal(
+        restoredAlerts.filter(alert => alert.address?.taskId === binding.task_id).length,
+        0,
+        'Restoring an unread completion must preserve the inbox entry without replaying its alert'
       )
       const bindings = await requestExecutor(
         control,
@@ -187,7 +230,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`)
         assert.equal(
           await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
-          '在通知内继续处理替身任务',
+          '在通知内继续处理分身任务',
           'Every notification hit target must open the original Issue'
         )
         await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
@@ -199,9 +242,20 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
         text: issue.id,
       })
+      await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`)
       assert.equal(
         await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
-        '在通知内继续处理替身任务'
+        '在通知内继续处理分身任务'
+      )
+      await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
+      await verifyLocalStandInStatuses(control, project.id, uiTimeoutMs, modelResponseTimeoutMs)
+      await failureRegression.verify(control, project.id, uiTimeoutMs, modelResponseTimeoutMs)
+      await subscriptionRegression.verify(
+        control,
+        project.id,
+        workspacePath,
+        uiTimeoutMs,
+        modelResponseTimeoutMs
       )
     },
   }

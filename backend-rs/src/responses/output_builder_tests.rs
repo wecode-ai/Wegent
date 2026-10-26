@@ -24,7 +24,7 @@ fn chain_subtask(result: Value) -> SubtaskRow {
 }
 
 fn serialized_items(subtask: &SubtaskRow) -> Vec<Value> {
-    build_output_items_for_subtask(subtask, &test_config())
+    build_output_items_for_subtask(subtask, &test_config(), "", None)
         .expect("builds")
         .iter()
         .map(|item| serde_json::to_value(item).expect("serializable"))
@@ -386,7 +386,7 @@ fn null_result_produces_no_output() {
         subtask("ASSISTANT", "RUNNING", None),
     ];
     assert!(
-        build_response_output(&subtasks, &test_config())
+        build_response_output(&subtasks, &test_config(), None)
             .expect("builds")
             .is_empty()
     );
@@ -399,7 +399,7 @@ fn value_result_builds_message() {
         "COMPLETED",
         Some(serde_json::json!({"value": "hello"})),
     )];
-    let output = build_response_output(&subtasks, &test_config()).expect("builds");
+    let output = build_response_output(&subtasks, &test_config(), None).expect("builds");
     assert_eq!(output.len(), 1);
     let item = serde_json::to_value(&output[0]).unwrap();
     assert_eq!(item["id"], "msg_100000000000014");
@@ -414,7 +414,7 @@ fn running_assistant_message_is_in_progress() {
         "RUNNING",
         Some(serde_json::json!({"value": "partial"})),
     )];
-    let output = build_response_output(&subtasks, &test_config()).expect("builds");
+    let output = build_response_output(&subtasks, &test_config(), None).expect("builds");
     let item = serde_json::to_value(&output[0]).unwrap();
     assert_eq!(item["status"], "in_progress");
 }
@@ -529,4 +529,75 @@ fn shell_input_passes_arguments_dict_through() {
     let items = serialized_items(&chain_subtask(result));
     assert_eq!(items[0]["input"], serde_json::json!({"command": "pwd"}));
     assert_eq!(items[0]["action"]["timeout_ms"], Value::Null);
+}
+
+#[test]
+fn active_assistant_overrides_replace_status_and_fallback_text() {
+    // `build_response_output(active_assistant_subtask_id=…,
+    // active_assistant_status="completed",
+    // active_assistant_content="<collected>")`: the accumulated stream content
+    // replaces the stored `value` and the status override wins over the row.
+    let subtasks = vec![subtask(
+        "ASSISTANT",
+        "RUNNING",
+        Some(serde_json::json!({"value": "partial"})),
+    )];
+    let active = ActiveAssistant {
+        subtask_id: 100_000_000_000_014,
+        status: "completed",
+        content: "collected text",
+    };
+    let output = build_response_output(&subtasks, &test_config(), Some(active)).expect("builds");
+    assert_eq!(output.len(), 1);
+    let item = serde_json::to_value(&output[0]).unwrap();
+    assert_eq!(item["status"], "completed");
+    assert_eq!(item["content"][0]["text"], "collected text");
+
+    // An override for a different subtask leaves the row untouched.
+    let other = ActiveAssistant {
+        subtask_id: 1,
+        status: "completed",
+        content: "ignored",
+    };
+    let item = serde_json::to_value(
+        &build_response_output(&subtasks, &test_config(), Some(other)).expect("builds")[0],
+    )
+    .unwrap();
+    assert_eq!(item["status"], "in_progress");
+    assert_eq!(item["content"][0]["text"], "partial");
+}
+
+#[test]
+fn active_content_wins_when_a_chain_has_no_message_entry() {
+    // `_build_items_from_messages_chain` final fallback:
+    // `content_override or str(result.get("value") or "")`.
+    let result = serde_json::json!({
+        "value": "stored",
+        "messages_chain": [{
+            "role": "assistant",
+            "tool_calls": [{
+                "id": "call_1",
+                "function": {"name": "exec", "arguments": "{}"}
+            }],
+            "content": ""
+        }],
+        "blocks": [{
+            "id": "call_1", "type": "tool", "status": "done", "tool_name": "exec",
+            "tool_protocol": "shell_call", "tool_use_id": "call_1", "tool_input": {}
+        }]
+    });
+    let subtask = chain_subtask(result);
+    let active = ActiveAssistant {
+        subtask_id: subtask.id,
+        status: "completed",
+        content: "streamed",
+    };
+    let items = build_response_output(std::slice::from_ref(&subtask), &test_config(), Some(active))
+        .expect("builds");
+    let serialized: Vec<Value> = items
+        .iter()
+        .map(|item| serde_json::to_value(item).unwrap())
+        .collect();
+    assert_eq!(serialized[1]["type"], "message");
+    assert_eq!(serialized[1]["content"][0]["text"], "streamed");
 }

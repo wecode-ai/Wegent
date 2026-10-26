@@ -562,6 +562,39 @@ describe('runtimeConversationCache', () => {
     ).toBe('replacement request activity')
   })
 
+  test.each(['abort', 'complete'] as const)(
+    'keeps task history when an overlapping drawer hydration finishes with %s',
+    finish => {
+      const drawerToken = beginRuntimeConversationHydration(address)
+      applyRuntimeConversationAction(address, {
+        type: 'user_added',
+        message: {
+          id: 'follow-up',
+          role: 'user',
+          content: 'Buffered follow up',
+          status: 'done',
+          createdAt: '2026-10-21T00:00:01Z',
+        },
+      })
+      const paneToken = beginRuntimeConversationHydration(address)
+
+      if (finish === 'abort') abortRuntimeConversationHydration(address, drawerToken)
+      else completeRuntimeConversationHydration(address, drawerToken, [])
+
+      const messages = completeRuntimeConversationHydration(address, paneToken, [
+        {
+          id: 'history-turn',
+          createdAt: '2026-10-21T00:00:00Z',
+          items: [{ id: 'history-text', type: 'assistant_text', content: 'History' }],
+          status: 'done',
+        },
+      ])
+
+      expect(messages.map(message => message.content)).toEqual(['History', 'Buffered follow up'])
+      expect(getRuntimeConversationMessages(address)).toBe(messages)
+    }
+  )
+
   test('reconciles buffered completion with the canonical hydration snapshot', () => {
     const hydrationToken = beginRuntimeConversationHydration(address)
     const content = 'Completed while the transcript was loading'
@@ -611,6 +644,23 @@ describe('runtimeConversationCache', () => {
       },
     ])
   })
+
+  test.each(['complete', 'abort'])(
+    'publishes each live action only once when hydration ends with %s',
+    end => {
+      const listener = vi.fn()
+      const unsubscribe = subscribeRuntimeConversation(address, listener)
+      const token = beginRuntimeConversationHydration(address)
+      applyRuntimeConversationAction(address, { type: 'assistant_started', subtaskId: 'turn-once' })
+      if (end === 'complete') completeRuntimeConversationHydration(address, token, [])
+      else abortRuntimeConversationHydration(address, token)
+      expect(listener.mock.calls.map(([action]) => action?.type)).toEqual([
+        'assistant_started',
+        undefined,
+      ])
+      unsubscribe()
+    }
+  )
 
   test('notifies conversation subscribers when the follow-up queue pause changes', () => {
     let notifications = 0

@@ -1,3 +1,4 @@
+import { readRawRequestBody as readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 
 import {
@@ -49,12 +50,6 @@ function completedResponse(id, text) {
       },
     },
   ]
-}
-
-async function readRequestBody(request) {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  return Buffer.concat(chunks).toString('utf8')
 }
 
 async function waitForCloudContextRequest(requestCount, timeoutMs) {

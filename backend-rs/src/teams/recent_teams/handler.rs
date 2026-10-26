@@ -40,11 +40,14 @@ fn quick_access_team(id: i64, user_id: i64, name: &str, team_json: &OpaqueJson) 
     let team = team_json
         .project::<crate::crd::CrdDocument>()
         .unwrap_or_default();
+    // `team.get("displayName") or team.get("display_name")`: the dict only
+    // carries `displayName`, so an empty (or absent) value collapses to null.
     let display_name = team
         .metadata
         .as_ref()
         .and_then(|metadata| metadata.display_name.as_ref())
-        .and_then(brz_json::OpaqueJson::project::<String>);
+        .and_then(brz_json::OpaqueJson::project::<String>)
+        .filter(|display_name| !display_name.is_empty());
     let modes = team
         .spec
         .as_ref()
@@ -62,7 +65,13 @@ fn quick_access_team(id: i64, user_id: i64, name: &str, team_json: &OpaqueJson) 
     };
     RecentTeam {
         id,
-        name: name.to_owned(),
+        // `str(team.get("name") or f"Team {team['id']}")`: an empty name falls
+        // back to the id-derived label.
+        name: if name.is_empty() {
+            format!("Team {id}")
+        } else {
+            name.to_owned()
+        },
         display_name,
         is_system: user_id == 0,
         recommended_mode,
@@ -362,5 +371,15 @@ mod tests {
             quick_access_team(1, 7, "t", &missing_display)["display_name"],
             Value::Null
         );
+    }
+
+    #[test]
+    fn empty_display_name_and_name_use_source_fallbacks() {
+        // `_quick_access_team_from_data`: an empty `displayName` collapses to
+        // null, and an empty team name falls back to `Team {id}`.
+        let payload = json!({"metadata": {"displayName": ""}, "spec": {"bind_mode": ["chat"]}});
+        let team = quick_access_team(77, 0, "", &payload);
+        assert_eq!(team["display_name"], Value::Null);
+        assert_eq!(team["name"], "Team 77");
     }
 }

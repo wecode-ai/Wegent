@@ -19,6 +19,7 @@ import type {
   ComposerFollowUpBehavior,
 } from './composerInputTypes'
 import { primaryComposerSubmitOptions } from './composerInputTypes'
+import { recordComposerDiagnostic } from './composerDiagnostics'
 import {
   browserComposerTransferServices,
   workspacePathReferenceText,
@@ -141,6 +142,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
       },
       focus: () => editorRef.current?.focus(),
       getValue: getLiveValue,
+      captureInsertion: () => editorRef.current?.captureInsertion?.() ?? null,
       insertReference: (reference) => editorRef.current?.insertReference(reference),
       setValue: (nextValue, cursor) => editorRef.current?.setValue(nextValue, cursor),
     }))
@@ -177,6 +179,13 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
         allowEmptySubmit ||
         current.trim() ||
         (!requireText && (attachments.length || codeCommentCount))
+      recordComposerDiagnostic('submit-policy', {
+        hasContent: Boolean(hasContent),
+        isModelSelectionReady,
+        disabled,
+        submitDisabled: Boolean(submitDisabled),
+        valueLength: current.length,
+      })
       if (hasContent && isModelSelectionReady && !disabled && !submitDisabled)
         onSubmit(current, options)
     }

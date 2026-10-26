@@ -154,6 +154,100 @@ fn plugin_archive_retains_original_manifest_without_runtime_cache_changes() {
     assert!(publish_plugin_archive(root.path(), &bytes, None).is_ok());
 }
 
+#[test]
+fn cached_plugin_verification_preserves_healthy_and_corrupt_packages() {
+    let root = tempfile::tempdir().unwrap();
+    let bytes = zip(&[
+        (".claude-plugin/plugin.json", "{\"name\":\"demo\"}"),
+        ("payload.txt", "verified"),
+    ]);
+    let package = publish_plugin_archive(root.path(), &bytes, None).unwrap();
+    let metadata = root
+        .path()
+        .join("shared/metadata")
+        .join(format!("plugins-{}.json", &package.archive_hash[7..]));
+    let original_record = fs::read(&metadata).unwrap();
+    let original_modified = fs::metadata(package.path.join("payload.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    publish_plugin_archive(root.path(), &bytes, Some(&package.archive_hash)).unwrap();
+    assert_eq!(
+        fs::metadata(package.path.join("payload.txt"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        original_modified
+    );
+    assert_eq!(fs::read(&metadata).unwrap(), original_record);
+    fs::write(package.path.join("payload.txt"), "corrupt").unwrap();
+    assert!(publish_plugin_archive(root.path(), &bytes, Some(&package.archive_hash)).is_err());
+    assert!(
+        verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash).is_err()
+    );
+    assert_eq!(
+        fs::read_to_string(package.path.join("payload.txt")).unwrap(),
+        "corrupt"
+    );
+    assert_eq!(fs::read(&metadata).unwrap(), original_record);
+}
+
+#[test]
+fn corrupt_unmanaged_hash_directory_is_not_replaced() {
+    let root = tempfile::tempdir().unwrap();
+    let bytes = zip(&[(".claude-plugin/plugin.json", "{\"name\":\"demo\"}")]);
+    let destination = root
+        .path()
+        .join("shared/plugins")
+        .join(&archive_hash(&bytes)[7..]);
+    fs::create_dir_all(&destination).unwrap();
+    fs::write(destination.join("user-data"), "keep").unwrap();
+    assert!(publish_plugin_archive(root.path(), &bytes, None).is_err());
+    assert_eq!(
+        fs::read_to_string(destination.join("user-data")).unwrap(),
+        "keep"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn plugin_cache_rejects_symbolic_store_paths_and_preserves_outside_data() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let bytes = zip(&[(".claude-plugin/plugin.json", "{\"name\":\"demo\"}")]);
+    fs::create_dir_all(root.path().join("shared")).unwrap();
+    fs::write(outside.path().join("user-data"), "keep").unwrap();
+    std::os::unix::fs::symlink(outside.path(), root.path().join("shared/plugins")).unwrap();
+    assert!(publish_plugin_archive(root.path(), &bytes, None).is_err());
+    assert_eq!(
+        fs::read_to_string(outside.path().join("user-data")).unwrap(),
+        "keep"
+    );
+    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 1);
+    assert!(
+        verify_published_package(root.path(), PackageKind::Plugin, &archive_hash(&bytes)).is_err()
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn plugin_cache_rejects_symbolic_integrity_records() {
+    let root = tempfile::tempdir().unwrap();
+    let package = plugin_fixture(root.path());
+    let record = root
+        .path()
+        .join("shared/metadata")
+        .join(format!("plugins-{}.json", &package.archive_hash[7..]));
+    let outside = root.path().join("original-record.json");
+    fs::rename(&record, &outside).unwrap();
+    let original = fs::read(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, &record).unwrap();
+    assert!(
+        verify_published_package(root.path(), PackageKind::Plugin, &package.archive_hash).is_err()
+    );
+    assert_eq!(fs::read(&outside).unwrap(), original);
+}
+
 fn plugin_fixture(root: &Path) -> PublishedPackage {
     publish_plugin_archive(
         root,

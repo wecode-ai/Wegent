@@ -36,6 +36,7 @@ export interface WorkbenchDebugSnapshot {
   idleTasks: ReturnType<typeof getIdleTaskSchedulerDiagnostics>
   updatedAt: string
   workbench: {
+    publishedAt: string
     isBootstrapping: boolean
     error: string | null
     currentProject: WorkbenchState['currentProject']
@@ -262,7 +263,7 @@ const MEMORY_ESTIMATE_NODE_LIMIT = 20_000
 const TOP_TOOL_OUTPUT_LIMIT = 8
 const DEBUG_PANEL_ID = 'wework-debug-panel'
 const RUNTIME_MEMORY_DIAGNOSTICS_STORAGE_KEY = 'wework:debug-runtime-memory'
-export const DEBUG_SNAPSHOT_DEBOUNCE_MS = 100
+export const DEBUG_SNAPSHOT_INTERVAL_MS = 100
 
 let installed = false
 let debugLogSequence = 0
@@ -302,6 +303,7 @@ export function updateWorkbenchDebugSnapshot({
     : null
   const lifecycleCurrentTaskRunning = activeLifecycle?.derived.isRunning ?? false
   workbenchSnapshot = {
+    publishedAt: new Date().toISOString(),
     isBootstrapping: state.isBootstrapping,
     error: state.error,
     currentProject: state.currentProject,
@@ -529,6 +531,17 @@ function emptyRuntimePaneMemoryDiagnostics(): RuntimePaneMemoryDiagnostics {
   }
 }
 
+function runtimeTaskThreadId(
+  task: Pick<RuntimeTaskAddress, 'threadId' | 'runtimeHandle'>
+): string | null {
+  const threadId = [
+    task.threadId,
+    task.runtimeHandle?.threadId,
+    task.runtimeHandle?.thread_id,
+  ].find(value => typeof value === 'string' && value.trim())
+  return typeof threadId === 'string' ? threadId.trim() : null
+}
+
 function sanitizeRuntimeTaskAddress(
   address: RuntimeTaskAddress | null
 ): RuntimeTaskAddressDebug | null {
@@ -537,7 +550,7 @@ function sanitizeRuntimeTaskAddress(
   return {
     deviceId: address.deviceId,
     taskId: address.taskId,
-    threadId: address.threadId ?? null,
+    threadId: runtimeTaskThreadId(address),
     workspacePath: address.workspacePath ?? null,
     hasRuntimeHandle: Boolean(address.runtimeHandle),
     runtimeHandleKeys: address.runtimeHandle ? Object.keys(address.runtimeHandle).sort() : [],
@@ -551,14 +564,9 @@ function sanitizeRuntimeTaskSummary(
 ): RuntimeTaskSummaryDebug | null {
   if (!task) return null
   const runtimeHandleEstimate = estimateApproxChars(task.runtimeHandle)
-  const runtimeHandleThreadId = [task.runtimeHandle?.threadId, task.runtimeHandle?.thread_id].find(
-    value => typeof value === 'string' && value.trim()
-  )
   return {
     taskId: task.taskId,
-    threadId:
-      task.threadId ??
-      (typeof runtimeHandleThreadId === 'string' ? runtimeHandleThreadId.trim() : null),
+    threadId: runtimeTaskThreadId(task),
     workspacePath: task.workspacePath,
     workspaceKind: task.workspaceKind ?? null,
     worktreeId: task.worktreeId ?? null,

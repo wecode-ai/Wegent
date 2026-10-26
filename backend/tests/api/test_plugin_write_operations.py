@@ -7,7 +7,7 @@ import zipfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import FastAPI
@@ -65,6 +65,7 @@ class PluginRequests:
     release_id: int
     upgraded_release_id: int
     remote_calls: list[str]
+    targeted_calls: list[int]
     installed_id: int | None = None
 
     def seed_update(self) -> None:
@@ -187,6 +188,7 @@ def plugin_requests(tmp_path, monkeypatch):
             visibility="workspace",
         )
     remote_calls: list[str] = []
+    targeted_calls: list[int] = []
 
     def device_result(db, *, report_plugins: bool) -> DeviceCapabilitySyncResult:
         rows = db.query(Kind).filter_by(
@@ -225,6 +227,15 @@ def plugin_requests(tmp_path, monkeypatch):
         with sessions() as db:
             return device_result(db, report_plugins=True)
 
+    async def changed_sync(
+        _service, db, *, user_id, installed_plugin_id, current_device_id
+    ):
+        assert user_id == user.id
+        assert current_device_id in {DEVICE_ID, None}
+        targeted_calls.append(installed_plugin_id)
+        # Preserve the legacy device ACK and its targeted retry behavior.
+        return await global_sync(db, user_id=user_id)
+
     monkeypatch.setattr(
         device_service,
         "get_all_devices",
@@ -234,6 +245,10 @@ def plugin_requests(tmp_path, monkeypatch):
     monkeypatch.setattr(sync_service, "sync_user_global_capabilities", global_sync)
     monkeypatch.setattr(sync_service, "sync_installed_plugin_to_device", plugin_sync)
     monkeypatch.setattr(sync_service, "sync_current_device_capabilities", current_sync)
+    monkeypatch.setattr(
+        "app.services.device.plugin_change_sync.sync_changed_plugin_to_devices",
+        changed_sync,
+    )
 
     def request_db():
         with sessions() as db:
@@ -253,6 +268,7 @@ def plugin_requests(tmp_path, monkeypatch):
                 releases[0].id,
                 releases[1].id,
                 remote_calls,
+                targeted_calls,
             )
     finally:
         engine.dispose()
@@ -286,6 +302,9 @@ def test_normal_account_write_materializes_the_device(plugin_requests, entry):
     assert "plugin" in context.remote_calls
     if entry == "legacy":
         assert context.remote_calls == ["plugin"]
+        assert context.targeted_calls == []
+    else:
+        assert context.targeted_calls == [account.id]
     if entry != "legacy":
         with context.sessions() as db:
             device = (
@@ -297,7 +316,7 @@ def test_normal_account_write_materializes_the_device(plugin_requests, entry):
             assert device.actual_release_id == account.json["spec"]["releaseId"]
 
 
-def test_uploaded_plugin_update_keeps_global_sync_scope(plugin_requests):
+def test_uploaded_plugin_update_targets_the_changed_plugin(plugin_requests):
     context = plugin_requests
     with context.sessions() as db:
         installed = installed_plugin_service.upload_plugin(
@@ -312,6 +331,7 @@ def test_uploaded_plugin_update_keeps_global_sync_scope(plugin_requests):
 
     assert response.status_code == 200, response.text
     assert_account_write(context, "state")
+    assert context.targeted_calls == [context.installed_id]
     assert context.remote_calls == ["global", "plugin"]
 
 
@@ -431,3 +451,83 @@ def test_device_coordination_failure_preserves_account_commit_and_recovers(
             assert devices[0].state == "installed"
             assert devices[0].actual_release_id == account.json["spec"]["releaseId"]
     assert assert_account_write(context, entry).json == account.json
+
+
+@pytest.mark.parametrize(
+    ("entry", "device_id"),
+    [(entry, DEVICE_ID) for entry in ENTRIES] + [("legacy", None)],
+)
+@pytest.mark.parametrize(
+    "code", (*FAULT_CODES, "plugin_write_lease_lost", "plugin_write_conflict")
+)
+def test_snapshot_coordination_failure_preserves_commit_without_retrying_device(
+    plugin_requests, monkeypatch, entry, device_id, code
+):
+    context = plugin_requests
+    if entry in {"release", "state"}:
+        context.seed_update()
+    with context.sessions.begin() as db:
+        unrelated = Kind(
+            user_id=context.user_id,
+            kind="InstalledPlugin",
+            namespace="default",
+            name="unrelated-removal",
+            is_active=False,
+            json={"spec": {"installState": "uninstalled"}},
+        )
+        db.add(unrelated)
+        db.flush()
+        pending = PluginDeviceInstallation(
+            user_id=context.user_id,
+            installed_kind_id=unrelated.id,
+            device_id=DEVICE_ID,
+            desired_release_id=context.release_id,
+            actual_release_id=context.release_id,
+            state="uninstalling",
+            attempt_count=2,
+            error_message="previous removal failed",
+        )
+        db.add(pending)
+        db.flush()
+        unrelated_id = pending.id
+
+    async def reject_snapshot(*_args, **_kwargs):
+        assert_account_write(context, entry)
+        raise PluginWriteError(code)
+
+    snapshot = AsyncMock(side_effect=reject_snapshot)
+    record = Mock(wraps=installations.record_sync_response)
+    record_plugin = Mock(wraps=installations.record_plugin_sync_response)
+    monkeypatch.setattr(
+        "app.services.device.plugin_change_sync.sync_changed_plugin_to_devices",
+        snapshot,
+    )
+    monkeypatch.setattr(
+        endpoints.device_capability_sync_service,
+        "sync_installed_plugin_to_device",
+        snapshot,
+    )
+    monkeypatch.setattr(installations, "record_sync_response", record)
+    monkeypatch.setattr(installations, "record_plugin_sync_response", record_plugin)
+
+    response = context.write(entry, device_id=device_id)
+
+    assert response.status_code == 200, response.text
+    assert_account_write(context, entry)
+    snapshot.assert_awaited_once()
+    record.assert_not_called()
+    record_plugin.assert_not_called()
+    assert context.remote_calls == []
+    if entry in {"marketplace", "builtin", "legacy"}:
+        sync = response.json()["sync"]
+        assert sync["success"] is False
+        assert sync["failed"] >= 1
+        assert sync["errors"] == [{"code": code, "stage": "snapshot"}]
+    with context.sessions() as db:
+        pending = db.get(PluginDeviceInstallation, unrelated_id)
+        assert pending is not None
+        assert pending.state == "uninstalling"
+        assert pending.actual_release_id == context.release_id
+        assert pending.desired_release_id == context.release_id
+        assert pending.attempt_count == 2
+        assert pending.error_message == "previous removal failed"

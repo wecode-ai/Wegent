@@ -16,6 +16,13 @@ struct BindingRow {
     resource_members_entity_type: String,
     resource_members_entity_id: String,
 }
+/// `NamespaceEntityResolver.get_resource_ids_by_entity`'s per-type read: only
+/// `(resource_id, entity_id)` are projected.
+#[derive(FromMysqlRow)]
+struct ExternalBindingRow {
+    resource_members_resource_id: i64,
+    resource_members_entity_id: String,
+}
 #[async_trait]
 impl<R: Redis> EntityResolver<R> for NamespaceResolver {
     async fn match_bindings(
@@ -70,12 +77,13 @@ impl<R: Redis> EntityResolver<R> for NamespaceResolver {
             .collect();
 
         // 2) Entity-derived memberships: namespaces whose non-user entity
-        //    bindings the user matches.
+        //    bindings the user matches. `NamespaceEntityResolver.get_resource_ids_by_entity`
+        //    projects only `(resource_id, entity_id)` and delegates each
+        //    external type to its resolver (`namespace_entity_resolver.py:177-220`).
         for other in registry.external_types() {
-            let pairs: Vec<BindingRow> = mysql
+            let pairs: Vec<ExternalBindingRow> = mysql
                 .fetch_all(
                     "SELECT resource_members.resource_id AS resource_members_resource_id, \
-                     resource_members.entity_type AS resource_members_entity_type, \
                      resource_members.entity_id AS resource_members_entity_id \n\
                      FROM resource_members \n\
                      WHERE resource_members.resource_type = 'Namespace' \
