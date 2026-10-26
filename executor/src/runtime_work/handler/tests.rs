@@ -5832,9 +5832,8 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
 
 #[tokio::test]
 async fn create_task_keeps_board_comment_session_persistent_across_store_reload() {
-    let index_path = temp_runtime_work_index_path("create-board-comment-task");
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let (handler, root) = isolated_runtime_work_handler("create-board-comment-task");
+    let index_path = handler.store.index_path().to_path_buf();
 
     handler
         .handle_runtime_rpc(json!({
@@ -5870,7 +5869,7 @@ async fn create_task_keeps_board_comment_session_persistent_across_store_reload(
         })
     );
 
-    let _ = fs::remove_file(index_path);
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
