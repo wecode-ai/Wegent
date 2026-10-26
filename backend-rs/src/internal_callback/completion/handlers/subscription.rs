@@ -70,8 +70,7 @@ pub(crate) async fn handle_task_completed<M: Mysql, R: Redis>(
         completed.execution.status.as_str(),
         "COMPLETED" | "COMPLETED_SILENT"
     ) && completed.subscription.is_some()
-    {
-        if let Err(error) = mysql
+        && let Err(error) = mysql
             .with_transaction(async |transaction| {
                 // A new round can start after the status transaction commits.
                 // Recheck under the same locks held throughout runtime deletion.
@@ -91,9 +90,8 @@ pub(crate) async fn handle_task_completed<M: Mysql, R: Redis>(
                 .await
             })
             .await
-        {
-            tracing::error!(execution_id, task_id=event.task_id, %error, "subscription executor cleanup failed after completion");
-        }
+    {
+        tracing::error!(execution_id, task_id=event.task_id, %error, "subscription executor cleanup failed after completion");
     }
     if completed.notify {
         let kwargs = serde_json::Map::from_iter([("execution_id".to_owned(), execution_id.into())]);

@@ -384,11 +384,8 @@ async fn current_round_rows(execution_id: i64, subtask_id: i64) -> [MysqlRow; 2]
 async fn completed_subscription_callback_writes_execution_terminal_state() {
     let capture = TransactionCapture::default();
     let row = execution_row().await;
-    capture
-        .rows
-        .lock()
-        .unwrap()
-        .extend(current_round_rows(11, 33).await);
+    let rows = current_round_rows(11, 33).await;
+    capture.rows.lock().unwrap().extend(rows);
     capture.rows.lock().unwrap().push_back(row);
     let redis = NoRedis::default();
     let manager = manager();
@@ -580,11 +577,8 @@ async fn subscription_completion_cleans_runtime_and_marks_subtasks_after_commit(
 #[tokio::test]
 async fn the_task_completion_reads_run_inside_one_transaction() {
     let capture = TransactionCapture::default();
-    capture
-        .rows
-        .lock()
-        .unwrap()
-        .extend(current_round_rows(11, 33).await);
+    let rows = current_round_rows(11, 33).await;
+    capture.rows.lock().unwrap().extend(rows);
     let redis = NoRedis::default();
     let manager = manager();
     let celery = crate::CeleryBroker::new(None);

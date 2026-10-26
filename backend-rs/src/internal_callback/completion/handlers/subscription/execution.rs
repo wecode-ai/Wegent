@@ -195,25 +195,25 @@ pub(super) async fn complete<T: MysqlTransaction>(
         .map(|row| row.get_required::<Json<Value>>("json"))
         .transpose()?
         .map(|json| json.0);
-    if let Some(subscription) = subscription.as_mut() {
-        if update_statistics(
+    if let Some(subscription) = subscription.as_mut()
+        && update_statistics(
             subscription,
             status,
             &now.to_string().replace(' ', "T"),
             summary,
             error,
-        ) {
-            transaction
-                .execute(
-                    sql::update_kind_json(),
-                    (
-                        Json(subscription.clone()),
-                        super::local_datetime(super::now_local()),
-                        execution.subscription_id,
-                    ),
-                )
-                .await?;
-        }
+        )
+    {
+        transaction
+            .execute(
+                sql::update_kind_json(),
+                (
+                    Json(subscription.clone()),
+                    super::local_datetime(super::now_local()),
+                    execution.subscription_id,
+                ),
+            )
+            .await?;
     }
     write_inbox(transaction, &execution, event, &datetime, now).await?;
     let mut payload = json!({
