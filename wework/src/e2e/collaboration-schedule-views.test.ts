@@ -1,7 +1,5 @@
-import { afterEach, expect, test, vi } from 'vitest'
+import { expect, test } from 'vitest'
 import { verifyCollaborationScheduleViews } from '../../e2e/desktop/modules/collaboration-schedule-views.mjs'
-
-afterEach(() => vi.useRealTimers())
 
 test.each([
   {
@@ -23,8 +21,6 @@ test.each([
     initiallyVisible: false,
   },
 ])('shows calendar target $target without navigating past it', async fixture => {
-  vi.useFakeTimers({ toFake: ['Date'] })
-  vi.setSystemTime(fixture.today)
   let monthAdvances = 0
   const dragReached = new Error('Calendar is ready for the drag assertion')
   const targetVisible = () => (fixture.initiallyVisible ? monthAdvances === 0 : monthAdvances === 1)
@@ -55,6 +51,7 @@ test.each([
       capture: async () => {},
       control,
       issueTitle: 'Calendar range regression',
+      now: fixture.today,
       scoped: (selector: string) => selector,
       timeoutMs: 1000,
     })

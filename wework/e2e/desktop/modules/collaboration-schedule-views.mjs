@@ -13,8 +13,8 @@ function addDays(value, days) {
   return next
 }
 
-function nextMonday() {
-  const today = new Date()
+function nextMonday(now) {
+  const today = new Date(now)
   today.setHours(12, 0, 0, 0)
   const daysUntilMonday = (8 - today.getDay()) % 7 || 7
   return addDays(today, daysUntilMonday)
@@ -42,13 +42,14 @@ export async function verifyCollaborationScheduleViews({
   capture,
   control,
   issueTitle,
+  now = new Date(),
   scoped,
   timeoutMs,
 }) {
   await control.command('setMainWindowSize', 'body', {
     value: JSON.stringify({ width: 1440, height: 900 }),
   })
-  const initialStart = nextMonday()
+  const initialStart = nextMonday(now)
   const initialEnd = addDays(initialStart, 2)
   const calendarStart = addDays(initialStart, 7)
   const calendarEnd = addDays(calendarStart, 2)

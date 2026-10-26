@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict'
-import { afterEach, expect, test, vi } from 'vitest'
+import { expect, test } from 'vitest'
 import { verifyCollaborationScheduleViews } from '../e2e/desktop/modules/collaboration-schedule-views.mjs'
-
-afterEach(() => vi.useRealTimers())
 
 test.each([
   {
@@ -28,8 +26,6 @@ test.each([
     ],
   },
 ])('keeps the target date visible when scheduling from $today', async fixture => {
-  vi.useFakeTimers({ toFake: ['Date'] })
-  vi.setSystemTime(new Date(fixture.today))
   let navigations = 0
   let rangeIndex = 0
   const target = `collaboration-calendar-day-${fixture.target}`
@@ -54,6 +50,7 @@ test.each([
     capture: async () => {},
     control,
     issueTitle: 'Calendar navigation regression',
+    now: new Date(fixture.today),
     scoped: selector => selector,
     timeoutMs: 100,
   })
