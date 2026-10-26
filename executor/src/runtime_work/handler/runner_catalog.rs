@@ -1,4 +1,5 @@
 use super::*;
+use sha2::{Digest, Sha256};
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn runner_catalog(&self) -> Result<Value, AppIpcError> {
@@ -53,7 +54,7 @@ impl RuntimeWorkRpcHandler {
                         runtimes.push("claude_code");
                         models.extend(claude_models);
                     }
-                    Err(_) => errors.push("claude_provider_required"),
+                    Err(_) => errors.push("claude_catalog_invalid"),
                 },
                 Err(_) => errors.push("claude_catalog_invalid"),
             },
@@ -66,14 +67,19 @@ impl RuntimeWorkRpcHandler {
 
 fn claude_runner_models(settings: &Value) -> Result<Vec<Value>, AppIpcError> {
     let env = settings.get("env").unwrap_or(&Value::Null);
-    let provider = env.get("WEGENT_CLAUDE_PROVIDER_ID").and_then(Value::as_str);
-    if provider.is_none() && env.get("ANTHROPIC_BASE_URL").is_some() {
-        return Err(AppIpcError::new(
-            "runner_provider_required",
-            "Set WEGENT_CLAUDE_PROVIDER_ID for a custom Claude provider",
-        ));
-    }
-    let provider = provider.unwrap_or("anthropic");
+    let explicit_provider = env
+        .get("WEGENT_CLAUDE_PROVIDER_ID")
+        .and_then(Value::as_str)
+        .filter(|provider| !provider.trim().is_empty());
+    let provider = match explicit_provider {
+        Some(provider) => provider.to_owned(),
+        None => claude_endpoint_provider(env)?,
+    };
+    let account_label = explicit_provider.unwrap_or(if provider == "anthropic" {
+        "anthropic"
+    } else {
+        "Claude"
+    });
     let default = settings
         .get("model")
         .or_else(|| env.get("ANTHROPIC_MODEL"))
@@ -97,11 +103,39 @@ fn claude_runner_models(settings: &Value) -> Result<Vec<Value>, AppIpcError> {
         .map(|id| {
             json!({
                 "runtime": "claude_code", "provider": provider, "model_id": id,
-                "local_model_id": id, "label": id, "account_label": provider,
+                "local_model_id": id, "label": id, "account_label": account_label,
                 "is_default": default == Some(id),
             })
         })
         .collect())
+}
+
+fn claude_endpoint_provider(env: &Value) -> Result<String, AppIpcError> {
+    let Some(endpoint) = env
+        .get("ANTHROPIC_BASE_URL")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|endpoint| !endpoint.is_empty())
+    else {
+        return Ok("anthropic".to_owned());
+    };
+    let invalid_endpoint =
+        || AppIpcError::new("claude_catalog_invalid", "Invalid Claude service URL");
+    let mut url = url::Url::parse(endpoint).map_err(|_| invalid_endpoint())?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err(invalid_endpoint());
+    }
+    let path = url.path().trim_end_matches('/').to_owned();
+    url.set_path(&path);
+    url.set_fragment(None);
+    url.set_username("").map_err(|_| invalid_endpoint())?;
+    url.set_password(None).map_err(|_| invalid_endpoint())?;
+    let endpoint = url.as_str();
+    if endpoint == "https://api.anthropic.com/" {
+        return Ok("anthropic".to_owned());
+    }
+    // Keep endpoint details out of the reported model identity and account label.
+    Ok(format!("claude:{:x}", Sha256::digest(endpoint.as_bytes())))
 }
 
 #[cfg(test)]
@@ -122,10 +156,142 @@ mod tests {
     }
 
     #[test]
-    fn custom_claude_provider_requires_stable_identity() {
-        assert!(claude_runner_models(
-            &json!({"env": {"ANTHROPIC_BASE_URL": "https://example.com"}})
-        )
-        .is_err());
+    fn custom_claude_catalog_does_not_require_a_provider_id() {
+        let models = claude_runner_models(&json!({"model": "model-a", "env": {
+            "ANTHROPIC_BASE_URL": "https://user:private-password@gateway.example/claude?token=private-query",
+            "ANTHROPIC_AUTH_TOKEN": "private-token",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "model-b"
+        }}))
+        .unwrap();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0]["runtime"], "claude_code");
+        assert_eq!(models[0]["model_id"], "model-a");
+        assert_eq!(models[0]["is_default"], true);
+        assert_eq!(models[1]["is_default"], false);
+        assert_eq!(models[0]["provider"], models[1]["provider"]);
+        assert!(models[0]["provider"]
+            .as_str()
+            .unwrap()
+            .starts_with("claude:"));
+        assert_eq!(models[0]["account_label"], "Claude");
+        let report = serde_json::to_string(&models).unwrap();
+        for private in [
+            "gateway.example",
+            "private-password",
+            "private-query",
+            "private-token",
+        ] {
+            assert!(!report.contains(private));
+        }
+    }
+
+    #[test]
+    fn claude_provider_identity_normalizes_equivalent_endpoints() {
+        let expected = claude_endpoint_provider(&json!({
+            "ANTHROPIC_BASE_URL": "https://gateway.example/claude"
+        }))
+        .unwrap();
+        for endpoint in [
+            "https://GATEWAY.EXAMPLE:443/claude",
+            "https://gateway.example/claude/",
+            " https://gateway.example/claude#fragment ",
+        ] {
+            assert_eq!(
+                claude_endpoint_provider(&json!({"ANTHROPIC_BASE_URL": endpoint})).unwrap(),
+                expected
+            );
+        }
+        for endpoint in [
+            "http://gateway.example/claude",
+            "https://other.example/claude",
+            "https://gateway.example:8443/claude",
+            "https://gateway.example/other",
+            "https://gateway.example/Claude",
+            "https://gateway.example/claude?route=other",
+        ] {
+            assert_ne!(
+                claude_endpoint_provider(&json!({"ANTHROPIC_BASE_URL": endpoint})).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn claude_provider_identity_preserves_query_path_separators() {
+        let provider =
+            |endpoint| claude_endpoint_provider(&json!({"ANTHROPIC_BASE_URL": endpoint})).unwrap();
+        assert_ne!(
+            provider("https://gateway.example/claude?route=tenant"),
+            provider("https://gateway.example/claude?route=tenant/")
+        );
+    }
+
+    #[test]
+    fn claude_provider_identity_excludes_url_credentials() {
+        let provider =
+            |endpoint| claude_endpoint_provider(&json!({"ANTHROPIC_BASE_URL": endpoint})).unwrap();
+        let expected = provider("https://gateway.example/claude?route=tenant");
+        for endpoint in [
+            "https://user:first-password@gateway.example/claude?route=tenant",
+            "https://user:rotated-password@gateway.example/claude?route=tenant",
+            "https://other-user@gateway.example/claude?route=tenant",
+        ] {
+            assert_eq!(provider(endpoint), expected);
+        }
+    }
+
+    #[test]
+    fn claude_official_service_keeps_its_provider_identity() {
+        for env in [
+            json!({}),
+            json!({"ANTHROPIC_BASE_URL": ""}),
+            json!({"ANTHROPIC_BASE_URL": "https://API.ANTHROPIC.COM:443/"}),
+            json!({"ANTHROPIC_BASE_URL": "https://user:password@api.anthropic.com/"}),
+        ] {
+            let models = claude_runner_models(&json!({"model": "model-a", "env": env})).unwrap();
+            assert_eq!(models[0]["provider"], "anthropic");
+        }
+    }
+
+    #[test]
+    fn claude_catalog_preserves_an_explicit_provider_identity() {
+        let models = claude_runner_models(&json!({"model": "model-a", "env": {
+            "ANTHROPIC_BASE_URL": "https://gateway.example",
+            "WEGENT_CLAUDE_PROVIDER_ID": "company-gateway"
+        }}))
+        .unwrap();
+        assert_eq!(models[0]["provider"], "company-gateway");
+        assert_eq!(models[0]["account_label"], "company-gateway");
+    }
+
+    #[test]
+    fn claude_catalog_derives_an_identity_for_an_empty_provider_id() {
+        for provider in ["", "   "] {
+            let models = claude_runner_models(&json!({"model": "model-a", "env": {
+                "ANTHROPIC_BASE_URL": "https://gateway.example",
+                "WEGENT_CLAUDE_PROVIDER_ID": provider
+            }}))
+            .unwrap();
+            assert!(models[0]["provider"]
+                .as_str()
+                .unwrap()
+                .starts_with("claude:"));
+        }
+    }
+
+    #[test]
+    fn claude_catalog_still_rejects_invalid_service_urls() {
+        for endpoint in [
+            "invalid-url",
+            "file:///tmp/claude",
+            "mailto:private@example.com",
+        ] {
+            let error = claude_runner_models(&json!({"model": "model-a", "env": {
+                "ANTHROPIC_BASE_URL": endpoint
+            }}))
+            .unwrap_err();
+            assert_eq!(error.code, "claude_catalog_invalid");
+            assert!(!error.message.contains(endpoint));
+        }
     }
 }
