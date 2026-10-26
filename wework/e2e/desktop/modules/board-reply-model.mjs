@@ -32,7 +32,7 @@ async function requestJson(cloud, path, options = {}) {
   return body
 }
 
-async function verifyMemberReply(cloud, issue, rootId) {
+async function verifyMemberReply(cloud, issue, rootId, deviceId) {
   const privateAgent = await requestJson(
     cloud,
     `/api/v1/cloud-projects/${cloud.projectId}/chat-agents`,
@@ -113,13 +113,33 @@ async function verifyMemberReply(cloud, issue, rootId) {
       mentions: [],
     })
     assert.equal(sent.ok, true)
-    const execution = await socket
-      .timeout(10_000)
-      .emitWithAck('wework:project_chat:comment:execute', {
+    const execute = () =>
+      socket.timeout(10_000).emitWithAck('wework:project_chat:comment:execute', {
         projectId: cloud.projectId,
         taskId: issue.id,
         triggerMessageId: sent.result.messageId,
       })
+    const denied = await execute()
+    assert.equal(denied.ok, false, 'An owner-only device must reject member continuation')
+    assert.equal(denied.error?.code, 'SCOPE_FORBIDDEN')
+    assert.equal(denied.error?.message, 'Comment execution authorization is revoked')
+
+    const project = await requestJson(cloud, `/api/v1/cloud-projects/${cloud.projectId}`)
+    await requestJson(cloud, `/api/v1/cloud-projects/${cloud.projectId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        version: project.version,
+        device_access_change: { device_id: deviceId, scope: 'members', member_ids: [member.id] },
+      }),
+    })
+    const environments = await requestJson(
+      memberCloud,
+      `/api/v1/cloud-projects/${cloud.projectId}/execution-environments`
+    )
+    const environment = environments.items.find(item => item.device_id === deviceId)
+    assert.deepEqual(environment?.use_access, { scope: 'members', member_ids: [member.id] })
+    assert.equal(environment.can_use, true, 'The selected member must be allowed to use the device')
+    const execution = await execute()
     assert.equal(execution.ok, true, execution.error?.message)
     return memberCloud
   } finally {
@@ -309,6 +329,7 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
           environment.device_key,
           'The project execution environment must have a device key'
         )
+        assert.deepEqual(environment.use_access, { scope: 'owner', member_ids: [] })
         const configured = await requestJson(
           cloud,
           `/api/v1/cloud-projects/${cloud.projectId}/chat-agents/${agent.id}`,
@@ -418,7 +439,7 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
           persisted.map(run => run.messageId),
           [initialRun.messageId, replyRun.messageId]
         )
-        const memberCloud = await verifyMemberReply(cloud, issue, rootId)
+        const memberCloud = await verifyMemberReply(cloud, issue, rootId, device.id)
         const [memberRun] = await readPersistedExecutions(
           memberCloud,
           issue.id,
