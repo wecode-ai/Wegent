@@ -209,7 +209,7 @@ async fn update_target<M: Mysql>(
         id: String,
         #[mysql(rename = "loop_items_metadata")]
         metadata: Option<Json<brz_json::OpaqueJson>>,
-        #[mysql(rename = "anon_1_priority")]
+        #[mysql(rename = "anon_3_priority")]
         priority: i64,
     }
     let statement = project_access_point_statement(user_id, project_id);

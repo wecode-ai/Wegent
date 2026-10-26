@@ -120,6 +120,7 @@ export interface ScrollableMessageAreaProps extends Pick<
   autoScrollSuspended?: boolean
   searchTarget?: ConversationSearchTarget | null
   searchNavigationPaused?: boolean
+  onSearchNavigationFailure?: (target: ConversationSearchTarget) => void
   onLoadMoreBefore?: () => Promise<void> | void
   onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
@@ -214,6 +215,9 @@ export function areScrollableMessageAreaPropsEqual(
     previous.searchTarget !== next.searchTarget ? 'searchTarget' : null,
     previous.searchNavigationPaused !== next.searchNavigationPaused
       ? 'searchNavigationPaused'
+      : null,
+    previous.onSearchNavigationFailure !== next.onSearchNavigationFailure
+      ? 'onSearchNavigationFailure'
       : null,
     previous.onLoadMoreBefore !== next.onLoadMoreBefore ? 'onLoadMoreBefore' : null,
     previous.onLoadTurnNavigationItem !== next.onLoadTurnNavigationItem

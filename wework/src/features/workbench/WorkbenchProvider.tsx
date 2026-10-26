@@ -1,3 +1,5 @@
+import { useScopedDraftInput } from './useScopedDraftInput'
+import { useDebugSnapshotPublisher } from './useDebugSnapshotPublisher'
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
 import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
@@ -15,7 +17,7 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { updateWorkbenchDebugSnapshot, DEBUG_SNAPSHOT_DEBOUNCE_MS } from '@/lib/debugPanel'
+import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { createConversationMentionReference } from '@/lib/conversation-mentions'
@@ -155,7 +157,6 @@ import {
   getRuntimeConversationMetadata,
   isRuntimeGoalSnapshotCurrent,
   markRuntimeConversationAssistantStarted,
-  publishRuntimeTransportReplaced,
   reconcileRuntimeConversationSnapshot,
   runtimeConversationKey,
   setRuntimeConversationTaskPlan,
@@ -238,6 +239,7 @@ export function WorkbenchProvider({
   syncCoreDshModels = false,
   syncRemoteProjects = true,
   syncRuntimeTaskLifecycle = true,
+  workspaceTabRevealRevision = 0,
 }: WorkbenchProviderProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
@@ -442,7 +444,11 @@ export function WorkbenchProvider({
     currentRuntimeTask: state.currentRuntimeTask,
     standaloneChatKey: state.standaloneChatKey,
   })
-  const [draftInputByScope, setDraftInputByScope] = useState<Record<string, string>>(() =>
+  const {
+    inputs: draftInputByScope,
+    setInput: writeDraftInputForScope,
+    getRevision: getInputRevisionForScope,
+  } = useScopedDraftInput(() =>
     workspaceTabId ? (consumeWorkspaceTabTransfer(workspaceTabId)?.draftInputByScope ?? {}) : {}
   )
   const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
@@ -475,36 +481,32 @@ export function WorkbenchProvider({
     },
     [projectChatScopeKey]
   )
-  const setDraftInputForScope = useCallback((scopeKey: string, value: string) => {
-    setDraftInputByScope(current => {
-      if ((current[scopeKey] ?? '') === value) return current
-      if (!value && current[scopeKey] === undefined) return current
-      const next = { ...current }
-      if (value) next[scopeKey] = value
-      else delete next[scopeKey]
-      return next
-    })
-    if (!value.trim()) {
-      setTrialTemplatesByScope(current => {
-        if (!current[scopeKey]) return current
-        const next = { ...current }
-        delete next[scopeKey]
-        return next
-      })
-      setTrialPluginNameByScope(current => {
-        if (!current[scopeKey]) return current
-        const next = { ...current }
-        delete next[scopeKey]
-        return next
-      })
-      setTrialPluginAppByScope(current => {
-        if (!current[scopeKey]) return current
-        const next = { ...current }
-        delete next[scopeKey]
-        return next
-      })
-    }
-  }, [])
+  const setDraftInputForScope = useCallback(
+    (scopeKey: string, value: string) => {
+      writeDraftInputForScope(scopeKey, value)
+      if (!value.trim()) {
+        setTrialTemplatesByScope(current => {
+          if (!current[scopeKey]) return current
+          const next = { ...current }
+          delete next[scopeKey]
+          return next
+        })
+        setTrialPluginNameByScope(current => {
+          if (!current[scopeKey]) return current
+          const next = { ...current }
+          delete next[scopeKey]
+          return next
+        })
+        setTrialPluginAppByScope(current => {
+          if (!current[scopeKey]) return current
+          const next = { ...current }
+          delete next[scopeKey]
+          return next
+        })
+      }
+    },
+    [writeDraftInputForScope]
+  )
   const setDraftInput = useCallback(
     (value: string) => {
       setDraftInputForScope(projectChatScopeKey, value)
@@ -552,7 +554,7 @@ export function WorkbenchProvider({
   }, [projectChatScopeKey, trialPluginName])
   const applyQueuedPluginTrial = useCallback(
     (scopeKey: string, trial: NonNullable<ReturnType<typeof consumePluginTrial>>) => {
-      setDraftInputByScope(current => ({ ...current, [scopeKey]: trial.input }))
+      setDraftInputForScope(scopeKey, trial.input)
       const showGuide =
         trial.pluginName.trim().length > 0 &&
         shouldShowPluginTrialGuide(trial.pluginName, scopeKey) &&
@@ -594,7 +596,7 @@ export function WorkbenchProvider({
         return next
       })
     },
-    []
+    [setDraftInputForScope]
   )
   const applyQueuedPluginTrialToFreshChat = useCallback(
     (trial: NonNullable<ReturnType<typeof consumePluginTrial>>) => {
@@ -663,7 +665,6 @@ export function WorkbenchProvider({
         currentRuntimeTask: state.currentRuntimeTask,
         standaloneChatKey: state.standaloneChatKey,
       })
-      setDraftInputByScope(current => ({ ...current, [currentScopeKey]: trial.input }))
       applyQueuedPluginTrial(currentScopeKey, trial)
       navigateTo('/')
       window.dispatchEvent(
@@ -689,7 +690,6 @@ export function WorkbenchProvider({
       standaloneWorkspacePath: null,
       startFreshChat: true,
     })
-    setDraftInputByScope(current => ({ ...current, [nextScopeKey]: trial.input }))
     applyQueuedPluginTrial(nextScopeKey, trial)
     navigateTo('/')
     window.dispatchEvent(
@@ -902,6 +902,7 @@ export function WorkbenchProvider({
     })
   }, [])
   const [taskComposerCatalogsRequested, setTaskComposerCatalogsRequested] = useState(false)
+  const taskComposerCatalogsRequired = loadTaskComposerCatalogs || taskComposerCatalogsRequested
   const taskComposerCatalogsEnabled =
     taskComposerCatalogsRequested || (loadTaskComposerCatalogs && state.runtimeWork !== null)
   const requestTaskComposerCatalogs = useCallback(() => {
@@ -1053,7 +1054,9 @@ export function WorkbenchProvider({
   })
   const isWorkbenchShellReady = !state.isBootstrapping
   const isStartupReady =
-    isWorkbenchShellReady && modelSelection.isSelectionReady && !skillSelection.isLoading
+    isWorkbenchShellReady &&
+    (!taskComposerCatalogsRequired || modelSelection.isSelectionReady) &&
+    !skillSelection.isLoading
 
   useEffect(() => {
     onStartupReadyChange?.(isWorkbenchShellReady)
@@ -1321,55 +1324,27 @@ export function WorkbenchProvider({
     state.devices,
   ])
 
-  useEffect(() => {
-    if (!debugSnapshotEnabled || !publishDebugSnapshots) return
-
-    let timeout: number | null = null
-    const schedule = () => {
-      if (timeout !== null) return
-      timeout = window.setTimeout(() => {
-        timeout = null
-        updateWorkbenchDebugSnapshot({
-          state,
-          lifecycle: lifecycleSnapshot,
-          taskReminders: runtimeTaskReminders,
-          cloudWorkStatus,
-          composer: {
-            scopeKey: projectChatScopeKey,
-            standaloneChatKey: state.standaloneChatKey,
-            availableModelNames: modelSelection.models.map(model => model.name),
-            currentInputLength: draftInput.length,
-            scopedInputLengths: Object.fromEntries(
-              Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
-            ),
-            attachmentCount: attachmentSelection.attachments.length,
-            contextUsagePercent: currentContextUsage
-              ? (runtimeContextUsageMetrics(currentContextUsage)?.usedPercent ?? undefined)
-              : undefined,
-          },
-        })
-      }, DEBUG_SNAPSHOT_DEBOUNCE_MS)
-    }
-    schedule()
-    return () => {
-      if (timeout !== null) {
-        clearTimeout(timeout)
-      }
-    }
-  }, [
-    attachmentSelection.attachments.length,
-    cloudWorkStatus,
-    currentContextUsage,
-    debugSnapshotEnabled,
-    draftInput.length,
-    lifecycleSnapshot,
-    draftInputByScope,
-    modelSelection.models,
-    publishDebugSnapshots,
-    projectChatScopeKey,
-    runtimeTaskReminders,
-    state,
-  ])
+  useDebugSnapshotPublisher(debugSnapshotEnabled && publishDebugSnapshots, () => {
+    updateWorkbenchDebugSnapshot({
+      state,
+      lifecycle: lifecycleSnapshot,
+      taskReminders: runtimeTaskReminders,
+      cloudWorkStatus,
+      composer: {
+        scopeKey: projectChatScopeKey,
+        standaloneChatKey: state.standaloneChatKey,
+        availableModelNames: modelSelection.models.map(model => model.name),
+        currentInputLength: draftInput.length,
+        scopedInputLengths: Object.fromEntries(
+          Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
+        ),
+        attachmentCount: attachmentSelection.attachments.length,
+        contextUsagePercent: currentContextUsage
+          ? (runtimeContextUsageMetrics(currentContextUsage)?.usedPercent ?? undefined)
+          : undefined,
+      },
+    })
+  })
 
   const { upgradingDevices, upgradeDevice } = useWorkbenchDeviceUpgrades({
     state,
@@ -1706,7 +1681,7 @@ export function WorkbenchProvider({
           return localSkillReference(skill, mentionName)
         })
         const input = `${references.join(' ')} `
-        setDraftInputByScope(current => ({ ...current, [nextScopeKey]: input }))
+        setDraftInputForScope(nextScopeKey, input)
       }
       writeLastProjectId(user.id, null)
       dispatch({
@@ -1726,6 +1701,7 @@ export function WorkbenchProvider({
     [
       availableSkills,
       listLocalSkills,
+      setDraftInputForScope,
       setSelectedSkillsForScope,
       state.devices,
       state.standaloneChatKey,
@@ -1931,6 +1907,9 @@ export function WorkbenchProvider({
   const stableStartNewProjectChat = useStableEvent(startNewProjectChat)
   const stableOpenRuntimeTask = useStableEvent(runtimeTasks.openRuntimeTask)
   const stableSearchRuntimeWork = useStableEvent(runtimeTasks.searchRuntimeWork)
+  const stableSearchRuntimeTranscriptForPane = useStableEvent(
+    runtimeTasks.searchRuntimeTranscriptForPane
+  )
   const resolveRuntimeContextUsage = useCallback(
     (address: RuntimeTaskAddress, usage: RuntimeContextUsage): RuntimeContextUsage => {
       const taskSelection =
@@ -1987,7 +1966,7 @@ export function WorkbenchProvider({
       options?: Parameters<typeof runtimeTasks.loadRuntimeTranscriptForPane>[1]
     ) => {
       const transcript = await runtimeTasks.loadRuntimeTranscriptForPane(address, options)
-      if (transcript.contextUsage) {
+      if (!options?.threadOnly && transcript.contextUsage) {
         const contextUsage = resolveRuntimeContextUsage(address, transcript.contextUsage)
         setContextUsageByRuntimeTask(current => ({
           ...current,
@@ -2042,6 +2021,14 @@ export function WorkbenchProvider({
     ) => settleRuntimeConversationGuidance(address, payload)
   )
   const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
+  const appliedRevealRevisionRef = useRef(workspaceTabRevealRevision)
+  useEffect(() => {
+    if (workspaceTabRevealRevision === appliedRevealRevisionRef.current) return
+    appliedRevealRevisionRef.current = workspaceTabRevealRevision
+    void stableRefreshWorkLists().catch(error => {
+      console.warn('[Wework] Failed to refresh runtime work after tab reveal', error)
+    })
+  }, [stableRefreshWorkLists, workspaceTabRevealRevision])
   useEffect(
     () =>
       resolvedServices.chatStream.subscribe({
@@ -2236,7 +2223,6 @@ export function WorkbenchProvider({
             syncRuntimeTaskSnapshot(address)
           },
           onRuntimePlanUpdated: setRuntimeConversationTaskPlan,
-          onRuntimeTransportReplaced: publishRuntimeTransportReplaced,
         },
         syncRuntimeTaskLifecycle
       ),
@@ -2705,6 +2691,7 @@ export function WorkbenchProvider({
     () => ({
       scopeKey: projectChatScopeKey,
       inputByScope: draftInputByScope,
+      getInputRevisionForScope,
       models: conversationModels,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
@@ -2776,6 +2763,7 @@ export function WorkbenchProvider({
       requestTaskComposerCatalogs,
       draftInput,
       draftInputByScope,
+      getInputRevisionForScope,
       composerError,
       composerErrorByScope,
       trialTemplates,
@@ -2848,6 +2836,7 @@ export function WorkbenchProvider({
       reorderQueuedRuntimeTask: stableReorderQueuedRuntimeTask,
       searchRuntimeWork: stableSearchRuntimeWork,
       loadRuntimeTranscriptForPane: stableLoadRuntimeTranscriptForPane,
+      searchRuntimeTranscriptForPane: stableSearchRuntimeTranscriptForPane,
       subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
       renameRuntimeTask: stableRenameRuntimeTask,
       archiveRuntimeTask: stableArchiveRuntimeTask,
@@ -2956,6 +2945,7 @@ export function WorkbenchProvider({
       stableLoadEnvironmentDiff,
       stableLoadEnvironmentInfo,
       stableLoadRuntimeTranscriptForPane,
+      stableSearchRuntimeTranscriptForPane,
       stableLoadTurnFileChangesDiff,
       stableOpenRuntimeTask,
       stableOpenStandaloneWorkspace,

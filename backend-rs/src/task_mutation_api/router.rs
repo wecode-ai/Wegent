@@ -7,9 +7,11 @@
 
 use brz_http_server::StatusCode;
 
+use super::cancel_task;
 use super::delete_task;
 use super::models::{
-    TaskArchiveBatchResponse, TaskBulkDeleteRequest, TaskDeleted, TaskInDbResponse, TaskUpdateBody,
+    TaskArchiveBatchResponse, TaskBulkDeleteRequest, TaskCancelResponse, TaskDeleted,
+    TaskInDbResponse, TaskUpdateBody,
 };
 use super::update_task;
 use crate::auth::SessionUser;
@@ -59,7 +61,25 @@ async fn update_task_route(
     #[auth] current_user: SessionUser,
 ) -> Result<TaskInDbResponse, FastApiError> {
     let origin = validated_origin(client_origin.as_deref())?;
-    update_task::update_task(state, i64::from(current_user.id), task_id, &origin, &body).await
+    update_task::update_task(
+        state,
+        i64::from(current_user.id),
+        task_id,
+        Some(&origin),
+        &body,
+    )
+    .await
+}
+
+/// `POST /api/tasks/{task_id}/cancel`: stop a running Chat Shell stream or
+/// ask executor-manager to cancel an executor task.
+#[brz_http_server::post("/api/tasks/:task_id/cancel")]
+async fn cancel_task_route(
+    #[inject(state)] state: &AppState,
+    task_id: i64,
+    #[auth] current_user: SessionUser,
+) -> Result<TaskCancelResponse, FastApiError> {
+    cancel_task::cancel_task(state, i64::from(current_user.id), task_id).await
 }
 
 /// `ClientOriginQuery`: `^(frontend|wework)$`, defaulting to `frontend`.

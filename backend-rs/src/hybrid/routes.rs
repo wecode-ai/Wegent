@@ -161,6 +161,7 @@ mod tests {
             "duplicate cutover rule"
         );
         assert!(selected.contains(&("GET".to_owned(), "/api/quota".to_owned())));
+        assert!(selected.contains(&("GET".to_owned(), "/api/quota/*path".to_owned())));
         let mut registered = BTreeSet::new();
         const METHODS: [&str; 7] = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"];
         macro_rules! collect {
@@ -181,6 +182,10 @@ mod tests {
         collect!(__http_registry_models_unified);
         collect!(__http_registry_remote_workspace_status);
         collect!(__http_registry_remote_workspace_tree);
+        // The LLM proxy route forwards dynamic `x-wegent-upstream-header-*`
+        // headers through a hand-written handler merged into the router, so it
+        // is not discoverable through the macro inventory.
+        registered.insert(("POST".to_owned(), crate::llm_proxy::ROUTE_PATH.to_owned()));
         assert!(selected.is_subset(&registered));
         let custom = Method::from_bytes(b"CUSTOM").unwrap();
         for (method, path) in &selected {
@@ -212,7 +217,8 @@ mod tests {
                 );
             }
         }
-        assert!(!table.matches(&Method::POST, "/api/v1/responses"));
+        // The cancel sibling is still a Python fallback.
+        assert!(!table.matches(&Method::POST, "/api/v1/responses/resp_123/cancel"));
         assert!(!table.matches(&Method::GET, "/api/groups/engineering/members"));
         assert!(!table.matches(&Method::PUT, "/api/groups/engineering/members/batch/roles"));
         assert!(!table.matches(&Method::GET, "/api/tasks/123/unmigrated"));
@@ -252,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn metrics_handler_registration_does_not_enable_cutover() {
+    fn metrics_handler_is_registered_without_changing_release_ownership() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
         let table = load(&path).unwrap();
         assert!(!table.matches(&Method::GET, "/metrics"));
@@ -268,15 +274,46 @@ mod tests {
         );
     }
 
-    /// Registering the content update handler must not select the lower-volume
-    /// PUT method when only the GET cutover is configured.
+    /// The `GET /api/v1/kinds/skills/unified` cutover must serve only the
+    /// recorded GET method and keep the handler registered.
+    #[test]
+    fn skills_unified_cutover_selects_registered_handler() {
+        const PATH: &str = "/api/v1/kinds/skills/unified";
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let table = load(&path).unwrap();
+        assert!(table.matches(&Method::GET, PATH));
+        for other_method in [
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::HEAD,
+            Method::OPTIONS,
+        ] {
+            assert!(
+                !table.matches(&other_method, PATH),
+                "unmigrated method selected: {other_method} {PATH}"
+            );
+        }
+
+        // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
+        const GET: u16 = 1 << 1;
+        let registered =
+            brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
+                .into_iter()
+                .flat_map(|entry| (entry.0.routes)())
+                .any(|route| route.path == PATH && route.methods & GET != 0);
+        assert!(registered, "GET {PATH} must be registered by the router");
+    }
+
+    /// Both content methods stay Python-owned while their Rust handlers remain.
     #[test]
     fn knowledge_document_content_put_registration_keeps_python_ownership() {
         const PATH: &str = "/api/knowledge/documents/:document_id/content";
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
         let table = load(&path).unwrap();
         let concrete = "/api/knowledge/documents/43199/content";
-        assert!(table.matches(&Method::GET, concrete));
+        assert!(!table.matches(&Method::GET, concrete));
         assert!(!table.matches(&Method::PUT, concrete));
         assert!(!table.matches(&Method::POST, concrete));
 
@@ -374,6 +411,76 @@ mod tests {
         assert!(!table.matches(&Method::DELETE, "/api/tasks/123"));
         assert!(!table.matches(&Method::DELETE, "/api/tasks/bulk"));
         assert!(!table.matches(&Method::PUT, "/api/users/me"));
-        assert!(!table.matches(&Method::POST, "/api/v1/token-issuers/123/issue"));
+    }
+
+    #[test]
+    fn knowledge_routes_keep_registered_handlers_without_cutover() {
+        const PREFIXES: [&str; 8] = [
+            "/api/knowledge-bases",
+            "/api/knowledge",
+            "/api/mcp/knowledge",
+            "/api/mcp/knowledge-external",
+            "/api/share/KnowledgeBase",
+            "/api/wiki",
+            "/api/dingtalk-wikispace",
+            "/api/admin/public-retrievers",
+        ];
+        let in_scope = |path: &str| {
+            PREFIXES.iter().any(|prefix| {
+                path == *prefix
+                    || path
+                        .strip_prefix(prefix)
+                        .is_some_and(|tail| tail.starts_with('/'))
+            })
+        };
+        assert!(!in_scope("/api/knowledge-documents/123"));
+        assert!(!in_scope("/api/knowledge-bases-other"));
+        assert!(!in_scope("/api/mcp/knowledge-external-other"));
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let config = load_routes_config(&path).unwrap();
+        assert!(config.routes.iter().all(|rule| !in_scope(&rule.path)));
+        let table = load(&path).unwrap();
+        let registered: BTreeSet<_> =
+            brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
+                .into_iter()
+                .flat_map(|entry| (entry.0.routes)())
+                .filter(|route| in_scope(route.path) && route.methods & (1 << 1) != 0)
+                .map(|route| route.path.to_owned())
+                .collect();
+        for path in [
+            "/api/knowledge-bases/:knowledge_base_id/document-protection",
+            "/api/knowledge-bases/:knowledge_base_id/artifacts",
+            "/api/knowledge/documents",
+            "/api/knowledge/documents/:document_id/content",
+            "/api/knowledge-bases/:kb_id/documents/:doc_id/detail",
+            "/api/knowledge-bases/:knowledge_base_id/folders",
+            "/api/mcp/knowledge-external/documents/:document_id/file",
+            "/api/share/KnowledgeBase/:resource_id/my-permission",
+            "/api/wiki/connections",
+        ] {
+            assert!(registered.contains(path), "Rust handler lost: GET {path}");
+        }
+        for path in registered.iter().map(String::as_str).chain(PREFIXES) {
+            let concrete = path
+                .split('/')
+                .map(|part| if part.starts_with(':') { "123" } else { part })
+                .collect::<Vec<_>>()
+                .join("/");
+            for method in [
+                Method::GET,
+                Method::HEAD,
+                Method::POST,
+                Method::PUT,
+                Method::PATCH,
+                Method::DELETE,
+                Method::OPTIONS,
+            ] {
+                assert!(!table.matches(&method, &concrete), "{method} {path}");
+            }
+        }
+        // Existing non-knowledge cutovers keep the same method selection.
+        assert!(table.matches(&Method::GET, "/api/users/me"));
+        assert!(table.matches(&Method::PUT, "/api/runtime-work/im-notifications/presence"));
+        assert!(!table.matches(&Method::POST, "/api/users/me"));
     }
 }

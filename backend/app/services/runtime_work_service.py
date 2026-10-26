@@ -32,7 +32,7 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.device import DeviceType
 from app.schemas.project import ProjectConfig
-from app.schemas.runtime_transcript_transport import RuntimeTranscriptTransferResponse
+from app.schemas.runtime_transcript_transport import RuntimeTranscriptChunkResponse
 from app.schemas.runtime_work import (
     ArchivedConversationItem,
     ArchivedConversationProjectGroup,
@@ -61,6 +61,7 @@ from app.schemas.runtime_work import (
     RuntimeProjectWork,
     RuntimeSendRequest,
     RuntimeSendResponse,
+    RuntimeSessionReadRequest,
     RuntimeSupervisorCreateInput,
     RuntimeTaskAddress,
     RuntimeTaskArchiveResponse,
@@ -79,6 +80,7 @@ from app.schemas.runtime_work import (
     RuntimeTaskRenameRequest,
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
+    RuntimeTranscriptSearchRequest,
     RuntimeWorkListResponse,
     RuntimeWorkSearchItem,
     RuntimeWorkSearchProjectRef,
@@ -442,17 +444,10 @@ async def get_runtime_transcript(
     db: Session,
     user_id: int,
     address: RuntimeTranscriptRequest,
-) -> RuntimeTranscriptResponse | RuntimeTranscriptTransferResponse:
+) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
     """Read a LocalTask transcript from the owning local executor."""
 
-    if getattr(address, "project_session", None) is not None:
-        from app.services.project_chat.session_access import resolve_project_transcript
-
-        user_id, normalized_address = resolve_project_transcript(db, user_id, address)
-    else:
-        normalized_address = _normalized_address(address)
-        _ensure_owned_device(db, user_id, normalized_address.device_id)
-        _touch_workspace_mapping(db, user_id, normalized_address)
+    user_id, normalized_address = _resolve_runtime_session_read(db, user_id, address)
     payload = _runtime_transcript_payload(address, normalized_address)
     started_at = time.perf_counter()
     logger.info(
@@ -511,11 +506,8 @@ async def get_runtime_transcript(
         result.get("beforeCursor"),
     )
     try:
-        if (
-            getattr(address, "transcript_protocol_version", None) == 2
-            and "transcriptProtocolVersion" in result
-        ):
-            return RuntimeTranscriptTransferResponse.model_validate(result)
+        if "transcriptProtocolVersion" in result:
+            return RuntimeTranscriptChunkResponse.model_validate(result)
         if not isinstance(result.get("turns"), list):
             raise HTTPException(
                 502, "Runtime transcript response is missing canonical turns"
@@ -3876,6 +3868,29 @@ def _runtime_task_address_payload(address: RuntimeTaskAddress) -> dict[str, Any]
     return address.model_dump(by_alias=True, exclude_none=True)
 
 
+def _resolve_runtime_session_read(
+    db: Session, user_id: int, request: RuntimeSessionReadRequest
+) -> tuple[int, RuntimeTaskAddress]:
+    if getattr(request, "project_session", None) is not None:
+        from app.services.project_chat.session_access import resolve_project_transcript
+
+        return resolve_project_transcript(db, user_id, request)
+    address = _normalized_address(request)
+    _ensure_owned_device(db, user_id, address.device_id)
+    _touch_workspace_mapping(db, user_id, address)
+    return user_id, address
+
+
+def _runtime_transcript_search_payload(
+    request: RuntimeTranscriptSearchRequest, address: RuntimeTaskAddress
+) -> dict[str, Any]:
+    payload = _runtime_task_address_payload(address)
+    payload["query"] = request.query
+    if request.limit is not None:
+        payload["limit"] = request.limit
+    return payload
+
+
 def _runtime_transcript_payload(
     request: RuntimeTranscriptRequest,
     normalized_address: RuntimeTaskAddress,
@@ -3900,13 +3915,14 @@ def _runtime_transcript_payload(
         payload["includeFullContent"] = True
     if conversation_context_only:
         payload["conversationContextOnly"] = True
-    if getattr(request, "refresh", False):
-        payload["refresh"] = True
-    if getattr(request, "navigation_only", False):
-        payload["navigationOnly"] = True
-    protocol_version = getattr(request, "transcript_protocol_version", None)
-    if protocol_version is not None:
-        payload["transcriptProtocolVersion"] = protocol_version
+    for name, alias in (
+        ("refresh", "refresh"),
+        ("navigation_only", "navigationOnly"),
+        ("transcript_protocol_version", "transcriptProtocolVersion"),
+    ):
+        value = getattr(request, name, None)
+        if value is not None:
+            payload[alias] = value
     transfer = getattr(request, "transcript_transfer", None)
     if transfer is not None:
         payload["transcriptTransfer"] = transfer.model_dump(by_alias=True)

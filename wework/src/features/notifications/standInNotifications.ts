@@ -103,7 +103,8 @@ export function mergeStandInNotifications(
         notification.kind === 'issue_dispatch_assignment' &&
         notification.payload.projectId === origin.cloudProjectId &&
         notification.payload.itemId === origin.loopItemId &&
-        notification.payload.humanAssignmentId === origin.humanAssignmentId
+        notification.payload.humanAssignmentId === origin.humanAssignmentId &&
+        (!notification.runtimeItem || notification.runtimeItem.key === item.key)
     )
     const state = standInState(item)
     const url = weworkIssueScheme(

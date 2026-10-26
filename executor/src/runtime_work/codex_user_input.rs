@@ -4,7 +4,61 @@
 
 use serde_json::{json, Value};
 
-use super::util::{item_id, item_type, string_field};
+use super::util::{item_id, item_type, now_ms, string_field};
+
+pub(super) const APPROVAL_SETTLED_METHOD: &str = "wegent/approval/settled";
+
+/// Native timeline pages may omit an unanswered blocking tool call. Keep the
+/// actual server request identity so a refreshed card answers its live waiter.
+pub(super) fn request_item(message: &Value) -> Option<Value> {
+    let request_id = message.get("id")?;
+    let method = message["method"].as_str()?;
+    let params = message.get("params")?;
+    let (id, mut payload) = if method == "item/tool/requestUserInput" {
+        let id = request_id
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| request_id.is_number().then(|| request_id.to_string()))?;
+        let payload = params.clone();
+        payload.get("questions")?.as_array()?;
+        (format!("request-user-input-{id}"), payload)
+    } else {
+        let approval_method = if method == APPROVAL_SETTLED_METHOD {
+            params["approvalMethod"].as_str()?
+        } else {
+            method
+        };
+        super::events::codex_approval_render_payload(approval_method, params, Some(request_id))?
+    };
+    payload["kind"] = json!("request_user_input");
+    payload["requestId"] = request_id.clone();
+    payload["interactionScope"] = payload.get("turnId")?.clone();
+    if payload.get("interactionStatus").is_none() {
+        payload["interactionStatus"] = json!("pending");
+    }
+    Some(json!({
+        "id": id,
+        "type": "userInputRequest", "renderPayload": payload, "createdAt": now_ms(),
+    }))
+}
+
+pub(super) fn interaction_block(item: &Value, terminal: bool) -> Value {
+    let mut payload = item["renderPayload"].clone();
+    if payload["interactionStatus"] == "pending" {
+        let expired = payload["expiresAtUnixMs"]
+            .as_i64()
+            .is_some_and(|deadline| deadline <= now_ms());
+        if terminal || expired {
+            payload["interactionStatus"] = json!(if expired { "expired" } else { "cancelled" });
+            payload["settledAtUnixMs"] = json!(now_ms());
+        }
+    }
+    json!({
+        "id": item["id"], "type": "tool", "tool_name": "request_user_input",
+        "status": if payload["interactionStatus"] == "pending" { "pending" } else { "done" },
+        "timestamp": item["createdAt"], "render_payload": payload,
+    })
+}
 
 pub(crate) fn async_question_payload_from_item(params: &Value) -> Option<Value> {
     let item = params.get("item").unwrap_or(params);

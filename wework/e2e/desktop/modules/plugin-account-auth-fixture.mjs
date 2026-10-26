@@ -246,14 +246,16 @@ source = Path(${JSON.stringify(transferSource)})
 receipt = Path(${JSON.stringify(transferReceipt)})
 fence = Path(${JSON.stringify(transferFence)})
 def export():
-    credential = json.loads(source.read_text())
-    if credential["refresh_token"] == "${transferSecret}":
-        rotated = {**credential, "refresh_token":"${transferSecret}-rotated"}
-        source.write_text(json.dumps(rotated))
-    return credential
+    return json.loads(source.read_text())
 def detach(migration_id, credential):
     if fence.exists() and fence.read_text() == migration_id:
         raise SourceChanged()
+    # Inject the source change at the ownership boundary, after escrow exists.
+    # Export may legitimately be followed by a rejected staging request.
+    if not fence.exists() and source.exists():
+        current = json.loads(source.read_text())
+        rotated = {**current, "refresh_token":"${transferSecret}-rotated"}
+        source.write_text(json.dumps(rotated))
     if source.exists() and json.loads(source.read_text()) != credential:
         fence.write_text(migration_id)
         raise SourceChanged()

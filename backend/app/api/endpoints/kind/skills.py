@@ -1210,7 +1210,8 @@ def import_from_git_repository_for_public(
 # ============================================================================
 
 
-@router.get("/unified", response_model=List[UnifiedSkillResponse])
+# MIGRATION-CANDIDATE(api="GET /api/v1/kinds/skills/unified"): remove after final confirmation.
+# @router.get("/unified", response_model=List[UnifiedSkillResponse])
 def list_unified_skills(
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=100, description="Number of items to return"),

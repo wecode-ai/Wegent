@@ -17,8 +17,8 @@ fn native_text_extraction_preserves_streaming_whitespace() {
 }
 
 #[tokio::test]
-async fn running_cached_transcript_preserves_native_text_identity_and_order() {
-    let (handler, root) = isolated_runtime_work_handler("streaming-transcript-identity");
+async fn native_transcript_preserves_text_identity_and_order() {
+    let (mut handler, root) = isolated_runtime_work_handler("streaming-transcript-identity");
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
@@ -46,6 +46,15 @@ async fn running_cached_transcript_preserves_native_text_identity_and_order() {
         "method": "item/started",
         "params": {"item": {"id": "final-1", "type": "agentMessage", "phase": "final_answer", "text": ""}}
     }));
+    install_native_history(
+        &mut handler,
+        &root,
+        vec![json!({"id":"turn-1","status":"inProgress","items":[
+          {"id":"progress-1","type":"agentMessage","phase":"commentary","text":"Inspecting the code."},
+          {"id":"progress-2","type":"agentMessage","phase":"commentary","text":"The implementation is ready."}
+        ]})],
+        None,
+    );
     let mut expected_content = String::new();
     for delta in ["First paragraph.\n\n", "Second paragraph."] {
         expected_content.push_str(delta);
@@ -80,6 +89,11 @@ async fn running_cached_transcript_preserves_native_text_identity_and_order() {
             response["messages"][0]["runtimeItems"].as_array().unwrap()
         );
     }
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
     let _ = fs::remove_dir_all(root);
 }
 

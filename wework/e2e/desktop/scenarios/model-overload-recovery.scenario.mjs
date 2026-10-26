@@ -1,3 +1,4 @@
+import { readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -129,9 +130,7 @@ export function createDesktopScenario({
     async handleHttp(request, response, url) {
       if (!active || request.method !== 'POST') return false
       if (!['/responses', '/v1/responses'].includes(url.pathname)) return false
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       const id = `wework-model-overload-${Date.now()}`
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })

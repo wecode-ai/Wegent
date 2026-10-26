@@ -788,8 +788,9 @@ async def test_project_transcript_uses_manual_binding_and_reports_real_device_fa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("continuation", [False, True])
+@pytest.mark.parametrize("search", [False, True])
 async def test_project_transcript_websocket_uses_same_authorization(
-    scenario, monkeypatch, continuation
+    scenario, monkeypatch, search, continuation
 ):
     from contextlib import contextmanager
 
@@ -811,16 +812,29 @@ async def test_project_transcript_websocket_uses_same_authorization(
     await ws.relay_ipc_request(
         user_id=s.member.id,
         device_id="admin-cloud",
-        method="runtime.tasks.transcript",
+        method=(
+            "runtime.tasks.transcript.search" if search else "runtime.tasks.transcript"
+        ),
         params={
             "deviceId": "forged-device",
             "taskId": "original-session",
             "projectSession": {"projectId": str(s.project.id), "issueId": s.issue.id},
-            "transcriptProtocolVersion": 2,
             **(
-                {"transcriptTransfer": {"snapshotId": "a" * 64, "offset": 360 * 1024}}
-                if continuation
-                else {}
+                {"query": "needle", "limit": 250}
+                if search
+                else {
+                    "transcriptProtocolVersion": 2,
+                    **(
+                        {
+                            "transcriptTransfer": {
+                                "snapshotId": "a" * 64,
+                                "offset": 360 * 1024,
+                            }
+                        }
+                        if continuation
+                        else {}
+                    ),
+                }
             ),
         },
         timeout_seconds=30,
@@ -829,11 +843,22 @@ async def test_project_transcript_websocket_uses_same_authorization(
     assert s.rpc.await_args.kwargs["payload"] == {
         "deviceId": "admin-cloud",
         "taskId": "original-session",
-        "transcriptProtocolVersion": 2,
         **(
-            {"transcriptTransfer": {"snapshotId": "a" * 64, "offset": 360 * 1024}}
-            if continuation
-            else {}
+            {"query": "needle", "limit": 250}
+            if search
+            else {
+                "transcriptProtocolVersion": 2,
+                **(
+                    {
+                        "transcriptTransfer": {
+                            "snapshotId": "a" * 64,
+                            "offset": 360 * 1024,
+                        }
+                    }
+                    if continuation
+                    else {}
+                ),
+            }
         ),
     }
 

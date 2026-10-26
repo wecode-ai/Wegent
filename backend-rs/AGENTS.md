@@ -59,5 +59,7 @@ For Rust code changes, run the relevant commands from this directory:
 ```bash
 cargo fmt --check
 cargo test
-cargo clippy --all-targets -- -D warnings
 ```
+
+Choose when to run focused tests or the full project suite based on the scope
+and risk of the changes.

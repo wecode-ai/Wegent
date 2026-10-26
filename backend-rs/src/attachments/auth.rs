@@ -31,7 +31,7 @@ pub struct UserRow {
     #[mysql(rename = "users_password_hash")]
     pub users_password_hash: String,
     pub users_email: Option<String>,
-    pub users_git_info: Json<OpaqueJson>,
+    pub users_git_info: Option<Json<OpaqueJson>>,
     pub users_is_active: i8,
     pub users_role: String,
     pub users_auth_source: String,

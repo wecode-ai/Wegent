@@ -1,0 +1,5 @@
+- insert:
+    - id: wework-connection-dingtalk
+      name: '@wegent/dsh-connection-dingtalk'
+      inject:
+        - weworkConnections

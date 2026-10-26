@@ -8,10 +8,12 @@ ARG UV_VERSION=0.11.17
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    apparmor \
     build-essential \
     ca-certificates \
     curl \
     gnupg \
+    gh \
     git \
     imagemagick \
     libasound2t64 \
@@ -57,6 +59,7 @@ ENV IS_SANDBOX=1
 
 RUN node --version \
   && pnpm --version \
+  && gh --version \
   && python3 --version \
   && uv --version \
   && mysqld --version \

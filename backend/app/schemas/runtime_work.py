@@ -135,13 +135,18 @@ class ProjectSessionScope(BaseModel):
     issue_id: str = Field(..., alias="issueId", min_length=1)
 
 
-class RuntimeTranscriptRequest(RuntimeTaskAddress):
-    """Request a page of a device-local runtime transcript."""
+class RuntimeSessionReadRequest(RuntimeTaskAddress):
+    """Read one runtime session using device ownership or a project binding."""
 
-    limit: Optional[int] = Field(default=None, ge=1, le=200)
     project_session: Optional[ProjectSessionScope] = Field(
         default=None, alias="projectSession"
     )
+
+
+class RuntimeTranscriptRequest(RuntimeSessionReadRequest):
+    """Request a page of a device-local runtime transcript."""
+
+    limit: Optional[int] = Field(default=None, ge=1, le=200)
     before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
     after_cursor: Optional[str] = Field(default=None, alias="afterCursor")
     include_full_content: bool = Field(default=False, alias="includeFullContent")
@@ -149,10 +154,10 @@ class RuntimeTranscriptRequest(RuntimeTaskAddress):
         default=False,
         alias="conversationContextOnly",
     )
-    refresh: bool = False
-    navigation_only: bool = Field(default=False, alias="navigationOnly")
-    transcript_protocol_version: Optional[Literal[1, 2]] = Field(
-        default=None, alias="transcriptProtocolVersion"
+    refresh: Optional[bool] = None
+    navigation_only: Optional[bool] = Field(default=None, alias="navigationOnly")
+    transcript_protocol_version: Optional[int] = Field(
+        default=None, alias="transcriptProtocolVersion", strict=True, ge=1, le=2
     )
     transcript_transfer: Optional[RuntimeTranscriptTransferRequest] = Field(
         default=None, alias="transcriptTransfer"
@@ -166,6 +171,13 @@ class RuntimeTranscriptRequest(RuntimeTaskAddress):
         ):
             raise ValueError("Transcript transfer requires protocol 2")
         return self
+
+
+class RuntimeTranscriptSearchRequest(RuntimeSessionReadRequest):
+    """Search one persisted runtime transcript without loading its pages."""
+
+    query: str = Field(..., min_length=1)
+    limit: Optional[int] = Field(default=None, ge=1, le=250)
 
 
 class RuntimeFileChangesRevertRequest(BaseModel):
@@ -206,6 +218,7 @@ class NormalizedRuntimeMessage(BaseModel):
     client_user_message_id: Optional[str] = Field(
         default=None, alias="clientUserMessageId"
     )
+    runtime_guidance: Optional[bool] = Field(default=None, alias="runtimeGuidance")
     turn_id: Optional[str] = Field(default=None, alias="turnId")
     role: Literal["user", "assistant", "system", "tool"]
     content: str = ""
@@ -532,11 +545,18 @@ class RuntimeTranscriptResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     local_task_id: str = Field(..., alias="taskId")
+    thread_id: Optional[str] = Field(default=None, alias="threadId")
     workspace_path: str = Field(..., alias="workspacePath")
     runtime: RuntimeName
     title: Optional[str] = None
     messages: list[NormalizedRuntimeMessage] = Field(default_factory=list)
     turns: list[dict[str, Any]]
+    runtime_turns: Optional[list[dict[str, Any]]] = Field(
+        default=None, alias="runtimeTurns"
+    )
+    superseded_turn_ids: list[str] = Field(
+        default_factory=list, alias="supersededTurnIds"
+    )
     running: Optional[bool] = None
     origin: Optional[dict[str, Any]] = None
     history_unavailable: bool = Field(default=False, alias="historyUnavailable")

@@ -24,7 +24,11 @@ export function usePersonalStandIn(
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [reload, setReload] = useState(0)
-  const loaded = useRef<{ key: string; settings: PersonalStandInSettings } | null>(null)
+  const loaded = useRef<{
+    key: string
+    deviceId: string
+    settings: PersonalStandInSettings
+  } | null>(null)
 
   useEffect(() => {
     let active = true
@@ -36,7 +40,7 @@ export function usePersonalStandIn(
       if (!active) return
       const key = JSON.stringify([userId, target, reload])
       const previous = loaded.current
-      loaded.current = { key, settings }
+      loaded.current = { key, deviceId: target, settings }
       setCurrentDeviceId(identity.deviceId)
       setSaved(settings)
       setDraft(current =>
@@ -88,11 +92,11 @@ export function usePersonalStandIn(
   }, [])
 
   const save = async (value = draft) => {
-    if (!value || saving) return null
+    if (!value || saving || loading || !loaded.current) return null
     setSaving(true)
     setError(null)
     try {
-      const result = await services.standInApi!.personalSave(userId, value)
+      const result = await services.standInApi!.personalSave(userId, value, loaded.current.deviceId)
       if (loaded.current) loaded.current = { ...loaded.current, settings: result }
       setSaved(result)
       setDraft(result)
@@ -122,9 +126,9 @@ export function usePersonalStandIn(
       setLoading(true)
       setDeviceId(value)
     },
-    reload: () => {
+    reload: useCallback(() => {
       setLoading(true)
       setReload(value => value + 1)
-    },
+    }, []),
   }
 }

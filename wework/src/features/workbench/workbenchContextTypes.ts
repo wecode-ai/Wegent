@@ -39,6 +39,7 @@ import type {
   RuntimeSendResponse,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
+  RuntimeTranscriptSearchResponse,
   RuntimeTaskQueueReorderRequest,
   RuntimeTaskCreateRequest,
   RuntimeTaskForkTarget,
@@ -268,6 +269,7 @@ export interface WorkbenchContextValue {
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setInput: (value: string) => void
     setInputForScope: (scopeKey: string, value: string) => void
+    getInputRevisionForScope: (scopeKey: string) => number
     setComposerError?: (error: string | null) => void
     setComposerErrorForScope?: (scopeKey: string, error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
@@ -314,6 +316,10 @@ export interface WorkbenchContextValue {
   reorderQueuedRuntimeTask: (data: RuntimeTaskQueueReorderRequest) => Promise<void>
   searchRuntimeWork: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   loadRuntimeTranscriptForPane: RuntimeTranscriptLoader
+  searchRuntimeTranscriptForPane: (
+    address: RuntimeTaskAddress,
+    query: string
+  ) => Promise<RuntimeTranscriptSearchResponse>
   subscribeRuntimeTaskStream: (
     address: RuntimeTaskAddress,
     handlers: RuntimeTaskStreamHandlers
@@ -526,4 +532,9 @@ export interface WorkbenchProviderProps {
   syncCoreDshModels?: boolean
   syncRemoteProjects?: boolean
   syncRuntimeTaskLifecycle?: boolean
+  /**
+   * Increments whenever a retained workspace tab is revealed again. Providers
+   * revalidate their per-tab runtime-work snapshot when it changes.
+   */
+  workspaceTabRevealRevision?: number
 }

@@ -1,3 +1,7 @@
+import {
+  readRuntimeThreadConversation,
+  synchronizeRuntimeConversation,
+} from './runtimeConversationSynchronization'
 import { useCallback, useEffect, useRef } from 'react'
 import type { Dispatch } from 'react'
 import type { ExecutorClient } from '@/api/executorAccess'
@@ -6,6 +10,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
 import { buildRuntimeTaskRoute, navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
+import { getErrorMessage } from '@/lib/error-message'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type {
   RuntimeTaskSummary,
   ProjectWithTasks,
@@ -14,6 +20,7 @@ import type {
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
   RuntimeTranscriptRequest,
+  RuntimeTranscriptSearchResponse,
   RuntimeWorkSearchRequest,
   ModelSelectionConfig,
   User,
@@ -26,7 +33,6 @@ import type {
 import {
   createRuntimeTaskStreamHandlers,
   runtimeAddressDebug,
-  runtimeTranscriptDebug,
   type RuntimeTaskStreamHandlers,
 } from './runtimePaneMessages'
 import type { WorkbenchAction } from './workbenchReducer'
@@ -73,8 +79,6 @@ interface UseWorkbenchRuntimeTasksOptions {
   setComposerErrorForScope: (scopeKey: string, error: string | null) => void
   canNavigate?: () => boolean
 }
-
-const runtimeTranscriptRequests = new Map<string, Promise<RuntimePaneTranscript>>()
 
 export function useWorkbenchRuntimeTasks({
   user,
@@ -160,34 +164,38 @@ export function useWorkbenchRuntimeTasks({
       address: RuntimeTaskAddress,
       options: RuntimePaneTranscriptLoadOptions = {}
     ): Promise<RuntimePaneTranscript> => {
-      const transcriptRequest: RuntimeTranscriptRequest = { ...address, ...options }
-      const transcriptKey = runtimeTranscriptRequestKey(address, options)
-      const inFlightTranscript = runtimeTranscriptRequests.get(transcriptKey)
-      if (inFlightTranscript) {
-        return inFlightTranscript
+      const { threadOnly, isolated, ...requestOptions } = options
+      const read = (request: RuntimeTranscriptRequest) =>
+        executorClient.runtime.getRuntimeTranscript(request)
+      return threadOnly
+        ? readRuntimeThreadConversation(read, address, requestOptions)
+        : synchronizeRuntimeConversation(read, address, { ...requestOptions, isolated })
+    },
+    [executorClient]
+  )
+
+  const searchRuntimeTranscriptForPane = useCallback(
+    async (
+      address: RuntimeTaskAddress,
+      query: string
+    ): Promise<RuntimeTranscriptSearchResponse> => {
+      const startedAt = performance.now()
+      try {
+        return await executorClient.runtime.searchRuntimeTranscript({
+          ...address,
+          query,
+          limit: 250,
+        })
+      } catch (error) {
+        logRuntimeTaskCreateStage('pane-transcript-search-failed', {
+          taskId: address.taskId,
+          deviceId: address.deviceId,
+          queryLength: query.length,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          error: getErrorMessage(error, 'Unknown transcript search error'),
+        })
+        throw error
       }
-
-      const request = executorClient.runtime
-        .getRuntimeTranscript(transcriptRequest)
-        .then(transcript => {
-          if (!Array.isArray(transcript.turns)) {
-            console.error('[Wework] Runtime pane transcript response missing canonical turns', {
-              address: runtimeAddressDebug(address),
-              response: runtimeTranscriptDebug(transcript),
-              transcriptKey,
-            })
-            throw new Error('Runtime transcript response is missing canonical turns')
-          }
-
-          return projectRuntimePaneTranscript(transcript)
-        })
-        .finally(() => {
-          if (runtimeTranscriptRequests.get(transcriptKey) === request) {
-            runtimeTranscriptRequests.delete(transcriptKey)
-          }
-        })
-      runtimeTranscriptRequests.set(transcriptKey, request)
-      return request
     },
     [executorClient]
   )
@@ -608,6 +616,7 @@ export function useWorkbenchRuntimeTasks({
     reconcileCurrentRuntimeTaskAddress,
     clearCurrentRuntimeTaskView,
     loadRuntimeTranscriptForPane,
+    searchRuntimeTranscriptForPane,
     subscribeRuntimeTaskStream,
     openRuntimeTask,
     renameRuntimeTask,
@@ -690,24 +699,6 @@ function isRuntimeTaskWorktree(
     task.workspaceKind === 'worktree' ||
     Boolean(task.worktreeId)
   )
-}
-
-function runtimeTranscriptRequestKey(
-  address: RuntimeTaskAddress,
-  options: RuntimePaneTranscriptLoadOptions
-): string {
-  return JSON.stringify({
-    address: getRuntimeTaskRouteKey(address),
-    projectSession: address.projectSession ?? null,
-    threadId: address.threadId ?? null,
-    limit: options.limit ?? null,
-    beforeCursor: options.beforeCursor ?? null,
-    afterCursor: options.afterCursor ?? null,
-    refresh: options.refresh ?? null,
-    includeFullContent: options.includeFullContent ?? null,
-    conversationContextOnly: options.conversationContextOnly ?? null,
-    navigationOnly: options.navigationOnly ?? null,
-  })
 }
 
 export type WorkbenchRuntimeTasks = ReturnType<typeof useWorkbenchRuntimeTasks>

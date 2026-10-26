@@ -1,4 +1,7 @@
-import { processingBlocks } from "./runtime-turn-helpers";
+import {
+  processingBlocks,
+  completeRuntimeTurnTiming,
+} from "./runtime-turn-helpers";
 import { commandExecutionPayload } from "./command-execution";
 import type { RuntimePaneMessageAction } from "./runtime-conversation";
 
@@ -11,6 +14,7 @@ import type {
 } from "./runtime-conversation";
 import {
   mergeRuntimeConversationTurn,
+  mergeRuntimeConversationItem,
   orderRuntimeConversationTurns,
   isTerminalProcessingBlockStatus,
 } from "./runtime-turn-merge";
@@ -36,6 +40,75 @@ import {
 } from "./runtime-turn-updates";
 import { projectRuntimeConversationTurn } from "./runtime-turn-projection";
 
+/** Materialize in-flight deltas against their observed base, then atomically publish native order.
+ * Applying append-only deltas directly to history would duplicate output already persisted there.
+ */
+export function hydrateRuntimeConversationTurns(
+  local: RuntimeConversationTurn[],
+  snapshot: RuntimeConversationTurn[],
+  actions: RuntimePaneMessageAction[],
+  actionsAlreadyApplied = false,
+  supersededTurnIds: readonly string[] = [],
+): RuntimeConversationTurn[] {
+  const superseded = new Set(supersededTurnIds);
+  local = local.filter((turn) => !turn.id || !superseded.has(turn.id));
+  const localIds = new Set(local.map((turn) => turn.id));
+  const localUserIds = new Set(
+    local.flatMap(runtimeConversationTurnClientUserMessageIds),
+  );
+  // A viewer can attach after turn/start. Native history supplies that turn's prerequisites.
+  let observed = [
+    ...local,
+    ...snapshot.filter(
+      (turn) =>
+        !localIds.has(turn.id) &&
+        !runtimeConversationTurnClientUserMessageIds(turn).some((id) =>
+          localUserIds.has(id),
+        ),
+    ),
+  ];
+  const updatedTextIds = new Set<string>();
+  for (const action of actions) {
+    if (!actionsAlreadyApplied)
+      observed = reduceRuntimeConversationTurns(observed, action);
+    if (
+      (action.type === "assistant_chunk" || action.type === "assistant_done") &&
+      action.itemId
+    ) {
+      updatedTextIds.add(action.itemId);
+    }
+  }
+  const observedByTurn = new Map(observed.map((turn) => [turn.id, turn]));
+  return mergeRuntimeConversationTurns(observed, snapshot)
+    .filter((turn) => !turn.id || !superseded.has(turn.id))
+    .map((turn) => {
+      const latest = observedByTurn.get(turn.id);
+      if (!latest || updatedTextIds.size === 0) return turn;
+      const latestItems = new Map(latest.items.map((item) => [item.id, item]));
+      return {
+        ...turn,
+        items: turn.items.map((item) => {
+          const live = latestItems.get(item.id);
+          if (
+            item.type !== "assistant_text" ||
+            live?.type !== "assistant_text" ||
+            !updatedTextIds.has(item.id)
+          )
+            return item;
+          // Text deltas are append-only. A native snapshot may already include a received delta,
+          // or even a suffix whose notification has not arrived; keep that complete prefix.
+          return item.content.startsWith(live.content)
+            ? item
+            : {
+                ...item,
+                content: live.content,
+                streamTextOffset: live.streamTextOffset,
+              };
+        }),
+      };
+    });
+}
+
 export function mergeRuntimeConversationTurns(
   localTurns: RuntimeConversationTurn[],
   snapshotTurns: RuntimeConversationTurn[],
@@ -54,6 +127,7 @@ export function mergeRuntimeConversationTurns(
     ),
   );
   const emittedLocalIndexes = new Set<number>();
+  const canonicalLocalTurnIds = new Map<number, string | null>();
   const snapshotUserMessageIds = new Set(
     snapshotTurns.flatMap(runtimeConversationTurnClientUserMessageIds),
   );
@@ -69,6 +143,7 @@ export function mergeRuntimeConversationTurns(
         .find((index): index is number => index !== undefined);
     if (localIndex === undefined) return snapshotTurn;
     emittedLocalIndexes.add(localIndex);
+    canonicalLocalTurnIds.set(localIndex, snapshotTurn.id);
     return mergeRuntimeConversationTurn(localTurns[localIndex], snapshotTurn);
   });
 
@@ -85,6 +160,7 @@ export function mergeRuntimeConversationTurns(
     if (aliasSnapshotIndexes.size === 1) {
       const snapshotIndex = aliasSnapshotIndexes.values().next().value;
       if (snapshotIndex !== undefined) {
+        canonicalLocalTurnIds.set(index, merged[snapshotIndex].id);
         merged[snapshotIndex] = mergeRuntimeConversationTurn(
           turn,
           merged[snapshotIndex],
@@ -106,7 +182,11 @@ export function mergeRuntimeConversationTurns(
       merged.push(turn);
     }
   });
-  return orderRuntimeConversationTurns(merged);
+  const localOrder = localTurns.map((turn, index) => {
+    const id = canonicalLocalTurnIds.get(index);
+    return id === undefined ? turn : { ...turn, id };
+  });
+  return orderRuntimeConversationTurns(merged, [localOrder, snapshotTurns]);
 }
 
 export function uniqueSnapshotIndexByAssistantItemId(
@@ -135,7 +215,7 @@ export function runtimeConversationTurnClientUserMessageIds(
     new Set([
       ...(turn.clientUserMessageId ? [turn.clientUserMessageId] : []),
       ...turn.items.flatMap((item) =>
-        item.type === "user_message" ? [item.id] : [],
+        item.type === "user_message" ? [item.id, item.message.id] : [],
       ),
     ]),
   );
@@ -144,8 +224,15 @@ export function runtimeConversationTurnClientUserMessageIds(
 export function runtimeConversationTurnAssistantItemIds(
   turn: RuntimeConversationTurn,
 ): string[] {
+  // Interaction request ids are scoped to a turn and may be reused by later turns.
+  // They cannot establish that two native/runtime turn identities are aliases.
   return turn.items.flatMap((item) =>
-    item.type === "user_message" ? [] : [item.id],
+    item.type === "user_message" ||
+    (item.type === "block" &&
+      item.block.type === "tool" &&
+      item.block.toolName === "request_user_input")
+      ? []
+      : [item.id],
   );
 }
 
@@ -218,9 +305,7 @@ export function reduceRuntimeConversationTurns(
           ...boundVisibleRuntimeProcessingBlocks(turn, items),
           status: "done",
           streamingThinkingContent: undefined,
-          startedAt: action.startedAt ?? turn.startedAt,
-          durationMs: action.durationMs,
-          completedAt: new Date().toISOString(),
+          ...completeRuntimeTurnTiming(turn, action),
           fileChanges: action.fileChanges ?? turn.fileChanges,
           error: undefined,
           errorType: undefined,
@@ -233,9 +318,7 @@ export function reduceRuntimeConversationTurns(
           items: settleRuntimeReconnectingBlocks(turn.items),
           status: "cancelled",
           streamingThinkingContent: undefined,
-          startedAt: action.startedAt ?? turn.startedAt,
-          durationMs: action.durationMs,
-          completedAt: new Date().toISOString(),
+          ...completeRuntimeTurnTiming(turn, action),
           stoppedNotice: true,
         };
       });
@@ -246,9 +329,7 @@ export function reduceRuntimeConversationTurns(
           items: settleRuntimeReconnectingBlocks(turn.items),
           status: "failed",
           streamingThinkingContent: undefined,
-          startedAt: action.startedAt ?? turn.startedAt,
-          durationMs: action.durationMs,
-          completedAt: new Date().toISOString(),
+          ...completeRuntimeTurnTiming(turn, action),
           error: action.error,
           errorType: action.errorType,
         };
@@ -302,10 +383,14 @@ export function reduceRuntimeConversationTurns(
         );
         const items = currentItems.map((item) =>
           item.type === "block" && item.id === action.blockId
-            ? {
-                ...item,
-                block: mergeProcessingBlockUpdate(item.block, action.updates),
-              }
+            ? mergeRuntimeConversationItem(
+                item,
+                {
+                  ...item,
+                  block: mergeProcessingBlockUpdate(item.block, action.updates),
+                },
+                false,
+              )
             : item,
         );
         return {

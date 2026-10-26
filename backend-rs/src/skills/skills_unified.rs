@@ -25,7 +25,6 @@ use brz_http_server::StatusCode;
 use brz_json::RawJson;
 use brz_json::{JsonProjection, OpaqueJson};
 use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
-use serde::Deserialize;
 
 use crate::auth::UserRow;
 use crate::http_compat::FastApiError;
@@ -34,18 +33,9 @@ use crate::teams::group_membership::{
     DirectoryMembership, ErpContext, effective_roles, user_group_memberships,
 };
 
-/// Query parameters.
-#[derive(Debug, Deserialize)]
-pub struct UnifiedParams {
-    #[serde(default)]
-    skip: Option<i64>,
-    #[serde(default)]
-    limit: Option<i64>,
-    #[serde(default)]
-    scope: Option<String>,
-    #[serde(default)]
-    group_name: Option<String>,
-}
+mod params;
+
+pub use params::UnifiedParams;
 
 /// `kinds` row with the SQLAlchemy `kinds_<column>` aliases
 /// (`db.query(Kind)` full projection).
@@ -153,6 +143,18 @@ struct SkillSourceInput {
     imported_at: Option<OpaqueJson>,
 }
 
+/// `UnifiedSkillResponse.validate_version`: numeric versions parsed from YAML
+/// are rendered as strings (`str(v)`); every other value passes through.
+fn version_value(version: Option<&OpaqueJson>) -> RawJson {
+    match version.map(OpaqueJson::to_value) {
+        Some(serde_json::Value::Number(number)) => {
+            brz_json::to_raw_value(&number.to_string()).expect("string serializes")
+        }
+        Some(value) => brz_json::to_raw_value(&value).expect("JSON value serializes"),
+        None => brz_json::to_raw_value(&()).expect("null serializes"),
+    }
+}
+
 /// Preserve unvalidated CRD fields as opaque JSON while typing the projection.
 fn user_skill_item(
     kind: &KindRow,
@@ -170,7 +172,7 @@ fn user_skill_item(
         namespace: kind.kinds_namespace.clone(),
         description: spec.description.raw_or(""),
         display_name: spec.display_name.raw_or(()),
-        version: spec.version.raw_or(()),
+        version: version_value(spec.version.as_ref()),
         author: spec.author.raw_or(()),
         tags: spec.tags.raw_or(()),
         bind_shells: spec.bind_shells.raw_or(()),
@@ -480,8 +482,8 @@ where
     if departments.is_empty() {
         return Ok(Vec::new());
     }
-    // `match_entity_bindings` -> `_get_user_ssn` -> ERP cache.
-    let Some(ssn) = erp.erp.employee_id(user_id as i64).await? else {
+    // Resolve external identity through the deployment-owned directory provider.
+    let Some(ssn) = erp.erp.resolve_employee_id(erp.redis, user_id).await? else {
         return Ok(Vec::new());
     };
     let department_ids: Vec<String> = departments.iter().map(|(id, _)| id.clone()).collect();
@@ -744,6 +746,10 @@ async fn unified_skills(
         redis: state.redis.as_ref(),
     };
 
+    // FastAPI validates the endpoint's own `Query` bounds before the handler
+    // body runs, so an invalid window returns 422 before any dependency read.
+    let (skip, limit) = params.validated()?;
+
     let scope = params
         .scope
         .clone()
@@ -940,8 +946,6 @@ async fn unified_skills(
     }
 
     // Pagination (`user_skills[skip : skip + limit]`).
-    let skip = params.skip.unwrap_or(0).max(0) as usize;
-    let limit = params.limit.unwrap_or(100).clamp(1, 100) as usize;
     let page: Vec<SkillItem> = skills.into_iter().skip(skip).take(limit).collect();
 
     Ok(page)

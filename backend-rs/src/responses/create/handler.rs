@@ -12,11 +12,12 @@
 use brz_http_server::StatusCode;
 
 use crate::http_compat::FastApiError;
-use crate::responses::auth::ResponsesUser;
+use crate::responses::auth::{CurrentUser, ResponsesUser};
 use crate::responses::rate_limit::{self, RateLimit};
 use crate::state::AppState;
 use crate::task_creation::{TaskCrdInput, WorkspaceRepository};
 
+use super::kind_reload::reload_team;
 use super::model::parse_model_string;
 use super::model_selection;
 use super::resolution::{kinds_row, resolve_team_bots};
@@ -65,7 +66,7 @@ async fn create_response(
         state,
         &user,
         input,
-        request_id.unwrap_or_default(),
+        request_id,
         auto_delete_executor.as_deref(),
     )
     .await
@@ -76,7 +77,7 @@ async fn create_response_flow(
     state: &AppState,
     user: &ResponsesUser,
     input: ResponseCreateInput,
-    request_id: &str,
+    request_id: Option<&str>,
     auto_delete_executor: Option<&str>,
 ) -> Result<CreateResponse, FastApiError> {
     let user_id = i64::from(user.id);
@@ -148,6 +149,23 @@ async fn create_response_flow(
         ));
     };
 
+    // `create_new_task`'s API source group (`params.is_api_call`): the group
+    // id is written to the placeholder Task row. A `previous_response_id`
+    // reuse skips task creation, so the source resolves no group.
+    let project_id = if input.previous_response_id.is_none() {
+        crate::task_source_group::get_or_create_task_source_group(
+            &state.mysql,
+            state.redis.as_ref(),
+            user_id,
+            "frontend",
+            "api",
+        )
+        .await
+        .map_err(source_group_error)?
+    } else {
+        0
+    };
+
     // `setup_chat_session`: task + workspace + paired subtasks.
     let tool_settings = parse_wegent_tools(&input.tools);
     let input_text = extract_input_text(&input.input);
@@ -156,6 +174,7 @@ async fn create_response_flow(
     let crd_timestamp = now.format("%Y-%m-%dT%H:%M:%S%.6f").to_string();
     let setup = setup_chat_session(
         state.task_store.as_ref(),
+        &state.mysql,
         &SetupChatSessionInput {
             user_id,
             owner_user_id: user.id,
@@ -172,6 +191,7 @@ async fn create_response_flow(
                 title: None,
                 task_type,
                 source: "chat_shell",
+                project_id,
                 api_key_name: user.api_key_name.as_deref(),
                 model_id: model.model_id.as_deref(),
                 force_override_bot_model: model.model_id.is_some(),
@@ -186,12 +206,52 @@ async fn create_response_flow(
             },
             repository: WorkspaceRepository::default(),
             client_origin: "frontend",
+            project_id,
             created_at: &row_timestamp,
             updated_at: &row_timestamp,
             completed_at: &row_timestamp,
         },
     )
     .await?;
+
+    // `prepare_execution_session` ends with `db.commit()`
+    // (`app/services/chat/trigger/lifecycle.py:421`), which expires every
+    // instance in the request session; it then refreshes the three rows the
+    // setup wrote (`lifecycle.py:422-429`). The ORM renders each refresh as an
+    // unaliased, `LIMIT`-free primary-key select.
+    let _task = state
+        .task_store
+        .refresh_task(setup.task_id, i64::from(user.id))
+        .await
+        .map_err(dependency)?;
+    let _user_subtask = state
+        .task_store
+        .refresh_subtask(setup.task_id, setup.user_subtask_id)
+        .await
+        .map_err(dependency)?;
+
+    // `TaskRunMetricHooks`: the source's `after_flush_postexec` listener
+    // captured the new assistant subtask's `created_at` (read inside the
+    // insert's savepoint) and `after_commit` records it in the run totals. The
+    // insert is committed by the store, so publish immediately after setup.
+    publish_inserted_assistant_subtask_metrics(
+        state,
+        setup.task_id,
+        setup.assistant_subtask_id,
+        setup.assistant_created_at,
+    )
+    .await;
+
+    // `_create_non_streaming_response_unified`'s first access to the request
+    // user after `setup_chat_session` (`openapi_responses.py:761`,
+    // `user_id = user.id`), which the commit above expired: the ORM re-selects
+    // the `users` row by primary key before its values are used again.
+    let user = reload_request_user(state, user).await?;
+    // The same expiry covers the Team Kind: `build_execution_request` receives
+    // the expired instance (`openapi_responses.py:795-799`) and its first
+    // `team.` access reloads the row by primary key.
+    let team = reload_team(state, &team).await?;
+    let user_id = i64::from(user.id);
 
     // The rewritten Task CRD (override labels + KB refs) the builder reads.
     let task_json = crate::task_creation::build_task_crd(&TaskCrdInput {
@@ -203,6 +263,7 @@ async fn create_response_flow(
         title: None,
         task_type,
         source: "chat_shell",
+        project_id,
         api_key_name: user.api_key_name.as_deref(),
         model_id: model.model_id.as_deref(),
         force_override_bot_model: model.model_id.is_some(),
@@ -220,15 +281,24 @@ async fn create_response_flow(
     let (bot_role, team_member_prompt) =
         team_member_context(&team.json.0, &bot.name, &bot.namespace);
 
+    // `request_preparation.py:966-970`: the middleware request id, or the
+    // deterministic `req_{assistant_subtask.id}` fallback when the request
+    // context carries none.
+    let request_id = request_id
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("req_{}", setup.assistant_subtask_id));
+
     let enable_chat_bot = tool_settings.enable_chat_bot;
     let dispatch = DispatchInput {
         user_id,
         user_name: &user.user_name,
-        request_id,
+        request_id: &request_id,
         team: &team,
         bot: &bot,
         bot_role: &bot_role,
         team_member_prompt: team_member_prompt.as_deref(),
+        bot_ids: &bots.bot_ids,
         input_text: &input_text,
         task_json: &task_json,
         setup: &setup,
@@ -238,6 +308,9 @@ async fn create_response_flow(
         background: input.background,
         previous_response_id: input.previous_response_id.clone(),
         model_string: &input.model,
+        task_project_id: project_id,
+        executor_name: &setup.assistant_executor_name,
+        executor_namespace: &setup.assistant_executor_namespace,
         enable_tools: enable_chat_bot || !tool_settings.preload_skills.is_empty(),
         enable_chat_bot,
         enable_web_search: enable_chat_bot && seam::web_search_enabled(),
@@ -272,6 +345,17 @@ fn normalize_auto_delete_executor(value: Option<&str>) -> Result<Option<String>,
 pub(super) fn dependency(error: brz_mysql::MysqlError) -> FastApiError {
     tracing::error!(%error, "responses create dependency failure");
     FastApiError::internal()
+}
+
+/// `get_or_create_task_source_group` errors: a missing owner is the source's
+/// `404 {"detail": "User not found"}`; a database failure stays a 500.
+fn source_group_error(error: crate::task_source_group::SourceGroupError) -> FastApiError {
+    match error {
+        crate::task_source_group::SourceGroupError::UserNotFound => {
+            FastApiError::detail(StatusCode::NOT_FOUND, "User not found")
+        }
+        crate::task_source_group::SourceGroupError::Mysql(error) => dependency(error),
+    }
 }
 
 /// The matching team member's `role` and `prompt` for the resolved bot.
@@ -318,4 +402,71 @@ fn client_ip(x_forwarded_for: Option<&str>) -> String {
         .filter(|value| !value.is_empty())
         .unwrap_or("unknown")
         .to_string()
+}
+
+/// `Session._load_expired` for the request user: the first attribute access
+/// after the setup commit re-selects the expired `User` row by primary key with
+/// the unaliased projection and no `LIMIT` (`openapi_responses.py:761`,
+/// `SQLAlchemy` `loading.load_on_pk_identity`). The reloaded row replaces the
+/// in-memory values for the rest of the request; the authenticating
+/// `api_key_name` is not a `users` column and is carried over.
+async fn reload_request_user(
+    state: &AppState,
+    user: &ResponsesUser,
+) -> Result<CurrentUser, FastApiError> {
+    let record = state
+        .user_reader
+        .get_entity_by_id(i64::from(user.id))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "responses request user reload failed");
+            FastApiError::internal()
+        })?;
+    let Some(record) = record else {
+        // The source's expired-instance access raises `ObjectDeletedError`
+        // when the row is gone, which FastAPI renders as an internal error.
+        tracing::error!("responses request user reload found no row");
+        return Err(FastApiError::internal());
+    };
+    Ok(CurrentUser {
+        id: i32::try_from(record.id).unwrap_or(user.id),
+        user_name: record.user_name,
+        api_key_name: user.api_key_name.clone(),
+    })
+}
+
+/// `TaskRunMetricHooks._after_flush_postexec`/`_after_commit` for the paired
+/// subtask insert: the hook captured the inserted assistant subtask's
+/// `created_at` during the setup flush (`created_at` here), and
+/// `prepare_execution_session` refreshes the assistant subtask after the commit
+/// (`db.refresh(assistant_subtask)`), which the source issues unconditionally.
+/// The new row is then recorded in the `task-run-monitor:v2` run totals. The
+/// source hook logs and swallows a store failure, so neither step can change
+/// the committed setup.
+async fn publish_inserted_assistant_subtask_metrics(
+    state: &AppState,
+    task_id: i64,
+    subtask_id: i64,
+    created_at: Option<chrono::NaiveDateTime>,
+) {
+    if !matches!(
+        state.task_store.refresh_subtask(task_id, subtask_id).await,
+        Ok(Some(_))
+    ) {
+        return;
+    }
+    // `if not subtask.id or not subtask.created_at: continue`: a missing
+    // captured timestamp skips the event.
+    let Some(created_at) = created_at else {
+        return;
+    };
+    let Some(redis) = state.redis.as_ref() else {
+        return;
+    };
+    if let Err(error) =
+        crate::task_run_metrics::record_inserted_assistant_subtask(redis, subtask_id, created_at)
+            .await
+    {
+        tracing::warn!(%error, "task run metrics publish failed");
+    }
 }

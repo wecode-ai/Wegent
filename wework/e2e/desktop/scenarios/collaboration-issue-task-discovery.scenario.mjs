@@ -198,6 +198,27 @@ export function createDesktopScenario({
       workbenchReadyTimeoutMs
     )
   }
+  async function openIssueWorkspace(control) {
+    await ensureExperimentalFeaturesEnabled(control)
+    await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+    await selectCollaborationDomain(control, CONTENT, 'cloud')
+    await control.command(
+      'waitFor',
+      scoped(
+        `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
+      ),
+      { timeoutMs: workbenchReadyTimeoutMs }
+    )
+    await control.command(
+      'click',
+      scoped(
+        `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
+      )
+    )
+  }
   return {
     requiresCloudEnvironment: true,
     async prepareCloud(value) {
@@ -226,6 +247,20 @@ export function createDesktopScenario({
       console.log('[executor-identity] Registered local Executor; refreshing the cloud catalog')
       await waitForCurrentRegistration(control)
       await runLocalTask(control)
+      // Large-history transport needs one unambiguous device; identity conflicts are tested below.
+      const owner = await request('/api/users/me')
+      const history = await prepareIssue(localApp, `${TITLE} large history`, owner)
+      await openIssueWorkspace(control)
+      const binding = await runAssistance(control, history)
+      await verifyIssueTranscriptTransfer({
+        control,
+        request,
+        fixture: history,
+        binding,
+        codexSqliteHome,
+        timeoutMs: workbenchReadyTimeoutMs,
+        scope: scoped,
+      })
       console.log(
         '[executor-identity] Local task completed; registering a conflicting installation'
       )
@@ -238,7 +273,6 @@ export function createDesktopScenario({
       const otherApp = await environment.waitForDeviceType(OTHER_APP_ID, 'app')
       assert.notEqual(otherApp.runtime_instance_id, localApp.runtime_instance_id)
       assert.match(otherApp.execution_target_id, /^app-record-\d+$/)
-      const owner = await request('/api/users/me')
       const local = await prepareIssue(localApp, `${TITLE} local`, owner)
       const other = await prepareIssue(otherApp, `${TITLE} other`, owner)
       console.log(
@@ -249,35 +283,8 @@ export function createDesktopScenario({
       console.log(
         '[executor-identity] Local task completed with duplicate addresses; checking Issue assistance'
       )
-      await ensureExperimentalFeaturesEnabled(control)
-      await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
-      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await selectCollaborationDomain(control, CONTENT, 'cloud')
-      await control.command(
-        'waitFor',
-        scoped(
-          `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
-        ),
-        { timeoutMs: workbenchReadyTimeoutMs }
-      )
-      await control.command(
-        'click',
-        scoped(
-          `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
-        )
-      )
-      const binding = await runAssistance(control, local)
-      await verifyIssueTranscriptTransfer({
-        control,
-        request,
-        fixture: local,
-        binding,
-        codexSqliteHome,
-        timeoutMs: workbenchReadyTimeoutMs,
-        scope: scoped,
-      })
+      await openIssueWorkspace(control)
+      await runAssistance(control, local)
       await runAssistance(control, other)
     },
     diagnostics() {

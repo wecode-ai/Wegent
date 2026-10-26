@@ -287,18 +287,15 @@ fn subtask_metric_event(
     result: &Value,
     state_changed_at: NaiveDateTime,
 ) -> Option<crate::task_run_metrics::SubtaskMetricEvent> {
-    Some(crate::task_run_metrics::SubtaskMetricEvent {
+    // The committed status is `COMPLETED`; only `FAILED` sets the flag.
+    crate::task_run_metric_hooks::committed_status_change(
+        created_at,
         subtask_id,
-        created_at: created_at?,
-        // The committed status is `COMPLETED`; only `FAILED` sets the flag.
-        failed: false,
+        false,
+        error_message,
+        Some(result),
         state_changed_at,
-        message: crate::task_run_metrics::failure_message(error_message, Some(result)),
-        // `update_fields` mutates an existing row, so it never records the id
-        // in the run totals; a status change always syncs the failure bucket.
-        record_total: false,
-        sync_failure: true,
-    })
+    )
 }
 
 /// Non-`chat_shell` branch: `task_kinds_service.cancel_task`.

@@ -13,6 +13,12 @@ from app.services.device import plugin_removal_sync as module
 
 @pytest.fixture
 def sync_context(monkeypatch):
+    monkeypatch.setattr(
+        module.device_capability_sync_service,
+        "supports_plugin_delta",
+        AsyncMock(return_value=False),
+    )
+
     @contextmanager
     def session():
         yield Mock()

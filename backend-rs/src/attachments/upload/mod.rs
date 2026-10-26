@@ -36,6 +36,7 @@ mod model_jpeg;
 pub(crate) mod office;
 mod overwrite;
 pub(crate) mod pdf;
+mod resample;
 mod response;
 mod store;
 #[cfg(test)]
@@ -96,7 +97,7 @@ struct OwnerEntityRow {
     #[allow(dead_code, reason = "selected to match the source column list")]
     email: Option<String>,
     #[allow(dead_code, reason = "selected to match the source column list")]
-    git_info: brz_mysql::Json<brz_json::OpaqueJson>,
+    git_info: Option<brz_mysql::Json<brz_json::OpaqueJson>>,
     #[allow(dead_code, reason = "selected to match the source column list")]
     is_active: i8,
     #[allow(dead_code, reason = "selected to match the source column list")]

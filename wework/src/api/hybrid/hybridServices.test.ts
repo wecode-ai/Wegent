@@ -96,6 +96,14 @@ const mocks = vi.hoisted(() => {
   }
 
   const localServices = {
+    standInApi: {
+      personalSave: vi.fn(),
+      save: vi.fn(),
+      organizeWork: vi.fn(),
+      memories: vi.fn(async () => []),
+      saveMemory: vi.fn(),
+      deleteMemory: vi.fn(),
+    },
     getLocalRuntimeSidebarIdentity: localSidebarIdentity,
     replyPredictionApi: { predict: vi.fn().mockResolvedValue({ suggestion: '继续' }) },
     composerCatalogApi: { readCatalog: vi.fn() },
@@ -124,6 +132,7 @@ const mocks = vi.hoisted(() => {
       syncRuntimeRemoteProjects: localSyncRemoteProjects,
       activateRuntimeProject: localActivateProject,
       getRuntimeTranscript: vi.fn(),
+      searchRuntimeTranscript: vi.fn(),
       materializeRuntimeTask: vi.fn(),
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: localListRuntimeWork,
@@ -177,6 +186,14 @@ const mocks = vi.hoisted(() => {
     createDockerRemoteDeviceCommand: cloudCreateDockerRemoteDeviceCommand,
   }
   const cloudServices = {
+    standInApi: {
+      personalSave: vi.fn(),
+      save: vi.fn(),
+      organizeWork: vi.fn(),
+      memories: vi.fn(async () => []),
+      saveMemory: vi.fn(),
+      deleteMemory: vi.fn(),
+    },
     projectChatClient: { reconcileExecutionSnapshot: vi.fn().mockResolvedValue([]) },
     composerCatalogApi: { readCatalog: vi.fn() },
     teamApi: {
@@ -190,6 +207,7 @@ const mocks = vi.hoisted(() => {
     runtimeWorkApi: {
       materializeRuntimeTask: cloudMaterializeRuntimeTask,
       getRuntimeTranscript: vi.fn(),
+      searchRuntimeTranscript: vi.fn(),
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: cloudListRuntimeWork,
       createRuntimeTask: cloudCreateRuntimeTask,
@@ -347,6 +365,9 @@ vi.mock('@/api/local/localServices', async importOriginal => ({
       compactRuntimeTask(data: Record<string, unknown>) {
         return request('runtime.tasks.compact', data, String(data.deviceId))
       },
+      searchRuntimeTranscript(data: Record<string, unknown>) {
+        return request('runtime.tasks.transcript.search', data, String(data.deviceId))
+      },
       async searchRuntimeWork(data: Record<string, unknown>) {
         return request(
           'runtime.tasks.search',
@@ -469,6 +490,75 @@ function deferred<T>() {
   })
   return { promise, resolve }
 }
+
+describe('stand-in save routing', () => {
+  it.each(['local-device', 'remote-device'])(
+    'routes saves by the selected Executor %s rather than the stored device field',
+    async deviceId => {
+      mocks.localSidebarIdentity.mockResolvedValue({
+        deviceId: 'local-device',
+        runtimeInstanceId: 'local-runtime',
+        provenance: 'local-ipc',
+      })
+      const local = mocks.localServices.standInApi
+      const cloud = mocks.cloudServices.standInApi
+      for (const api of [local, cloud]) {
+        api.personalSave.mockClear()
+        api.save.mockClear()
+        api.memories.mockClear()
+        api.saveMemory.mockClear()
+        api.deleteMemory.mockClear()
+        api.organizeWork.mockClear()
+      }
+      const settings = {
+        userId: 7,
+        executionDeviceId: 'old-device',
+        version: 1,
+        roles: [],
+      }
+      const services = createServices()
+      await services.standInApi!.personalSave(7, settings, deviceId)
+      const selected = deviceId === 'local-device' ? local : cloud
+      const other = selected === local ? cloud : local
+      expect(selected.personalSave).toHaveBeenCalledExactlyOnceWith(7, settings, deviceId)
+      expect(other.personalSave).not.toHaveBeenCalled()
+      const projectSettings = {
+        enabled: true,
+        prompt: '',
+        executionDeviceId: 'old-device',
+        version: 1,
+      }
+      await services.standInApi!.save('project', 7, 'cloud', projectSettings, deviceId)
+      expect(selected.save).toHaveBeenCalledExactlyOnceWith(
+        'project',
+        7,
+        'cloud',
+        projectSettings,
+        deviceId
+      )
+      expect(other.save).not.toHaveBeenCalled()
+      const memory = { content: 'Prefer concise replies', scope: { kind: 'personal' as const } }
+      await services.standInApi!.memories(7, deviceId)
+      await services.standInApi!.saveMemory(7, deviceId, memory)
+      await services.standInApi!.deleteMemory(7, deviceId, 'memory-1', 3)
+      expect(selected.memories).toHaveBeenCalledExactlyOnceWith(7, deviceId)
+      expect(selected.saveMemory).toHaveBeenCalledExactlyOnceWith(7, deviceId, memory)
+      expect(selected.deleteMemory).toHaveBeenCalledExactlyOnceWith(7, deviceId, 'memory-1', 3)
+      expect(other.memories).not.toHaveBeenCalled()
+      expect(other.saveMemory).not.toHaveBeenCalled()
+      expect(other.deleteMemory).not.toHaveBeenCalled()
+      await services.standInApi!.organizeWork(7, deviceId, 'work', ['message'], 'target')
+      expect(selected.organizeWork).toHaveBeenCalledExactlyOnceWith(
+        7,
+        deviceId,
+        'work',
+        ['message'],
+        'target'
+      )
+      expect(other.organizeWork).not.toHaveBeenCalled()
+    }
+  )
+})
 
 describe('qualified local sidebar routing', () => {
   const identity = {
@@ -956,6 +1046,45 @@ describe('execution status write-back on history reads', () => {
     await createServices().runtimeWorkApi!.getRuntimeTranscript(request)
     expect(mocks.localServices.runtimeWorkApi.getRuntimeTranscript).toHaveBeenCalledWith(request)
     expect(mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])(
+    'authorizes project-scoped search before device routing (%s)',
+    async projectScoped => {
+      const request = {
+        ...address,
+        query: 'needle',
+        ...(projectScoped
+          ? { projectSession: { projectId: 'project-1', issueId: 'issue-1' } }
+          : {}),
+      }
+      const result = { matches: [], totalMatches: 0, isCapped: false }
+      const local = mocks.localServices.runtimeWorkApi.searchRuntimeTranscript
+      const cloud = mocks.cloudServices.runtimeWorkApi.searchRuntimeTranscript
+      local.mockReset().mockResolvedValue(result)
+      cloud.mockReset().mockResolvedValue(result)
+
+      expect(await createServices().runtimeWorkApi!.searchRuntimeTranscript(request)).toEqual(
+        result
+      )
+
+      expect(projectScoped ? cloud : local).toHaveBeenCalledExactlyOnceWith(request)
+      expect(projectScoped ? local : cloud).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps the shared search timeout when routing directly to a cloud device', async () => {
+    const request = { deviceId: 'cloud-device', taskId: 'runtime-1', query: 'needle' }
+    const result = { matches: [], totalMatches: 0, isCapped: false }
+    mocks.cloudRuntimeIpcRequest.mockReset().mockResolvedValue(result)
+
+    expect(await createServices().runtimeWorkApi!.searchRuntimeTranscript(request)).toEqual(result)
+
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledExactlyOnceWith(
+      'runtime.tasks.transcript.search',
+      request,
+      'cloud-device'
+    )
   })
 
   it('reports a completed local turn to durable cloud storage after reading history', async () => {
