@@ -1,3 +1,4 @@
+import { readRawRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -26,25 +27,56 @@ function seedHistory(sqliteHome, threadId) {
     const assistant = rows.find(item => item.type === 'agentMessage')
     assert.ok(user && assistant, 'The native seed conversation must contain both message types')
     const maximum = database
-      .prepare('SELECT MAX(rollout_ordinal) AS value FROM thread_items WHERE thread_id = ?')
-      .get(threadId).value
+      .prepare(
+        `SELECT MAX(value) AS value FROM (
+        SELECT COALESCE(MAX(rollout_ordinal), 0) AS value FROM thread_items WHERE thread_id = ?
+        UNION ALL
+        SELECT COALESCE(MAX(rollout_ordinal), 0) FROM thread_turns WHERE thread_id = ?
+        UNION ALL
+        SELECT COALESCE(MAX(rollout_end_ordinal), 0) FROM thread_turns WHERE thread_id = ?
+      )`
+      )
+      .get(threadId, threadId, threadId).value
     const insertTurn = database.prepare(`INSERT INTO thread_turns
-      (thread_id, turn_id, rollout_ordinal, status, error_json, started_at, completed_at,
-       first_user_item_id, final_agent_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      (thread_id, turn_id, rollout_ordinal, rollout_end_ordinal, status, error_json,
+       started_at, completed_at, first_user_item_id, final_agent_item_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     const insertItem = database.prepare(`INSERT INTO thread_items
       (thread_id, turn_id, item_id, rollout_ordinal, created_at_ms, item_json, item_type)
       VALUES (?, ?, ?, ?, ?, ?, ?)`)
     const startedAt = Date.now()
     database.exec('BEGIN IMMEDIATE')
+    let ordinal = maximum + 1
     for (let index = 1; index <= 10; index += 1) {
       const turnId = `latest-history-turn-${index}`
-      const ordinal = maximum + index * 3
       const timestamp = startedAt + index * 1000
       const failed = index === 2
+      const items = failed
+        ? []
+        : [
+            {
+              ...user,
+              id: `${turnId}-user`,
+              clientId: `${turnId}-user`,
+              content: [{ type: 'text', text: `${PROMPT}_${index}`, text_elements: [] }],
+            },
+            // Native timeline pages budget 500 items at page size five. The latest
+            // turn must exceed that budget so reopening initially loads only replies.
+            ...(index === 10
+              ? Array.from({ length: 600 }, (_, part) => ({
+                  ...assistant,
+                  id: `${turnId}-detail-${part}`,
+                  text: `${PROMPT}_REPLY_${index}_DETAIL_${part}`,
+                }))
+              : []),
+            { ...assistant, id: `${turnId}-assistant`, text: `${PROMPT}_REPLY_${index}` },
+          ]
+      const endOrdinal = ordinal + items.length + 1
       insertTurn.run(
         threadId,
         turnId,
         ordinal,
+        endOrdinal,
         failed ? 'failed' : 'completed',
         failed
           ? JSON.stringify({ message: 'Historical request failed before producing items' })
@@ -54,25 +86,6 @@ function seedHistory(sqliteHome, threadId) {
         failed ? null : `${turnId}-user`,
         failed ? null : `${turnId}-assistant`
       )
-      if (failed) continue
-      const items = [
-        {
-          ...user,
-          id: `${turnId}-user`,
-          clientId: `${turnId}-user`,
-          content: [{ type: 'text', text: `${PROMPT}_${index}`, text_elements: [] }],
-        },
-        // Native timeline pages budget 500 items at page size five. The latest
-        // turn must exceed that budget so reopening initially loads only replies.
-        ...(index === 10
-          ? Array.from({ length: 600 }, (_, part) => ({
-              ...assistant,
-              id: `${turnId}-detail-${part}`,
-              text: `${PROMPT}_REPLY_${index}_DETAIL_${part}`,
-            }))
-          : []),
-        { ...assistant, id: `${turnId}-assistant`, text: `${PROMPT}_REPLY_${index}` },
-      ]
       items.forEach((item, offset) =>
         insertItem.run(
           threadId,
@@ -84,6 +97,7 @@ function seedHistory(sqliteHome, threadId) {
           item.type
         )
       )
+      ordinal = endOrdinal + 1
     }
     database.exec('COMMIT')
   } finally {
@@ -148,9 +162,7 @@ export function createDesktopScenario({
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname))
         return false
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      if (!Buffer.concat(chunks).toString('utf8').includes(PROMPT)) return false
+      if (!(await readRawRequestBody(request)).includes(PROMPT)) return false
       const id = `latest-history-${Date.now()}`
       const events = [
         { type: 'response.created', response: { id } },

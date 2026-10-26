@@ -1,3 +1,4 @@
+import { readRequestBody as readJsonBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { constants } from 'node:fs'
 import { access } from 'node:fs/promises'
@@ -206,12 +207,6 @@ async function waitForHarnessExit(control, harnessId, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 50))
   }
   throw new Error(`The ${harnessId} CLI did not finish within ${timeoutMs}ms`)
-}
-
-async function readJsonBody(request) {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
 function writeSse(response, events) {

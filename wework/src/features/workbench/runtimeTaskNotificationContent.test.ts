@@ -53,4 +53,15 @@ describe('runtimeTaskNotificationContent', () => {
       ])
     ).toBeNull()
   })
+
+  test('does not invent a completed reply when the latest prompt has no assistant text', () => {
+    for (const following of [[], [message({ role: 'assistant', content: '' })]]) {
+      expect(
+        notificationTextFromMessages([
+          message({ role: 'user', content: 'Review the PR' }),
+          ...following,
+        ])
+      ).toEqual({ title: 'Review the PR', body: '' })
+    }
+  })
 })

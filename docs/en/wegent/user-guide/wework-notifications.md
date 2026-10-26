@@ -8,7 +8,7 @@ The bell beside Feedback is the single notification inbox. Its badge and the mac
 
 The bell opens a category popover with Task updates, Collaboration, and Other notifications. Each category shows its latest preview, time, and unread count; unrelated sources are not mixed into one list. Opening an entry marks it read. Entries with a destination open it, while entries without one keep the current page and notification content visible. Opening the popover alone does not clear unread state. Mark all read acknowledges unread entries from every available source.
 
-The settings button in the notification popover controls in-app, system, and IM delivery independently for Task updates, Collaboration, and Other notifications. Task in-app and system delivery remain editable while the app is locally offline; the signed-in account's saved preferences take over after Backend connection. Collaboration IM controls pushes for assignments, comment mentions, run updates, and human work to DingTalk and any other connected private IM session; Other IM controls general notification pushes. Disabling in-app delivery marks existing unread entries in that category as read without deleting history, and future notifications are not stored in the inbox. Cloud preferences follow the Wework account across devices. Task IM continues to use the current runtime-task notification setting.
+The settings button in the notification popover controls in-app, system, and IM delivery independently for Task updates, Collaboration, and Other notifications. Task in-app and system delivery remain editable while the app is locally offline; the signed-in account's saved preferences take over after Backend connection. Collaboration IM controls pushes for assignments, comment mentions, run updates, and human work to the DingTalk channels configured for notification cards; Other IM controls general notification pushes. Disabling in-app delivery marks existing unread entries in that category as read without deleting history, and future notifications are not stored in the inbox. Cloud preferences follow the Wework account across devices. Task IM continues to use the current runtime-task notification setting.
 
 Task reminder read state belongs to the local task lifecycle on this device. Cloud notifications are stored in Backend and remain available after sign-in or on another device. While offline, local task reminders remain available and cloud categories show that they cannot be loaded. Cloud entries return after reconnection; a failed refresh does not erase entries already loaded.
 
@@ -16,7 +16,7 @@ Issue cards on collaboration project boards do not show unread dots or unread ba
 
 Human assignments offer Notify or Do not notify before saving, including assignment through board lanes and Issue creation. Assigning the same person again does not duplicate the notification. Ordinary self-assignment stays quiet; AI handing an Issue back to its user sends a notification.
 
-Delivery also attempts the recipient's connected private IM sessions. IM failures do not remove the inbox entry or change the active IM task.
+Delivery reaches only the recipient's connected private IM channels that configured a notification card, such as the DingTalk WegentBot. A connected channel without that configuration receives no IM push; the in-app entry is unaffected. IM failures do not remove the inbox entry or change the active IM task.
 
 ## Mentioning members in comments
 

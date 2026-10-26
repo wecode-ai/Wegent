@@ -54,6 +54,15 @@ mod stand_in;
 #[path = "personal_stand_in.rs"]
 pub mod personal_stand_in;
 
+#[path = "stand_in_proposals.rs"]
+mod stand_in_proposals;
+
+#[path = "stand_in_memories.rs"]
+mod stand_in_memories;
+
+#[path = "stand_in_inbox.rs"]
+mod stand_in_inbox;
+
 const LOCAL_SCHEMA_VERSION: i64 = 10;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
 const DEFAULT_WORK_ITEM_PROJECT_KEY: &str = "WORK";

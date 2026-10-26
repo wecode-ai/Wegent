@@ -313,3 +313,131 @@ async fn native_timeline_binds_plain_execution_identity_without_synthesizing_a_p
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn native_timeline_restores_completed_approval_evidence_with_native_history() {
+    let (mut handler, root) = native_handler("native-approval-evidence");
+    fs::write(
+        root.join("thread_timeline_list.json"),
+        json!({"data":[
+        {"type":"turnStarted", "position":1, "turnId":"current"},
+        {"type":"item", "position":2, "turnId":"current", "item":{
+            "id":"current-text", "type":"agentMessage", "phase":"final_answer", "text":"Current"
+        }},
+        {"type":"turnCompleted", "position":3, "turnId":"current", "status":"completed"}
+    ], "nextCursor":null})
+        .to_string(),
+    )
+    .unwrap();
+    handler.begin_active_codex_transcript("task-1", "thread-1", "current");
+    for (id, status, rationale) in [
+        ("allow", "completed", "Read authorized work context"),
+        (
+            "deny",
+            "failed",
+            "Private data is outside the assigned task",
+        ),
+    ] {
+        handler.record_active_codex_transcript_item("task-1", "current", &json!({
+            "method":"item/completed", "params":{"threadId":"thread-1", "turnId":"current", "item":{
+                "id":id,"type":"autoApprovalReview","name":"auto_approval_review",
+                "status":status,"arguments":{"type":"command"},"output":{"rationale":rationale}
+            }}
+        }));
+    }
+    handler.persist_and_clear_active_codex_transcript("task-1", "completed");
+    let response = read_and_stop(&mut handler).await.unwrap();
+    let reviews = response["runtimeTurns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
+        .map(|item| &item["block"])
+        .filter(|block| block["tool_name"] == "auto_approval_review")
+        .collect::<Vec<_>>();
+    assert_eq!(reviews.len(), 2);
+    assert!(reviews.iter().any(|block| block["status"] == "done"));
+    assert!(reviews.iter().any(|block| block["status"] == "error"));
+    assert!(reviews
+        .iter()
+        .any(|block| block["tool_output"]["rationale"]
+            == "Private data is outside the assigned task"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn native_approval_expiry_clears_only_its_waiter_and_updates_the_visible_card() {
+    let (mut handler, root) = native_handler("native-approval-expiry");
+    let (event_tx, mut events) = broadcast::channel(16);
+    handler.event_tx = Some(event_tx);
+    handler.begin_active_codex_transcript("task-1", "thread-1", "current");
+    let request = ExecutionRequest {
+        subtask_id: "current".into(),
+        ..ExecutionRequest::default()
+    };
+    let mut mapper = CodexNotificationEventMapper::default();
+    for (id, method) in [
+        (71, "item/commandExecution/requestApproval"),
+        (72, "item/fileChange/requestApproval"),
+    ] {
+        let message = json!({"id":id,"method":method,"params":{"threadId":"thread-1","turnId":"current","itemId":format!("item-{id}"),"interactionStatus":"pending","expiresAtUnixMs":1}});
+        handler.record_active_codex_transcript_item("task-1", "current", &message);
+        mapper.map(
+            &handler.event_tx,
+            &handler.device_id,
+            "task-1",
+            &request,
+            message,
+        );
+    }
+    handler.refresh_pending_user_input_status("task-1");
+    assert_eq!(
+        handler
+            .local_task_link("task-1")
+            .unwrap()
+            .interaction_status
+            .as_deref(),
+        Some(INTERACTION_WAITING_FOR_USER_INPUT)
+    );
+    for (id, method) in [
+        (71, "item/commandExecution/requestApproval"),
+        (72, "item/fileChange/requestApproval"),
+    ] {
+        let message = json!({"id":id,"method":crate::runtime_work::codex_user_input::APPROVAL_SETTLED_METHOD,"params":{"threadId":"thread-1","turnId":"current","itemId":format!("item-{id}"),"approvalMethod":method,"interactionStatus":"expired","expiresAtUnixMs":1,"settledAtUnixMs":2}});
+        handler.record_active_codex_transcript_item("task-1", "current", &message);
+        handler.refresh_pending_user_input_status("task-1");
+        mapper.map(
+            &handler.event_tx,
+            &handler.device_id,
+            "task-1",
+            &request,
+            message,
+        );
+        assert_eq!(
+            handler
+                .local_task_link("task-1")
+                .unwrap()
+                .interaction_status
+                .is_some(),
+            id == 71
+        );
+    }
+    let updates: Vec<Value> = std::iter::from_fn(|| events.try_recv().ok())
+        .filter(|event| event["event"] == "response.block.updated")
+        .collect();
+    // Event envelopes expose the update payload independently of their transport name.
+    let active = handler.active_codex_transcript_items.lock().unwrap();
+    let items = &active["task-1"].items;
+    assert_eq!(items.len(), 2);
+    assert!(items
+        .iter()
+        .all(|item| item["renderPayload"]["interactionStatus"] == "expired"));
+    drop(active);
+    assert_eq!(updates.len(), 2);
+    assert!(updates.iter().all(
+        |event| event["payload"]["data"]["updates"]["status"] == "done"
+            && event["payload"]["data"]["updates"]["render_payload"]["interactionStatus"]
+                == "expired"
+    ));
+    fs::remove_dir_all(root).unwrap();
+}

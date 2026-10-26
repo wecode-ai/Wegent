@@ -29,6 +29,7 @@ interface ComposerToolbarProps {
   canSend: boolean
   disabled?: boolean
   pluginPickerIconOnly?: boolean
+  showModelSelector?: boolean
   showExecutionTools?: boolean
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null

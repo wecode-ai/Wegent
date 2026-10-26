@@ -147,6 +147,10 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let target = resolve_local_plugin_uninstall_target(&payload)
             .map_err(|error| AppIpcError::new("invalid_local_plugin_uninstall", error))?;
+        super::super::connection_host::assert_dependency_unused(&format!(
+            "{}@{}",
+            target.plugin_key, WEWORK_PERSONAL_MARKETPLACE
+        ))?;
         let plugin_key = target.plugin_key.clone();
         let started_at = Instant::now();
         tokio::task::spawn_blocking(move || uninstall_local_plugin_files(&target))

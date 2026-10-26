@@ -33,6 +33,7 @@ const SAFE_DETAIL_KEYS = new Set([
   "canSend",
   "disabled",
   "isModelSelectionReady",
+  "hasContent",
   "submitDisabled",
   "stateIsComposing",
   "suppressEnterUntilKeyUp",

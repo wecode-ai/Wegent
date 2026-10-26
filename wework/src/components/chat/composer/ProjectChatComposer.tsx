@@ -105,6 +105,7 @@ interface ProjectChatComposerProps {
   projectPhrases?: QuickPhrase[]
   showProjectWorkBar?: boolean
   projectWorkBar?: ReactNode
+  showModelSelector?: boolean
   showExecutionTools?: boolean
   isStreaming?: boolean
   onPause?: () => void
@@ -191,6 +192,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       projectPhrases = [],
       showProjectWorkBar = true,
       showExecutionTools = true,
+      showModelSelector,
       isStreaming = false,
       onPause,
       showWorkspaceMenu,
@@ -400,6 +402,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               disabled={disabled}
               pluginPickerIconOnly={pluginPickerIconOnly}
               showExecutionTools={showExecutionTools}
+              showModelSelector={showModelSelector}
               models={models}
               selectedModel={selectedModel}
               activeModel={activeModel}

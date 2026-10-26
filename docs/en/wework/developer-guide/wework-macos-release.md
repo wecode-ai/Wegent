@@ -304,7 +304,7 @@ with SHA-512. Prepared desktop resources live under `wework/resources/`.
 icons, and runtime descriptors into the application resources. Do not maintain
 a second desktop resource tree or manifest.
 
-The current pin is Codex `0.153.3`. Codex `0.152` disables
+The current pin is Codex `0.163.0-alpha.5`. Codex `0.152` disables
 `tools.update_plan.enabled` by default, while Wework consumes the corresponding
 plan events to render plan blocks, so the Executor must enable the tool
 explicitly when launching Codex. Desktop E2E verifies the lockfile binary by

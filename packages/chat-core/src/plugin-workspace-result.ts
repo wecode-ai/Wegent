@@ -69,11 +69,48 @@ export function parsePluginWorkspaceResults(
 }
 
 export function stripPluginWorkspaceResultMarkers(content: string): string {
-  return content
-    .split(/\r?\n/)
-    .filter((line) => !parsePluginWorkspaceResults(line).length)
-    .join("\n")
-    .trimEnd();
+  return projectPluginWorkspaceResultText(content).content;
+}
+
+/** Marker removal and newline normalization retain exact original line spans. */
+export function projectPluginWorkspaceResultText(content: string) {
+  const sources: Array<{
+    start: number;
+    end: number;
+    sourceStart: number;
+    sourceEnd: number;
+  }> = [];
+  let sourceOffset = 0;
+  let text = "";
+  let retainedLines = 0;
+  for (const line of content.split(/\r?\n/)) {
+    if (!parsePluginWorkspaceResults(line).length) {
+      if (retainedLines++) text += "\n";
+      const start = text.length;
+      text += line;
+      if (line.length)
+        sources.push({
+          start,
+          end: text.length,
+          sourceStart: sourceOffset,
+          sourceEnd: sourceOffset + line.length,
+        });
+    }
+    sourceOffset +=
+      line.length + (content[sourceOffset + line.length] === "\r" ? 2 : 1);
+  }
+  text = text.trimEnd();
+  return {
+    content: text,
+    sources: sources
+      .filter((source) => source.start < text.length)
+      .map((source) => ({
+        ...source,
+        end: Math.min(source.end, text.length),
+        sourceEnd:
+          source.sourceStart + Math.min(source.end, text.length) - source.start,
+      })),
+  };
 }
 
 export function latestPluginWorkspaceResult(

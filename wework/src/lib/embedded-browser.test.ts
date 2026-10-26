@@ -153,6 +153,18 @@ describe('embedded-browser', () => {
     )
   })
 
+  test('closes without an identity using the host optional-string contract', async () => {
+    desktopHostMocks.invoke.mockImplementationOnce(async (_command, params) => {
+      if (
+        params.expectedNativeLabel !== undefined &&
+        typeof params.expectedNativeLabel !== 'string'
+      ) {
+        throw new Error('expectedNativeLabel is invalid')
+      }
+    })
+    await expect(closeEmbeddedBrowser('workspace-browser-task-1')).resolves.toBeUndefined()
+  })
+
   test('closes only the expected native browser identity', async () => {
     await closeEmbeddedBrowser('workspace-browser-task-1', 'embedded-browser-native-7')
 

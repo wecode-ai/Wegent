@@ -53,7 +53,7 @@ fn archive_payload(name: &str, content: &str) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 pub(super) fn store(root: &Path, codex_only: bool) -> GlobalCapabilityStore {
-    let store = GlobalCapabilityStore::new(
+    let mut store = GlobalCapabilityStore::new(
         root.join("executor/capabilities/manifest-v2.json"),
         root.join("claude/skills"),
     )
@@ -61,11 +61,9 @@ pub(super) fn store(root: &Path, codex_only: bool) -> GlobalCapabilityStore {
     .with_codex_plugins_dir(root.join("codex/plugins"))
     .with_codex_skills_dir(root.join("codex/skills"))
     .with_workbench_root(root.join("workbench"));
-    if codex_only {
-        store.with_codex_only_plugins()
-    } else {
-        store
-    }
+    // Each matrix case owns its runtime target, including the dual-product case.
+    store.codex_only_plugins = codex_only;
+    store
 }
 pub(super) fn payload(name: &str) -> Value {
     json!({"scope":"plugins","plugins":[{"name":name,"marketplace":"wegent","installed_plugin_id":41,"cloud_plugin_id":7,"enabled":false,"version":"1.0","download_path":"/archive","component_states":{"skill:demo":false}}]})

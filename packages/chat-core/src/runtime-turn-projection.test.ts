@@ -121,4 +121,52 @@ describe("assistant view identity", () => {
       "After",
     ]);
   });
+
+  it("splits an existing reply before the first user without a guidance flag", () => {
+    const content = "API error: CORE_GUIDANCE";
+    const result = projectRuntimeConversationTurn({
+      ...turn,
+      status: "failed",
+      error: content,
+      items: [
+        { ...text, id: "early", content },
+        {
+          id: "follow-up",
+          type: "user_message",
+          message: {
+            id: "client-follow-up",
+            role: "user",
+            content: "Continue",
+            status: "done",
+          },
+        },
+        { ...text, id: "final", content },
+      ],
+    });
+
+    expect(result.map((message) => message.id)).toEqual([
+      "runtime-view:turn-1:assistant",
+      "client-follow-up",
+      "runtime-view:turn-1:after:follow-up",
+    ]);
+    expect(result.map((message) => message.content)).toEqual([
+      content,
+      "Continue",
+      content,
+    ]);
+    expect(result.map((message) => message.status)).toEqual([
+      "done",
+      "done",
+      "failed",
+    ]);
+    expect(result[0].error).toBeUndefined();
+    expect(result[2].error).toBe(content);
+    expect(result[0].runtimeDisplayItems).toEqual([
+      { id: "early", type: "assistant_text", content },
+    ]);
+    expect(result[1].runtimeItemId).toBe("follow-up");
+    expect(result[2].runtimeDisplayItems).toEqual([
+      { id: "final", type: "assistant_text", content },
+    ]);
+  });
 });

@@ -30,6 +30,7 @@ export interface ComposerToolbarProps {
   className?: string
   canSend: boolean
   disabled?: boolean
+  showModelSelector?: boolean
   showExecutionTools?: boolean
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
@@ -80,6 +81,7 @@ export function ComposerToolbar({
   canSend,
   disabled = false,
   showExecutionTools = true,
+  showModelSelector = showExecutionTools,
   models,
   selectedModel,
   activeModel,
@@ -139,7 +141,7 @@ export function ComposerToolbar({
     if (!toolbar || typeof ResizeObserver === 'undefined') return
     const updateCompact = (width: number) => setCompact(width < COMPACT_TOOLBAR_WIDTH)
     updateCompact(toolbar.getBoundingClientRect().width)
-    const observer = new ResizeObserver((entries) => {
+    const observer = new ResizeObserver(entries => {
       const entry = entries[0]
       if (entry) updateCompact(entry.contentRect.width)
     })
@@ -202,27 +204,29 @@ export function ComposerToolbar({
               value={runtimePermissionMode(selectedModelOptions)}
               disabled={disabled}
               iconOnly
-              onChange={(mode) => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
+              onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
             />
             {contextUsageIndicator}
-            {modelSelectorOverride ??
-              renderModelSelector({
-                models: models,
-                selectedModel: displayedSelectedModel,
-                selectedModelOptions: selectedModelOptions,
-                nextTurn: isStreaming && modelChangePending,
-                openSignal: modelSelectorOpenSignal,
-                onOpenChange: onModelSelectorOpenChange,
-                disabled: disabled,
-                onSelectModel: onSelectModel,
-                onSelectModelAndOptions: onSelectModelAndOptions,
-                onSelectModelOption: onSelectModelOption,
-                onBlockedModelSelect: onBlockedModelSelect,
-                buttonClassName: 'opacity-90 hover:opacity-100',
-                maxClosedWidth: compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined,
-              })}
           </>
         ) : null}
+        {showModelSelector
+          ? (modelSelectorOverride ??
+            renderModelSelector({
+              models: models,
+              selectedModel: displayedSelectedModel,
+              selectedModelOptions: selectedModelOptions,
+              nextTurn: isStreaming && modelChangePending,
+              openSignal: modelSelectorOpenSignal,
+              onOpenChange: onModelSelectorOpenChange,
+              disabled: disabled,
+              onSelectModel: onSelectModel,
+              onSelectModelAndOptions: onSelectModelAndOptions,
+              onSelectModelOption: onSelectModelOption,
+              onBlockedModelSelect: onBlockedModelSelect,
+              buttonClassName: 'opacity-90 hover:opacity-100',
+              maxClosedWidth: compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined,
+            }))
+          : null}
         {workspaceMenu}
         {showSubmitButton &&
           (isStreaming && !canSend ? (
@@ -254,7 +258,7 @@ export function ComposerToolbar({
                   type="submit"
                   data-composer-primary-action="true"
                   data-testid={sendButtonTestId}
-                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseDown={event => event.preventDefault()}
                   className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-text-primary/90"
                   aria-label={primaryBusyLabel}
                 >
@@ -320,7 +324,7 @@ export function ComposerToolbar({
                 data-composer-primary-action="true"
                 data-testid={sendButtonTestId}
                 disabled={!canSend}
-                onMouseDown={(event) => event.preventDefault()}
+                onMouseDown={event => event.preventDefault()}
                 className={cn(
                   'flex h-8 shrink-0 items-center justify-center gap-1.5 bg-text-primary text-background disabled:cursor-not-allowed disabled:bg-text-muted/45',
                   sendButtonLabel ? 'rounded-lg px-3 text-sm font-medium' : 'w-8 rounded-full p-0'

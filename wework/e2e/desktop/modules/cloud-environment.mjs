@@ -498,6 +498,9 @@ class RealCloudEnvironment {
         '127.0.0.1',
         '--port',
         String(this.pythonBackendPort),
+        // Match start-hybrid-backend.sh: the gateway must not reuse expired upstream sockets.
+        '--timeout-keep-alive',
+        '2400',
       ],
       {
         cwd: join(repoDir, 'backend'),
