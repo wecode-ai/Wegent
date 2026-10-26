@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
+import type { DeviceListResponse } from '../../src/apis/devices'
 import { ADMIN_USER } from '../config/test-users'
 import { createApiClient } from './api-client'
 import {
   openBlankProjectCreation,
   selectCollaborationProjectView,
+  webApi,
 } from './collaboration-test-support'
 import {
   authHeaders,
@@ -113,8 +115,7 @@ export async function configureIssueDispatchModelScenario(
 export async function createProjectFixture(
   page: Page,
   suffix: string,
-  issueTitle: string,
-  deviceRecordId?: number
+  issueTitle: string
 ): Promise<IssueDispatchProjectFixture> {
   await page.goto('/collaboration', { waitUntil: 'domcontentloaded' })
   await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
@@ -145,7 +146,7 @@ export async function createProjectFixture(
     projectId
   )}`
 
-  await initializeProjectExecutionEnvironment(page, deviceRecordId)
+  await initializeProjectExecutionEnvironment(page)
   await page.getByTestId('collaboration-issue-create').click()
   await page.getByTestId('cloud-todo-title').fill(issueTitle)
   await page.getByTestId('cloud-todo-detail-description').fill(ISSUE_DESCRIPTION)
@@ -157,38 +158,33 @@ export async function createProjectFixture(
   return { issueId, projectId, projectPath, workspaceId }
 }
 
-export async function initializeProjectExecutionEnvironment(
-  page: Page,
-  deviceRecordId?: number
-): Promise<void> {
+export async function initializeProjectExecutionEnvironment(page: Page): Promise<void> {
+  const deviceId =
+    process.env.E2E_DEVICE_ID ||
+    (process.env.E2E_SHARD_INDEX
+      ? `e2e-platform-device-${process.env.E2E_SHARD_INDEX}`
+      : 'e2e-claudecode-device')
+  const { items } = await webApi<DeviceListResponse>(page, '/api/devices')
+  const device = items.find(item => item.device_id === deviceId)
+  expect(device, `Expected collaboration App device ${deviceId}`).toBeDefined()
+  expect(device!.device_type).toBe('app')
+  expect(device!.execution_target_id).toMatch(/^app-record-\d+$/)
+
   await selectCollaborationProjectView(page, 'manage')
   await page.getByTestId('collaboration-project-settings-environments').click()
-  const initialize =
-    deviceRecordId !== undefined
-      ? page.getByTestId(`collaboration-project-execution-environment-initialize-${deviceRecordId}`)
-      : page
-          .locator('[data-testid^="collaboration-project-execution-environment-initialize-"]')
-          .first()
+  const prefix = 'collaboration-project-execution-environment'
+  const initialize = page.getByTestId(`${prefix}-initialize-${device!.id}`)
   if ((await initialize.count()) === 0) {
-    await page.getByTestId('collaboration-project-execution-environment-add').click()
-    const candidate =
-      deviceRecordId !== undefined
-        ? page.getByTestId(
-            `collaboration-project-execution-environment-candidate-${deviceRecordId}`
-          )
-        : page
-            .locator('[data-testid^="collaboration-project-execution-environment-candidate-"]')
-            .first()
+    await page.getByTestId(`${prefix}-add`).click()
+    const candidate = page.getByTestId(`${prefix}-candidate-${device!.id}`)
     await expect(candidate).toBeVisible()
     await candidate.click()
   }
   await expect(initialize).toBeAttached()
-  const initializeId = await initialize.getAttribute('data-testid')
-  expect(initializeId).toBeTruthy()
-  await page.getByTestId(initializeId!.replace('-initialize-', '-actions-toggle-')).click()
+  await page.getByTestId(`${prefix}-actions-toggle-${device!.id}`).click()
   await expect(initialize).toBeVisible()
   await initialize.click()
-  await expect(page.getByTestId(initializeId!.replace('-initialize-', '-'))).toHaveAttribute(
+  await expect(page.getByTestId(`${prefix}-${device!.id}`)).toHaveAttribute(
     'data-preparation-state',
     'ready'
   )
