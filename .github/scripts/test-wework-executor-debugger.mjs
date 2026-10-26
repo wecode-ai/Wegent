@@ -8,17 +8,16 @@ const directory = mkdtempSync(join(tmpdir(), "wework-executor-debugger-"));
 try {
   const executor = join(directory, "executor");
   const wrapper = `${executor}.gdb`;
-  // A stand-in Executor that echoes its arguments. Runners that install Rust
-  // coreutils resolve /usr/bin/printf to a multi-call binary that rejects the
-  // renamed symlink, so the stand-in must not depend on the system printf.
-  writeFileSync(executor, '#!/bin/sh\nprintf "$@"\n', { mode: 0o755 });
+  writeFileSync(executor, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n", {
+    mode: 0o755,
+  });
   copyFileSync(
     new URL("./run-wework-executor-with-gdb.sh", import.meta.url),
     wrapper,
   );
   const result = spawnSync(
     "bash",
-    [wrapper, "%s\n", "--workbench-schema", "--version"],
+    [wrapper, "--workbench-schema", "--version"],
     {
       env: { PATH: process.env.PATH },
       encoding: "utf8",

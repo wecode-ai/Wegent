@@ -7,10 +7,12 @@ export TIKTOKEN_CACHE_DIR="$cache_dir"
 
 mkdir -p "$TIKTOKEN_CACHE_DIR"
 python - <<'PY'
+import ssl
 import time
 
 import tiktoken
 
+print(f"Chat Shell tokenizer SSL runtime: {ssl.OPENSSL_VERSION}")
 # The encodings come from a public blob store that occasionally stalls; a
 # single slow response must not fail every E2E shard.
 for encoding_name in ("cl100k_base", "o200k_base"):

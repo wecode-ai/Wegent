@@ -36,10 +36,8 @@ import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
 import type { ProcessSnapshot } from '../vendor/process-explorer/contract.js'
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
-import {
-  extractFilePathsFromNativePayloads,
-  inspectWorkspacePaths,
-} from './workspace-path-inspector.js'
+import { inspectWorkspacePaths } from './workspace-path-inspector.js'
+import { readClipboardWorkspacePaths } from './workspace-path-clipboard.js'
 import { FeedbackBundleManager, type FeedbackExportRequest } from './feedback-bundle-manager.js'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
 import type { TrayActivation, TrayMenuState, TraySnapshot } from './tray-manager.js'
@@ -591,31 +589,9 @@ export function createElectronCapabilityRouter(
     await desktopServices.secureStorage.delete(stringParam(params, 'key'))
     return { deleted: true }
   })
-  router.register('clipboard.readWorkspacePaths', async params => {
-    const fallbackPaths = stringArrayParam(params, 'fallbackPaths') ?? []
-    const items = await clipboard.read().catch(() => [])
-    const nativePayloads = await Promise.all(
-      items.flatMap(item =>
-        item.types
-          .filter(format => /(file|filename|uri)/i.test(format))
-          .map(async format => {
-            try {
-              const payload = await item.getType(format)
-              if (!('arrayBuffer' in payload)) return []
-              const buffer = Buffer.from(await payload.arrayBuffer())
-              return [buffer.toString('utf8'), buffer.toString('utf16le')]
-            } catch {
-              // Native clipboard formats may become unavailable during a read.
-              return []
-            }
-          })
-      )
-    )
-    return inspectWorkspacePaths([
-      ...extractFilePathsFromNativePayloads(nativePayloads.flat()),
-      ...fallbackPaths,
-    ])
-  })
+  router.register('clipboard.readWorkspacePaths', params =>
+    readClipboardWorkspacePaths(stringArrayParam(params, 'fallbackPaths') ?? [])
+  )
   router.register('clipboard.writeText', params =>
     clipboard.writeText(rawStringParam(params, 'text'))
   )
@@ -1412,7 +1388,11 @@ export async function systemPressureSnapshot(): Promise<{
   const cpuAfter = cpuTimeSample()
   return {
     cpuLoadRatio: cpuLoadRatioBetween(cpuBefore, cpuAfter),
-    freeMemoryRatio: availableMemoryRatio(process.getSystemMemoryInfo(), process.platform),
+    freeMemoryRatio: availableMemoryRatio(
+      process.getSystemMemoryInfo(),
+      process.platform,
+      process.availableMemory()
+    ),
     userIdleSeconds: powerMonitor.getSystemIdleTime(),
   }
 }
