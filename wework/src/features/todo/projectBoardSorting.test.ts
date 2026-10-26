@@ -121,9 +121,9 @@ describe('project board sorting', () => {
 
   it('keeps automatic order on same-column drops and allows moves to other columns', () => {
     const { result, onMove } = setup()
-    act(() => result.current.moveItem('2', pending, '0'))
+    act(() => result.current.moveItem('2', pending, '0', pending))
     expect(onMove).not.toHaveBeenCalled()
-    act(() => result.current.moveItem('2', completed, null))
+    act(() => result.current.moveItem('2', completed, null, pending))
     expect(onMove).toHaveBeenCalledWith(
       items[2],
       completed,
@@ -135,7 +135,7 @@ describe('project board sorting', () => {
     )
     onMove.mockClear()
     act(() => result.current.state.selectColumnSort(completed.key, []))
-    act(() => result.current.moveItem('2', completed, 'completed-0'))
+    act(() => result.current.moveItem('2', completed, 'completed-0', pending))
     expect(onMove).toHaveBeenCalledWith(
       items[2],
       completed,
@@ -147,7 +147,7 @@ describe('project board sorting', () => {
     expect(result.current.state.getColumnSort(pending.key)).toEqual(['priority-desc'])
     onMove.mockClear()
     act(() => result.current.state.selectColumnSort(pending.key, []))
-    act(() => result.current.moveItem('2', pending, '0'))
+    act(() => result.current.moveItem('2', pending, '0', pending))
     expect(onMove).toHaveBeenCalledWith(
       items[2],
       pending,
