@@ -1,3 +1,4 @@
+import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -5,9 +6,9 @@ import { join } from 'node:path'
 const HOST_INVOKE_PATH = '/wework/electron-host/v1/invoke'
 const MODEL_LABEL = 'Desktop E2E Chat'
 
-async function postInvoke(origin, capability, params) {
+async function postInvoke(control, origin, capability, params) {
   const endpoint = `${origin}${HOST_INVOKE_PATH}`
-  const response = await fetch(endpoint, {
+  const response = await fetchLocalRuntime(control, endpoint, {
     method: 'POST',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     body: JSON.stringify({ capability, params }),
@@ -15,8 +16,8 @@ async function postInvoke(origin, capability, params) {
   return { response, payload: await response.json() }
 }
 
-async function invoke(origin, capability, params = {}) {
-  const { response, payload } = await postInvoke(origin, capability, params)
+async function invoke(control, origin, capability, params = {}) {
+  const { response, payload } = await postInvoke(control, origin, capability, params)
   assert.equal(
     response.ok,
     true,
@@ -26,8 +27,8 @@ async function invoke(origin, capability, params = {}) {
   return payload.result
 }
 
-async function invokeFailure(origin, capability, params = {}) {
-  const { response, payload } = await postInvoke(origin, capability, params)
+async function invokeFailure(control, origin, capability, params = {}) {
+  const { response, payload } = await postInvoke(control, origin, capability, params)
   assert.equal(response.ok, false, `${capability} unexpectedly returned HTTP success`)
   assert.equal(payload.ok, false, `${capability} unexpectedly succeeded`)
   return payload.error
@@ -42,9 +43,9 @@ async function enableExperimentalFeatures(control) {
   await control.command('waitFor', `${selector}[aria-checked="true"]`, { stableMs: 300 })
 }
 
-async function verifyMicrophoneDiagnostics(origin) {
+async function verifyMicrophoneDiagnostics(control, origin) {
   const capability = 'deviceDiagnostics.microphone'
-  const initial = await invoke(origin, capability)
+  const initial = await invoke(control, origin, capability)
   assert.equal(initial.schemaVersion, 1)
   assert.equal(initial.platform, process.platform)
   assert.equal(initial.inputDeviceKind, 'unknown')
@@ -61,9 +62,9 @@ async function verifyMicrophoneDiagnostics(origin) {
   } else {
     assert.equal(initial.code, 'MICROPHONE_DIAGNOSTICS_UNSUPPORTED')
   }
-  const invalid = await invokeFailure(origin, capability, { inputDeviceKind: 'default' })
+  const invalid = await invokeFailure(control, origin, capability, { inputDeviceKind: 'default' })
   assert.equal(invalid.code, 'invalid_params')
-  const recovered = await invoke(origin, capability, { inputDeviceKind: 'external' })
+  const recovered = await invoke(control, origin, capability, { inputDeviceKind: 'external' })
   assert.equal(recovered.inputDeviceKind, 'external')
   assert.equal(recovered.checks.permission, initial.checks.permission)
   assert.equal(
@@ -77,7 +78,7 @@ export function createDesktopScenario({ resultDir }) {
   return {
     async verify(control) {
       const origin = await control.command('getLocationOrigin', 'body')
-      const workbench = await invoke(origin, 'smartApps.createDirectory', {
+      const workbench = await invoke(control, origin, 'smartApps.createDirectory', {
         parentPath: resultDir,
         name: 'dsh-owner-capture-bridge',
         displayName: 'DSH owner capture bridge',
@@ -113,13 +114,13 @@ export function createDesktopScenario({ resultDir }) {
 
         const workbenchOrigin = new URL(webUrl).origin
         const microphoneDiagnostics = {
-          core: await verifyMicrophoneDiagnostics(origin),
-          workbench: await verifyMicrophoneDiagnostics(workbenchOrigin),
+          core: await verifyMicrophoneDiagnostics(control, origin),
+          workbench: await verifyMicrophoneDiagnostics(control, workbenchOrigin),
         }
-        const capabilities = await invoke(workbenchOrigin, 'dshCapture.capabilities')
+        const capabilities = await invoke(control, workbenchOrigin, 'dshCapture.capabilities')
         assert.deepEqual(capabilities, { available: true })
 
-        const capture = await invoke(workbenchOrigin, 'dshCapture.ownerRect', {
+        const capture = await invoke(control, workbenchOrigin, 'dshCapture.ownerRect', {
           x: 0,
           y: 0,
           width: 128,
@@ -127,7 +128,7 @@ export function createDesktopScenario({ resultDir }) {
         })
         assert.match(capture.dataUrl, /^data:image\/png;base64,/)
 
-        const invalid = await invokeFailure(workbenchOrigin, 'dshCapture.ownerRect', {
+        const invalid = await invokeFailure(control, workbenchOrigin, 'dshCapture.ownerRect', {
           x: -1,
           y: 0,
           width: 128,
@@ -135,12 +136,12 @@ export function createDesktopScenario({ resultDir }) {
         })
         assert.equal(invalid.code, 'invalid_params')
 
-        await invoke(origin, 'browser.setBounds', {
+        await invoke(control, origin, 'browser.setBounds', {
           label: ownerLabel,
           bounds: { x: 0, y: 0, width: 1, height: 1 },
           visible: false,
         })
-        const hidden = await invokeFailure(workbenchOrigin, 'dshCapture.ownerRect', {
+        const hidden = await invokeFailure(control, workbenchOrigin, 'dshCapture.ownerRect', {
           x: 0,
           y: 0,
           width: 1,
@@ -154,8 +155,8 @@ export function createDesktopScenario({ resultDir }) {
           'utf8'
         )
       } finally {
-        await invoke(origin, 'smartApps.stop', { installationId: workbench.id })
-        await invoke(origin, 'smartApps.delete', {
+        await invoke(control, origin, 'smartApps.stop', { installationId: workbench.id })
+        await invoke(control, origin, 'smartApps.delete', {
           installationId: workbench.id,
           deleteData: true,
         })

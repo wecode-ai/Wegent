@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 
 export function createDesktopScenario({ uiTimeoutMs }) {
   return {
@@ -12,7 +13,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         '@wegent/dsh-connection-dingtalk/dingtalk',
         '@test/unknown/source',
       ]) {
-        const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
+        const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
@@ -30,7 +31,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
               readTools: [{ server: 'mail', tool: 'read' }],
             },
           }),
-          signal: AbortSignal.timeout(uiTimeoutMs),
+          timeoutMs: uiTimeoutMs,
         })
         const payload = await response.json()
         assert.equal(payload.ok, false)

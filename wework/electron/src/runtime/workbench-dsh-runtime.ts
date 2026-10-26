@@ -112,6 +112,9 @@ export async function prepareWorkbenchDshLaunch(
 ): Promise<WorkbenchDshLaunch> {
   const runtime = await resolveWorkbenchRuntime(options, options.manifest.requirements.dsh)
   validateRequirements(options.manifest, runtime)
+  if (options.includeElectronHostBridge !== false && runtime.version !== WORKBENCH_DSH_VERSION) {
+    throw new Error(`The trusted Electron host bridge requires DSH ${WORKBENCH_DSH_VERSION}`)
+  }
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(
     options.dataDirectory,
@@ -156,13 +159,9 @@ export async function prepareWorkbenchDshLaunch(
     // /wework/electron-host/v1/invoke hits a plain page and every capability
     // (including dshCapture.*) silently degrades. Install the trusted host bridge
     // into the profile so the workbench can reach the owner-scoped capabilities.
-    const hostPluginPath = join(runtime.pluginsRoot, 'wework-electron-host')
     const corePluginsRoot = options.environment.WEWORK_CORE_PLUGIN_ROOT?.trim()
-    const resolvedHostPluginPath = (await isDirectory(hostPluginPath))
-      ? hostPluginPath
-      : corePluginsRoot && (await isDirectory(join(corePluginsRoot, 'wework-electron-host')))
-        ? join(corePluginsRoot, 'wework-electron-host')
-        : null
+    const hostPluginPath = join(corePluginsRoot || runtime.pluginsRoot, 'wework-electron-host')
+    const resolvedHostPluginPath = (await isDirectory(hostPluginPath)) ? hostPluginPath : null
     if (!resolvedHostPluginPath) {
       throw new Error(
         'Workbench Smart App runtime requires the trusted wework-electron-host plugin'

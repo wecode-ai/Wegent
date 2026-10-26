@@ -12,6 +12,50 @@ import {
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('workbench DSH runtime', () => {
+  test('uses the current host bridge rather than a stale runtime copy', async () => {
+    const fixture = await decisionRouteFixture('workbench-current-host-')
+    const options = decisionRouteOptions(fixture)
+    const currentPlugins = join(fixture.root.path, 'current-plugins')
+    const currentHost = join(currentPlugins, 'wework-electron-host')
+    await mkdir(currentHost, { recursive: true })
+    const launch = await prepareWorkbenchDshLaunch({
+      ...options,
+      environment: { ...options.environment, WEWORK_CORE_PLUGIN_ROOT: currentPlugins },
+    })
+    expect(options.run.mock.calls.some(([, args]) => args.includes(`file:${currentHost}`))).toBe(
+      true
+    )
+    expect(
+      options.run.mock.calls.some(([, args]) =>
+        args.includes(`file:${join(fixture.runtimeRoot, 'plugins', 'wework-electron-host')}`)
+      )
+    ).toBe(false)
+    expect(launch.environment.WEWORK_DSH_BROWSER_AUTH).toBe('1')
+    await fixture.root.remove()
+  })
+
+  test('refuses a privileged host bridge on a Runtime without browser authentication', async () => {
+    const fixture = await decisionRouteFixture('workbench-legacy-host-')
+    const options = decisionRouteOptions(fixture)
+    await writeFile(
+      join(fixture.runtimeRoot, 'runtime.json'),
+      JSON.stringify({
+        dshVersion: '0.1.0-rc.8',
+        role: 'workbench',
+        sourceFingerprint: 'a'.repeat(64),
+      })
+    )
+    options.manifest.requirements.dsh = '0.1.0-rc.8'
+    await writeFile(
+      join(fixture.runtimeRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'),
+      JSON.stringify({ version: '0.1.0-rc.8' })
+    )
+    await expect(prepareWorkbenchDshLaunch(options)).rejects.toThrow(
+      'trusted Electron host bridge requires DSH'
+    )
+    expect(options.run).not.toHaveBeenCalled()
+    await fixture.root.remove()
+  })
   test('selects client modules for both current and legacy app requirements', () => {
     expect(workbenchClientRendererPackage('0.2.0-rc.2')).toBe('@deepseek-ai/dsh-client-ui-renderer')
     expect(workbenchClientRendererPackage('>=0.1.0-rc.8')).toBe(
