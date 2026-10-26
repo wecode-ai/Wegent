@@ -226,7 +226,6 @@ export function FileWorkspacePanel({
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [directoryTreeVisible, setDirectoryTreeVisible] = useState(true)
-  const initialSelectionRef = useRef(initialSelection)
   const treeRequestSequence = useRef(0)
   const latestTreeRequestByPath = useRef(new Map<string, number>())
   const directoryLoadedAtByPath = useRef(new Map<string, number>())
@@ -560,6 +559,7 @@ export function FileWorkspacePanel({
         return
       }
 
+      const listingRequestId = ++fileRequestSequence.current
       const parentListStartedAt = performance.now()
       logFilePreviewDiagnostic(traceId, 'parent_tree_start', pathMetadata)
       void listWorkspaceEntries(
@@ -568,6 +568,7 @@ export function FileWorkspacePanel({
         stableTarget.path
       ).then(
         result => {
+          if (fileRequestSequence.current !== listingRequestId) return
           logFilePreviewDiagnostic(traceId, 'parent_tree_end', {
             ...pathMetadata,
             durationMs: filePreviewElapsedMs(parentListStartedAt),
@@ -582,6 +583,7 @@ export function FileWorkspacePanel({
           openAsFile()
         },
         error => {
+          if (fileRequestSequence.current !== listingRequestId) return
           logFilePreviewDiagnostic(traceId, 'parent_tree_failed', {
             ...pathMetadata,
             durationMs: filePreviewElapsedMs(parentListStartedAt),
@@ -727,21 +729,34 @@ export function FileWorkspacePanel({
   })
 
   useEffect(() => {
-    if (!stableTarget || openFileRequest?.path) return
-    const selection = initialSelectionRef.current
-    if (!selection?.path) return
+    if (
+      !stableTarget ||
+      openFileRequest?.path ||
+      !initialSelection?.path ||
+      selectedFilePath === initialSelection.path ||
+      (initialSelection.isDirectory && activeDirectoryPath === initialSelection.path)
+    ) {
+      return
+    }
 
     let cancelled = false
     void Promise.resolve().then(() => {
       if (!cancelled) {
-        initialSelectionRef.current = null
-        openFilePath(selection.path, { isDirectory: selection.isDirectory })
+        openFilePath(initialSelection.path, { isDirectory: initialSelection.isDirectory })
       }
     })
     return () => {
       cancelled = true
     }
-  }, [openFilePath, openFileRequest?.path, stableTarget])
+  }, [
+    activeDirectoryPath,
+    initialSelection?.isDirectory,
+    initialSelection?.path,
+    openFilePath,
+    openFileRequest?.path,
+    selectedFilePath,
+    stableTarget,
+  ])
 
   useEffect(() => {
     if (!openFileRequest?.path) return

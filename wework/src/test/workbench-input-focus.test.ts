@@ -118,6 +118,22 @@ beforeAll(async () => {
   compiled.walkDecls(/^--tw-/, declaration => {
     if (!declaration.value.trim()) declaration.remove()
   })
+  // jsdom's computed styles reject modern rgb() syntax, even when :focus matches.
+  // Preserve concrete utility colors using the equivalent legacy rgba() notation.
+  compiled.walkDecls(declaration => {
+    declaration.value = declaration.value.replace(
+      /rgb\((\d+) (\d+) (\d+) \/ (var\((--tw-(?:bg|border)-opacity), ([\d.]+)\)|[\d.]+)\)/g,
+      (original, red, green, blue, alpha, variable, fallback) => {
+        if (variable) {
+          const opacity = declaration.parent?.nodes.find(
+            node => node.type === 'decl' && node.prop === variable
+          )
+          alpha = opacity?.type === 'decl' ? opacity.value : fallback
+        }
+        return /^[\d.]+$/.test(alpha) ? `rgba(${red}, ${green}, ${blue}, ${alpha})` : original
+      }
+    )
+  })
   // jsdom ignores the entire selector list when a universal rule includes pseudos.
   // Pseudo-element defaults do not affect these element-only fixture assertions.
   compiled.walkRules(rule => {
@@ -307,6 +323,8 @@ test('pointer suppression preserves focus backgrounds instead of disabling every
   const markup = field('bg-[#ffffff] focus:bg-[#eeeeee]')
   const baseline = computed(markup, 'pointer', { focus: false })
   const pointer = computed(markup, 'pointer')
+  expect(baseline.background).toMatch(/255[ ,]+255[ ,]+255/)
+  expect(pointer.background).toMatch(/238[ ,]+238[ ,]+238/)
   expect(pointer.background).not.toBe(baseline.background)
   expect(pointer.background).toBe(computed(markup, 'keyboard').background)
   expect(pointer.borderWidth).toBe(baseline.borderWidth)

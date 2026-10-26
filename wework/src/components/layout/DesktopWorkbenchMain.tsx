@@ -2091,13 +2091,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ? `calc(${rightPanelWidth} - ${rightTitlebarActionsWidth})`
     : '0px'
   const temporaryChatAvailable = !activeLocalHarnessSession
+  const canBrowseFiles = Boolean(
+    workspaceProject ||
+    selectedWorkspaceFile?.target ||
+    openFileRequest?.target ||
+    openFileRequest?.attachment ||
+    Object.keys(fileTabs).length
+  )
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
-    const canBrowseFiles = Boolean(
-      workspaceProject ||
-      openFileRequest?.target ||
-      openFileRequest?.attachment ||
-      Object.keys(fileTabs).length
-    )
     const availableContextTabs = workItemContextAvailable
       ? rightPanelTabs
       : rightPanelTabs.filter(tab => tab !== 'work-item')
@@ -2118,14 +2119,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ? permittedTabs
       : [...permittedTabs, rightPanelView]
   }, [
-    openFileRequest?.target,
-    openFileRequest?.attachment,
-    fileTabs,
+    canBrowseFiles,
     rightPanelTabs,
     rightPanelView,
     temporaryChatAvailable,
     workItemContextAvailable,
-    workspaceProject,
   ])
   const effectiveRightPanelView =
     (!temporaryChatAvailable && rightPanelView.startsWith('chat:')) ||
@@ -2255,12 +2253,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           isDirectory: selectedWorkspaceFile.isDirectory,
         }
       : null
-  const canBrowseFiles = Boolean(
-    workspaceProject ||
-    openFileRequest?.target ||
-    openFileRequest?.attachment ||
-    Object.keys(fileTabs).length
-  )
   const devWorkspacePath = getWeworkDevInstanceInfo()?.worktree?.trim() ?? ''
   const centralHarnessTargetDevice = composerWorkspaceTarget?.deviceId
     ? devices.find(device => device.device_id === composerWorkspaceTarget.deviceId)
