@@ -370,6 +370,112 @@ describe('BufferedChatInput', () => {
     })
   })
 
+  test('keeps a newer draft when a completed submit clears the shared value late', async () => {
+    let resolveSubmission: (accepted: boolean) => void = () => undefined
+    let clearSharedDraft: () => void = () => undefined
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<boolean>(resolve => {
+          resolveSubmission = resolve
+        })
+    )
+
+    function Harness() {
+      const [value, setValue] = useState('submitted draft')
+      clearSharedDraft = () => setValue('')
+      return (
+        <BufferedChatInput value={value} onChange={setValue} onSubmit={onSubmit} disabled={false} />
+      )
+    }
+
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    await userEvent.type(input, 'next draft')
+
+    act(() => resolveSubmission(true))
+    act(() => clearSharedDraft())
+
+    await waitFor(() => expect(input).toHaveValue('next draft'))
+  })
+
+  test('keeps a confirmed draft when the completed submit clears it late', async () => {
+    let resolveSubmission: (accepted: boolean) => void = () => undefined
+    let clearSharedDraft: () => void = () => undefined
+    const onSubmit = vi.fn(
+      () =>
+        new Promise<boolean>(resolve => {
+          resolveSubmission = resolve
+        })
+    )
+
+    function Harness() {
+      const [value, setValue] = useState('submitted draft')
+      clearSharedDraft = () => setValue('')
+      return (
+        <>
+          <span data-testid="shared-draft">{value}</span>
+          <BufferedChatInput
+            value={value}
+            onChange={setValue}
+            onSubmit={onSubmit}
+            disabled={false}
+          />
+        </>
+      )
+    }
+
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    await waitFor(() => expect(screen.getByTestId('shared-draft')).toBeEmptyDOMElement())
+    await userEvent.type(input, 'next draft')
+    await waitFor(() => expect(screen.getByTestId('shared-draft')).toHaveTextContent('next draft'))
+
+    act(() => resolveSubmission(true))
+    act(() => clearSharedDraft())
+
+    await waitFor(() => expect(screen.getByTestId('shared-draft')).toBeEmptyDOMElement())
+    expect(input).toHaveValue('next draft')
+  })
+
+  test('keeps the newer draft when a pending publication returns after a late clear', async () => {
+    let setExternalValue: (value: string) => void = () => undefined
+    const publications: Array<{ value: string; acknowledge: () => void }> = []
+
+    function Harness() {
+      const [value, setValue] = useState('submitted draft')
+      setExternalValue = setValue
+      return (
+        <BufferedChatInput
+          value={value}
+          onChange={nextValue => {
+            publications.push({ value: nextValue, acknowledge: () => setValue(nextValue) })
+          }}
+          onSubmit={vi.fn()}
+          disabled={false}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    act(() => setExternalValue(''))
+    act(() => setExternalValue('accepted reply'))
+    await userEvent.type(input, 'B')
+    await waitFor(() => expect(publications.some(publication => publication.value)).toBe(true))
+    const returnedDraft = publications.find(publication => publication.value)!
+    await userEvent.type(input, 'C')
+    const newerDraft = input.textContent
+
+    act(() => setExternalValue(''))
+    act(() => returnedDraft?.acknowledge())
+
+    await waitFor(() => expect(input.textContent).toBe(newerDraft))
+    expect(input.textContent).not.toBe(returnedDraft.value)
+  })
+
   test('clears the live composer when preserving a paused queue', async () => {
     const onResumeQueueWithInput = vi.fn()
 
