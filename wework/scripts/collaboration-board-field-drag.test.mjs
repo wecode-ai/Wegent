@@ -14,21 +14,28 @@ import { verifyReadOnlyBoardDrag } from '../e2e/desktop/modules/collaboration-bo
 
 test('scrolls the Viewer card into view after grouping and reload', async () => {
   let visibleCard = null
+  let mounted = false
   let drags = 0
   let reads = 0
   const control = {
     resetScroll() {
       visibleCard = null
+      mounted = false
     },
-    async command(action, selector, options) {
-      if (action === 'scrollIntoView') visibleCard = selector
-      else if (action === 'waitFor' && options.visible) {
+    async command(action, selector, options = {}) {
+      if (action === 'scrollIntoView') {
+        assert.ok(mounted, 'The Viewer card has not mounted after loading the board')
+        visibleCard = selector
+      } else if (action === 'waitFor' && options.visible) {
         assert.equal(visibleCard, selector, 'The Viewer card is outside the viewport')
       } else if (action === 'getAttribute') return ''
       else if (action === 'drag') {
         assert.equal(visibleCard, selector)
         drags += 1
-      } else assert.equal(action, 'waitFor')
+      } else {
+        assert.equal(action, 'waitFor')
+        if (options.visible === undefined) mounted = true
+      }
       return ''
     },
   }
