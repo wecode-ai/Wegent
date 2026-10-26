@@ -1,4 +1,4 @@
-import { render, waitFor } from '@testing-library/react'
+import { act, render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { HarnessAppAutoLauncher } from './HarnessAppAutoLauncher'
 
@@ -20,6 +20,10 @@ const mocks = vi.hoisted(() => ({
   takeContext: vi.fn(),
   takeDecision: vi.fn(),
   clearLaunch: vi.fn(),
+  failLaunch: vi.fn(),
+  isModelCatalogReady: vi.fn(),
+  modelCatalog: vi.fn(),
+  listModelOptions: vi.fn(),
   notifyInstallationsChanged: vi.fn(),
 }))
 
@@ -46,7 +50,7 @@ vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
 vi.mock('@/features/harness-apps/harnessAppLaunchState', () => ({
   beginHarnessAppLaunch: vi.fn(),
   clearHarnessAppLaunch: mocks.clearLaunch,
-  failHarnessAppLaunch: vi.fn(),
+  failHarnessAppLaunch: mocks.failLaunch,
 }))
 
 vi.mock('@/features/harness-apps/harnessAppInstallationsChanged', () => ({
@@ -58,25 +62,31 @@ vi.mock('@/lib/runtime-environment', () => ({
 }))
 
 vi.mock('@/features/local-harness/localHarnessModels', () => ({
-  listLocalHarnessModelOptions: () => [{ key: 'model-1' }],
+  listLocalHarnessModelOptions: mocks.listModelOptions,
 }))
 
-vi.mock('@/features/workbench/useWorkbench', () => ({
-  useWorkbench: () => ({
-    projectChat: { models: [] },
-    services: {
-      localDecisionRouterApi: {
-        resolveLaunch: mocks.resolveDecisionLaunch,
-        unregister: mocks.unregisterDecision,
-      },
-      localHarnessModelApi: {
-        resolveLaunch: mocks.resolveLaunch,
-        unregisterProxy: mocks.unregisterProxy,
-        unregisterContext: mocks.unregisterContext,
-      },
+vi.mock('@/features/workbench/useWorkbench', () => {
+  const services = {
+    localDecisionRouterApi: {
+      resolveLaunch: mocks.resolveDecisionLaunch,
+      unregister: mocks.unregisterDecision,
     },
-  }),
-}))
+    localHarnessModelApi: {
+      resolveLaunch: mocks.resolveLaunch,
+      unregisterProxy: mocks.unregisterProxy,
+      unregisterContext: mocks.unregisterContext,
+    },
+  }
+  return {
+    useWorkbench: () => ({
+      projectChat: {
+        models: mocks.modelCatalog(),
+        isModelCatalogReady: mocks.isModelCatalogReady(),
+      },
+      services,
+    }),
+  }
+})
 
 const installation = {
   id: 'app-1',
@@ -103,6 +113,9 @@ const running = {
 describe('HarnessAppAutoLauncher', () => {
   beforeEach(() => {
     Object.values(mocks).forEach(mock => mock.mockReset())
+    mocks.isModelCatalogReady.mockReturnValue(true)
+    mocks.modelCatalog.mockReturnValue([])
+    mocks.listModelOptions.mockReturnValue([{ key: 'model-1' }])
     mocks.resolveLaunch.mockResolvedValue({
       baseUrl: 'http://127.0.0.1:9000',
       proxyToken: 'proxy-token',
@@ -123,6 +136,46 @@ describe('HarnessAppAutoLauncher', () => {
     mocks.unregisterContext.mockResolvedValue(undefined)
     mocks.unregisterDecision.mockResolvedValue(undefined)
     mocks.stop.mockResolvedValue(undefined)
+  })
+
+  test('waits for the model catalog before starting or settling an app launch', async () => {
+    mocks.isModelCatalogReady.mockReturnValue(false)
+    mocks.listModelOptions.mockReturnValue([])
+    mocks.list.mockResolvedValue([installation])
+    mocks.start.mockResolvedValue(running)
+    const settled = vi.fn()
+
+    const view = render(
+      <HarnessAppAutoLauncher installationId="app-1" onStartupSettled={settled} />
+    )
+    await act(async () => {})
+
+    expect(mocks.list).not.toHaveBeenCalled()
+    expect(mocks.failLaunch).not.toHaveBeenCalled()
+    expect(mocks.start).not.toHaveBeenCalled()
+    expect(settled).not.toHaveBeenCalled()
+
+    mocks.isModelCatalogReady.mockReturnValue(true)
+    mocks.modelCatalog.mockReturnValue([{ name: 'model-1', type: 'runtime' }])
+    mocks.listModelOptions.mockReturnValue([{ key: 'model-1' }])
+    view.rerender(<HarnessAppAutoLauncher installationId="app-1" onStartupSettled={settled} />)
+
+    await waitFor(() => expect(settled).toHaveBeenCalledWith('app-1'))
+    expect(mocks.start).toHaveBeenCalledTimes(1)
+    expect(mocks.register).toHaveBeenCalledWith(running)
+    expect(mocks.failLaunch).not.toHaveBeenCalled()
+  })
+
+  test('reports a missing model after the catalog has loaded instead of waiting forever', async () => {
+    mocks.listModelOptions.mockReturnValue([])
+    mocks.list.mockResolvedValue([installation])
+    const settled = vi.fn()
+
+    render(<HarnessAppAutoLauncher installationId="app-1" onStartupSettled={settled} />)
+
+    await waitFor(() => expect(settled).toHaveBeenCalledWith('app-1'))
+    expect(mocks.failLaunch).toHaveBeenCalledWith('app-1', '智能工作台配置的模型不可用')
+    expect(mocks.start).not.toHaveBeenCalled()
   })
 
   test('starts and registers an installed Smart app when its tab opens', async () => {

@@ -511,6 +511,7 @@ export function useWorkbenchModels({
     refreshModels,
     selectedModel,
     selectedModelOptions,
+    isCatalogReady: enabled && hasCompletedModelLoad,
     isSelectionReady,
     isConfiguredModelUnavailable: configuredModelUnavailable,
     setSelectedModel,
