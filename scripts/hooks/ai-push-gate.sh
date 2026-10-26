@@ -253,8 +253,10 @@ run_wework_unit_tests() {
     fi
 
     if [ "$WEWORK_ELECTRON_CHANGED" -eq 1 ] && [ "$ELECTRON_INSTALL_EXIT" -eq 0 ]; then
-        echo -e "   Running Electron unit tests..."
-        if ! pnpm --dir wework/electron test >> "$TEMP_DIR/wework_test.log" 2>&1; then
+        local electron_workers="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
+        echo -e "   Running Electron unit tests with $(format_worker_count "$electron_workers")..."
+        if ! pnpm --dir wework/electron test --maxWorkers "$electron_workers" \
+            >> "$TEMP_DIR/wework_test.log" 2>&1; then
             test_exit=1
         fi
     fi

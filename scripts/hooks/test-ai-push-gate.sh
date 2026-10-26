@@ -70,7 +70,7 @@ if [ "$(basename "$0")" = "pnpm" ]; then
             sleep 0.2
             touch "$CALL_LOG.electron-typecheck-complete"
             ;;
-        '--dir wework/electron test')
+        '--dir wework/electron test'*)
             if [ ! -f "$CALL_LOG.electron-typecheck-complete" ]; then
                 echo 'Electron tests started before typechecking finished staging process-explorer' >&2
                 exit 1
@@ -359,8 +359,8 @@ if ! grep -qE '^pnpm --filter wework run prepare:electron$' "$CALL_LOG"; then
 fi
 
 if ! grep -qE '^pnpm --dir wework/electron typecheck$' "$CALL_LOG" ||
-    ! grep -qE '^pnpm --dir wework/electron test$' "$CALL_LOG"; then
-    echo "Expected Electron changes to run Electron-owned checks."
+    ! grep -qE '^pnpm --dir wework/electron test --maxWorkers 2$' "$CALL_LOG"; then
+    echo "Expected Electron changes to run Electron-owned checks within the default worker budget."
     echo "Calls:"
     cat "$CALL_LOG"
     exit 1
@@ -369,6 +369,19 @@ fi
 if grep -qE '^pnpm --filter wework (typecheck|test)$|^pnpm --filter wework exec vitest ' "$CALL_LOG"; then
     echo "Expected Electron-only changes to skip unrelated renderer checks."
     echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+: > "$CALL_LOG"
+WEWORK_PRE_PUSH_TEST_WORKERS=1 \
+AI_VERIFIED=1 \
+PATH="$TMP_DIR/bin:$PATH" \
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$TMP_DIR/electron-one-worker.out" 2>&1
+refs/heads/topic $ELECTRON_LOCAL_SHA refs/heads/topic $ELECTRON_BASE_SHA
+EOF
+if ! grep -qE '^pnpm --dir wework/electron test --maxWorkers 1$' "$CALL_LOG"; then
+    echo "Expected the configured worker budget to cover all Electron tests."
     cat "$CALL_LOG"
     exit 1
 fi
@@ -425,7 +438,7 @@ if grep -qE '^pnpm --filter wework test$' "$CALL_LOG"; then
     exit 1
 fi
 
-if ! grep -qE '^pnpm --dir wework/electron test$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --dir wework/electron test --maxWorkers 2$' "$CALL_LOG"; then
     echo "Expected merge-like Wework changes to retain Electron-owned tests."
     echo "Calls:"
     cat "$CALL_LOG"
