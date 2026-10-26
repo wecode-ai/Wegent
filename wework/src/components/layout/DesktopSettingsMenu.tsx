@@ -300,7 +300,7 @@ export function DesktopSettingsMenu({
                 type="button"
                 data-testid="app-update-error-details-button"
                 onClick={() => setSelectedUpdateError(updateError)}
-                className="shrink-0 rounded-sm text-blue-600 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 dark:text-blue-300"
+                className="shrink-0 rounded-sm text-blue-600 underline-offset-2 hover:underline focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40 dark:text-blue-300"
               >
                 {t('workbench.app_update_error_details', '查看错误详情')}
               </button>

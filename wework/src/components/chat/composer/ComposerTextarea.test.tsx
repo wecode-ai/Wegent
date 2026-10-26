@@ -879,8 +879,8 @@ describe('ComposerTextarea', () => {
     render(<Harness />)
     const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
     act(() => {
-      editor.value = '/'
       editor.focus()
+      editor.value = '/'
     })
 
     const modelOption = screen.getByTestId('slash-command-option-model')

@@ -21,13 +21,18 @@ export type {
 } from '@wegent/chat-core/runtime-conversation'
 
 import type {
+  Attachment,
   DeviceInfo,
+  ModelOptions,
+  ModelType,
   ProjectWithTasks,
+  RuntimeGoalCreateInput,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
   Team,
   User,
 } from './api'
+import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 
 export type {
   QueuedMessageStatus,
@@ -56,6 +61,19 @@ export type RuntimeTranscriptLoader = (
   address: RuntimeTaskAddress,
   options?: RuntimePaneTranscriptLoadOptions
 ) => Promise<RuntimePaneTranscript>
+
+export interface RuntimeTaskComposerCreateOptions {
+  attachments: Attachment[]
+  initialGoal?: RuntimeGoalCreateInput
+  executionModel: {
+    modelId?: string
+    modelType?: ModelType | null
+    modelOptions?: ModelOptions
+  }
+  optimisticUserMessage: WorkbenchMessage & { role: 'user' }
+  onError: (message: string) => void
+  onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
+}
 
 export type CloudWorkCheckKey = 'teams' | 'devices' | 'runtimeWork'
 export type CloudWorkCheckStatus = 'idle' | 'syncing' | 'available' | 'empty' | 'unavailable'

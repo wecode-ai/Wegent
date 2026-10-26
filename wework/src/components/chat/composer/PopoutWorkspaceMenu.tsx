@@ -116,7 +116,7 @@ export function PopoutWorkspaceMenu({
 
   const projectSubmenu = (
     <>
-      <label className="mx-2 mb-1 flex h-9 items-center gap-2 rounded-lg border border-border/70 px-2 text-text-secondary focus-within:border-focus">
+      <label className="mx-2 mb-1 flex h-9 items-center gap-2 rounded-lg border border-border/70 px-2 text-text-secondary keyboard:focus-within:border-focus">
         <Search className="h-4 w-4 shrink-0" />
         <input
           data-testid="popout-workspace-project-search"

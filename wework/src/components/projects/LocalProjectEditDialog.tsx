@@ -499,7 +499,7 @@ function LocalProjectEditDialogContent({
 
         {activeTab === 'basic' ? (
           <div data-testid="local-project-settings-basic-panel">
-            <label className="mt-5 flex h-11 items-center rounded-xl border border-border bg-background focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/10">
+            <label className="mt-5 flex h-11 items-center rounded-xl border border-border bg-background keyboard:focus-within:border-primary keyboard:focus-within:ring-2 keyboard:focus-within:ring-primary/10">
               <Folder className="mx-3 h-4 w-4 shrink-0 text-text-secondary" />
               <span className="h-full w-px bg-border" />
               <input
@@ -615,7 +615,7 @@ function LocalProjectEditDialogContent({
                     '在这个项目里开启的新对话会默认加入所选项目空间，并在发送前明确显示。'
                   )}
                 </p>
-                <label className="mt-2 flex h-11 items-center rounded-xl border border-border bg-background focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/10">
+                <label className="mt-2 flex h-11 items-center rounded-xl border border-border bg-background keyboard:focus-within:border-primary keyboard:focus-within:ring-2 keyboard:focus-within:ring-primary/10">
                   <LayoutDashboard className="mx-3 h-4 w-4 shrink-0 text-text-secondary" />
                   <span className="h-full w-px bg-border" />
                   <select
@@ -679,7 +679,7 @@ function LocalProjectEditDialogContent({
               disabled={aiDisabled}
               onChange={event => setInstructions(event.target.value)}
               placeholder={t('workbench.project_instructions_placeholder', '留空则只使用全局指令')}
-              className="mt-2 min-h-28 w-full resize-y rounded-xl border border-border bg-background px-3 py-2 text-base outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 disabled:opacity-50"
+              className="mt-2 min-h-28 w-full resize-y rounded-xl border border-border bg-background px-3 py-2 text-base outline-none keyboard:focus:border-primary keyboard:focus:ring-2 keyboard:focus:ring-primary/10 disabled:opacity-50"
             />
             <p className="mt-1 text-sm text-text-secondary">
               {t(
@@ -692,7 +692,7 @@ function LocalProjectEditDialogContent({
               {t('workbench.project_default_model', '默认模型')}
             </label>
             <div className="mt-2 grid grid-cols-[minmax(0,1fr)_minmax(120px,160px)] gap-2">
-              <label className="flex h-11 items-center rounded-xl border border-border bg-background focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/10">
+              <label className="flex h-11 items-center rounded-xl border border-border bg-background keyboard:focus-within:border-primary keyboard:focus-within:ring-2 keyboard:focus-within:ring-primary/10">
                 <Brain className="mx-3 h-4 w-4 shrink-0 text-text-secondary" />
                 <span className="h-full w-px bg-border" />
                 <select
@@ -745,7 +745,7 @@ function LocalProjectEditDialogContent({
                   })
                   setModelSelection({ ...modelSelection, options })
                 }}
-                className="h-11 min-w-0 rounded-xl border border-border bg-background px-3 text-base outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 disabled:opacity-50"
+                className="h-11 min-w-0 rounded-xl border border-border bg-background px-3 text-base outline-none keyboard:focus:border-primary keyboard:focus:ring-2 keyboard:focus:ring-primary/10 disabled:opacity-50"
               >
                 {!reasoningControl ? (
                   <option value={modelSelection?.options?.reasoning ?? ''}>

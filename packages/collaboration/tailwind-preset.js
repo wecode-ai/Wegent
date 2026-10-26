@@ -1,6 +1,9 @@
 /** Shared semantic utilities used by collaboration components in both hosts. */
 export default {
   plugins: [
+    // Keep focus paint opt-in for keyboard navigation without restoring base colors.
+    ({ addVariant }) =>
+      addVariant('keyboard', ':where(html:not([data-input-modality="pointer"])) &'),
     ({ addComponents }) =>
       addComponents({
         '.heading-xl': {
