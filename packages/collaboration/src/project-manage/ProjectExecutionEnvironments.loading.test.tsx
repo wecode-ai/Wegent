@@ -59,7 +59,11 @@ function apiFor(
   } as unknown as SharedWorkspaceApi
 }
 
-async function render(api: SharedWorkspaceApi, selectedProject = project) {
+async function render(
+  api: SharedWorkspaceApi,
+  selectedProject = project,
+  onProjectChange?: (project: CollaborationProject) => void
+) {
   if (!container) {
     container = document.createElement('div')
     document.body.append(container)
@@ -67,7 +71,12 @@ async function render(api: SharedWorkspaceApi, selectedProject = project) {
   }
   await act(async () =>
     root.render(
-      <ProjectExecutionEnvironments api={api} project={selectedProject} translate={translate} />
+      <ProjectExecutionEnvironments
+        api={api}
+        project={selectedProject}
+        onProjectChange={onProjectChange}
+        translate={translate}
+      />
     )
   )
 }
@@ -82,6 +91,43 @@ afterEach(() => {
 })
 
 describe('execution environment settings loading', () => {
+  it('preserves the project version after adding a device and reopening settings', async () => {
+    let currentProject = project
+    const assigned: CollaborationExecutionEnvironment[] = []
+    const api = apiFor(vi.fn(async () => assigned))
+    api.resources!.devices!.cloud = vi.fn(async () => [device])
+    api.workspaces!.listExecutionEnvironments = vi.fn(async () => [device])
+    api.projects.get = vi.fn(async () => ({ ...project, version: 2 }))
+    api.projects.addExecutionEnvironment = vi.fn(async () => {
+      const created = { ...device, project_version: 2 }
+      assigned.push(created)
+      return created
+    })
+    api.projects.update = vi.fn(async () => ({ ...currentProject, version: 3 }))
+    await render(api, project, updated => {
+      currentProject = updated
+    })
+    await act(async () => element('-add')!.click())
+    await act(async () => element('-candidate-1')!.click())
+
+    expect(api.projects.get).toHaveBeenCalledExactlyOnceWith('project-1')
+    expect(currentProject.version).toBe(2)
+    await act(async () => root.render(null))
+    await render(api, currentProject)
+    await act(async () => {
+      const policy = element('-workspace-policy') as HTMLSelectElement
+      policy.value = 'project'
+      policy.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await act(async () => element('-save-configuration')!.click())
+
+    expect(api.projects.update).toHaveBeenCalledWith(
+      'project-1',
+      expect.objectContaining({ version: 2 })
+    )
+    expect(element('-configuration-status')!.textContent).toContain('配置已保存')
+  })
+
   it('reuses the device page snapshot across scoped APIs without granting local placeholder IDs', async () => {
     const api = apiFor()
     const registered = { ...device, id: 'registered-22', device_id: 22, device_key: 'runtime-22' }

@@ -588,7 +588,10 @@ export function ProjectExecutionEnvironments({
         ? await api.workspaces!.addExecutionEnvironment(scopeId, { deviceId })
         : await api.projects.addExecutionEnvironment(scopeId, deviceId)
       assigned.update(current => [...current.filter(item => item.device_id !== deviceId), created])
-      if (created.project_version != null) setConfigVersion(created.project_version)
+      if (created.project_version != null) {
+        setConfigVersion(created.project_version)
+        if (onProjectChange) onProjectChange(await api.projects.get(scopeId))
+      }
       setPickerOpen(false)
     } catch (saveError) {
       const reason = environmentAuthorizationError(saveError, translate)

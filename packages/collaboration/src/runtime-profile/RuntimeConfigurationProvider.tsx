@@ -22,6 +22,7 @@ export function RuntimeConfigurationProvider({
   project,
   locale,
   children,
+  onProjectChange,
 }: {
   api?: SharedWorkspaceApi | null;
   project?: Pick<
@@ -35,6 +36,7 @@ export function RuntimeConfigurationProvider({
   > | null;
   locale: string;
   children: ReactNode;
+  onProjectChange?(project: CollaborationProject): void;
 }) {
   const [request, setRequest] = useState<{
     projectId: string;
@@ -162,6 +164,7 @@ export function RuntimeConfigurationProvider({
                     api={api}
                     project={project}
                     translate={t}
+                    onProjectChange={onProjectChange}
                   />
                 ) : (
                   <ProjectRuntimeSettings
