@@ -147,6 +147,11 @@ export function HarnessAppAutoLauncher({
             decisionProtocolVersion: decision?.protocolVersion ?? null,
           })
           started = true
+          // The tab can close while the runtime is starting; stop and release
+          // through the normal failure path instead of leaking the new routes.
+          if (cancelled) {
+            throw new Error('Smart app tab closed during launch')
+          }
           if (!running.webUrl) {
             throw new Error(t('workbench.smart_apps_missing_web_url', '智能工作台没有返回可用地址'))
           }
