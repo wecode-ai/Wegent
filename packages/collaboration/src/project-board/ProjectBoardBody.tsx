@@ -1,3 +1,4 @@
+import { ProjectBoardCardContext } from './projectBoardCardContext'
 import {
   Plus,
   ChevronDown,
@@ -502,7 +503,13 @@ export function ProjectBoardBody<TItem>({
               </>
             )}
             getItemKey={getItemKey}
-            renderItem={(item, column) => renderItem(item, column, state)}
+            renderItem={(item, column) => (
+              <ProjectBoardCardContext.Provider
+                value={{ columnKey: column.key, groupBy: state.groupBy }}
+              >
+                {renderItem(item, column, state)}
+              </ProjectBoardCardContext.Provider>
+            )}
             renderItemsFooter={renderItemsFooter}
             getColumnEmptyState={getColumnEmptyState}
             renderAddIcon={() => <Plus className="h-5 w-5" />}

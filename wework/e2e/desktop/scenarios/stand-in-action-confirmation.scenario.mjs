@@ -69,7 +69,7 @@ export function createDesktopScenario({
       const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
       assert.ok(model)
       const origin = {
-        type: 'stand_in_verification',
+        type: 'connection_work',
         initiatedBy: 'stand_in',
         userId: 9001,
         standInId: settings.roles[0].id,

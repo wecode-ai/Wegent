@@ -128,7 +128,7 @@ function DisconnectedCloudCodexSyncSection({
   codexOfficialModels: CodexOfficialModelList | null
   codexOfficialLoading: boolean
   codexOfficialError: string | null
-  onRefreshCodexOfficialModels: () => void
+  onRefreshCodexOfficialModels: () => void | Promise<void>
   subscriptionEnabled: boolean
 }) {
   const { t } = useTranslation('common')
@@ -710,7 +710,7 @@ export function ModelSettingsPage({
               codexOfficialModels={codexOfficialModels}
               codexOfficialLoading={codexOfficialLoading}
               codexOfficialError={codexOfficialError}
-              onRefreshCodexOfficialModels={() => void loadCodexOfficialModels()}
+              onRefreshCodexOfficialModels={loadCodexOfficialModels}
               subscriptionEnabled={subscriptionEnabled}
             />
           </CodexAuthSettingsSection>
