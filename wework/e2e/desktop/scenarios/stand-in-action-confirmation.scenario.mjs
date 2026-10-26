@@ -20,6 +20,20 @@ const PROMPT = 'STAND_IN_VERIFY_EXPLICIT_WRITE_CONFIRMATION'
 const DISPLAY_MESSAGE = '请在隔离工作区创建验证文件，执行前先让我确认。'
 const ROOT = '[data-testid="stand-in-overview"]'
 
+async function waitForFile(file, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      await access(file)
+      return
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  await access(file)
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   uiTimeoutMs,
@@ -154,7 +168,7 @@ export function createDesktopScenario({
         text: '已按你的单次确认完成操作',
         timeoutMs: modelResponseTimeoutMs,
       })
-      await access(file)
+      await waitForFile(file, uiTimeoutMs)
       await captureScreenshot(control, '03-confirmed-operation-completed.png')
     },
     diagnostics() {

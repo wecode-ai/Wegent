@@ -461,9 +461,6 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
       })
       await control.command('click', `${WORKBENCH} ${ANSWER_OPTION}`)
       await waitForRequestHold(control)
-      // Let the runtime finish its turn so archiving can cancel it; the answer
-      // acceptance itself stays held until after the archive has completed.
-      archiveGate.resolve()
       const archiveRow = `[data-testid="runtime-local-task-row-${archiveAddress.taskId}"]`
       const archiveButton = `[data-testid="runtime-local-task-archive-${archiveAddress.taskId}"]`
       await control.command('waitFor', archiveRow, { visible: true, timeoutMs: taskTimeoutMs })
@@ -477,8 +474,11 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         'The task was not archived while the input answer acceptance was pending',
         taskTimeoutMs
       )
+      // Archiving cancels the live turn. Release the model and the held answer
+      // only afterward so late completions cannot restore the conversation.
+      archiveGate.resolve()
       await releaseRequestHold(control, taskTimeoutMs)
-      await new Promise(resolve => setTimeout(resolve, 250))
+      await new Promise(resolve => setTimeout(resolve, 500))
       assert.deepEqual(
         JSON.parse(
           await control.command('getRuntimeConversationMessages', 'body', {
