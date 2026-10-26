@@ -123,6 +123,23 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
     assert.equal(calls.filter(call => call.action === 'drag').length, 2)
     assert.equal(calls.filter(call => call.action === 'dragBy').length, 1)
     assert.equal(captures.length, 3)
+    const dayWaits = calls.filter(
+      call => call.action === 'waitFor' && call.selector.includes('collaboration-calendar-day-')
+    )
+    assert.deepEqual(
+      dayWaits.map(call => call.selector),
+      [keys.initialStart, keys.calendarStart].map(
+        day => `[data-testid="collaboration-calendar-day-${day}"]`
+      )
+    )
+    const filterIndex = calls.findIndex(
+      call =>
+        call.action === 'select' && call.selector.includes('collaboration-calendar-status-filter')
+    )
+    assert.ok(
+      dayWaits.every(call => calls.indexOf(call) < filterIndex),
+      'Both source and target days must be visible before saving the calendar filters'
+    )
     assert.equal(
       calls.some(call => /collaboration-schedule-next|下一个月/.test(call.selector)),
       false,

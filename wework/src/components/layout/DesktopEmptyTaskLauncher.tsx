@@ -63,7 +63,7 @@ export function DesktopEmptyTaskLauncher({
               data-testid="empty-project-title-button"
               onClick={event => onOpenProjectSelector(event.currentTarget)}
               title={t('workbench.change_project', '更改项目')}
-              className="max-w-[18rem] truncate align-bottom underline decoration-text-muted decoration-dotted underline-offset-4 transition-colors hover:text-text-secondary focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+              className="max-w-[18rem] truncate align-bottom underline decoration-text-muted decoration-dotted underline-offset-4 transition-colors hover:text-text-secondary focus-visible:rounded focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
             >
               {projectName}
             </button>{' '}

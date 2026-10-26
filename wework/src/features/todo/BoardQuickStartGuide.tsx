@@ -158,7 +158,7 @@ export function BoardQuickStartGuide({
           type="button"
           data-testid="cloud-board-quick-start-dismiss"
           onClick={() => updateState({ dismissed: true })}
-          className="h-7 rounded-lg px-2 text-xs text-text-muted transition hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+          className="h-7 rounded-lg px-2 text-xs text-text-muted transition hover:bg-background hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
         >
           {t('todo.quick_start_dismiss', '不再显示')}
         </button>
@@ -167,7 +167,7 @@ export function BoardQuickStartGuide({
           data-testid="cloud-board-quick-start-toggle"
           aria-expanded={!state.collapsed}
           onClick={() => updateState({ collapsed: !state.collapsed })}
-          className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary transition hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+          className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary transition hover:bg-background hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
         >
           {state.collapsed
             ? t('todo.quick_start_expand', '展开')
@@ -271,7 +271,7 @@ function QuickStartStep({
             data-testid={`${testId}-action`}
             disabled={actionDisabled}
             onClick={onAction}
-            className="mt-2 h-7 rounded-lg bg-muted px-2.5 text-xs font-medium text-text-secondary transition hover:bg-text-primary/10 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-40"
+            className="mt-2 h-7 rounded-lg bg-muted px-2.5 text-xs font-medium text-text-secondary transition hover:bg-text-primary/10 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-40"
           >
             {actionLabel}
           </button>

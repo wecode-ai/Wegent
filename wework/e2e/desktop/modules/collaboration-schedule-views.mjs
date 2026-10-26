@@ -97,6 +97,13 @@ export async function verifyCollaborationScheduleViews({
     visible: true,
     timeoutMs,
   })
+  const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
+  for (const key of [keys.initialStart, keys.calendarStart]) {
+    await control.command('waitFor', scoped(`[data-testid="collaboration-calendar-day-${key}"]`), {
+      visible: true,
+      timeoutMs,
+    })
+  }
   await control.command('select', scoped('[data-testid="collaboration-calendar-status-filter"]'), {
     value: 'inbox',
   })
@@ -124,9 +131,6 @@ export async function verifyCollaborationScheduleViews({
       timeoutMs,
     }
   )
-
-  const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
-  await control.command('waitFor', calendarTarget, { visible: true, timeoutMs })
 
   const calendarBar = scoped('[data-testid^="collaboration-calendar-issue-"]')
   await control.command('waitFor', calendarBar, {

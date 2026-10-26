@@ -124,7 +124,7 @@ RUN dnf install -y \
     redis \
     # MySQL server for standalone mode (embedded)
     mysql-server \
-    && npm install -g @anthropic-ai/claude-code@2.1.277 @openai/codex@0.155.1 \
+    && npm install -g @anthropic-ai/claude-code@2.1.310 @openai/codex@0.155.1 \
     && { ! getcap /usr/libexec/mysqld | grep -q . || setcap -r /usr/libexec/mysqld; } \
     && test -z "$(getcap /usr/libexec/mysqld)" \
     && /usr/sbin/mysqld --version \

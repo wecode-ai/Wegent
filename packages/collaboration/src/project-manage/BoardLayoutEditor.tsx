@@ -144,7 +144,7 @@ function SortableStatus({
                 event.currentTarget.blur();
               }
             }}
-            className="h-6 min-w-0 flex-1 rounded-md border border-border bg-background px-1.5 text-xs outline-none focus:border-focus"
+            className="h-6 min-w-0 flex-1 rounded-md border border-border bg-background px-1.5 text-xs outline-none keyboard:focus:border-focus"
             aria-label={translate("todo.status_name", "状态名称")}
           />
         ) : (

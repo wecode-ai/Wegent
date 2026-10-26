@@ -326,7 +326,7 @@ export function CloudWorkPage() {
                           type="button"
                           data-testid={`cloud-work-project-${projectId}`}
                           onClick={() => handleSelectProject(projectId)}
-                          className="flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                          className="flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-blue-500"
                         >
                           <FolderGit2 className="h-4 w-4 shrink-0 text-text-secondary" />
                           <span className="min-w-0 flex-1">

@@ -32,12 +32,15 @@ test.each([
   vi.setSystemTime(new Date(fixture.today))
   let navigations = 0
   let rangeIndex = 0
-  const target = `collaboration-calendar-day-${fixture.target}`
+  const visibleDays = []
+  const expectedDays = [fixture.ranges[0].split(' → ')[0], fixture.target]
   const control = {
     async command(action, selector, options) {
       if (action === 'click' && /collaboration-schedule-next|下一个月/.test(selector)) navigations++
       if (action === 'waitFor' && selector.includes('collaboration-calendar-day-')) {
-        expect(selector).toContain(target)
+        const day = expectedDays[visibleDays.length]
+        expect(selector).toContain(`collaboration-calendar-day-${day}`)
+        visibleDays.push(day)
         assert.equal(navigations, fixture.navigationCount, 'The target month was overshot')
       }
       if (action === 'getAttribute')
@@ -59,5 +62,6 @@ test.each([
   })
 
   expect(navigations).toBe(fixture.navigationCount)
+  expect(visibleDays).toEqual(expectedDays)
   expect(rangeIndex).toBe(3)
 })

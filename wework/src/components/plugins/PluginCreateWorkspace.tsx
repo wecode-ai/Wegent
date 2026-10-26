@@ -231,7 +231,7 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
                   type="button"
                   data-testid="plugin-creator-context-dismiss"
                   aria-label={t('workbench.cancel', '取消')}
-                  className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-sm text-current opacity-60 transition-[background-color,opacity] hover:bg-focus/10 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+                  className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-sm text-current opacity-60 transition-[background-color,opacity] hover:bg-focus/10 hover:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
                   onClick={dismissPluginCreator}
                 >
                   <X className="h-3 w-3" aria-hidden="true" />
