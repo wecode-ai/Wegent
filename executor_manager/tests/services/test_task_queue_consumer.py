@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from executor_manager.services.task_queue_consumer import TaskQueueConsumer
 
-TASK_ID = 10445360625101
-SUBTASK_ID = 10445360625940
+TASK_ID = 10000000000001
+SUBTASK_ID = 10000000000002
 
 
 def _build_consumer() -> TaskQueueConsumer:
@@ -31,7 +31,7 @@ def test_failed_result_with_executor_name_is_requeued():
     consumer.task_processor.process_tasks.return_value = {
         TASK_ID: {
             "status": "failed",
-            "executor_name": "wegent-task-huaqing1-8a83708e1fe4e76",
+            "executor_name": "wegent-task-example-000000000000000",
             "error_msg": "Executor is deleted. Please create a new session.",
         }
     }
@@ -79,7 +79,7 @@ def test_exhausted_retries_report_failure_to_backend():
     consumer.task_processor.process_tasks.return_value = {
         TASK_ID: {
             "status": "failed",
-            "executor_name": "wegent-task-huaqing1-8a83708e1fe4e76",
+            "executor_name": "wegent-task-example-000000000000000",
             "error_msg": "Executor is deleted. Please create a new session.",
         }
     }

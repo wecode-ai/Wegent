@@ -24,7 +24,7 @@ from app.services.execution.stalled_tasks import (
 NOW = datetime(2026, 10, 27, 15, 0, 0)
 
 
-def _task(task_id: int, user_id: int = 508) -> TaskResource:
+def _task(task_id: int, user_id: int = 7) -> TaskResource:
     return TaskResource(
         id=task_id,
         user_id=user_id,
@@ -43,19 +43,19 @@ def _subtask(
     status: SubtaskStatus,
     role: SubtaskRole = SubtaskRole.ASSISTANT,
     updated_at: datetime = NOW - timedelta(minutes=30),
-    executor_name: str = "wegent-task-xulu7-abc",
+    executor_name: str = "wegent-task-example-abc",
 ) -> Subtask:
     return Subtask(
         id=subtask_id,
         task_id=task_id,
-        user_id=508,
+        user_id=7,
         team_id=1,
         title="assistant",
         role=role,
         status=status,
         progress=0,
         bot_ids=[1],
-        executor_namespace="wb-plat-ide",
+        executor_namespace="default",
         executor_name=executor_name,
         created_at=updated_at,
         updated_at=updated_at,
@@ -66,9 +66,9 @@ def _candidate(**overrides) -> StalledCandidate:
     values = {
         "task_id": 100,
         "subtask_id": 200,
-        "user_id": 508,
-        "executor_name": "wegent-task-xulu7-abc",
-        "executor_namespace": "wb-plat-ide",
+        "user_id": 7,
+        "executor_name": "wegent-task-example-abc",
+        "executor_namespace": "default",
         "updated_at": NOW - timedelta(minutes=30),
     }
     values.update(overrides)
@@ -92,7 +92,7 @@ def test_list_stalled_candidates_filters_running_and_old(test_db):
     )
 
     assert [row.subtask_id for row in rows] == [200, 203]
-    assert rows[0].user_id == 508
+    assert rows[0].user_id == 7
 
 
 @pytest.mark.asyncio
