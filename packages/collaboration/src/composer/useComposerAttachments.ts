@@ -1,11 +1,11 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import type { Attachment } from '@wegent/chat-core/runtime'
 export interface MultiAttachmentUploadState {
   attachments: Attachment[]
   uploadingFiles: Map<string, { file: File; progress: number; previewUrl?: string }>
   errors: Map<string, string>
 }
-import { isValidFileSize, releaseAttachmentPreview, isWorkspaceImageFile } from './attachmentFiles'
+import { releaseAttachmentPreview, isWorkspaceImageFile } from './attachmentFiles'
 import { readTextAttachmentMetadata } from '../issue-detail/attachmentPresentation'
 import { isPastedTextFile } from './pastedTextAttachment'
 
@@ -49,6 +49,8 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
   const deleteAttachment = options.deleteAttachment
   const scopeKey = options.scopeKey ?? DEFAULT_ATTACHMENT_SCOPE_KEY
   const [stateByScope, setStateByScope] = useState<Record<string, MultiAttachmentUploadState>>({})
+  const uploadSequence = useRef(0)
+  const latestAttemptsByScope = useRef(new Map<string, Map<string, string>>())
   const storedState = stateByScope[scopeKey]
   const state = useMemo(() => storedState ?? emptyAttachmentState(), [scopeKey, storedState])
 
@@ -93,25 +95,20 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
     async (targetScopeKey: string, files: File | File[]) => {
       const fileList = Array.isArray(files) ? files : [files]
 
-      for (const [index, file] of fileList.entries()) {
-        // file.name alone collides when the same file name is selected twice;
-        // include size/lastModified and the in-batch index for a stable key.
-        const fileId = `${file.name}:${file.size}:${file.lastModified}:${index}`
-
-        if (!isValidFileSize(file.size)) {
-          updateScopeState(targetScopeKey, current => {
-            const errors = new Map(current.errors)
-            errors.set(fileId, 'File is too large')
-            return { ...current, errors }
-          })
-          continue
-        }
+      for (const file of fileList) {
+        const fileId = `${file.name}:${++uploadSequence.current}`
+        const latestAttempts =
+          latestAttemptsByScope.current.get(targetScopeKey) ?? new Map<string, string>()
+        latestAttempts.set(file.name, fileId)
+        latestAttemptsByScope.current.set(targetScopeKey, latestAttempts)
 
         const previewUrl = createImagePreview(file)
         updateScopeState(targetScopeKey, current => {
           const uploadingFiles = new Map(current.uploadingFiles)
+          const errors = new Map(current.errors)
+          errors.delete(file.name)
           uploadingFiles.set(fileId, { file, progress: 0, previewUrl })
-          return { ...current, uploadingFiles }
+          return { ...current, uploadingFiles, errors }
         })
 
         let previewTransferred = false
@@ -136,7 +133,11 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
                 text_length: attachment.text_length ?? textMetadata.text_length,
               }
             : attachment
-          if (isPastedTextFile(file)) enrichedAttachment = { ...enrichedAttachment, ui_kind: 'pasted-text' }
+          if (isPastedTextFile(file))
+            enrichedAttachment = {
+              ...enrichedAttachment,
+              ui_kind: 'pasted-text',
+            }
           if (previewUrl) {
             if (enrichedAttachment.local_preview_url !== previewUrl) {
               releaseAttachmentPreview(enrichedAttachment)
@@ -160,14 +161,23 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
           options.onAction?.('upload')
         } catch (error) {
           options.onAction?.('failed')
+          const isLatestAttempt =
+            latestAttemptsByScope.current.get(targetScopeKey)?.get(file.name) === fileId
           updateScopeState(targetScopeKey, current => {
             const uploadingFiles = new Map(current.uploadingFiles)
             const errors = new Map(current.errors)
             uploadingFiles.delete(fileId)
-            errors.set(fileId, error instanceof Error ? error.message : 'Upload failed')
+            if (isLatestAttempt) {
+              errors.set(file.name, error instanceof Error ? error.message : 'Upload failed')
+            }
             return { ...current, uploadingFiles, errors }
           })
         } finally {
+          const latestAttempts = latestAttemptsByScope.current.get(targetScopeKey)
+          if (latestAttempts?.get(file.name) === fileId) {
+            latestAttempts.delete(file.name)
+            if (latestAttempts.size === 0) latestAttemptsByScope.current.delete(targetScopeKey)
+          }
           if (!previewTransferred) {
             releaseImagePreview(previewUrl)
           }
@@ -175,6 +185,18 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
       }
     },
     [updateScopeState, uploadAttachment, options.onAction]
+  )
+
+  const dismissAttachmentErrorForScope = useCallback(
+    (targetScopeKey: string, filename: string) => {
+      updateScopeState(targetScopeKey, current => {
+        if (!current.errors.has(filename)) return current
+        const errors = new Map(current.errors)
+        errors.delete(filename)
+        return { ...current, errors }
+      })
+    },
+    [updateScopeState]
   )
 
   const removeAttachmentForScope = useCallback(
@@ -207,6 +229,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
 
   const resetAttachmentsForScope = useCallback(
     (targetScopeKey: string) => {
+      latestAttemptsByScope.current.delete(targetScopeKey)
       const scopedState = stateByScope[targetScopeKey] ?? emptyAttachmentState()
       scopedState.attachments.forEach(releaseAttachmentPreview)
       updateScopeState(targetScopeKey, current => ({
@@ -235,6 +258,10 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
     () => resetAttachmentsForScope(scopeKey),
     [resetAttachmentsForScope, scopeKey]
   )
+  const dismissAttachmentError = useCallback(
+    (filename: string) => dismissAttachmentErrorForScope(scopeKey, filename),
+    [dismissAttachmentErrorForScope, scopeKey]
+  )
 
   return {
     state,
@@ -242,6 +269,8 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
     attachments: state.attachments,
     uploadingFiles: state.uploadingFiles,
     errors: state.errors,
+    dismissAttachmentError,
+    dismissAttachmentErrorForScope,
     isUploading,
     isAttachmentReadyToSend,
     handleFileSelect,

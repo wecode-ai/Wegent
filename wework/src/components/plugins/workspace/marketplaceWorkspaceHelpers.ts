@@ -220,7 +220,10 @@ export function withMarketplacePluginDetail(
       spec: {
         ...plugin.raw.spec,
         components: detail.spec.components,
-        componentStates: detail.spec.componentStates || plugin.raw.spec.componentStates,
+        // Cloud inventory owns settings; local details fill gaps in summary reads.
+        componentStates: isCloudManagedInstalledPlugin(plugin.raw)
+          ? plugin.raw.spec.componentStates
+          : { ...detail.spec.componentStates, ...plugin.raw.spec.componentStates },
         description: detail.spec.description || plugin.raw.spec.description,
         interface: {
           ...plugin.raw.spec.interface,
@@ -261,7 +264,6 @@ export function keepRicherMarketplacePluginDetail(
         spec: {
           ...next.raw.spec,
           components: previous.raw.spec.components,
-          componentStates: previous.raw.spec.componentStates || next.raw.spec.componentStates,
         },
       },
     }

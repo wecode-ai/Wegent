@@ -2490,8 +2490,8 @@ wework_memory_job="$(
 memory_step_gate="$(
   sed -n '/^      - name: Run Wework desktop memory E2E$/{n;p;}' "$wework_workflow"
 )"
-if [[ "$memory_step_gate" != "        if: github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all'))" ]]; then
-  printf 'Wework memory E2E must run only for ci:memory or ci:all PRs\n' >&2
+if [[ "$memory_step_gate" != "        if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')" ]]; then
+  printf 'Wework memory E2E must run only for ci:all PRs\n' >&2
   exit 1
 fi
 

@@ -9,7 +9,23 @@ import {
   formatsToAcceptString,
   getAttachmentPlayback,
   getErrorMessageFromCode,
+  uploadAttachment,
 } from '@/apis/attachments'
+
+describe('uploadAttachment empty files', () => {
+  it.each(['image.png', 'empty.csv', 'empty.txt', 'clip.mp4'])(
+    'rejects empty %s before starting an upload request',
+    async filename => {
+      const requestSpy = jest.spyOn(XMLHttpRequest.prototype, 'open')
+      try {
+        await expect(uploadAttachment(new File([], filename))).rejects.toThrow('File is empty')
+        expect(requestSpy).not.toHaveBeenCalled()
+      } finally {
+        requestSpy.mockRestore()
+      }
+    }
+  )
+})
 
 describe('formatsToAcceptString', () => {
   it('uses MIME types so the system file picker filters by model formats', () => {

@@ -93,6 +93,27 @@ describe("createSharedWorkspaceHttpApi", () => {
     );
   });
 
+  it("invalidates the lightweight resource catalog after deleting an Agent", async () => {
+    const { transport, get } = createTransport();
+    get
+      .mockResolvedValueOnce({
+        agents: [{ id: 12, team_id: 12, name: "Review", status: "unchecked" }],
+      })
+      .mockResolvedValueOnce({ agents: [] });
+    const api = createSharedWorkspaceHttpApi(transport);
+    const resources = await api.resources.list();
+    await api.resources.list();
+    expect(get).toHaveBeenCalledOnce();
+
+    await api.resources.removeAgent?.(resources.agents[0]);
+
+    await expect(api.resources.list()).resolves.toMatchObject({ agents: [] });
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenLastCalledWith(
+      "/v1/resources?include_readiness=false",
+    );
+  });
+
   it("uses one collaboration-group resource for workspace and project scopes", async () => {
     const { transport, get, post, remove } = createTransport();
     const group = {
@@ -218,6 +239,7 @@ describe("createSharedWorkspaceHttpApi", () => {
     await expect(api.resources.list()).resolves.toMatchObject({
       execution_environments: [{ device_id: 22, owner_type: "user" }],
     });
+    expect(get).toHaveBeenCalledWith("/v1/resources?include_readiness=false");
     await expect(
       api.workspaces.addMember("workspace/1", { userId: 8 }),
     ).resolves.toMatchObject({ user_id: 8, user_name: "王芳" });

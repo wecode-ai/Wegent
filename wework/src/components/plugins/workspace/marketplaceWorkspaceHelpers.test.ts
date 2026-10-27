@@ -13,6 +13,7 @@ import {
   requiredConnectionNames,
   resolveCloudMarketplaceRevalidateIntervalMs,
   resolveMarketplaceUninstallId,
+  withMarketplacePluginDetail,
 } from './marketplaceWorkspaceHelpers'
 
 vi.mock('@/lib/navigation', () => ({
@@ -255,15 +256,67 @@ describe('pluginDetailActionErrorMessage', () => {
   })
 })
 
+describe('marketplace detail component settings', () => {
+  test.each([false, true, undefined])(
+    'preserves current cloud settings (%s) when an older detail arrives',
+    enabled => {
+      const installed = githubInstalledItem()
+      installed.raw.spec.pluginId = 101
+      installed.raw.spec.componentStates =
+        enabled === undefined ? {} : { 'skill:ci-debug': enabled }
+      const stale: InstalledPlugin = {
+        ...installed.raw,
+        spec: {
+          ...installed.raw.spec,
+          componentStates: { 'skill:ci-debug': !enabled },
+          components: {
+            ...emptyComponents,
+            skills: [{ name: 'ci-debug', description: 'Debug failing checks', path: 'ci-debug' }],
+          },
+        },
+      }
+
+      const detail = withMarketplacePluginDetail(installed, stale)
+
+      expect(detail.raw.spec.componentStates).toEqual(installed.raw.spec.componentStates)
+      expect(detail.raw.spec.components.skills).toEqual(stale.spec.components.skills)
+    }
+  )
+
+  test('loads disabled local skills from detail without replacing explicit current settings', () => {
+    const installed = githubInstalledItem()
+    const detail: InstalledPlugin = {
+      ...installed.raw,
+      spec: {
+        ...installed.raw.spec,
+        componentStates: { 'skill:ci-debug': false, 'skill:review': false },
+      },
+    }
+
+    expect(withMarketplacePluginDetail(installed, detail).raw.spec.componentStates).toEqual({
+      'skill:ci-debug': false,
+      'skill:review': false,
+    })
+
+    installed.raw.spec.componentStates = { 'skill:ci-debug': true }
+    expect(withMarketplacePluginDetail(installed, detail).raw.spec.componentStates).toEqual({
+      'skill:ci-debug': true,
+      'skill:review': false,
+    })
+  })
+})
+
 describe('keepRicherMarketplacePluginDetail', () => {
   test('keeps previously loaded skills when a later catalog row has empty components', () => {
     const empty = githubInstalledItem()
+    empty.raw.spec.componentStates = { 'skill:ci-debug': true }
     const rich: InstalledPluginItem = {
       ...empty,
       raw: {
         ...empty.raw,
         spec: {
           ...empty.raw.spec,
+          componentStates: { 'skill:ci-debug': false },
           components: {
             ...emptyComponents,
             skills: [{ name: 'ci-debug', description: 'Debug failing checks', path: 'ci-debug' }],
@@ -280,6 +333,7 @@ describe('keepRicherMarketplacePluginDetail', () => {
     }
 
     const kept = keepRicherMarketplacePluginDetail(rich, empty)
+    expect(kept.raw.spec.componentStates).toEqual({ 'skill:ci-debug': true })
     expect(kept.raw.spec.components.skills).toEqual([
       { name: 'ci-debug', description: 'Debug failing checks', path: 'ci-debug' },
     ])
@@ -290,6 +344,8 @@ describe('keepRicherMarketplacePluginDetail', () => {
         description: 'Access repositories, issues, and pull requests.',
       },
     ])
+    empty.raw.spec.componentStates = {}
+    expect(keepRicherMarketplacePluginDetail(rich, empty).raw.spec.componentStates).toEqual({})
   })
 })
 

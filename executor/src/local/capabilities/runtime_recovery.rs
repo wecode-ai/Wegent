@@ -378,15 +378,11 @@ impl GlobalCapabilityStore {
         safe_managed_path(root.parent().unwrap_or(root), path, leaf_link)
     }
 
-    fn runtime_state_paths(&self, spec: &PluginSyncSpec) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    pub(super) fn runtime_state_paths(
+        &self,
+        spec: &PluginSyncSpec,
+    ) -> (Vec<PathBuf>, Vec<PathBuf>) {
         let codex_market = self.codex_marketplace_dir(&spec.marketplace);
-        let mut files = vec![
-            codex_market.join(".agents/plugins/marketplace.json"),
-            self.codex_plugins_dir
-                .parent()
-                .unwrap_or(Path::new("."))
-                .join("config.toml"),
-        ];
         let mut directories = vec![
             self.plugin_codex_link(spec),
             codex_market
@@ -395,6 +391,29 @@ impl GlobalCapabilityStore {
         ];
         if !self.codex_only_plugins {
             let market = self.claude_marketplace_dir(&spec.marketplace);
+            directories.extend([
+                self.plugin_runtime_link(spec),
+                market
+                    .join("plugins")
+                    .join(self.marketplace_plugin_name(spec, true)),
+            ]);
+        }
+        directories.sort();
+        directories.dedup();
+        (self.runtime_metadata_paths(&spec.marketplace), directories)
+    }
+
+    pub(super) fn runtime_metadata_paths(&self, marketplace: &str) -> Vec<PathBuf> {
+        let mut files = vec![
+            self.codex_marketplace_dir(marketplace)
+                .join(".agents/plugins/marketplace.json"),
+            self.codex_plugins_dir
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join("config.toml"),
+        ];
+        if !self.codex_only_plugins {
+            let market = self.claude_marketplace_dir(marketplace);
             files.extend([
                 self.plugins_dir.join("known_marketplaces.json"),
                 self.plugins_dir.join("installed_plugins.json"),
@@ -405,18 +424,10 @@ impl GlobalCapabilityStore {
                 market.join(".claude-plugin/marketplace.json"),
                 market.join(".agents/plugins/marketplace.json"),
             ]);
-            directories.extend([
-                self.plugin_runtime_link(spec),
-                market
-                    .join("plugins")
-                    .join(self.marketplace_plugin_name(spec, true)),
-            ]);
         }
         files.sort();
         files.dedup();
-        directories.sort();
-        directories.dedup();
-        (files, directories)
+        files
     }
 
     pub(super) fn ensure_state_path(
@@ -658,7 +669,13 @@ impl GlobalCapabilityStore {
                 copy_dir_atomic(store_path, &codex)?;
                 ensure_dual_plugin_manifests(&codex)?;
                 ensure_plugin_hook_permissions(&codex)?;
-                self.install_codex_marketplace_metadata(spec, &codex)?;
+                self.install_codex_marketplace_metadata(
+                    spec,
+                    &codex,
+                    old.as_ref()
+                        .and_then(|entry| entry.get("component_states"))
+                        .unwrap_or(&json!({})),
+                )?;
             }
             let codex = self.plugin_codex_link(spec);
             let mut entry = old.clone().unwrap_or_else(|| json!({}));

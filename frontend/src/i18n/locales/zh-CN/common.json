@@ -1746,6 +1746,7 @@
   "attachment": {
     "errors": {
       "unsupported_type": "文件格式不支持",
+      "empty_file": "文件内容为空，请选择非空文件或重新复制图片后上传。",
       "unsupported_type_hint": "请上传以下格式的文件：{{types}}",
       "unrecognized_type": "文件类型无法识别",
       "unrecognized_type_hint": "请上传文档、图片或文本类文件",
