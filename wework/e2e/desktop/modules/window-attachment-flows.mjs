@@ -471,6 +471,12 @@ async function verifyBackgroundTaskWindowLifecycle({
     })
     await control.command('click', '[data-testid="runtime-task-close-confirm-button"]')
     await waitForLogPattern(desktopWindowLogPath(app.pid), /windowWillClose:/)
+    await waitForWindowState(
+      control,
+      state => !state.visible,
+      'Closing to tray did not hide the main window',
+      DEFAULT_STEP_TIMEOUT_MS
+    )
     assert.equal(processIsAlive(app.pid), true, 'Closing to tray terminated the Wework process')
     assert.equal(
       processIsAlive(executorProcessId),
@@ -488,11 +494,26 @@ async function verifyBackgroundTaskWindowLifecycle({
       assertionIds: backgroundAssertionIds,
     })
 
+    await control.command('restoreMainWindow', 'body')
     await reactivateMacApplication(appIdentifier, appBundlePath)
+    await waitForWindowState(
+      control,
+      state => state.visible && !state.minimized,
+      'The main window did not reopen from the tray',
+      DEFAULT_STEP_TIMEOUT_MS
+    )
+    assert.equal(
+      control.ready?.clientId,
+      controlClientIdBeforeClose,
+      'Closing to tray replaced the retained WebView'
+    )
+    // A reload replaces the retained renderer and exercises stale-client isolation.
+    const readyCountBeforeReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
     await withTimeout(
-      control.awaitReadyAfter(readyCountBeforeClose),
+      control.awaitReadyAfter(readyCountBeforeReload),
       WORKBENCH_READY_TIMEOUT_MS,
-      'The reopened Wework WebView did not reconnect to the desktop controller'
+      'The reloaded Wework WebView did not reconnect to the desktop controller'
     )
     assert.notEqual(
       control.ready?.clientId,

@@ -300,6 +300,16 @@ unrelated modules do not make the summary fail.
 
 CI reliability depends on these invariants:
 
+- Snapshots from executor-confirmed earlier turns remain stale after a later turn
+  completes and must not revive its running state. A turn seen only in history
+  still needs executor confirmation before it can be classified as an earlier
+  turn. Preserve recovery, same-second admissions, device-alias merging, and
+  stopped-Goal regression assertions.
+- Closing to the tray on macOS retains the WebView. The window-lifecycle check
+  verifies hiding, restored visibility, and the retained control connection, then
+  explicitly reloads the WebView to verify replacement-client identity and
+  stale-client command isolation while keeping the executor and task alive.
+
 - In the scrolling task-detail document, `core-task-flow` waits for the activity
   composer to mount, scrolls to it, and checks visibility. At a 1024×600 viewport,
   it also scrolls from the top of the detail to the composer and asserts that the

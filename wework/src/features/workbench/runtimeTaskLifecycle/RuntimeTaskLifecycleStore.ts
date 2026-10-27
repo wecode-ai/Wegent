@@ -445,12 +445,14 @@ export class RuntimeTaskLifecycleStore {
       event.type === 'executor_snapshot_received' ? { ...event, address: canonicalAddress } : event
     const machine = this.ensureMachine(canonicalAddress)
     const previous = machine.getSnapshot()
+    // A previous turn's snapshot stays stale after the current turn settles.
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
-      previous.turn.active &&
       previous.task !== null &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
-      machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId)
+      machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId) &&
+      (previous.turn.active ||
+        machine.hasAcceptedTurn(canonicalEvent.task.runtimeHandle.lastTurnId))
     )
       return false
     const key = previous.key
