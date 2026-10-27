@@ -12,6 +12,7 @@ import {
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
+import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -421,13 +422,13 @@ function runTaskFlow(args, env, label) {
     })
     child.once('exit', (code, signal) => {
       clearInterval(heartbeat)
-      resolvePromise({
+      rejectRecordedCheckpointFailure({
         code: code ?? 1,
         durationMs: Date.now() - startedAt,
         resultDir,
         signal,
         stderrTail,
-      })
+      }).then(resolvePromise, reject)
     })
   })
 }

@@ -260,7 +260,7 @@ input.on('line', async line => {
     sendUrlElicitation(
       URL_ELICITATION_ID,
       scenario === 'url_timeout'
-        ? 'E2E browser authorization: wait for the ten-minute deadline'
+        ? 'E2E browser authorization: wait for the configured deadline'
         : 'E2E browser authorization: cancel before explicitly opening'
     )
     return

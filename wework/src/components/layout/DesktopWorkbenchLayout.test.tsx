@@ -9267,6 +9267,8 @@ describe('DesktopWorkbenchLayout', () => {
   }, 30_000)
 
   test('temporary chat keeps a stale busy rejection queued without blind retries', async () => {
+    // Queue semantics do not require timer-paced typing, which can outlive a timed-out test.
+    const user = userEvent.setup({ delay: null })
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',
       taskId: 'runtime-side-chat-stale-busy',
@@ -9282,13 +9284,13 @@ describe('DesktopWorkbenchLayout', () => {
     })
     renderWorkspacePanelLayout()
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
-    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await user.type(sideChatInput, 'first message')
+    await user.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalled())
 
     const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
@@ -9296,8 +9298,8 @@ describe('DesktopWorkbenchLayout', () => {
       | undefined
     act(() => streamHandlers?.onAssistantStart?.())
 
-    await userEvent.type(sideChatInput, 'follow-up during stale state')
-    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await user.type(sideChatInput, 'follow-up during stale state')
+    await user.click(within(sideChat).getByTestId('send-message-button'))
 
     await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1))
     expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
@@ -9309,6 +9311,8 @@ describe('DesktopWorkbenchLayout', () => {
   }, 30_000)
 
   test('temporary chat marks a rejected queued send as failed', async () => {
+    // Queue semantics do not require timer-paced typing, which can outlive a timed-out test.
+    const user = userEvent.setup({ delay: null })
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',
       taskId: 'runtime-side-chat-rejected-queue',
@@ -9322,17 +9326,17 @@ describe('DesktopWorkbenchLayout', () => {
     sendRuntimePaneMessageMock.mockRejectedValueOnce(new Error('network unavailable'))
     renderWorkspacePanelLayout()
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
-    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await user.type(sideChatInput, 'first message')
+    await user.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalled())
 
-    await userEvent.type(sideChatInput, 'queued follow-up')
-    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await user.type(sideChatInput, 'queued follow-up')
+    await user.click(within(sideChat).getByTestId('send-message-button'))
     expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
       'queued follow-up'
     )
