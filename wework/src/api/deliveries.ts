@@ -912,10 +912,15 @@ export function createDeliveryApi(client: HttpClient) {
         { kind: 'human_read' }
       )
     },
-    markLoopItemRead(itemId: string, activitySequence?: number): Promise<CloudLoopItem> {
-      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/read`, {
-        activity_sequence: activitySequence ?? null,
-      })
+    async markLoopItemRead(itemId: string, activitySequence?: number): Promise<CloudLoopItem> {
+      const item = await client.post<CloudLoopItem>(
+        `/v1/loop-items/${encodeURIComponent(itemId)}/read`,
+        {
+          activity_sequence: activitySequence ?? null,
+        }
+      )
+      window.dispatchEvent(new Event('wework-notifications-changed'))
+      return item
     },
     findLoopItemForTask(task: RuntimeTaskAddress): Promise<CloudLoopItem> {
       const query = new URLSearchParams({ device_id: task.deviceId, task_id: task.taskId })

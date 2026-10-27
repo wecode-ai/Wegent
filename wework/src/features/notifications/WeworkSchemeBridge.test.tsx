@@ -56,7 +56,9 @@ describe('Wework scheme bridge', () => {
       openWeworkScheme('wework://boards/local/local-project-1/issues/OFF-1')
     })
     expect(openTab).toHaveBeenCalledExactlyOnceWith('board', {
-      contentRoute: '/todo?projectStore=local&projectId=local-project-1&itemId=OFF-1',
+      contentRoute: expect.stringMatching(
+        /^\/todo\?projectStore=local&projectId=local-project-1&itemId=OFF-1&focusRequest=\d+-1$/
+      ),
     })
   })
 
@@ -221,7 +223,12 @@ describe('Wework scheme bridge', () => {
       await waitFor(() =>
         expect(invokeDesktopHost).toHaveBeenCalledWith('navigation.acknowledgeScheme', { id: 3 })
       )
-      expect(openTab).toHaveBeenCalledExactlyOnceWith(kind, { contentRoute })
+      expect(openTab).toHaveBeenCalledOnce()
+      const route = new URL(openTab.mock.calls[0][1].contentRoute, 'https://local')
+      expect(route.searchParams.has('focusRequest')).toBe(kind === 'board')
+      route.searchParams.delete('focusRequest')
+      expect(openTab.mock.calls[0][0]).toBe(kind)
+      expect(`${route.pathname}${route.search}`).toBe(contentRoute)
     }
   )
 
@@ -297,7 +304,9 @@ describe('Wework scheme bridge', () => {
     )
     await waitFor(() =>
       expect(openTab).toHaveBeenCalledWith('board', {
-        contentRoute: '/todo?projectStore=backend&projectId=12&itemId=ISSUE-1',
+        contentRoute: expect.stringMatching(
+          /^\/todo\?projectStore=backend&projectId=12&itemId=ISSUE-1&focusRequest=\d+-1$/
+        ),
       })
     )
     expect(openTab).toHaveBeenCalledOnce()

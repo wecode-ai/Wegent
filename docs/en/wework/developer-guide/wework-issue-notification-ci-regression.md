@@ -4,6 +4,44 @@ sidebar_position: 40
 
 # Issue notification and human-task CI regression
 
+## Read synchronization when opening an Issue from another entry
+
+Once Issue activity is visible, the existing `POST /v1/loop-items/{id}/read`
+updates the activity cursor and the reader's associated notifications in one
+transaction. Notifications match by payload `itemId` or `issueId`. Other Issues,
+other recipients, unrelated notifications and existing read timestamps remain
+unchanged. Reopening previously read content also acknowledges notifications
+that arrived later. Failed reads preserve the count; successful responses refresh
+the notification center immediately.
+
+The existing CI checkpoint `collaboration-issue-comment-notification` runs both
+its original navigation scenario and the independent `issue-notification-read`
+scenario. The new scenario creates three already-read Issues and unread notices
+through the real Backend, then opens them through a system notification, a deep
+link and a board card. It asserts persisted reads and badge counts from 3 to 0
+without manual refresh, retaining each unrelated notice until its Issue opens.
+The shared runner cleans up the isolated Electron and database environment.
+Each Issue deep link carries a fresh open request through the existing
+`focusRequest`. Reusing an open drawer acknowledges later notifications while
+retaining activity scroll progress. The scenario also sends another notice while
+the drawer remains open, reopens the same Issue through a system notification,
+and asserts that the badge clears again.
+
+Focused tests additionally cover repeated reads, recipient isolation, unrelated
+notifications, failed reads without refresh and revisiting already-read content.
+Activity must load and become visible before acknowledging a read.
+
+2026-10-27: the isolated Electron `issue-notification-read` checkpoint passed all
+three entry paths and later notifications for the same open drawer. Four Backend
+read API regressions, 37 notification/API tests, 146 activity/routing tests, 19
+shared scrolling tests and four checkpoint contract tests passed. Fixtures retain
+project IDs as strings to avoid JavaScript Number precision loss.
+
+The same CI run exposed a shared desktop artifact build waiting for a nonexistent
+Rust image: its consumer omitted the producer's `backend-rs/examples/**` from the
+source digest. Desktop CI and cache warmup now use the producer's source inputs,
+with a contract check covering all three definitions instead of increasing waits.
+
 ## Evidence and fix boundaries
 
 PR #3763 at `f124f3d2e` failed desktop Core shards 12 and 15:

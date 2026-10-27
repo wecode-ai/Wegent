@@ -4,6 +4,11 @@
 
 use super::*;
 use crate::config::device::UpdateConfig;
+use axum::{
+    extract::ws::{Message, WebSocket, WebSocketUpgrade},
+    routing::get,
+    Router,
+};
 use std::{
     ffi::OsString,
     path::PathBuf,
@@ -25,6 +30,7 @@ struct RuntimeWorkPollTransport {
     disconnect_calls: Arc<AtomicUsize>,
     close_handler: Arc<TestMutex<Option<ConnectionClosedHandler>>>,
     close_during_registration: Arc<AtomicBool>,
+    register_ack: Arc<TestMutex<Option<Value>>>,
 }
 
 impl LocalBackendTransport for RuntimeWorkPollTransport {
@@ -47,7 +53,12 @@ impl LocalBackendTransport for RuntimeWorkPollTransport {
     ) -> TransportFuture<'a, Value> {
         Box::pin(async move {
             match event {
-                "device:register" => Ok(json!({"success": true})),
+                "device:register" => Ok(self
+                    .register_ack
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| json!({"success": true}))),
                 "runtime.tasks.pull" => {
                     assert!(payload["runner_catalog"]["models"].is_array());
                     let pull_index = self.pull_calls.fetch_add(1, AtomicOrdering::AcqRel);
@@ -402,9 +413,11 @@ async fn heartbeat_reconnects_when_an_event_relay_marks_the_connection_unavailab
 async fn socket_close_invalidates_ready_status_and_reconnects_before_heartbeat() {
     let transport = RuntimeWorkPollTransport::default();
     let connection_status = Arc::new(AtomicBool::new(true));
+    let route_slot = Arc::new(TestMutex::new(Some("app-record-42".to_owned())));
     let runner =
         LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport.clone())
-            .with_connection_status(Arc::clone(&connection_status));
+            .with_connection_status(Arc::clone(&connection_status))
+            .with_device_route_id_slot(Arc::clone(&route_slot));
     runner.register_handlers();
     let on_close = transport
         .close_handler
@@ -416,6 +429,7 @@ async fn socket_close_invalidates_ready_status_and_reconnects_before_heartbeat()
     on_close();
 
     assert!(!connection_status.load(Ordering::Acquire));
+    assert!(route_slot.lock().unwrap().is_none());
     let stable_connection =
         tokio::time::timeout(Duration::from_secs(1), runner.heartbeat_until_reconnect())
             .await
@@ -427,22 +441,41 @@ async fn socket_close_invalidates_ready_status_and_reconnects_before_heartbeat()
 #[tokio::test]
 async fn socket_close_during_registration_cannot_publish_ready_status() {
     let transport = RuntimeWorkPollTransport::default();
+    *transport.register_ack.lock().unwrap() =
+        Some(json!({"success": true, "device_route_id": "app-record-42"}));
     transport
         .close_during_registration
         .store(true, AtomicOrdering::Release);
     let connection_status = Arc::new(AtomicBool::new(false));
+    let route_slot = Arc::new(TestMutex::new(None));
     let runner =
         LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport.clone())
-            .with_connection_status(Arc::clone(&connection_status));
+            .with_connection_status(Arc::clone(&connection_status))
+            .with_device_route_id_slot(Arc::clone(&route_slot));
     runner.register_handlers();
 
     let result = runner.connect_and_register().await;
 
     assert!(result.is_err(), "a closed registration cannot become ready");
     assert!(!connection_status.load(Ordering::Acquire));
+    assert!(route_slot.lock().unwrap().is_none());
 
     runner.connect_and_register().await.unwrap();
     assert!(connection_status.load(Ordering::Acquire));
+    assert_eq!(route_slot.lock().unwrap().as_deref(), Some("app-record-42"));
+}
+
+#[tokio::test]
+async fn rejected_registration_clears_the_previous_plugin_route() {
+    let transport = RuntimeWorkPollTransport::default();
+    *transport.register_ack.lock().unwrap() = Some(json!({"success": false}));
+    let route_slot = Arc::new(TestMutex::new(Some("app-record-41".to_owned())));
+    let runner = LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport)
+        .with_device_route_id_slot(Arc::clone(&route_slot));
+    runner.register_handlers();
+
+    assert!(runner.connect_and_register().await.is_err());
+    assert!(route_slot.lock().unwrap().is_none());
 }
 
 #[test]
@@ -484,4 +517,192 @@ fn local_project_request_keeps_device_without_backend_context() {
     assert!(request.backend_url.is_none());
     assert!(request.auth_token.is_none());
     assert!(request.runtime_auth_token.is_none());
+}
+
+#[tokio::test]
+async fn registration_captures_backend_assigned_device_route_id() {
+    let transport = RuntimeWorkPollTransport::default();
+    *transport.register_ack.lock().unwrap() =
+        Some(json!({"success": true, "device_route_id": "app-record-42"}));
+    let route_slot = Arc::new(std::sync::Mutex::new(None));
+    let runner = LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport)
+        .with_device_route_id_slot(Arc::clone(&route_slot));
+    runner.register_handlers();
+
+    runner
+        .connect_and_register()
+        .await
+        .expect("registration succeeds");
+
+    assert_eq!(route_slot.lock().unwrap().as_deref(), Some("app-record-42"));
+}
+
+struct RouteRegistrationRuntimeWorkHandler;
+
+impl RuntimeWorkHandler for RouteRegistrationRuntimeWorkHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            match data["method"].as_str() {
+                Some("runtime.runner.catalog") => Ok(json!({"models": []})),
+                Some("runtime.capacity.get") => Ok(json!({"limit": 1, "active": 0, "queued": 0})),
+                method => panic!("unexpected runtime method: {method:?}"),
+            }
+        })
+    }
+}
+
+async fn acknowledge_route_registration(mut socket: WebSocket, registered: Arc<Notify>) {
+    socket
+        .send(Message::Text(
+            r#"0{"sid":"route-test","upgrades":[],"pingInterval":25000,"pingTimeout":20000,"maxPayload":1000000}"#
+                .into(),
+        ))
+        .await
+        .unwrap();
+    while let Some(Ok(Message::Text(packet))) = socket.next().await {
+        if packet.starts_with("40/local-executor,") {
+            socket
+                .send(Message::Text(
+                    r#"40/local-executor,{"sid":"route-test"}"#.into(),
+                ))
+                .await
+                .unwrap();
+        } else if let Some(event) = packet.strip_prefix("42/local-executor,") {
+            let (ack_id, payload) = event.split_once('[').unwrap();
+            let payload: Value = serde_json::from_str(&format!("[{payload}")).unwrap();
+            if payload[0] == "device:heartbeat" {
+                registered.notify_one();
+            }
+            if !ack_id.is_empty() {
+                let response = if payload[0] == "device:register" {
+                    json!({"success": true, "device_route_id": "app-record-42"})
+                } else {
+                    json!({"success": true, "task": null, "workspace_cleanup_intents": []})
+                };
+                socket
+                    .send(Message::Text(
+                        format!("43/local-executor,{ack_id}[{response}]").into(),
+                    ))
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn initial_backend_registration_is_visible_to_app_ipc_plugin_requests() {
+    use crate::local::app_ipc::BackendConnectionHandler;
+
+    let _guard = env_lock();
+    let home = tempfile::tempdir().unwrap();
+    let previous_home = env::var_os("WEGENT_EXECUTOR_HOME");
+    env::set_var("WEGENT_EXECUTOR_HOME", home.path());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (registration, description, plugin_route, rejected_profile, shutdown) =
+        runtime.block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let registered = Arc::new(Notify::new());
+            let registration_signal = registered.clone();
+            let server = tokio::spawn(async move {
+                let router = Router::new().route(
+                    "/socket.io/",
+                    get(move |upgrade: WebSocketUpgrade| {
+                        let registered = registration_signal.clone();
+                        async move {
+                            upgrade.on_upgrade(move |socket| {
+                                acknowledge_route_registration(socket, registered)
+                            })
+                        }
+                    }),
+                );
+                axum::serve(listener, router).await.unwrap();
+            });
+            let config = DeviceConfig {
+                device_id: "local-device".to_owned(),
+                runtime_instance_id: "runtime-1".to_owned(),
+                connection: ConnectionConfig {
+                    backend_url: format!("http://{address}"),
+                    auth_token: "wg-token".to_owned(),
+                    ..ConnectionConfig::default()
+                },
+                ..DeviceConfig::default()
+            };
+            let route_slot = Arc::new(TestMutex::new(None));
+            let (events, _) = broadcast::channel(8);
+            let controller = LocalBackendConnectionController::start_with_runtime(
+                config,
+                Arc::new(RouteRegistrationRuntimeWorkHandler),
+                ExecutorEventHub::new(events),
+                Arc::new(TestMutex::new(None)),
+                route_slot.clone(),
+            )
+            .await;
+            let ipc = AppIpcServer::new()
+                .with_device_route_id_slot(route_slot)
+                .with_backend_connection_handler(controller.clone());
+
+            let registration =
+                tokio::time::timeout(Duration::from_secs(10), registered.notified()).await;
+            let description = ipc.dispatch("executor.protocol.describe", json!({})).await;
+            let params = json!({
+                "backend_url": format!("http://{address}"),
+                "auth_token": "wg-token",
+                "device_id": "local-device",
+            });
+            let plugin_route = ipc
+                .dispatch("executor.plugins.device_route", params.clone())
+                .await;
+            let mut other_profile = params;
+            other_profile["auth_token"] = json!("other-account-token");
+            let rejected_profile = ipc
+                .dispatch("executor.plugins.device_route", other_profile)
+                .await;
+            let shutdown = controller.configure_backend(json!({})).await;
+            server.abort();
+            let _ = server.await;
+            (
+                registration,
+                description,
+                plugin_route,
+                rejected_profile,
+                shutdown,
+            )
+        });
+    restore_env("WEGENT_EXECUTOR_HOME", previous_home);
+
+    registration.expect("the initial backend connection must register without reconnecting");
+    shutdown.expect("the backend runner must stop");
+    assert_eq!(description.unwrap()["device_route_id"], "app-record-42");
+    assert_eq!(
+        plugin_route.unwrap(),
+        json!({
+            "device_id": "local-device",
+            "device_route_id": "app-record-42",
+        })
+    );
+    assert_eq!(
+        rejected_profile.unwrap_err().code,
+        "plugin_route_profile_mismatch"
+    );
+}
+
+#[test]
+fn plugin_reconcile_delay_is_stable_and_bounded() {
+    let delay = plugin_reconcile_delay("runtime-instance-1");
+    assert_eq!(delay, plugin_reconcile_delay("runtime-instance-1"));
+    assert!(delay >= PLUGIN_RECONCILE_INTERVAL);
+    assert!(delay < PLUGIN_RECONCILE_INTERVAL + Duration::from_secs(PLUGIN_RECONCILE_JITTER_SECS));
+    // Distinct runtimes spread across the jitter window.
+    assert_ne!(
+        plugin_reconcile_delay("runtime-instance-1"),
+        plugin_reconcile_delay("runtime-instance-2")
+    );
 }

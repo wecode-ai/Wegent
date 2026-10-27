@@ -847,6 +847,23 @@ export function TodoEditor(props: TodoEditorProps) {
     Record<string, boolean>
   >({});
   const [saving, setSaving] = useState(false);
+  const persistedIssueRef = useRef<CloudLoopItem | null>(null);
+  useEffect(() => {
+    const persisted = persistedIssueRef.current;
+    if (!item || !persisted || saving || item.id !== persisted.id) return;
+    if (item.version < persisted.version) {
+      console.warn(
+        "[Collaboration] Issue detail source trails a successful save",
+        {
+          issueId: item.id,
+          sourceVersion: item.version,
+          persistedVersion: persisted.version,
+          sourceAssignee: issueAssigneeTarget(item),
+          persistedAssignee: issueAssigneeTarget(persisted),
+        },
+      );
+    }
+  }, [item, saving]);
   const [saveError, setSaveError] = useState<string | null>(null);
   const workspaceAgents = useIssueAssigneeResources(
     editorPort,
@@ -1607,8 +1624,7 @@ export function TodoEditor(props: TodoEditorProps) {
           assigneeTarget,
           notifyAssignee,
         );
-        setAssigneeTarget(issueAssigneeTarget(updated));
-        props.onUpdated(updated);
+        acceptSavedIssue(updated);
         return;
       }
       const sourceDueDate = (
@@ -1663,8 +1679,7 @@ export function TodoEditor(props: TodoEditorProps) {
           assign: persistAssignee,
         },
       );
-      setAssigneeTarget(issueAssigneeTarget(updated));
-      props.onUpdated(updated);
+      acceptSavedIssue(updated);
       if (readFirst) {
         setEditingContent(false);
         setDescriptionExpanded(false);
@@ -1686,6 +1701,12 @@ export function TodoEditor(props: TodoEditorProps) {
     } finally {
       setSaving(false);
     }
+  }
+
+  function acceptSavedIssue(updated: CloudLoopItem) {
+    persistedIssueRef.current = updated;
+    setAssigneeTarget(issueAssigneeTarget(updated));
+    if (props.mode === "edit") props.onUpdated(updated);
   }
 
   function cancelContentEditing() {

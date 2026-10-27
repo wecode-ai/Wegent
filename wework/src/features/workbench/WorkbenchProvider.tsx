@@ -67,6 +67,10 @@ import {
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
 import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
+import {
+  createLocalDevicePluginApi,
+  resolveLocalPluginDeviceRouteId,
+} from '@/features/plugins/pluginDeviceApi'
 import { mergeInstalledPlugins } from '@wegent/chat-core/installed-plugin-merge'
 import { publishPluginInvocationCatalog } from '@/features/plugins/pluginInvocationTelemetry'
 import {
@@ -352,14 +356,20 @@ export function WorkbenchProvider({
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
     const runtime = getRuntimeConfig()
-    const apiBaseUrl = cloudConnection.apiBaseUrl || runtime.apiBaseUrl
-    return createPluginApi(
-      createHttpClient({
-        baseUrl: apiBaseUrl,
-        getToken: () => cloudConnection.token,
-        redirectOnUnauthorized: false,
-      }),
-      apiBaseUrl
+    const profile = {
+      apiBaseUrl: cloudConnection.apiBaseUrl || runtime.apiBaseUrl,
+      token: cloudConnection.token,
+    }
+    return createLocalDevicePluginApi(
+      createPluginApi(
+        createHttpClient({
+          baseUrl: profile.apiBaseUrl,
+          getToken: () => profile.token,
+          redirectOnUnauthorized: false,
+        }),
+        profile.apiBaseUrl
+      ),
+      deviceId => resolveLocalPluginDeviceRouteId(deviceId, profile)
     )
   }, [cloudConnection.apiBaseUrl, cloudConnection.token])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)

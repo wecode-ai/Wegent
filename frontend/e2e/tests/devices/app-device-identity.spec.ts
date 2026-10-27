@@ -11,7 +11,12 @@ import {
 
 const API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const APP_URL = process.env.E2E_BASE_URL || 'http://localhost:3000'
-type Ack = { success?: boolean; device_id?: string; error?: string }
+type Ack = {
+  success?: boolean
+  device_id?: string
+  device_route_id?: string
+  error?: string
+}
 type Device = {
   id: number
   device_id: string
@@ -103,11 +108,21 @@ test('keeps app identity unique across concurrent registration and reconnect wit
 
     const firstClients = await Promise.all([connect(), connect(), connect()])
     const replies = await Promise.all(firstClients.map(client => register(client, routeId, runId)))
-    replies.forEach(reply => expect(reply).toEqual({ success: true, device_id: routeId }))
     const initial = await devices()
     expect(initial).toHaveLength(1)
     const recordId = initial[0].id
-    expect(initial[0]).toMatchObject({ status: 'online', device_type: 'app' })
+    replies.forEach(reply =>
+      expect(reply).toEqual({
+        success: true,
+        device_id: routeId,
+        device_route_id: `app-record-${recordId}`,
+      })
+    )
+    expect(initial[0]).toMatchObject({
+      status: 'online',
+      device_type: 'app',
+      execution_target_id: `app-record-${recordId}`,
+    })
     const initialIdentity = {
       id: initial[0].id,
       device_id: initial[0].device_id,
@@ -117,10 +132,7 @@ test('keeps app identity unique across concurrent registration and reconnect wit
     }
 
     await test.step('create an independent record for a different Runtime', async () => {
-      expect(await register(await connect(), routeId, otherSuffix)).toEqual({
-        success: true,
-        device_id: routeId,
-      })
+      const acknowledgement = await register(await connect(), routeId, otherSuffix)
       const afterOtherRegistration = await devices()
       expect(afterOtherRegistration).toHaveLength(2)
       expect(afterOtherRegistration.find(device => device.id === recordId)).toMatchObject({
@@ -129,6 +141,11 @@ test('keeps app identity unique across concurrent registration and reconnect wit
       })
       const other = afterOtherRegistration.find(device => device.id !== recordId)
       if (!other) throw new Error('Missing independent app device record')
+      expect(acknowledgement).toEqual({
+        success: true,
+        device_id: routeId,
+        device_route_id: `app-record-${other.id}`,
+      })
       expect(other).toMatchObject({
         device_id: routeId,
         runtime_instance_id: `runtime-${otherSuffix}`,
@@ -146,6 +163,7 @@ test('keeps app identity unique across concurrent registration and reconnect wit
       expect(await register(await connect(), routeId, runId)).toEqual({
         success: true,
         device_id: routeId,
+        device_route_id: `app-record-${recordId}`,
       })
       const reconnected = await devices()
       expect(reconnected).toHaveLength(2)
@@ -159,10 +177,7 @@ test('keeps app identity unique across concurrent registration and reconnect wit
     })
 
     await test.step('show distinct installations separately even when display names match', async () => {
-      expect(await register(await connect(), secondId, `second-${runId}`)).toEqual({
-        success: true,
-        device_id: secondId,
-      })
+      const acknowledgement = await register(await connect(), secondId, `second-${runId}`)
       const expiry = getJwtExpiryMs(token)
       if (!expiry) throw new Error('Missing isolated token expiry')
       const state = buildStorageState(APP_URL, token, expiry)
@@ -173,6 +188,13 @@ test('keeps app identity unique across concurrent registration and reconnect wit
       await expect(page.getByText('E2E Wework', { exact: true })).toHaveCount(3)
       const current = await devices()
       expect(current).toHaveLength(3)
+      const second = current.find(device => device.device_id === secondId)
+      if (!second) throw new Error('Missing second app device record')
+      expect(acknowledgement).toEqual({
+        success: true,
+        device_id: secondId,
+        device_route_id: `app-record-${second.id}`,
+      })
       expect(current.map(device => device.device_id).sort()).toEqual(
         [routeId, routeId, secondId].sort()
       )
@@ -274,7 +296,11 @@ test('keeps app identity unique across concurrent registration and reconnect wit
         })
       ) as { duplicate_id: number; other_id: number }
       const original = await connect()
-      expect(await register(original, routeId, runId)).toMatchObject({ success: true })
+      expect(await register(original, routeId, runId)).toEqual({
+        success: true,
+        device_id: routeId,
+        device_route_id: `app-record-${recordId}`,
+      })
       const list = await devices()
       expect(list.filter(device => device.device_id === routeId)).toHaveLength(4)
       expect(list.find(device => device.id === recordId)?.status).toBe('online')
@@ -294,7 +320,11 @@ test('keeps app identity unique across concurrent registration and reconnect wit
       await expect(page.getByTestId(`device-record-${seeded.duplicate_id}`)).toHaveCount(0)
 
       const other = await connect()
-      expect(await register(other, routeId, `legacy-${runId}`)).toMatchObject({ success: true })
+      expect(await register(other, routeId, `legacy-${runId}`)).toEqual({
+        success: true,
+        device_id: routeId,
+        device_route_id: `app-record-${seeded.other_id}`,
+      })
       const heartbeat = (client: AuthenticatedSocketClient, suffix: string) =>
         emitAck(client, 'device:heartbeat', {
           device_id: routeId,
@@ -325,8 +355,10 @@ test('keeps app identity unique across concurrent registration and reconnect wit
         .toBe('offline')
       expect((await devices()).find(device => device.id === recordId)?.status).toBe('online')
       expect((await api.delete(`/api/devices/records/${seeded.other_id}`)).status).toBe(200)
-      expect(await register(await connect(), routeId, `legacy-${runId}`)).toMatchObject({
+      expect(await register(await connect(), routeId, `legacy-${runId}`)).toEqual({
         success: true,
+        device_id: routeId,
+        device_route_id: `app-record-${seeded.other_id}`,
       })
       expect((await devices()).find(device => device.id === seeded.other_id)?.status).toBe('online')
     })

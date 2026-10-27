@@ -1,5 +1,6 @@
 import { toInstalledPluginItem } from '../installedPluginPresentation'
 import { createHttpClient } from '@/api/http'
+import { getToken } from '@/api/auth'
 import { requiresInstallConnectorAuth } from '@/features/plugins/connectorAuthPolicy'
 import {
   peekLocalCodexPluginsReadState,
@@ -273,15 +274,12 @@ export function keepRicherMarketplacePluginDetail(
 export function createDefaultPluginApi(apiBaseUrl?: string, token?: string | null) {
   const runtime = getRuntimeConfig()
   const resolvedApiBaseUrl = apiBaseUrl || runtime.apiBaseUrl
+  const resolvedToken = token === undefined ? getToken() : token
   return createPluginApi(
     createHttpClient({
       baseUrl: resolvedApiBaseUrl,
-      ...(token === undefined
-        ? {}
-        : {
-            getToken: () => token,
-            redirectOnUnauthorized: false,
-          }),
+      getToken: () => resolvedToken,
+      redirectOnUnauthorized: token === undefined,
     }),
     resolvedApiBaseUrl
   )
