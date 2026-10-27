@@ -14,6 +14,10 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
 packageExtensions:
+  # Match JSDOM's parser instead of a hoisted legacy cssstyle version.
+  "@acemir/cssom@0.9.31":
+    dependencies:
+      cssstyle: 6.2.0
   "tiptap-markdown@0.8.10":
     dependencies:
       "@tiptap/pm": ^2.27.2

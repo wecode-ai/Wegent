@@ -35,16 +35,21 @@ describe('runSmartAppProjectScripts', () => {
       )
       const pnpmEntry = process.env.npm_execpath
       if (!pnpmEntry) throw new Error('Run this regression through pnpm test')
+      const pnpmIsScript = /\.[cm]?js$/.test(pnpmEntry)
       const result = await runSmartAppProjectScripts({
         ...options(root),
         scripts: { typecheck: 'check', test: 'check', build: 'check' },
         resolveCommand: async () => ({
-          command: process.execPath,
-          argsPrefix: [pnpmEntry, '--pm-on-fail=error'],
+          command: pnpmIsScript ? process.execPath : pnpmEntry,
+          argsPrefix: [...(pnpmIsScript ? [pnpmEntry] : []), '--pm-on-fail=error'],
           environment: { PATH: process.env.PATH, CI: 'true' },
         }),
       })
-      expect(result.issues).toEqual([])
+      const failedScript = result.scripts.find(script => script.status === 'failed')
+      const failureLog = failedScript
+        ? await readFile(join(root, failedScript.logPath), 'utf8')
+        : undefined
+      expect(result.issues, failureLog).toEqual([])
       expect(result.scripts.map(script => script.status)).toEqual(['passed', 'passed', 'passed'])
       await expect(readFile(join(host, 'pnpm-lock.yaml'))).rejects.toMatchObject({ code: 'ENOENT' })
     }

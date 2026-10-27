@@ -2,6 +2,9 @@ import { IssueDeliveryContent } from "./issue-detail/IssueDeliveryContent";
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
 import { persistIssueDetailFields } from "./issue-detail/persistIssueDetailFields";
 import * as Popover from "@radix-ui/react-popover";
+import { runnerEnvironmentError } from "./execution-environment/runnerEnvironmentError";
+import { collectProjectTags } from "./project-board/projectTags";
+import { MAX_TAGS_PER_ITEM } from "./tagging";
 import {
   useCallback,
   useEffect,
@@ -697,6 +700,8 @@ export function TodoEditor(props: TodoEditorProps) {
   const showPanelControls = props.showPanelControls !== false;
   const showFullscreenControl = props.showFullscreenControl !== false;
   const item = editProps?.item ?? null;
+  const latestItemRef = useRef(item);
+  latestItemRef.current = item;
   const creation = useIssueCreation(editorPort);
   const [securityBusy, setSecurityBusy] = useState(false);
   const isAITableEdit =
@@ -793,13 +798,9 @@ export function TodoEditor(props: TodoEditorProps) {
     if (allItems.some((candidate) => candidate.id === parentId)) return;
     setParentId("");
   }, [allItems, item, parentId, setParentId]);
-  // Tag autocomplete candidates: the project registry plus tags already used
-  // by any item in the project.
-  const tagSuggestions = Array.from(
-    new Set([
-      ...(createProps?.project.tags ?? editProps?.project?.tags ?? []),
-      ...allItems.flatMap((candidate) => candidate.tags ?? []),
-    ]),
+  const tagSuggestions = collectProjectTags(
+    createProps?.project ?? editProps?.project ?? {},
+    allItems,
   ).sort((a, b) => a.localeCompare(b, "zh-CN"));
   const [pendingFiles, setPendingFiles] = useState<File[]>(() =>
     draftKey ? (draftAttachmentStore.get(draftKey) ?? []) : [],
@@ -1597,6 +1598,7 @@ export function TodoEditor(props: TodoEditorProps) {
     if (!editable && assigneeTarget === issueAssigneeTarget(current)) return;
     setSaving(true);
     setSaveError(null);
+    let fieldsPersisted = false;
     try {
       if (!editable) {
         const updated = await persistAssignee(
@@ -1632,8 +1634,8 @@ export function TodoEditor(props: TodoEditorProps) {
         notifyAssignee,
         {
           getAssigneeTarget: issueAssigneeTarget,
-          update: (source, values) =>
-            persistIssueDetailFields(
+          update: async (source, values) => {
+            const saved = await persistIssueDetailFields(
               source,
               {
                 title: values.title.trim(),
@@ -1646,7 +1648,10 @@ export function TodoEditor(props: TodoEditorProps) {
                 tags: values.tags,
               },
               editorPort.issues,
-            ),
+            );
+            fieldsPersisted = true;
+            return saved;
+          },
           clearAssignment: (source) =>
             editorPort.issues.update(source.id, {
               version: source.version,
@@ -1664,10 +1669,18 @@ export function TodoEditor(props: TodoEditorProps) {
         setDescriptionExpanded(false);
       }
     } catch (cause) {
+      const environmentError = runnerEnvironmentError(cause, t);
+      const latest = latestItemRef.current;
+      if (environmentError && !fieldsPersisted && latest?.id === current.id) {
+        setIssueDraft((draft) =>
+          draft.status === status ? { ...draft, status: latest.status } : draft,
+        );
+      }
       setSaveError(
-        cause instanceof Error
-          ? cause.message
-          : t("todo.save_issue_failed", "保存任务失败"),
+        environmentError ??
+          (cause instanceof Error
+            ? cause.message
+            : t("todo.save_issue_failed", "保存任务失败")),
       );
     } finally {
       setSaving(false);
@@ -2544,6 +2557,11 @@ export function TodoEditor(props: TodoEditorProps) {
                 onChange={setTags}
                 disabled={!editable}
                 suggestions={tagSuggestions}
+                lengthErrorLabel={t("todo.tag_name_too_long")}
+                tagLimit={{
+                  max: MAX_TAGS_PER_ITEM,
+                  errorLabel: t("todo.tag_limit_exceeded"),
+                }}
                 placeholder={t("todo.add_tag", "添加标签")}
                 removeLabel={(tag) =>
                   t("todo.remove_name", "删除 {{name}}", { name: tag })
@@ -2872,6 +2890,11 @@ export function TodoEditor(props: TodoEditorProps) {
                     onChange={setTags}
                     disabled={!editable}
                     suggestions={tagSuggestions}
+                    lengthErrorLabel={t("todo.tag_name_too_long")}
+                    tagLimit={{
+                      max: MAX_TAGS_PER_ITEM,
+                      errorLabel: t("todo.tag_limit_exceeded"),
+                    }}
                     placeholder={t("todo.add_tag", "添加标签")}
                     removeLabel={(tag) =>
                       t("todo.remove_name", "删除 {{name}}", { name: tag })

@@ -1655,38 +1655,17 @@
     "whyDescription": "In-app browsers may restrict login functionality from working properly. For the best experience, we recommend opening in your default browser (Safari, Chrome, etc.).",
     "howToOpen": "How to open in default browser?",
     "instructions": {
-      "wechat": [
-        "Tap the '···' menu in the top right corner",
-        "Select 'Open in Browser'"
-      ],
+      "wechat": ["Tap the '···' menu in the top right corner", "Select 'Open in Browser'"],
       "dingtalk": [
         "Tap the '···' menu in the top right corner",
         "Select 'Open in Default Browser'"
       ],
-      "alipay": [
-        "Tap the '···' menu in the top right corner",
-        "Select 'Open in Browser'"
-      ],
-      "qq": [
-        "Tap the '···' menu in the top right corner",
-        "Select 'Open in Browser'"
-      ],
-      "weibo": [
-        "Tap the '···' menu in the top right corner",
-        "Select 'Open in Browser'"
-      ],
-      "facebook": [
-        "Tap the menu button in the top right corner",
-        "Select 'Open in Browser'"
-      ],
-      "instagram": [
-        "Tap the '···' menu in the top right corner",
-        "Select 'Open in Browser'"
-      ],
-      "twitter": [
-        "Tap the 'Share' button in the top right corner",
-        "Select 'Open in Browser'"
-      ],
+      "alipay": ["Tap the '···' menu in the top right corner", "Select 'Open in Browser'"],
+      "qq": ["Tap the '···' menu in the top right corner", "Select 'Open in Browser'"],
+      "weibo": ["Tap the '···' menu in the top right corner", "Select 'Open in Browser'"],
+      "facebook": ["Tap the menu button in the top right corner", "Select 'Open in Browser'"],
+      "instagram": ["Tap the '···' menu in the top right corner", "Select 'Open in Browser'"],
+      "twitter": ["Tap the 'Share' button in the top right corner", "Select 'Open in Browser'"],
       "default": [
         "Tap the menu button in the top right corner",
         "Select 'Open in Browser' or 'Open in Default Browser'"
@@ -1809,6 +1788,7 @@
   "attachment": {
     "errors": {
       "unsupported_type": "Unsupported file format",
+      "empty_file": "The file is empty. Please select a non-empty file or copy the image again.",
       "unsupported_type_hint": "Please upload files in these formats: {{types}}",
       "unrecognized_type": "Unrecognized file type",
       "unrecognized_type_hint": "Please upload documents, images, or text files",

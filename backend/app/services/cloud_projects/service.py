@@ -241,13 +241,22 @@ class CloudProjectService(CloudProjectMemberService):
         project = require_cloud_project_role(
             db, project_id, user_id, BaseRole.Maintainer
         ).project
-        updates = values.model_dump(exclude={"version"}, exclude_none=True)
+        if values.tag_change is not None:
+            from app.services.cloud_projects.tags import change_project_tag
+
+            return change_project_tag(
+                db, project_id, user_id, values.version, values.tag_change
+            )
+        updates = values.model_dump(
+            exclude={"version", "tag_change"}, exclude_none=True
+        )
         if (
             "membership_mode" in values.model_fields_set
             or "tags" in values.model_fields_set
             or "provider_config" in values.model_fields_set
             or "card_display" in values.model_fields_set
             or "board_config" in values.model_fields_set
+            or "board_views" in values.model_fields_set
             or "ai_automation" in values.model_fields_set
             or "pull_request_automation" in values.model_fields_set
             or "workflow_definition" in values.model_fields_set
@@ -257,6 +266,18 @@ class CloudProjectService(CloudProjectMemberService):
             or "default_issue_security" in values.model_fields_set
         ):
             metadata = dict(project.metadata_json or {})
+            if values.board_views is not None:
+                previous_views = metadata.get("board_views")
+                if (
+                    isinstance(previous_views, dict)
+                    and previous_views.get("schema_version") != 1
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Board views were saved by a newer version. Upgrade before editing.",
+                    )
+                metadata["board_views"] = values.board_views.model_dump()
+                updates.pop("board_views", None)
             if values.membership_mode is not None:
                 metadata["membership_mode"] = updates.pop("membership_mode")
             if "tags" in values.model_fields_set and values.tags is not None:

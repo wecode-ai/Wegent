@@ -6,9 +6,67 @@
 //! (`src/attachments/upload/mod.rs`).
 
 use super::*;
-use brz_mysql::{
-    FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult, MysqlTransaction, MysqlTransactionService,
-};
+use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult, MysqlTransaction};
+
+#[test]
+fn empty_uploads_are_rejected_before_the_upload_pipeline() {
+    for filename in ["image.png", "empty.csv", "empty.txt"] {
+        let multipart = Multipart {
+            fields: vec![brz_http_server::Upload {
+                name: "file".to_owned(),
+                filename: Some(filename.to_owned()),
+                content_type: None,
+                bytes: bytes::Bytes::new(),
+            }],
+        };
+        let error = bind_upload_file(&multipart, None).unwrap_err();
+        assert_eq!(error.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(error.validation_detail(), "\"File is empty\"");
+    }
+}
+
+#[test]
+fn binding_keeps_missing_filename_and_nonempty_file_contracts() {
+    let missing = bind_upload_file(&Multipart { fields: vec![] }, None).unwrap_err();
+    assert_eq!(missing.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let multipart = Multipart {
+        fields: vec![brz_http_server::Upload {
+            name: "file".to_owned(),
+            filename: Some("document.csv".to_owned()),
+            content_type: None,
+            bytes: bytes::Bytes::from_static(b"name,value\na,42"),
+        }],
+    };
+    assert_eq!(
+        bind_upload_file(&multipart, None).unwrap(),
+        ("document.csv", b"name,value\na,42".as_slice())
+    );
+    let mut missing_filename = multipart;
+    missing_filename.fields[0].filename = None;
+    let error = bind_upload_file(&missing_filename, None).unwrap_err();
+    assert_eq!(error.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(error.validation_detail(), "\"Filename is required\"");
+}
+
+#[test]
+fn empty_overwrites_keep_the_text_document_clearing_contract() {
+    for filename in ["document.txt", "document.md"] {
+        let multipart = Multipart {
+            fields: vec![brz_http_server::Upload {
+                name: "file".to_owned(),
+                filename: Some(filename.to_owned()),
+                content_type: None,
+                bytes: bytes::Bytes::new(),
+            }],
+        };
+        let (name, bytes) = bind_upload_file(&multipart, Some(42)).unwrap();
+        assert_eq!(name, filename);
+        assert!(bytes.is_empty());
+        let parsed = document::parse(bytes, &document::extension_of(name)).unwrap();
+        assert!(parsed.text.is_empty());
+        assert_eq!(parsed.text_length, 0);
+    }
+}
 
 /// An object store whose write always fails, like the source `save`
 /// raising when `put_object` fails.
@@ -61,12 +119,18 @@ impl MysqlTransaction for StatementLog {
         })
     }
 
-    async fn fetch_optional<S, A, T>(&mut self, _: S, _: A) -> MysqlResult<Option<T>>
+    async fn fetch_optional<S, A, T>(&mut self, sql: S, _: A) -> MysqlResult<Option<T>>
     where
         S: AsRef<str> + Send,
         A: MysqlArgs + Send,
         T: FromMysqlRow + Send,
     {
+        self.statements.push(
+            sql.as_ref()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
         Ok(None)
     }
 
@@ -164,16 +228,14 @@ async fn a_failed_storage_write_aborts_before_any_column_write() {
     assert!(transaction.statements.is_empty());
 }
 
-/// A `Mysql` double that records every non-transactional statement, so
-/// tests can assert the service's post-commit `db.refresh(context)` ran
-/// outside the upload transaction.
+/// Capture ordinary statements and primary transactions used by the upload tail.
 #[derive(Default, Clone)]
 struct StatementCapture {
     statements: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl brz_mysql::Mysql for StatementCapture {
-    type Transaction = MysqlTransactionService;
+    type Transaction = StatementLog;
 
     fn with_route<R: brz_mysql::MysqlRouting + 'static>(&self, _: R) -> brz_mysql::MysqlService {
         panic!("plain queries must reuse the configured service")
@@ -183,12 +245,18 @@ impl brz_mysql::Mysql for StatementCapture {
         self.clone()
     }
 
-    async fn with_transaction<T, F>(&self, _: F) -> MysqlResult<T>
+    async fn with_transaction<T, F>(&self, operation: F) -> MysqlResult<T>
     where
         T: Send,
         F: for<'a> AsyncFnOnce(&'a mut Self::Transaction) -> MysqlResult<T> + Send,
     {
-        panic!("unexpected transaction in the upload tail")
+        let mut transaction = StatementLog::default();
+        let result = operation(&mut transaction).await;
+        self.statements
+            .lock()
+            .unwrap()
+            .extend(transaction.statements);
+        result
     }
 
     async fn fetch_optional<S, A, T>(&self, sql: S, _: A) -> MysqlResult<Option<T>>

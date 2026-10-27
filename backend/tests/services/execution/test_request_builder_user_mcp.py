@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.models.kind import Kind
 from app.services import mcp_provider_registry
 from app.services.execution.request_builder import TaskRequestBuilder
 from app.services.user_mcp_oauth import user_mcp_oauth_service
@@ -977,7 +978,11 @@ class TestUserScopedMcpInjection:
         assert len(result) == 4
         assert result == ([], [], [], {})
 
-    def test_resolve_shell_info_cache_isolated_by_shell_ref(self, test_db, mocker):
+    def test_resolve_shell_info_cache_isolated_by_shell_ref(self, test_db, test_user):
+        """
+        Resolve distinct persisted Shell references without leaking the first cached
+        result.
+        """
         builder = TaskRequestBuilder(test_db)
 
         bot_one = SimpleNamespace(
@@ -1001,27 +1006,36 @@ class TestUserScopedMcpInjection:
             }
         )
 
-        shell_a = SimpleNamespace(
+        shell_a = Kind(
+            user_id=test_user.id,
+            kind="Shell",
+            name="shell-a",
+            namespace="default",
+            is_active=True,
             json={
                 "kind": "Shell",
                 "metadata": {"name": "shell-a", "namespace": "default"},
                 "spec": {"shellType": "ClaudeCode", "baseImage": "img-a"},
-            }
+            },
         )
-        shell_b = SimpleNamespace(
+        shell_b = Kind(
+            user_id=test_user.id,
+            kind="Shell",
+            name="shell-b",
+            namespace="default",
+            is_active=True,
             json={
                 "kind": "Shell",
                 "metadata": {"name": "shell-b", "namespace": "default"},
                 "spec": {"shellType": "Agno", "baseImage": "img-b"},
-            }
+            },
         )
 
-        mock_query = mocker.Mock()
-        mock_query.filter.return_value.first.side_effect = [shell_a, shell_b]
-        mocker.patch.object(builder.db, "query", return_value=mock_query)
+        test_db.add_all([shell_a, shell_b])
+        test_db.commit()
 
-        shell_info_one = builder._resolve_shell_info(bot_one, user_id=1)
-        shell_info_two = builder._resolve_shell_info(bot_two, user_id=1)
+        shell_info_one = builder._resolve_shell_info(bot_one, user_id=test_user.id)
+        shell_info_two = builder._resolve_shell_info(bot_two, user_id=test_user.id)
 
         assert shell_info_one == {"shell_type": "ClaudeCode", "base_image": "img-a"}
         assert shell_info_two == {"shell_type": "Agno", "base_image": "img-b"}

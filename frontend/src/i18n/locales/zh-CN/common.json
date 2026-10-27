@@ -1655,42 +1655,15 @@
     "whyDescription": "应用内置浏览器可能会限制登录功能的正常使用。为了获得最佳体验，建议在默认浏览器（Safari、Chrome等）中打开。",
     "howToOpen": "如何在默认浏览器中打开？",
     "instructions": {
-      "wechat": [
-        "点击右上角「···」菜单",
-        "选择「在浏览器中打开」"
-      ],
-      "dingtalk": [
-        "点击右上角「···」菜单",
-        "选择「在默认浏览器打开」"
-      ],
-      "alipay": [
-        "点击右上角「···」菜单",
-        "选择「在浏览器中打开」"
-      ],
-      "qq": [
-        "点击右上角「···」菜单",
-        "选择「在浏览器中打开」"
-      ],
-      "weibo": [
-        "点击右上角「···」菜单",
-        "选择「在浏览器中打开」"
-      ],
-      "facebook": [
-        "点击右上角菜单按钮",
-        "选择「Open in Browser」"
-      ],
-      "instagram": [
-        "点击右上角「···」菜单",
-        "选择「Open in Browser」"
-      ],
-      "twitter": [
-        "点击右上角「Share」按钮",
-        "选择「Open in Browser」"
-      ],
-      "default": [
-        "点击右上角菜单按钮",
-        "选择「在浏览器中打开」或「Open in Browser」"
-      ]
+      "wechat": ["点击右上角「···」菜单", "选择「在浏览器中打开」"],
+      "dingtalk": ["点击右上角「···」菜单", "选择「在默认浏览器打开」"],
+      "alipay": ["点击右上角「···」菜单", "选择「在浏览器中打开」"],
+      "qq": ["点击右上角「···」菜单", "选择「在浏览器中打开」"],
+      "weibo": ["点击右上角「···」菜单", "选择「在浏览器中打开」"],
+      "facebook": ["点击右上角菜单按钮", "选择「Open in Browser」"],
+      "instagram": ["点击右上角「···」菜单", "选择「Open in Browser」"],
+      "twitter": ["点击右上角「Share」按钮", "选择「Open in Browser」"],
+      "default": ["点击右上角菜单按钮", "选择「在浏览器中打开」或「Open in Browser」"]
     },
     "copyUrl": "复制链接地址",
     "urlCopied": "链接已复制！您可以在默认浏览器中粘贴打开。",
@@ -1809,6 +1782,7 @@
   "attachment": {
     "errors": {
       "unsupported_type": "文件格式不支持",
+      "empty_file": "文件内容为空，请选择非空文件或重新复制图片后上传。",
       "unsupported_type_hint": "请上传以下格式的文件：{{types}}",
       "unrecognized_type": "文件类型无法识别",
       "unrecognized_type_hint": "请上传文档、图片或文本类文件",

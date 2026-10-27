@@ -6,6 +6,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { uploadAttachment } from '@/apis/attachments'
 import { useMultiAttachment } from '@/hooks/useMultiAttachment'
+import { toast } from '@/hooks/use-toast'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -28,17 +29,15 @@ jest.mock('@/apis/attachments', () => {
 
 function UploadHarness({
   storagePurpose = 'default',
+  file = new File(['video'], 'clip.mp4', { type: 'video/mp4' }),
 }: {
   storagePurpose?: 'default' | 'video_reference'
+  file?: File
 }) {
   const { handleFileSelect, handleRemove, state } = useMultiAttachment({ storagePurpose })
   return (
     <>
-      <button
-        type="button"
-        data-testid="upload-video"
-        onClick={() => handleFileSelect(new File(['video'], 'clip.mp4', { type: 'video/mp4' }))}
-      >
+      <button type="button" data-testid="upload-video" onClick={() => handleFileSelect(file)}>
         upload
       </button>
       <button
@@ -81,6 +80,21 @@ describe('useMultiAttachment video upload', () => {
 
   afterEach(() => {
     jest.clearAllMocks()
+  })
+
+  it('rejects an empty clipboard image before adding it to the upload queue', async () => {
+    render(<UploadHarness file={new File([], 'image.png', { type: 'image/png' })} />)
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('upload-video'))
+    })
+
+    expect(uploadAttachment).not.toHaveBeenCalled()
+    expect(toast).toHaveBeenCalledWith({
+      title: 'common:attachment.errors.empty_file',
+      variant: 'destructive',
+    })
+    expect(screen.getByTestId('preview-url')).toBeEmptyDOMElement()
   })
 
   it('uploads video immediately and creates a local preview', async () => {

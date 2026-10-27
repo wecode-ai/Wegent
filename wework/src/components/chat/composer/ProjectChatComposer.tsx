@@ -70,6 +70,7 @@ interface ProjectChatComposerProps {
   codeComments?: CodeCommentContext[]
   uploadingFiles: Map<string, { file: File; progress: number }>
   attachmentErrors: Map<string, string>
+  onDismissAttachmentError?: (filename: string) => void
   contextUsage?: RuntimeContextUsage
   onSelectModel: (model: UnifiedModel | null) => boolean | void
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
@@ -157,6 +158,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       codeComments = [],
       uploadingFiles,
       attachmentErrors,
+      onDismissAttachmentError,
       contextUsage,
       onSelectModel,
       onSelectModelAndOptions,
@@ -343,6 +345,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               attachments={attachments}
               uploadingFiles={uploadingFiles}
               errors={attachmentErrors}
+              onDismissAttachmentError={onDismissAttachmentError}
               codeComments={codeComments}
               onRemoveAttachment={onRemoveAttachment}
               onShowTextAttachment={onShowTextAttachment}
