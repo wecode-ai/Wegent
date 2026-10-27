@@ -213,6 +213,7 @@ class IssueAssignmentService:
             "workflow_step": self._workflow_step(workflow_step),
             "notify": bool(notify),
             "trigger": trigger,
+            "receipt_tracking": True,
         }
         comment = db.get(LoopItemComment, comment_id) if comment_id else None
         if comment is None:

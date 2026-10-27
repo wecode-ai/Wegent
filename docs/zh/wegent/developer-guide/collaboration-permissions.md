@@ -193,3 +193,5 @@ sequenceDiagram
 复现后端全量：`cd backend && uv run pytest tests/ -n 4 -q --assert=plain --tb=line --show-capture=no`。权限专项见 `.github/workflows/test.yml`；共享组件使用 `pnpm --filter @wegent/collaboration test`。MySQL 用例仅连接独立临时测试容器。
 
 本次未运行 E2E 或 `ai:verify`，未部署。真实开发库曾受自动迁移影响，事实及恢复边界见上文。
+
+分配接收回执遵循 CP07、CP13、CP14 和 CP15：沿用项目及 Issue 读取权限，只允许当前分配的接收人确认本人已读；分身回执还需验证接收人所属设备上的当次任务绑定。回执只记录接收事实，不授予编辑、执行或资源权限。云端保存前在事务中重新检查活动分配，本地在同一 SQLite 事务中校验；转派后的旧请求不能确认新分配。定向回执测试和 CI 的 `stand-in-notifications`、`stand-in-cloud` checkpoint 覆盖身份、持久化及详情展示。

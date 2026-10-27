@@ -35,9 +35,13 @@ export function GlobalIconButtonTooltip() {
   }, [])
 
   const schedule = useCallback(
-    (button: HTMLButtonElement) => {
+    (button: HTMLButtonElement, eventTarget: EventTarget | null) => {
       const label = button.getAttribute('aria-label')?.trim()
-      if (!label || button.closest('[data-tooltip-trigger]')) {
+      if (
+        !label ||
+        button.closest('[data-tooltip-trigger]') ||
+        (eventTarget instanceof Element && eventTarget.closest('[data-tooltip-trigger]'))
+      ) {
         hide()
         return
       }
@@ -60,7 +64,7 @@ export function GlobalIconButtonTooltip() {
         : null
     const handlePointerOver = (event: PointerEvent) => {
       const button = buttonFromTarget(event.target)
-      if (button) schedule(button)
+      if (button) schedule(button, event.target)
     }
     const handlePointerOut = (event: PointerEvent) => {
       const button = buttonFromTarget(event.target)
@@ -74,7 +78,7 @@ export function GlobalIconButtonTooltip() {
     }
     const handleFocusIn = (event: FocusEvent) => {
       const button = buttonFromTarget(event.target)
-      if (button) schedule(button)
+      if (button) schedule(button, event.target)
     }
     const handleFocusOut = (event: FocusEvent) => {
       const button = buttonFromTarget(event.target)
@@ -137,6 +141,7 @@ export function GlobalIconButtonTooltip() {
     <span
       ref={tooltipRef}
       role="tooltip"
+      data-testid="global-icon-button-tooltip"
       style={position}
       className={`pointer-events-none fixed z-system-popover max-w-[20rem] whitespace-normal break-words rounded-lg border border-border/70 bg-popover/95 px-2 py-1 text-sm leading-5 text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.18)] backdrop-blur-md ${
         position ? 'opacity-100' : 'opacity-0'

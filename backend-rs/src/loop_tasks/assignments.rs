@@ -38,11 +38,11 @@ const ASSIGNMENT_EVENT_TYPE: &str = "assignment";
 
 /// One `IssueAssignmentResponse` row.
 #[derive(Debug, Serialize)]
-struct IssueAssignmentResponse {
-    id: String,
+pub(super) struct IssueAssignmentResponse {
+    pub(super) id: String,
     issue_id: String,
-    target_type: String,
-    target_id: String,
+    pub(super) target_type: String,
+    pub(super) target_id: String,
     target_name: String,
     workflow_step: Option<String>,
     body: String,
@@ -52,12 +52,15 @@ struct IssueAssignmentResponse {
     status: String,
     created_at: String,
     updated_at: String,
+    receipt_tracking: bool,
+    human_read_at: Option<String>,
+    stand_in_received_at: Option<String>,
 }
 
 /// `IssueAssignmentListResponse`.
 #[derive(Debug, Serialize)]
-struct IssueAssignmentListResponse {
-    items: Vec<IssueAssignmentResponse>,
+pub(super) struct IssueAssignmentListResponse {
+    pub(super) items: Vec<IssueAssignmentResponse>,
 }
 
 /// GET /api/v1/loop-items/{item_id}/assignments.
@@ -71,7 +74,7 @@ async fn list_issue_assignments(
 }
 
 /// Handler body for `GET /api/v1/loop-items/{item_id}/assignments`.
-async fn list_assignments(
+pub(super) async fn list_assignments(
     state: &AppState,
     item_id: &str,
     current_user: &FlexibleUser,
@@ -96,8 +99,6 @@ async fn list_assignments(
         .await
         .map_err(internal)?
         .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Project not found"))?;
-    require_cloud_project_role(state, &project.id, current_user.id).await?;
-
     // `issue_assignment_service.list`.
     let access = require_cloud_project_role(state, &project.id, current_user.id).await?;
     // `_require_issue_project` re-reads the item through the session's identity
@@ -395,6 +396,9 @@ async fn assignment_response(
         status: "active".to_string(),
         created_at: datetime_value(comment.created_at)?,
         updated_at: datetime_value(comment.updated_at)?,
+        receipt_tracking: metadata.receipt_tracking.unwrap_or(false),
+        human_read_at: metadata.human_read_at.clone(),
+        stand_in_received_at: metadata.stand_in_received_at.clone(),
     })
 }
 
@@ -487,6 +491,30 @@ mod tests {
     }
 
     #[test]
+    fn reception_metadata_does_not_change_assignment_reduction() {
+        let comments = vec![comment(
+            "1",
+            serde_json::json!({
+                "event_type":"assignment", "action":"assign", "target_type":"human", "target_id":"7",
+                "human_read_at":"2026-10-27T02:00:00Z", "stand_in_received_at":"2026-10-27T02:01:00Z",
+            }),
+        )];
+        let events = active_events(&comments);
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].metadata.human_read_at.as_deref(),
+            Some("2026-10-27T02:00:00Z")
+        );
+        assert_eq!(
+            events[0].metadata.stand_in_received_at.as_deref(),
+            Some("2026-10-27T02:01:00Z")
+        );
+        let mut cancelled = comments;
+        cancelled.push(unassign("2", "1"));
+        assert!(active_events(&cancelled).is_empty());
+    }
+
+    #[test]
     fn drops_events_cancelled_by_an_unassign() {
         let comments = vec![assign("1", "human", "7", ""), unassign("9", "1")];
         assert!(active_events(&comments).is_empty());
@@ -547,6 +575,9 @@ mod tests {
             status: "active".to_string(),
             created_at: datetime_value(event[0].comment.created_at).unwrap(),
             updated_at: datetime_value(event[0].comment.updated_at).unwrap(),
+            receipt_tracking: false,
+            human_read_at: None,
+            stand_in_received_at: None,
         };
         let value = crate::json_contract_tests::serialized(row).unwrap();
         assert_eq!(
@@ -565,6 +596,9 @@ mod tests {
                 "status": "active",
                 "created_at": "2026-10-10T05:57:44Z",
                 "updated_at": "2026-10-10T05:57:44Z",
+                "receipt_tracking": false,
+                "human_read_at": null,
+                "stand_in_received_at": null,
             })
         );
     }

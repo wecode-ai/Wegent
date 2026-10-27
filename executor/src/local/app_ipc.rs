@@ -2160,6 +2160,27 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "todos.assignment_receipts" => serialize_task_value(
+            runtime
+                .assignment_receipts(
+                    required_task_string(&params, "project_id")?,
+                    required_task_string(&params, "task_id")?,
+                )
+                .map_err(task_runtime_error)?,
+        ),
+        "todos.acknowledge_assignment" => {
+            runtime
+                .acknowledge_assignment(
+                    required_task_string(&params, "project_id")?,
+                    required_task_string(&params, "task_id")?,
+                    required_task_string(&params, "assignment_id")?,
+                    params["user_id"]
+                        .as_i64()
+                        .ok_or_else(|| AppIpcError::new("bad_request", "user_id is required"))?,
+                )
+                .map_err(task_runtime_error)?;
+            Ok(json!({"acknowledged":true}))
+        }
         "todos.mark_read" => {
             let project_id = required_task_string(&params, "project_id")?;
             let task_id = required_task_string(&params, "task_id")?;

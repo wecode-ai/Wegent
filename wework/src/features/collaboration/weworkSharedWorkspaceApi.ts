@@ -66,6 +66,7 @@ export interface WeworkAutomationSharedWorkspaceApi {
 export interface WeworkDeliverySharedWorkspaceApi {
   projects: Pick<SharedWorkspaceApi['projects'], ProjectMethod>
   myWork: NonNullable<SharedWorkspaceApi['myWork']>
+  assignmentReceipts: NonNullable<SharedWorkspaceApi['assignmentReceipts']>
   issues: SharedWorkspaceApi['issues']
   attachments: SharedWorkspaceApi['attachments']
   collaborators: SharedWorkspaceApi['collaborators']
@@ -79,6 +80,7 @@ export interface WeworkDeliverySharedWorkspaceApi {
 export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
   projects: ['list', 'get', 'create', 'update', 'archive'],
   myWork: ['list'],
+  assignmentReceipts: ['list', 'acknowledge'],
   issues: [
     'list',
     'listPage',
@@ -386,6 +388,11 @@ export function createWeworkDeliverySharedWorkspaceApi(
   deliveryApi: DeliveryApi
 ): WeworkDeliverySharedWorkspaceApi {
   return {
+    assignmentReceipts: {
+      list: issueId => deliveryApi.getIssueAssignmentReceipts(issueId),
+      acknowledge: (issueId, assignmentId, userId) =>
+        deliveryApi.acknowledgeIssueAssignment(issueId, assignmentId, userId),
+    },
     projects: {
       async list() {
         return (await deliveryApi.listCloudProjects()).items.map(toProject)

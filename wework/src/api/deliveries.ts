@@ -1,3 +1,4 @@
+import type { CollaborationAssignmentReceipt as IssueAssignmentReceipt } from '@wegent/collaboration'
 import type { RunnerSelection } from '@wegent/collaboration'
 import { createIssueTaskBindingApi } from '@wegent/chat-core/issue-task-binding-api'
 import { ApiError, type HttpClient } from './http'
@@ -17,6 +18,8 @@ import type {
   SkillRef,
 } from '@/types/api'
 import { saveBlobToDownloads } from '@/lib/blobDownload'
+
+export type { CollaborationAssignmentReceipt as IssueAssignmentReceipt } from '@wegent/collaboration'
 
 export type CloudProjectId = string
 type CloudProjectIdInput = CloudProjectId | number
@@ -890,6 +893,24 @@ export function createDeliveryApi(client: HttpClient) {
     },
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
+    },
+    async getIssueAssignmentReceipts(itemId: string): Promise<IssueAssignmentReceipt[]> {
+      const response = await client.get<{ items: IssueAssignmentReceipt[] }>(
+        `/v1/loop-items/${encodeURIComponent(itemId)}/assignments`
+      )
+      return response.items.filter(row => row.target_type === 'human')
+    },
+    acknowledgeIssueAssignment(
+      itemId: string,
+      assignmentId: string,
+      userId: number
+    ): Promise<unknown> {
+      // Cloud identity comes from authentication; local adapters use this argument.
+      void userId
+      return client.post(
+        `/v1/loop-items/${encodeURIComponent(itemId)}/assignments/${encodeURIComponent(assignmentId)}/receipt`,
+        { kind: 'human_read' }
+      )
     },
     markLoopItemRead(itemId: string, activitySequence?: number): Promise<CloudLoopItem> {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/read`, {

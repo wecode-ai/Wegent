@@ -82,6 +82,9 @@ pub struct AssignmentMetadata {
     pub target_name: Option<serde_json::Value>,
     pub workflow_step: Option<String>,
     pub trigger: Option<String>,
+    pub receipt_tracking: Option<bool>,
+    pub human_read_at: Option<String>,
+    pub stand_in_received_at: Option<String>,
 }
 
 /// Whether a datetime equals the unset sentinel or is NULL
@@ -484,6 +487,18 @@ pub fn has_permission(user_role: &str, required_role: &str) -> bool {
     role_level(user_role) <= role_level(required_role)
 }
 
+/// Shared ordered assignment-event query for transactional and ordinary reads.
+pub(super) fn item_comments_query() -> String {
+    format!(
+        "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
+                     WHERE loop_items.loop_item_id = ? \
+                     AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
+                         ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
+                     AND loop_items.resource_type IN ('comment') \
+                     ORDER BY loop_items.created_at, loop_items.id",
+    )
+}
+
 /// Loop-item repositories for the task-binding read path.
 pub struct LoopItemRepository<'a, M> {
     mysql: &'a M,
@@ -717,17 +732,7 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
     /// activity order.
     pub async fn list_item_comments(&self, item_id: &str) -> MysqlResult<Vec<CommentRow>> {
         self.mysql
-            .fetch_all(
-                &format!(
-                    "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
-                     WHERE loop_items.loop_item_id = ? \
-                     AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
-                         ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
-                     AND loop_items.resource_type IN ('comment') \
-                     ORDER BY loop_items.created_at, loop_items.id",
-                ),
-                (item_id,),
-            )
+            .fetch_all(item_comments_query(), (item_id,))
             .await
     }
 

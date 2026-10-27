@@ -1,3 +1,4 @@
+import { IssueAssignmentReceipts } from './IssueAssignmentReceipts'
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { LockKeyhole, Send } from 'lucide-react'
 import {
@@ -158,6 +159,17 @@ export function TodoEditor(props: TodoEditorProps) {
       },
     }
   }, [props.api, props.projectChatAgentApi, props.sharedApi])
+  const receiptApi = useMemo(
+    () =>
+      workspaceApi.assignmentReceipts
+        ? {
+            getIssueAssignmentReceipts: workspaceApi.assignmentReceipts.list,
+            acknowledgeIssueAssignment: workspaceApi.assignmentReceipts.acknowledge,
+            getLoopItem: workspaceApi.issues.get,
+          }
+        : undefined,
+    [workspaceApi]
+  )
   const port = useMemo(
     () =>
       createSharedIssueDetailPort(workspaceApi, async (blob, filename) => {
@@ -223,6 +235,17 @@ export function TodoEditor(props: TodoEditorProps) {
           api={props.aitableApi}
           project={context.project as CloudProject}
           item={context.item as CloudLoopItem}
+        />
+      ) : null,
+    renderAssignmentReceipts: item =>
+      receiptApi ? (
+        <IssueAssignmentReceipts
+          key={item.id}
+          api={receiptApi}
+          issueId={item.id}
+          version={item.version}
+          currentUserId={props.currentUserId}
+          assigneeUserId={item.assignee_user_id}
         />
       ) : null,
     renderAssignmentHistory: context => (

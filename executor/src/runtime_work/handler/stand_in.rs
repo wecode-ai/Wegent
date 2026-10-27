@@ -16,12 +16,12 @@ pub(super) fn settings_error(error: crate::task_runtime::TaskRuntimeError) -> Ap
 }
 
 impl RuntimeWorkRpcHandler {
-    pub(super) async fn stand_in_http(
+    pub(super) async fn stand_in_request(
         &self,
         method: reqwest::Method,
         path: &str,
         body: Option<&Value>,
-    ) -> Result<Value, AppIpcError> {
+    ) -> Result<reqwest::Response, AppIpcError> {
         let connection = self
             .backend_connection_snapshot()?
             .filter(|value| !value.backend_url.is_empty() && !value.auth_token.is_empty())
@@ -31,6 +31,15 @@ impl RuntimeWorkRpcHandler {
                     "Connect this Executor to your cloud account",
                 )
             })?;
+        Self::stand_in_request_on(&connection, method, path, body).await
+    }
+
+    pub(super) async fn stand_in_request_on(
+        connection: &ConnectionConfig,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&Value>,
+    ) -> Result<reqwest::Response, AppIpcError> {
         let client = crate::agents::backend_url::backend_http_client()
             .map_err(|error| AppIpcError::new("cloud_unavailable", error.to_string()))?;
         let mut request = client
@@ -43,10 +52,19 @@ impl RuntimeWorkRpcHandler {
         if let Some(body) = body {
             request = request.json(body);
         }
-        let response = request
+        request
             .send()
             .await
-            .map_err(|error| AppIpcError::new("cloud_unavailable", error.to_string()))?;
+            .map_err(|error| AppIpcError::new("cloud_unavailable", error.to_string()))
+    }
+
+    pub(super) async fn stand_in_http(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&Value>,
+    ) -> Result<Value, AppIpcError> {
+        let response = self.stand_in_request(method, path, body).await?;
         if !response.status().is_success() {
             return Err(AppIpcError::new(
                 "cloud_request_failed",
@@ -279,6 +297,20 @@ impl RuntimeWorkRpcHandler {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
+        let receipt_handler = self.clone();
+        runtime.spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                if let Err(error) = receipt_handler.flush_assignment_receipts().await {
+                    log_executor_event(
+                        "Assignment receipt synchronization failed",
+                        &[("error", error.message)],
+                    );
+                }
+            }
+        });
         let handler = self.clone();
         runtime.spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
@@ -542,6 +574,15 @@ impl RuntimeWorkRpcHandler {
         if config["projectStore"] == "cloud" {
             self.verify_stand_in_user(config).await?;
         }
+        let receipt_backend = if config["projectStore"] == "cloud" {
+            self.backend_connection_snapshot()?
+                .map(|connection| connection.backend_url)
+                .ok_or_else(|| {
+                    AppIpcError::new("cloud_unavailable", "Cloud connection is unavailable")
+                })?
+        } else {
+            String::new()
+        };
         let project = config["projectId"].as_str().unwrap_or_default();
         let issue_id = issue["id"].as_str().unwrap_or_default();
         let task_id = self.stand_in_task_id(config, binding);
@@ -601,6 +642,15 @@ impl RuntimeWorkRpcHandler {
                 );
             }
             return Err(error);
+        }
+        if let Err(error) = self
+            .record_stand_in_receipt(config, issue, &binding, &receipt_backend)
+            .await
+        {
+            log_executor_event(
+                "Stand-in receipt persistence failed",
+                &[("task_id", task_id), ("error", error.message)],
+            );
         }
         Ok(())
     }

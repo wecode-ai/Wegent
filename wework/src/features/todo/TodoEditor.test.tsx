@@ -1,3 +1,4 @@
+import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
 import { describe, expect, it, vi } from 'vitest'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -35,6 +36,8 @@ describe('markdownAttachmentRows', () => {
 })
 
 const api = {
+  getIssueAssignmentReceipts: vi.fn(async () => []),
+  acknowledgeIssueAssignment: vi.fn(async () => ({ acknowledged: true })),
   listDeliveries: vi.fn(async () => ({ items: [] })),
   listTaskBindings: vi.fn(async () => []),
   listLoopItemAttachments: vi.fn(async () => []),
@@ -120,7 +123,8 @@ describe('TodoEditor external item sync', () => {
   )
 
   it('restores rejected status changes without discarding the content draft', async () => {
-    const user = userEvent.setup()
+    // Text-entry pacing is irrelevant here; avoid a timed-out interaction leaking into the next test.
+    const user = userEvent.setup({ delay: null })
     const item = { ...baseItem, status: 'inbox' }
     const updateLoopItem = vi.fn().mockRejectedValueOnce(
       Object.assign(new Error('No execution environment is authorized for this selection'), {
@@ -2967,4 +2971,89 @@ describe('TodoEditor shared attachments', () => {
       expect(teamApi.listTeams).toHaveBeenCalledTimes(1)
     })
   })
+})
+
+describe('assignment receipt icons inside the Issue assignee selector', () => {
+  it.each([undefined, 'workspace-panel'] as const)(
+    'renders exactly one receipt surface in %s',
+    async presentation => {
+      const item = { ...baseItem, assignee_agent_id: null, assignee_user_id: 2 }
+      const receiptApi = {
+        ...api,
+        getIssueAssignmentReceipts: vi.fn(async () => [
+          {
+            id: 'assignment',
+            target_type: 'human',
+            target_id: '2',
+            target_name: 'Recipient',
+            receipt_tracking: true,
+            human_read_at: null,
+            stand_in_received_at: null,
+          },
+        ]),
+      }
+      render(
+        <TodoEditor
+          mode="edit"
+          presentation={presentation}
+          readFirst
+          item={item}
+          project={project}
+          allItems={[item]}
+          api={receiptApi as never}
+          currentUserId={1}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+        />
+      )
+      expect(await screen.findByText('未读')).toBeInTheDocument()
+      expect(screen.getByTestId('cloud-todo-detail-assignee')).toContainElement(
+        screen.getByTestId('issue-assignment-receipts')
+      )
+      expect(screen.getAllByTestId('issue-assignment-receipts')).toHaveLength(1)
+    }
+  )
+})
+
+it('routes local assignment receipts through the same project-space adapter as the Issue', async () => {
+  const localList = vi.fn(async () => [
+    {
+      id: 'local-assignment',
+      target_type: 'human',
+      target_id: '2',
+      target_name: 'Recipient',
+      receipt_tracking: true,
+      human_read_at: null,
+      stand_in_received_at: null,
+    },
+  ])
+  const cloudList = vi.fn(async () => {
+    throw new Error('Cloud API must not own local receipts')
+  })
+  const local = createWeworkDeliverySharedWorkspaceApi({
+    ...api,
+    getIssueAssignmentReceipts: localList,
+  } as never)
+  const sharedApi = { ...local, agents: { list: async () => [] } }
+  const item = { ...baseItem, assignee_agent_id: null, assignee_user_id: 2 }
+  render(
+    <TodoEditor
+      mode="edit"
+      presentation="workspace-panel"
+      item={item}
+      project={project}
+      allItems={[item]}
+      sharedApi={sharedApi}
+      api={{ ...api, getIssueAssignmentReceipts: cloudList } as never}
+      currentUserId={1}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />
+  )
+  expect(await screen.findByText('未读')).toBeInTheDocument()
+  expect(screen.getByTestId('cloud-todo-detail-assignee')).toContainElement(
+    screen.getByTestId('issue-assignment-receipts')
+  )
+  expect(localList).toHaveBeenCalledWith(item.id)
+  expect(cloudList).not.toHaveBeenCalled()
 })

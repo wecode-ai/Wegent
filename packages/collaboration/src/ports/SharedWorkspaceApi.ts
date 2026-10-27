@@ -7,6 +7,7 @@ import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-type
 import type {
   CollaborationAgent,
   CollaborationAssignment,
+  CollaborationAssignmentReceipt,
   CollaborationAttachment,
   CollaborationBoardSnapshot,
   CollaborationComment,
@@ -980,6 +981,14 @@ export interface SharedWorkspaceApi {
   issues: SharedWorkspaceIssuesApi;
   comments: SharedWorkspaceCommentsApi;
   assignments?: SharedWorkspaceAssignmentsApi;
+  assignmentReceipts?: {
+    list(issueId: string): Promise<CollaborationAssignmentReceipt[]>;
+    acknowledge(
+      issueId: string,
+      assignmentId: string,
+      userId: number,
+    ): Promise<unknown>;
+  };
   attachments: SharedWorkspaceAttachmentsApi;
   collaborators: SharedWorkspaceCollaboratorsApi;
   taskBindings: SharedWorkspaceTaskBindingsApi;

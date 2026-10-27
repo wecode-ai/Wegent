@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 use uuid::Uuid;
 
+mod assignment_receipts;
 mod code_projects;
 pub(crate) mod execution_workspace;
 mod issue_badges;
@@ -5116,6 +5117,7 @@ fn record_assignment_change(
         .expect("assignment history must be an array");
     entries.push(json!({
         "by_user_id": by_user_id,
+        "receipt_tracking": true,
         "to_type": to_type,
         "to_id": to_id,
         "to_name": to_name,

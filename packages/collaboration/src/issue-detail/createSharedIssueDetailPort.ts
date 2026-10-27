@@ -197,6 +197,7 @@ export type SharedIssueDetailWorkspaceApi = Omit<
   Pick<
     SharedWorkspaceApi,
     | "issues"
+    | "assignmentReceipts"
     | "attachments"
     | "collaborators"
     | "taskBindings"
