@@ -251,7 +251,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
         execution_target = {"type": "managed", "device_id": None}
         if self.shell_type != "Chat":
             execution_target = {
-                "type": "remote",
+                "type": "app",
                 "device_id": os.environ.get("E2E_DEVICE_ID", "e2e-platform-device-1"),
             }
         self._api(
@@ -322,6 +322,24 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
             )
             db.commit()
         return subscription_id
+
+    def _configure_model_response(self, prompt: str) -> None:
+        response = "测试，现在时间：12:00:00"
+        if "【静默】" in prompt and "【@列表" in prompt:
+            response += "\n【静默】【@列表：41068】"
+        elif "【静默】" in prompt:
+            response += "\n【静默】"
+        elif "【@列表" in prompt:
+            response += "\n【@列表：41068】"
+        self.client.post(
+            "http://localhost:9999/stream-rules",
+            json={
+                "matchText": "测试，现在时间",
+                "responseContent": response,
+                "chunkDelayMs": 0,
+                "doneDelayMs": 0,
+            },
+        )
 
     def _cleanup(self) -> None:
         for kind, identifier in reversed(self.created):
@@ -409,6 +427,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
 
     def _execute(self, prompt: str, shell_type: str) -> dict:
         self.shell_type = shell_type
+        self._configure_model_response(prompt)
         team = self._create_shell_resources(shell_type)
         channel_id = self._create_messager_channel()
         subscription_id = self._create_subscription(prompt, team, channel_id)
