@@ -9,7 +9,7 @@ import { ModelSelector } from "./ModelSelector";
 import { PermissionModeSelector } from "./PermissionModeSelector";
 import { codexRuntimeModels } from "@wegent/chat-core/runtime-model-catalog";
 import type { CodexOfficialModel } from "@wegent/chat-core/codex-official-models";
-import type { UnifiedModel } from "@wegent/chat-core/models";
+import type { ModelOptions, UnifiedModel } from "@wegent/chat-core/models";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -60,6 +60,82 @@ function officialModel(modelId: string, isDefault = false): CodexOfficialModel {
 }
 
 describe("model controls without a desktop host", () => {
+  it.each(["model", "preset"])(
+    "keeps selection intent when the host rejects an atomic %s selection",
+    (kind) => {
+      const models = codexRuntimeModels(
+        [officialModel("gpt-6.1-sol", true)],
+        null,
+        true,
+      );
+      const selected = models[0];
+      const atomic = vi.fn(() => false);
+      const selectModel = vi.fn();
+      const selectOption = vi.fn();
+      act(() =>
+        root.render(
+          <ModelSelector
+            translate={translate}
+            isMobile={false}
+            models={models}
+            selectedModel={selected}
+            selectedModelOptions={{ reasoning: "medium" }}
+            disabled={false}
+            onSelectModel={selectModel}
+            onSelectModelAndOptions={atomic}
+            onSelectModelOption={selectOption}
+            onOpenModelSettings={vi.fn()}
+          />,
+        ),
+      );
+      act(() => element("model-selector-button").click());
+      act(() => element("model-advanced-toggle").click());
+      act(() =>
+        element(
+          kind === "model"
+            ? `model-option-${selected.name}`
+            : "model-option-default",
+        ).click(),
+      );
+      expect(atomic).toHaveBeenCalledOnce();
+      expect(selectModel).not.toHaveBeenCalled();
+      expect(selectOption).not.toHaveBeenCalled();
+      act(() => element("model-selector-button").click());
+      expect(element("model-selection-mode").textContent).toBe("推荐模型集");
+    },
+  );
+
+  it("does not label an empty selection as a fixed model", () => {
+    const models = codexRuntimeModels(
+      [officialModel("gpt-6.1-sol", true)],
+      null,
+      true,
+    );
+    act(() =>
+      root.render(
+        <ModelSelector
+          translate={translate}
+          isMobile={false}
+          models={models}
+          selectedModel={null}
+          selectedModelOptions={{}}
+          disabled={false}
+          onSelectModel={vi.fn()}
+          onSelectModelOption={vi.fn()}
+          onOpenModelSettings={vi.fn()}
+        />,
+      ),
+    );
+    act(() => element("model-selector-button").click());
+    expect(element("model-selector-menu")).toBeTruthy();
+    expect(
+      document.querySelector('[data-testid="model-selection-mode"]'),
+    ).toBeNull();
+    expect(
+      document.querySelector('[data-testid="model-slider-description"]'),
+    ).toBeNull();
+  });
+
   it.each(["zh-CN", "en"] as const)(
     "distinguishes model sets from fixed models through selection and reset (%s)",
     (locale) => {
@@ -78,24 +154,36 @@ describe("model controls without a desktop host", () => {
       )!;
       function Harness() {
         const [model, setModel] = useState(initialModel);
-        const [options, setOptions] = useState({ reasoning: "medium" });
+        const [options, setOptions] = useState<ModelOptions>({
+          reasoning: "medium",
+        });
+        const [generation, setGeneration] = useState(0);
         return (
-          <ModelSelector
-            translate={t}
-            isMobile={false}
-            models={models}
-            selectedModel={model}
-            selectedModelOptions={options}
-            onSelectModel={setModel}
-            onSelectModelAndOptions={(nextModel, nextOptions) => {
-              setModel(nextModel);
-              setOptions({ reasoning: nextOptions.reasoning ?? "medium" });
-            }}
-            onSelectModelOption={(key, value) =>
-              setOptions((current) => ({ ...current, [key]: value }))
-            }
-            onOpenModelSettings={vi.fn()}
-          />
+          <>
+            <button
+              data-testid="remount-model-selector"
+              onClick={() => setGeneration((current) => current + 1)}
+            >
+              Remount
+            </button>
+            <ModelSelector
+              key={generation}
+              translate={t}
+              isMobile={false}
+              models={models}
+              selectedModel={model}
+              selectedModelOptions={options}
+              onSelectModel={setModel}
+              onSelectModelAndOptions={(nextModel, nextOptions) => {
+                setModel(nextModel);
+                setOptions(nextOptions);
+              }}
+              onSelectModelOption={(key, value) =>
+                setOptions((current) => ({ ...current, [key]: value }))
+              }
+              onOpenModelSettings={vi.fn()}
+            />
+          </>
         );
       }
       act(() => root.render(<Harness />));
@@ -123,6 +211,11 @@ describe("model controls without a desktop host", () => {
       expect(element("model-slider-description").textContent).toBe(
         t("workbench.fixed_model_slider_hint"),
       );
+      act(() => element("remount-model-selector").click());
+      act(() => element("model-selector-button").click());
+      expect(element("model-selection-mode").textContent).toBe(
+        t("workbench.model_fixed"),
+      );
       expect(
         document.querySelector(
           '[data-testid="model-power-setting-gpt-6-1-sol-medium"]',
@@ -135,6 +228,11 @@ describe("model controls without a desktop host", () => {
       );
       expect(element("model-simple-name").textContent).toBe(
         initialModel.displayName,
+      );
+      act(() => element("remount-model-selector").click());
+      act(() => element("model-selector-button").click());
+      expect(element("model-selection-mode").textContent).toBe(
+        t("workbench.model_recommended_set"),
       );
     },
   );
@@ -243,11 +341,17 @@ describe("model controls without a desktop host", () => {
       act(() => element("model-advanced-toggle").click());
       act(() => element("model-option-default").click());
       if (atomic) {
-        expect(onSelectModelAndOptions).toHaveBeenCalledWith(defaultModel, {});
+        expect(onSelectModelAndOptions).toHaveBeenCalledWith(defaultModel, {
+          modelSelection: "public:deepseek-flash-responses(公网):recommended",
+        });
+        expect(onSelectModelOption).not.toHaveBeenCalled();
       } else {
         expect(onSelectModel).toHaveBeenCalledWith(defaultModel);
+        expect(onSelectModelOption).toHaveBeenCalledExactlyOnceWith(
+          "modelSelection",
+          "public:deepseek-flash-responses(公网):recommended",
+        );
       }
-      expect(onSelectModelOption).not.toHaveBeenCalled();
     },
   );
 
@@ -321,11 +425,17 @@ describe("model controls without a desktop host", () => {
       );
       act(() => element("model-option-default").click());
       if (atomic) {
-        expect(onSelectModelAndOptions).toHaveBeenLastCalledWith(glm, {});
+        expect(onSelectModelAndOptions).toHaveBeenLastCalledWith(glm, {
+          modelSelection: "public:cloud-glm:recommended",
+        });
+        expect(onSelectModelOption).not.toHaveBeenCalled();
       } else {
         expect(onSelectModel).toHaveBeenLastCalledWith(glm);
+        expect(onSelectModelOption).toHaveBeenCalledExactlyOnceWith(
+          "modelSelection",
+          "public:cloud-glm:recommended",
+        );
       }
-      expect(onSelectModelOption).not.toHaveBeenCalled();
     },
   );
 
@@ -413,6 +523,7 @@ describe("model controls without a desktop host", () => {
 
     act(() => element("model-option-preset-quality").click());
     expect(onSelectModelAndOptions).toHaveBeenCalledWith(gptModel, {
+      modelSelection: "public:deepseek-flash-responses(公网):quality",
       reasoning: "high",
     });
   });

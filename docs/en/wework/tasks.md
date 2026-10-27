@@ -112,7 +112,7 @@ Open the model selector in the composer to see the account source, selection mod
 
 Click the mode or model name to open the full list, organized by local ChatGPT account, cloud models, and custom models. Long model names wrap in full, and the panel scrolls when space is limited.
 
-Wework remembers the model and reasoning effort separately for new-task defaults and active tasks:
+Wework remembers the model, selection mode, and reasoning effort separately for new-task defaults and active tasks. Returning to the page keeps an explicitly fixed model fixed, even when it also belongs to the recommended set:
 
 - With no task open, the composer selection belongs to the current draft and the next new task. Standalone tasks save this selection as the default for later new tasks.
 - When a local project follows the global default, a project-composer selection updates the global new-task default used by later standalone tasks and other projects that follow the global default. When a project defines its own model and reasoning effort, a temporary composer change applies only to that task; starting another task restores the project default.

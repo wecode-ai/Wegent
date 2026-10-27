@@ -291,6 +291,23 @@ describe('ModelSelector desktop layout', () => {
     expect(screen.queryByTestId('model-simple-header')).not.toBeInTheDocument()
   })
 
+  test('fits the full menu inside a narrow workbench boundary', async () => {
+    createShellElement({ left: 300 })
+    render(
+      <ModelSelector
+        models={[SAMPLE_MODEL]}
+        selectedModel={SAMPLE_MODEL}
+        selectedModelOptions={{}}
+        disabled={false}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+      />
+    )
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+    const menu = await screen.findByTestId('model-selector-menu')
+    await waitFor(() => expect(menu.parentElement).toHaveStyle({ width: '268px', left: '16px' }))
+  })
+
   test('opens setup destinations from the empty model menu', async () => {
     createShellElement({ hidden: true })
 
@@ -484,12 +501,12 @@ describe('ModelSelector desktop layout', () => {
       if (testId === 'model-selector-menu') {
         return {
           top: 300,
-          left: 216,
+          left: 150,
           right: 470,
           bottom: 500,
-          width: 254,
+          width: 320,
           height: 200,
-          x: 216,
+          x: 150,
           y: 300,
           toJSON: () => {},
         } as DOMRect
@@ -513,7 +530,7 @@ describe('ModelSelector desktop layout', () => {
       fireEvent.click(await screen.findByTestId('model-advanced-toggle'))
 
       const menu = await screen.findByTestId('model-selector-menu')
-      await waitFor(() => expect(menu.parentElement).toHaveStyle({ left: '216px' }))
+      await waitFor(() => expect(menu.parentElement).toHaveStyle({ left: '150px', width: '320px' }))
       expect(menu).toHaveClass('w-full')
       expect(menu.parentElement?.parentElement).toBe(document.body)
     } finally {

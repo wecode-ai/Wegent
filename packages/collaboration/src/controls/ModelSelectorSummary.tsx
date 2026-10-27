@@ -5,6 +5,7 @@ import styles from "./ModelSelector.module.css";
 
 interface ModelSelectorSummaryProps {
   translate: CollaborationTranslate;
+  hasSelection: boolean;
   sourceLabel?: string;
   modelName: string;
   reasoningLabel?: string;
@@ -17,6 +18,7 @@ interface ModelSelectorSummaryProps {
 
 export function ModelSelectorSummary({
   translate: t,
+  hasSelection,
   sourceLabel,
   modelName,
   reasoningLabel,
@@ -80,12 +82,14 @@ export function ModelSelectorSummary({
         onClick={onOpenModels}
         className="my-1 flex w-full min-w-0 flex-col items-center gap-1 rounded-lg px-2 py-1 hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
       >
-        <span
-          data-testid="model-selection-mode"
-          className="max-w-full rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-text-muted [overflow-wrap:anywhere]"
-        >
-          {presetLabel ?? t("workbench.model_fixed", "固定模型")}
-        </span>
+        {hasSelection && (
+          <span
+            data-testid="model-selection-mode"
+            className="max-w-full rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-text-muted [overflow-wrap:anywhere]"
+          >
+            {presetLabel ?? t("workbench.model_fixed", "固定模型")}
+          </span>
+        )}
         <span className="flex max-w-full items-center gap-1 text-base font-medium text-text-primary">
           <span
             data-testid="model-simple-name"

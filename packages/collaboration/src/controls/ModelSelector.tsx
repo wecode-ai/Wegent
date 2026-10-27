@@ -14,6 +14,7 @@ import { useCollaborationPortalTheme } from "../theme";
 import {
   type ModelControlConfig,
   getControlsForModel,
+  getDefaultModelOptions,
   getModelDisplayLabel,
   getSelectedModelDisplayLabel,
   groupModelsByFamily,
@@ -22,14 +23,15 @@ import {
   isSameModelSelection,
   modelSelectionKey,
   normalizeModelOptionValue,
+  normalizeModelOptions,
+  MODEL_SELECTION_OPTION,
 } from "./model-ui";
 import { activityClassNames as cn } from "../issue-detail/activityClassNames";
 import type { UnifiedModel } from "@wegent/chat-core/models";
-import { ModelSelectorSummary } from "./ModelSelectorSummary";
+import { ModelSelectorSimplePanel } from "./ModelSelectorSimplePanel";
+import { useModelPresetSelection } from "./useModelPresetSelection";
 import { FastModeIcon } from "./FastModeIcon";
-import { ModelPowerSlider } from "./ModelPowerSlider";
 import { ModelSelectorTrigger } from "./ModelSelectorTrigger";
-import { ReasoningSlider } from "./ReasoningSlider";
 import type {
   ModelSelectorCloseReason,
   ModelSelectorProps,
@@ -60,7 +62,6 @@ const MAIN_MENU_MAX_HEIGHT = 608;
 const SIMPLE_MENU_FALLBACK_HEIGHT = 160;
 const ADVANCED_MENU_FALLBACK_HEIGHT = 316;
 type DesktopMenuView = "simple" | "advanced";
-type ModelSelectionMode = "default" | "model";
 
 export interface ModelSelectorHostProps {
   translate: CollaborationTranslate;
@@ -115,6 +116,7 @@ export function ModelSelector({
     null,
   );
   const [desktopMenuLeft, setDesktopMenuLeft] = useState(0);
+  const [desktopMenuWidth, setDesktopMenuWidth] = useState(MAIN_MENU_WIDTH);
   const [desktopMenuMaxHeight, setDesktopMenuMaxHeight] =
     useState(MAIN_MENU_MAX_HEIGHT);
   const [viewHeights, setViewHeights] = useState<
@@ -146,55 +148,21 @@ export function ModelSelector({
     () => getModelPowerPresets(desktopModels, defaultModel),
     [defaultModel, desktopModels],
   );
-  const defaultPowerPreset =
-    powerPresets.find(
-      (preset) =>
-        preset.isDefault &&
-        Boolean(
-          defaultModel && isSameModelSelection(preset.owner, defaultModel),
-        ),
-    ) ??
-    powerPresets.find(
-      (preset) =>
-        defaultModel && isSameModelSelection(preset.owner, defaultModel),
-    ) ??
-    powerPresets.find((preset) => preset.isDefault) ??
-    powerPresets[0];
-  const initiallySelectedPowerPreset =
-    powerPresets.find((preset) =>
-      preset.settings.some((setting) =>
-        isSelectedPowerSetting(
-          setting,
-          selectedModel,
-          selectedModelOptions.reasoning,
-        ),
-      ),
-    ) ?? defaultPowerPreset;
-  const [activePowerPresetKey, setActivePowerPresetKey] = useState(
-    initiallySelectedPowerPreset?.key ?? "",
+  const {
+    defaultPowerPreset,
+    activePowerPreset,
+    modelSelectionMode,
+    defaultModelSelected,
+    selectFixedMode,
+    selectPresetMode,
+  } = useModelPresetSelection(
+    powerPresets,
+    defaultModel,
+    selectedModel,
+    selectedModelOptions,
   );
-  const activePowerPreset =
-    powerPresets.find((preset) => preset.key === activePowerPresetKey) ??
-    defaultPowerPreset;
   const powerSettings = activePowerPreset?.settings ?? [];
   const hasRecommendedDefault = powerPresets.length > 0;
-  const selectedPowerSettingAvailable = powerSettings.some((setting) =>
-    isSelectedPowerSetting(
-      setting,
-      selectedModel,
-      selectedModelOptions.reasoning,
-    ),
-  );
-  const selectedInDefaultSet =
-    hasRecommendedDefault && selectedPowerSettingAvailable;
-  const explicitModelSelectionRef = useRef(false);
-  const [modelSelectionMode, setModelSelectionMode] =
-    useState<ModelSelectionMode>(() =>
-      selectedInDefaultSet ? "default" : "model",
-    );
-  const defaultModelSelected = Boolean(
-    modelSelectionMode === "default" && selectedInDefaultSet,
-  );
   const selectedFamily = selectedModel
     ? inferModelFamily(selectedModel)
     : familyGroups[0]?.config.id;
@@ -204,22 +172,6 @@ export function ModelSelector({
   const activeGroup =
     familyGroups.find((group) => group.config.id === displayedFamilyId) ??
     familyGroups[0];
-
-  useEffect(() => {
-    if (activePowerPreset) return;
-    setActivePowerPresetKey(defaultPowerPreset?.key ?? "");
-  }, [activePowerPreset, defaultPowerPreset]);
-
-  useEffect(() => {
-    if (!selectedInDefaultSet) {
-      explicitModelSelectionRef.current = false;
-      setModelSelectionMode("model");
-      return;
-    }
-    if (!explicitModelSelectionRef.current) {
-      setModelSelectionMode("default");
-    }
-  }, [selectedInDefaultSet]);
 
   useEffect(() => {
     if (!openSignal || disabled || open) return;
@@ -302,10 +254,15 @@ export function ModelSelector({
     const clampedTop = Math.round(
       Math.max(viewportTop, Math.min(preferredTop, maxTop)),
     );
-    const menuWidth =
-      menuPanel.getBoundingClientRect().width || MAIN_MENU_WIDTH;
-    const viewportRight =
-      getViewportRightBoundary?.(button) ?? window.innerWidth;
+    const viewportRight = Math.min(
+      window.innerWidth,
+      getViewportRightBoundary?.(button) ?? window.innerWidth,
+    );
+    const menuWidth = Math.min(
+      MAIN_MENU_WIDTH,
+      Math.max(0, viewportRight - 2 * MODEL_SELECTOR_VIEWPORT_MARGIN),
+    );
+    setDesktopMenuWidth(menuWidth);
     const maxLeft = viewportRight - MODEL_SELECTOR_VIEWPORT_MARGIN - menuWidth;
     const preferredLeft = buttonRect.right - menuWidth;
     const clampedLeft = Math.round(
@@ -588,13 +545,10 @@ export function ModelSelector({
               onBlockedModelSelect?.(model, disabledMessage);
               return;
             }
-            const selectionApplied = handleSelectModel(model);
-            if (selectionApplied === false) {
+            if (selectExplicitModel(model) === false) {
               closeMenu("selection");
               return;
             }
-            explicitModelSelectionRef.current = true;
-            setModelSelectionMode("model");
             setDesktopMenuView("simple");
           }}
           className={[
@@ -643,9 +597,7 @@ export function ModelSelector({
       .map((preset) => {
         const isDefaultPreset = preset.key === defaultPowerPreset?.key;
         const selected =
-          modelSelectionMode === "default" &&
-          activePowerPreset?.key === preset.key &&
-          selectedInDefaultSet;
+          defaultModelSelected && activePowerPreset?.key === preset.key;
         return (
           <button
             key={preset.key}
@@ -753,6 +705,28 @@ export function ModelSelector({
     );
   }
 
+  function selectExplicitModel(model: UnifiedModel | null) {
+    if (!model) return handleSelectModel(null);
+    const modelOptions =
+      selectedModel &&
+      inferModelFamily(model) === inferModelFamily(selectedModel)
+        ? normalizeModelOptions(model, selectedModelOptions)
+        : getDefaultModelOptions(model);
+    const options = {
+      ...modelOptions,
+      [MODEL_SELECTION_OPTION]: "model",
+    };
+    const applied = onSelectModelAndOptions
+      ? onSelectModelAndOptions(model, options)
+      : handleSelectModel(model);
+    if (applied === false) return false;
+    if (!onSelectModelAndOptions)
+      handleSelectModelOption(MODEL_SELECTION_OPTION, "model");
+    selectFixedMode();
+    if (isMobile) closeMenu("selection");
+    return applied;
+  }
+
   function selectPowerPreset(preset: (typeof powerPresets)[number]) {
     const ownerReasoningControl = getControlsForModel(preset.owner).find(
       (control) => control.id === "reasoning",
@@ -770,12 +744,18 @@ export function ModelSelector({
       (control) => control.id === "speed",
     );
     const defaultOptions = modelPowerOptions(selectedSetting, {
+      [MODEL_SELECTION_OPTION]: preset.key,
       ...(speedControl?.defaultValue
         ? { speed: speedControl.defaultValue }
         : {}),
     });
     if (onSelectModelAndOptions) {
-      onSelectModelAndOptions(selectedSetting.model, defaultOptions);
+      if (
+        onSelectModelAndOptions(selectedSetting.model, defaultOptions) === false
+      ) {
+        closeMenu("selection");
+        return;
+      }
     } else {
       if (handleSelectModel(selectedSetting.model) === false) {
         closeMenu("selection");
@@ -788,9 +768,9 @@ export function ModelSelector({
         handleSelectModelOption("speed", speedControl.defaultValue);
       }
     }
-    explicitModelSelectionRef.current = false;
-    setActivePowerPresetKey(preset.key);
-    setModelSelectionMode("default");
+    if (!onSelectModelAndOptions)
+      handleSelectModelOption(MODEL_SELECTION_OPTION, preset.key);
+    selectPresetMode(preset);
     setDesktopMenuView("simple");
   }
 
@@ -818,7 +798,7 @@ export function ModelSelector({
           selectedModelOptions={selectedModelOptions}
           getModelOptionId={getModelOptionId}
           onBlockedModelSelect={onBlockedModelSelect}
-          handleSelectModel={handleSelectModel}
+          handleSelectModel={selectExplicitModel}
           closeMenu={closeMenu}
           emptyState={
             <ModelSelectorEmptyState
@@ -841,6 +821,7 @@ export function ModelSelector({
             style={{
               ...portalTheme.style,
               left: desktopMenuLeft,
+              width: desktopMenuWidth,
               top: desktopMenuBottom === null ? desktopMenuTop : undefined,
               bottom: desktopMenuBottom ?? undefined,
             }}
@@ -894,93 +875,31 @@ export function ModelSelector({
                           : undefined
                       }
                     >
-                      <div
-                        ref={simplePanelRef}
-                        data-model-picker-panel="simple"
-                        style={{ maxHeight: desktopMenuMaxHeight }}
-                        className="flex w-full flex-col overflow-y-auto p-1"
-                      >
-                        <ModelSelectorSummary
-                          translate={t}
-                          sourceLabel={selectedModelSourceLabel}
-                          modelName={selectedModelName}
-                          reasoningLabel={selectedReasoningLabel}
-                          presetLabel={
-                            defaultModelSelected && activePowerPreset
-                              ? activePowerPreset.name === "recommended"
-                                ? t(
-                                    "workbench.model_recommended_set",
-                                    "推荐模型集",
-                                  )
-                                : activePowerPreset.label
-                              : undefined
-                          }
-                          fastModeState={fastModeState}
-                          onToggleFastMode={() =>
-                            handleSelectModelOption(
-                              "speed",
-                              fastModeState.nextValue,
-                            )
-                          }
-                          onOpenModels={() => setDesktopMenuView("advanced")}
-                          onReset={
-                            hasRecommendedDefault &&
-                            !defaultModelSelected &&
-                            defaultPowerPreset
-                              ? selectDefaultModel
-                              : undefined
-                          }
-                        />
-                        {(useModelPowerSlider || desktopReasoningControl) &&
-                        advancedReasoningAvailable ? (
-                          <div
-                            data-testid="model-advanced-panel"
-                            className="min-h-9"
-                          >
-                            {useModelPowerSlider ? (
-                              <ModelPowerSlider
-                                translate={t}
-                                powerSettings={powerSettings}
-                                selectedModel={selectedModel}
-                                selectedModelOptions={selectedModelOptions}
-                                onSelectModel={handleSelectModel}
-                                onSelectModelAndOptions={
-                                  onSelectModelAndOptions
-                                }
-                                onSelectModelOption={handleSelectModelOption}
-                                onInteractionChange={setPowerSliderInteracting}
-                                accentPulse={fastModeState.enabled}
-                                compact
-                              />
-                            ) : desktopReasoningControl ? (
-                              <ReasoningSlider
-                                translate={t}
-                                control={desktopReasoningControl}
-                                selectedModelOptions={selectedModelOptions}
-                                onSelectOption={handleSelectModelOption}
-                                compact
-                                clearSubmenuOnHover={false}
-                                onInteractionChange={setPowerSliderInteracting}
-                                accentPulse={fastModeState.enabled}
-                              />
-                            ) : null}
-                          </div>
-                        ) : null}
-                        <p
-                          data-testid="model-slider-description"
-                          className="px-3 pb-2 pt-1 text-center text-xs text-text-muted text-balance"
-                        >
-                          {defaultModelSelected
-                            ? t(
-                                "workbench.model_set_slider_hint",
-                                "调整档位会切换模型及推理强度",
-                              )
-                            : t(
-                                "workbench.fixed_model_slider_hint",
-                                "仅调整当前模型的推理强度",
-                              )}
-                        </p>
-                      </div>
+                      <ModelSelectorSimplePanel
+                        translate={t}
+                        panelRef={simplePanelRef}
+                        maxHeight={desktopMenuMaxHeight}
+                        sourceLabel={selectedModelSourceLabel}
+                        modelName={selectedModelName}
+                        reasoningLabel={selectedReasoningLabel}
+                        preset={activePowerPreset}
+                        presetSelected={defaultModelSelected}
+                        resetAvailable={
+                          hasRecommendedDefault &&
+                          !defaultModelSelected &&
+                          Boolean(defaultPowerPreset)
+                        }
+                        fastModeState={fastModeState}
+                        control={desktopReasoningControl}
+                        onOpenModels={() => setDesktopMenuView("advanced")}
+                        onReset={selectDefaultModel}
+                        onInteractionChange={setPowerSliderInteracting}
+                        selectedModel={selectedModel}
+                        selectedModelOptions={selectedModelOptions}
+                        onSelectModel={handleSelectModel}
+                        onSelectModelAndOptions={onSelectModelAndOptions}
+                        onSelectModelOption={handleSelectModelOption}
+                      />
                     </div>
                   ) : null}
 

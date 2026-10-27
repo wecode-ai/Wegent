@@ -3170,6 +3170,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-option-default'))
 
     expect(setSelectedModelAndOptions).toHaveBeenCalledWith(solModel, {
+      modelSelection: 'runtime:gpt-5.6-sol:recommended',
       reasoning: 'medium',
       speed: 'standard',
     })
@@ -3475,6 +3476,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-option-preset-quality'))
 
     expect(setSelectedModelAndOptions).toHaveBeenCalledWith(cloudTerraModel, {
+      modelSelection: 'public:cloud-sol:quality',
       reasoning: 'high',
     })
 

@@ -22,6 +22,21 @@ const models = [
 const cloudSource = '[data-testid="model-source-cloud"]'
 const recommended = `${cloudSource} > [data-model-preset="recommended"]`
 
+async function assertCompactLayout(control) {
+  const [menu] = JSON.parse(
+    await control.command('getElementMetrics', '[data-testid="model-selector-menu"]')
+  )
+  for (const id of ['model-simple-name', 'model-selection-mode', 'model-simple-source']) {
+    const [metrics] = JSON.parse(
+      await control.command('getElementMetrics', `[data-testid="${id}"]`)
+    )
+    assert.ok(metrics.width > 0 && metrics.height > 0, `${id} must be visible`)
+    assert.ok(metrics.scrollWidth <= metrics.clientWidth + 1, `${id} overflows horizontally`)
+    assert.ok(metrics.scrollHeight <= metrics.clientHeight + 1, `${id} clips its text`)
+    assert.ok(metrics.left >= menu.left && metrics.right <= menu.right, `${id} exceeds the menu`)
+  }
+}
+
 export function createDesktopScenario({ captureScreenshot }) {
   let cloudEnvironment
   const createdIds = []
@@ -113,6 +128,9 @@ export function createDesktopScenario({ captureScreenshot }) {
       const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
       const errors = []
       try {
+        await control.command('navigate', 'body', { value: '/settings/appearance' })
+        await control.command('click', '[data-testid="appearance-mode-light"]')
+        await control.command('navigate', 'body', { value: '/' })
         await ensureModelOptionVisible(control, 'model-option-preset-deepseek', selector, null)
         await control.command('waitFor', recommended, { visible: true })
         await control.command('waitFor', `${cloudSource} > [data-model-preset="quality"]`)
@@ -184,26 +202,19 @@ export function createDesktopScenario({ captureScreenshot }) {
           (await control.command('getText', '[data-testid="model-simple-name"]')).trim(),
           models[4].label
         )
-        const [menu] = JSON.parse(
-          await control.command('getElementMetrics', '[data-testid="model-selector-menu"]')
-        )
-        for (const id of ['model-simple-name', 'model-selection-mode', 'model-simple-source']) {
-          const [metrics] = JSON.parse(
-            await control.command('getElementMetrics', `[data-testid="${id}"]`)
-          )
-          assert.ok(metrics.width > 0 && metrics.height > 0, `${id} must be visible`)
-          assert.ok(metrics.scrollWidth <= metrics.clientWidth + 1, `${id} overflows horizontally`)
-          assert.ok(metrics.scrollHeight <= metrics.clientHeight + 1, `${id} clips its text`)
-          assert.ok(
-            metrics.left >= menu.left && metrics.right <= menu.right,
-            `${id} exceeds the menu`
-          )
-        }
+        await assertCompactLayout(control)
         await captureScreenshot(control, 'model-selector-fixed-long-name.png', 'body')
         await control.command('click', '[data-testid="model-control-reasoning-high"]')
         await control.command('waitFor', '[data-testid="model-simple-name"]', {
           text: models[4].label,
         })
+        await control.command('waitFor', '[data-testid="model-selection-mode"]', {
+          text: '固定模型',
+        })
+        await control.command('press', 'body', { key: 'Escape' })
+        await control.command('navigate', 'body', { value: '/settings/general' })
+        await control.command('navigate', 'body', { value: '/' })
+        await control.command('click', selector)
         await control.command('waitFor', '[data-testid="model-selection-mode"]', {
           text: '固定模型',
         })
@@ -219,6 +230,32 @@ export function createDesktopScenario({ captureScreenshot }) {
         await control.command('click', `${cloudSource} > [data-model-preset="quality"]`)
         await control.command('press', 'body', { key: 'Escape' })
         await control.command('waitFor', selector, { text: models[3].label })
+
+        // Exercise longer English copy and the dark palette in a constrained desktop window.
+        await control.command('navigate', 'body', { value: '/settings/general' })
+        await control.command('click', '[data-testid="general-language-en-button"]')
+        await control.command('navigate', 'body', { value: '/settings/appearance' })
+        await control.command('click', '[data-testid="appearance-mode-dark"]')
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify({ width: 1040, height: 720 }),
+        })
+        await control.command('navigate', 'body', { value: '/' })
+        await ensureModelOptionVisible(control, 'model-option-preset-long', selector, null)
+        await control.command('click', '[data-testid="model-option-preset-long"]')
+        await control.command('waitFor', '[data-testid="model-selection-mode"]', {
+          text: 'Fixed model',
+        })
+        await control.command('waitFor', '[data-testid="model-slider-description"]', {
+          text: 'Adjusts reasoning effort for this model only',
+        })
+        await assertCompactLayout(control)
+        await captureScreenshot(control, 'model-selector-fixed-english-dark.png', 'body')
+        await control.command('click', '[data-testid="model-reset-default-button"]')
+        await control.command('waitFor', '[data-testid="model-selection-mode"]', {
+          text: 'Recommended model set',
+        })
+        await assertCompactLayout(control)
+        await captureScreenshot(control, 'model-selector-recommended-english-dark.png', 'body')
       } catch (error) {
         console.error('[cloud-model-presets] Verification failed', error)
         errors.push(error)

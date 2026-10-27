@@ -1,5 +1,5 @@
 .menuWrapper {
-  width: min(320px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
 }
 
 .mainMenu {
