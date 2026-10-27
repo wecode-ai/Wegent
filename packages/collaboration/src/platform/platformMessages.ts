@@ -120,6 +120,8 @@ export const platformMessages = {
     group: "协作小组",
     workspaceHint: "空间是成员、项目、智能体和执行环境的协作边界。",
     createWorkspace: "创建云端空间",
+    creatingWorkspace: "正在创建…",
+    createWorkspaceFailed: "创建云端空间失败，请重试。",
     cloudStorageNotice:
       "空间、项目与 Issue 将保存在 Wegent 云端，可在 Wework 和网页端跨设备协作。",
     localStorage: "本地 · 仅当前设备",
@@ -344,6 +346,8 @@ export const platformMessages = {
     workspaceHint:
       "A workspace is the collaboration boundary for members, projects, agents, and execution environments.",
     createWorkspace: "Create cloud space",
+    creatingWorkspace: "Creating…",
+    createWorkspaceFailed: "Failed to create cloud space. Please try again.",
     cloudStorageNotice:
       "The space, projects, and issues are stored in Wegent Cloud for cross-device collaboration in Wework and on the web.",
     localStorage: "Local · This device only",
