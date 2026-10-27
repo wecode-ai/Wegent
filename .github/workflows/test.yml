@@ -422,7 +422,9 @@ jobs:
         working-directory: ./executor
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
-        run: cargo test --all-features --lib worktree_metadata_can_exceed_the_windows_max_path_limit
+        run: |
+          cargo test --all-features --lib worktree_metadata_can_exceed_the_windows_max_path_limit
+          cargo test --all-features --lib deferred_worktree_rebases_project_roots_using_path_identity
 
       - name: Run native clone platform regressions
         if: ${{ !cancelled() }}

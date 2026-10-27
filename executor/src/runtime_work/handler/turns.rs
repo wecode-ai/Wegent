@@ -700,6 +700,18 @@ impl RuntimeWorkRpcHandler {
                 *root = record.path.clone();
             }
         }
+        log_executor_event(
+            "runtime worktree permission roots resolved",
+            &[
+                ("local_task_id", turn.local_task_id.clone()),
+                ("source_path", previous_root),
+                ("workspace_path", record.path.clone()),
+                (
+                    "runtime_workspace_roots",
+                    json!(turn.request.runtime_workspace_roots).to_string(),
+                ),
+            ],
+        );
         self.store.update_task(&turn.local_task_id, |link| {
             link.workspace_path = record.path.clone();
             link.updated_at = now_ms();

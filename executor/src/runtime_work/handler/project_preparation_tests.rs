@@ -179,7 +179,8 @@ fn deferred_worktree_rebases_project_roots_using_path_identity() {
             .unwrap();
         let source = plan.source_path.display().to_string();
         let alias = if cfg!(windows) {
-            format!("{}\\", source.replace('/', "\\"))
+            let plain = crate::path_compat::strip_windows_verbatim_prefix(Path::new(&source));
+            format!("{}\\", plain.display().to_string().replace('/', "\\"))
         } else {
             format!("{source}/")
         };

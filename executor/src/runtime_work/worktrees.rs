@@ -1947,6 +1947,13 @@ fn normalized_path_key(path: &Path) -> String {
 }
 
 pub(super) fn same_path(left: &str, right: &str) -> bool {
+    if cfg!(windows) {
+        return normalized_path_key(&crate::path_compat::strip_windows_verbatim_prefix(
+            Path::new(left),
+        )) == normalized_path_key(&crate::path_compat::strip_windows_verbatim_prefix(
+            Path::new(right),
+        ));
+    }
     normalized_path_key(Path::new(left)) == normalized_path_key(Path::new(right))
 }
 
