@@ -142,10 +142,8 @@ fn verified_source(
 }
 
 fn atomic_copy(source: &Path, target: &Path, expected_hash: &str) -> Result<()> {
-    if let Ok(_) = fs::symlink_metadata(target) {
-        if !files::regular_metadata(target)?.is_file() {
-            return Err("Launcher replacement target must be a regular file".into());
-        }
+    if fs::symlink_metadata(target).is_ok() && !files::regular_metadata(target)?.is_file() {
+        return Err("Launcher replacement target must be a regular file".into());
     }
     let temporary = target
         .parent()

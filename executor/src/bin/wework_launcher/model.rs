@@ -89,11 +89,7 @@ pub struct Health {
 }
 
 pub fn host_platform() -> &'static str {
-    match std::env::consts::OS {
-        "windows" => "windows",
-        "macos" => "macos",
-        other => other,
-    }
+    std::env::consts::OS
 }
 
 pub fn host_arch() -> &'static str {
