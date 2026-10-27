@@ -105,6 +105,7 @@ export interface ProjectChatControls {
   toggleSkill: (skill: SkillRef) => void
   handleFileSelect: (files: File | File[]) => Promise<void>
   removeAttachment: (attachmentId: number) => Promise<void>
+  dismissAttachmentError?: (filename: string) => void
   listLocalSkills: () => Promise<LocalDeviceSkill[]>
   listLocalApps?: () => Promise<LocalDeviceApp[]>
 }
@@ -730,6 +731,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             codeComments={codeComments}
             uploadingFiles={controls.uploadingFiles}
             attachmentErrors={controls.errors}
+            onDismissAttachmentError={controls.dismissAttachmentError}
             contextUsage={controls.contextUsage}
             onSelectModel={model => requestModelSelection(model)}
             onSelectModelAndOptions={(model, options) => requestModelSelection(model, options)}
@@ -844,6 +846,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
           codeComments={codeComments}
           uploadingFiles={controls.uploadingFiles}
           attachmentErrors={controls.errors}
+          onDismissAttachmentError={controls.dismissAttachmentError}
           onFileSelect={files => controls.handleFileSelect(files)}
           planModeActive={planModeActive}
           onSetPlanMode={handleSetPlanMode}

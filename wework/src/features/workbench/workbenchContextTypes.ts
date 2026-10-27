@@ -280,6 +280,8 @@ export interface WorkbenchContextValue {
     addExistingAttachmentForScope: (scopeKey: string, attachment: Attachment) => void
     removeAttachment: (attachmentId: number) => Promise<void>
     removeAttachmentForScope: (scopeKey: string, attachmentId: number) => Promise<void>
+    dismissAttachmentError: (filename: string) => void
+    dismissAttachmentErrorForScope: (scopeKey: string, filename: string) => void
     resetAttachments: () => void
     resetAttachmentsForScope: (scopeKey: string) => void
     listLocalSkills: () => Promise<LocalDeviceSkill[]>
