@@ -366,7 +366,7 @@ jobs:
           WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
         run: |
           pnpm --filter wework e2e:desktop -- \
-            --parallel-segments release-package-startup,component-update,app-update-full
+            --parallel-segments release-package-startup,component-update
 
       - name: Prune formal release verification diagnostics
         if: failure() && matrix.platform == 'macos' && matrix.arch == 'arm64'
@@ -403,6 +403,18 @@ jobs:
             "${{ matrix.arch }}" \
             "${{ needs.prepare-release.outputs.version }}" \
             "$RUNNER_TEMP/wework-release-assets"
+
+      - name: Verify declared upgrade and rollback edges on real release packages
+        if: matrix.platform == 'macos' || matrix.platform == 'windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node wework/scripts/verify-release-upgrades.mjs \
+            "$RUNNER_TEMP/wework-release-assets" \
+            "${{ matrix.platform }}" "${{ matrix.arch }}" \
+            "${{ needs.prepare-release.outputs.channel }}" \
+            "$GITHUB_REPOSITORY" "${{ needs.prepare-release.outputs.release_tag }}"
 
       - name: Verify componentized macOS update package
         if: matrix.platform == 'macos' && needs.prepare-release.outputs.componentized_host_update == 'true'
@@ -462,6 +474,7 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
           RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
           WEWORK_USE_COMPONENTIZED_HOST_UPDATE: ${{ needs.prepare-release.outputs.componentized_host_update }}
+          WEWORK_REQUIRE_UPGRADE_POLICY: "true"
         run: |
           set -euo pipefail
           notes="$(mktemp)"

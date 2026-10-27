@@ -23,6 +23,14 @@ const staging = join(electronRoot, '.package-staging')
 const sharedResourcesRoot = join(electronRoot, '..', 'resources')
 const repositoryRoot = resolve(electronRoot, '..', '..')
 const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
+// Regression fixtures are independently packaged and signed. Never rewrite a built archive.
+const fixtureVersion = process.env.WEWORK_UPGRADE_FIXTURE_VERSION?.trim()
+const fixtureDataSchema = Number(process.env.WEWORK_UPGRADE_FIXTURE_DATA_SCHEMA || 1)
+if (fixtureVersion && !/^\d+\.\d+\.\d+(?:-beta\.[1-9]\d*)?$/.test(fixtureVersion))
+  throw new Error('Invalid upgrade fixture version')
+if (!Number.isSafeInteger(fixtureDataSchema) || fixtureDataSchema < 1)
+  throw new Error('Invalid upgrade fixture data schema')
+const packageVersion = fixtureVersion || sourcePackage.version
 const identity = resolveBuildIdentity()
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const icon =
@@ -61,11 +69,21 @@ await writeFile(
   `${JSON.stringify(
     {
       productName: identity.productName,
-      version: sourcePackage.version,
+      version: packageVersion,
+      weworkUpgradeFixture: Boolean(fixtureVersion),
       type: sourcePackage.type,
       main: sourcePackage.main,
       dependencies: sourcePackage.dependencies,
       ...builderConfig.extraMetadata,
+      ...(fixtureVersion
+        ? {
+            weworkDataSchema: fixtureDataSchema,
+            weworkReadableDataSchemas: Array.from(
+              { length: fixtureDataSchema },
+              (_, index) => index + 1
+            ),
+          }
+        : {}),
     },
     null,
     2
@@ -85,8 +103,8 @@ try {
     appBundleId: identity.identifier,
     ...(process.platform === 'darwin' ? { extendInfo: macosAppIcon.extendInfo } : {}),
     protocols: [{ name: 'Wework', schemes: ['wework'] }],
-    appVersion: sourcePackage.version,
-    buildVersion: sourcePackage.version,
+    appVersion: packageVersion,
+    buildVersion: packageVersion,
     executableName: identity.executableName,
     out: output,
     overwrite: true,
@@ -94,6 +112,11 @@ try {
       unpack: '**/*.{node,dylib,so,dll}',
     },
     extraResource: [
+      join(
+        electronRoot,
+        'resources',
+        `wework-launcher${process.platform === 'win32' ? '.exe' : ''}`
+      ),
       ...(process.platform === 'darwin' ? [macosAppIcon.assetCatalog] : []),
       join(electronRoot, 'resources', 'harness-runtime'),
       join(electronRoot, 'resources', 'bin'),
@@ -115,6 +138,17 @@ try {
       process.platform === 'darwin'
         ? join(application, `${identity.productName}.app`, 'Contents', 'Resources')
         : join(application, 'resources')
+    if (fixtureVersion) {
+      const path = join(resources, 'components.json')
+      const components = JSON.parse(await readFile(path, 'utf8'))
+      components.appVersion = packageVersion
+      components.dataSchema = fixtureDataSchema
+      components.readableDataSchemas = Array.from(
+        { length: fixtureDataSchema },
+        (_, index) => index + 1
+      )
+      await writeFile(path, JSON.stringify(components, null, 2) + '\n')
+    }
     await writeFile(
       join(resources, 'app-update.yml'),
       stringify({

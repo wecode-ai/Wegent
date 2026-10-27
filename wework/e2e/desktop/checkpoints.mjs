@@ -1,3 +1,5 @@
+import { UPGRADE_CHECKPOINTS, UPGRADE_CHECKPOINT_GROUP } from './upgrade-suite.mjs'
+
 export const DESKTOP_CHECKPOINTS = [
   'remote-device-onboarding',
   'workspace-tabs',
@@ -130,6 +132,7 @@ export const DESKTOP_CHECKPOINTS = [
   'split-workbench',
   'release-package-startup',
   'app-update-full',
+  ...UPGRADE_CHECKPOINTS,
   'component-update',
   'renderer-crash-recovery',
   'native-window-startup',
@@ -188,6 +191,7 @@ export const PLUGIN_SEGMENTS = [
 ]
 
 export const DESKTOP_CHECKPOINT_GROUPS = new Map([
+  [UPGRADE_CHECKPOINT_GROUP, UPGRADE_CHECKPOINTS],
   ['stand-in-profile', ['stand-in-profile-settings', 'stand-in-model-catalog']],
   [
     'plugin-account-auth',

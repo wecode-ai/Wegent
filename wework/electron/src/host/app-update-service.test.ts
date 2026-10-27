@@ -1,364 +1,151 @@
-import { EventEmitter } from 'node:events'
-import { describe, expect, test, vi } from 'vitest'
-import type { AppUpdater, UpdateCheckResult } from 'electron-updater'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, expect, test, vi } from 'vitest'
 import { AppUpdateService } from './app-update-service.js'
+import { atomicReleaseWrite, ReleaseStore } from '../runtime/release-store.js'
+import type { UpgradeCatalog } from '../runtime/upgrade-policy.mjs'
 
-class FakeUpdater extends EventEmitter {
-  autoDownload = true
-  autoInstallOnAppQuit = true
-  disableDifferentialDownload = false
-  allowPrerelease = false
-  channel: string | null = null
-  setFeedURL = vi.fn()
-  checkForUpdates = vi.fn<() => Promise<UpdateCheckResult | null>>()
-  downloadUpdate = vi.fn<() => Promise<string[]>>()
-  quitAndInstall = vi.fn()
-}
-
-function service(updater: FakeUpdater, overrides: { packaged?: boolean } = {}) {
-  return new AppUpdateService({
-    updater: updater as unknown as AppUpdater,
-    currentVersion: () => '0.2.6',
-    isPackaged: () => overrides.packaged ?? true,
-    prepareUpdate: vi.fn().mockResolvedValue(undefined),
-    prepareInstall: vi.fn().mockResolvedValue(undefined),
-    updateBaseUrl: 'https://example.com/wework-updater/',
-  })
-}
-
-describe('AppUpdateService', () => {
-  test('checks the stable Electron update channel without downloading automatically', async () => {
-    const updater = new FakeUpdater()
-    updater.checkForUpdates.mockResolvedValue({
-      updateInfo: {
-        version: '0.2.7',
-        files: [],
-        path: 'WeWork_0.2.7_windows_x64-setup.exe',
-        sha512: 'sha',
-        releaseDate: '2026-08-25T00:00:00Z',
-        releaseNotes: 'Changes',
-      },
-      cancellationToken: {} as never,
-      downloadPromise: null,
-      isUpdateAvailable: true,
-    })
-
-    await expect(service(updater).check('stable')).resolves.toEqual({
-      currentVersion: '0.2.6',
-      version: '0.2.7',
-      body: 'Changes',
-    })
-    expect(updater.autoDownload).toBe(false)
-    expect(updater.autoInstallOnAppQuit).toBe(false)
-    expect(updater.disableDifferentialDownload).toBe(true)
-    expect(updater.channel).toBe('latest')
-    expect(updater.allowPrerelease).toBe(false)
-    expect(updater.setFeedURL).toHaveBeenCalledWith({
-      provider: 'generic',
-      url: 'https://example.com/wework-updater',
-      useMultipleRangeRequest: false,
-    })
-  })
-
-  test('downloads once, forwards progress, prepares shutdown, and installs', async () => {
-    const updater = new FakeUpdater()
-    const prepareUpdate = vi.fn().mockResolvedValue(undefined)
-    const prepareInstall = vi.fn().mockResolvedValue(undefined)
-    updater.checkForUpdates.mockResolvedValue({
-      updateInfo: {
-        version: '0.3.0-beta.1',
-        files: [],
-        path: 'beta',
-        sha512: 'sha',
-        releaseDate: '2026-08-25T00:00:00Z',
-      },
-      cancellationToken: {} as never,
-      downloadPromise: null,
-      isUpdateAvailable: true,
-    })
-    updater.downloadUpdate.mockImplementation(async () => {
-      updater.emit('download-progress', { transferred: 40, total: 100 })
-      return ['update']
-    })
-    const appUpdate = new AppUpdateService({
-      updater: updater as unknown as AppUpdater,
-      currentVersion: () => '0.2.6',
-      isPackaged: () => true,
-      prepareUpdate,
-      prepareInstall,
-      updateBaseUrl: 'https://example.com',
-    })
-
-    await appUpdate.check('beta')
-    await Promise.all([appUpdate.download(), appUpdate.download()])
-    const install = appUpdate.createInstallAction()
-    expect(prepareInstall).not.toHaveBeenCalled()
-    expect(updater.quitAndInstall).not.toHaveBeenCalled()
-    await install()
-
-    expect(updater.channel).toBe('beta')
-    expect(prepareUpdate).toHaveBeenCalledWith('0.3.0-beta.1', 'beta', expect.any(Function))
-    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
-    expect(appUpdate.downloadProgress()).toEqual({
-      downloadedBytes: 40,
-      totalBytes: 100,
-      phase: 'ready',
-    })
-    expect(prepareInstall).toHaveBeenCalledTimes(1)
-    expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
-  })
-
-  test('rejects install actions before the pending update finishes downloading', async () => {
-    const updater = new FakeUpdater()
-    updater.checkForUpdates.mockResolvedValue({
-      updateInfo: {
-        version: '0.2.7',
-        files: [],
-        path: 'pending',
-        sha512: 'sha',
-        releaseDate: '2026-08-25T00:00:00Z',
-      },
-      cancellationToken: {} as never,
-      downloadPromise: null,
-      isUpdateAvailable: true,
-    })
-
-    const appUpdate = service(updater)
-    await appUpdate.check('stable')
-
-    expect(() => appUpdate.createInstallAction()).toThrow('has not finished downloading')
-  })
-
-  test('rejects checks from an unpackaged development app', async () => {
-    const updater = new FakeUpdater()
-    await expect(service(updater, { packaged: false }).check('stable')).rejects.toThrow(
-      'packaged desktop app'
-    )
-  })
-
-  test('returns null when electron-updater reports the current version', async () => {
-    const updater = new FakeUpdater()
-    updater.checkForUpdates.mockResolvedValue({
-      updateInfo: {
-        version: '0.2.6',
-        files: [],
-        path: 'current',
-        sha512: 'sha',
-        releaseDate: '2026-08-25T00:00:00Z',
-      },
-      cancellationToken: {} as never,
-      downloadPromise: null,
-      isUpdateAvailable: false,
-    })
-
-    const appUpdate = service(updater)
-    await expect(appUpdate.check('stable')).resolves.toBeNull()
-    await expect(appUpdate.download()).rejects.toThrow('No pending Wework update')
-  })
-
-  test('preserves a downloaded update when another channel has no update', async () => {
-    const updater = new FakeUpdater()
-    const available = {
-      updateInfo: {
-        version: '0.2.7',
-        files: [],
-        path: 'stable',
-        sha512: 'sha',
-        releaseDate: '2026-08-25T00:00:00Z',
-      },
-      cancellationToken: {} as never,
-      downloadPromise: null,
-      isUpdateAvailable: true,
-    }
-    updater.checkForUpdates
-      .mockResolvedValueOnce(available)
-      .mockResolvedValueOnce({
-        updateInfo: {
-          version: '0.2.6',
-          files: [],
-          path: 'beta-current',
-          sha512: 'sha',
-          releaseDate: '2026-08-25T00:00:00Z',
-        },
-        cancellationToken: {} as never,
-        downloadPromise: null,
-        isUpdateAvailable: false,
-      })
-      .mockResolvedValueOnce(available)
-    updater.downloadUpdate.mockResolvedValue(['update'])
-
-    const appUpdate = service(updater)
-    await appUpdate.check('stable')
-    await appUpdate.download()
-    await expect(appUpdate.check('beta')).resolves.toBeNull()
-    expect(() => appUpdate.createInstallAction()).not.toThrow()
-
-    await expect(appUpdate.check('stable')).resolves.toMatchObject({ version: '0.2.7' })
-    await appUpdate.download()
-    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
-  })
-
-  test('treats a missing channel manifest as no available update', async () => {
-    const updater = new FakeUpdater()
-    updater.checkForUpdates.mockRejectedValue(
-      Object.assign(new Error('Cannot find channel "latest-mac.yml" update info'), {
-        code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND',
-      })
-    )
-
-    await expect(service(updater).check('stable')).resolves.toBeNull()
-  })
-
-  test('preserves other update check failures', async () => {
-    const updater = new FakeUpdater()
-    updater.checkForUpdates.mockRejectedValue(
-      Object.assign(new Error('GitHub is unavailable'), {
-        code: 'HTTP_ERROR_503',
-      })
-    )
-
-    await expect(service(updater).check('stable')).rejects.toThrow('GitHub is unavailable')
-  })
-
-  test('logs the concrete download failure without exposing its URL', async () => {
-    const updater = new FakeUpdater()
-    const log = vi.fn()
-    updater.checkForUpdates.mockResolvedValue({
-      updateInfo: {
-        version: '0.2.7',
-        files: [],
-        path: 'pending',
-        sha512: 'sha',
-        releaseDate: '2026-08-25T00:00:00Z',
-      },
-      cancellationToken: {} as never,
-      downloadPromise: null,
-      isUpdateAvailable: true,
-    })
-    const failure = Object.assign(new Error('fetch failed for https://example.com/private'), {
-      code: 'ECONNRESET',
-    })
-    updater.downloadUpdate.mockRejectedValue(failure)
-    const appUpdate = new AppUpdateService({
-      updater: updater as unknown as AppUpdater,
-      currentVersion: () => '0.2.6',
-      isPackaged: () => true,
-      prepareUpdate: vi.fn().mockResolvedValue(undefined),
-      prepareInstall: vi.fn().mockResolvedValue(undefined),
-      updateBaseUrl: 'https://example.com',
-      log,
-    })
-
-    await appUpdate.check('stable')
-    await expect(appUpdate.download()).rejects.toBe(failure)
-
-    expect(log).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        event: 'update-failed',
-        errorType: 'Error',
-        errorCode: 'ECONNRESET',
-        errorMessage: 'fetch failed for [URL removed]',
-      })
-    )
-    expect(appUpdate.downloadProgress()).toMatchObject({
-      phase: 'failed',
-      failure: { message: 'fetch failed for https://example.com/private', code: 'ECONNRESET' },
-    })
-  })
-
-  test('clears a recorded download failure when the update is retried', async () => {
-    const updater = new FakeUpdater()
-    updater.checkForUpdates.mockResolvedValue({
-      updateInfo: {
-        version: '0.2.7',
-        files: [],
-        path: 'pending',
-        sha512: 'sha',
-        releaseDate: '2026-08-25T00:00:00Z',
-      },
-      cancellationToken: {} as never,
-      downloadPromise: null,
-      isUpdateAvailable: true,
-    })
-    updater.downloadUpdate.mockRejectedValueOnce(new Error('fetch failed'))
-    const appUpdate = service(updater)
-
-    await appUpdate.check('stable')
-    await expect(appUpdate.download()).rejects.toThrow('fetch failed')
-    expect(appUpdate.downloadProgress()).toMatchObject({ phase: 'failed' })
-
-    await appUpdate.download()
-    expect(appUpdate.downloadProgress()).toEqual({
-      downloadedBytes: 0,
-      totalBytes: null,
-      phase: 'ready',
-    })
-  })
-
-  test('records a failed download state when no pending update exists', async () => {
-    const appUpdate = service(new FakeUpdater())
-
-    await expect(appUpdate.download()).rejects.toThrow('No pending Wework update')
-    expect(appUpdate.downloadProgress()).toMatchObject({
-      phase: 'failed',
-      failure: { message: 'No pending Wework update is available.' },
-    })
-  })
+const roots: string[] = []
+afterEach(async () => {
+  for (const path of roots.splice(0)) await rm(path, { recursive: true, force: true })
 })
-
-test('preserves an active full download across repeated checks', async () => {
-  const updater = new FakeUpdater()
-  const updateInfo = {
-    version: '0.4.2',
-    files: [],
-    path: 'host.zip',
-    sha512: 'sha',
-    releaseDate: '',
+async function fixture() {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-updater-test-'))
+  roots.push(directory)
+  const store = new ReleaseStore(join(directory, 'releases'))
+  await store.save({
+    schemaVersion: 1,
+    id: 'source',
+    version: '1.0.0',
+    executable: join(directory, 'host'),
+    resources: join(directory, 'resources'),
+    runtimeRoot: join(directory, 'runtimes'),
+    profileRoot: join(directory, 'profile'),
+    dataSchema: 1,
+    readableDataSchemas: [1],
+  })
+  await atomicReleaseWrite(join(store.root, 'active'), 'source')
+  const catalog: UpgradeCatalog = {
+    schemaVersion: 1,
+    channel: 'stable',
+    platform:
+      process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux',
+    arch: process.arch as 'arm64' | 'x64',
+    releases: ['1.0.0', '1.1.0', '1.2.0'].map((version, i) => ({
+      version,
+      minSourceVersion: i === 0 ? '0.0.0' : '1.0.0',
+      url: `https://example.com/${version}.tar.gz`,
+      sha256: String(i + 1).repeat(64),
+      bytes: 7,
+      dataSchema: 1,
+      readableDataSchemas: [1],
+      revoked: false,
+    })),
+    edges: [
+      {
+        from: '1.0.0',
+        to: '1.1.0',
+        fromSha256: '1'.repeat(64),
+        toSha256: '2'.repeat(64),
+        runId: '123',
+        evidenceSha256: 'a'.repeat(64),
+        upgrade: 'passed',
+        rollback: 'passed',
+        revoked: false,
+      },
+    ],
   }
-  updater.checkForUpdates.mockResolvedValue({
-    isUpdateAvailable: true,
-    updateInfo,
-  } as UpdateCheckResult)
-  let release!: () => void
-  const gate = new Promise<void>(resolve => {
-    release = resolve
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockImplementation(
+      async url =>
+        new Response(
+          String(url).endsWith('.tar.gz')
+            ? 'damaged'
+            : JSON.stringify({ schemaVersion: 1, upgradePolicy: catalog })
+        )
+    )
+  const shutdown = vi.fn().mockResolvedValue(undefined)
+  const restart = vi.fn()
+  const options = {
+    store,
+    dataDirectory: directory,
+    currentVersion: '1.0.0',
+    executable: join(directory, 'host'),
+    resources: join(directory, 'resources'),
+    runtimeRoot: join(directory, 'runtimes'),
+    dataSchema: 1,
+    readableDataSchemas: [1],
+    updateBaseUrl: 'https://example.com',
+    isPackaged: true,
+    shutdown,
+    restart,
+    fetch,
+  }
+  return {
+    service: new AppUpdateService(options),
+    options,
+    catalog,
+    fetch,
+    shutdown,
+    restart,
+    store,
+  }
+}
+test('uses new fields on the existing component endpoint and selects a verified next hop', async () => {
+  const { service, fetch } = await fixture()
+  expect(await service.check('stable')).toMatchObject({
+    version: '1.1.0',
+    targetVersion: '1.1.0',
+    path: ['1.1.0'],
   })
-  updater.downloadUpdate.mockImplementation(async () => {
-    updater.emit('download-progress', { transferred: 20, total: 100 })
-    await gate
-    updater.emit('download-progress', { transferred: 100, total: 100 })
-    return []
+  expect(String(fetch.mock.calls[0][0])).toContain('/components-stable-')
+})
+test('never treats the absence of an upgrade policy as permission to update directly', async () => {
+  const { service, fetch } = await fixture()
+  fetch.mockResolvedValue(new Response(JSON.stringify({ schemaVersion: 1, appVersion: '1.2.0' })))
+  await expect(service.check('stable')).rejects.toThrow('no verified upgrade policy')
+})
+test('reports an unavailable path separately from already being up to date', async () => {
+  const { service, catalog } = await fixture()
+  catalog.edges = []
+  await expect(service.check('stable')).rejects.toMatchObject({ code: 'UPGRADE_PATH_UNAVAILABLE' })
+})
+test('rejects a policy for another platform or channel', async () => {
+  const { service, catalog } = await fixture()
+  catalog.channel = 'beta'
+  await expect(service.check('stable')).rejects.toThrow('target mismatch')
+})
+test('a rolled-back target is not automatically offered again', async () => {
+  const { service, store } = await fixture()
+  await atomicReleaseWrite(join(store.root, 'rolled-back-versions.json'), JSON.stringify(['1.1.0']))
+  await expect(service.check('stable')).rejects.toMatchObject({ code: 'UPGRADE_PATH_UNAVAILABLE' })
+})
+test('corrupt downloads fail once, retain the active release, and never shut down the app', async () => {
+  const { service, fetch, shutdown, restart, store } = await fixture()
+  await service.check('stable')
+  const results = await Promise.allSettled([service.download(), service.download()])
+  expect(results.every(result => result.status === 'rejected')).toBe(true)
+  expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('.tar.gz'))).toHaveLength(1)
+  expect(service.downloadProgress()).toMatchObject({
+    phase: 'failed',
+    failure: { message: 'Release package integrity check failed' },
   })
-  const appUpdate = new AppUpdateService({
-    updater: updater as unknown as AppUpdater,
-    currentVersion: () => '0.4.1',
-    isPackaged: () => true,
-    prepareUpdate: async (_version, _channel, onProgress) => {
-      onProgress({
-        downloadedBytes: 50,
-        totalBytes: 50,
-        completedComponents: 1,
-        totalComponents: 1,
-      })
-    },
-    prepareInstall: async () => undefined,
-    updateBaseUrl: 'https://example.test',
-  })
-  await appUpdate.check('stable')
-  const download = appUpdate.download()
-  await Promise.resolve()
-  await appUpdate.check('stable')
-  const duplicate = appUpdate.download()
-  expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
-  expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
-  release()
-  await Promise.all([download, duplicate])
-  expect(appUpdate.downloadProgress()).toMatchObject({
-    downloadedBytes: 150,
-    totalBytes: 150,
-    phase: 'ready',
-  })
-  await appUpdate.check('stable')
-  await appUpdate.download()
-  expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
+  expect((await store.active())?.id).toBe('source')
+  expect(shutdown).not.toHaveBeenCalled()
+  expect(restart).not.toHaveBeenCalled()
+  expect(() => service.createInstallAction()).toThrow('not ready')
+})
+test('rollback cannot restore incompatible data without an explicit boolean confirmation', async () => {
+  const { service, store } = await fixture()
+  const previous = {
+    ...(await store.read('source')),
+    id: 'previous',
+    version: '0.9.0',
+    readableDataSchemas: [2],
+  }
+  await store.save(previous)
+  await atomicReleaseWrite(join(store.root, 'previousHealthy'), 'previous')
+  await expect(service.createRollbackAction(false)()).rejects.toThrow('requires confirmation')
 })
