@@ -318,6 +318,17 @@ export function collaborationWorkspaceControllerReducer(
   return next;
 }
 
+function resolveLoadedIssue(
+  state: Pick<
+    CollaborationWorkspaceControllerState,
+    "issues" | "selectedIssue"
+  >,
+  incoming: CollaborationIssue,
+): CollaborationIssue {
+  const listed = state.issues.find((issue) => issue.id === incoming.id);
+  return newestIssue(state.selectedIssue, newestIssue(listed, incoming));
+}
+
 function reduceWorkspaceState(
   state: CollaborationWorkspaceControllerState,
   action: CollaborationWorkspaceControllerAction,
@@ -520,7 +531,7 @@ function reduceWorkspaceState(
     case "issue-loaded":
       return {
         ...state,
-        selectedIssue: newestIssue(state.selectedIssue, action.issue),
+        selectedIssue: resolveLoadedIssue(state, action.issue),
         attachments:
           action.preserveAttachments &&
           state.selectedIssue?.id === action.issue.id
@@ -1261,8 +1272,13 @@ export function createCollaborationWorkspaceControllerCommands({
             : Promise.resolve([]),
         ]);
         if (revision !== selectedIssueLoadRevision) return null;
-        const currentIssue = getSelectedIssue();
-        const resolvedIssue = newestIssue(currentIssue, issue);
+        const resolvedIssue = resolveLoadedIssue(
+          {
+            issues: getExternalBoardState().issues,
+            selectedIssue: getSelectedIssue(),
+          },
+          issue,
+        );
         dispatch({
           type: "issue-loaded",
           issue: resolvedIssue,
