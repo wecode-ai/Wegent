@@ -1247,7 +1247,9 @@ def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
     wake.assert_awaited_once_with()
 
 
-@pytest.mark.parametrize("change", ["status", "execution_config", "same_agent_config"])
+@pytest.mark.parametrize(
+    "change", ["status", "pending", "execution_config", "same_agent_config"]
+)
 def test_runner_rejection_does_not_commit_issue_changes(
     test_client: TestClient,
     test_db: Session,
@@ -1315,8 +1317,8 @@ def test_runner_rejection_does_not_commit_issue_changes(
     wake = AsyncMock()
     monkeypatch.setattr("app.tasks.robot_queue_tasks.consume_queues_background", wake)
     patch = (
-        {"status": "in_progress"}
-        if change == "status"
+        {"status": "pending" if change == "pending" else "in_progress"}
+        if change in {"status", "pending"}
         else {
             "execution_config": {
                 "agent_id": agent.id,
@@ -1377,7 +1379,7 @@ def test_runner_rejection_does_not_commit_issue_changes(
     assert retried.status_code == 200, retried.text
     assert retried.json()["version"] == before[1] + 1
     assert retried.json()["status"] == (
-        "in_progress" if change == "status" else "inbox"
+        patch["status"] if change in {"status", "pending"} else "inbox"
     )
     test_db.expire_all()
     assert test_db.get(LoopItemExecution, execution_id).status == "cancelled"

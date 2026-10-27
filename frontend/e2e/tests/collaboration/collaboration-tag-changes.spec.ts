@@ -56,12 +56,32 @@ projectTest(
       'in_progress'
     )
     await page.getByTestId('collaboration-issue-table-batch-status').selectOption('pending')
+    const rejectedRetry = page.waitForResponse(
+      response =>
+        response.url().endsWith(`/api/v1/loop-items/${rejected.id}`) &&
+        response.request().method() === 'PATCH'
+    )
     await page.getByTestId('collaboration-issue-table-batch-apply').click()
-    await expect(error).toHaveCount(0)
+    expect((await rejectedRetry).status()).toBe(422)
+    await expect(error).toContainText('Rejected bulk Issue')
+    await expect(page.getByTestId(`collaboration-issue-table-select-${rejected.id}`)).toBeChecked()
+    expect((await webApi<Resource>(page, `/api/v1/loop-items/${rejected.id}`)).version).toBe(
+      rejected.version
+    )
+
+    await page.getByTestId('collaboration-issue-table-batch-status').selectOption('completed')
+    const successfulRetry = page.waitForResponse(
+      response =>
+        response.url().endsWith(`/api/v1/loop-items/${rejected.id}`) &&
+        response.request().method() === 'PATCH'
+    )
+    await page.getByTestId('collaboration-issue-table-batch-apply').click()
+    expect((await successfulRetry).status()).toBe(200)
     await expect(page.getByTestId('collaboration-issue-table-batch')).toHaveCount(0)
+    await expect(error).toHaveCount(0)
     expect(
       (await webApi<{ status: string }>(page, `/api/v1/loop-items/${rejected.id}`)).status
-    ).toBe('pending')
+    ).toBe('completed')
   }
 )
 
