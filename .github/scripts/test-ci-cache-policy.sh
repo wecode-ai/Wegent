@@ -239,9 +239,9 @@ wework_e2e_workflow="$workflow_dir/wework-e2e.yml"
 if [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"' \
   "$wework_e2e_workflow")" -ne 1 ]] ||
   [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"' \
-    "$wework_e2e_workflow")" -ne 1 ]] ||
-  [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"' \
     "$wework_e2e_workflow")" -ne 2 ]] ||
+  [[ "$(grep -Fc 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "4"' \
+    "$wework_e2e_workflow")" -ne 1 ]] ||
   ! grep -Fq 'name: Restore Rust runtimes and build shared Wework desktop E2E runtime' \
     "$action_dir/build-wework-core-e2e/action.yml"; then
   fail "Linux Wework desktop E2E must use bounded checkpoint parallelism"
