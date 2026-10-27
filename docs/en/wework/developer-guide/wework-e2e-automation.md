@@ -232,7 +232,7 @@ above exclude this new checkpoint.
 
 - `plugin-account-auth` expands into password sync, exclusive credential transfer, OAuth, DWS accounts, conversation QR, and GitHub checkpoints.
 - `plugin-uninstall-resilience` expands into write coordination, lost response, unknown result, restart recovery, and reinstall race checkpoints. `plugin-write-coordination` independently checks API responsiveness during contention, post-commit ACK conflicts, and later sync recovery. Removal recovery checkpoints create another active installation so catalog refresh is tested alongside pending cleanup.
-- `harness-apps` expands into development and installation/runtime lifecycle checkpoints.
+- `harness-apps` expands into development, installation/runtime lifecycle, and multi-model routing checkpoints.
 - `streaming-text` expands into content, tool details, timers, scrolling, message order, and subagent checkpoints.
 
 Each checkpoint establishes its own prerequisites in an isolated environment. The
@@ -321,6 +321,12 @@ handoff is complete. Management refresh, open, and retry must not bypass the
 installation's pending lifecycle. On failure, compare delivery counts in
 `harness-model-token-handoff.json` with the UI snapshot rather than increasing
 waits or weakening the early-publication assertion.
+A retained management page can leave a stopped runtime's URL registered after
+restoring an old running snapshot. Starting again invalidates that registration
+before creating a new tab. An existing tab or pending operation still owns its
+registration and must not lose it to a stale management snapshot. The checkpoint
+checks for no stale iframe immediately after Start and no running iframe before
+the additional-token handoff finishes.
 
 Merge queue validates
 the final commit that enters `main`, so Tests, Lint, Platform E2E, and Wework E2E

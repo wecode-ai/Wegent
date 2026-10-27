@@ -192,6 +192,91 @@ describe('useHarnessAppManagement', () => {
     expect(onError).toHaveBeenCalledWith(null)
   })
 
+  test('discards a stale running registration before starting a stopped app again', async () => {
+    const tabs = await vi.importActual<typeof import('./harnessAppTabs')>('./harnessAppTabs')
+    // A retained management surface can publish its old running snapshot when
+    // reconnected, before its refresh reports that the previous runtime stopped.
+    mocks.register.mockImplementation(tabs.registerHarnessAppTab)
+    mocks.unregister.mockImplementation(tabs.unregisterHarnessAppTab)
+    const view = renderHook(
+      ({ installations }) =>
+        useHarnessAppManagement({ installations, onBusyChange, onError, onRefresh }),
+      { initialProps: { installations: [running] } }
+    )
+    try {
+      expect(tabs.resolveRunningHarnessApp(`harness-${installed.id}`)?.url).toBe(running.webUrl)
+      view.rerender({ installations: [installed] })
+
+      act(() => view.result.current.start(installed))
+
+      expect(mocks.openTab).toHaveBeenCalledWith(workspaceTabs, installed)
+      expect(tabs.resolveRunningHarnessApp(`harness-${installed.id}`)).toBeNull()
+      expect(mocks.unregister.mock.invocationCallOrder[0]!).toBeLessThan(
+        mocks.openTab.mock.invocationCallOrder[0]!
+      )
+    } finally {
+      view.unmount()
+      tabs.unregisterHarnessAppTab(installed.id)
+    }
+  })
+
+  test('does not revoke a running app registration when selecting its existing tab', () => {
+    const { result } = renderManagement([running])
+
+    act(() => result.current.start(running))
+
+    expect(mocks.unregister).not.toHaveBeenCalled()
+    expect(mocks.openTab).toHaveBeenCalledWith(workspaceTabs, running)
+  })
+
+  test('does not revoke an active launch from a stale installed management snapshot', async () => {
+    const tabs = await vi.importActual<typeof import('./harnessAppTabs')>('./harnessAppTabs')
+    tabs.registerHarnessAppTab(running)
+    mocks.unregister.mockImplementation(tabs.unregisterHarnessAppTab)
+    let release: () => void = () => {}
+    const handoff = runHarnessAppRuntimeOperation(
+      installed.id,
+      () =>
+        new Promise<void>(resolve => {
+          release = resolve
+        })
+    )
+    await Promise.resolve()
+    const { result, unmount } = renderManagement()
+    try {
+      act(() => result.current.start(installed))
+
+      expect(tabs.resolveRunningHarnessApp(`harness-${installed.id}`)?.url).toBe(running.webUrl)
+      expect(mocks.unregister).not.toHaveBeenCalled()
+      expect(mocks.openTab).toHaveBeenCalledWith(workspaceTabs, installed)
+    } finally {
+      unmount()
+      release()
+      await handoff
+      tabs.unregisterHarnessAppTab(installed.id)
+    }
+  })
+
+  test('preserves an existing app tab when the management snapshot still says installed', async () => {
+    const tabs = await vi.importActual<typeof import('./harnessAppTabs')>('./harnessAppTabs')
+    tabs.registerHarnessAppTab(running)
+    mocks.unregister.mockImplementation(tabs.unregisterHarnessAppTab)
+    workspaceTabs.tabs = [
+      { id: 'running-app-tab', contentRoute: tabs.harnessAppRoute(installed.id) },
+    ]
+    const { result, unmount } = renderManagement()
+    try {
+      act(() => result.current.start(installed))
+
+      expect(tabs.resolveRunningHarnessApp(`harness-${installed.id}`)?.url).toBe(running.webUrl)
+      expect(mocks.unregister).not.toHaveBeenCalled()
+      expect(mocks.openTab).toHaveBeenCalledWith(workspaceTabs, installed)
+    } finally {
+      unmount()
+      tabs.unregisterHarnessAppTab(installed.id)
+    }
+  })
+
   test('stops the runtime, clears registrations, and closes its workspace tab', async () => {
     workspaceTabs.tabs = [{ id: 'app-tab', contentRoute: '/app/harness-smart-app-1' }]
     mocks.takeProxyToken.mockResolvedValue('proxy-token')

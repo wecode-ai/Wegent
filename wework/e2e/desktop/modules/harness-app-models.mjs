@@ -316,6 +316,18 @@ async function verifyCloseDuringTokenHandoff(
       `[data-testid="harness-app-start-${INSTALLED_APP_ID}"]`,
       { timeoutMs: 60_000 }
     )
+    // The retained Owned Apps page can still hold the previous running
+    // registration. Starting again must invalidate it before the new tab mounts.
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `[data-testid="app-iframe-harness-${INSTALLED_APP_ID}"]`
+        )
+      ),
+      0,
+      'Starting a stopped app must not mount its stale running URL'
+    )
     await gates.wait(ids[0], undefined, 600_000)
     const oldRoutes = parseHarnessModelRoutes(
       await readFile(join(instanceDirectory, 'settings.yaml'), 'utf8')

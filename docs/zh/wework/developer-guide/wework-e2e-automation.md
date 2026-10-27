@@ -201,7 +201,7 @@ Lint、单元测试、平台 E2E 和桌面 E2E 的汇总 job 使用 `always() &&
 
 - `plugin-account-auth` 展开为密码同步、独占凭据迁移、OAuth、钉钉账号、对话扫码和 GitHub 六个 checkpoint。
 - `plugin-uninstall-resilience` 展开为写入争锁、响应丢失、结果未知、重启恢复和重装竞态五个 checkpoint。`plugin-write-coordination` 独立验证争锁期间 API 响应、提交后的 ACK 冲突及后续同步恢复；卸载恢复用例自行建立另一个仍有效的安装，覆盖目录刷新与待清理任务并存的情况。
-- `harness-apps` 展开为开发流程与安装运行生命周期两个 checkpoint。
+- `harness-apps` 展开为开发流程、安装运行生命周期和多模型路由三个 checkpoint。
 - `streaming-text` 展开为内容、工具详情、计时、滚动、消息顺序和子智能体六个 checkpoint。
 
 每个 checkpoint 都从隔离环境建立自己的前置数据。上述组名仍可用于 `--segment`，
@@ -267,6 +267,9 @@ Cargo 清单、锁文件、源码、examples 和定义产物布局的 `e2e-tests
 快照不代表 renderer 已完成交接；应用管理页的刷新、打开和重试不得绕过同一
 installation 的在途生命周期。失败时先检查 `harness-model-token-handoff.json`
 中的 delivery 数与 UI 快照，不通过延长等待或修改断言隐藏提前发布。
+管理页恢复的旧 running 快照可能留下已停止工作台的 URL。再次启动时，在创建新标签页前
+清除这类旧注册；已有标签页或在途操作仍持有注册，不能被滞后的管理页快照清除。
+该 checkpoint 同时断言启动瞬间没有旧 iframe，以及额外令牌交接完成前没有运行 iframe。
 
 merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再通过 `push main`
 重复运行同一套 Tests、Lint、Platform E2E 和 Wework E2E。保留 `ci:all` 标签后，后续 push 也会运行完整 Windows Core 分片。

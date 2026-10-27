@@ -89,6 +89,18 @@ export function useHarnessAppManagement({
         return
       }
       onError(null)
+      // A retained management page may have republished its old running
+      // snapshot before refreshing. Do not mount that stopped runtime's URL
+      // while the new launcher is still registering and handing off routes.
+      // An existing tab or operation owns its registration even if this
+      // management snapshot has not received the running update yet.
+      if (
+        installation.state !== 'running' &&
+        !isHarnessAppRuntimeOperationPending(installation.id) &&
+        !workspaceTabs.tabs.some(tab => tab.contentRoute === harnessAppRoute(installation.id))
+      ) {
+        unregisterHarnessAppTab(installation.id)
+      }
       openHarnessAppTab(workspaceTabs, installation)
     },
     [hasSelectedModel, onError, t, workspaceTabs]
