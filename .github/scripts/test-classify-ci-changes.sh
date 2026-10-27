@@ -2302,10 +2302,13 @@ wework_windows_desktop_core_build_job="$(
 if [[ "$wework_windows_desktop_core_build_job" != *"runs-on: windows-latest"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"needs.changes.outputs.windows_desktop_core_e2e == 'true'"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"pnpm --filter wework ai:verify:electron:build"* ]] ||
-  [[ "$wework_windows_desktop_core_build_job" != *"WeWork-win32-x64/WeWork.exe"* ]] ||
-  [[ "$wework_windows_desktop_core_build_job" != *"resources/bin/wegent-executor.exe"* ]] ||
-  [[ "$wework_windows_desktop_core_build_job" != *"resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe"* ]] ||
-  [[ "$wework_windows_desktop_core_build_job" != *"resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"(Join-Path \$root 'WeWork.exe')"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"(Join-Path \$resources 'bin/wegent-executor.exe')"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"(Join-Path \$resources 'codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe')"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"(Join-Path \$resources 'bundled-plugins/wework-personal/.agents/plugins/marketplace.json')"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"node wework/scripts/build-desktop-e2e-client.mjs (Join-Path \$resources 'e2e-client')"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"writeWindowsReleaseManifest({ directory, version: manifest.version })"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"path: wework/electron/release/WeWork-win32-x64/"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"include-hidden-files: true"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"REDIS_WINDOWS_VERSION: 8.10.1"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"REDIS_WINDOWS_SHA256: 4e8f2f956ed92feadf3f64b4e137ed34026438821e692e7ae22c9bba5976607a"* ]] ||
@@ -2324,9 +2327,13 @@ if [[ "$wework_windows_desktop_core_job" != *"runs-on: windows-latest"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"max-parallel: 17"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"'* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"--parallel-segments"* ]] ||
-  [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_APP_BIN:"* ]] ||
-  [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_EXECUTOR_BIN:"* ]] ||
-  [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_CODEX_BIN:"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_APP_BIN = Join-Path \$root 'WeWork.exe'"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_RESOURCE_ROOT = \$resources"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_EXECUTOR_BIN = Join-Path \$resources 'bin/wegent-executor.exe'"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_BACKEND_RS_BIN = Join-Path \$resources 'bin/wegent-backend-rs.exe'"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_CODEX_BIN = Join-Path \$resources 'codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe'"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_SOCKET_IO_CLIENT = Join-Path \$resources 'e2e-client/socket.io-client.cjs'"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"if (\$state.schemaVersion -ne 2) { throw 'Missing Windows v2 installation state' }"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"bundled-plugins/wework-personal/.agents/plugins/marketplace.json"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"name: wework-desktop-windows-redis-e2e-tools"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"uses: ./.github/actions/setup-python-uv-cache"* ]] ||
@@ -2337,6 +2344,19 @@ if [[ "$wework_windows_desktop_core_job" != *"runs-on: windows-latest"* ]] ||
   printf 'Windows Wework Core desktop E2E must use all selected Core shards\n' >&2
   exit 1
 fi
+
+# Build and shard jobs must resolve the same complete version from installation state.
+for versioned_windows_job in \
+  "$wework_windows_desktop_core_build_job" "$wework_windows_desktop_core_job"; do
+  if [[ "$versioned_windows_job" != *"\$root = (Resolve-Path 'wework/electron/release/WeWork-win32-x64').Path"* ]] ||
+    [[ "$versioned_windows_job" != *"\$statePath = Join-Path \$root 'update-state.json'"* ]] ||
+    [[ "$versioned_windows_job" != *"if (-not (Test-Path -LiteralPath \$statePath)) { \$statePath = Join-Path \$root 'initial-update-state.json' }"* ]] ||
+    [[ "$versioned_windows_job" != *"\$state = Get-Content -Raw \$statePath | ConvertFrom-Json"* ]] ||
+    [[ "$versioned_windows_job" != *"\$resources = Join-Path (Join-Path \$root \$state.active.path) 'resources'"* ]]; then
+    printf 'Windows Wework Core desktop E2E must resolve versioned resources from live or initial installation state\n' >&2
+    exit 1
+  fi
+done
 
 wework_summary_job="$(
   sed -n '/^  wework-e2e-summary:/,/^  wework-desktop-memory-e2e:/p' \
