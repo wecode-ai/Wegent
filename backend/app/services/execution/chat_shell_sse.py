@@ -327,6 +327,8 @@ async def _dispatch_chat_shell_sse(
                         },
                     )
                     async for event in stream:
+                        if cancelled:
+                            break
                         event_count += 1
                         event_type = getattr(event, "type", None)
                         if not event_type:
@@ -391,6 +393,11 @@ async def _dispatch_chat_shell_sse(
                                 emit_ms = (time.perf_counter() - emit_started) * 1000
                                 emit_total_ms += emit_ms
                                 emit_max_ms = max(emit_max_ms, emit_ms)
+
+                        # Delivery can consume CancelledError; cancellation still
+                        # owns the terminal state before another stream read.
+                        if cancelled:
+                            break
 
                         if event_type in (
                             ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,

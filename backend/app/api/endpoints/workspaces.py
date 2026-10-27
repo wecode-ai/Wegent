@@ -3,12 +3,16 @@
 
 """Collaboration Workspace API shared by Wegent and Wework clients."""
 
+import logging
+from time import perf_counter
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_current_user_jwt_apikey_tasktoken
 from app.models.user import User
+from app.schemas.base_role import BaseRole
 from app.schemas.cloud_project import (
     CloudProjectCreate,
     CloudProjectListResponse,
@@ -44,9 +48,11 @@ from app.services.cloud_projects.responses import (
 )
 from app.services.cloud_projects.responses import project_response as _project_response
 from app.services.workspaces import workspace_service
+from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
 resources_router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/{workspace_id}/transfer-ownership", response_model=WorkspaceResponse)
@@ -100,13 +106,29 @@ async def list_personal_resources(
 
 
 @router.post("", response_model=WorkspaceResponse, status_code=status.HTTP_201_CREATED)
+@trace_sync(span_name="workspaces.create", tracer_name="backend.workspaces")
 def create_workspace(
     values: WorkspaceCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> WorkspaceResponse:
-    workspace = workspace_service.create(db, current_user.id, values)
-    return _response(db, workspace, current_user)
+    started = perf_counter()
+    user_id = current_user.id
+    workspace = workspace_service.create(db, user_id, values)
+    persisted = perf_counter()
+    # Creation commits only the new workspace and its owner membership. Return
+    # that transaction's snapshot without scanning unrelated resources.
+    response = WorkspaceResponse.model_validate(
+        {**workspace.__dict__, "access_role": BaseRole.Owner, "member_count": 1}
+    )
+    logger.info(
+        "Workspace created: workspace_id=%s user_id=%s persist_ms=%.1f response_ms=%.1f",
+        workspace.id,
+        user_id,
+        (persisted - started) * 1000,
+        (perf_counter() - persisted) * 1000,
+    )
+    return response
 
 
 @router.get("/{workspace_id}", response_model=WorkspaceResponse)

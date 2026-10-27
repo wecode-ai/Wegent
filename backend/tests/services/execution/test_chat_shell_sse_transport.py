@@ -156,6 +156,96 @@ async def test_cancelled_response_does_not_close_shared_client() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancel_during_chunk_delivery_cannot_emit_buffered_completion() -> None:
+    delivery_started = asyncio.Event()
+    cancellation_consumed = asyncio.Event()
+    delivered = []
+
+    async def emit(event: ExecutionEvent) -> None:
+        delivered.append(event.type)
+        if event.type == EventType.CHUNK.value:
+            delivery_started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                # A delivery dependency can finish normally after consuming cancellation.
+                cancellation_consumed.set()
+
+    def handler(_request):
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_DELTA + _COMPLETED,
+        )
+
+    emitter = AsyncMock()
+    emitter.emit.side_effect = emit
+    async with _environment(handler) as (dispatcher, request, target, client, session):
+        task = asyncio.create_task(dispatcher._dispatch_sse(request, target, emitter))
+        try:
+            await asyncio.wait_for(delivery_started.wait(), timeout=2)
+            session.register_stream.return_value.set()
+            await asyncio.wait_for(asyncio.shield(task), timeout=2)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+        assert cancellation_consumed.is_set()
+        assert delivered == [EventType.CHUNK.value, EventType.CANCELLED.value]
+        assert not client.is_closed()
+        session.unregister_stream.assert_awaited_once_with(request.subtask_id)
+
+
+class _CancellationResistantStream(httpx.AsyncByteStream):
+    def __init__(self) -> None:
+        self.read_started = asyncio.Event()
+        self.cancellation_consumed = asyncio.Event()
+        self.closed = False
+
+    async def __aiter__(self):
+        yield _DELTA
+        self.read_started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            self.cancellation_consumed.set()
+        yield _COMPLETED
+
+    async def aclose(self):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_read_cannot_emit_buffered_completion() -> None:
+    body = _CancellationResistantStream()
+
+    def handler(_request):
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, stream=body
+        )
+
+    emitter = AsyncMock()
+    async with _environment(handler) as (dispatcher, request, target, client, session):
+        task = asyncio.create_task(dispatcher._dispatch_sse(request, target, emitter))
+        try:
+            await asyncio.wait_for(body.read_started.wait(), timeout=2)
+            session.register_stream.return_value.set()
+            await asyncio.wait_for(asyncio.shield(task), timeout=2)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+        assert body.cancellation_consumed.is_set()
+        assert [call.args[0].type for call in emitter.emit.await_args_list] == [
+            EventType.CHUNK.value,
+            EventType.CANCELLED.value,
+        ]
+        assert body.closed
+        assert not client.is_closed()
+        session.unregister_stream.assert_awaited_once_with(request.subtask_id)
+
+
+@pytest.mark.asyncio
 async def test_start_event_failure_unregisters_stream() -> None:
     handler = AsyncMock()
     emitter = AsyncMock()
