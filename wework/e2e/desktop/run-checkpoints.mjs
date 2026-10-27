@@ -12,6 +12,7 @@ import {
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
+import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -59,6 +60,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-collaboration-composer-isolation':
     './scenarios/plugin-collaboration-composer-isolation.scenario.mjs',
   'plugin-runtime-path-recovery': './scenarios/plugin-runtime-path-recovery.scenario.mjs',
+  'plugin-runtime-route-refresh': './scenarios/plugin-runtime-route-refresh.scenario.mjs',
+  'plugin-background-sync-isolation': './scenarios/plugin-background-sync-isolation.scenario.mjs',
+  'plugin-periodic-reconcile': './scenarios/plugin-periodic-reconcile.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'runtime-input-answer-persistence': './scenarios/runtime-input-answer-persistence.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
@@ -118,6 +122,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'cloud-login-proxy': './scenarios/cloud-login-proxy.scenario.mjs',
   'collaboration-deliveries': './scenarios/collaboration-deliveries.scenario.mjs',
+  'collaboration-delivery-editing': './scenarios/collaboration-delivery-editing.scenario.mjs',
   'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
   'collaboration-issue-task-discovery':
     './scenarios/collaboration-issue-task-discovery.scenario.mjs',
@@ -131,6 +136,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
   'stand-in-list-confirmation': './scenarios/stand-in-list-confirmation.scenario.mjs',
   'stand-in-profile-settings': './scenarios/stand-in-profile.scenario.mjs',
+  'stand-in-telemetry': './scenarios/stand-in-telemetry.scenario.mjs',
   'stand-in-model-catalog': './scenarios/stand-in-model-catalog.scenario.mjs',
   'stand-in-identities': './scenarios/stand-in-identities.scenario.mjs',
   'stand-in-connections': './scenarios/stand-in-connections.scenario.mjs',
@@ -163,8 +169,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-issue-assignment-activity.scenario.mjs',
   'collaboration-issue-comment-attachments':
     './scenarios/collaboration-issue-comment-attachments.scenario.mjs',
-  'collaboration-issue-comment-notification':
+  'collaboration-issue-comment-notification-navigation':
     './scenarios/collaboration-issue-comment-notification.scenario.mjs',
+  'issue-notification-read': './scenarios/issue-notification-read.scenario.mjs',
   'collaboration-issue-mcp-comments': './scenarios/collaboration-issue-mcp-comments.scenario.mjs',
   'collaboration-issue-attachment-preview':
     './scenarios/collaboration-issue-attachment-preview.scenario.mjs',
@@ -227,6 +234,9 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-composer-long-list',
   'plugin-collaboration-composer-isolation',
   'plugin-runtime-path-recovery',
+  'plugin-runtime-route-refresh',
+  'plugin-background-sync-isolation',
+  'plugin-periodic-reconcile',
   'codex-account-login',
   'cloud-space-mention',
   'collaboration-issue-badges',
@@ -245,6 +255,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-login-proxy',
   'collaboration-shared-core',
   'collaboration-deliveries',
+  'collaboration-delivery-editing',
   'collaboration-issue-task-discovery',
   'collaboration-app-queue-identity',
   'collaboration-runtime-reconciliation',
@@ -254,6 +265,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'stand-in-action-confirmation',
   'stand-in-list-confirmation',
   'stand-in-profile-settings',
+  'stand-in-telemetry',
   'stand-in-model-catalog',
   'stand-in-identities',
   'stand-in-connections',
@@ -278,7 +290,8 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-issue-comment-mention',
   'collaboration-issue-assignment-activity',
   'collaboration-issue-comment-attachments',
-  'collaboration-issue-comment-notification',
+  'collaboration-issue-comment-notification-navigation',
+  'issue-notification-read',
   'collaboration-issue-mcp-comments',
   'collaboration-issue-attachment-preview',
   'collaboration-issue-archive',
@@ -409,13 +422,13 @@ function runTaskFlow(args, env, label) {
     })
     child.once('exit', (code, signal) => {
       clearInterval(heartbeat)
-      resolvePromise({
+      rejectRecordedCheckpointFailure({
         code: code ?? 1,
         durationMs: Date.now() - startedAt,
         resultDir,
         signal,
         stderrTail,
-      })
+      }).then(resolvePromise, reject)
     })
   })
 }

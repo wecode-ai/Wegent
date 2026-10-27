@@ -16,6 +16,7 @@ import { PluginPickerMenu } from './PluginPickerMenu'
 import { ComposerCatalogContext } from './ComposerCatalogContext'
 import { createComposerCatalogStore } from '@wegent/collaboration/composer/createComposerCatalogStore'
 import { SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
+import { getComposerDiagnosticsSnapshot } from '@wegent/collaboration/composer/composerDiagnostics'
 
 const nativeWorkspacePickerMocks = vi.hoisted(() => ({
   open: vi.fn(),
@@ -605,7 +606,7 @@ describe('ComposerTextarea', () => {
 
     fireEvent.keyDown(editor, { key: 'Tab', code: 'Tab', keyCode: 9, charCode: 9 })
 
-    expect(onSetGoal).toHaveBeenCalledOnce()
+    expect(onSetGoal, JSON.stringify(getComposerDiagnosticsSnapshot())).toHaveBeenCalledOnce()
     expect(onSubmit).not.toHaveBeenCalled()
     await waitFor(() => expect(editor.value).toBe(''))
     await waitFor(() => expect(screen.queryByTestId('slash-command-menu')).not.toBeInTheDocument())

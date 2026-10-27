@@ -128,6 +128,25 @@ impl Default for ExecutionRequest {
 }
 
 impl ExecutionRequest {
+    pub(crate) fn uses_ephemeral_codex_thread(&self) -> bool {
+        self.ephemeral
+            && self
+                .extra
+                .get("persist_runtime_thread")
+                .and_then(Value::as_bool)
+                != Some(true)
+    }
+
+    pub(crate) fn persist_runtime_thread(&mut self) {
+        self.extra
+            .insert("persist_runtime_thread".to_owned(), Value::Bool(true));
+    }
+
+    pub(crate) fn use_ephemeral_codex_thread(&mut self) {
+        self.ephemeral = true;
+        self.extra.remove("persist_runtime_thread");
+    }
+
     pub fn is_local_project(&self) -> bool {
         self.extra
             .get("origin")

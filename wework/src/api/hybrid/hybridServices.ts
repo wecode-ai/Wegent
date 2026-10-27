@@ -1684,6 +1684,20 @@ export function createHybridWorkbenchServices(
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async configureTelemetry(userId, deviceId, enabled, enabledSince) {
+        return (await standInApiForDevice(deviceId)).configureTelemetry(
+          userId,
+          deviceId,
+          enabled,
+          enabledSince
+        )
+      },
+      async telemetryFacts(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).telemetryFacts(userId, deviceId)
+      },
+      async acknowledgeTelemetry(userId, deviceId, ids) {
+        return (await standInApiForDevice(deviceId)).acknowledgeTelemetry(userId, deviceId, ids)
+      },
       async memories(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).memories(userId, deviceId)
       },
@@ -1702,13 +1716,14 @@ export function createHybridWorkbenchServices(
       async runWork(userId, deviceId, workId) {
         return (await standInApiForDevice(deviceId)).runWork(userId, deviceId, workId)
       },
-      async organizeWork(userId, deviceId, workId, messageIds, targetWorkId) {
+      async organizeWork(userId, deviceId, workId, messageIds, targetWorkId, telemetryAction) {
         return (await standInApiForDevice(deviceId)).organizeWork(
           userId,
           deviceId,
           workId,
           messageIds,
-          targetWorkId
+          targetWorkId,
+          ...(telemetryAction ? ([telemetryAction] as const) : ([] as const))
         )
       },
       async adjustMessage(userId, deviceId, workId, messageId, targetWorkId) {

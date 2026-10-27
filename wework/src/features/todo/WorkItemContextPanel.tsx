@@ -11,7 +11,7 @@ import { TodoEditor } from './TodoEditor'
 
 interface WorkItemContextPanelProps {
   api: ProjectSpaceApi
-  services: Pick<WorkbenchServices, 'projectSpaceDetailServices'>
+  services: Pick<WorkbenchServices, 'projectSpaceDetailServices' | 'runtimeWorkApi'>
   project: CloudProject
   item: CloudLoopItem
   currentTask: RuntimeTaskAddress
@@ -64,6 +64,7 @@ export function WorkItemContextPanel({
     >
       <div className="min-h-0 flex-1">
         <TodoEditor
+          getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
           mode="edit"
           presentation="workspace-panel"
           workspacePanelFill

@@ -15,6 +15,7 @@ import { resetRuntimeConversationQueueControllersForTests } from './runtimeConve
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import {
   clearPluginMarketplaceCache,
+  getPluginMarketplaceCache,
   pluginMarketplaceCacheKey,
 } from '@/features/plugins/pluginMarketplaceCache'
 import { writePluginInventory } from '@/features/plugins/pluginInventory'
@@ -94,6 +95,7 @@ import {
   resetComposerAppsMemory,
   replaceComposerApps,
 } from '@/components/chat/composer/composerAppsSnapshot'
+import { appReference } from '@/components/chat/composer/composerMentionCandidates'
 import type {
   Attachment,
   DeviceInfo,
@@ -281,6 +283,66 @@ function createRuntimeWork(
     totalTasks: 3,
     ...overrides,
   }
+}
+
+function createCloudComposerPlugin(deviceRouteId: string, attemptCount = 1): InstalledPlugin {
+  return {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledPlugin',
+    metadata: { name: 'documents', namespace: 'default', labels: { id: '101' } },
+    spec: {
+      source: { type: 'marketplace', providerKey: 'wegent-market', pluginKey: 'documents' },
+      displayName: 'Documents',
+      description: 'Create documents',
+      installState: 'installed',
+      enabled: true,
+      visibility: 'public',
+      pluginId: 101,
+      releaseId: 1001,
+      manifest: { name: 'documents' },
+      components: emptyPluginComponents(),
+    },
+    status: {
+      state: 'enabled',
+      devices: [
+        {
+          deviceId: deviceRouteId,
+          desiredReleaseId: 1001,
+          actualReleaseId: 1001,
+          state: 'installed',
+          attemptCount,
+          updatedAt: '2026-10-26T00:00:00Z',
+        },
+        {
+          deviceId: 'other-runtime-record',
+          desiredReleaseId: 1001,
+          state: 'failed',
+          attemptCount: 1,
+          updatedAt: '2026-10-26T00:00:00Z',
+        },
+      ],
+    },
+  }
+}
+
+function mockComposerDirectoryRoute(resolveRoute: () => string) {
+  localExecutorMocks.requestLocalExecutor.mockImplementation(
+    async (method: string, params?: unknown) => {
+      if (method === 'executor.plugins.device_route')
+        return { device_id: 'local-device', device_route_id: resolveRoute() }
+      if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
+      if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
+      if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+      if (method === 'executor.plugins.links.list') return []
+      if (method === 'codex.app_server_request') {
+        const request = params as { method?: string }
+        if (request.method === 'plugin/list' || request.method === 'plugin/installed')
+          return { marketplaces: [] }
+        if (request.method === 'app/list') return { data: [], nextCursor: null }
+      }
+      return {}
+    }
+  )
 }
 
 function createRemoteProjectRuntimeWork(name: string): RuntimeWorkListResponse {
@@ -2831,6 +2893,35 @@ function RuntimeTaskSkillsProbe() {
   )
 }
 
+function ComposerDirectorySendProbe({ message }: { message: string }) {
+  const workbench = useWorkbench()
+  const [result, setResult] = useState('idle')
+  return (
+    <>
+      <RuntimeTaskSkillsProbe />
+      <span data-testid="composer-directory-send-result">{result}</span>
+      <button
+        type="button"
+        onClick={() => {
+          setResult('sending')
+          void workbench
+            .sendRuntimePaneMessage({
+              address: {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/project-alpha',
+                taskId: 'runtime-a',
+              },
+              message,
+            })
+            .then(sent => setResult(sent ? 'sent' : 'failed'))
+        }}
+      >
+        send while reading composer directory
+      </button>
+    </>
+  )
+}
+
 function StartSkillChatProbe() {
   const workbench = useWorkbench()
   const [result, setResult] = useState('not-started')
@@ -3885,6 +3976,176 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
   })
 
+  test('routes composer inventory through the current Runtime while retaining stable cache identity', async () => {
+    setElectronRuntime()
+    let routeId = 'runtime-record-70'
+    mockComposerDirectoryRoute(() => routeId)
+    pluginApiMocks.cloudListInstalledPlugins.mockImplementation(async () => ({
+      items: [createCloudComposerPlugin(routeId, routeId === 'runtime-record-70' ? 1 : 2)],
+    }))
+    const cacheKey = pluginMarketplaceCacheKey('https://cloud.example/api', 'test-token')
+    renderWorkbench(<RuntimeTaskSkillsProbe />, createWorkbenchServices(), {
+      status: 'connected',
+      isConnected: true,
+      apiBaseUrl: 'https://cloud.example/api',
+      token: 'test-token',
+    })
+
+    await userEvent.click(screen.getByText('list local apps'))
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(
+        'loaded:plugin:documents'
+      )
+    )
+    expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'executor.plugins.device_route',
+      {
+        backend_url: 'https://cloud.example',
+        auth_token: 'test-token',
+        device_id: 'local-device',
+      }
+    )
+    expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenLastCalledWith('runtime-record-70')
+    await waitFor(() =>
+      expect(getPluginMarketplaceCache(cacheKey)?.installedPluginsFetchedAt).toBeDefined()
+    )
+    expect(getPluginMarketplaceCache(cacheKey)).toMatchObject({
+      deviceId: 'local-device',
+      installedPlugins: [
+        {
+          status: {
+            devices: [
+              { deviceId: 'local-device', state: 'installed' },
+              { deviceId: 'other-runtime-record', state: 'failed' },
+            ],
+          },
+        },
+      ],
+    })
+
+    routeId = 'runtime-record-71'
+    act(() => window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT)))
+
+    await waitFor(() =>
+      expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenLastCalledWith('runtime-record-71')
+    )
+    await waitFor(() =>
+      expect(getPluginMarketplaceCache(cacheKey)?.installedPlugins[0]?.status.devices).toEqual([
+        expect.objectContaining({ deviceId: 'local-device', state: 'installed', attemptCount: 2 }),
+        expect.objectContaining({ deviceId: 'other-runtime-record', state: 'failed' }),
+      ])
+    )
+    expect(getPluginMarketplaceCache(cacheKey)?.deviceId).toBe('local-device')
+    expect(getComposerApps().map(app => app.id)).toEqual(['plugin:documents'])
+    expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledTimes(2)
+  })
+
+  test('reads the account inventory without stale targeting when the Runtime route becomes unavailable', async () => {
+    setElectronRuntime()
+    let routeAvailable = true
+    mockComposerDirectoryRoute(() => {
+      if (!routeAvailable) throw new Error('Runtime registration unavailable')
+      return 'runtime-record-70'
+    })
+    pluginApiMocks.cloudListInstalledPlugins
+      .mockResolvedValueOnce({ items: [createCloudComposerPlugin('runtime-record-70')] })
+      .mockResolvedValue({ items: [] })
+    const cacheKey = pluginMarketplaceCacheKey('https://cloud.example/api', 'test-token')
+    renderWorkbench(<RuntimeTaskSkillsProbe />, createWorkbenchServices(), {
+      status: 'connected',
+      isConnected: true,
+      apiBaseUrl: 'https://cloud.example/api',
+      token: 'test-token',
+    })
+    await userEvent.click(screen.getByText('list local apps'))
+    await waitFor(() => expect(getComposerApps().map(app => app.id)).toEqual(['plugin:documents']))
+    await waitFor(() =>
+      expect(getPluginMarketplaceCache(cacheKey)?.installedPluginsFetchedAt).toBeDefined()
+    )
+    expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenLastCalledWith('runtime-record-70')
+
+    routeAvailable = false
+    act(() => window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT)))
+
+    await waitFor(() =>
+      expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenLastCalledWith('')
+    )
+    await waitFor(() => expect(getComposerApps()).toEqual([]))
+    expect(getPluginMarketplaceCache(cacheKey)?.deviceId).toBe('local-device')
+    expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledTimes(2)
+  })
+
+  test.each([
+    { kind: 'ordinary', directory: 'pending', message: '继续处理任务' },
+    { kind: 'ordinary', directory: 'failed', message: '继续处理任务' },
+    {
+      kind: 'plugin',
+      directory: 'pending',
+      message: `${appReference({ id: 'plugin:documents', name: 'Documents' })} 生成报告`,
+    },
+    {
+      kind: 'plugin',
+      directory: 'failed',
+      message: `${appReference({ id: 'plugin:documents', name: 'Documents' })} 生成报告`,
+    },
+  ])(
+    'sends a $kind message while the composer directory is $directory',
+    async ({ directory, message }) => {
+      setElectronRuntime()
+      mockComposerDirectoryRoute(() => 'runtime-record-70')
+      const inventory = deferred<{ items: InstalledPlugin[] }>()
+      pluginApiMocks.cloudListInstalledPlugins.mockReturnValue(inventory.promise)
+      const runtimeWorkApi = createRuntimeWorkApiMock()
+      renderWorkbench(
+        <ComposerDirectorySendProbe message={message} />,
+        createWorkbenchServices({ runtimeWorkApi }),
+        {
+          status: 'connected',
+          isConnected: true,
+          apiBaseUrl: 'https://cloud.example/api',
+          token: 'test-token',
+        }
+      )
+      await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalled())
+      await userEvent.click(screen.getByText('list local apps'))
+      await waitFor(() =>
+        expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledWith('runtime-record-70')
+      )
+      if (directory === 'failed') {
+        inventory.reject(new Error('Cloud plugin directory unavailable'))
+        await waitFor(() =>
+          expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(
+            'failed:Error: Cloud plugin directory unavailable'
+          )
+        )
+      } else {
+        expect(screen.getByTestId('composer-apps-result')).toHaveTextContent('loading')
+      }
+
+      await userEvent.click(screen.getByText('send while reading composer directory'))
+
+      await waitFor(() =>
+        expect(screen.getByTestId('composer-directory-send-result')).toHaveTextContent('sent')
+      )
+      expect(runtimeWorkApi.sendRuntimeMessage).toHaveBeenCalledExactlyOnceWith({
+        address: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-a',
+        },
+        message,
+      })
+      expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledOnce()
+      if (directory === 'pending') {
+        expect(screen.getByTestId('composer-apps-result')).toHaveTextContent('loading')
+        inventory.resolve({ items: [] })
+        await waitFor(() =>
+          expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(/^loaded:$/)
+        )
+      }
+    }
+  )
+
   test('keeps installed plugins available while both remote Codex catalogs hang and fail', async () => {
     setElectronRuntime()
     const codexApps = deferred<{ data: LocalDeviceApp[]; nextCursor: null }>()
@@ -4155,6 +4416,8 @@ describe('WorkbenchProvider runtime tasks', () => {
     setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
+        if (method === 'executor.plugins.device_route')
+          return { device_id: 'local-device', device_route_id: 'runtime-record-70' }
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
         if (method === 'runtime.connectors.apps.sync') return { apps: [] }
         if (method === 'runtime.tasks.list') {
@@ -4218,7 +4481,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await userEvent.click(screen.getByText('list local apps'))
     await waitFor(() => expect(getComposerApps().map(app => app.id)).toContain('plugin:documents'))
-    expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledWith('local-device')
+    expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledWith('runtime-record-70')
     await waitFor(() => expect(listWegentInstalledConnectorApps).toHaveBeenCalled())
 
     act(() => {

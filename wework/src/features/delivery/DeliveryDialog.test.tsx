@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -42,7 +42,7 @@ describe('DeliveryDialog', () => {
     deliveryFileMocks.readSelectedDeliveryFiles.mockResolvedValue([])
   })
 
-  it('creates and finalizes a Markdown-first immutable delivery', async () => {
+  it('creates and finalizes a delivery with its title and notes', async () => {
     const bindTask = vi.fn(async () => undefined)
     const createDelivery = vi.fn(async () => ({ id: 'delivery-1' }))
     const finalizeDelivery = vi.fn(async () => ({ id: 'delivery-1' }))
@@ -67,11 +67,14 @@ describe('DeliveryDialog', () => {
     )
 
     const dialog = screen.getByTestId('delivery-dialog')
+    expect(screen.getByTestId('delivery-title')).toHaveValue('Implement delivery')
     expect(dialog).toHaveAttribute('aria-modal', 'true')
     expect(dialog.parentElement?.parentElement).toBe(document.body)
     expect(view.container).toBeEmptyDOMElement()
 
-    await userEvent.type(screen.getByTestId('delivery-markdown'), '# Result\nReady to continue')
+    fireEvent.change(screen.getByTestId('delivery-markdown'), {
+      target: { value: '# Result\nReady to continue' },
+    })
     await userEvent.click(screen.getByTestId('delivery-confirm'))
 
     await waitFor(() => expect(finalizeDelivery).toHaveBeenCalledWith('delivery-1'))
@@ -81,7 +84,10 @@ describe('DeliveryDialog', () => {
     })
     expect(createDelivery).toHaveBeenCalledWith(
       'todo-1',
-      expect.objectContaining({ markdown: '# Result\nReady to continue' })
+      expect.objectContaining({
+        title: 'Implement delivery',
+        markdown: '# Result\nReady to continue',
+      })
     )
     expect(screen.getByTestId('delivery-complete-dialog')).toBeInTheDocument()
   })
@@ -198,7 +204,7 @@ describe('DeliveryDialog', () => {
     const attachmentPicker = screen.getByTestId('delivery-attachment-picker')
     const attachmentCheckbox = within(attachmentPicker).getByRole('checkbox')
     await userEvent.click(attachmentCheckbox)
-    await userEvent.type(screen.getByTestId('delivery-markdown'), 'Done')
+    fireEvent.change(screen.getByTestId('delivery-markdown'), { target: { value: 'Done' } })
     await userEvent.click(screen.getByTestId('delivery-confirm'))
 
     await waitFor(() => expect(deliveryApi.finalizeDelivery).toHaveBeenCalledWith('delivery-1'))

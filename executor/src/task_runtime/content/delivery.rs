@@ -43,6 +43,8 @@ fn map_delivery(row: &Row<'_>) -> rusqlite::Result<Delivery> {
         .unwrap_or_else(|| json!({}));
     Ok(Delivery {
         id: row.get(0)?,
+        title: row.get::<_, Option<String>>(8)?.unwrap_or_default(),
+        version: row.get(9)?,
         loop_item_id: row.get(1)?,
         created_by_user_id: 0,
         source_task_binding_id: row.get(2)?,
@@ -154,6 +156,218 @@ fn attach_delivery_to_workflow(
 }
 
 impl LocalTaskStore {
+    pub fn list_project_delivery_files(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<serde_json::Value>, TaskRuntimeError> {
+        self.get_project(project_id)?;
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT a.id, d.id, COALESCE(d.loop_item_id, json_extract(d.metadata, '$.external_item_id')),
+                    a.relative_path, a.display_name, a.content_type, a.size_bytes, d.delivered_at
+             FROM loop_items a JOIN loop_items d ON a.delivery_id = d.id
+             WHERE a.resource_type = 'delivery_asset' AND d.resource_type = 'delivery'
+               AND d.cloud_project_id = ?1 AND d.status = 'delivered'
+               AND a.deleted_at IS NULL AND d.deleted_at IS NULL ORDER BY d.delivered_at DESC, a.relative_path"
+        )?;
+        let rows = statement
+            .query_map([project_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, String>(7)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter().map(|(asset_id, delivery_id, item_id, path, name, content_type, size, delivered_at)| {
+            let mut item_path = Vec::new();
+            let mut next = Some(item_id.clone());
+            let mut visited = std::collections::HashSet::new();
+            while let Some(id) = next.take() {
+                if !visited.insert(id.clone()) { break; }
+                let item = connection.query_row(
+                    "SELECT title, parent_id FROM loop_items WHERE id = ?1 AND resource_type = 'task' AND cloud_project_id = ?2 AND deleted_at IS NULL",
+                    params![id, project_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                ).optional()?;
+                let Some((title, parent)) = item else { break; };
+                item_path.push(json!({"id": id, "title": title})); next = parent;
+            }
+            let title = item_path.first().and_then(|item| item["title"].as_str()).unwrap_or(&item_id).to_owned();
+            item_path.reverse();
+            Ok(json!({"asset_id": asset_id, "delivery_id": delivery_id, "loop_item_id": item_id,
+                "loop_item_title": title, "relative_path": path, "display_name": name, "content_type": content_type,
+                "size_bytes": size, "delivered_at": delivered_at, "loop_item_path": item_path}))
+        }).collect()
+    }
+
+    pub fn update_delivery(
+        &self,
+        delivery_id: &str,
+        input: DeliveryUpdate,
+    ) -> Result<DeliveryDetail, TaskRuntimeError> {
+        let detail = self.delivery_detail(delivery_id)?;
+        let invalid = |message: &str| TaskRuntimeError::Invalid(message.to_owned());
+        if detail.delivery.status != "delivered" || detail.delivery.version != input.version {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        if input.title.trim().is_empty() || input.title.chars().count() > 255 {
+            return Err(invalid("Delivery title must contain 1 to 255 characters"));
+        }
+        if input.chat.as_ref().is_some_and(|chat| !chat.is_object()) {
+            return Err(invalid("Delivery chat must be an object"));
+        }
+        if input.markdown.len() > 2 * 1024 * 1024
+            || input
+                .chat
+                .as_ref()
+                .is_some_and(|chat| chat.to_string().len() > 10 * 1024 * 1024)
+        {
+            return Err(invalid("Delivery text is too large"));
+        }
+        let retained: std::collections::HashSet<_> = input.retained_asset_ids.iter().collect();
+        if retained.len() != input.retained_asset_ids.len()
+            || retained
+                .iter()
+                .any(|id| !detail.delivery.assets.iter().any(|asset| &asset.id == *id))
+        {
+            return Err(invalid("Invalid retained delivery asset"));
+        }
+        let mut paths: std::collections::HashSet<String> = detail
+            .delivery
+            .assets
+            .iter()
+            .filter(|asset| retained.contains(&asset.id))
+            .map(|asset| asset.relative_path.clone())
+            .collect();
+        let mut staged = Vec::new();
+        for entry in &input.files {
+            let path = normalize_relative_path(&entry.relative_path)?;
+            if !paths.insert(path.clone()) {
+                return Err(invalid("Duplicate delivery file path"));
+            }
+            staged.push((numeric_id(), path, decode_binary(&entry.file)?, &entry.file));
+        }
+        // Fulfillment references must remain valid after editing.
+        for fulfillment in &detail.delivery.fulfillments {
+            let ids = fulfillment
+                .get("asset_ids")
+                .and_then(serde_json::Value::as_array);
+            if ids
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .any(|id| !retained.contains(&id.to_owned()))
+                || fulfillment
+                    .get("asset_id")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|id| !retained.contains(&id.to_owned()))
+            {
+                return Err(invalid(
+                    "Cannot remove an asset referenced by a deliverable requirement",
+                ));
+            }
+        }
+        let revision_key = format!("deliveries/{delivery_id}/revisions/{}", numeric_id());
+        let revision_path = self.resolve_object_key(Path::new(&revision_key))?;
+        let obsolete = {
+            let connection = self.connection()?;
+            let (markdown, chat): (String, Option<String>) = connection.query_row(
+                "SELECT markdown_object_key, chat_object_key FROM loop_items WHERE id = ?1 AND resource_type = 'delivery'", [delivery_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            let mut keys = vec![markdown];
+            keys.extend(chat);
+            for asset in detail
+                .delivery
+                .assets
+                .iter()
+                .filter(|asset| !retained.contains(&asset.id))
+            {
+                let key = connection.query_row("SELECT object_key FROM loop_items WHERE id = ?1 AND resource_type = 'delivery_asset'", [&asset.id], |row| row.get::<_, String>(0))?;
+                keys.push(key);
+            }
+            keys
+        };
+        let result = (|| {
+            let markdown_key = format!("{revision_key}/markdown.md");
+            write_binary(
+                &self.resolve_object_key(Path::new(&markdown_key))?,
+                input.markdown.as_bytes(),
+            )?;
+            let chat_key = input
+                .chat
+                .as_ref()
+                .map(|chat| -> Result<String, TaskRuntimeError> {
+                    let key = format!("{revision_key}/chat.json");
+                    write_binary(
+                        &self.resolve_object_key(Path::new(&key))?,
+                        &serde_json::to_vec(chat).map_err(|e| invalid(&e.to_string()))?,
+                    )?;
+                    Ok(key)
+                })
+                .transpose()?;
+            let timestamp = now();
+            let mut connection = self.connection()?;
+            let transaction = connection.transaction()?;
+            let changed = transaction.execute(
+                "UPDATE loop_items SET title = ?1, markdown_object_key = ?2, chat_object_key = ?3,
+                    version = version + 1, updated_at = ?4
+                 WHERE id = ?5 AND resource_type = 'delivery' AND status = 'delivered'
+                    AND deleted_at IS NULL AND version = ?6",
+                params![
+                    input.title.trim(),
+                    markdown_key,
+                    chat_key,
+                    timestamp,
+                    delivery_id,
+                    input.version
+                ],
+            )?;
+            if changed != 1 {
+                return Err(TaskRuntimeError::VersionConflict);
+            }
+            for asset in &detail.delivery.assets {
+                if !retained.contains(&asset.id) {
+                    transaction.execute("UPDATE loop_items SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND delivery_id = ?3 AND resource_type = 'delivery_asset'", params![timestamp, asset.id, delivery_id])?;
+                }
+            }
+            for (id, path, bytes, file) in &staged {
+                let object_key = format!("{revision_key}/files/{id}");
+                write_binary(&self.resolve_object_key(Path::new(&object_key))?, bytes)?;
+                transaction.execute(
+                    "INSERT INTO loop_items (id, resource_type, project_space, cloud_project_id, loop_item_id,
+                        delivery_id, kind, display_name, relative_path, object_key, content_type, size_bytes,
+                        sha256, metadata, status, version, created_at, updated_at)
+                     SELECT ?1, 'delivery_asset', project_space, cloud_project_id, loop_item_id,
+                        id, 'file', ?2, ?3, ?4, ?5, ?6, ?7, metadata, 'delivered', 1, ?8, ?8
+                     FROM loop_items WHERE id = ?9 AND resource_type = 'delivery'",
+                    params![id, file.display_name, path, object_key, file.content_type, bytes.len() as i64, sha256_hex(bytes), timestamp, delivery_id],
+                )?;
+            }
+            refresh_runtime_projection_additional_context(
+                &transaction,
+                &detail.delivery.loop_item_id,
+            )?;
+            transaction.commit()?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_dir_all(revision_path);
+        }
+        result?;
+        for key in obsolete {
+            if let Ok(path) = self.resolve_object_key(Path::new(&key)) {
+                if let Err(error) = fs::remove_file(path) {
+                    eprintln!("Could not remove obsolete delivery object: {error}");
+                }
+            }
+        }
+        self.delivery_detail(delivery_id)
+    }
+
     pub fn create_delivery(
         &self,
         project_id: &str,
@@ -212,9 +426,9 @@ impl LocalTaskStore {
             "INSERT INTO loop_items (
                 id, resource_type, project_space, cloud_project_id, loop_item_id,
                 source_task_binding_id, source_task_snapshot, markdown_object_key,
-                chat_object_key, metadata, status, version, created_at, updated_at
+                chat_object_key, metadata, status, version, created_at, updated_at, title
              ) VALUES (?1, 'delivery', 'default', ?2, ?3, ?4, ?5, ?6, ?7, ?8,
-                       'draft', 1, ?9, ?9)",
+                       'draft', 1, ?9, ?9, ?10)",
             params![
                 id,
                 project_id,
@@ -225,6 +439,7 @@ impl LocalTaskStore {
                 chat_key,
                 metadata.to_string(),
                 timestamp,
+                input.title.trim(),
             ],
         )?;
         if persisted_task {
@@ -574,7 +789,7 @@ impl LocalTaskStore {
                 "SELECT id,
                         COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
                         source_task_binding_id, source_task_snapshot,
-                        status, created_at, delivered_at, metadata
+                        status, created_at, delivered_at, metadata, title, version
                  FROM loop_items
                  WHERE id = ?1 AND resource_type = 'delivery'
                    AND (loop_item_id = ?2 OR json_extract(metadata, '$.external_item_id') = ?2)

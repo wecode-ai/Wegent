@@ -22,6 +22,7 @@ export interface DshExecutorDescription {
   protocol_version: number
   device_id: string
   runtime_instance_id: string
+  device_route_id?: string
   version?: string
   capabilities: string[]
   renderer_methods: string[]

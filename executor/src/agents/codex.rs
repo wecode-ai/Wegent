@@ -1768,6 +1768,21 @@ fn codex_thread_plan(
     }
 }
 
+fn temporary_thread_error(
+    request: &ExecutionRequest,
+    direct_thread_id: Option<&str>,
+    error: String,
+) -> String {
+    if request.uses_ephemeral_codex_thread()
+        && direct_thread_id.is_some_and(|id| error.contains(&format!("thread not found: {id}")))
+    {
+        return format!(
+            "Temporary chat session has expired. Open a new temporary chat to continue. ({error})"
+        );
+    }
+    error
+}
+
 fn thread_id_to_activate_before_start(thread_plan: &CodexThreadPlan) -> Option<&str> {
     match &thread_plan.start {
         CodexThreadStart::Direct(thread_id) => Some(thread_id),
@@ -2122,10 +2137,11 @@ async fn run_codex_app_server_turn_on_shared_client(
             duration_ms,
         })
     }
-    .await;
+    .await
+    .map_err(|error| temporary_thread_error(&prepared.request, direct_thread_id.as_deref(), error));
 
     if let Some(thread_id) = subscribed_thread_id {
-        let retain_subscription = result.is_ok() && !prepared.request.ephemeral;
+        let retain_subscription = result.is_ok() && !prepared.request.uses_ephemeral_codex_thread();
         client
             .finish_thread_activity(&thread_id, retain_subscription)
             .await;
@@ -4019,7 +4035,9 @@ fn build_codex_launch_config_with_route_scope(
         )?;
     launch_config.config_overrides.extend(request_mcp_overrides);
     launch_config.env.extend(request_mcp_environment);
-    if crate::runtime_work::stand_in_requires_confirmation(request) {
+    if crate::runtime_work::stand_in_requires_confirmation(request)
+        && !external_work::applies(request)
+    {
         let approvals = stand_in_mcp_approval_overrides(
             request,
             &codex_home,
@@ -6080,7 +6098,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
         codex_runtime_approval_policy(request),
     );
     insert_codex_runtime_permissions(&mut params, request);
-    if request.ephemeral {
+    if request.uses_ephemeral_codex_thread() {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
     if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false) {
@@ -6115,7 +6133,7 @@ fn thread_fork_params(
         codex_runtime_approval_policy(request),
     );
     insert_codex_runtime_permissions(&mut params, request);
-    if request.ephemeral {
+    if request.uses_ephemeral_codex_thread() {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
     Value::Object(params)

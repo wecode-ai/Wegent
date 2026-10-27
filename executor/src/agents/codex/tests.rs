@@ -3806,6 +3806,59 @@ fn codex_thread_plan_trims_and_prioritizes_direct_thread() {
 }
 
 #[test]
+fn temporary_tasks_persist_native_history_without_changing_auxiliary_threads() {
+    let launch = CodexLaunchConfig::default();
+    let mut request = ExecutionRequest {
+        ephemeral: true,
+        ..ExecutionRequest::default()
+    };
+    assert_eq!(thread_start_params(&request, &launch)["ephemeral"], true);
+    assert_eq!(
+        thread_fork_params("source", None, &request, &launch)["ephemeral"],
+        true
+    );
+
+    request.persist_runtime_thread();
+    assert!(request.ephemeral, "the task must remain hidden");
+    assert!(thread_start_params(&request, &launch)
+        .get("ephemeral")
+        .is_none());
+    assert!(thread_fork_params("source", None, &request, &launch)
+        .get("ephemeral")
+        .is_none());
+
+    request.use_ephemeral_codex_thread();
+    assert!(request.uses_ephemeral_codex_thread());
+    assert!(request.extra.get("persist_runtime_thread").is_none());
+    assert_eq!(thread_start_params(&request, &launch)["ephemeral"], true);
+    assert_eq!(
+        thread_fork_params("source", None, &request, &launch)["ephemeral"],
+        true
+    );
+}
+
+#[test]
+fn missing_legacy_temporary_threads_explain_how_to_continue() {
+    let mut request = ExecutionRequest {
+        ephemeral: true,
+        ..ExecutionRequest::default()
+    };
+    let original = "thread not found: old-thread".to_owned();
+    let error = temporary_thread_error(&request, Some("old-thread"), original.clone());
+    assert!(error.contains("Open a new temporary chat"));
+    assert!(error.contains(&original));
+    assert_eq!(
+        temporary_thread_error(&request, Some("another-thread"), original.clone()),
+        original
+    );
+    request.persist_runtime_thread();
+    assert_eq!(
+        temporary_thread_error(&request, Some("old-thread"), original.clone()),
+        original
+    );
+}
+
+#[test]
 fn codex_thread_plan_ignores_empty_direct_thread_and_prioritizes_fork() {
     let plan = codex_thread_plan(
         Some("   "),
@@ -4936,6 +4989,41 @@ fn codex_launch_config_includes_computer_use_mcp_server() {
     );
 
     let _ = fs::remove_dir_all(home);
+}
+
+#[test]
+fn source_collaboration_approval_exemption_survives_start_resume_fork_and_turn() {
+    let _environment = environment::LaunchEnvironment::new();
+    for kind in ["connection_work", "dingtalk_work", "issue_dispatch"] {
+        for ask in [false, true] {
+            let request = serde_json::from_value(json!({
+                "task_id":"source-collaboration-review",
+                "origin":{"type":kind,"initiatedBy":"stand_in","askBeforeAct":ask,
+                    "cloudProjectId":"project-1","loopItemId":"issue-1"}
+            }))
+            .unwrap();
+            let launch = build_codex_launch_config(&request).unwrap();
+            let key = "mcp_servers.wework_space.default_tools_approval_mode";
+            assert_eq!(
+                launch.config_overrides.iter().filter(|entry| entry.starts_with(&format!("{key}="))).count(),
+                2,
+                "One managed default and one source policy override; never apply source policy twice"
+            );
+            for params in [
+                thread_start_params(&request, &launch),
+                thread_resume_params("thread", &request, &launch),
+                thread_fork_params("thread", None, &request, &launch),
+            ] {
+                assert_eq!(params["config"][key], "approve");
+                assert_eq!(
+                    params["approvalsReviewer"],
+                    external_work::reviewer(&request)
+                );
+            }
+            let turn = turn_start_params("thread", &request, &launch, vec![]);
+            assert_eq!(turn["approvalsReviewer"], external_work::reviewer(&request));
+        }
+    }
 }
 
 #[test]

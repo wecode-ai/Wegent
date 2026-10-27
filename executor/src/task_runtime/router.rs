@@ -8,11 +8,11 @@ use super::{
     aitable_provider::AITableProvider, credentials::mask_provider_config,
     issue_provider::IssueProvider, store::task_provider, ArchivedLoopItemPage, BinaryInput,
     ChatAgent, ChatAgentCreate, ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate,
-    DeliveryDetail, DeliveryFinalize, IssueComment, LocalComment, LocalCommentCreate,
-    LocalExecution, LocalExecutionClaim, LocalRuntimeCommentStart, LocalTaskStore, LoopItem,
-    ProjectCreate, ProjectDescriptor, ProjectFile, ProjectUpdate, RuntimeTaskAddress,
-    TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskRuntimeError,
-    TaskUpdate,
+    DeliveryDetail, DeliveryFinalize, DeliveryUpdate, IssueComment, LocalComment,
+    LocalCommentCreate, LocalExecution, LocalExecutionClaim, LocalRuntimeCommentStart,
+    LocalTaskStore, LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile, ProjectUpdate,
+    RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder,
+    TaskRuntimeError, TaskUpdate,
 };
 
 /// Routes project and task operations to the provider configured on each project.
@@ -555,6 +555,25 @@ impl TaskRuntime {
                 "{provider:?}"
             ))),
         }
+    }
+
+    pub fn assignment_receipts(
+        &self,
+        project: &str,
+        issue: &str,
+    ) -> Result<Vec<Value>, TaskRuntimeError> {
+        self.local_store.assignment_receipts(project, issue)
+    }
+
+    pub fn acknowledge_assignment(
+        &self,
+        project: &str,
+        issue: &str,
+        assignment: &str,
+        user: i64,
+    ) -> Result<(), TaskRuntimeError> {
+        self.local_store
+            .acknowledge_assignment(project, issue, assignment, user, false)
     }
 
     pub async fn mark_task_read(
@@ -1210,6 +1229,21 @@ impl TaskRuntime {
 
     pub fn list_deliveries(&self, item_id: &str) -> Result<Vec<Delivery>, TaskRuntimeError> {
         self.local_store.list_deliveries(item_id)
+    }
+
+    pub fn update_delivery(
+        &self,
+        delivery_id: &str,
+        input: DeliveryUpdate,
+    ) -> Result<DeliveryDetail, TaskRuntimeError> {
+        self.local_store.update_delivery(delivery_id, input)
+    }
+
+    pub fn list_project_delivery_files(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<Value>, TaskRuntimeError> {
+        self.local_store.list_project_delivery_files(project_id)
     }
 
     pub fn delivery_detail(&self, delivery_id: &str) -> Result<DeliveryDetail, TaskRuntimeError> {
