@@ -326,6 +326,8 @@ The composer context selector adds knowledge to the current message. The task/gr
 2. Agent stops processing
 3. You can continue the conversation or start a new task
 
+Once stopping a Chat conversation is confirmed, the partial reply is kept and the turn remains cancelled even if the model finishes afterward. If the live cancellation notification is missed, the runtime check restores the input's ready state.
+
 ### Q4: How to retry a failed conversation?
 
 **Method**:
