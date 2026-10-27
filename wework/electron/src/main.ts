@@ -6,6 +6,7 @@ import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   globalShortcut,
   ipcMain,
@@ -91,6 +92,8 @@ import {
   type StartupSplashTheme,
 } from './host/startup-splash.js'
 import { StartupProgressReporter } from './host/startup-progress.js'
+import { buildStartupDiagnostics, type StartupFailureSnapshot } from './host/startup-diagnostics.js'
+import { mainProcessLog } from './host/main-process-log.js'
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
 import { clearStartupRuntimeFiles, clearStartupUserFiles } from './host/startup-recovery-files.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
@@ -284,6 +287,8 @@ if (desktopDataPaths) {
   if (configuredUserDataPath) app.setAppLogsPath(join(userDataPath, 'logs'))
 }
 
+await mainProcessLog.setPath(join(app.getPath('logs'), 'wework-main.log'))
+
 let mainWindow: BrowserWindow | null = null
 let startupSplashWindow: BrowserWindow | null = null
 const workspaceWindows = new Map<string, BrowserWindow>()
@@ -316,6 +321,7 @@ let pendingSystemDrops: Array<{
   paths: string[]
 }> = []
 let runtimeError: string | null = null
+let lastStartupFailure: StartupFailureSnapshot | null = null
 let runtimePhase: 'initializing' | 'ready' | 'failed' = 'initializing'
 let runtimeStartPromise: Promise<void> | null = null
 let computerUseStartupScheduled = false
@@ -412,6 +418,10 @@ const conversationSearchDiagnosticsLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'conversation-search.log'),
   '[Wework] Conversation search diagnostic '
 )
+const startupRendererLog = new RuntimeDiagnosticsLog(
+  join(app.getPath('logs'), 'renderer-startup.log'),
+  ''
+)
 app.on('web-contents-created', (_event, contents) => {
   const logLoadEvent = (event: string) => () => {
     console.info('[renderer-load]', { event, webContentsId: contents.id })
@@ -441,6 +451,14 @@ app.on('web-contents-created', (_event, contents) => {
         lineNumber,
         sourcePath: URL.canParse(sourceId) ? redactLog(new URL(sourceId).pathname) : undefined,
       })
+    }
+    if (level === 3 && startupSplash?.snapshot().state !== 'closed') {
+      const source = URL.canParse(sourceId) ? redactLog(new URL(sourceId).pathname) : sourceId
+      void startupRendererLog
+        .record(contents.id, `[renderer] ${source}:${lineNumber} ${message}`)
+        .catch(error => {
+          console.warn('[Wework] Failed to write startup renderer diagnostics', error)
+        })
     }
     void runtimeDiagnosticsLog.record(contents.id, message).catch(error => {
       console.warn('[Wework] Failed to write runtime diagnostics', error)
@@ -843,10 +861,15 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     )
     if (!pluginName || quitting || contents.isDestroyed()) return
     runtimeError = `Core DSH plugin failed to load: ${pluginName}`
+    lastStartupFailure = {
+      message: runtimeError,
+      pluginName,
+    }
     rendererHealth.failed('plugin_load_failed')
     logStartupStep('core-dsh-plugin-load', 'failed', { plugin: pluginName })
     startupTelemetry.fail('core_plugin')
     notifyRuntimeChanged()
+    await mainProcessLog.flush()
     await startupSplash?.showError(pluginName)
   } catch (error) {
     primaryDshLoaded = false
@@ -1580,6 +1603,33 @@ function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   })
 }
 
+async function startupDiagnosticsText(): Promise<string> {
+  const bootstrapLogPath = mainProcessLog.startupBootstrapPath
+  await Promise.allSettled([
+    mainProcessLog.flush(),
+    startupRendererLog.flush(),
+    runtimeDiagnosticsLog.flush(),
+  ])
+  return buildStartupDiagnostics({
+    appName: app.getName(),
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    osRelease: release(),
+    electronVersion: process.versions.electron,
+    nodeVersion: process.versions.node,
+    logDirectories: runtimeLogDirectories,
+    extraLogPaths: bootstrapLogPath ? [bootstrapLogPath] : [],
+    progress: {
+      current: startupProgress.currentUpdate(),
+      history: startupProgress.history(),
+    },
+    failure: lastStartupFailure,
+    runtimeError,
+    runtimeState: desktopRuntime?.diagnostics() ?? null,
+  })
+}
+
 function installIpc(): void {
   ipcMain.handle('startup-recovery:retry', event => {
     assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
@@ -1600,6 +1650,17 @@ function installIpc(): void {
     assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
     if (typeof name !== 'string' || !name.trim()) throw new Error('Plugin name is required')
     return requiredStartupRecovery().disablePlugin(name)
+  })
+  ipcMain.handle('startup-diagnostics:copy', async event => {
+    assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
+    const text = await startupDiagnosticsText()
+    clipboard.writeText(text)
+    return { ok: true, characters: text.length }
+  })
+  ipcMain.handle('startup-diagnostics:open-logs', async event => {
+    assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
+    await openApplicationLogDirectory()
+    return { ok: true }
   })
   ipcMain.handle('cloud-credentials:get-device-public-key', () =>
     requiredCloudCredentials().devicePublicKey()
@@ -1743,7 +1804,13 @@ function requestApplicationShutdown(exit: () => void): void {
 function prepareApplicationShutdown(): Promise<void> {
   if (shutdownPromise) return shutdownPromise
   quitting = true
-  shutdownPromise = shutdown()
+  shutdownPromise = (async () => {
+    try {
+      await shutdown()
+    } finally {
+      await mainProcessLog.flush()
+    }
+  })()
   return shutdownPromise
 }
 
@@ -2095,9 +2162,11 @@ async function configureDesktopRuntime(): Promise<void> {
             }
             scheduleComputerUseStartup()
           }),
-          rendererStartupFailed: () => {
+          rendererStartupFailed: async () => {
             logStartupStep('renderer-startup', 'failed')
+            lastStartupFailure = { message: 'Renderer startup failed' }
             startupTelemetry.fail('renderer_initialize')
+            await mainProcessLog.flush()
             return startupSplash?.showError()
           },
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
@@ -2248,6 +2317,7 @@ function startDesktopRuntime(): Promise<void> {
   logStartupStep('desktop-runtime-start', 'started')
   runtimePhase = 'initializing'
   runtimeError = null
+  lastStartupFailure = null
   void pluginDevelopmentChildRuntime?.writeState('starting')
   notifyRuntimeChanged()
   runtimeStartPromise = (async () => {
@@ -2282,6 +2352,7 @@ function startDesktopRuntime(): Promise<void> {
               new Promise<void>(resolve => setTimeout(resolve, 1_500)),
             ])
           }
+          await mainProcessLog.flush()
           app.relaunch()
           app.exit(1)
           return
@@ -2292,6 +2363,10 @@ function startDesktopRuntime(): Promise<void> {
       }
       runtimePhase = 'failed'
       runtimeError = error instanceof Error ? error.message : String(error)
+      lastStartupFailure = {
+        message: runtimeError,
+        stack: error instanceof Error ? error.stack : undefined,
+      }
       await pluginDevelopmentChildRuntime?.writeState(
         'error',
         error instanceof Error ? error : new Error(String(error))
@@ -2300,6 +2375,7 @@ function startDesktopRuntime(): Promise<void> {
         errorType: error instanceof Error ? error.name : typeof error,
       })
       console.error('[runtime] startup failed', error)
+      await mainProcessLog.flush()
       void startupSplash?.showError().catch(async splashError => {
         console.error('[startup-splash] failed to show runtime failure', splashError)
         if (!keepE2EWindowInBackground) mainWindow?.show()

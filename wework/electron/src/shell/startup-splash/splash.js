@@ -74,11 +74,17 @@ const failureElement = document.querySelector('#startup-failure')
 const failureTitleElement = document.querySelector('#startup-failure-title')
 const failureDetailElement = document.querySelector('#startup-failure-detail')
 const recoveryElement = document.querySelector('#startup-recovery')
+const timeoutActionsElement = document.querySelector('#startup-timeout-actions')
 const disablePluginButton = document.querySelector('#startup-disable-plugin')
 const retryButton = document.querySelector('#startup-retry')
 const recoverButton = document.querySelector('#startup-recover')
 const resetOpenButton = document.querySelector('#startup-reset-open')
+const copyDiagnosticsButton = document.querySelector('#startup-copy-diagnostics')
+const openLogsButton = document.querySelector('#startup-open-logs')
+const timeoutCopyButton = document.querySelector('#startup-timeout-copy')
+const timeoutOpenLogsButton = document.querySelector('#startup-timeout-open-logs')
 const actionErrorElement = document.querySelector('#startup-action-error')
+const toastElement = document.querySelector('#startup-toast')
 const confirmationElement = document.querySelector('#startup-confirmation')
 const confirmationTitle = document.querySelector('#startup-confirmation-title')
 const confirmationDescription = document.querySelector('#startup-confirmation-description')
@@ -102,6 +108,7 @@ let failedPluginName = null
 let pendingResetMode = null
 let actionPending = false
 let confirmationTrigger = null
+let toastTimer = 0
 
 function localized(copy) {
   return copy ? (isChinese ? copy.zh : copy.en) : ''
@@ -201,6 +208,54 @@ function setText(element, text) {
   return true
 }
 
+function showToast(message) {
+  if (!toastElement) return
+  if (toastTimer) window.clearTimeout?.(toastTimer)
+  toastElement.textContent = message
+  toastElement.hidden = false
+  toastTimer = window.setTimeout(() => {
+    toastElement.hidden = true
+  }, 2200)
+}
+
+async function copyStartupDiagnostics(button) {
+  const diagnostics = window.weworkStartupDiagnostics
+  if (!diagnostics || typeof diagnostics.copy !== 'function') {
+    showToast(isChinese ? '诊断信息暂不可用' : 'Diagnostics are unavailable')
+    return
+  }
+  const originalLabel = button?.textContent ?? ''
+  try {
+    await diagnostics.copy()
+    if (button) {
+      button.textContent = isChinese ? '已复制' : 'Copied'
+      window.setTimeout(() => {
+        button.textContent = originalLabel
+      }, 1600)
+    }
+    showToast(
+      isChinese
+        ? '诊断信息已复制，可直接发给技术支持'
+        : 'Diagnostics copied — share it with support'
+    )
+  } catch {
+    showToast(isChinese ? '复制失败，请重试' : 'Could not copy diagnostics')
+  }
+}
+
+async function openStartupLogs() {
+  const diagnostics = window.weworkStartupDiagnostics
+  if (!diagnostics || typeof diagnostics.openLogs !== 'function') {
+    showToast(isChinese ? '日志目录暂不可用' : 'The log folder is unavailable')
+    return
+  }
+  try {
+    await diagnostics.openLogs()
+  } catch {
+    showToast(isChinese ? '无法打开日志目录' : 'Could not open the log folder')
+  }
+}
+
 function renderCopy() {
   let title
 
@@ -219,6 +274,7 @@ function renderCopy() {
 function renderNotes() {
   slowElement.hidden = !slowActive || timeoutActive || startupFailed
   timeoutElement.hidden = !timeoutActive || startupFailed
+  timeoutActionsElement.hidden = !timeoutActive || startupFailed
   failureElement.hidden = !startupFailed
   const showRecovery = startupFailed
   recoveryElement.hidden = !showRecovery
@@ -295,6 +351,10 @@ function setLocalizedActionCopy() {
   retryButton.textContent = isChinese ? '重新启动' : 'Restart'
   recoverButton.textContent = isChinese ? '修复启动' : 'Repair startup'
   resetOpenButton.textContent = isChinese ? '重置个人状态' : 'Reset personal state'
+  copyDiagnosticsButton.textContent = isChinese ? '复制诊断信息' : 'Copy diagnostics'
+  openLogsButton.textContent = isChinese ? '打开日志目录' : 'Open log folder'
+  timeoutCopyButton.textContent = isChinese ? '复制诊断信息' : 'Copy diagnostics'
+  timeoutOpenLogsButton.textContent = isChinese ? '打开日志目录' : 'Open log folder'
   confirmationCancel.textContent = isChinese ? '取消' : 'Cancel'
 }
 
@@ -365,6 +425,10 @@ function setActionPending(pending) {
   retryButton.disabled = pending
   recoverButton.disabled = pending
   resetOpenButton.disabled = pending
+  copyDiagnosticsButton.disabled = pending
+  openLogsButton.disabled = pending
+  timeoutCopyButton.disabled = pending
+  timeoutOpenLogsButton.disabled = pending
   confirmationCancel.disabled = pending
   confirmationSubmit.disabled = pending
 }
@@ -422,6 +486,18 @@ retryButton.addEventListener('click', () => {
 })
 recoverButton.addEventListener('click', () => showConfirmation('recover'))
 resetOpenButton.addEventListener('click', () => showConfirmation('resetAppState'))
+copyDiagnosticsButton.addEventListener('click', () => {
+  void copyStartupDiagnostics(copyDiagnosticsButton)
+})
+openLogsButton.addEventListener('click', () => {
+  void openStartupLogs()
+})
+timeoutCopyButton.addEventListener('click', () => {
+  void copyStartupDiagnostics(timeoutCopyButton)
+})
+timeoutOpenLogsButton.addEventListener('click', () => {
+  void openStartupLogs()
+})
 confirmationCancel.addEventListener('click', hideConfirmation)
 confirmationSubmit.addEventListener('click', () => {
   if (!pendingResetMode) return

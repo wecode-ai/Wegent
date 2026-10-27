@@ -161,6 +161,24 @@
             <p id="startup-timeout-detail">Still loading. Please wait…</p>
           </div>
         </div>
+        <div id="startup-timeout-actions" class="startup-actions startup-timeout-actions" hidden>
+          <button
+            id="startup-timeout-copy"
+            data-testid="startup-timeout-copy-button"
+            class="startup-button startup-button-secondary"
+            type="button"
+          >
+            Copy diagnostics
+          </button>
+          <button
+            id="startup-timeout-open-logs"
+            data-testid="startup-timeout-open-logs-button"
+            class="startup-link-button"
+            type="button"
+          >
+            Open log folder
+          </button>
+        </div>
         <div id="startup-failure" class="inline-note inline-note-error" role="alert" hidden>
           <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
             <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" />
@@ -190,6 +208,14 @@
               Retry
             </button>
             <button
+              id="startup-copy-diagnostics"
+              data-testid="startup-copy-diagnostics-button"
+              class="startup-button startup-button-secondary"
+              type="button"
+            >
+              Copy diagnostics
+            </button>
+            <button
               id="startup-recover"
               data-testid="startup-recover-button"
               class="startup-button startup-button-primary"
@@ -204,6 +230,14 @@
               type="button"
             >
               Reset personal state
+            </button>
+            <button
+              id="startup-open-logs"
+              data-testid="startup-open-logs-button"
+              class="startup-link-button"
+              type="button"
+            >
+              Open log folder
             </button>
           </div>
           <p id="startup-action-error" class="startup-action-error" role="alert" hidden></p>
@@ -236,6 +270,7 @@
         </div>
       </main>
     </div>
+    <div id="startup-toast" class="startup-toast" role="status" hidden></div>
     <script src="./splash.js"></script>
   </body>
 </html>

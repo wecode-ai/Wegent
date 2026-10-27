@@ -3,7 +3,7 @@ import { basename, resolve } from 'node:path'
 import { describe, expect, test } from 'vitest'
 
 describe('startup splash preload', () => {
-  test('exposes only the startup recovery actions', async () => {
+  test('exposes the startup recovery, progress, and diagnostics bridges', async () => {
     const sourcePath = resolve(
       process.cwd(),
       basename(process.cwd()) === 'electron'
@@ -20,6 +20,9 @@ describe('startup splash preload', () => {
     expect(source).toContain("'startup-recovery:disable-plugin'")
     expect(source).toContain("'weworkStartupProgress'")
     expect(source).toContain("'startup-progress:update'")
+    expect(source).toContain("'weworkStartupDiagnostics'")
+    expect(source).toContain("'startup-diagnostics:copy'")
+    expect(source).toContain("'startup-diagnostics:open-logs'")
     expect(source).not.toContain('webUtils')
   })
 })

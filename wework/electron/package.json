@@ -14,6 +14,8 @@
     "build:release": "pnpm run prepare:package && pnpm run build && node scripts/build-release.mjs",
     "dev": "pnpm run build && electron .",
     "prepare:package": "node scripts/prepare-package-assets.mjs",
+    "preview:startup-splash": "pnpm run build && node scripts/run-startup-splash-preview.mjs",
+    "preview:startup-splash:fast": "node scripts/run-startup-splash-preview.mjs",
     "start": "electron .",
     "test": "pnpm run stage:process-explorer && vitest run",
     "typecheck": "pnpm run stage:process-explorer && tsc -p tsconfig.json --noEmit",

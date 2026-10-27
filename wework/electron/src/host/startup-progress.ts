@@ -150,6 +150,7 @@ export function startupProgressTotalWeight(): number {
 export class StartupProgressReporter {
   private index = -1
   private current: StartupProgressUpdate | null = null
+  private readonly stageHistory: StartupProgressUpdate[] = []
   private lastActivityPublishedAt = 0
 
   constructor(
@@ -173,6 +174,7 @@ export class StartupProgressReporter {
       stage: STARTUP_PROGRESS_STAGES[index],
       startedAt: this.now(),
     }
+    this.stageHistory.push(this.current)
     this.publish(this.current)
   }
 
@@ -187,5 +189,25 @@ export class StartupProgressReporter {
     this.lastActivityPublishedAt = now
     this.current = { ...this.current, activity: { kind, path } }
     this.publish(this.current)
+  }
+
+  history(): readonly StartupProgressUpdate[] {
+    return this.stageHistory.map(update => cloneUpdate(update))
+  }
+
+  currentUpdate(): StartupProgressUpdate | null {
+    return this.current ? cloneUpdate(this.current) : null
+  }
+}
+
+function cloneUpdate(update: StartupProgressUpdate): StartupProgressUpdate {
+  return {
+    ...update,
+    stage: {
+      ...update.stage,
+      label: { ...update.stage.label },
+      detail: { ...update.stage.detail },
+    },
+    ...(update.activity ? { activity: { ...update.activity } } : {}),
   }
 }

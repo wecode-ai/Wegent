@@ -14,3 +14,8 @@ contextBridge.exposeInMainWorld('weworkStartupProgress', {
     )
   },
 })
+
+contextBridge.exposeInMainWorld('weworkStartupDiagnostics', {
+  copy: () => ipcRenderer.invoke('startup-diagnostics:copy'),
+  openLogs: () => ipcRenderer.invoke('startup-diagnostics:open-logs'),
+})

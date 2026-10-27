@@ -94,4 +94,24 @@ describe('startup progress', () => {
       activity: { kind: 'scan', path: 'plugins/three.js' },
     })
   })
+
+  test('keeps a stage history and current activity for diagnostics', () => {
+    let now = 1_000
+    const reporter = new StartupProgressReporter(vi.fn(), () => now)
+
+    reporter.report('launch')
+    now = 1_200
+    reporter.reportActivity('scan', 'plugins/first.js')
+    now = 1_500
+    reporter.report('components')
+    now = 1_700
+    reporter.reportActivity('scan', 'plugins/second.js')
+
+    expect(reporter.history().map(update => update.stage.id)).toEqual(['launch', 'components'])
+    expect(reporter.history()[0]?.activity).toBeUndefined()
+    expect(reporter.currentUpdate()).toMatchObject({
+      stage: { id: 'components' },
+      activity: { kind: 'scan', path: 'plugins/second.js' },
+    })
+  })
 })

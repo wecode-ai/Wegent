@@ -44,7 +44,7 @@ export async function verifyStartupSplashProgress({ appBinary, resultDir, electr
 
   const evidence = JSON.parse(await readFile(join(root, 'evidence.json'), 'utf8'))
   assert.equal(evidence.error, undefined, evidence.error)
-  const { normal, slow, timeout, failure } = evidence
+  const { normal, slow, timeout, timeoutCopy, failure, failureCopy } = evidence
 
   assertIncludesAny(
     normal.stepCount,
@@ -82,6 +82,11 @@ export async function verifyStartupSplashProgress({ appBinary, resultDir, electr
   assert.equal(timeout.slowHidden, true, 'The slow note stayed visible with the timeout reminder')
   assert.equal(timeout.timeoutHidden, false, 'The slow-stage reminder did not appear')
   assert.equal(timeout.recoveryHidden, true, 'Recovery actions appeared for a soft timeout')
+  assert.equal(
+    timeout.timeoutActionsHidden,
+    false,
+    'The timeout state did not offer diagnostics and log recovery'
+  )
   assertIncludesAny(
     timeout.timeoutTitle,
     ['首次启动可能较慢', 'First startup can take longer'],
@@ -95,21 +100,50 @@ export async function verifyStartupSplashProgress({ appBinary, resultDir, electr
     !timeout.progressClassName.includes('is-timed-out'),
     'The progress bar still uses the removed timeout styling'
   )
+  assert.equal(
+    timeoutCopy.requests,
+    1,
+    'Copying diagnostics from the timeout state did not reach IPC'
+  )
+  assert.ok(
+    includesAny(timeoutCopy.toastText, ['诊断信息已复制', 'Diagnostics copied']),
+    `The timeout diagnostics copy did not confirm success: ${timeoutCopy.toastText}`
+  )
 
   assert.equal(failure.failureHidden, false, 'The failure note did not appear')
   assert.equal(failure.recoveryHidden, false, 'Recovery actions did not appear for a failure')
+  assert.equal(
+    failure.timeoutActionsHidden,
+    true,
+    'The soft-timeout actions stayed visible after a hard failure'
+  )
   assertIncludesAny(
     failure.title,
     ['Wework 启动失败', 'Wework could not start'],
     'The splash did not show the failure title'
+  )
+  assert.equal(
+    failureCopy.requests,
+    2,
+    'Copying diagnostics from the failure state did not reach IPC'
+  )
+  assert.ok(
+    includesAny(failureCopy.toastText, ['诊断信息已复制', 'Diagnostics copied']),
+    `The failure diagnostics copy did not confirm success: ${failureCopy.toastText}`
   )
 }
 
 async function runSplashProgressVerification() {
   const fs = require('node:fs/promises')
   const path = require('node:path')
-  const { app, BrowserWindow } = require('electron')
+  const { app, BrowserWindow, ipcMain } = require('electron')
   const input = JSON.parse(process.argv[2])
+  const diagnosticsCopyRequests = []
+  ipcMain.handle('startup-diagnostics:copy', () => {
+    diagnosticsCopyRequests.push(Date.now())
+    return { ok: true, characters: 1 }
+  })
+  ipcMain.handle('startup-diagnostics:open-logs', () => ({ ok: true }))
   app.setPath('userData', path.join(input.root, 'user-data'))
   await app.whenReady()
   const metadata = JSON.parse(
@@ -146,8 +180,10 @@ async function runSplashProgressVerification() {
         slowHidden: document.querySelector('#startup-slow').hidden,
         timeoutHidden: document.querySelector('#startup-timeout').hidden,
         timeoutTitle: document.querySelector('#startup-timeout-title').textContent,
+        timeoutActionsHidden: document.querySelector('#startup-timeout-actions').hidden,
         failureHidden: document.querySelector('#startup-failure').hidden,
         recoveryHidden: document.querySelector('#startup-recovery').hidden,
+        toastText: document.querySelector('#startup-toast').textContent,
         progressClassName: document.querySelector('#splash-progress').className,
         progressNow: document.querySelector('#splash-progress').getAttribute('aria-valuenow'),
       }
@@ -189,16 +225,26 @@ async function runSplashProgressVerification() {
   send(update(61_000))
   await wait(300)
   const timeout = await readState()
+  await splash.webContents.executeJavaScript(
+    'document.querySelector(\'[data-testid="startup-timeout-copy-button"]\').click()'
+  )
+  await wait(300)
+  const timeoutCopy = { requests: diagnosticsCopyRequests.length, ...(await readState()) }
 
   await splash.webContents.executeJavaScript(
     "window.dispatchEvent(new CustomEvent('wework-startup-error', { detail: {} }))"
   )
   await wait(300)
   const failure = await readState()
+  await splash.webContents.executeJavaScript(
+    'document.querySelector(\'[data-testid="startup-copy-diagnostics-button"]\').click()'
+  )
+  await wait(300)
+  const failureCopy = { requests: diagnosticsCopyRequests.length, ...(await readState()) }
 
   await fs.writeFile(
     path.join(input.root, 'evidence.json'),
-    `${JSON.stringify({ normal, slow, timeout, failure }, null, 2)}\n`
+    `${JSON.stringify({ normal, slow, timeout, timeoutCopy, failure, failureCopy }, null, 2)}\n`
   )
   app.exit(0)
 }

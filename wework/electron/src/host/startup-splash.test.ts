@@ -156,18 +156,30 @@ describe('StartupSplash', () => {
     expect(html).toContain('id="startup-recover"')
     expect(html).toContain('id="startup-reset-open"')
     expect(html).toContain('id="startup-confirmation"')
+    expect(html).toContain('id="startup-timeout-actions"')
+    expect(html).toContain('data-testid="startup-timeout-copy-button"')
+    expect(html).toContain('data-testid="startup-timeout-open-logs-button"')
+    expect(html).not.toContain('startup-timeout-retry')
+    expect(html).toContain('data-testid="startup-copy-diagnostics-button"')
+    expect(html).toContain('data-testid="startup-open-logs-button"')
+    expect(html).toContain('id="startup-toast"')
     expect(styles).toContain('@keyframes robot-bob')
     expect(styles).toContain('@keyframes human-bob')
     expect(styles).toContain('@keyframes splash-enter')
     expect(styles).toContain('@keyframes ambient-line-arrive')
     expect(styles).toContain('@keyframes progress-breathe')
     expect(styles).toContain('.startup-progress-fill')
+    expect(styles).toContain('.startup-toast')
+    expect(styles).toContain('.startup-timeout-actions')
     expect(html).toContain('document.documentElement.dataset.theme = theme')
     expect(styles).toContain(":root[data-theme='dark']")
     expect(styles).toContain('@media (prefers-reduced-motion: reduce)')
     expect(script).toContain('const SLOW_AFTER_MS = 30_000')
     expect(script).toContain('stageTimeoutMs()')
     expect(script).toContain('weworkStartupProgress')
+    expect(script).toContain('weworkStartupDiagnostics')
+    expect(script).toContain('openStartupLogs')
+    expect(script).toContain('copyStartupDiagnostics')
     expect(script).toContain('requestAnimationFrame(animateMorph)')
     expect(script).toContain("navigator.language.toLowerCase().startsWith('zh')")
     expect(script).toContain("progressElement.setAttribute('aria-valuenow'")
@@ -321,6 +333,7 @@ describe('StartupSplash', () => {
     progressListener?.(update(1, 5_000, 60_000))
     expect(element('#startup-slow').hidden).toBe(true)
     expect(element('#startup-timeout').hidden).toBe(true)
+    expect(element('#startup-timeout-actions').hidden).toBe(true)
     expect(element('#splash-title').textContent).toBe("We're preparing your workbench")
     expect(element('#splash-step-count').textContent).toBe('Step 2 of 9 · Stage 1')
     expect(element('#splash-activity').textContent).toBe('Working on stage 1')
@@ -343,11 +356,13 @@ describe('StartupSplash', () => {
     progressListener?.(update(1, 31_000, 60_000))
     expect(element('#startup-slow').hidden).toBe(false)
     expect(element('#startup-timeout').hidden).toBe(true)
+    expect(element('#startup-timeout-actions').hidden).toBe(true)
     expect(element('#splash-title').textContent).toBe('Startup is taking longer than expected')
 
     progressListener?.(update(1, 61_000, 60_000))
     expect(element('#startup-slow').hidden).toBe(true)
     expect(element('#startup-timeout').hidden).toBe(false)
+    expect(element('#startup-timeout-actions').hidden).toBe(false)
     expect(element('#startup-timeout-title').textContent).toBe('First startup can take longer')
     expect(element('#splash-title').textContent).toBe('Startup is taking longer than expected')
     expect(element('#startup-recovery').hidden).toBe(true)
@@ -355,11 +370,64 @@ describe('StartupSplash', () => {
     progressListener?.(update(2, 1_000, 60_000))
     expect(element('#startup-slow').hidden).toBe(true)
     expect(element('#startup-timeout').hidden).toBe(true)
+    expect(element('#startup-timeout-actions').hidden).toBe(true)
     expect(element('#startup-recovery').hidden).toBe(true)
     expect(element('#splash-title').textContent).toBe("We're preparing your workbench")
     expect(element('#splash-step-count').textContent).toBe('Step 3 of 9 · Stage 2')
     expect(element('#splash-activity').textContent).toBe('Working on stage 2')
     expect(interval).toHaveBeenCalledWith(expect.any(Function), 100)
+  })
+
+  test('copies diagnostics and opens the log folder from the timeout actions', async () => {
+    const electronRoot =
+      basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
+    const script = await readFile(
+      join(electronRoot, 'src', 'shell', 'startup-splash', 'splash.js'),
+      'utf8'
+    )
+    const elements = new Map<string, FakeSplashElement>()
+    const element = (selector: string) => {
+      const existing = elements.get(selector)
+      if (existing) return existing
+      const created = new FakeSplashElement()
+      elements.set(selector, created)
+      return created
+    }
+    const copy = vi.fn(async () => ({ ok: true, characters: 42 }))
+    const openLogs = vi.fn(async () => ({ ok: true }))
+
+    runInNewContext(script, {
+      document: {
+        activeElement: null,
+        body: element('body'),
+        documentElement: element('documentElement'),
+        querySelector: (selector: string) => element(selector),
+        querySelectorAll: () => [],
+      },
+      HTMLElement: FakeSplashElement,
+      navigator: { language: 'zh-CN' },
+      performance: { now: () => 0 },
+      requestAnimationFrame: vi.fn(),
+      window: {
+        addEventListener: vi.fn(),
+        matchMedia: () => ({ matches: true }),
+        requestAnimationFrame: vi.fn(),
+        setInterval: vi.fn(),
+        setTimeout: vi.fn(),
+        weworkStartupProgress: { onUpdate: vi.fn() },
+        weworkStartupDiagnostics: { copy, openLogs },
+      },
+    })
+
+    element('#startup-copy-diagnostics').click()
+    await vi.waitFor(() => expect(copy).toHaveBeenCalledOnce())
+    element('#startup-open-logs').click()
+    await vi.waitFor(() => expect(openLogs).toHaveBeenCalledOnce())
+
+    element('#startup-timeout-copy').click()
+    await vi.waitFor(() => expect(copy).toHaveBeenCalledTimes(2))
+    element('#startup-timeout-open-logs').click()
+    await vi.waitFor(() => expect(openLogs).toHaveBeenCalledTimes(2))
   })
 
   test('shows the branded animation in the main startup window and records its timeline', async () => {

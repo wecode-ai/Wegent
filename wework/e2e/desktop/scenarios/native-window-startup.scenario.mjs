@@ -63,6 +63,25 @@ async function waitForStartupLogs(resultDir) {
   assert.fail(`The Electron startup log did not contain the required stages:\n${appLog}`)
 }
 
+async function waitForMainProcessLog(resultDir) {
+  const logPath = join(resultDir, 'electron-user-data', 'logs', 'wework-main.log')
+  const deadline = Date.now() + SPLASH_CLOSE_TIMEOUT_MS
+  let mainLog = ''
+
+  do {
+    mainLog = await readFile(logPath, 'utf8').catch(() => '')
+    if (
+      mainLog.includes("step: 'desktop-runtime-start'") &&
+      mainLog.includes("step: 'renderer-startup-ready'")
+    ) {
+      return mainLog
+    }
+    await delay(SPLASH_CLOSE_POLL_INTERVAL_MS)
+  } while (Date.now() < deadline)
+
+  assert.fail(`The durable main-process log did not capture startup stages:\n${mainLog}`)
+}
+
 export async function createDesktopScenario({ resultDir }) {
   let restartDesktopApp
   return {
@@ -96,6 +115,11 @@ export async function createDesktopScenario({ resultDir }) {
         'The Electron startup splash evidence was not a PNG'
       )
       const appLog = await waitForStartupLogs(resultDir)
+      const mainProcessLog = await waitForMainProcessLog(resultDir)
+      assert.ok(
+        mainProcessLog.includes("step: 'startup-splash-close'"),
+        'The durable main-process log did not capture the splash closing'
+      )
       const startupReady = appLog.indexOf("step: 'renderer-startup-ready'")
       const taskListReady = appLog.indexOf("source: 'task-list'", startupReady)
       const splashClosed = appLog.indexOf("step: 'startup-splash-close'")
