@@ -21,7 +21,7 @@ const OTHER = 'WEWORK_NATIVE_ORDER_OTHER_TASK'
 const PREFIX = 'TASK_SWITCH_RUNNING'
 const SUFFIX = '\n\nTASK_SWITCH_BACKGROUND_UPDATE'
 
-export function createConversationSwitchingChecks({ uiTimeoutMs }) {
+export function createConversationSwitchingChecks({ uiTimeoutMs, modelResponseTimeoutMs }) {
   const timeline = []
   let failureSnapshot
   const record = (stage, details = {}) => timeline.push({ stage, at: Date.now(), ...details })
@@ -84,24 +84,16 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
     },
 
     async verify(control) {
-      const previousDebug = await requestExecutor(
-        control,
-        'runtime.codex.stream_debug.get',
-        {},
-        uiTimeoutMs
-      )
-      await requestExecutor(
-        control,
-        'runtime.codex.stream_debug.set',
-        { enabled: true },
-        uiTimeoutMs
-      )
       try {
         await openNewChatWithE2EModel(control, uiTimeoutMs)
         await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
         record('prefix-wait-started')
-        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: PREFIX })
+        // The final-answer marker follows 520 native history items, before ordinary UI checks.
+        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+          text: PREFIX,
+          timeoutMs: modelResponseTimeoutMs,
+        })
         record('prefix-visible')
         const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         const address = debug.workbench?.currentRuntimeTask
@@ -197,12 +189,6 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
       } finally {
         releaseTail?.()
         releaseDone?.()
-        await requestExecutor(
-          control,
-          'runtime.codex.stream_debug.set',
-          { enabled: previousDebug.enabled },
-          uiTimeoutMs
-        )
         console.log('[desktop-e2e] conversation-switching timeline', JSON.stringify(timeline))
       }
       await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)

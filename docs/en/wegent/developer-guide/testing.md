@@ -300,11 +300,17 @@ unrelated modules do not make the summary fail.
 
 CI reliability depends on these invariants:
 
+- The native-history stress fixture processes 520 progress messages before its
+  final-answer marker, so that wait uses the existing `modelResponseTimeoutMs` budget (30 seconds
+  by default). Subsequent UI interactions, including task switching, use the
+  ordinary 10-second budget. Preserve all history-count, ordering, identity, and
+  deduplication assertions.
 - Scenarios holding a streaming model response must capture failures before
   releasing it: release completes the native turn and changes the messages seen
   by later diagnostics. The conversation-switching scenario records model batch
-  writes, flushes, UI wait timestamps, and messages before release, and temporarily
-  enables native stream diagnostics to correlate item identities and phases.
+  writes, flushes, UI wait timestamps, and messages before release. Explicitly set
+  `WEGENT_CODEX_STREAM_DEBUG=1` when native stream diagnostics are needed to
+  correlate item identities and phases.
   Diagnostics must preserve assertions and timeouts and never record credentials.
 - Model fixtures use `trackModelServerConnections` to own connection errors,
   including upgraded WebSockets. Scenarios must not forward a model client's
