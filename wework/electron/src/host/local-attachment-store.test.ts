@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
@@ -19,6 +19,33 @@ afterEach(async () => {
 })
 
 describe('LocalAttachmentStore', () => {
+  test.each([100 * 1024 * 1024 + 1, 378989795])(
+    'accepts a generated attachment of %i bytes and cleans up an aborted write',
+    async size => {
+      const root = await temporaryDirectory()
+      const store = new LocalAttachmentStore(root)
+      const started = await store.begin('generated.bin', size)
+      const path = join(root, '.uploading', started.uploadId, 'generated.bin')
+
+      await expect(store.append(started.uploadId, 0, 'YQ==')).resolves.toBe(1)
+      await expect(readFile(path, 'utf8')).resolves.toBe('a')
+      await expect(store.finish(started.uploadId)).rejects.toThrow(
+        'Attachment upload is incomplete'
+      )
+      await store.abort(started.uploadId)
+
+      await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  )
+
+  test.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Infinity, NaN])(
+    'rejects the invalid declared size %s',
+    async size => {
+      const store = new LocalAttachmentStore(await temporaryDirectory())
+      await expect(store.begin('invalid.bin', size)).rejects.toThrow('Attachment size is invalid')
+    }
+  )
+
   test('stores a verified chunked attachment under the draft root', async () => {
     const root = await temporaryDirectory()
     const store = new LocalAttachmentStore(root)

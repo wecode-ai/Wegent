@@ -1,0 +1,110 @@
+[
+  {
+    "name": "quoted-and-ragged",
+    "input": "name,value\r\n\"a,b\",\"first\r\nsecond\"\r\n\"say \"\"hi\"\"\", 42 \r\n,,\r\nlast\r\n",
+    "max_length": 500000,
+    "text": "--- Sheet: CSV Data ---\nname | value\na,b | first\r\nsecond\nsay \"hi\" | 42\nlast",
+    "is_truncated": false,
+    "original_length": 75,
+    "truncated_length": 75
+  },
+  {
+    "name": "unicode-bom",
+    "input": "﻿名称,数值\n中文,42\n",
+    "max_length": 500000,
+    "text": "--- Sheet: CSV Data ---\n﻿名称 | 数值\n中文 | 42",
+    "is_truncated": false,
+    "original_length": 40,
+    "truncated_length": 40
+  },
+  {
+    "name": "blank-rows",
+    "input": " \t, \r\n,,\n",
+    "max_length": 500000,
+    "text": "",
+    "is_truncated": false,
+    "original_length": 0,
+    "truncated_length": 0
+  },
+  {
+    "name": "columns",
+    "input": "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51",
+    "max_length": 500000,
+    "text": "--- Sheet: CSV Data ---\n0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 | 32 | 33 | 34 | 35 | 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 45 | 46 | 47 | 48 | 49 | ... (+2 columns)",
+    "is_truncated": false,
+    "original_length": 280,
+    "truncated_length": 280
+  },
+  {
+    "name": "head-tail-10",
+    "input": "row0,value\nrow1,value\nrow2,value\nrow3,value\nrow4,value\nrow5,value\nrow6,value\nrow7,value\nrow8,value\nrow9,value\nrow10,value\nrow11,value\nrow12,value\nrow13,value\nrow14,value\nrow15,value\nrow16,value\nrow17,value\nrow18,value\nrow19,value\nrow20,value\nrow21,value\nrow22,value\nrow23,value\nrow24,value\nrow25,value\nrow26,value\nrow27,value\nrow28,value\nrow29,value\nrow30,value\nrow31,value\nrow32,value\nrow33,value\nrow34,value\nrow35,value\nrow36,value\nrow37,value\nrow38,value\nrow39,value",
+    "max_length": 10,
+    "text": "\n... [truncated] ...",
+    "is_truncated": true,
+    "original_length": 573,
+    "truncated_length": 20
+  },
+  {
+    "name": "head-tail-40",
+    "input": "row0,value\nrow1,value\nrow2,value\nrow3,value\nrow4,value\nrow5,value\nrow6,value\nrow7,value\nrow8,value\nrow9,value\nrow10,value\nrow11,value\nrow12,value\nrow13,value\nrow14,value\nrow15,value\nrow16,value\nrow17,value\nrow18,value\nrow19,value\nrow20,value\nrow21,value\nrow22,value\nrow23,value\nrow24,value\nrow25,value\nrow26,value\nrow27,value\nrow28,value\nrow29,value\nrow30,value\nrow31,value\nrow32,value\nrow33,value\nrow34,value\nrow35,value\nrow36,value\nrow37,value\nrow38,value\nrow39,value",
+    "max_length": 40,
+    "text": "--- Sheet: CSV Data \n... [truncated] ...",
+    "is_truncated": true,
+    "original_length": 573,
+    "truncated_length": 40
+  },
+  {
+    "name": "head-tail-110",
+    "input": "row0,value\nrow1,value\nrow2,value\nrow3,value\nrow4,value\nrow5,value\nrow6,value\nrow7,value\nrow8,value\nrow9,value\nrow10,value\nrow11,value\nrow12,value\nrow13,value\nrow14,value\nrow15,value\nrow16,value\nrow17,value\nrow18,value\nrow19,value\nrow20,value\nrow21,value\nrow22,value\nrow23,value\nrow24,value\nrow25,value\nrow26,value\nrow27,value\nrow28,value\nrow29,value\nrow30,value\nrow31,value\nrow32,value\nrow33,value\nrow34,value\nrow35,value\nrow36,value\nrow37,value\nrow38,value\nrow39,value",
+    "max_length": 110,
+    "text": "--- Sheet: CSV Data ---\n# Header\nrow0 | value\n\n# Head Data (rows 2-3)\nrow1 | value\n... [truncated] ...",
+    "is_truncated": true,
+    "original_length": 573,
+    "truncated_length": 102
+  },
+  {
+    "name": "head-tail-200",
+    "input": "row0,value\nrow1,value\nrow2,value\nrow3,value\nrow4,value\nrow5,value\nrow6,value\nrow7,value\nrow8,value\nrow9,value\nrow10,value\nrow11,value\nrow12,value\nrow13,value\nrow14,value\nrow15,value\nrow16,value\nrow17,value\nrow18,value\nrow19,value\nrow20,value\nrow21,value\nrow22,value\nrow23,value\nrow24,value\nrow25,value\nrow26,value\nrow27,value\nrow28,value\nrow29,value\nrow30,value\nrow31,value\nrow32,value\nrow33,value\nrow34,value\nrow35,value\nrow36,value\nrow37,value\nrow38,value\nrow39,value",
+    "max_length": 200,
+    "text": "--- Sheet: CSV Data ---\n# Header\nrow0 | value\n\n# Head Data (rows 2-3)\nrow1 | value\nrow2 | value\n\n... [35 rows omitted] ...\n\n# Tail Data (rows 39-40)\nrow38 | value\nrow39 | value",
+    "is_truncated": true,
+    "original_length": 573,
+    "truncated_length": 176
+  },
+  {
+    "name": "head-tail-350",
+    "input": "row0,value\nrow1,value\nrow2,value\nrow3,value\nrow4,value\nrow5,value\nrow6,value\nrow7,value\nrow8,value\nrow9,value\nrow10,value\nrow11,value\nrow12,value\nrow13,value\nrow14,value\nrow15,value\nrow16,value\nrow17,value\nrow18,value\nrow19,value\nrow20,value\nrow21,value\nrow22,value\nrow23,value\nrow24,value\nrow25,value\nrow26,value\nrow27,value\nrow28,value\nrow29,value\nrow30,value\nrow31,value\nrow32,value\nrow33,value\nrow34,value\nrow35,value\nrow36,value\nrow37,value\nrow38,value\nrow39,value",
+    "max_length": 350,
+    "text": "--- Sheet: CSV Data ---\n# Header\nrow0 | value\n\n# Head Data (rows 2-3)\nrow1 | value\nrow2 | value\n\n... [35 rows omitted] ...\n\n# Tail Data (rows 39-40)\nrow38 | value\nrow39 | value",
+    "is_truncated": true,
+    "original_length": 573,
+    "truncated_length": 176
+  },
+  {
+    "name": "head-tail-450",
+    "input": "row0,value\nrow1,value\nrow2,value\nrow3,value\nrow4,value\nrow5,value\nrow6,value\nrow7,value\nrow8,value\nrow9,value\nrow10,value\nrow11,value\nrow12,value\nrow13,value\nrow14,value\nrow15,value\nrow16,value\nrow17,value\nrow18,value\nrow19,value\nrow20,value\nrow21,value\nrow22,value\nrow23,value\nrow24,value\nrow25,value\nrow26,value\nrow27,value\nrow28,value\nrow29,value\nrow30,value\nrow31,value\nrow32,value\nrow33,value\nrow34,value\nrow35,value\nrow36,value\nrow37,value\nrow38,value\nrow39,value",
+    "max_length": 450,
+    "text": "--- Sheet: CSV Data ---\n# Header\nrow0 | value\n\n# Head Data (rows 2-6)\nrow1 | value\nrow2 | value\nrow3 | value\nrow4 | value\nrow5 | value\n\n... [30 rows omitted] ...\n\n# Tail Data (rows 37-40)\nrow36 | value\nrow37 | value\nrow38 | value\nrow39 | value",
+    "is_truncated": true,
+    "original_length": 573,
+    "truncated_length": 243
+  },
+  {
+    "name": "head-tail-800",
+    "input": "row0,value\nrow1,value\nrow2,value\nrow3,value\nrow4,value\nrow5,value\nrow6,value\nrow7,value\nrow8,value\nrow9,value\nrow10,value\nrow11,value\nrow12,value\nrow13,value\nrow14,value\nrow15,value\nrow16,value\nrow17,value\nrow18,value\nrow19,value\nrow20,value\nrow21,value\nrow22,value\nrow23,value\nrow24,value\nrow25,value\nrow26,value\nrow27,value\nrow28,value\nrow29,value\nrow30,value\nrow31,value\nrow32,value\nrow33,value\nrow34,value\nrow35,value\nrow36,value\nrow37,value\nrow38,value\nrow39,value",
+    "max_length": 800,
+    "text": "--- Sheet: CSV Data ---\nrow0 | value\nrow1 | value\nrow2 | value\nrow3 | value\nrow4 | value\nrow5 | value\nrow6 | value\nrow7 | value\nrow8 | value\nrow9 | value\nrow10 | value\nrow11 | value\nrow12 | value\nrow13 | value\nrow14 | value\nrow15 | value\nrow16 | value\nrow17 | value\nrow18 | value\nrow19 | value\nrow20 | value\nrow21 | value\nrow22 | value\nrow23 | value\nrow24 | value\nrow25 | value\nrow26 | value\nrow27 | value\nrow28 | value\nrow29 | value\nrow30 | value\nrow31 | value\nrow32 | value\nrow33 | value\nrow34 | value\nrow35 | value\nrow36 | value\nrow37 | value\nrow38 | value\nrow39 | value",
+    "is_truncated": false,
+    "original_length": 573,
+    "truncated_length": 573
+  },
+  {
+    "name": "long-single-row",
+    "input": "header,中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中",
+    "max_length": 100,
+    "text": "--- Sheet: CSV Data ---\n... [truncated] ...",
+    "is_truncated": true,
+    "original_length": 233,
+    "truncated_length": 43
+  }
+]

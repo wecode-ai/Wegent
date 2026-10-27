@@ -1,4 +1,5 @@
 import { rendererCrashStore } from './rendererCrashStore'
+import { createDesktopControlFile } from './file-fixture'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { removeToken, setToken } from '@/api/auth'
@@ -1789,9 +1790,7 @@ function dropDesktopControlFile(command: DesktopControlCommand): string {
   if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
   const filename = command.filename?.trim()
   if (!filename) throw new Error('dropFile requires a filename')
-  const binary = window.atob(command.value ?? '')
-  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0))
-  const file = new File([bytes], filename, { type: command.mimeType ?? '' })
+  const file = createDesktopControlFile(command)
   const transfer = new DataTransfer()
   transfer.items.add(file)
   const event = new DragEvent('drop', {
@@ -1809,9 +1808,7 @@ function pasteDesktopControlFile(command: DesktopControlCommand): string {
   if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
   const filename = command.filename?.trim()
   if (!filename) throw new Error('pasteFile requires a filename')
-  const binary = window.atob(command.value ?? '')
-  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0))
-  const file = new File([bytes], filename, { type: command.mimeType ?? '' })
+  const file = createDesktopControlFile(command)
   const transfer = new DataTransfer()
   transfer.items.add(file)
   const event = new ClipboardEvent('paste', {
