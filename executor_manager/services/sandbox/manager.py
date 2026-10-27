@@ -1713,6 +1713,15 @@ class SandboxManager(metaclass=SingletonMeta):
         """
         idle_seconds = time.time() - (sandbox.last_activity_at or 0)
         grace_seconds = self._config.timeout.redis_ttl * 3
+        if sandbox.metadata.get("task_id") is None:
+            # Without a task id there is nothing to archive against; retrying
+            # cannot help, so do not pin the Pod for the whole grace window.
+            logger.warning(
+                "[SandboxManager] Sandbox %s has no task_id; deleting without "
+                "archiving",
+                sandbox.sandbox_id,
+            )
+            return True
         archived = await self._archive_sandbox_before_cleanup(sandbox)
 
         if archived:
