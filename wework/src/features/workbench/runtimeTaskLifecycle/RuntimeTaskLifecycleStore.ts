@@ -455,9 +455,10 @@ export class RuntimeTaskLifecycleStore {
       canonicalEvent.task.running === true
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
-      previous.turn.active &&
       !confirmsPendingSend &&
-      previous.task !== null &&
+      (previous.turn.active
+        ? previous.task !== null
+        : previous.turn.outcome !== null && !isRuntimeGoalExecutionActive(canonicalEvent.task)) &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
       machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId)
     )
