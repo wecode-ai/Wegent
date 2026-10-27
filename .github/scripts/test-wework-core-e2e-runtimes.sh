@@ -14,6 +14,13 @@ ruby -ryaml -e '
   producer = workflow.fetch("jobs").fetch("build-backend-rs-e2e-runtime")
   publish = producer.fetch("steps").find { |s| s["name"] == "Publish content-addressed Backend Rust E2E image" }.fetch("if")
   consumer_workflow = YAML.safe_load(File.read(ARGV[2]))
+  producer_digest = producer.fetch("steps").find { |s| s["id"] == "runtime" }.fetch("env").fetch("SOURCE_DIGEST")
+  warmup_workflow = YAML.safe_load(File.read(ARGV[3]))
+  consumers = [consumer_workflow.fetch("jobs").fetch("changes"), warmup_workflow.fetch("jobs").fetch("prepare-wework-desktop-image")]
+  consumers.each do |job|
+    consumer_digest = job.fetch("steps").find { |s| s["id"] == "runtime" }.fetch("env").fetch("BACKEND_RS_SOURCE_DIGEST")
+    raise "Backend Rust runtime producer and consumer must hash identical source inputs" unless producer_digest == consumer_digest
+  end
   consumer = consumer_workflow.fetch("jobs").fetch("build-wework-desktop-core-e2e")
   producer_seconds = Integer(producer.fetch("timeout-minutes")) * 60
   consumer_seconds = Integer(consumer.fetch("timeout-minutes")) * 60
@@ -53,7 +60,7 @@ ruby -ryaml -e '
       end
     end
   end
-' "$script_dir/../actions/build-wework-core-e2e/action.yml" "$script_dir/../workflows/e2e-tests.yml" "$script_dir/../workflows/wework-e2e.yml"
+' "$script_dir/../actions/build-wework-core-e2e/action.yml" "$script_dir/../workflows/e2e-tests.yml" "$script_dir/../workflows/wework-e2e.yml" "$script_dir/../workflows/ci-cache-warmup.yml"
 ruby -ryaml -e '
   action = YAML.safe_load(File.read(ARGV[0]))
   step = action.fetch("runs").fetch("steps").find { |s| s["env"]&.key?("EXECUTOR_IMAGE") }

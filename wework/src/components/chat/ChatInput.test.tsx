@@ -1032,9 +1032,13 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
 
-    expect(continueInNewConversation).toHaveBeenCalledWith(targetModel, undefined, {
-      draft: '继续排查',
-    })
+    expect(continueInNewConversation).toHaveBeenCalledWith(
+      targetModel,
+      { modelSelection: 'model' },
+      {
+        draft: '继续排查',
+      }
+    )
     expect(setSelectedModel).not.toHaveBeenCalled()
   })
 
