@@ -918,7 +918,8 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "$E2E_REPORT_DIR"
-          export E2E_TEST_SHA="$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)"
+          E2E_TEST_SHA="$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)"
+          export E2E_TEST_SHA
           test "$E2E_TEST_SHA" = "$E2E_EXPECTED_SHA"
           uv run --no-sync python tests/e2e/subscription_callback_gateway.py \
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
