@@ -273,6 +273,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn opaque_app_metadata_preserves_manifest_serialization() {
+        let wire = r#"{"_meta":{"manifest":[{"path":"entry.txt","size":1,"sha256":"abc"}]}}"#;
+        let response: Value = serde_json::from_str(wire).unwrap();
+        assert_eq!(
+            serde_json::to_string(&response["_meta"]["manifest"]).unwrap(),
+            r#"[{"path":"entry.txt","size":1,"sha256":"abc"}]"#
+        );
+    }
+
+    #[test]
     fn app_state_preserves_context_aliases_and_never_indexes_invalid_context() {
         let mut link =
             RuntimeTaskLink::new_pending("task".into(), "/tmp/project".into(), "App".into());

@@ -58,3 +58,5 @@ pnpm --filter wework e2e:desktop --segment mcp-apps
 该 checkpoint 使用真实 Electron、执行器、Codex 和标准输入输出 MCP 服务，仅模拟模型响应，并由桌面 CI 调用。验证范围包含资源读取、初始化、私有结果元数据交付、应用专用工具、模型上下文、显示模式切换、跨调用隔离、连续非只读工具调用、作用域拒绝和资源清理。
 
 每个文档使用独立的 `codex-sandbox://<id>.web-sandbox.oaiusercontent.com/mcp-app.html` 来源。Electron 在本地处理此自定义协议，不查询该域名、不请求 OpenAI 服务，也不远程执行页面。宿主在启动前将协议注册为标准安全协议，文档响应继续执行资源声明的 CSP。
+
+Executor 转发应用元数据时保留 JSON 对象键的原始顺序，避免改变应用用于清单摘要校验的序列化字节。桌面回归通过真实工具回调验证清单摘要在整条桥接链路中保持一致。

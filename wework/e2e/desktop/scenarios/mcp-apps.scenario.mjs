@@ -125,6 +125,7 @@ export function createDesktopScenario({
       await frameAction('fill', '#draft', 'preserved draft')
       await frameAction('click', '#refresh')
       await waitText('Counter 1')
+      assert.equal(await frameAction('attribute', 'body', 'data-integrity'), 'verified')
       await frameAction('click', '#context')
       await waitText('Context saved')
       await captureScreenshot(control, 'mcp-apps-inline.png', 'body')

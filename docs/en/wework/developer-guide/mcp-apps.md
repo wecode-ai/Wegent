@@ -14,7 +14,7 @@ The host also accepts `ui/resourceUri`, `openai/outputTemplate`, and resource re
 
 ## Communication and lifecycle
 
-After the initialization handshake, apps receive tool arguments and results. The host preserves `content`, `structuredContent`, and `_meta` separately and does not add result metadata to model context.
+After the initialization handshake, apps receive tool arguments and results. The executor preserves JSON object insertion order when forwarding opaque app metadata, including manifests whose serialized bytes are checked by the app. The host preserves `content`, `structuredContent`, and `_meta` separately and does not add result metadata to model context.
 
 Apps can call their source server's tools, read resources, send conversation messages, update model context, and request inline, fullscreen, or picture-in-picture presentation. Read-only Issue execution views omit app conversation messaging; replies still originate from the Issue. Other conversation messages require confirmation. App tool calls use the source-bound native Codex channel without an additional annotation-based confirmation dialog. App-only tools remain callable by apps; model-only tools are excluded.
 

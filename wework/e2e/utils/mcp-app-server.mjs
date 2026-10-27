@@ -1,6 +1,11 @@
 import readline from 'node:readline'
+import { createHash } from 'node:crypto'
 
 const uri = 'ui://counter/app.html'
+const manifest = [
+  { path: 'entry.txt', size: 1, sha256: createHash('sha256').update('x').digest('hex') },
+]
+const manifestDigest = createHash('sha256').update(JSON.stringify(manifest)).digest('hex')
 let count = 0
 let heartbeats = 0
 let failedResource = false
@@ -61,7 +66,7 @@ const request=(method,params)=>new Promise((resolve,reject)=>{const id=++sequenc
 window.addEventListener('message',event=>{if(event.source!==parent)return;const m=event.data;if(pending.has(m.id)){const p=pending.get(m.id);pending.delete(m.id);m.error?p.reject(Error(m.error.message)):p.resolve(m.result)}
 if(m.method==='ui/notifications/tool-result'){document.querySelector('#status').textContent='Result '+m.params.structuredContent.count+' '+m.params._meta.privateMarker}
 if(m.method==='ui/resource-teardown')parent.postMessage({jsonrpc:'2.0',id:m.id,result:{}},'*')});
-document.querySelector('#refresh').onclick=async()=>{try{const r=await request('tools/call',{name:'read_count',arguments:{}});document.querySelector('#status').textContent='Counter '+r.structuredContent.count}catch(e){document.querySelector('#status').textContent=e.message}};
+document.querySelector('#refresh').onclick=async()=>{try{const r=await request('tools/call',{name:'read_count',arguments:{}});const integrity=r._meta.integrity;const digest=[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(integrity.manifest))))].map(n=>n.toString(16).padStart(2,'0')).join('');document.body.dataset.integrity=digest===integrity.sha256?'verified':'mismatch';document.querySelector('#status').textContent='Counter '+r.structuredContent.count}catch(e){document.querySelector('#status').textContent=e.message}};
 document.querySelector('#heartbeat').onclick=async()=>{try{let r;for(let i=0;i<3;i++)r=await request('tools/call',{name:'change_count',arguments:{token:'synthetic-panel-token',state:'loading'}});document.querySelector('#status').textContent='Heartbeats '+r.structuredContent.count}catch(e){document.querySelector('#status').textContent=e.message}};
 document.querySelector('#expand').onclick=()=>request('ui/request-display-mode',{mode:'fullscreen'});
 document.querySelector('#pip').onclick=()=>request('ui/request-display-mode',{mode:'pip'});
@@ -129,6 +134,7 @@ for await (const line of readline.createInterface({ input: process.stdin, crlfDe
         structuredContent: { count: request.params.name === 'change_count' ? heartbeats : count },
         _meta: {
           privateMarker: 'ui-only-marker',
+          integrity: { manifest, sha256: manifestDigest },
           ...(request.params.name === 'show_dynamic' ? { ui: { resourceUri: uri } } : {}),
         },
       }
