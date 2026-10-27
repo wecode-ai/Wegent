@@ -5,10 +5,19 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.board_views import BoardViews
+from app.schemas.board_views import BoardViewColumn, BoardViewFilter, BoardViews
 from app.schemas.cloud_project import CloudProjectUpdate
 from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.schemas.tagging import normalize_tags
+
+
+@pytest.mark.parametrize("value", [" tag", "tag ", "\ttag", "tag\n", "\u3000tag"])
+def test_tag_references_reject_noncanonical_names(value: str) -> None:
+    assert LoopItemCreate(title="Issue", tags=[value]).tags == ["tag"]
+    with pytest.raises(ValidationError):
+        BoardViewColumn(id="tag", type="tag", value=value)
+    with pytest.raises(ValidationError):
+        BoardViewFilter(tags=[value])
 
 
 @pytest.mark.parametrize("character", ["a", "标", "😀"])

@@ -78,6 +78,29 @@ def test_tag_boundaries_preserve_lane_and_filter_matches(
                 "views": [
                     {
                         "id": "bad",
+                        "name": "Untrimmed lane",
+                        "columns": [{"id": "tag", "type": "tag", "value": " tag "}],
+                    }
+                ]
+            }
+        },
+        {
+            "board_views": {
+                "views": [
+                    {
+                        "id": "bad",
+                        "name": "Untrimmed filter",
+                        "columns": [{"id": "tag", "type": "tag", "value": tag}],
+                        "filter": {"tags": [" tag "]},
+                    }
+                ]
+            }
+        },
+        {
+            "board_views": {
+                "views": [
+                    {
+                        "id": "bad",
                         "name": "Bad lane",
                         "columns": [{"id": "tag", "type": "tag", "value": oversized}],
                     }

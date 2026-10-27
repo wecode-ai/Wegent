@@ -6,11 +6,24 @@
 
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import AfterValidator, Field
 
 MAX_TAGS_PER_ITEM = 20
 MAX_TAG_LENGTH = 32
-TagName = Annotated[str, Field(min_length=1, max_length=MAX_TAG_LENGTH)]
+
+
+def require_canonical_tag(value: str) -> str:
+    """References must use the same canonical identity as normalized Issue tags."""
+    if not value or value != value.strip():
+        raise ValueError("Tag names must be nonblank and trimmed")
+    return value
+
+
+TagName = Annotated[
+    str,
+    Field(min_length=1, max_length=MAX_TAG_LENGTH),
+    AfterValidator(require_canonical_tag),
+]
 
 
 def normalize_tags(value: object) -> list[str]:

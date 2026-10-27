@@ -24,6 +24,7 @@ from app.schemas.tagging import (
     MAX_TAGS_PER_ITEM,
     TagName,
     normalize_tags,
+    require_canonical_tag,
 )
 from app.schemas.types import SnowflakeId
 from app.schemas.workspace import (
@@ -236,9 +237,7 @@ class ProjectTagChange(BaseModel):
     @field_validator("source", "target")
     @classmethod
     def validate_tag(cls, value: str | None) -> str | None:
-        if value is not None and (not value.strip() or value != value.strip()):
-            raise ValueError("Tag names must be nonblank and trimmed")
-        return value
+        return None if value is None else require_canonical_tag(value)
 
 
 class CloudProjectUpdate(BaseModel):

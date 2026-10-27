@@ -7,9 +7,9 @@ use super::TaskRuntimeError;
 pub(super) const MAX_TAG_LENGTH: usize = 32;
 
 pub(super) fn validate_tag(tag: &str) -> Result<(), TaskRuntimeError> {
-    if tag.trim().is_empty() || tag.chars().count() > MAX_TAG_LENGTH {
+    if tag.is_empty() || tag != tag.trim() || tag.chars().count() > MAX_TAG_LENGTH {
         return Err(TaskRuntimeError::Invalid(format!(
-            "Tag names must contain 1 to {MAX_TAG_LENGTH} characters"
+            "Tag names must be trimmed and contain 1 to {MAX_TAG_LENGTH} characters"
         )));
     }
     Ok(())

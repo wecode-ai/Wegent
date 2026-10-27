@@ -72,9 +72,6 @@ impl LocalTaskStore {
     ) -> Result<LoopItem, TaskRuntimeError> {
         for tag in std::iter::once(&change.source).chain(change.target.iter()) {
             super::super::tagging::validate_tag(tag)?;
-            if tag != tag.trim() {
-                return Err(TaskRuntimeError::Invalid("Invalid tag name".into()));
-            }
         }
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;

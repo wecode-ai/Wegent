@@ -51,6 +51,14 @@ fn tag_boundaries_preserve_saved_lane_and_filter_matches() {
             .unwrap();
         for fields in [
             json!({"tags":[oversized]}),
+            json!({"tags":[" tag "]}),
+            json!({"board_views":{"schema_version":1,"views":[{
+                "id":"bad","name":"Untrimmed lane","columns":[{"id":"tag","type":"tag","value":" tag "}]
+            }]}}),
+            json!({"board_views":{"schema_version":1,"views":[{
+                "id":"bad","name":"Untrimmed filter","columns":[{"id":"tag","type":"tag","value":tag}],
+                "filter":{"tags":[" tag "],"match":"all"}
+            }]}}),
             json!({"board_views":{"schema_version":1,"views":[{
                 "id":"bad","name":"Bad lane","columns":[{"id":"tag","type":"tag","value":oversized}]
             }]}}),

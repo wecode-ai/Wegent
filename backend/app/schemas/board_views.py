@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.schemas.tagging import MAX_TAG_LENGTH, TagName
+from app.schemas.tagging import MAX_TAG_LENGTH, TagName, require_canonical_tag
 
 SortRule = Literal[
     "priority-desc",
@@ -29,8 +29,12 @@ class BoardViewColumn(BaseModel):
 
     @model_validator(mode="after")
     def validate_tag(self) -> "BoardViewColumn":
-        if self.type == "tag" and len(self.value) > MAX_TAG_LENGTH:
-            raise ValueError(f"tag names must be at most {MAX_TAG_LENGTH} characters")
+        if self.type == "tag":
+            require_canonical_tag(self.value)
+            if len(self.value) > MAX_TAG_LENGTH:
+                raise ValueError(
+                    f"tag names must be at most {MAX_TAG_LENGTH} characters"
+                )
         return self
 
 
