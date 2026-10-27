@@ -23,6 +23,11 @@ use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 /// `GIT_TOKEN_AES_KEY` default (`12345678901234567890123456789012`).
 const DEFAULT_KEY: &str = "12345678901234567890123456789012";
 
+/// Test-only key/IV, installed once instead of mutating the process
+/// environment from concurrent test threads.
+#[cfg(test)]
+static TEST_KEY_IV: std::sync::OnceLock<(String, Vec<u8>)> = std::sync::OnceLock::new();
+
 /// `encrypt_sensitive_data` failures.
 #[derive(Debug)]
 pub(crate) enum CryptoError {
@@ -53,12 +58,7 @@ pub(crate) fn encrypt_sensitive_data(plain: &str) -> Result<String, CryptoError>
         return Ok("***".to_string());
     }
 
-    let key = std::env::var("GIT_TOKEN_AES_KEY").unwrap_or_else(|_| DEFAULT_KEY.to_string());
-    let iv = std::env::var("GIT_TOKEN_AES_IV").map_err(|_| CryptoError::MissingIv)?;
-    let iv = iv.into_bytes();
-    if iv.len() != 16 {
-        return Err(CryptoError::InvalidIv);
-    }
+    let (key, iv) = configured_key_iv()?;
     let key = parse_aes_key(&key)?;
     encrypt_with(&key, &iv, plain)
 }
@@ -88,18 +88,7 @@ pub(crate) fn decrypt_sensitive_data(encrypted: &str) -> Result<String, CryptoEr
         return Ok("***".to_string());
     }
 
-    // The sibling decryptors (`git_repositories::crypto`,
-    // `admin_connector_apps::crypto`) resolve these settings through
-    // `config::env_or_dotenv`, which falls back to the runtime dotenv file when
-    // the process environment does not define them. A missing or malformed IV
-    // is the source's `CryptoConfigurationError`.
-    let key = crate::config::env_or_dotenv("GIT_TOKEN_AES_KEY")
-        .unwrap_or_else(|| DEFAULT_KEY.to_string());
-    let iv = crate::config::env_or_dotenv("GIT_TOKEN_AES_IV").ok_or(CryptoError::MissingIv)?;
-    let iv = iv.into_bytes();
-    if iv.len() != 16 {
-        return Err(CryptoError::InvalidIv);
-    }
+    let (key, iv) = configured_key_iv()?;
     // `_get_encryption_key` keeps the raw UTF-8 key bytes; `algorithms.AES`
     // accepts 16/24/32-byte keys and raises for anything else, which the
     // source's `except` turns into the passthrough.
@@ -111,20 +100,33 @@ pub(crate) fn decrypt_sensitive_data(encrypted: &str) -> Result<String, CryptoEr
     )
 }
 
-/// Install the fixed test key/IV in the process environment.
+/// Resolve the configured key and IV.
 ///
-/// Tests that round-trip a credential need the same key on both sides. Every
-/// caller writes these two constants, so concurrent test threads read a stable
-/// pair regardless of order.
-#[cfg(test)]
-#[allow(unsafe_code)]
-pub(crate) fn use_test_key() {
-    // SAFETY: the values written here are constant for the whole test binary
-    // and every reader expects exactly this pair.
-    unsafe {
-        std::env::set_var("GIT_TOKEN_AES_KEY", DEFAULT_KEY);
-        std::env::set_var("GIT_TOKEN_AES_IV", "1234567890123456");
+/// The sibling decryptors (`git_repositories::crypto`,
+/// `admin_connector_apps::crypto`) read these through `config::env_or_dotenv`,
+/// which falls back to the runtime dotenv file when the process environment
+/// does not define them. A missing or malformed IV is the source's
+/// `CryptoConfigurationError`.
+fn configured_key_iv() -> Result<(String, Vec<u8>), CryptoError> {
+    #[cfg(test)]
+    if let Some((key, iv)) = TEST_KEY_IV.get() {
+        return Ok((key.clone(), iv.clone()));
     }
+    let key = crate::config::env_or_dotenv("GIT_TOKEN_AES_KEY")
+        .unwrap_or_else(|| DEFAULT_KEY.to_string());
+    let iv = crate::config::env_or_dotenv("GIT_TOKEN_AES_IV").ok_or(CryptoError::MissingIv)?;
+    let iv = iv.into_bytes();
+    if iv.len() != 16 {
+        return Err(CryptoError::InvalidIv);
+    }
+    Ok((key, iv))
+}
+
+/// Install the fixed test key/IV once, without touching the process
+/// environment from concurrent test threads.
+#[cfg(test)]
+pub(crate) fn use_test_key() {
+    let _ = TEST_KEY_IV.set((DEFAULT_KEY.to_string(), b"1234567890123456".to_vec()));
 }
 
 /// AES-CBC/PKCS7 decryption of `text` with an explicit key and IV; `None` is

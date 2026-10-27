@@ -100,7 +100,16 @@ where
     let refresh_token = previous.refresh_token().ok_or(RefreshError::Unavailable)?;
     let client = stored_client(app)?;
     let form = refresh_form(&client, &refresh_token);
-    let payload = request_tokens(&client.token_endpoint, &form).await?;
+    // A rejected request and a rejected payload both mean the stored grant is
+    // unusable, so both must clear it before reporting the rejection.
+    let payload = match request_tokens(&client.token_endpoint, &form).await {
+        Ok(payload) => payload,
+        Err(RefreshError::Rejected) => {
+            reject(mysql, &row).await?;
+            return Err(RefreshError::Rejected);
+        }
+        Err(error) => return Err(error),
+    };
 
     match parse_grant(&payload) {
         Ok(grant) => {
@@ -266,13 +275,19 @@ where
     M: Mysql,
 {
     let mut document = row.kinds_json.0.to_value();
+    mark_rejected(&mut document)?;
+    write_json(mysql, row.kinds_id, &document).await
+}
+
+/// Clear the stored grant so the app asks for authorization again.
+fn mark_rejected(document: &mut Value) -> Result<(), RefreshError> {
     let spec = document
         .get_mut("spec")
         .and_then(Value::as_object_mut)
         .ok_or(RefreshError::Unavailable)?;
     spec.insert("refreshTokenEncrypted".to_string(), Value::Null);
     spec.insert("status".to_string(), json!("expired"));
-    write_json(mysql, row.kinds_id, &document).await
+    Ok(())
 }
 
 async fn write_json<M>(mysql: &M, id: i64, document: &Value) -> Result<(), RefreshError>
@@ -306,8 +321,65 @@ where
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
+
+    /// Serve one HTTP response so the token request hits a real socket.
+    async fn serve_response(response: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buffer = [0_u8; 2048];
+                let _ = stream.read(&mut buffer).await;
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        format!("http://{address}/oauth/token")
+    }
+
+    #[tokio::test]
+    async fn token_endpoint_4xx_answers_are_rejections() {
+        let endpoint = serve_response(
+            "HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+        )
+        .await;
+        let error = request_tokens(&endpoint, &[("grant_type", "refresh_token")])
+            .await
+            .unwrap_err();
+        assert!(matches!(error, RefreshError::Rejected));
+    }
+
+    #[tokio::test]
+    async fn token_endpoint_5xx_answers_keep_the_grant() {
+        let endpoint = serve_response(
+            "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+        )
+        .await;
+        let error = request_tokens(&endpoint, &[("grant_type", "refresh_token")])
+            .await
+            .unwrap_err();
+        assert!(matches!(error, RefreshError::Provider(_)));
+    }
+
+    /// A rejected grant must stop looking usable.
+    #[test]
+    fn marking_a_rejection_clears_the_refresh_token() {
+        let mut document = json!({
+            "spec": {
+                "status": "connected",
+                "refreshTokenEncrypted": "ciphertext",
+                "accessTokenEncrypted": "ciphertext",
+            }
+        });
+
+        mark_rejected(&mut document).unwrap();
+
+        assert_eq!(document["spec"]["refreshTokenEncrypted"], json!(null));
+        assert_eq!(document["spec"]["status"], json!("expired"));
+        assert_eq!(document["spec"]["accessTokenEncrypted"], json!("ciphertext"));
+    }
 
     fn client() -> StoredClient {
         StoredClient {
