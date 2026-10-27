@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -16,6 +17,29 @@ vi.mock('./QuickPhraseMenu', () => ({
 
 vi.mock('./ModelSelector', () => ({
   ModelSelector: () => <span data-testid="model-selector-button">model</span>,
+}))
+
+vi.mock('@/features/dsh-runtime/DshContributionSlotSurface', () => ({
+  DshContributionSlotSurface: ({
+    props,
+  }: {
+    props: { onActiveChange: (active: boolean) => void }
+  }) => {
+    const [active, setActive] = useState(false)
+    const { onActiveChange } = props
+    useEffect(() => () => onActiveChange(false), [onActiveChange])
+    return (
+      <button
+        data-testid="test-voice-input"
+        onClick={() => {
+          setActive(!active)
+          onActiveChange(!active)
+        }}
+      >
+        Voice
+      </button>
+    )
+  },
 }))
 
 vi.mock('./DrawingAttachmentDialog', () => ({
@@ -58,6 +82,48 @@ describe('ComposerToolbar', () => {
     resizeCallback = null
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('hides other left actions during voice input and restores them on finish and session switch', () => {
+    const props = {
+      composerScopeKey: 'task-a',
+      canSend: false,
+      models: [],
+      selectedModel: null,
+      selectedModelOptions: {},
+      isModelSelectionReady: true,
+      goalDraftActive: true,
+      onSelectModel: vi.fn(),
+      onSelectModelOption: vi.fn(),
+      onFileSelect: vi.fn(),
+      onQuickPhraseSelect: vi.fn(),
+      onInsertPluginReference: vi.fn(),
+      onSubmit: vi.fn(),
+    }
+    const { rerender } = render(<ComposerToolbar {...props} />)
+    const expectOtherActionsVisible = (visible: boolean) => {
+      for (const id of [
+        'add-context-button',
+        'quick-phrase-layout',
+        'composer-plugin-picker-button',
+        'goal-draft-pill',
+      ]) {
+        if (visible) expect(screen.getByTestId(id)).toBeVisible()
+        else expect(screen.getByTestId(id)).not.toBeVisible()
+      }
+      expect(screen.getByTestId('test-voice-input')).toBeVisible()
+      expect(screen.getByTestId('model-selector-button')).toBeVisible()
+    }
+    expectOtherActionsVisible(true)
+    fireEvent.click(screen.getByTestId('test-voice-input'))
+    expectOtherActionsVisible(false)
+    fireEvent.click(screen.getByTestId('test-voice-input'))
+    expectOtherActionsVisible(true)
+    fireEvent.click(screen.getByTestId('test-voice-input'))
+    rerender(<ComposerToolbar {...props} composerScopeKey="task-b" />)
+    expectOtherActionsVisible(true)
+    rerender(<ComposerToolbar {...props} />)
+    expectOtherActionsVisible(true)
   })
 
   it('opens a drawing from the add menu and sends the PNG to the existing attachment handler', async () => {

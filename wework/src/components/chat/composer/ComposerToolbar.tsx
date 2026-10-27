@@ -1,6 +1,6 @@
 import { ComposerToolbar as SharedComposerToolbar } from '@wegent/collaboration/composer'
 
-import { type ComponentProps, type ReactNode } from 'react'
+import { useCallback, useState, type ComponentProps, type ReactNode } from 'react'
 
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import type { ComposerFollowUpBehavior } from './composerTextareaTypes'
@@ -76,6 +76,15 @@ interface ComposerToolbarProps {
 
 export function ComposerToolbar(props: ComposerToolbarProps) {
   const { t } = useTranslation('common')
+  const [voiceActivity, setVoiceActivity] = useState({
+    scope: props.composerScopeKey,
+    active: false,
+  })
+  const voiceActive = voiceActivity.scope === props.composerScopeKey && voiceActivity.active
+  const onVoiceActiveChange = useCallback(
+    (active: boolean) => setVoiceActivity({ scope: props.composerScopeKey, active }),
+    [props.composerScopeKey]
+  )
   const {
     disabled = false,
     showExecutionTools = true,
@@ -91,6 +100,7 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
       {drawingDialog}
       <SharedComposerToolbar
         {...props}
+        hideFeatureActions={voiceActive}
         onDraw={openDrawing}
         translate={(key, fallback, options) => t(key, fallback ?? key, options)}
         renderModelSelector={modelProps => <ModelSelector {...modelProps} />}
@@ -108,12 +118,17 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
         }
         renderFeatureMenus={compact => (
           <>
-            <DshMenuActions disabled={disabled} location="composer.toolbar" />
+            <div hidden={voiceActive} className={voiceActive ? 'hidden' : 'contents'}>
+              <DshMenuActions disabled={disabled} location="composer.toolbar" />
+            </div>
             <div className="contents" data-testid="composer-extension-actions">
               <DshContributionSlotSurface
+                key={props.composerScopeKey}
+                entryId={voiceActive ? 'voice-input' : undefined}
                 attachedClassName="contents"
                 props={{
                   compact,
+                  onActiveChange: onVoiceActiveChange,
                   disabled,
                   workspaceTarget,
                   captureInsertion: props.captureInsertion,
@@ -122,21 +137,23 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
                 slot={WEWORK_DSH_SLOTS.composerAction}
               />
             </div>
-            {showExecutionTools ? (
-              <>
-                <QuickPhraseMenu
-                  disabled={disabled}
-                  projectPhrases={projectPhrases}
-                  onSelect={onQuickPhraseSelect}
-                />
-                <PluginPickerMenu
-                  disabled={disabled}
-                  iconOnly={compact || pluginPickerIconOnly}
-                  onListLocalApps={onListLocalApps}
-                  onInsertReference={props.onInsertPluginReference}
-                />
-              </>
-            ) : null}
+            <div hidden={voiceActive} className={voiceActive ? 'hidden' : 'contents'}>
+              {showExecutionTools ? (
+                <>
+                  <QuickPhraseMenu
+                    disabled={disabled}
+                    projectPhrases={projectPhrases}
+                    onSelect={onQuickPhraseSelect}
+                  />
+                  <PluginPickerMenu
+                    disabled={disabled}
+                    iconOnly={compact || pluginPickerIconOnly}
+                    onListLocalApps={onListLocalApps}
+                    onInsertReference={props.onInsertPluginReference}
+                  />
+                </>
+              ) : null}
+            </div>
           </>
         )}
       />
