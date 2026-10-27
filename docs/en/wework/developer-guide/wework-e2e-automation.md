@@ -232,6 +232,8 @@ new Issue. Task lifecycle regressions cover delayed running snapshots for both t
 same and a prior provider turn. A confirmed settled turn cannot restart from stale
 metadata, even when its update timestamp exceeds a second-precision completion;
 the executor can still confirm the start of a different new turn.
+An earlier completion cannot settle a known newer live turn. Goal execution between
+turns remains independent of turn completion and is confirmed by the executor.
 Read-only board drag checks scroll the source card into view after grouping changes
 and reloads. Windows can have a narrower available viewport, so priority and tag
 columns cannot all be assumed visible. Permission and persistence assertions remain.

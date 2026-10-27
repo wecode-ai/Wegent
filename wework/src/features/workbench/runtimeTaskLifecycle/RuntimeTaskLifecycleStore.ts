@@ -10,6 +10,7 @@ import type { RuntimePaneTranscript } from '@/types/workbench'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import {
+  isRuntimeGoalExecutionActive,
   isRuntimeTaskAuthoritativeCompletion,
   normalizeRuntimeTaskSummary,
   shouldReplaceRuntimeTaskProjection,
@@ -446,14 +447,15 @@ export class RuntimeTaskLifecycleStore {
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
       previous.turn.active &&
+      previous.task !== null &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
-      machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId) &&
-      previous.task?.completedAt != null
+      machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId)
     )
       return false
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
       canonicalEvent.task.running === true &&
+      !isRuntimeGoalExecutionActive(canonicalEvent.task) &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
       machine.isSettledTurn(canonicalEvent.task.runtimeHandle.lastTurnId)
     )

@@ -112,7 +112,7 @@ export function shouldReplaceRuntimeTaskProjection(
     const candidateTurnId = candidate.runtimeHandle?.lastTurnId
     // A delayed start snapshot cannot revive the same completed provider turn.
     // Turn identity is authoritative even when native timestamps lose precision.
-    if (currentTurnId && currentTurnId === candidateTurnId) return candidateCompleted
+    if (currentCompleted && currentTurnId && currentTurnId === candidateTurnId) return false
     if (candidateCompleted) {
       if (!isRuntimeTaskExecutionRunning(current)) return true
       // Completion belongs to its turn, not to a later metadata refresh.
