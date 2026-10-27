@@ -70,6 +70,7 @@ import {
   getRuntimeTaskReminderKey,
 } from '@/features/workbench/runtimeTaskReminders'
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
+import { useRuntimeTaskRateLimitWait } from '@/features/workbench/useRuntimeTaskRateLimitWait'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import {
   getRuntimeConversationQueuePaused,
@@ -1602,6 +1603,7 @@ function RuntimeTaskRow({
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
   const conversationMenuActions = useDshMenuCommands('conversation.context')
   const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
+  const rateLimitWaiting = useRuntimeTaskRateLimitWait(taskAddress)
   const hasActiveGoal = taskLifecycle?.goalStatus === 'active'
   const queuePaused = useRuntimeTaskQueuePaused(taskAddress)
   const queued = isRuntimeTaskQueued(task)
@@ -1974,6 +1976,19 @@ function RuntimeTaskRow({
                       <Bell className="h-4 w-4" aria-hidden="true" />
                     </span>
                   </Tooltip>
+                ) : taskLifecycle?.derived.shouldShowSidebarRunning && rateLimitWaiting ? (
+                  <span
+                    data-testid={`runtime-local-task-rate-limit-wait-${task.taskId}`}
+                    role="status"
+                    title={t('workbench.runtime_task_rate_limit_wait')}
+                    aria-label={t('workbench.runtime_task_rate_limit_wait')}
+                    className="flex h-[30px] w-[30px] items-center justify-center"
+                  >
+                    <AlarmClock
+                      className="h-4 w-4 text-[rgb(var(--color-sidebar-text-muted))]"
+                      aria-hidden="true"
+                    />
+                  </span>
                 ) : taskLifecycle?.derived.shouldShowSidebarRunning ? (
                   <span
                     data-testid={`runtime-local-task-running-${task.taskId}`}

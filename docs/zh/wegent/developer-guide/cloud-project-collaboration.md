@@ -8,7 +8,7 @@ sidebar_position: 32
 
 ## 目标
 
-云项目是多人共享的协作与存储边界。成员可以在自己的本地项目中选择默认云项目，在 Wework 中执行任务，并把选定的聊天记录、文件和 Markdown 说明作为不可变交付快照提交到云端。
+云项目是多人共享的协作与存储边界。成员可以在自己的本地项目中选择默认云项目，在 Wework 中执行任务，并把选定的聊天记录、文件和 Markdown 说明作为可编辑交付物提交到云端。
 
 云项目不等同于现有 `Project`：
 
@@ -83,7 +83,7 @@ projects/{cloud-project-public-id}/
       files/
 ```
 
-交付完成后，其对象前缀不可覆盖。后续任务只能读取或复制交付物。
+已交付记录支持版本校验后的原子更新。更新先写入项目交付前缀下独立的 `edits/{revision}` 对象，再在一个数据库事务中更新标题、对象引用、附件清单和版本号；提交失败时保留原交付内容，成功后清理被替换对象。
 
 ## 数据模型
 
@@ -211,7 +211,7 @@ Wework 本地运行时把绑定区分为 `system` 和 `user`。每个运行任�
 
 ### Delivery
 
-`deliveries` 和 `delivery_assets` 保存不可变快照元数据。`Delivery.source_task_binding_id` 是可空外键：云端直接完成 TODO 时为空，本地任务交付时指向已经验证的 TODO/Task 关联。
+`deliveries` 和 `delivery_assets` 保存交付元数据。`Delivery.source_task_binding_id` 是可空外键：云端直接完成 TODO 时为空，本地任务交付时指向已经验证的 TODO/Task 关联。
 
 ## 权限
 
@@ -231,7 +231,7 @@ Wework 本地运行时把绑定区分为 `system` 和 `user`。每个运行任�
 ```text
 cloud_projects/  项目和成员
 loop_items/      TODO、状态机和 Task 关联
-delivery/        不可变交付快照
+delivery/        可编辑交付物
 cloud_files/     可变共享文件
 mcp_server/tools/delivery.py  AI 按权限读取云空间与交付引用
 ```
@@ -244,8 +244,10 @@ Delivery 服务不负责 TODO CRUD；LoopItem 服务不直接访问 MinIO；MCP 
 2. 分批上传文件，记录 SHA-256 和大小。
 3. `finalize` 锁定 Delivery 与 LoopItem，验证来源 Task 仍关联当前 TODO。
 4. 写入 `manifest.json`。
-5. 在一个数据库事务中将 Delivery 置为 `delivered`、TODO 置为 `completed`，并更新 `current_delivery_id`。
+5. 在一个数据库事务中将 Delivery 置为 `delivered`，并更新 `current_delivery_id`；人工协作任务的首次交付按轮次规则结算，编辑交付物不重复结算。
 6. 数据库提交失败时删除新写入的 manifest，草稿仍可重试。
+
+`PATCH /api/v1/deliveries/{id}` 由 Rust Backend 实现，使用 multipart `metadata` 和 `file_0`、`file_1` 等文件字段。元数据包含 `title`、`version`、`markdown`、`chat`、`retained_asset_ids` 和文件描述清单。新文件与保留附件必须具有唯一相对路径，引用其他交付物附件的请求被拒绝。已有创建、读取和首次交付接口保留原所有权。
 
 ## API
 

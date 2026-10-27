@@ -17,6 +17,7 @@ import {
 } from './config'
 
 const INSTALLATION_ID_KEY = 'wework.telemetry.installation-id.v1'
+const STAND_IN_COLLECTION_SINCE_KEY = 'wework.stand-in-telemetry-enabled-since'
 const MAX_QUEUED_EVENTS = 100
 const COMMON_EVENT_PROPERTY_KEYS = [
   'app_version',
@@ -378,6 +379,7 @@ export function useTelemetryEnabled(): boolean {
 }
 
 export async function installTelemetry(initiallyEnabled: boolean): Promise<void> {
+  updateStandInCollectionBoundary(initiallyEnabled)
   setTelemetryEnabledFlag(initiallyEnabled)
   if (!enabled) return
   await initialize()
@@ -390,27 +392,7 @@ export function track<EventName extends AnalyticsEventName>(
   properties: AnalyticsEventMap[EventName]
 ): void {
   if (!enabled) return
-  const valueConstraints = ANALYTICS_EVENT_VALUE_CONSTRAINTS[name]
-  const allowedProperties = ANALYTICS_EVENT_PROPERTY_KEYS[name].reduce(
-    (acc, key) => {
-      const value = properties[key]
-      if (value === undefined) return acc
-      const constraint = valueConstraints?.[key]
-      if (constraint) {
-        if (Array.isArray(constraint)) {
-          if (!constraint.includes(value as never)) return acc
-        } else if ('pattern' in constraint || 'maxLength' in constraint) {
-          if (constraint.enum && !constraint.enum.includes(value as never)) return acc
-          if (typeof value === 'string') {
-            if (constraint.maxLength != null && value.length > constraint.maxLength) return acc
-            if (constraint.pattern && !constraint.pattern.test(value)) return acc
-          }
-        }
-      }
-      return { ...acc, [key]: value }
-    },
-    {} as AnalyticsEventMap[EventName]
-  )
+  const allowedProperties = sanitizeAnalyticsProperties(name, properties)
   const event: QueuedAnalyticsEvent<EventName> = {
     name,
     properties: { ...commonTelemetryProperties(), ...allowedProperties },
@@ -443,6 +425,7 @@ export function setTelemetryEnabled(nextEnabled: boolean): Promise<void> {
 }
 
 async function applyTelemetryEnabled(nextEnabled: boolean): Promise<void> {
+  updateStandInCollectionBoundary(nextEnabled)
   if (enabled === nextEnabled) return
   setTelemetryEnabledFlag(nextEnabled)
   if (nextEnabled) {
@@ -482,4 +465,118 @@ export function resetTelemetryForTests(): void {
   pendingCaptures = []
   captureFlushScheduled = false
   cachedCommonProperties = null
+}
+
+export function sanitizeAnalyticsProperties<EventName extends AnalyticsEventName>(
+  name: EventName,
+  properties: AnalyticsEventMap[EventName]
+): AnalyticsEventMap[EventName] {
+  const valueConstraints = ANALYTICS_EVENT_VALUE_CONSTRAINTS[name]
+  return ANALYTICS_EVENT_PROPERTY_KEYS[name].reduce(
+    (acc, key) => {
+      const value = properties[key]
+      if (value === undefined) return acc
+      const constraint = valueConstraints?.[key]
+      if (constraint) {
+        if (Array.isArray(constraint)) {
+          if (!constraint.includes(value as never)) return acc
+        } else if ('min' in constraint || 'max' in constraint) {
+          if (typeof value !== 'number' || !Number.isFinite(value)) return acc
+          if (constraint.min != null && value < constraint.min) return acc
+          if (constraint.max != null && value > constraint.max) return acc
+        } else if ('pattern' in constraint || 'maxLength' in constraint) {
+          if (constraint.enum && !constraint.enum.includes(value as never)) return acc
+          if (typeof value === 'string') {
+            if (constraint.maxLength != null && value.length > constraint.maxLength) return acc
+            if (constraint.pattern && !constraint.pattern.test(value)) return acc
+          }
+        }
+      }
+      return { ...acc, [key]: value }
+    },
+    {} as AnalyticsEventMap[EventName]
+  )
+}
+
+export interface DurablePublicIdentity {
+  readonly distinctId: string
+  readonly common: CommonTelemetryProperties
+}
+
+export async function durablePublicIdentity(): Promise<DurablePublicIdentity | null> {
+  if (!enabled) return null
+  await initialize()
+  if (!enabled || !posthog) return null
+  return { distinctId: posthog.get_distinct_id(), common: { ...commonTelemetryProperties() } }
+}
+
+/** Keep the durable queue until the SDK transport confirms HTTP acceptance. */
+export async function deliverDurablePublicEvent(
+  event: AnalyticsEvent,
+  id: string,
+  occurredAt: string,
+  identity: DurablePublicIdentity
+): Promise<boolean> {
+  if (!enabled) return false
+  await initialize()
+  const sdk = posthog
+  if (!enabled || !sdk || sdk.get_distinct_id() !== identity.distinctId) return false
+  const timestamp = new Date(occurredAt)
+  const properties = sdk.calculateEventProperties(
+    event.name,
+    {
+      ...identity.common,
+      ...sanitizeAnalyticsProperties(event.name, event.properties),
+      distinct_id: identity.distinctId,
+      token: getTelemetryConfig().posthogKey,
+      $geoip_disable: true,
+      $process_person_profile: false,
+    },
+    timestamp,
+    id,
+    true
+  )
+  const payload = sanitizePostHogCapture({ event: event.name, properties, uuid: id, timestamp })
+  if (!payload) return false
+  return new Promise(resolve => {
+    // The SDK capture API only confirms enqueueing in its in-memory queue.
+    // Use its existing transport with a receipt; our durable queue owns retries.
+    const timer = setTimeout(() => resolve(false), 11_000)
+    try {
+      sdk._send_request({
+        url: sdk.requestRouter.endpointFor('api', sdk.analyticsDefaultEndpoint),
+        data: payload,
+        method: 'POST',
+        transport: 'fetch',
+        timeout: 10_000,
+        noRetries: true,
+        fireCallbackOnDrop: true,
+        callback: response => {
+          clearTimeout(timer)
+          resolve(response.statusCode >= 200 && response.statusCode < 300)
+        },
+      })
+    } catch {
+      clearTimeout(timer)
+      resolve(false)
+    }
+  })
+}
+
+function updateStandInCollectionBoundary(allow: boolean) {
+  if (allow) {
+    if (!localStorage.getItem(STAND_IN_COLLECTION_SINCE_KEY))
+      localStorage.setItem(STAND_IN_COLLECTION_SINCE_KEY, String(Date.now()))
+    return
+  }
+  localStorage.removeItem(STAND_IN_COLLECTION_SINCE_KEY)
+  for (const key of Object.keys(localStorage)) {
+    if (key.startsWith('wework.stand-in-telemetry:public:')) localStorage.removeItem(key)
+  }
+}
+
+export function standInCollectionSince(): number | undefined {
+  const raw = localStorage.getItem(STAND_IN_COLLECTION_SINCE_KEY)
+  const value = raw == null ? NaN : Number(raw)
+  return Number.isFinite(value) && value > 0 ? value : undefined
 }

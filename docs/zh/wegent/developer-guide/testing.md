@@ -623,3 +623,15 @@ pnpm --filter wecode-ai-assistant test -- src/__tests__/utils/test_example.test.
 - [Testing Library](https://testing-library.com/)
 - [Jest 文档](https://jestjs.io/)
 - [GitHub Actions](https://docs.github.com/en/actions)
+
+## E2E 资源复用与分片分配
+
+平台 E2E 保持四个既有分片，S3 上传测试复用 shard 2 的 MySQL、Redis 和 MinIO，媒体托管测试复用 shard 3 的相同服务。测试入口、断言和证据制品保持不变；Redis 使用独立逻辑库，媒体校验工具预装在共享镜像中。复制测试在 shard 3 按需启动专用副本和 broker，结束或失败时保存日志并删除容器，不在其他分片常驻。副本的健康探针通过 TCP 认证执行 `SELECT 1`，避免把初始化期间仅监听 Unix socket 的临时实例误判为就绪。知识远程索引测试移至 shard 4。
+
+该分配参考成功运行 [40548056927](https://github.com/wecode-ai/Wegent/actions/runs/40548056927) 和 [40547828678](https://github.com/wecode-ai/Wegent/actions/runs/40547828678)：shard 1 的知识索引步骤耗时 149–164 秒，复制步骤耗时 20–26 秒，媒体测试耗时 24–26 秒，S3 测试约 6 秒。移走 shard 1 的额外步骤，并在现有较轻分片承载附件测试；不增加机器，不以增加并行 job 缩短墙钟时间。后续按实际测试步骤耗时与累计 runner 时间复核分配，不计排队时间。
+
+平台 E2E 的普通标签事件不运行测试分类，仅 `ci:all` 标签触发完整回归。桌面 Plugins 的选中场景在一个 job 内依次运行，保留每个场景的独立初始化与失败结果。macOS 共享 job 显示为 `Wework Desktop macOS E2E`：Inspector 按受影响路径自动运行，memory 步骤仍仅对带 `ci:all` 的 PR 执行；定时运行和手动运行不会自动执行 memory 步骤。
+
+首次集成运行 [40558717377](https://github.com/wecode-ai/Wegent/actions/runs/40558717377) 中，五个测试 job 的累计 runner 执行时间为 44 分 20 秒，两次七个 job 的基线分别为 48 分 18 秒与 51 分 53 秒，均从 job 首个步骤开始计时、排除排队。该轮 Provider-native 的逻辑分片 1 用时 120 秒，逻辑分片 3 基本为空，因此将它们分别交给物理 shard 3 与 shard 1；其他 Provider-native 分片不变，普通浏览器分片和各机器的用户身份也不变。矩阵契约检查保证仍只有四个物理分片，所有四个 Provider-native 逻辑分片恰好执行一次。
+
+插件安装或卸载尚未结束时，后台设备补同步与显式刷新对账共用前台操作的 busy 状态，不能把过程中可见的 pending 记录当成缺包而触发第二次全量下发。前台操作结束后，真正未完成的设备同步仍会恢复。组件回归覆盖“安装请求挂起时收到 pending 目录”和“请求结束后恢复补同步”；原多 Runtime 隔离 E2E 的逐设备一次下发断言保持不变。
