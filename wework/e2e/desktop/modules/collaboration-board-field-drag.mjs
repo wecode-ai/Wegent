@@ -19,7 +19,7 @@ async function revealBoardCard(control, selector) {
 export async function assertLaneOrder(control, scoped, columnKey, ids) {
   const selector = scoped(`[data-testid="cloud-todo-column-${columnKey}"]`)
   for (const id of ids) {
-    await control.command('waitFor', scoped(card(columnKey, id)), { visible: true })
+    await revealBoardCard(control, scoped(card(columnKey, id)))
   }
   await control.command('waitFor', selector, { stableMs: 300 })
   const testIds = JSON.parse(await control.command('getTestIdOrder', selector))
