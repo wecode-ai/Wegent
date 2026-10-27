@@ -1,3 +1,4 @@
+import { open } from 'node:fs/promises'
 import { waitForElementWidth, waitForSnapshot } from './conversation-layout.mjs'
 import { waitForTerminalOutput } from './terminal-compatibility-flows.mjs'
 
@@ -386,7 +387,13 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
   const filePath = join(workspacePath, PASTED_PATH_FILE_NAME)
   await mkdir(folderPath, { recursive: true })
   await writeFile(join(folderPath, 'nested.txt'), 'nested path context\n')
-  await writeFile(filePath, '# Pasted path context\n')
+  const largeFile = await open(filePath, 'w')
+  try {
+    await largeFile.write('# Pasted path context\n')
+    await largeFile.truncate(100 * 1024 * 1024 + 1)
+  } finally {
+    await largeFile.close()
+  }
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
@@ -398,6 +405,31 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
   await control.command('waitFor', '[data-testid="attachment-document-preview-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('fill', composerSelector, { value: 'test retained attachment draft' })
+  await control.command('pasteFile', composerSelector, {
+    filename: 'test-empty-file.txt',
+    mimeType: 'text/plain',
+    value: '',
+  })
+  await control.command('waitFor', '[data-testid="attachment-error-badge"]', {
+    text: 'test-empty-file.txt',
+  })
+  await control.command('click', '[data-testid="dismiss-attachment-error-button"]')
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="attachment-error-badge"]')),
+    0,
+    'Dismissing a failed attachment retained its error'
+  )
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    'test retained attachment draft'
+  )
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="attachment-badge"]')),
+    1,
+    'Dismissing a failed attachment removed the valid attachment'
+  )
+  await control.command('fill', composerSelector, { value: '' })
   await control.command('click', '[data-testid="attachment-document-preview-button"]')
   await control.command('waitFor', '[data-testid="composer-attachment-preview-panel"]', {
     text: 'test-preview.csv',
@@ -410,7 +442,28 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
   assert.equal(await control.command('getValue', composerSelector), '')
   await control.command('hover', '[data-testid="attachment-badge"]')
   await control.command('click', '[data-testid="remove-attachment-button"]')
+  await control.command('pasteFile', composerSelector, {
+    filename: 'test-large-generated.bin',
+    mimeType: 'application/octet-stream',
+    fileSize: 100 * 1024 * 1024 + 1,
+    value: 'YQ==',
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.text.includes('test-large-generated.bin') &&
+      snapshot.testIds.includes('attachment-badge') &&
+      !snapshot.testIds.includes('uploading-attachment-badge') &&
+      !snapshot.testIds.includes('attachment-error-badge'),
+    'A generated local attachment above 100 MiB did not finish staging',
+    60_000,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await control.command('hover', '[data-testid="attachment-badge"]')
+  await control.command('click', '[data-testid="remove-attachment-button"]')
   await control.command('pastePaths', composerSelector, {
+    // Transferring a real file above the cloud limit reads it through bounded host chunks.
+    timeoutMs: 60_000,
     value: JSON.stringify([
       {
         uri: pathToFileURL(folderPath).href,
@@ -434,6 +487,11 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.equal(
+    snapshot.testIds.includes('attachment-error-badge'),
+    false,
+    'A large native file was rejected by the cloud upload size limit'
+  )
   assert.equal(
     snapshot.testIds.includes('composer-path-chip-pasted-context-md'),
     false,

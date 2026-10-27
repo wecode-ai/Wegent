@@ -48,8 +48,45 @@ describe('local attachment API', () => {
     const attachment = await createLocalAttachmentApi().uploadAttachment(file)
 
     expect(attachment.local_path).toBe('/Users/alice/Documents/context.md')
-    expect(attachment.text_length).toBe(9)
+    expect(attachment.text_length).toBeNull()
     expect(desktopMocks.invoke).not.toHaveBeenCalled()
+  })
+
+  test.each(['log', 'txt', 'pdf'])(
+    'references a large native %s file without reading or copying its contents',
+    async extension => {
+      const file = new File(['test data'], `large.${extension}`, { type: 'text/plain' })
+      Object.defineProperty(file, 'size', { value: 378989795 })
+      rememberNativeFilePath(file, `/Users/alice/large.${extension}`)
+      const readText = vi.spyOn(file, 'text')
+      const readBytes = vi.spyOn(file, 'arrayBuffer')
+      const readChunk = vi.spyOn(file, 'slice')
+
+      const attachment = await createLocalAttachmentApi().uploadAttachment(file)
+
+      expect(attachment).toMatchObject({
+        file_size: 378989795,
+        local_path: `/Users/alice/large.${extension}`,
+        text_length: null,
+        status: 'ready',
+      })
+      expect(readText).not.toHaveBeenCalled()
+      expect(readBytes).not.toHaveBeenCalled()
+      expect(readChunk).not.toHaveBeenCalled()
+      expect(desktopMocks.invoke).not.toHaveBeenCalled()
+    }
+  )
+
+  test('starts staging a large generated file and reports the actual disk failure', async () => {
+    const file = new File(['test data'], 'generated.txt')
+    Object.defineProperty(file, 'size', { value: 100 * 1024 * 1024 + 1 })
+    desktopMocks.invoke.mockRejectedValueOnce(new Error('disk full'))
+
+    await expect(createLocalAttachmentApi().uploadAttachment(file)).rejects.toThrow('disk full')
+    expect(desktopMocks.invoke).toHaveBeenCalledExactlyOnceWith('attachment.begin', {
+      filename: 'generated.txt',
+      size: file.size,
+    })
   })
 
   test('stores a generated file without a source path under executor home', async () => {

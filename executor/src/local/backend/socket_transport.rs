@@ -29,6 +29,9 @@ use super::{
 const NAMESPACE: &str = "/local-executor";
 const NAMESPACE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+#[cfg(test)]
+mod correlation_tests;
+
 /// The tf-rust-socketio client expects an HTTP(S) URL and upgrades the
 /// connection itself. Normalize ws(s):// schemes so the Engine.IO handshake
 /// reaches the server correctly.

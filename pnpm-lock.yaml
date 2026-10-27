@@ -4,7 +4,7 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-packageExtensionsChecksum: sha256-7xSR3ISjHMO1s2SGAymiUIjUjIMF2cWdsXI0XROK3UY=
+packageExtensionsChecksum: sha256-WE38AAKnRy6d54cL6yvi0cklx5r0uwplT5PiqrcuqYE=
 
 patchedDependencies:
   '@file-viewer/renderer-drawing@2.1.26': 96f8d20757dde512edb9d888a64aee9a18ab063435284f5e2cba69ef422f1e0c
@@ -9551,7 +9551,9 @@ packages:
 
 snapshots:
 
-  '@acemir/cssom@0.9.31': {}
+  '@acemir/cssom@0.9.31':
+    dependencies:
+      cssstyle: 6.2.0
 
   '@adobe/css-tools@4.5.0': {}
 

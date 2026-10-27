@@ -126,6 +126,8 @@ node e2e/utils/mock-connector-upstream-server.mjs
 
 主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/run-checkpoints.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
+`runtime-input-answer-persistence` Core checkpoint 会在主工作区和临时聊天中通过真实交互回答 MCP elicitation 表单。Executor、Codex app-server、MCP server、桌面自动化传输和工作区列表刷新均为真实集成，仅模型服务由 loopback fixture 提供。测试通过 Executor 请求闸门在真实响应后保持已接受的答案待定，并延迟终态续跑响应，从而确定性地建立“接受成功 → 终态历史先到 → 工作区列表刷新后完成”的顺序，并在刷新前后都断言完整答案摘要可见。checkpoint 同时验证传输失败和过期请求的真实拒绝都不会把答案标记为成功，以及等待接受期间归档不会恢复答案。
+
 主桌面 runner 也支持按有序 checkpoint 分段执行。当前 checkpoint 依次为
 `remote-device-onboarding`、`workspace-tabs`、`cloud-project-creation`、
 `cloud-space-mention`、`priority-filter`、`telemetry-consent`、
@@ -133,7 +135,7 @@ node e2e/utils/mock-connector-upstream-server.mjs
 `project-assignment-notification`、`offline-local-project-space`、
 `core-dsh-plugin-management`、`plugin-auto-update`、
 `plugin-workspace-publication`、`project-ai-settings`、`model-routing`、
-`permission-modes`、`computer-use`、`task-status-sync`、
+`permission-modes`、`runtime-input-answer-persistence`、`computer-use`、`task-status-sync`、
 `task-board-association`、`core-task-flow`、`task-attachments`、
 `cloud-git-worktree`、`cloud-worktree-capability`、`cloud-worktree-create`、
 `cloud-worktree-queued-cancel`、`cloud-worktree-tools`、
@@ -152,6 +154,9 @@ checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fix
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
 Core 和 Cloud 的分片定义以 `.github/scripts/classify-wework-desktop-e2e.sh` 为准。
+
+`collaboration-runtime-reconciliation` 是可独立运行的 Core checkpoint，自动建立隔离的云项目、Issue、智能体和真实 Executor。它通过透明 WebSocket 代理暂存真实完成事件，分别验证快照先到、最终事件先到，以及两个终态事务在真实 MySQL 行锁后交错提交。每种顺序都检查数据库中的完整最终文本、Issue 界面和刷新后的结果。续轮在模型响应暂停期间重放旧完成事件，覆盖重复、乱序、无序号和空内容；每次都等待后端真实确认，再检查新轮、工作流和执行容量未被旧事件改变。代理只调度传输，模型服务之外的组件均保持真实；清理时释放模型、事务锁和代理连接。
+
 Linux Core 和 Cloud job 最多并行运行 4 个彼此隔离的 checkpoint，实际并发还受
 分片内 checkpoint 数量限制。每个 checkpoint 使用独立的数据库、Redis、端口和运行目录，
 Harness runtime 在分片启动前统一解压，因此不再因“重型运行时”或“协作”分组而全程串行。
@@ -637,6 +642,8 @@ const route = await app.route();
 新增 E2E 用例应优先使用该 helper 和 `data-testid` 定位，不要依赖易变的 CSS 选择器或可见文案。
 
 ## CI 建议
+
+Backend Rust E2E 镜像同时包含 `wegent-backend-rs` 和 `attachment-s3-e2e`。生产者、桌面消费者及预热任务共享 `resolve-backend-rs-e2e-runtime.sh` 的 `v2` 镜像命名规则，哈希输入必须一致，并包含 Rust manifest、锁文件、源码、examples 和 `.github/runtime-images/backend-rs-e2e.Dockerfile`。镜像配方变化会生成新标签，不能复用只包含主程序的旧 `v1` 镜像。缓存命中仍必须恢复完整产物；构建、发布、恢复和上传的路径一致性由 CI 调用的 runtime handoff 单测验证，不以跳过缺失文件或临时回退掩盖缓存错误。
 
 平台 E2E 基础镜像 `docker/wework-e2e/browser.Dockerfile` 通过 `docker.io` 预装 Docker CLI，并在构建时执行 `docker --version`。各分片准备远程工作区 Executor 时直接使用镜像内的 CLI，不再运行 apt 更新和安装。Dockerfile 的内容哈希决定镜像标签，修改后 CI 会构建新镜像并在后续运行中复用。
 

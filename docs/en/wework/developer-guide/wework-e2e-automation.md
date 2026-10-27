@@ -134,13 +134,18 @@ ordinary read within the same renderer process.
 
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/run-checkpoints.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
+The `collaboration-runtime-reconciliation` Core checkpoint runs independently and creates its own isolated cloud project, Issue, agent, and real Executor. A transparent WebSocket proxy holds actual completion events to cover snapshot-first, final-event-first, and terminal transactions contending on a real MySQL row lock. Each order checks the complete final text in the database, the Issue UI, and after reload. While a continuation's model response is held, it replays duplicate, reordered, unsequenced, and empty old completion events. Every replay waits for the real backend acknowledgement before asserting that the new turn, workflow, and execution capacity remain unchanged. The proxy only schedules transport; every component except the model service is real. Cleanup releases the model, transaction locks, and proxy connections.
+
+The `runtime-input-answer-persistence` Core checkpoint answers real MCP elicitation forms in the main workbench pane and a temporary chat. The Executor, Codex app-server, MCP server, desktop automation transport, and work-list refresh stay real; only the model service is mocked. Executor request gates hold the accepted answer after the real response and hold the terminal continuation so the terminal history deterministically arrives before the work-list refresh completes. The checkpoint asserts that the full answer summary remains visible before and after the refresh. It also verifies that a transport failure and a stale executor rejection never mark the answer as accepted, and that archiving while acceptance is pending does not restore the answer.
+
 The main desktop runner also supports execution through ordered checkpoints.
 The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
 `cloud-project-creation`, `cloud-space-mention`, `priority-filter`,
 `telemetry-consent`, `automation-lifecycle`, `project-automation`,
 `project-assignment-notification`, `offline-local-project-space`,
 `core-dsh-plugin-management`, `plugin-auto-update`, `plugin-workspace-publication`,
-`project-ai-settings`, `model-routing`, `permission-modes`, `computer-use`,
+`project-ai-settings`, `model-routing`, `permission-modes`,
+`runtime-input-answer-persistence`, `computer-use`,
 `task-status-sync`, `task-board-association`, `core-task-flow`, `task-attachments`,
 `cloud-git-worktree`, `cloud-worktree-capability`,
 `cloud-worktree-create`, `cloud-worktree-queued-cancel`, `cloud-worktree-tools`,
@@ -745,6 +750,8 @@ const route = await app.route();
 New E2E tests should prefer this helper and `data-testid` locators instead of unstable CSS selectors or visible copy.
 
 ## CI Guidance
+
+The Backend Rust E2E image contains both `wegent-backend-rs` and `attachment-s3-e2e`. Its producer, desktop consumers, and warmup use the shared `v2` image naming rule in `resolve-backend-rs-e2e-runtime.sh`. Their identical hash inputs include the Rust manifest, lockfile, sources, examples, and `.github/runtime-images/backend-rs-e2e.Dockerfile`. Recipe changes generate a new tag; old `v1` images containing only the API server cannot be reused. Cache hits must still restore the complete payload. CI invokes runtime handoff unit tests that verify matching build, publication, restoration, and upload paths instead of skipping missing files or hiding cache defects behind a fallback.
 
 The platform E2E base image, `docker/wework-e2e/browser.Dockerfile`, preinstalls the Docker CLI through `docker.io` and checks `docker --version` during its build. Shards use that CLI when preparing the remote workspace Executor without running apt update or installation. The Dockerfile content hash determines the image tag, so CI builds a new image after changes and reuses it in subsequent runs.
 

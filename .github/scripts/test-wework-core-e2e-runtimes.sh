@@ -12,9 +12,39 @@ ruby -ryaml -e '
   artifact = step.fetch("env").fetch("EXECUTOR_ARTIFACT")
   workflow = YAML.safe_load(File.read(ARGV[1]))
   producer = workflow.fetch("jobs").fetch("build-backend-rs-e2e-runtime")
-  publish = producer.fetch("steps").find { |s| s["name"] == "Publish content-addressed Backend Rust E2E image" }.fetch("if")
   consumer_workflow = YAML.safe_load(File.read(ARGV[2]))
   consumer = consumer_workflow.fetch("jobs").fetch("build-wework-desktop-core-e2e")
+  warmup = YAML.safe_load(File.read(ARGV[3]))
+  runtime_steps = [
+    producer.fetch("steps").find { |s| s["name"] == "Resolve Backend Rust E2E runtime" },
+    consumer_workflow.fetch("jobs").fetch("changes").fetch("steps").find { |s| s["name"] == "Resolve shared Rust E2E runtimes" },
+    warmup.fetch("jobs").fetch("prepare-wework-desktop-image").fetch("steps").find { |s| s["name"] == "Resolve shared Rust E2E runtimes" }
+  ]
+  digests = runtime_steps.map { |s| s.fetch("env").fetch(s["env"].key?("SOURCE_DIGEST") ? "SOURCE_DIGEST" : "BACKEND_RS_SOURCE_DIGEST") }
+  raise "Backend Rust OCI producer and consumers must hash the same inputs" unless digests.uniq.length == 1
+  raise "Backend Rust OCI digest must include its example binaries" unless digests.first.include?("backend-rs/examples/**")
+  recipe = ".github/runtime-images/backend-rs-e2e.Dockerfile"
+  raise "Backend Rust OCI digest must include the image recipe" unless digests.first.include?(recipe)
+  resolver = ".github/scripts/resolve-backend-rs-e2e-runtime.sh"
+  raise "Backend Rust OCI references must use the shared resolver" unless runtime_steps.all? { |s| s.fetch("run").include?(resolver) }
+  steps = producer.fetch("steps").to_h { |s| [s.fetch("name"), s] }
+  build = steps.fetch("Build Backend Rust E2E runtime").fetch("run")
+  raise "Backend Rust must compile the attachment S3 example" unless build.include?("--example attachment_s3_e2e")
+  publish = steps.fetch("Publish content-addressed Backend Rust E2E image")
+  raise "Backend Rust image publication must use its hashed recipe" unless publish.fetch("run").include?("--file #{recipe}")
+  dockerfile = File.read(File.join(File.dirname(ARGV[1]), "../runtime-images/backend-rs-e2e.Dockerfile"))
+  copies = dockerfile.scan(/^COPY (\S+) (\/app\/\S+)$/)
+  expected = [["wegent-backend-rs", "/app/wegent-backend-rs"], ["attachment-s3-e2e", "/app/attachment-s3-e2e"]]
+  raise "Backend Rust image must contain both runtime binaries" unless copies.sort == expected.sort
+  restore = steps.fetch("Restore content-addressed Backend Rust E2E binary").fetch("run")
+  restored_paths = restore.scan(/"\$container_id:(\/app\/[^"]+)"/).flatten
+  raise "Backend Rust cache hits must restore the published payload" unless restored_paths.sort == copies.map(&:last).sort
+  upload = steps.fetch("Upload Backend Rust E2E runtime").fetch("with").fetch("path")
+  expected.each do |name, _|
+    raise "Backend Rust image omits #{name}" unless publish.fetch("run").include?(".ci-artifacts/backend-rs-image/#{name}")
+    raise "Backend Rust artifact omits #{name}" unless upload.lines.map(&:strip).include?(".ci-artifacts/#{name}")
+  end
+  publish = publish.fetch("if")
   producer_seconds = Integer(producer.fetch("timeout-minutes")) * 60
   consumer_seconds = Integer(consumer.fetch("timeout-minutes")) * 60
   oci_seconds = Integer(step.fetch("env").fetch("OCI_RUNTIME_WAIT_SECONDS"))
@@ -53,7 +83,12 @@ ruby -ryaml -e '
       end
     end
   end
-' "$script_dir/../actions/build-wework-core-e2e/action.yml" "$script_dir/../workflows/e2e-tests.yml" "$script_dir/../workflows/wework-e2e.yml"
+' "$script_dir/../actions/build-wework-core-e2e/action.yml" "$script_dir/../workflows/e2e-tests.yml" "$script_dir/../workflows/wework-e2e.yml" "$script_dir/../workflows/ci-cache-warmup.yml"
+backend_image="$(
+  SOURCE_DIGEST=source-digest GITHUB_REPOSITORY_OWNER=WECODE-AI \
+    bash "$script_dir/resolve-backend-rs-e2e-runtime.sh"
+)"
+test "$backend_image" = "ghcr.io/wecode-ai/wegent-backend-rs-e2e:v2-source-digest"
 ruby -ryaml -e '
   action = YAML.safe_load(File.read(ARGV[0]))
   step = action.fetch("runs").fetch("steps").find { |s| s["env"]&.key?("EXECUTOR_IMAGE") }

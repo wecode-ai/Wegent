@@ -37,12 +37,6 @@ export async function createDesktopScenario({ captureScreenshot, executorHome, h
       await control.command('waitFor', '[data-testid="external-content-import-success"]', {
         text: 'Codex',
       })
-      await captureScreenshot(
-        control,
-        'external-content-import-success.png',
-        '[data-testid="external-content-import-dialog"]'
-      )
-
       assert.match(
         await readFile(join(destinationHome, 'config.toml'), 'utf8'),
         /^model = "desktop-e2e-imported"$/mu,
@@ -57,6 +51,11 @@ export async function createDesktopScenario({ captureScreenshot, executorHome, h
         await readFile(join(destinationHome, 'skills', 'external-import-e2e', 'SKILL.md'), 'utf8'),
         SOURCE_SKILL,
         'Codex skills were not imported into the managed home'
+      )
+      await captureScreenshot(
+        control,
+        'external-content-import-success.png',
+        '[data-testid="external-content-import-dialog"]'
       )
     },
 

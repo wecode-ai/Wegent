@@ -460,6 +460,9 @@ pub(crate) fn project_response(
         board_config: board_config_value(
             metadata.and_then(|metadata| metadata.board_config.as_ref()),
         ),
+        board_views: metadata
+            .and_then(|metadata| metadata.board_views.as_ref())
+            .map(|value| brz_json::to_raw_value(value).unwrap()),
         ai_automation: ai_automation_value(
             metadata.and_then(|metadata| metadata.ai_automation.as_ref()),
         ),
@@ -508,6 +511,8 @@ pub(crate) struct CloudProjectBody {
     provider_config: ProviderConfig,
     card_display: CardDisplay,
     board_config: BoardConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    board_views: Option<RawJson>,
     ai_automation: AiAutomation,
     pull_request_automation: PullRequestAutomation,
     workflow_definition: WorkflowDefinition,
@@ -595,6 +600,18 @@ mod tests {
     use super::*;
     use brz_mysql::Json;
     use chrono::NaiveDateTime;
+
+    #[test]
+    fn saved_views_preserve_future_versions_and_extensions() {
+        for config in [
+            json!({"schema_version":1,"views":[{"id":"mixed","name":"Mixed","columns":[{"id":"progress","type":"status","value":"in_progress","futureField":true},{"id":"tag","type":"tag","value":"frontend"}],"filter":{"tags":[],"match":"all"}}],"futureExtension":{"keepCase":7}}),
+            json!({"schema_version":2,"future":true}),
+        ] {
+            let response =
+                project_response(&row(json!({"board_views":config})), 1, "user", "Owner");
+            assert_eq!(response["board_views"], config);
+        }
+    }
 
     #[test]
     fn cloud_project_legacy_json_baseline() {

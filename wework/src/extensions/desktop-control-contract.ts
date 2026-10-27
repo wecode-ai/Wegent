@@ -13,6 +13,7 @@ export interface DesktopControlCommand {
   key?: string
   by?: 'label' | 'value'
   filename?: string
+  fileSize?: number
   mimeType?: string
 }
 
