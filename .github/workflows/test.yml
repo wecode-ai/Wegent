@@ -191,6 +191,13 @@ jobs:
           cargo test --locked --lib attachments_task_all::auth::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/attachment-auth-mysql.log
 
+      - name: Verify handoff title search with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib tasks_search::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/tasks-search-mysql.log
+
       - name: Upload Rust backend test evidence
         if: always()
         uses: actions/upload-artifact@v4

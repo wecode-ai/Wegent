@@ -37,6 +37,10 @@ use crate::tasks_db_projection::{
 
 pub mod statements;
 
+#[cfg(test)]
+#[path = "mysql_tests.rs"]
+mod mysql_tests;
+
 /// Bound each owned-task read while scanning for title matches.
 const SEARCH_SCAN_BATCH_SIZE: i64 = 200;
 
