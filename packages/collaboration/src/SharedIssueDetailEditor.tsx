@@ -2095,7 +2095,7 @@ export function TodoEditor(props: TodoEditorProps) {
       value={assigneeTarget}
       onChange={setAssigneeTarget}
       disabled={!canAssign || saving}
-      className="relative inline-flex items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default"
+      className="relative inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default"
       triggerContent={
         <>
           {assigneeTarget.startsWith("group:") ? (
