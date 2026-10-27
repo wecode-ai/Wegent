@@ -449,9 +449,10 @@ export class RuntimeTaskLifecycleStore {
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
       ((isRuntimeTaskConfirmedActive(canonicalEvent.task) &&
         machine.isPriorSettledTurn(canonicalEvent.task.runtimeHandle.lastTurnId)) ||
-        (previous.turn.active &&
-          previous.task?.completedAt != null &&
-          machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId)))
+        (machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId) &&
+          (previous.turn.active
+            ? previous.task?.completedAt != null
+            : previous.turn.outcome !== null)))
     ) {
       logRuntimeTaskCreateStage('lifecycle-snapshot-skipped', {
         taskId: canonicalAddress.taskId,
