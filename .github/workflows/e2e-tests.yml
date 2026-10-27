@@ -217,7 +217,13 @@ jobs:
           IMAGE: ${{ steps.runtime.outputs.image }}
         run: |
           if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
+            if docker pull "$IMAGE" >/dev/null 2>&1 && \
+              docker cp "$(docker create "$IMAGE")":/app/wegent-backend-rs /tmp/e2e-wegent-backend-rs && \
+              docker cp "$(docker create "$IMAGE")":/app/attachment-s3-e2e /tmp/e2e-attachment-s3-e2e; then
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
@@ -283,12 +289,6 @@ jobs:
         run: |
           container_id="$(docker create "$IMAGE")"
           trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
-          if ! docker cp "$container_id:/app/wegent-backend-rs" /tmp/e2e-wegent-backend-rs || \
-            ! docker cp "$container_id:/app/attachment-s3-e2e" \
-            /tmp/e2e-attachment-s3-e2e; then
-            echo "Cached runtime image is missing required binaries; rebuilding"
-            exit 0
-          fi
           docker pull "$IMAGE"
           mkdir -p .ci-artifacts
           docker cp \
