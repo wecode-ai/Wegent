@@ -180,6 +180,7 @@ export function StandInConnections({
                 disabled={disabled}
                 suggestions={[...new Set(projects.flatMap(project => project.tags ?? []))]}
                 placeholder={t('standIn.personal.add_tag')}
+                lengthErrorLabel={t('standIn.personal.tag_too_long')}
                 removeLabel={tag => t('standIn.personal.remove_tag', { tag })}
                 testIdPrefix="stand-in-connection-tags"
               />

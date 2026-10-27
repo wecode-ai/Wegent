@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { updateBoardViewTag } from '../project-board/projectTags'
 
 import type {
   ProjectManageApi,
@@ -111,6 +112,7 @@ import { createCollaborationTranslator } from '../i18n'
 import { ProjectManageView } from './ProjectManageView'
 import { ProjectMembersSection } from './ProjectMembersSection'
 import { ProjectTagsSection } from './ProjectManageSections'
+import type { ProjectBoardViews } from '../project-board/projectBoardViews'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -145,7 +147,6 @@ function createApi() {
     addMember: vi.fn(),
     updateMember: vi.fn(),
     removeMember: vi.fn(),
-    updateItem: vi.fn(),
     updateProject: vi.fn(),
   } as unknown as ProjectManageApi<
     ProjectManageProject,
@@ -240,6 +241,136 @@ async function flushPromises() {
   await Promise.resolve()
   await Promise.resolve()
 }
+
+describe('project tag view integration', () => {
+  beforeEach(() => hookRuntime.reset())
+  const boardViews: ProjectBoardViews = {
+    schema_version: 1,
+    views: [
+      {
+        id: 'mixed',
+        name: '测试视图',
+        columns: [
+          { id: 'inbox', type: 'status', value: 'inbox' },
+          { id: 'test', type: 'tag', value: '测试' },
+        ],
+        filter: { tags: ['需求'] },
+      },
+    ],
+  }
+
+  it.each(['rename', 'delete'] as const)(
+    'discovers unused view tags and updates their references on %s',
+    async action => {
+      const api = createApi()
+      const host = createHost()
+      host.renderActionMenu = vi.fn(() => null)
+      let current = { ...project('project-a', 'private'), tags: ['bug'], board_views: boardViews }
+      const onUpdated = vi.fn(updated => {
+        current = updated
+      })
+      vi.mocked(api.updateProject).mockImplementation(async (_id, values) => ({
+        ...current,
+        ...values,
+        board_views: values.tag_change
+          ? updateBoardViewTag(
+              current.board_views,
+              values.tag_change.source,
+              values.tag_change.target,
+              host.translate
+            )
+          : current.board_views,
+        version: values.version + 1,
+      }))
+      let tree = renderView(api, host, current, onUpdated)
+      findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
+        currentTarget: { open: true },
+      })
+      renderView(api, host, current, onUpdated)
+      await flushPromises()
+      tree = renderView(api, host, current, onUpdated)
+      for (const tag of ['bug', '测试', '需求'])
+        expect(findByTestId(tree, `cloud-project-tag-${tag}`)).not.toBeNull()
+      expect(api.updateProject).not.toHaveBeenCalled()
+      const menu = vi
+        .mocked(host.renderActionMenu)
+        .mock.calls.flatMap(([options]) => options.items)
+        .find(item => item.testId === `cloud-project-tag-${action}-测试`)!
+      if (action === 'rename') {
+        menu.onSelect()
+        tree = renderView(api, host, current, onUpdated)
+        findByTestId(tree, 'cloud-project-tag-rename-input-测试').props.onChange({
+          target: { value: '验证' },
+        })
+        tree = renderView(api, host, current, onUpdated)
+        findByTestId(tree, 'cloud-project-tag-rename-input-测试').props.onKeyDown({ key: 'Enter' })
+      } else {
+        await menu.onSelect()
+      }
+      await vi.waitFor(() => expect(onUpdated).toHaveBeenCalledOnce())
+      expect(api.updateProject).toHaveBeenCalledWith('project-a', {
+        version: 1,
+        tag_change: { source: '测试', target: action === 'rename' ? '验证' : null },
+      })
+      tree = renderView(api, host, current, onUpdated)
+      expect(findByTestId(tree, 'cloud-project-tag-测试')).toBeNull()
+      expect(findByTestId(tree, 'cloud-project-tag-需求')).not.toBeNull()
+    }
+  )
+})
+
+describe('project tag change failures', () => {
+  beforeEach(() => hookRuntime.reset())
+  it.each(['rename', 'delete'] as const)(
+    'keeps the catalog and Issues unchanged when %s conflicts',
+    async action => {
+      const api = createApi()
+      const host = createHost()
+      host.renderActionMenu = vi.fn(() => null)
+      const current = { ...project('project-a', 'private'), tags: ['old'] }
+      vi.mocked(api.listItems).mockResolvedValue({
+        items: [{ id: 'issue', version: 1, tags: ['old', 'keep'] }],
+      })
+      vi.mocked(api.updateProject).mockRejectedValue(new Error('Project changed'))
+      const onUpdated = vi.fn()
+      let tree = renderView(api, host, current, onUpdated)
+      findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
+        currentTarget: { open: true },
+      })
+      renderView(api, host, current, onUpdated)
+      await flushPromises()
+      tree = renderView(api, host, current, onUpdated)
+      expect(findByTestId(tree, 'cloud-project-tag-old')).not.toBeNull()
+      const menu = vi
+        .mocked(host.renderActionMenu)
+        .mock.calls.flatMap(([options]) => options.items)
+        .find(item => item.testId === `cloud-project-tag-${action}-old`)!
+      if (action === 'rename') {
+        menu.onSelect()
+        tree = renderView(api, host, current, onUpdated)
+        findByTestId(tree, 'cloud-project-tag-rename-input-old').props.onChange({
+          target: { value: 'new' },
+        })
+        tree = renderView(api, host, current, onUpdated)
+        findByTestId(tree, 'cloud-project-tag-rename-input-old').props.onKeyDown({ key: 'Enter' })
+      } else await menu.onSelect()
+      await vi.waitFor(() => expect(api.updateProject).toHaveBeenCalledOnce())
+      await flushPromises()
+      tree = renderView(api, host, current, onUpdated)
+      expect(findByTestId(tree, 'cloud-project-manage-error').props.children).toBe(
+        'Project changed'
+      )
+      expect(findByTestId(tree, 'cloud-project-tag-old')).not.toBeNull()
+      expect(findByTestId(tree, 'cloud-project-tag-new')).toBeNull()
+      expect(findByTestId(tree, 'cloud-project-tag-keep')).not.toBeNull()
+      expect(onUpdated).not.toHaveBeenCalled()
+      expect(api.updateProject).toHaveBeenCalledWith('project-a', {
+        version: 1,
+        tag_change: { source: 'old', target: action === 'rename' ? 'new' : null },
+      })
+    }
+  )
+})
 
 describe('ProjectManageView project scope', () => {
   beforeEach(() => {

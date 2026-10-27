@@ -238,6 +238,24 @@ function createMockDeliveryApi() {
 }
 
 describe('createWeworkDeliverySharedWorkspaceApi', () => {
+  it.each(['renamed', null])(
+    'maps atomic tag change target %s to the delivery API',
+    async target => {
+      const deliveryApi = createMockDeliveryApi()
+      const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+
+      await api.projects.update('project-1', {
+        version: 2,
+        tagChange: { source: 'old', target },
+      })
+
+      expect(deliveryApi.updateCloudProject).toHaveBeenCalledExactlyOnceWith('project-1', {
+        version: 2,
+        tag_change: { source: 'old', target },
+      })
+    }
+  )
+
   it('preserves current project authority and member override provenance', async () => {
     const deliveryApi = createMockDeliveryApi()
     const authoritative: CloudProject = {
@@ -786,7 +804,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         if (endpoint === '/v1/workspaces/workspace-1/projects') {
           return { items: [project] }
         }
-        if (endpoint === '/v1/resources') {
+        if (endpoint === '/v1/resources?include_readiness=false') {
           return {
             agents: [
               {

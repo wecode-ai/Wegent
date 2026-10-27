@@ -77,6 +77,7 @@
     }
   },
   "workbench": {
+    "dismiss_attachment_error": "关闭附件错误",
     "reply_prediction_generating": "正在生成建议…",
     "reply_prediction_failed": "回复建议生成失败，请检查当前模型的连接和认证设置。",
     "reply_prediction_accept": "接受建议",
@@ -4222,6 +4223,7 @@
     "task_board_group_tag": "标签",
     "task_board_no_priority": "普通",
     "task_board_no_tag": "无标签",
+    "tag_limit_exceeded": "最多添加 20 个不同标签",
     "task_board_unassigned": "未指定",
     "task_board_search_group_fields": "搜索分组字段",
     "task_board_root_label": "任务",
@@ -5334,6 +5336,7 @@
       "cloud": "云端",
       "limit_tags": "限定任务标签（选填）",
       "add_tag": "选择或输入任务标签",
+      "tag_too_long": "标签名称不能超过 32 个字符",
       "remove_tag": "移除标签 {{tag}}",
       "limit_tags_help": "匹配任意标签即可接手；留空表示不限定标签。",
       "discard_help": "有未保存的修改，是否放弃？",

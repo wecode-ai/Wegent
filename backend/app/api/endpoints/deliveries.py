@@ -601,7 +601,31 @@ async def update_loop_item(
             bound_rule_id="",
         )
 
-    item = loop_item_service.update(db, item_id, current_user.id, values)
+    refresh_execution = bool(
+        existing.assignee_agent_id
+        and (
+            "assignee_agent_id" not in values.model_fields_set
+            or values.assignee_agent_id == existing.assignee_agent_id
+        )
+        and not values.assignee_group_id
+        and ("execution_config" in values.model_fields_set or entered_processing)
+    )
+    try:
+        item = loop_item_service.update(
+            db, item_id, current_user.id, values, commit=False
+        )
+        if refresh_execution and item.assignee_agent_id:
+            item = loop_item_service.refresh_agent_execution_configuration(
+                db,
+                item=item,
+                user_id=current_user.id,
+                commit=False,
+            )
+        db.commit()
+        db.refresh(item)
+    except Exception:
+        db.rollback()
+        raise
     queue_wakeup_scheduled = False
     if (item.assignee_agent_id and "assignee_agent_id" in values.model_fields_set) or (
         "assignee_group_id" in values.model_fields_set
@@ -614,11 +638,6 @@ async def update_loop_item(
     elif item.assignee_agent_id and (
         "execution_config" in values.model_fields_set or entered_processing
     ):
-        item = loop_item_service.refresh_agent_execution_configuration(
-            db,
-            item=item,
-            user_id=current_user.id,
-        )
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
