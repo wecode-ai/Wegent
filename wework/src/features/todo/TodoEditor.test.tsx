@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { startTransition, Suspense, useState } from 'react'
 import '@/i18n'
 import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
 import { TodoEditor } from './TodoEditor'
@@ -588,9 +589,7 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
-    expect(await screen.findByTestId('todo-detail-deliveries')).toHaveTextContent(
-      '交付结果 · 1 个附件'
-    )
+    expect(await screen.findByTestId('todo-detail-deliveries')).toHaveTextContent('1 个附件')
   })
 
   it('fails closed for cloud Issue editing when can_edit is missing', async () => {
@@ -1282,10 +1281,108 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue('Inspect changes')
   })
 
-  it('hydrates the authoritative current delivery when an external update completes the Issue', async () => {
-    const initialDeliveryList = deferred<{ items: [] }>()
+  it.each([false, true])(
+    'hydrates the current delivery without discarding a delayed list (history=%s)',
+    async includeHistory => {
+      const currentDelivery = {
+        id: 'delivery-1',
+        loop_item_id: baseItem.id,
+        created_by_user_id: 1,
+        source_task_binding_id: null,
+        source_task_snapshot: null,
+        status: 'delivered',
+        created_at: '2026-09-15T13:55:16Z',
+        delivered_at: '2026-09-15T13:55:16Z',
+        markdown: '',
+        chat: {
+          scope: 'selected',
+          messages: [
+            { role: 'user', content: '请分析下载原因' },
+            { role: 'assistant', content: '**结论**：来自定时任务。' },
+          ],
+        },
+        assets: [
+          {
+            id: 'asset-1',
+            kind: 'file',
+            display_name: 'result.txt',
+            relative_path: 'result.txt',
+            content_type: 'text/plain',
+            size_bytes: 6,
+            sha256: 'sha256',
+          },
+        ],
+        fulfillments: [],
+      }
+      const initialDeliveryList = deferred<{ items: (typeof currentDelivery)[] }>()
+      const historicalDelivery = { ...currentDelivery, id: 'delivery-older', markdown: '此前交付' }
+      const deliveryApi = {
+        ...api,
+        listDeliveries: vi.fn(() => initialDeliveryList.promise),
+        getDelivery: vi.fn(async () => currentDelivery),
+      } as never
+      const renderEditor = (item: CloudLoopItem) => (
+        <TodoEditor
+          mode="edit"
+          presentation="workspace-panel"
+          item={item}
+          project={project}
+          allItems={[item]}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          api={deliveryApi}
+          currentUserId={1}
+        />
+      )
+      const view = render(renderEditor(baseItem))
+
+      view.rerender(
+        renderEditor({
+          ...baseItem,
+          status: 'completed',
+          current_delivery_id: currentDelivery.id,
+          version: 2,
+        })
+      )
+
+      expect(await screen.findByTestId('todo-detail-deliveries')).toHaveTextContent('1 个附件')
+      expect(deliveryApi.getDelivery).toHaveBeenCalledWith(currentDelivery.id)
+
+      await act(async () => {
+        initialDeliveryList.resolve({ items: includeHistory ? [historicalDelivery] : [] })
+        await initialDeliveryList.promise
+      })
+
+      expect(screen.getByTestId('todo-detail-deliveries')).toHaveTextContent('1 个附件')
+
+      if (includeHistory) {
+        expect(screen.getByTestId('todo-detail-open-delivery-delivery-older')).toHaveTextContent(
+          '此前交付'
+        )
+      }
+
+      await userEvent.click(screen.getByTestId('todo-detail-open-delivery-delivery-1'))
+      const chat = await screen.findByTestId('todo-detail-delivery-chat')
+      const deliveryPanel = screen.getByTestId('todo-detail-delivery-panel')
+      expect(deliveryPanel).toHaveClass('task-detail-workspace-panel-shell', 'relative', 'h-full')
+      expect(deliveryPanel).not.toHaveClass('fixed')
+      expect(screen.queryByText('无交付说明')).not.toBeInTheDocument()
+      expect(chat).toHaveTextContent('请分析下载原因')
+      expect(chat).toHaveTextContent('结论：来自定时任务。')
+      expect(within(chat).getByText('结论').tagName).toBe('STRONG')
+      expect(screen.getByText('result.txt')).toBeInTheDocument()
+
+      await userEvent.click(screen.getByRole('button', { name: '返回' }))
+      await userEvent.click(screen.getByTestId('todo-detail-open-delivery-delivery-1'))
+      expect(await screen.findByTestId('todo-detail-delivery-chat')).toHaveTextContent(
+        '结论：来自定时任务。'
+      )
+    }
+  )
+
+  it('retains the committed delivery when a newer render suspends', async () => {
     const currentDelivery = {
-      id: 'delivery-1',
+      id: 'delivery-current',
       loop_item_id: baseItem.id,
       created_by_user_id: 1,
       source_task_binding_id: null,
@@ -1293,61 +1390,68 @@ describe('TodoEditor external item sync', () => {
       status: 'delivered',
       created_at: '2026-09-15T13:55:16Z',
       delivered_at: '2026-09-15T13:55:16Z',
-      markdown: '',
+      markdown: 'Committed delivery',
       chat: null,
-      assets: [
-        {
-          id: 'asset-1',
-          kind: 'file',
-          display_name: 'result.txt',
-          relative_path: 'result.txt',
-          content_type: 'text/plain',
-          size_bytes: 6,
-          sha256: 'sha256',
-        },
-      ],
+      assets: [],
       fulfillments: [],
     }
+    const olderDelivery = { ...currentDelivery, id: 'delivery-older', markdown: 'Older delivery' }
+    const deliveryList = deferred<{ items: (typeof currentDelivery)[] }>()
+    const suspended = deferred<void>()
     const deliveryApi = {
       ...api,
-      listDeliveries: vi.fn(() => initialDeliveryList.promise),
+      listDeliveries: vi.fn(() => deliveryList.promise),
       getDelivery: vi.fn(async () => currentDelivery),
     } as never
-    const renderEditor = (item: CloudLoopItem) => (
-      <TodoEditor
-        mode="edit"
-        presentation="workspace-panel"
-        item={item}
-        project={project}
-        allItems={[item]}
-        onUpdated={vi.fn()}
-        onClose={vi.fn()}
-        api={deliveryApi}
-        currentUserId={1}
-      />
-    )
-    const view = render(renderEditor(baseItem))
-
-    view.rerender(
-      renderEditor({
+    let beginUpdate = () => {}
+    let attemptedSuspendedRender = false
+    function SuspendGate({ pending }: { pending: boolean }) {
+      if (pending) {
+        attemptedSuspendedRender = true
+        throw suspended.promise
+      }
+      return null
+    }
+    function Harness() {
+      const [pending, setPending] = useState(false)
+      beginUpdate = () => startTransition(() => setPending(true))
+      const item = {
         ...baseItem,
-        status: 'completed',
-        current_delivery_id: currentDelivery.id,
-        version: 2,
-      })
-    )
-
-    expect(await screen.findByTestId('todo-detail-deliveries')).toHaveTextContent(
-      '交付结果 · 1 个附件'
-    )
-    expect(deliveryApi.getDelivery).toHaveBeenCalledWith(currentDelivery.id)
-
+        current_delivery_id: pending ? 'delivery-uncommitted' : currentDelivery.id,
+      }
+      return (
+        <Suspense fallback={<div data-testid="pending-delivery-render" />}>
+          <TodoEditor
+            mode="edit"
+            presentation="workspace-panel"
+            item={item}
+            project={project}
+            allItems={[item]}
+            onUpdated={vi.fn()}
+            onClose={vi.fn()}
+            api={deliveryApi}
+          />
+          <SuspendGate pending={pending} />
+        </Suspense>
+      )
+    }
+    render(<Harness />)
+    expect(
+      await screen.findByTestId('todo-detail-open-delivery-delivery-current')
+    ).toHaveTextContent('Committed delivery')
+    await act(async () => beginUpdate())
+    expect(attemptedSuspendedRender).toBe(true)
+    expect(screen.queryByTestId('pending-delivery-render')).not.toBeInTheDocument()
     await act(async () => {
-      initialDeliveryList.resolve({ items: [] })
-      await initialDeliveryList.promise
+      deliveryList.resolve({ items: [olderDelivery] })
+      await deliveryList.promise
     })
-
-    expect(screen.getByTestId('todo-detail-deliveries')).toHaveTextContent('交付结果 · 1 个附件')
+    expect(screen.getByTestId('todo-detail-open-delivery-delivery-current')).toHaveTextContent(
+      'Committed delivery'
+    )
+    expect(screen.getByTestId('todo-detail-open-delivery-delivery-older')).toHaveTextContent(
+      'Older delivery'
+    )
   })
 
   it('hydrates placeholder fields when the same issue version finishes loading', () => {

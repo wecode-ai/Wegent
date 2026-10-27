@@ -678,6 +678,14 @@ jobs:
           PYTHONPATH: ..:.
         run: uv run --no-sync python tests/integration/runtime_activity_mysql.py
 
+      - name: Verify MySQL project detachment concurrency
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          PROJECT_TASK_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          PYTHONPATH: ..:.
+        run: uv run --no-sync python tests/integration/project_task_detachment_mysql.py
+
       - name: Start backend server
         env:
           EXTERNAL_KNOWLEDGE_MCP_ENABLED: "true"
