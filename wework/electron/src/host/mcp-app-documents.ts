@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { createServer, type Server } from 'node:http'
 
 type Metadata = Record<string, unknown>
 
@@ -59,71 +58,62 @@ export function mcpAppContentSecurityPolicy(metadata: Metadata): string {
   ].join('; ')
 }
 
+export const MCP_APP_SCHEME = 'codex-sandbox'
+const sandboxDomain = 'web-sandbox.oaiusercontent.com'
+
 /** Each document has its own origin, never the workbench's cookies or host bridge. */
 export class McpAppDocuments {
-  private readonly documents = new Map<string, { server: Server; expiry: NodeJS.Timeout }>()
+  private readonly documents = new Map<
+    string,
+    { url: string; html: string; csp: string; expiry: NodeJS.Timeout }
+  >()
 
   owns(url: string): boolean {
     try {
       const parsed = new URL(url)
-      const server = this.documents.get(parsed.pathname.slice(1))?.server
-      const address = server?.address()
-      return (
-        !!address &&
-        typeof address !== 'string' &&
-        parsed.origin === `http://127.0.0.1:${address.port}` &&
-        !parsed.search &&
-        !parsed.hash
-      )
+      const id = parsed.hostname.slice(0, -(sandboxDomain.length + 1))
+      return this.documents.get(id)?.url === url
     } catch {
       return false
     }
+  }
+
+  respond(request: Request): Response {
+    if (request.method !== 'GET' || !this.owns(request.url)) {
+      return new Response(null, { status: 404 })
+    }
+    const id = new URL(request.url).hostname.slice(0, -(sandboxDomain.length + 1))
+    const document = this.documents.get(id)!
+    return new Response(document.html, {
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Security-Policy': document.csp,
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+        'X-Content-Type-Options': 'nosniff',
+        'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+      },
+    })
   }
 
   async create(html: string, metadata: Metadata): Promise<{ id: string; url: string }> {
     if (Buffer.byteLength(html) > 10 * 1024 * 1024) throw new Error('MCP App document is too large')
     if (this.documents.size >= 64) throw new Error('Too many active MCP App documents')
     const id = randomUUID()
-    const csp = mcpAppContentSecurityPolicy(metadata)
-    const server = createServer((request, response) => {
-      if (request.method !== 'GET' || request.url !== `/${id}` || request.headers.host !== host) {
-        response.writeHead(404).end()
-        return
-      }
-      response
-        .writeHead(200, {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Content-Security-Policy': csp,
-          'Cache-Control': 'no-store',
-          'Referrer-Policy': 'no-referrer',
-          'X-Content-Type-Options': 'nosniff',
-          'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
-        })
-        .end(html)
+    const url = `${MCP_APP_SCHEME}://${id}.${sandboxDomain}/mcp-app.html`
+    this.documents.set(id, {
+      url,
+      html,
+      csp: mcpAppContentSecurityPolicy(metadata),
+      expiry: setTimeout(() => this.release(id), 90000).unref(),
     })
-    let host = ''
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject)
-      server.listen(0, '127.0.0.1', () => resolve())
-    })
-    const address = server.address()
-    if (!address || typeof address === 'string') {
-      server.close()
-      throw new Error('Invalid MCP App address')
-    }
-    host = `127.0.0.1:${address.port}`
-    server.unref()
-    this.documents.set(id, { server, expiry: setTimeout(() => this.release(id), 90000).unref() })
-    return { id, url: `http://${host}/${id}` }
+    return { id, url }
   }
 
   release(id: string): void {
     const document = this.documents.get(id)
     this.documents.delete(id)
-    if (!document) return
-    clearTimeout(document.expiry)
-    document.server.closeAllConnections()
-    document.server.close()
+    if (document) clearTimeout(document.expiry)
   }
 
   renew(id: string): void {

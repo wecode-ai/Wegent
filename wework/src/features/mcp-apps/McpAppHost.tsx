@@ -13,7 +13,7 @@ import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import type { ToolBlock } from '@wegent/chat-core/runtime-conversation'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import { appDocumentTransport } from './transport'
+import { appDocumentOrigin, appDocumentTransport } from './transport'
 import { legacyWidgetDocument } from './legacyBridge'
 import { appDisplayModes, appHostContext, appInitialDisplayMode } from './hostContext'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
@@ -342,7 +342,7 @@ export function McpAppHost({
       if (active) setFailure(error.message)
     }
     void app
-      .connect(appDocumentTransport(frame.current.contentWindow, new URL(document.url).origin))
+      .connect(appDocumentTransport(frame.current.contentWindow, appDocumentOrigin(document.url)))
       .catch(error => {
         if (active) setFailure(error.message)
       })

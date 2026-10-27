@@ -2,6 +2,12 @@ import type { AppBridge } from '@modelcontextprotocol/ext-apps/app-bridge'
 
 type Transport = Parameters<AppBridge['connect']>[0]
 
+/** URL.origin reports null for custom schemes outside Electron's registered renderer. */
+export function appDocumentOrigin(url: string): string {
+  const parsed = new URL(url)
+  return parsed.protocol === 'codex-sandbox:' ? `${parsed.protocol}//${parsed.host}` : parsed.origin
+}
+
 /** Bind both directions to one document's origin, including after navigation. */
 export function appDocumentTransport(target: Window, origin: string): Transport {
   let listener: ((event: MessageEvent) => void) | undefined

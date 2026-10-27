@@ -25,17 +25,29 @@ describe('MCP App isolated documents', () => {
     try {
       const first = await documents.create('<h1>Private app</h1>', {})
       const second = await documents.create('<h1>Other app</h1>', {})
-      expect(new URL(first.url).origin).not.toBe(new URL(second.url).origin)
-      const response = await fetch(first.url)
+      expect(new URL(first.url).host).not.toBe(new URL(second.url).host)
+      expect(first.url).toMatch(
+        /^codex-sandbox:\/\/[a-f0-9-]+\.web-sandbox\.oaiusercontent\.com\/mcp-app\.html$/
+      )
+      for (const url of [
+        first.url + '?other=1',
+        first.url.replace('codex-sandbox:', 'https:'),
+        first.url.replace('/mcp-app.html', '/unknown'),
+        first.url.replace('.web-sandbox.', '.other.'),
+      ]) {
+        expect(documents.respond(new Request(url)).status).toBe(404)
+      }
+      expect(documents.respond(new Request(first.url, { method: 'POST' })).status).toBe(404)
+      const response = documents.respond(new Request(first.url))
       expect(await response.text()).toBe('<h1>Private app</h1>')
       expect(response.headers.get('content-security-policy')).toContain("connect-src 'none'")
       expect(response.headers.get('content-security-policy')).toContain("frame-src 'none'")
       expect(response.headers.get('access-control-allow-origin')).toBeNull()
       expect(response.headers.get('cache-control')).toBe('no-store')
-      expect((await fetch(new URL('/unknown', first.url))).status).toBe(404)
+      expect(documents.respond(new Request(new URL('/unknown', first.url))).status).toBe(404)
       documents.release(first.id)
-      await expect(fetch(first.url)).rejects.toThrow()
-      expect((await fetch(second.url)).ok).toBe(true)
+      expect(documents.respond(new Request(first.url)).status).toBe(404)
+      expect(documents.respond(new Request(second.url)).ok).toBe(true)
     } finally {
       documents.dispose()
     }
@@ -72,7 +84,7 @@ describe('MCP App isolated documents', () => {
       const document = await documents.create('<p>App</p>', {
         ui: { csp: { connectDomains: ['https://例子.测试', 'https://safe.example\u0000'] } },
       })
-      const response = await fetch(document.url)
+      const response = documents.respond(new Request(document.url))
       expect(response.ok).toBe(true)
       expect(response.headers.get('content-security-policy')).toContain(
         'connect-src https://xn--fsqu00a.xn--0zwm56d'

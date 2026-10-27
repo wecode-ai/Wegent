@@ -80,7 +80,10 @@ export function createDesktopScenario({
       let frameUrl = await control.command('getAttribute', '[data-testid="mcp-app-frame"]', {
         value: 'src',
       })
-      assert.ok(frameUrl.startsWith('http://127.0.0.1:'))
+      assert.match(
+        frameUrl,
+        /^codex-sandbox:\/\/[a-f0-9-]+\.web-sandbox\.oaiusercontent\.com\/mcp-app\.html$/
+      )
       const frameAction = async (action, selector, value) => {
         const response = await fetch(`${origin}/wework/electron-host/v1/invoke`, {
           method: 'POST',
@@ -95,6 +98,7 @@ export function createDesktopScenario({
         assert.equal(result.ok, true, JSON.stringify(result.error))
         return result.result
       }
+      assert.equal(await frameAction('document-status', 'body'), 200)
       const waitText = async text => {
         const deadline = Date.now() + uiTimeoutMs
         let actual
@@ -213,7 +217,7 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="mcp-app-frame"]', {
         visible: false,
       })
-      await assert.rejects(fetch(frameUrl))
+      assert.equal(await frameAction('document-status', 'body'), 404)
       for (const [tool, expected] of [
         ['show_legacy', 'Legacy 1'],
         ['show_dynamic', 'Result 2 ui-only-marker'],
@@ -250,7 +254,7 @@ export function createDesktopScenario({
         await control.command('waitFor', scope + ' [data-testid="mcp-app-frame"]', {
           visible: false,
         })
-        await assert.rejects(fetch(frameUrl))
+        assert.equal(await frameAction('document-status', 'body'), 404)
       }
       const original = '[data-mcp-call-id="' + callId + '"]'
       await control.command('click', original + ' [data-testid="mcp-app-expand"]')
@@ -269,7 +273,7 @@ export function createDesktopScenario({
       await control.command('waitFor', original + ' [data-testid="mcp-app-frame"]', {
         visible: false,
       })
-      await assert.rejects(fetch(frameUrl))
+      assert.equal(await frameAction('document-status', 'body'), 404)
       await control.command('click', original + ' [data-testid="mcp-app-expand"]')
       await control.command(
         'waitFor',
@@ -287,9 +291,7 @@ export function createDesktopScenario({
       const releaseDeadline = Date.now() + uiTimeoutMs
       let released = false
       do {
-        try {
-          await fetch(frameUrl)
-        } catch {
+        if ((await frameAction('document-status', 'body')) === 404) {
           released = true
           break
         }

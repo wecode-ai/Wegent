@@ -1,5 +1,5 @@
 import { registerModelConfigurationCapabilities } from './model-configuration-capabilities.js'
-import { McpAppDocuments } from './mcp-app-documents.js'
+import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
 import {
   app,
@@ -8,6 +8,7 @@ import {
   dialog,
   Notification,
   powerMonitor,
+  protocol,
   shell,
   type WebContents,
   type FileFilter,
@@ -871,7 +872,11 @@ export function createElectronCapabilityRouter(
     dialog.showMessageBox(requiredWindow(window), messageBoxOptions(params))
   )
   const mcpAppDocuments = new McpAppDocuments()
-  app.once('will-quit', () => mcpAppDocuments.dispose())
+  protocol.handle(MCP_APP_SCHEME, request => mcpAppDocuments.respond(request))
+  app.once('will-quit', () => {
+    protocol.unhandle(MCP_APP_SCHEME)
+    mcpAppDocuments.dispose()
+  })
   router.register('mcpApps.createDocument', params =>
     mcpAppDocuments.create(stringParam(params, 'html'), objectParam(params, 'metadata'))
   )
@@ -899,6 +904,9 @@ export function createElectronCapabilityRouter(
   router.register('e2e.mcpAppFrame', async params => {
     assertE2EEnabled('MCP App frame controls')
     const url = stringParam(params, 'url')
+    if (params.action === 'document-status') {
+      return mcpAppDocuments.respond(new Request(url)).status
+    }
     if (!mcpAppDocuments.owns(url)) throw new Error('Unknown MCP App document')
     const contents = e2eHost.captureTarget('main')
     const frame = contents?.mainFrame.framesInSubtree.find(frame => frame.url === url)

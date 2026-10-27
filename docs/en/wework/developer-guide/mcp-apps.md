@@ -25,7 +25,7 @@ The desktop workbench supports both inline conversation cards and right-side app
 ## Security boundaries
 
 - The executor derives authority from a real invocation in the owning task. Apps cannot choose another task, server, plugin, connector, or account.
-- Each HTML document receives an independent local origin, without workbench DOM, cookies, storage, or desktop host APIs.
+- Each HTML document receives a unique `codex-sandbox://<id>.web-sandbox.oaiusercontent.com/mcp-app.html` origin. Electron handles this scheme locally; no DNS lookup, OpenAI request, or remote execution is involved. Documents have no workbench DOM, cookies, storage, or desktop host APIs.
 - Response headers enforce the declared CSP. Undeclared network and child-frame requests are blocked. Insecure HTTP is restricted to explicitly declared local development origins.
 - Messages must match both the source window and document origin. Outbound messages are bound to that origin as well.
 - Metadata and model context cannot grant permissions. Approval never expands plugin or account scope.
