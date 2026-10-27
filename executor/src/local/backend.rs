@@ -162,6 +162,7 @@ pub struct LocalBackendRunner<
     R: TaskRunner,
 {
     client: LocalBackendClient<T>,
+    connection_snapshot: Arc<Mutex<Option<ConnectionConfig>>>,
     runner: R,
     command_handler: Arc<dyn DeviceCommandHandler>,
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
@@ -330,8 +331,11 @@ where
     }
 
     pub fn from_client_and_runner(client: LocalBackendClient<T>, runner: R) -> Self {
+        let connection_snapshot =
+            Arc::new(Mutex::new(connection_snapshot_from_config(&client.config)));
         Self {
             client,
+            connection_snapshot,
             runner,
             command_handler: Arc::new(CommandHandler),
             runtime_work_handler: None,
@@ -355,6 +359,11 @@ where
 
     pub fn with_connection_status(mut self, connection_status: Arc<AtomicBool>) -> Self {
         self.connection_status = connection_status;
+        self
+    }
+
+    fn with_connection_snapshot(mut self, snapshot: Arc<Mutex<Option<ConnectionConfig>>>) -> Self {
+        self.connection_snapshot = snapshot;
         self
     }
 

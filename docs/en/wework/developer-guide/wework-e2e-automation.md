@@ -240,10 +240,14 @@ columns cannot all be assumed visible. Permission and persistence assertions rem
 Tracked task activity composers also scroll into view before visibility checks.
 Executor environment verification resolves real filesystem paths through Node to
 compare Windows native paths with the Bash working directory correctly.
+Notification tab navigation waits for the project URL to commit before recording
+or comparing it; a rendered project title does not imply its asynchronous route
+has committed. Project-route preservation and tab-reuse assertions remain enabled.
 Foreground plugin installation pauses automatic page updates and synchronization
 until completion, preventing stale inventory from triggering a full replay.
-Cloud restoration retains the resolved socket endpoint so reloads do not reset an
-active connection and lose transcript requests. Goal restoration preserves the
+Cloud restoration retains the resolved socket endpoint. Runtime-token rotation
+updates shared executor credentials while preserving the device connection and
+RPC route, avoiding lost transcript requests during reloads. Goal restoration preserves the
 known turn and rejects a different stale streaming history.
 Long history hydration polls use `performanceSnapshot` with `collectMemory: false`
 to avoid forced GC on every poll; final memory assertions retain full sampling.
@@ -251,6 +255,15 @@ Timeout diagnostics include the last snapshot. Permission modes use dedicated
 Core shard 11, retaining real MCP deadlines within the serial Windows shard budget.
 Source project configuration no longer forces the Windows unelevated sandbox,
 which rejects split writable roots; other permission and approval settings remain.
+Windows source-project coverage therefore verifies outside writes can execute;
+other platforms retain OS write-denial checks. All platforms still verify explicitly
+authorized writes, native approval denial of private reads, and no private data
+disclosure. The network probe declares a text response type so PowerShell does not
+enumerate response bytes.
+After the subscription model fixture rejects a WebSocket upgrade with HTTP 426,
+it handles that connection's `ECONNRESET` and closes it; other socket errors still
+fail. Node regressions cover expected resets and unexpected errors, preventing
+an unhandled socket error from crashing cleanup after scenario assertions pass.
 
 Long scenarios are split into independent checkpoints as well as balanced shards:
 

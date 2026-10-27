@@ -29,10 +29,12 @@ where
     pub(super) fn task_handler(&self) -> EventHandler {
         let runner = self.runner.clone();
         let config = Arc::clone(&self.client.config);
+        let connection_snapshot = Arc::clone(&self.connection_snapshot);
         let cancellations = self.cancellations.clone();
         Arc::new(move |payload| {
             let runner = runner.clone();
             let config = Arc::clone(&config);
+            let connection_snapshot = Arc::clone(&connection_snapshot);
             let cancellations = cancellations.clone();
             Box::pin(async move {
                 write_executor_log_line(&format_executor_log(
@@ -64,6 +66,10 @@ where
                         ("cwd", request.cwd().unwrap_or("<missing>").to_owned()),
                     ],
                 ));
+                let Some(config) = task_config_from_snapshot(&config, &connection_snapshot) else {
+                    write_executor_log_line("task:execute ignored after backend disconnect");
+                    return None;
+                };
                 normalize_local_task_request(&mut request, &config);
                 cancellations.register_task(&request);
                 let result = runner.submit(request).await;
@@ -556,6 +562,53 @@ where
                 Some(handler.handle_run_extension(payload).await)
             })
         })
+    }
+}
+
+fn task_config_from_snapshot(
+    config: &LocalBackendConfig,
+    snapshot: &Mutex<Option<ConnectionConfig>>,
+) -> Option<LocalBackendConfig> {
+    let connection = snapshot
+        .lock()
+        .expect("backend connection snapshot lock")
+        .clone()?;
+    let mut config = config.clone();
+    config.backend_url = connection.backend_url;
+    config.auth_token = connection.auth_token;
+    config.runtime_auth_token = connection.runtime_auth_token;
+    Some(config)
+}
+
+#[cfg(test)]
+mod connection_tests {
+    use super::*;
+
+    #[test]
+    fn task_credentials_follow_runtime_token_rotation_and_disconnect() {
+        let config = LocalBackendConfig::from_device_config(DeviceConfig {
+            connection: ConnectionConfig {
+                backend_url: "https://backend.example.com".to_owned(),
+                auth_token: "socket-token".to_owned(),
+                runtime_auth_token: "runtime-before".to_owned(),
+                ..ConnectionConfig::default()
+            },
+            ..DeviceConfig::default()
+        });
+        let snapshot = Mutex::new(connection_snapshot_from_config(&config));
+        snapshot
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .runtime_auth_token = "runtime-after".to_owned();
+        let current = task_config_from_snapshot(&config, &snapshot).unwrap();
+        let mut request = ExecutionRequest::default();
+        normalize_local_task_request(&mut request, &current);
+        assert_eq!(request.runtime_auth_token.as_deref(), Some("runtime-after"));
+        assert_eq!(config.runtime_auth_token, "runtime-before");
+        *snapshot.lock().unwrap() = None;
+        assert!(task_config_from_snapshot(&config, &snapshot).is_none());
     }
 }
 

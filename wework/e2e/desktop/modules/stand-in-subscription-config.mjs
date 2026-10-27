@@ -74,6 +74,10 @@ export function createSubscriptionConfigRegression() {
     attachServer(server) {
       server.on('upgrade', (request, socket) => {
         if (!request.url?.startsWith('/backend-api/codex/responses')) return
+        socket.once('error', error => {
+          socket.destroy()
+          if (error.code !== 'ECONNRESET') throw error
+        })
         // A model service may require HTTP; Codex handles 426 through its native fallback.
         socket.end(
           'HTTP/1.1 426 Upgrade Required\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'
