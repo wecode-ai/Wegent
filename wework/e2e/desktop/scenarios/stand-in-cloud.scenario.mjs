@@ -43,6 +43,7 @@ export function createDesktopScenario({
   captureScreenshot,
 }) {
   let backendUrl
+  let cloudEnvironment
   let authToken
   let socket
   let requests = 0
@@ -90,6 +91,7 @@ export function createDesktopScenario({
   return {
     requiresCloudEnvironment: true,
     async prepareCloud(cloud) {
+      cloudEnvironment = cloud
       backendUrl = cloud.backendUrl
       authToken = cloud.authToken
       await request('/admin/setup-complete', {})
@@ -388,7 +390,7 @@ export function createDesktopScenario({
           backendUrl,
           authToken,
           workspaceId: workspace.id,
-          database: cloud,
+          database: cloudEnvironment,
         })
         await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
 
