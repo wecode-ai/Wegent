@@ -228,6 +228,7 @@ export async function verifyReadOnlyBoardDrag(
   ]) {
     await selectProjectBoardGrouping(control, scoped, group)
     const sourceCard = scoped(card(source, moving.id))
+    await control.command('scrollIntoView', sourceCard)
     await control.command('waitFor', sourceCard, { visible: true })
     assert.equal(
       await control.command('getAttribute', sourceCard, { value: 'aria-roledescription' }),
@@ -251,6 +252,7 @@ export async function verifyReadOnlyBoardDrag(
     await control.command('waitFor', scoped(card(target, moving.id)), { visible: false })
     await reloadMainWindow(control, 'The Viewer board drag attempt did not reload')
     await openProjectBoard(control, scoped, project)
+    await control.command('scrollIntoView', sourceCard)
     await control.command('waitFor', sourceCard, { visible: true })
     await control.command('waitFor', scoped(card(target, moving.id)), { visible: false })
     console.log(
