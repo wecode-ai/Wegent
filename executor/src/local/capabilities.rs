@@ -22,12 +22,14 @@ use super::personal_marketplace_lock::acquire_personal_marketplace_lock;
 
 mod activation_revision;
 mod manifest_migration;
+mod plugin_skills;
 mod plugin_sync_protocol;
 mod runtime_recovery;
 mod runtime_skill_config;
 mod shared_packages;
 mod support;
 
+use plugin_skills::scan_plugin_skills;
 pub use runtime_recovery::PluginRuntimeRecoveryReport;
 use support::*;
 
@@ -777,19 +779,16 @@ impl GlobalCapabilityStore {
                 &self.plugins_dir,
                 &claude_marketplace_dir.join(".claude-plugin/marketplace.json"),
                 &desired_names,
-                &mut observe_native_change,
             )?;
             prune_unreferenced_marketplace_plugins(
                 &self.plugins_dir,
                 &claude_marketplace_dir.join(".agents/plugins/marketplace.json"),
                 &desired_names,
-                &mut observe_native_change,
             )?;
             prune_unreferenced_marketplace_plugins(
                 &self.codex_plugins_dir,
                 &codex_marketplace_dir.join(".agents/plugins/marketplace.json"),
                 &desired_names,
-                &mut observe_native_change,
             )?;
         }
         Ok(removed)
@@ -900,6 +899,7 @@ impl GlobalCapabilityStore {
         &self,
         spec: &PluginSyncSpec,
         store_path: &Path,
+        previous_states: &Value,
         reused: &BTreeSet<PathBuf>,
     ) -> Result<(), CapabilitySyncError> {
         let marketplace_dir = self.codex_marketplace_dir(&spec.marketplace);
@@ -954,6 +954,12 @@ impl GlobalCapabilityStore {
             value(marketplace_dir.display().to_string());
         document["plugins"][&spec.key]["enabled"] = value(spec.enabled);
         runtime_skill_config::relocate_plugin_skill_config(&mut document, spec, store_path)?;
+        runtime_skill_config::apply_plugin_skill_states(
+            &mut document,
+            spec,
+            store_path,
+            previous_states,
+        )?;
         let next_content = document.to_string();
         if next_content != content {
             replace_codex_config(&config_path, &next_content)?;
@@ -1369,24 +1375,22 @@ where
             .into_iter()
             .map(|value| PluginSyncSpec::from_value(&value))
             .collect::<Result<Vec<_>, _>>()?;
+        let mut activation = activation_revision::ActivationRevision::begin(
+            &self.store,
+            &plugin_specs,
+            &skill_specs,
+        )?;
         let mut manifest = {
             let _binding = self.plugin_sync_binding.lock_active()?;
-            self.store.manifest.load()?
+            if plugin_specs.is_empty() || self.store.shared_packages {
+                self.store.manifest.load()?
+            } else {
+                self.store.load_manifest_with_plugin_store_migration()?
+            }
         };
-        let mut _changed = activation_revision::ActivationRevision::new(
-            &self.store,
-            &manifest,
-            &skill_specs,
-            plugin_specs.iter(),
-            mode == "replace" && !plugins_only,
-            mode == "replace" || plugins_only,
-        );
 
         {
             let _binding = self.plugin_sync_binding.lock_active()?;
-            if !plugin_specs.is_empty() && !self.store.shared_packages {
-                manifest = self.store.load_manifest_with_plugin_store_migration()?;
-            }
             if mode == "replace" || plugins_only {
                 let desired_skills = skill_specs
                     .iter()
@@ -1417,24 +1421,33 @@ where
         }
         self.store
             .garbage_collect_unreferenced_managed_plugins(&manifest, |path| {
-                _changed.observe_cleanup_path(path);
+                activation.observe_cleanup_path(path);
             })?;
         self.store.manifest.save_with_revision_bump(manifest)?;
         let success = skill_results
             .iter()
             .chain(plugin_results.iter())
             .all(|result| result.get("status").and_then(Value::as_str) != Some("failed"));
+        drop(_binding);
+        let changes = activation.finish_with_skill_reload().await?;
         crate::logging::log_executor_event(
             "capability_sync_completed",
             &[
                 ("queue_ms", queued_ms.to_string()),
                 ("total_ms", started.elapsed().as_millis().to_string()),
                 ("plugin_count", plugin_specs.len().to_string()),
+                ("changed", changes.changed.to_string()),
+                ("requires_restart", changes.requires_restart.to_string()),
+                ("detection_ms", changes.detection_ms.to_string()),
+                ("changed_plugins", changes.plugins.join(",")),
+                ("changed_skills", changes.skills.join(",")),
             ],
         );
 
         Ok(json!({
             "success": success,
+            "changed": changes.changed,
+            "requires_restart": changes.requires_restart,
             "scope": if plugins_only { "plugins" } else { "all" },
             "skills": skill_results,
             "plugins": plugin_results,
@@ -2058,7 +2071,6 @@ fn prune_unreferenced_marketplace_plugins(
     managed_root: &Path,
     manifest_path: &Path,
     desired_names: &BTreeSet<String>,
-    observe_native_change: &mut impl FnMut(&Path),
 ) -> Result<(), CapabilitySyncError> {
     ensure_managed_path_without_symlinks(managed_root, manifest_path)?;
     if !manifest_path.is_file() {
@@ -2076,7 +2088,6 @@ fn prune_unreferenced_marketplace_plugins(
             .is_some_and(|name| desired_names.contains(name))
     });
     if plugins.len() != previous_len {
-        observe_native_change(manifest_path);
         write_json(manifest_path, &marketplace)?;
     }
     Ok(())

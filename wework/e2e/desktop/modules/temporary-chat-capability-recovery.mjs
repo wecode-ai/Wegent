@@ -73,15 +73,16 @@ export async function restartTemporaryChatCapabilities(
     )
     evidence.beforeLogOffset = before.logLength
     evidence.beforeProcessId = before.processId
-    evidence.syncRevision = Date.now()
-    const cleared = await requestExecutor(
-      control,
-      'runtime.connectors.clear',
-      { syncRevision: evidence.syncRevision },
-      uiTimeoutMs
+    // Share the renderer's revision allocator with connector configure and sync.
+    const cleared = JSON.parse(
+      await control.command('clearLocalExecutorConnectors', 'body', {
+        timeoutMs: uiTimeoutMs,
+      })
     )
+    evidence.clearResult = cleared
     assert.equal(cleared.configured, false, 'The real connector clear did not complete')
     assert.notEqual(cleared.stale, true, 'The connector clear revision was rejected as stale')
+    assert.equal(cleared.changed, true, 'Deleting the loaded connector skill was not reported')
     await assert.rejects(lstat(skillDir), { code: 'ENOENT' })
     evidence.removedByClear = true
 

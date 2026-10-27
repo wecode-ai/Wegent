@@ -101,6 +101,31 @@ test('shows native opening failures and permits retry without switching to an in
   expect(fetchBlob).not.toHaveBeenCalled()
 })
 
+test('dismisses a native opening error while keeping the attachment available', async () => {
+  vi.mocked(openLocalFileInWorkspaceApp).mockRejectedValueOnce(new Error('test open failure'))
+  const { remove } = renderAttachment({ local_path: '/tmp/test-document.md' })
+  await userEvent.click(screen.getByTestId('attachment-document-preview-button'))
+  expect(await screen.findByTestId('attachment-error-badge')).toBeInTheDocument()
+
+  await userEvent.click(screen.getByTestId('dismiss-attachment-error-button'))
+
+  expect(screen.queryByTestId('attachment-error-badge')).not.toBeInTheDocument()
+  expect(screen.getByTestId('attachment-badge')).toBeInTheDocument()
+  expect(remove).not.toHaveBeenCalled()
+})
+
+test('clears a native opening error when its attachment is removed', async () => {
+  vi.mocked(openLocalFileInWorkspaceApp).mockRejectedValueOnce(new Error('test open failure'))
+  const { remove } = renderAttachment({ local_path: '/tmp/test-document.md' })
+  await userEvent.click(screen.getByTestId('attachment-document-preview-button'))
+  expect(await screen.findByTestId('attachment-error-badge')).toBeInTheDocument()
+
+  await userEvent.click(screen.getByTestId('remove-attachment-button'))
+
+  expect(screen.queryByTestId('attachment-error-badge')).not.toBeInTheDocument()
+  expect(remove).toHaveBeenCalledExactlyOnceWith(42)
+})
+
 test.each([undefined, '/tmp/test-document.pdf'])(
   'routes PDF %s to the side panel with the correct file reader',
   async localPath => {

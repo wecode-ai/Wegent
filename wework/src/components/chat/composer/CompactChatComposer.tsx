@@ -85,6 +85,7 @@ interface CompactChatComposerProps {
   codeComments?: CodeCommentContext[]
   uploadingFiles?: Map<string, { file: File; progress: number }>
   attachmentErrors?: Map<string, string>
+  onDismissAttachmentError?: (filename: string) => void
   onFileSelect?: (files: File | File[]) => void
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceTarget | null
@@ -139,6 +140,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       codeComments = [],
       uploadingFiles = new Map(),
       attachmentErrors = new Map(),
+      onDismissAttachmentError,
       onFileSelect,
       onOpenSkillFile,
       workspaceTarget,
@@ -352,6 +354,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
           attachments={attachments}
           uploadingFiles={uploadingFiles}
           errors={attachmentErrors}
+          onDismissAttachmentError={onDismissAttachmentError}
           codeComments={codeComments}
           onRemoveAttachment={onRemoveAttachment}
           onShowTextAttachment={handleShowTextAttachment}

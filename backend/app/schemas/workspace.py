@@ -380,7 +380,7 @@ class PersonalAgentResource(BaseModel):
     owner_type: Literal["user"] = "user"
     owner_id: str
     owner_name: str
-    status: Literal["available", "unavailable"]
+    status: Literal["available", "unavailable", "unchecked"]
     execution_environment_ids: list[str] = Field(default_factory=list)
     workspace_ids: list[str] = Field(default_factory=list)
 

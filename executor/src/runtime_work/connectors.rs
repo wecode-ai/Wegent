@@ -13,13 +13,15 @@ use std::{
 };
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::{
-    agents::CodexAppServerClient,
+    agents::{wework_codex_home, CodexAppServerClient},
     connector_gateway::{
         clear_connector_gateway_config, persist_connector_gateway_config, ConnectorGatewayConfig,
     },
+    connector_mcp::mcp_tools,
     local::app_ipc::AppIpcError,
     services::capability_activation,
 };
@@ -31,22 +33,26 @@ const WEGENT_CONNECTOR_MCP_TOOL_APPROVAL_MODE: &str = "approve";
 #[derive(Clone)]
 pub(super) struct ConnectorRuntime {
     codex_app_server: CodexAppServerClient,
+    codex_home: PathBuf,
     cloud: Arc<RwLock<Option<ConnectorGatewayConfig>>>,
     synced_apps: Arc<RwLock<Vec<Value>>>,
     mutation: Arc<Mutex<()>>,
     revision: Arc<AtomicU64>,
+    sync_generation: Arc<AtomicU64>,
 }
 
 impl ConnectorRuntime {
     pub(super) fn new(codex_app_server: CodexAppServerClient) -> Self {
         Self {
             codex_app_server,
+            codex_home: wework_codex_home(),
             cloud: Arc::new(RwLock::new(
                 crate::connector_gateway::load_connector_gateway_config().ok(),
             )),
             synced_apps: Arc::new(RwLock::new(Vec::new())),
             mutation: Arc::new(Mutex::new(())),
             revision: Arc::new(AtomicU64::new(0)),
+            sync_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -125,13 +131,15 @@ impl ConnectorRuntime {
             return Ok(json!({
                 "configured": self.cloud.read().await.is_some(),
                 "stale": true,
+                "changed": false,
             }));
         }
-        self.cloud.write().await.take();
+        let mut changed = self.cloud.write().await.take().is_some();
         self.synced_apps.write().await.clear();
         clear_connector_gateway_config()
             .map_err(|error| AppIpcError::new("connector_authorization_clear_failed", error))?;
         let config_result = self.write_mcp_config(false).await;
+        changed |= !matches!(&config_result, Ok(false));
         drop(_mutation);
         let _activation = capability_activation::activate().await;
         let _mutation = self.mutation.lock().await;
@@ -140,16 +148,17 @@ impl ConnectorRuntime {
             return Ok(json!({
                 "configured": self.cloud.read().await.is_some(),
                 "stale": true,
+                "changed": false,
             }));
         }
-        let mut changed = false;
-        let skills_result = materialize_skills(&skills_root(), &[], &mut changed);
+        let skills_result =
+            materialize_skills(&self.codex_home.join("skills"), &[], &[], &mut changed);
         if changed {
             capability_activation::mark_changed();
         }
         config_result?;
         skills_result?;
-        Ok(json!({ "configured": false }))
+        Ok(json!({ "configured": false, "changed": changed }))
     }
 
     pub(super) async fn tools(&self) -> Result<Value, AppIpcError> {
@@ -186,31 +195,72 @@ impl ConnectorRuntime {
             .get("apps")
             .and_then(Value::as_array)
             .ok_or_else(|| AppIpcError::new("bad_request", "apps must be an array"))?;
+        let (tools, revision, generation) = self.discover_tools(apps).await?;
         // Waiting for an idle turn must not prevent connector-token refresh.
         let _activation = capability_activation::activate().await;
         let _mutation = self.mutation.lock().await;
-        if self.cloud.read().await.is_none() {
+        if self.revision.load(Ordering::Acquire) != revision
+            || self.sync_generation.load(Ordering::Acquire) != generation
+        {
             return Err(AppIpcError::new(
-                "connector_cloud_disconnected",
-                "Connect Wework to Wegent cloud before synchronizing apps",
+                "connector_sync_superseded",
+                "Connector state changed during discovery; synchronize apps again",
             ));
         }
-        self.write_mcp_config(true).await?;
-        let mut changed = false;
-        let result = materialize_skills(&skills_root(), apps, &mut changed);
+        let mut changed = self.write_mcp_config(true).await?;
+        let result =
+            materialize_skills(&self.codex_home.join("skills"), apps, &tools, &mut changed);
+        // A failed sync may already have published part of the new capabilities.
         if changed {
             capability_activation::mark_changed();
         }
-        let result = result?;
+        let mut result = result?;
+        result["changed"] = json!(changed);
         *self.synced_apps.write().await = result
             .get("apps")
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        crate::logging::log_executor_event(
+            "runtime connector skills synchronized",
+            &[
+                ("app_count", apps.len().to_string()),
+                ("changed", changed.to_string()),
+            ],
+        );
         Ok(result)
     }
 
-    async fn write_mcp_config(&self, enabled: bool) -> Result<(), AppIpcError> {
+    async fn discover_tools(&self, apps: &[Value]) -> Result<(Vec<Value>, u64, u64), AppIpcError> {
+        let (cloud, revision, generation) = {
+            let _mutation = self.mutation.lock().await;
+            let cloud = self.cloud.read().await.clone().ok_or_else(|| {
+                AppIpcError::new(
+                    "connector_cloud_disconnected",
+                    "Connect Wework to Wegent cloud before synchronizing apps",
+                )
+            })?;
+            // Allocate under mutation so a newer request cannot race an active publication.
+            let generation = self.sync_generation.fetch_add(1, Ordering::AcqRel) + 1;
+            (cloud, self.revision.load(Ordering::Acquire), generation)
+        };
+        // Discover outside both locks so slow upstreams cannot block token renewal.
+        let catalog = cloud
+            .request(reqwest::Method::GET, "tools", None)
+            .await
+            .map_err(|error| AppIpcError::new(error.code, error.message))?;
+        if !catalog.get("tools").is_some_and(Value::is_array) {
+            return Err(AppIpcError::new(
+                "connector_tool_catalog_incomplete",
+                "Connector tool discovery did not return a tools array",
+            ));
+        }
+        let tools = mcp_tools(&catalog);
+        validate_tool_catalog(apps, &tools)?;
+        Ok((tools, revision, generation))
+    }
+
+    async fn write_mcp_config(&self, enabled: bool) -> Result<bool, AppIpcError> {
         let value = if enabled {
             let command = env::current_exe().map_err(|error| {
                 AppIpcError::new(
@@ -222,6 +272,9 @@ impl ConnectorRuntime {
         } else {
             Value::Null
         };
+        if connector_mcp_config_matches(&self.codex_home.join("config.toml"), &value)? {
+            return Ok(false);
+        }
         self.codex_app_server
             .request(
                 "config/batchWrite",
@@ -237,7 +290,7 @@ impl ConnectorRuntime {
                 }),
             )
             .await
-            .map(|_| ())
+            .map(|_| true)
             .map_err(|error| AppIpcError::new("connector_mcp_config_failed", error))
     }
 
@@ -288,16 +341,24 @@ fn is_valid_slug(value: &str) -> bool {
             .is_some_and(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit())
 }
 
-fn skills_root() -> PathBuf {
-    env::var_os("WEGENT_CODEX_HOME")
-        .or_else(|| env::var_os("CODEX_HOME"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(env::temp_dir)
-                .join(".codex")
-        })
-        .join("skills")
+fn connector_mcp_config_matches(path: &Path, expected: &Value) -> Result<bool, AppIpcError> {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(AppIpcError::new(
+                "connector_mcp_config_failed",
+                error.to_string(),
+            ));
+        }
+    };
+    let config: Value = toml_edit::de::from_str(&content).map_err(|_| {
+        AppIpcError::new("connector_mcp_config_failed", "Invalid Codex config TOML")
+    })?;
+    Ok(config
+        .pointer("/mcp_servers/wegent_apps")
+        .unwrap_or(&Value::Null)
+        == expected)
 }
 
 fn advance_revision(revision: &AtomicU64, next: u64) -> bool {
@@ -312,6 +373,7 @@ fn advance_revision(revision: &AtomicU64, next: u64) -> bool {
 fn materialize_skills(
     skills_root: &Path,
     apps: &[Value],
+    tools: &[Value],
     changed: &mut bool,
 ) -> Result<Value, AppIpcError> {
     fs::create_dir_all(skills_root).map_err(|error| {
@@ -346,7 +408,7 @@ fn materialize_skills(
             .flatten()
             .filter_map(|tool| string_field(tool, "name"))
             .collect::<Vec<_>>();
-        tool_names.sort_unstable();
+        tool_names.sort();
         tool_names.dedup();
         let tool_section = if tool_names.is_empty() {
             String::new()
@@ -363,8 +425,11 @@ fn materialize_skills(
         let body = format!(
             "---\nname: wegent-connector-{slug}\ndescription: Use the administrator-managed Wegent connector app {slug}.\n---\n\n# Wegent connector `{slug}`\n\n{description}\n\nUse the `wegent_apps` MCP server. Only call tools whose names start with `{slug}__`.\nAuthentication and credentials are managed by Wegent; never request or expose them.\n{tool_section}"
         );
-        write_skill_file(&skill_path, body.as_bytes(), changed)?;
-        write_skill_file(&skill_dir.join(".wegent-connector"), b"managed\n", changed)?;
+        write_skill_if_changed(&skill_path, &body, changed)?;
+        let marker = tool_definitions_marker(tools.iter().filter(|tool| {
+            tool.pointer("/_meta/connectorId").and_then(Value::as_str) == Some(slug.as_str())
+        }));
+        write_skill_if_changed(&skill_dir.join(".wegent-connector"), &marker, changed)?;
         materialized.push(json!({
             "slug": slug,
             "skillPath": skill_path.display().to_string(),
@@ -374,28 +439,74 @@ fn materialize_skills(
     Ok(json!({ "apps": materialized }))
 }
 
-fn write_skill_file(path: &Path, content: &[u8], changed: &mut bool) -> Result<(), AppIpcError> {
-    let previous = match fs::read(path) {
-        Ok(current) if current == content => return Ok(()),
-        Ok(current) => Some(current),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+fn validate_tool_catalog(apps: &[Value], tools: &[Value]) -> Result<(), AppIpcError> {
+    let expected: HashSet<_> = apps
+        .iter()
+        .flat_map(|app| {
+            app.get("tools")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(move |tool| {
+                    Some((app.get("slug")?.as_str()?, tool.get("name")?.as_str()?))
+                })
+        })
+        .collect();
+    let discovered = tools
+        .iter()
+        .map(|tool| {
+            Some((
+                tool.pointer("/_meta/connectorId")?.as_str()?,
+                tool.get("name")?.as_str()?,
+            ))
+        })
+        .collect::<Option<HashSet<_>>>();
+    if discovered.as_ref() != Some(&expected) {
+        return Err(AppIpcError::new(
+            "connector_tool_catalog_incomplete",
+            "Installed apps and discovered tools differ; synchronize apps again",
+        ));
+    }
+    Ok(())
+}
+
+fn tool_definitions_marker<'a>(tools: impl Iterator<Item = &'a Value>) -> String {
+    let mut definitions = tools.cloned().collect::<Vec<_>>();
+    definitions.iter_mut().for_each(canonicalize_json);
+    definitions.sort_by_cached_key(Value::to_string);
+    definitions.dedup();
+    format!(
+        "managed\nsha256:{:x}\n",
+        Sha256::digest(json!(definitions).to_string())
+    )
+}
+
+fn canonicalize_json(value: &mut Value) {
+    match value {
+        Value::Object(fields) => {
+            fields.sort_keys();
+            fields.values_mut().for_each(canonicalize_json);
+        }
+        Value::Array(items) => items.iter_mut().for_each(canonicalize_json),
+        _ => {}
+    }
+}
+
+fn write_skill_if_changed(path: &Path, body: &str, changed: &mut bool) -> Result<(), AppIpcError> {
+    match fs::read(path) {
+        Ok(current) if current == body.as_bytes() => return Ok(()),
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
             return Err(AppIpcError::new(
                 "connector_skill_sync_failed",
                 error.to_string(),
             ))
         }
-    };
-    if let Err(error) = fs::write(path, content) {
-        // A failed write can still create or truncate the native skill.
-        *changed |= fs::read(path).ok() != previous;
-        return Err(AppIpcError::new(
-            "connector_skill_sync_failed",
-            error.to_string(),
-        ));
     }
     *changed = true;
-    Ok(())
+    fs::write(path, body)
+        .map_err(|error| AppIpcError::new("connector_skill_sync_failed", error.to_string()))
 }
 
 fn remove_inactive_skills(
@@ -403,284 +514,25 @@ fn remove_inactive_skills(
     active_dirs: &HashSet<String>,
     changed: &mut bool,
 ) -> Result<(), AppIpcError> {
-    let Ok(entries) = fs::read_dir(skills_root) else {
-        return Ok(());
-    };
-    for entry in entries.flatten() {
+    let entries = fs::read_dir(skills_root)
+        .map_err(|error| AppIpcError::new("connector_skill_sync_failed", error.to_string()))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| AppIpcError::new("connector_skill_sync_failed", error.to_string()))?;
         let name = entry.file_name().to_string_lossy().into_owned();
         if name.starts_with("wegent-connector-")
             && !active_dirs.contains(&name)
             && entry.path().join(".wegent-connector").is_file()
         {
-            let skill_path = entry.path().join("SKILL.md");
-            let previous = fs::read(&skill_path).ok();
-            if let Err(error) = fs::remove_dir_all(entry.path()) {
-                *changed |= fs::read(&skill_path).ok() != previous;
-                return Err(AppIpcError::new(
-                    "connector_skill_sync_failed",
-                    error.to_string(),
-                ));
-            }
             *changed = true;
+            fs::remove_dir_all(entry.path()).map_err(|error| {
+                AppIpcError::new("connector_skill_sync_failed", error.to_string())
+            })?;
         }
     }
     Ok(())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mcp_child_uses_the_executor_instance_home() {
-        let config = connector_mcp_server_config(
-            Path::new("/opt/wegent-executor"),
-            Some(std::ffi::OsString::from("/private/runtime/instance")),
-        );
-
-        assert_eq!(
-            config["env"]["WEGENT_EXECUTOR_HOME"],
-            "/private/runtime/instance"
-        );
-        assert_eq!(
-            config["default_tools_approval_mode"],
-            WEGENT_CONNECTOR_MCP_TOOL_APPROVAL_MODE
-        );
-    }
-
-    #[test]
-    fn skill_materialization_is_scoped_and_removes_only_managed_stale_dirs() {
-        let temp = tempfile::tempdir().expect("temporary directory should be created");
-        let skills_root = temp.path().join("skills");
-        let unrelated = skills_root.join("personal-skill");
-        fs::create_dir_all(&unrelated).expect("unrelated skill should be created");
-        fs::write(unrelated.join("SKILL.md"), "personal")
-            .expect("unrelated skill should be written");
-
-        let result = materialize_skills(
-            &skills_root,
-            &[json!({"slug": "tickets", "name": "Tickets"})],
-            &mut false,
-        )
-        .expect("connector skill should materialize");
-        let skill_path = skills_root
-            .join("wegent-connector-tickets")
-            .join("SKILL.md");
-        let content = fs::read_to_string(&skill_path).expect("skill should be readable");
-        assert!(content.contains("tickets__"));
-        assert_eq!(
-            result["apps"][0]["skillPath"],
-            skill_path.display().to_string()
-        );
-
-        materialize_skills(&skills_root, &[], &mut false)
-            .expect("stale managed connector skill should be removed");
-        assert!(!skill_path.exists());
-        assert!(unrelated.join("SKILL.md").exists());
-    }
-
-    #[test]
-    fn skill_materialization_rejects_path_traversal_slugs() {
-        let temp = tempfile::tempdir().expect("temporary directory should be created");
-        let result = materialize_skills(
-            temp.path(),
-            &[json!({"slug": "../escape", "name": "Escape"})],
-            &mut false,
-        );
-
-        let error = result.expect_err("unsafe slug should be rejected");
-        assert_eq!(error.code, "bad_request");
-    }
-
-    #[test]
-    fn skill_materialization_only_marks_effective_changes() {
-        let temp = tempfile::tempdir().unwrap();
-        let mut apps = vec![json!({
-            "slug": "tickets", "name": "Tickets", "description": "First definition",
-            "tools": [{"name": "tickets__write"}, {"name": "tickets__read"}]
-        })];
-        let mut changed = false;
-        materialize_skills(temp.path(), &apps, &mut changed).unwrap();
-        assert!(changed);
-        let skill = temp.path().join("wegent-connector-tickets/SKILL.md");
-        let modified = fs::metadata(&skill).unwrap().modified().unwrap();
-
-        changed = false;
-        apps[0]["tools"].as_array_mut().unwrap().reverse();
-        materialize_skills(temp.path(), &apps, &mut changed).unwrap();
-        assert!(
-            !changed,
-            "tool ordering must not invalidate native sessions"
-        );
-        assert_eq!(fs::metadata(&skill).unwrap().modified().unwrap(), modified);
-
-        apps[0]["description"] = json!("Changed definition under the same slug");
-        materialize_skills(temp.path(), &apps, &mut changed).unwrap();
-        assert!(changed);
-        assert!(fs::read_to_string(&skill)
-            .unwrap()
-            .contains("Changed definition"));
-
-        changed = false;
-        materialize_skills(temp.path(), &[], &mut changed).unwrap();
-        assert!(changed);
-        assert!(!skill.exists());
-        changed = false;
-        materialize_skills(temp.path(), &[], &mut changed).unwrap();
-        assert!(!changed);
-    }
-
-    #[test]
-    fn partial_skill_failure_keeps_earlier_publication_marked() {
-        let temp = tempfile::tempdir().unwrap();
-        let mut changed = false;
-        let result = materialize_skills(
-            temp.path(),
-            &[
-                json!({"slug": "tickets", "name": "Tickets"}),
-                json!({"slug": "../invalid", "name": "Invalid"}),
-            ],
-            &mut changed,
-        );
-        assert!(result.is_err());
-        assert!(changed);
-        assert!(temp
-            .path()
-            .join("wegent-connector-tickets/SKILL.md")
-            .is_file());
-
-        changed = false;
-        assert!(materialize_skills(
-            temp.path(),
-            &[json!({"slug": "../invalid", "name": "Invalid"})],
-            &mut changed,
-        )
-        .is_err());
-        assert!(!changed, "rejected input must not invalidate sessions");
-    }
-
-    #[test]
-    fn revision_rejects_stale_cloud_mutations() {
-        let revision = AtomicU64::new(0);
-
-        assert!(advance_revision(&revision, 10));
-        assert!(!advance_revision(&revision, 10));
-        assert!(!advance_revision(&revision, 9));
-        assert!(advance_revision(&revision, 11));
-    }
-
-    #[tokio::test]
-    async fn waiting_skill_activation_does_not_block_token_refresh() {
-        let runtime = ConnectorRuntime {
-            codex_app_server: CodexAppServerClient::new("unused-test-binary"),
-            cloud: Arc::new(RwLock::new(None)),
-            synced_apps: Arc::new(RwLock::new(Vec::new())),
-            mutation: Arc::new(Mutex::new(())),
-            revision: Arc::new(AtomicU64::new(0)),
-        };
-        let execution = capability_activation::begin_execution().await;
-        let mut sync = Box::pin(runtime.sync_apps(json!({"apps": []})));
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(20), &mut sync)
-                .await
-                .is_err()
-        );
-        let token_refresh = runtime
-            .mutation
-            .try_lock()
-            .expect("token refresh must remain available during an active turn");
-        drop(token_refresh);
-        drop(execution);
-        assert_eq!(sync.await.unwrap_err().code, "connector_cloud_disconnected");
-    }
-
-    #[tokio::test]
-    async fn gateway_forwards_scoped_token_and_tool_payload() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use tokio::net::TcpListener;
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("gateway listener should bind");
-        let addr = listener
-            .local_addr()
-            .expect("listener address should resolve");
-        let gateway = tokio::spawn(async move {
-            for expected_path in ["/connector-runtime/tools", "/connector-runtime/call"] {
-                let (mut socket, _) = listener.accept().await.expect("request should connect");
-                let mut request = Vec::new();
-                let mut buffer = [0_u8; 4096];
-                loop {
-                    let read = socket.read(&mut buffer).await.expect("request should read");
-                    assert!(read > 0, "request closed before headers arrived");
-                    request.extend_from_slice(&buffer[..read]);
-                    let Some(header_end) = request.windows(4).position(|item| item == b"\r\n\r\n")
-                    else {
-                        continue;
-                    };
-                    let headers = String::from_utf8_lossy(&request[..header_end + 4]);
-                    let content_length = headers
-                        .lines()
-                        .find_map(|line| {
-                            let (name, value) = line.split_once(':')?;
-                            name.eq_ignore_ascii_case("content-length")
-                                .then(|| value.trim().parse::<usize>().ok())
-                                .flatten()
-                        })
-                        .unwrap_or(0);
-                    if request.len() >= header_end + 4 + content_length {
-                        break;
-                    }
-                }
-                let request_text = String::from_utf8(request).expect("request should be utf-8");
-                assert!(request_text.contains(expected_path));
-                assert!(request_text
-                    .to_ascii_lowercase()
-                    .contains("authorization: bearer scoped-token"));
-                if expected_path.ends_with("/call") {
-                    let body = request_text
-                        .split_once("\r\n\r\n")
-                        .expect("request body should exist")
-                        .1;
-                    let payload: Value =
-                        serde_json::from_str(body).expect("tool payload should be json");
-                    assert_eq!(payload["name"], "tickets__search");
-                    assert_eq!(payload["arguments"]["query"], "connector");
-                }
-                let body = if expected_path.ends_with("/tools") {
-                    r#"{"tools":[{"name":"tickets__search"}]}"#
-                } else {
-                    r#"{"content":[{"type":"text","text":"done"}],"is_error":false}"#
-                };
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                socket
-                    .write_all(response.as_bytes())
-                    .await
-                    .expect("response should write");
-            }
-        });
-
-        let runtime = ConnectorRuntime::new(CodexAppServerClient::new("/bin/false"));
-        *runtime.cloud.write().await = Some(ConnectorGatewayConfig {
-            api_base_url: format!("http://{addr}"),
-            connector_token: "scoped-token".to_owned(),
-            expires_at_ms: now_ms() + 60_000,
-        });
-
-        let tools = runtime.tools().await.expect("tools should load");
-        let result = runtime
-            .call(json!({
-                "name": "tickets__search",
-                "arguments": { "query": "connector" }
-            }))
-            .await
-            .expect("tool should execute");
-
-        assert_eq!(tools["tools"][0]["name"], "tickets__search");
-        assert_eq!(result["content"][0]["text"], "done");
-        gateway.await.expect("gateway task should finish");
-    }
-}
+#[path = "connectors_tests.rs"]
+mod tests;

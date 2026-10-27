@@ -537,3 +537,7 @@ mod tests;
 #[cfg(test)]
 #[path = "shared_packages_reconnect_tests.rs"]
 mod reconnect_tests;
+
+#[cfg(test)]
+#[path = "activation_revision_tests.rs"]
+mod activation_revision_tests;

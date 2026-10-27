@@ -11,6 +11,7 @@ pub(super) fn planned_files(
     template: &Path,
     staging: &Path,
     timestamp: &str,
+    previous_states: &Value,
 ) -> Result<BTreeMap<PathBuf, Vec<u8>>, CapabilitySyncError> {
     let plan = staging.join("planned");
     let mut isolated = store.clone();
@@ -69,7 +70,7 @@ pub(super) fn planned_files(
     }
     let codex = isolated.plugin_codex_link(spec);
     copy_dir_atomic(template, &codex)?;
-    isolated.install_codex_marketplace_metadata(spec, &codex, &BTreeSet::new())?;
+    isolated.install_codex_marketplace_metadata(spec, &codex, previous_states, &BTreeSet::new())?;
     let mut result = BTreeMap::new();
     for file in files {
         let content = fs::read_to_string(project(&file)?)?;
