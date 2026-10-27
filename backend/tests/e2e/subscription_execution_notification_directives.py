@@ -251,7 +251,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
         execution_target = {"type": "managed", "device_id": None}
         if self.shell_type != "Chat":
             execution_target = {
-                "type": "app",
+                "type": "remote",
                 "device_id": os.environ.get("E2E_DEVICE_ID", "e2e-platform-device-1"),
             }
         self._api(

@@ -826,7 +826,7 @@ jobs:
       - name: Start backend server
         env:
           EXTERNAL_KNOWLEDGE_MCP_ENABLED: "true"
-          EMBEDDED_CELERY_ENABLED: "false"
+          EMBEDDED_CELERY_ENABLED: "true"
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           RS_DATABASE_URL_COLLATION: utf8mb4_0900_ai_ci
           REDIS_URL: redis://redis:6379/0
