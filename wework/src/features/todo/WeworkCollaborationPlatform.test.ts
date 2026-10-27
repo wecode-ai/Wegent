@@ -1669,6 +1669,35 @@ describe('Wework collaboration workspace API', () => {
     expect(detail.props.conversation?.props.initialTaskInput).toContain('采集 CPU 证据')
   })
 
+  it('publishes canonical project changes from the desktop renderer to its platform owner', () => {
+    const project = { id: 'cloud-device-project', version: 1, project_store: 'cloud' }
+    const onProjectChange = vi.fn()
+    render(
+      createElement(WeworkSharedProject, {
+        api: {
+          projects: { list: vi.fn(async () => [project]) },
+          issues: {},
+        } as unknown as SharedWorkspaceApi,
+        localProjects: [],
+        locale: 'zh-CN',
+        location: {
+          workspaceId: 'workspace',
+          projectId: project.id,
+          projectView: 'manage',
+        } as never,
+        project: project as never,
+        onProjectChange,
+        services: {} as never,
+        setLocation: vi.fn(),
+        userId: 1,
+        workspace: { id: 'workspace', name: 'Workspace' } as never,
+      })
+    )
+    const updated = { ...project, version: 3 }
+    act(() => renderedProjectControls.get(project.id)!.onProjectChange!(updated))
+    expect(onProjectChange).toHaveBeenCalledExactlyOnceWith(updated)
+  })
+
   it('does not use an agent environment for a personal task', async () => {
     const project = {
       id: 'local-environment-project',

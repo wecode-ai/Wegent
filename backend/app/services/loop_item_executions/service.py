@@ -492,7 +492,10 @@ def _execution_is_claimable_by_device(
         or runner is None
         or runner.id
         not in execution_environment_ids(
-            db, execution.cloud_project_id, execution.agent_id
+            db,
+            execution.cloud_project_id,
+            execution.agent_id,
+            user_id=execution.assigner_user_id,
         )
     ):
         return False

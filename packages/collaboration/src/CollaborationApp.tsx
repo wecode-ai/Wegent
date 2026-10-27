@@ -434,8 +434,18 @@ export function CollaborationApp({
     );
   }
 
+  function publishProject(nextProject: CollaborationProject) {
+    commands.replaceProject(nextProject);
+    onProjectChange?.(nextProject);
+  }
+
   return (
-    <RuntimeConfigurationProvider api={api} project={project} locale={locale}>
+    <RuntimeConfigurationProvider
+      api={api}
+      project={project}
+      locale={locale}
+      onProjectChange={publishProject}
+    >
       <BrowserTaskDrafts runtime={api.runtime}>
         <section
           className={`collaboration-app${project ? " collaboration-app-project issue-drawer-workspace" : ""}`}
@@ -1092,10 +1102,7 @@ export function CollaborationApp({
                                 ? () => host.manageResource?.("environments")
                                 : undefined
                             }
-                            onProjectChange={(nextProject) => {
-                              commands.replaceProject(nextProject);
-                              onProjectChange?.(nextProject);
-                            }}
+                            onProjectChange={publishProject}
                             project={project}
                             translate={translate}
                           />

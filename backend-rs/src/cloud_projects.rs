@@ -39,6 +39,7 @@ mod collaboration_groups;
 
 mod access;
 mod collaboration_access;
+mod device_access;
 mod environment_authorization;
 /// `cloud_project_service.list_members` and the collaboration-permission
 /// reads shared by the project projections.
@@ -72,6 +73,8 @@ mod update;
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct CloudMetadataInput {
+    #[serde(default, deserialize_with = "device_access::present_policies")]
+    pub execution_device_access: Option<OpaqueJson>,
     pub membership_mode: Option<String>,
     pub legacy_device_revocations: Option<OpaqueJson>,
     pub visibility: Option<String>,

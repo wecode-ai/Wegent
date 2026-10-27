@@ -285,6 +285,18 @@ export async function verifyHarnessLifecycle(
     }
   )
 
+  // Stopped state can render before route cleanup and the list refresh complete.
+  await control.command('waitFor', importedModelSelector, {
+    enabled: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('scrollIntoView', importedModelSelector)
+  await control.command('waitFor', importedModelSelector, {
+    visible: true,
+    enabled: true,
+    stableMs: 300,
+    timeoutMs: uiTimeoutMs,
+  })
   const modelSelector = `[data-testid="harness-app-model-${INSTALLATION_ID}"]`
   const initialModelKey = await control.command('getValue', modelSelector)
   await control.command('select', modelSelector, {

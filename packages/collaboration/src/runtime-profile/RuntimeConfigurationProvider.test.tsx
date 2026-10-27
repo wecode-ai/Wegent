@@ -11,6 +11,7 @@ import {
   vi,
 } from "vitest";
 import { RuntimeConfigurationProvider } from "./RuntimeConfigurationProvider";
+import { useRuntimeConfiguration } from "./context";
 import { ExecutionConfigurationNotice } from "./ExecutionConfigurationNotice";
 import type {
   SharedWorkspaceApi,
@@ -55,6 +56,83 @@ afterEach(() => {
 });
 
 describe("inline runtime configuration", () => {
+  it("publishes device binding changes from inline environment settings", async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const project = {
+      id: "project",
+      workspace_id: "workspace",
+      project_store: "backend" as const,
+      version: 1,
+      access_role: "Owner" as const,
+    };
+    const updated = { ...project, version: 2 };
+    const device = {
+      id: "runner-1",
+      device_id: 1,
+      name: "Runner",
+      status: "online",
+      kind: "local_device",
+      owner_type: "user",
+      owner_id: "1",
+      owner_name: "Owner",
+      coding_tools: [],
+      project_version: 2,
+    };
+    const api = {
+      automationExecutionCatalog: {
+        load: vi.fn(async () => ({
+          environments: [],
+          models: [],
+          runtimeProfiles: [],
+        })),
+      },
+      runtimeProfiles: {
+        getProjectDefault: vi.fn(async () => ({ runtimeProfileId: null })),
+      },
+      projects: {
+        get: vi.fn(async () => updated),
+        listExecutionEnvironments: vi.fn(async () => []),
+        addExecutionEnvironment: vi.fn(async () => device),
+      },
+      workspaces: { listExecutionEnvironments: vi.fn(async () => [device]) },
+      resources: { devices: { cloud: vi.fn(async () => [device]) } },
+    } as unknown as SharedWorkspaceApi;
+    const onProjectChange = vi.fn();
+    function Configure() {
+      const open = useRuntimeConfiguration();
+      return (
+        <button data-testid="open-runtime-settings" onClick={() => open?.()}>
+          Configure
+        </button>
+      );
+    }
+    await act(async () =>
+      root.render(
+        <RuntimeConfigurationProvider
+          api={api}
+          project={project}
+          locale="zh-CN"
+          onProjectChange={onProjectChange}
+        >
+          <Configure />
+        </RuntimeConfigurationProvider>,
+      ),
+    );
+    const click = async (id: string) =>
+      act(async () => {
+        container.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.click();
+      });
+    await click("open-runtime-settings");
+    await click("project-runtime-configure-environments");
+    await click("collaboration-project-execution-environment-add");
+    await click("collaboration-project-execution-environment-candidate-1");
+
+    expect(onProjectChange).toHaveBeenCalledExactlyOnceWith(updated);
+  });
+
   it.each(["success", "denied", "save-error"])(
     "configures a blocked execution without changing defaults: %s",
     async (scenario) => {

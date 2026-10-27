@@ -21,6 +21,7 @@ import type {
 } from '../types'
 import { ProjectEnvironmentConfiguration } from './ProjectEnvironmentConfiguration'
 import { ProjectEnvironmentDevices } from './ProjectEnvironmentDevices'
+import { ProjectDeviceAccessSettings } from './ProjectDeviceAccessSettings'
 import { repositoryKey } from './environmentConfiguration'
 import { environmentAuthorizationError } from './environmentAuthorization'
 import { useExecutionEnvironmentList } from '../execution-environment/useExecutionEnvironmentList'
@@ -587,7 +588,25 @@ export function ProjectExecutionEnvironments({
         ? await api.workspaces!.addExecutionEnvironment(scopeId, { deviceId })
         : await api.projects.addExecutionEnvironment(scopeId, deviceId)
       assigned.update(current => [...current.filter(item => item.device_id !== deviceId), created])
+      if (created.project_version != null) {
+        setConfigVersion(created.project_version)
+      }
       setPickerOpen(false)
+      if (created.project_version != null && onProjectChange) {
+        try {
+          onProjectChange(await api.projects.get(scopeId))
+        } catch (refreshError) {
+          setError(
+            translate(
+              'todo.execution_environment_added_refresh_failed',
+              '设备已添加，但刷新项目失败，请重新加载项目：{{reason}}',
+              {
+                reason: refreshError instanceof Error ? refreshError.message : String(refreshError),
+              }
+            )
+          )
+        }
+      }
     } catch (saveError) {
       const reason = environmentAuthorizationError(saveError, translate)
       setError(
@@ -718,6 +737,25 @@ export function ProjectExecutionEnvironments({
 
         <section className="mt-6">
           <ProjectEnvironmentDevices
+            renderDeviceAccess={
+              !isWorkspaceScope && !localScope
+                ? environment =>
+                    environment.use_access ? (
+                      <ProjectDeviceAccessSettings
+                        api={api}
+                        projectId={scopeId}
+                        environment={environment}
+                        translate={translate}
+                        onReload={assigned.refresh}
+                        onChanged={async updated => {
+                          setConfigVersion(updated.version)
+                          onProjectChange?.(updated)
+                          await assigned.refresh()
+                        }}
+                      />
+                    ) : null
+                : undefined
+            }
             {...{
               testIdPrefix,
               translate,

@@ -82,6 +82,10 @@ async def environment_catalog(
         else:
             save_catalog(db, device, result)
     allowed = project_environment_ids(db, project_id) if project_id else set()
+    if project_id:
+        from app.services.project_device_access import filter_device_access
+
+        allowed = filter_device_access(db, project_id, user_id, allowed)
     rows = []
     for device in devices:
         spec = (device.json or {}).get("spec") or {}

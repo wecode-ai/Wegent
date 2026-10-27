@@ -106,6 +106,36 @@ sequenceDiagram
 
 没有 MCP 的插件可通过通用 CLI 读取传输复用已有 `localAuth.tool`。可执行工具、Connector、固定命令和允许参数均来自精确依赖及已安装 Wework 适配插件的读取声明；调用者不能传入命令或增加参数，也不执行 Shell 或 Skill 文本。钉钉采集已使用该路径，专用读取 RPC 已删除；回复继续沿用原来源绑定及确认策略。通用 CLI 契约测试与 `stand-in-cli` CI checkpoint 覆盖写入拒绝、参数注入和旧入口删除。
 
+### 项目设备的使用范围
+
+设备范围是现有授权链路的附加约束：当前项目执行能力、空间设备授权、项目启用关系和设备使用范围必须同时成立。个人设备仅由本人调整范围；空间托管设备由所属空间管理员代表所有者管理。项目管理员不能修改其他人的设备范围，Viewer 即使拥有设备也不能在该项目执行。
+
+项目已有 metadata 的 `execution_device_access` 按设备资源 ID 保存 `owner`、`project` 或 `members` 及成员 ID。新加入的设备默认仅所有者可用；没有范围记录的历史绑定保留 CP11 的原项目安装授权。重新加入设备保留原范围，撤销空间授权仍使项目绑定失效。指定成员必须是当前具有执行能力的项目成员。
+
+```mermaid
+sequenceDiagram
+    actor Owner as 设备所有者
+    participant API as 现有项目 PATCH
+    participant DB as 现有项目与执行记录
+    participant Revoke as 现有撤权链路
+    participant Runtime as 执行设备
+    Owner->>API: 预览设备范围变更及项目版本
+    API->>DB: 锁定项目并读取活动执行
+    API-->>Owner: 影响数量及确认指纹，不含私有 Issue 详情
+    Owner->>API: 确认范围、版本与指纹
+    API->>DB: 重新校验影响；变化则返回 409
+    API->>DB: 同一事务保存范围并递增版本
+    API->>Revoke: 复核当前授权并记录取消
+    Revoke->>DB: 排队任务取消；运行中记录 cancel_requested
+    API->>DB: 提交事务
+    API->>Runtime: 发送已有取消请求
+    Runtime->>DB: 经现有执行接口确认停止
+```
+
+固定设备、项目池、用户选择、成员小组、领取复核和提前准备项目目录使用同一范围过滤。未绑定的池任务只有在失去最后一个有权设备时才取消；仍有可用设备则保留队列。取消仅作用于已确认的执行记录，不附带取消其他未授权工作。运行中执行只有收到 Runtime 的终态证据才标记停止，设备离线时继续等待确认。
+
+`test_project_device_access.py` 与 `test_runner_routing.py` 覆盖所有者、空间托管身份、管理员、只读成员、成员范围、跨项目隔离、加入与重新加入、预览冲突、排队池及运行中撤权。共享组件和网页、桌面适配器测试覆盖相同更新字段；桌面 CI 的 `collaboration-shared-core` 检查权限设置保存与重新打开后的持久化。
+
 ## 界面入口
 
 看板批量排序的 HTTP 与 MCP 入口共同遵守 CP07、CP13、CP14：Viewer 不能排序，其他成员只能提交和接收其可见的 Issue。可见卡片的重排只交换它们在全局同级顺序中的位置，保留不可见成员的位置；普通成员提交不可见或不存在的请求目标时，在写入前统一返回 404。项目管理员仍按既有规则查看全部 Issue。`test_loop_item_reorder_permissions.py` 覆盖角色、默认安全级别、同状态和跨状态排序，以及拒绝请求不改变持久化状态。

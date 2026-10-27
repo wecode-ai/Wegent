@@ -410,10 +410,18 @@ def test_cp11_cp12_legacy_device_consent_cannot_be_borrowed_by_another_binding(
     )
     test_db.add_all([legacy, modern, unrelated])
     test_db.commit()
-    assert device.id in execution_environment_ids(test_db, pid, legacy.id)
-    assert device.id not in execution_environment_ids(test_db, pid, modern.id)
-    assert device.id not in execution_environment_ids(test_db, pid, unrelated.id)
-    assert device.id not in execution_environment_ids(test_db, pid, None)
+    assert device.id in execution_environment_ids(
+        test_db, pid, legacy.id, user_id=owner_id
+    )
+    assert device.id not in execution_environment_ids(
+        test_db, pid, modern.id, user_id=owner_id
+    )
+    assert device.id not in execution_environment_ids(
+        test_db, pid, unrelated.id, user_id=owner_id
+    )
+    assert device.id not in execution_environment_ids(
+        test_db, pid, None, user_id=owner_id
+    )
     pending = ResourceMember.create(
         resource_type="Device",
         resource_id=device.id,
@@ -424,4 +432,6 @@ def test_cp11_cp12_legacy_device_consent_cannot_be_borrowed_by_another_binding(
     )
     test_db.add(pending)
     test_db.commit()
-    assert device.id not in execution_environment_ids(test_db, pid, legacy.id)
+    assert device.id not in execution_environment_ids(
+        test_db, pid, legacy.id, user_id=owner_id
+    )

@@ -3918,6 +3918,7 @@ export function CloudTodoWorkspace({
         selectedProject?.location === 'cloud' ? (selectedProject as CollaborationProject) : null
       }
       locale={i18n.language}
+      onProjectChange={cloudWorkspace.commands.replaceProject}
     >
       <div
         className={cn(

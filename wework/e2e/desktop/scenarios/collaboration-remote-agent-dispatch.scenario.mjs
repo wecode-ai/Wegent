@@ -377,6 +377,12 @@ async function verifyConfiguredExecutionEnvironment(
   timeoutMs,
   captureScreenshot
 ) {
+  // Re-enter through the platform cache after device binding changed the project version.
+  await control.command('click', scoped('[data-testid="collaboration-workspace-nav-projects"]'))
+  const projectEntry = scoped(`[data-testid="collaboration-workspace-project-${projectId}"]`)
+  await control.command('waitFor', projectEntry)
+  await control.command('click', projectEntry)
+  await control.command('waitFor', scoped('[data-testid="collaboration-tab-manage"]'))
   await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
   await control.command(
     'click',

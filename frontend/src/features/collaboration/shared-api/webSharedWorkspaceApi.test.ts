@@ -16,6 +16,46 @@ function createClient() {
 }
 
 describe('workspace resource configuration adapter', () => {
+  it('preserves device permission preview and confirmation fields', async () => {
+    const client = createClient()
+    const api = createWebSharedWorkspaceApi(client)
+    await api.projects.update('100', {
+      version: 3,
+      deviceAccessChange: {
+        deviceId: 21,
+        scope: 'members',
+        memberIds: [2],
+        previewOnly: true,
+      },
+    })
+    expect(client.patch).toHaveBeenCalledWith('/v1/cloud-projects/100', {
+      version: 3,
+      device_access_change: {
+        device_id: 21,
+        scope: 'members',
+        member_ids: [2],
+        preview_only: true,
+      },
+    })
+    await api.projects.update('100', {
+      version: 3,
+      deviceAccessChange: {
+        deviceId: 21,
+        scope: 'members',
+        memberIds: [2],
+        confirmationToken: 'reviewed',
+      },
+    })
+    expect(client.patch).toHaveBeenLastCalledWith('/v1/cloud-projects/100', {
+      version: 3,
+      device_access_change: {
+        device_id: 21,
+        scope: 'members',
+        member_ids: [2],
+        confirmation_token: 'reviewed',
+      },
+    })
+  })
   it('uses canonical member, agent, and execution environment endpoints', async () => {
     const client = createClient()
     client.post

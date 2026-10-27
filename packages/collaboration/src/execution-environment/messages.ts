@@ -19,6 +19,8 @@ export const executionEnvironmentMessages: Record<
     'todo.project_available_environments': '项目可用环境',
     'todo.execution_environment_empty_hint': '通过「添加设备」选择可以运行任务的设备。',
     'todo.execution_environments_load_failed': '加载执行环境失败',
+    'todo.execution_environment_added_refresh_failed':
+      '设备已添加，但刷新项目失败，请重新加载项目：{{reason}}',
     'todo.project_direct': '项目直接添加',
     'todo.execution_environment_preparation': '项目准备',
     'todo.execution_environment_preparation_summary':
@@ -129,6 +131,8 @@ export const executionEnvironmentMessages: Record<
     'todo.project_available_environments': 'Available environments',
     'todo.execution_environment_empty_hint': 'Use Add device to choose a runner for tasks.',
     'todo.execution_environments_load_failed': 'Failed to load execution environments',
+    'todo.execution_environment_added_refresh_failed':
+      'Device added, but the project could not be refreshed. Reload the project: {{reason}}',
     'todo.project_direct': 'Added to project',
     'todo.execution_environment_preparation': 'Project setup',
     'todo.execution_environment_preparation_summary':

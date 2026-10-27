@@ -79,12 +79,17 @@ def project_environment_ids(db: Session, project_id: str) -> set[int]:
 
 
 def execution_environment_ids(
-    db: Session, project_id: str, agent_id: str | None
+    db: Session, project_id: str, agent_id: str | None, *, user_id: int
 ) -> set[int]:
     explicit = explicit_project_environment_ids(db, project_id)
-    if not agent_id:
-        return explicit
-    return explicit | legacy_project_environment_ids(db, project_id, agent_id=agent_id)
+    ids = explicit | (
+        legacy_project_environment_ids(db, project_id, agent_id=agent_id)
+        if agent_id
+        else set()
+    )
+    from app.services.project_device_access import filter_device_access
+
+    return filter_device_access(db, project_id, user_id, ids)
 
 
 def legacy_project_environment_ids(
@@ -257,7 +262,10 @@ def resolve_routing(db: Session, **kwargs) -> ResolvedRouting:
             config = kwargs["config"]
             ids = visible_environment_ids(db, kwargs["user_id"], kwargs["project_id"])
             allowed = execution_environment_ids(
-                db, kwargs["project_id"], kwargs.get("agent_id")
+                db,
+                kwargs["project_id"],
+                kwargs.get("agent_id"),
+                user_id=kwargs["user_id"],
             )
             devices = (
                 db.query(Kind)
@@ -423,7 +431,7 @@ def _candidates(
             "RUNNER_PROJECT_ACCESS_REVOKED",
             "The triggering user no longer has permission to execute in the project",
         ) from error
-    ids = execution_environment_ids(db, project_id, agent_id)
+    ids = execution_environment_ids(db, project_id, agent_id, user_id=user_id)
     if policy.mode == "fixed":
         ids &= {int(policy.environment_id)}
     devices = (
@@ -487,6 +495,35 @@ def _resolve_model(
             include={"runtime", "provider", "model_id", "source", "cloud_model"}
         )
     )
+
+
+def unbound_execution_environment_ids(db: Session, execution: Any) -> set[int]:
+    """Intersect every member's current grants before a queued run binds a runner."""
+    routes = [
+        (execution.agent_id, execution.runtime_selection["runner_routing"]),
+        *execution.runtime_selection.get("group_runner_requirements", {}).items(),
+    ]
+    candidates = None
+    for agent_id, route in routes:
+        if not isinstance(route, dict):
+            return set()
+        ids = execution_environment_ids(
+            db, execution.cloud_project_id, agent_id, user_id=execution.assigner_user_id
+        )
+        try:
+            policy = ExecutionPolicy.model_validate(route.get("execution_policy"))
+        except ValueError:
+            return set()
+        if policy.mode == "fixed":
+            ids &= {int(policy.environment_id)}
+        candidates = ids if candidates is None else candidates & ids
+    try:
+        bound_id = issue_binding(db, execution.loop_item_id)
+    except HTTPException as error:
+        if error.status_code >= 500:
+            raise
+        return set()
+    return (candidates or set()) & {int(bound_id)} if bound_id else candidates or set()
 
 
 def eligible_runner(db: Session, execution: Any, device: Kind) -> bool:
@@ -690,6 +727,10 @@ def validate_agent_policies(
         ids &= {int(policy.environment_id)}
     elif policy.mode == "project_pool" and project_id:
         ids &= explicit_project_environment_ids(db, project_id)
+    if project_id:
+        from app.services.project_device_access import filter_device_access
+
+        ids = filter_device_access(db, project_id, user_id, ids)
     candidates = (
         db.query(Kind)
         .filter(

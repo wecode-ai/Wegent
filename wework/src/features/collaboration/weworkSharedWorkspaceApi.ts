@@ -422,6 +422,15 @@ export function createWeworkDeliverySharedWorkspaceApi(
             projectId,
             withoutUndefined({
               version: input.version,
+              device_access_change: input.deviceAccessChange
+                ? {
+                    device_id: input.deviceAccessChange.deviceId,
+                    scope: input.deviceAccessChange.scope,
+                    member_ids: input.deviceAccessChange.memberIds,
+                    preview_only: input.deviceAccessChange.previewOnly,
+                    confirmation_token: input.deviceAccessChange.confirmationToken,
+                  }
+                : undefined,
               name: input.name,
               description: input.description,
               tags: input.tags,

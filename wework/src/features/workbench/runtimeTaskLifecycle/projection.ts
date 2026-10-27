@@ -18,6 +18,13 @@ export function summarizeRuntimeTaskExecution(task: RuntimeTaskSummary | null) {
 export type RuntimeTaskBoardState = 'attention' | 'queued' | 'active' | 'completed'
 
 export { projectRuntimePaneTranscript } from '@wegent/chat-core/runtime-transcript-page'
+export function isRuntimeTurnSuperseded(
+  transcript: RuntimePaneTranscript,
+  turnId: string | null | undefined
+): boolean {
+  return Boolean(turnId && transcript.supersededTurnIds?.includes(turnId))
+}
+
 export function isRuntimePaneTranscriptConfirmedIdle(transcript: RuntimePaneTranscript): boolean {
   if (transcript.running !== false) return false
   return !transcript.turns.some(turn => isRuntimeTurnRunningStatus(turn.status))

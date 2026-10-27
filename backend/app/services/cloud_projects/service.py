@@ -488,6 +488,12 @@ class CloudProjectService(CloudProjectMemberService):
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Execution device is not available in this Project",
             )
+        from app.services.runner_routing import execution_environment_ids
+
+        if device_id not in execution_environment_ids(
+            db, str(cloud_project_id), None, user_id=user_id
+        ):
+            raise HTTPException(403, "Device use permission is required")
         definition = (project.metadata_json or {}).get("execution_environment")
         definition = definition if isinstance(definition, dict) else {}
         # Preparation runs on the device for minutes, so the project row must not
@@ -674,15 +680,41 @@ class CloudProjectService(CloudProjectMemberService):
             invited_by_user_id=user_id,
         )
         db.add(grant)
+        from app.schemas.project_device_access import ProjectDeviceAccess
+        from app.services.project_device_access import (
+            can_manage_device_access,
+            can_use_device,
+            device_access,
+            set_device_access,
+        )
+
+        project = self._lock_project(db, cloud_project_id)
+        policies = (project.metadata_json or {}).get("execution_device_access", {})
+        if not isinstance(policies, dict):
+            raise HTTPException(409, "Device permission metadata is invalid")
+        if str(device_id) not in policies:
+            set_device_access(project, device_id, ProjectDeviceAccess())
+            project.version += 1
         db.commit()
         db.refresh(grant)
-        return execution_environment_values(
+        policy = device_access(project, device_id)
+        result = execution_environment_values(
             db,
             grant,
             device,
             connection_status=connection_statuses[device.id],
             workspace_id=str(workspace_id),
+            can_use=can_use_device(db, project, device, user_id, policy),
         )
+        if not result["can_use"]:
+            result["unavailable_reason"] = "device_use_not_allowed"
+            result["status"] = connection_statuses[device.id]
+        result.update(
+            use_access=policy.model_dump(),
+            can_manage_access=can_manage_device_access(db, device, user_id),
+            project_version=project.version,
+        )
+        return result
 
     def remove_execution_environment(
         self,

@@ -11,6 +11,7 @@ import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import {
   isRuntimeTaskAuthoritativeCompletion,
+  isRuntimeTurnSuperseded,
   normalizeRuntimeTaskSummary,
   shouldReplaceRuntimeTaskProjection,
   summarizeRuntimeTaskExecution,
@@ -331,14 +332,19 @@ export class RuntimeTaskLifecycleStore {
       deviceId: address.deviceId,
       running: transcript.running ?? null,
       preserveActiveTurn: options.preserveActiveTurn === true,
+      activeTurnId: this.getTask(address)?.turn.id ?? null,
+      supersededTurnIds: transcript.supersededTurnIds ?? [],
+      turns: transcript.turns.map(turn => ({ id: turn.id, status: turn.status })),
     })
     const recoveredTurn = this.getTask(address)?.turn
     const completedRecoveredTurn =
       transcript.running === false && recoveredTurn?.phase === 'streaming'
-        ? transcript.turns.find(
+        ? (options.preserveActiveTurn !== true &&
+            isRuntimeTurnSuperseded(transcript, recoveredTurn.id)) ||
+          transcript.turns.some(
             turn => turn.id === recoveredTurn.id && isTerminalTurnStatus(turn.status)
           )
-        : undefined
+        : false
     if (completedRecoveredTurn) {
       // Canonical history can settle a recovered turn even when a newer turn was observed first.
       this.executorSettled(address)

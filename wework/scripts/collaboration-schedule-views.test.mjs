@@ -54,17 +54,29 @@ test.each([
   vi.setSystemTime(new Date(fixture.today))
   let navigations = 0
   let rangeIndex = 0
-  const calendarDays = []
   const target = `collaboration-calendar-day-${fixture.target}`
+  const targetSelector = `[data-testid="${target}"]`
+  const expectedDaySelectors = [
+    `[data-testid="collaboration-calendar-day-${fixture.ranges[0].split(' → ')[0]}"]`,
+    targetSelector,
+  ]
+  const visibleDaySelectors = []
   const control = {
     async command(action, selector, options) {
-      if (action === 'getElementCount' && selector.includes(target))
+      if (action === 'getElementCount') {
+        expect(selector).toBe(targetSelector)
         return String(navigations === fixture.navigationCount ? 1 : 0)
+      }
       if (action === 'click' && /collaboration-schedule-next|下一个月/.test(selector)) navigations++
       if (action === 'waitFor' && selector.includes('collaboration-calendar-day-')) {
-        calendarDays.push(selector)
+        expect(expectedDaySelectors).toContain(selector)
         assert.equal(navigations, fixture.navigationCount, 'The target month was overshot')
         assert.equal(options.visible, true)
+        visibleDaySelectors.push(selector)
+      }
+      if (action === 'drag' && rangeIndex === 0) {
+        expect(options.target).toBe(targetSelector)
+        expect(visibleDaySelectors).toEqual(expectedDaySelectors)
       }
       if (action === 'getAttribute')
         return options.value === 'aria-sort' ? 'ascending' : fixture.ranges[rangeIndex]
@@ -85,9 +97,6 @@ test.each([
   })
 
   expect(navigations).toBe(fixture.navigationCount)
-  expect(calendarDays).toEqual([
-    `[data-testid="collaboration-calendar-day-${fixture.ranges[0].split(' → ')[0]}"]`,
-    `[data-testid="collaboration-calendar-day-${fixture.target}"]`,
-  ])
+  expect(visibleDaySelectors).toEqual(expectedDaySelectors)
   expect(rangeIndex).toBe(3)
 })

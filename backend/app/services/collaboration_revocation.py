@@ -142,6 +142,10 @@ def _device_authorized(db: Session, execution: LoopItemExecution) -> bool:
         return True
     device_id = execution.runtime_device_id or execution.execution_device_id
     if not device_id:
+        if isinstance(execution.runtime_selection.get("runner_routing"), dict):
+            from app.services.runner_routing import unbound_execution_environment_ids
+
+            return bool(unbound_execution_environment_ids(db, execution))
         return True
     from app.services.device.identity import resolve_owned_device_alias
     from app.services.runner_routing import execution_environment_ids
@@ -150,7 +154,10 @@ def _device_authorized(db: Session, execution: LoopItemExecution) -> bool:
         db, user_id=execution.executor_owner_user_id, device_id=device_id
     )
     return runner is not None and runner.id in execution_environment_ids(
-        db, execution.cloud_project_id, execution.agent_id
+        db,
+        execution.cloud_project_id,
+        execution.agent_id,
+        user_id=execution.assigner_user_id,
     )
 
 
@@ -196,7 +203,11 @@ def execution_authorized(db: Session, execution: LoopItemExecution) -> bool:
 
 
 def revoke_unauthorized_project_work(
-    db: Session, project_id: str | int, actor_user_id: int | None = None
+    db: Session,
+    project_id: str | int,
+    actor_user_id: int | None = None,
+    *,
+    execution_ids: set[str] | None = None,
 ) -> list[LoopItemExecution]:
     """Return cancellation requests that callers publish after their commit."""
     from app.services.loop_item_executions.service import loop_item_execution_service
@@ -207,6 +218,8 @@ def revoke_unauthorized_project_work(
     )
     if actor_user_id is not None:
         rows = rows.filter(LoopItemExecution.assigner_user_id == actor_user_id)
+    if execution_ids is not None:
+        rows = rows.filter(LoopItemExecution.id.in_(execution_ids))
     pending = []
     for row in rows.all():
         decision = execution_permission(db, row)

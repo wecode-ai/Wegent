@@ -13,7 +13,7 @@ import {
 } from '../runtimeConversationCache'
 import { subscribeSystemResume } from '@/desktop/systemResume'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
-import { isRuntimePaneTranscriptConfirmedIdle } from './projection'
+import { isRuntimePaneTranscriptConfirmedIdle, isRuntimeTurnSuperseded } from './projection'
 import type { RuntimeTaskAddress } from '@/types/api'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 import {
@@ -217,7 +217,8 @@ export function RuntimeTaskLifecycleStreamCoordinator({
           didStartNewerTurn(expectedSnapshot, currentSnapshot, terminalTurnId) ||
           (currentSnapshot?.turn.active &&
             terminalTurnId &&
-            store.isPriorTurn(address, terminalTurnId))
+            store.isPriorTurn(address, terminalTurnId) &&
+            !isRuntimeTurnSuperseded(transcript, currentSnapshot.turn.id))
         ) {
           return
         }

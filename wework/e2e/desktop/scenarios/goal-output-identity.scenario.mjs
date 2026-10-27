@@ -206,6 +206,36 @@ export function createDesktopScenario(options) {
           Object.fromEntries(ordered.map(text => [text, 1]))
         )
         assertConversationTextOrder(visible, ordered)
+      } catch (error) {
+        if (address) {
+          const [debugResult, transcriptResult] = await Promise.allSettled([
+            control.command('getWorkbenchDebugSnapshot', 'body'),
+            transcript(),
+          ])
+          const debug = debugResult.status === 'fulfilled' ? JSON.parse(debugResult.value) : null
+          const native = transcriptResult.status === 'fulfilled' ? transcriptResult.value : null
+          await writeFile(
+            join(options.resultDir, 'output-identity-lifecycle-failure.json'),
+            JSON.stringify(
+              {
+                lifecycle: debug?.workbench?.activeLifecycle ?? null,
+                running: native?.running ?? null,
+                supersededTurnIds: native?.supersededTurnIds ?? [],
+                turns:
+                  native?.turns?.map(turn => ({
+                    id: turn.id,
+                    status: turn.status,
+                    completedAt: turn.completedAt,
+                  })) ?? [],
+                debugStatus: debugResult.status,
+                transcriptStatus: transcriptResult.status,
+              },
+              null,
+              2
+            )
+          )
+        }
+        throw error
       } finally {
         releaseRecovered()
         releaseFollowUp()

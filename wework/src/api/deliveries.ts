@@ -317,6 +317,7 @@ export interface ProjectTaskAttachment extends CloudLoopItemAttachment {
 }
 
 export interface CloudProject {
+  device_access_preview?: import('@wegent/collaboration').CollaborationProject['device_access_preview']
   id: CloudProjectId
   workspace_id?: string | null
   workspace_access_role?: 'Owner' | 'Maintainer' | 'Developer' | 'Viewer' | null
@@ -716,6 +717,13 @@ export function createDeliveryApi(client: HttpClient) {
     updateCloudProject(
       projectId: CloudProjectIdInput,
       data: {
+        device_access_change?: {
+          device_id: number
+          scope: 'owner' | 'project' | 'members'
+          member_ids: number[]
+          preview_only?: boolean
+          confirmation_token?: string
+        }
         name?: string
         description?: string
         tags?: string[]

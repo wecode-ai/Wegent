@@ -82,6 +82,36 @@ The background MCP bridge invokes only read tools of the current provider's decl
 
 Plugins without MCP can reuse existing `localAuth.tool` declarations through the generic CLI read transport. Executable identity, Connector, command prefix and allowed arguments come from the exact dependency and the installed Wework adapter's read declaration. Callers cannot supply commands or grant parameters; neither shell code nor Skill prose is executed. DingTalk collection now uses this path and its dedicated read RPC has been removed. Replies retain existing source binding and confirmation requirements. Generic CLI contracts and the CI-registered `stand-in-cli` checkpoint cover write rejection, argument injection and removal of the old endpoint.
 
+### Project device use scopes
+
+Device scopes constrain the existing authorization chain: current project execution authority, space use grants, project bindings and device consent must all hold. Only the owner manages a personal device's scope. Administrators of the owning space represent ownership for space-managed devices. Project administration does not allow changing another person's device consent; Viewers cannot execute even on their own devices.
+
+Existing project metadata stores `execution_device_access` by device resource ID with an `owner`, `project` or `members` scope and member IDs. New bindings default to owner-only use. Historical bindings without a scope retain CP11 installation consent within their original project. Rebinding preserves the previous scope; revoking space consent still invalidates project bindings. Selected recipients must be current project members with execution authority.
+
+```mermaid
+sequenceDiagram
+    actor Owner as Device owner
+    participant API as Existing project PATCH
+    participant DB as Project and execution records
+    participant Revoke as Existing revocation flow
+    participant Runtime as Execution device
+    Owner->>API: Preview scope change with project version
+    API->>DB: Lock project and read active executions
+    API-->>Owner: Impact counts and confirmation digest, no private Issue details
+    Owner->>API: Confirm scope, version and digest
+    API->>DB: Revalidate impact; reject changes with 409
+    API->>DB: Save scope and increment version in one transaction
+    API->>Revoke: Recheck current authority and record cancellations
+    Revoke->>DB: Cancel queued work; mark running work cancel_requested
+    API->>DB: Commit
+    API->>Runtime: Publish existing cancellation requests
+    Runtime->>DB: Confirm termination through existing execution APIs
+```
+
+Fixed runners, project pools, user selection, group members, claim checks and explicit project directory preparation share the same consent filter. Unbound pool work is cancelled only when its last authorized runner is removed; otherwise it remains queued. Cancellation is limited to the confirmed execution IDs without additionally cancelling unrelated unauthorized work. Running executions require Runtime terminal evidence before being marked stopped, including when the device is offline.
+
+`test_project_device_access.py` and `test_runner_routing.py` cover ownership, space-managed identities, administrators, read-only members, recipient scopes, project isolation, binding and rebinding, preview conflicts, pools and active-work revocation. Shared UI and web/desktop adapter tests cover the same update fields. The existing desktop CI `collaboration-shared-core` checkpoint verifies saving scopes and reopening settings with persisted consent.
+
 ## Management surfaces
 
 HTTP and MCP board bulk ordering enforce CP07, CP13 and CP14 together: Viewers cannot reorder, and other members may submit and receive only Issues they can read. Reordering visible cards exchanges only their slots in the global sibling sequence, retaining invisible members' positions. For non-administrators, inaccessible or nonexistent request targets return the same 404 before any write. Project administrators retain their existing access to all Issues. `test_loop_item_reorder_permissions.py` covers roles, default security, same-status and cross-status ordering, and unchanged persistence after rejection.

@@ -2615,6 +2615,7 @@ def test_execution_environment_initialization_keeps_the_client_version_token(
         json={"device_id": device.id},
     )
     assert bound.status_code == 201, bound.text
+    project["version"] = bound.json()["project_version"]
 
     configured = test_client.patch(
         f"/api/v1/cloud-projects/{project['id']}",
