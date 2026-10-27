@@ -17,6 +17,7 @@ const UI_TIMEOUT_MS = 15_000
 const EDIT = `[data-testid="codex-catalog-edit-openai-${MODEL_ID}"]`
 const ROW = `[data-testid="codex-official-model-row-openai-${MODEL_ID}"]`
 const RESTORE = `[data-testid="codex-catalog-restore-openai-${MODEL_ID}"]`
+const DIALOG = '[data-testid="codex-catalog-editor-dialog"]'
 
 export function createDesktopScenario(options) {
   const context = createCatalogContextVerification({ ...options, modelId: MODEL_ID })
@@ -85,8 +86,25 @@ export function createDesktopScenario(options) {
           assert.equal(Number(await control.command('getElementCount', `${selector}:disabled`)), 0)
         }
       }
-      await control.command('clickWhenEnabled', EDIT)
-      await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]')
+      const openCatalogEditor = async () => {
+        await control.command('waitFor', `${EDIT}:not(:disabled)`, { timeoutMs: UI_TIMEOUT_MS })
+        await control.command('clickWhenEnabled', EDIT)
+        await control.command('waitFor', DIALOG, { timeoutMs: UI_TIMEOUT_MS })
+      }
+      try {
+        await openCatalogEditor()
+      } catch (error) {
+        // Chromium's network service can crash under parallel load and break the
+        // renderer's requests, so reopen the editor once on a fresh window.
+        await control.command('reloadMainWindow', 'body')
+        await control.command('navigate', 'body', { value: '/settings/personal/models' })
+        await control.command('clickWhenEnabled', '[data-testid="codex-models-details-toggle"]')
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="codex-model-provider-toggle-openai"]'
+        )
+        await openCatalogEditor()
+      }
       await control.command('fill', '[data-testid="local-model-context-window-input"]', {
         value: '300001',
       })
@@ -94,9 +112,7 @@ export function createDesktopScenario(options) {
       const saveLogOffset = (await readFile(executorLogPath, 'utf8')).length
       await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
       await waitForCatalogRestart(control, executorLogPath, saveLogOffset)
-      await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
-        timeoutMs: UI_TIMEOUT_MS,
-      })
+      await control.command('waitFor', DIALOG, { visible: false, timeoutMs: UI_TIMEOUT_MS })
       await control.command('waitFor', ROW, { text: '已自定义', timeoutMs: UI_TIMEOUT_MS })
       const persisted = JSON.parse(await readFile(overridePath, 'utf8'))
       assert.deepEqual(persisted, [
