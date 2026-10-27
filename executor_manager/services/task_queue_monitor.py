@@ -164,14 +164,31 @@ class TaskQueueMonitor:
 
 
 async def run_queue_stall_check() -> None:
-    """Scheduler entry point."""
-    stalled = await TaskQueueMonitor().sweep()
-    if stalled:
-        logger.error(
-            "[TaskQueueMonitor] Failed %d stalled queued tasks: %s",
-            len(stalled),
-            stalled,
+    """Scheduler entry point.
+
+    Every executor_manager replica runs the scheduler, so the sweep is guarded
+    by a distributed lock: only one replica scans per interval. Without it,
+    concurrent replicas would scan the same keys and could emit duplicate
+    failure callbacks for the same task.
+    """
+    from executor_manager.common.distributed_lock import get_distributed_lock
+
+    lock = get_distributed_lock()
+    if not lock.acquire("task_queue_stall_check", expire_seconds=300):
+        logger.debug(
+            "[TaskQueueMonitor] Stall check already running on another instance"
         )
+        return
+    try:
+        stalled = await TaskQueueMonitor().sweep()
+        if stalled:
+            logger.error(
+                "[TaskQueueMonitor] Failed %d stalled queued tasks: %s",
+                len(stalled),
+                stalled,
+            )
+    finally:
+        lock.release("task_queue_stall_check")
 
 
 __all__ = ["TaskQueueMonitor", "run_queue_stall_check"]

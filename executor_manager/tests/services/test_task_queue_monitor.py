@@ -10,7 +10,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from executor_manager.services.task_queue_monitor import TaskQueueMonitor
+from executor_manager.services.task_queue_monitor import (
+    TaskQueueMonitor,
+    run_queue_stall_check,
+)
 
 QUEUE_KEY = "wegent:task_queue:online:online"
 
@@ -121,3 +124,42 @@ async def test_sweep_keeps_record_when_callback_fails(redis_client):
 
     assert stalled == []
     redis_client.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stall_check_skips_when_another_replica_holds_the_lock():
+    """Only one executor_manager replica scans per interval."""
+    lock = MagicMock()
+    lock.acquire.return_value = False
+    with (
+        patch(
+            "executor_manager.common.distributed_lock.get_distributed_lock",
+            return_value=lock,
+        ),
+        patch.object(TaskQueueMonitor, "sweep", new_callable=AsyncMock) as sweep,
+    ):
+        await run_queue_stall_check()
+
+    sweep.assert_not_awaited()
+    lock.release.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stall_check_sweeps_and_releases_the_lock():
+    """The lock holder runs the sweep and always releases the lock."""
+    lock = MagicMock()
+    lock.acquire.return_value = True
+    with (
+        patch(
+            "executor_manager.common.distributed_lock.get_distributed_lock",
+            return_value=lock,
+        ),
+        patch.object(
+            TaskQueueMonitor, "sweep", new_callable=AsyncMock, return_value=["13869"]
+        ) as sweep,
+    ):
+        await run_queue_stall_check()
+
+    sweep.assert_awaited_once()
+    lock.acquire.assert_called_once_with("task_queue_stall_check", expire_seconds=300)
+    lock.release.assert_called_once_with("task_queue_stall_check")

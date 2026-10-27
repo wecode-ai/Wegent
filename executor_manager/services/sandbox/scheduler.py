@@ -30,7 +30,7 @@ GC_INTERVAL = int(os.getenv("GC_INTERVAL", "3600"))  # 1 hour default
 HEARTBEAT_CHECK_INTERVAL = int(os.getenv("HEARTBEAT_CHECK_INTERVAL", "5"))  # seconds
 QUEUE_STALL_CHECK_INTERVAL = int(
     os.getenv("QUEUE_STALL_CHECK_INTERVAL", "60")
-)  # seconds
+)  # seconds; Redis-only sweep, guarded by a distributed lock across replicas
 
 
 class SandboxScheduler:
