@@ -202,7 +202,7 @@ export function QuickAccessCards({
 
   const handleSelectTeamFromMore = (team: Team) => {
     if (isShowingAllTeams) {
-      const targetPage = getTeamTargetPage(team, 'all')
+      const targetPage = getTeamTargetPage(team, currentMode)
       const currentPage = getCurrentTargetPageByMode(currentMode)
       if (targetPage !== currentPage) {
         router.push(
