@@ -159,3 +159,81 @@ async def test_lookup_dingtalk_mention_name_falls_back_to_erp(monkeypatch):
     )
 
     assert name == "刘彦生"
+
+
+def _stub_directory_lookup(monkeypatch, response_payload):
+    class FakeQuery:
+        def filter(self, *_args, **_kwargs):
+            return self
+
+        def first(self):
+            return None
+
+    class FakeDB:
+        def query(self, _model):
+            return FakeQuery()
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return response_payload
+
+    captured = {}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, _url, **kwargs):
+            captured["payload"] = kwargs.get("json")
+            return FakeResponse()
+
+    async def no_cached_name(_key):
+        return None
+
+    async def ignore_cache_set(*_args, **_kwargs):
+        return True
+
+    async def no_erp_email(_staff_id):
+        return ""
+
+    monkeypatch.setattr(cache_manager, "get", no_cached_name)
+    monkeypatch.setattr(cache_manager, "set", ignore_cache_set)
+    monkeypatch.setattr(notification_dispatcher, "_lookup_employee_email", no_erp_email)
+    monkeypatch.setattr(
+        notification_dispatcher.httpx,
+        "AsyncClient",
+        lambda **_kwargs: FakeClient(),
+    )
+    monkeypatch.setattr(
+        notification_dispatcher,
+        "_get_dingtalk_user_info_url",
+        lambda: "http://example.test/user-info",
+    )
+    return FakeDB(), captured
+
+
+@pytest.mark.asyncio
+async def test_lookup_dingtalk_mention_name_uses_staff_id_without_erp(monkeypatch):
+    db, captured = _stub_directory_lookup(monkeypatch, [{"NAME": "李四"}])
+
+    name = await notification_dispatcher._lookup_dingtalk_mention_name(db, "220750")
+
+    assert name == "李四"
+    assert captured["payload"] == {"emails": ["220750"]}
+
+
+@pytest.mark.asyncio
+async def test_lookup_dingtalk_mention_name_ignores_unknown_staff_id(monkeypatch):
+    db, _captured = _stub_directory_lookup(
+        monkeypatch, [{"EMAIL": "220750", "notExist": True}]
+    )
+
+    name = await notification_dispatcher._lookup_dingtalk_mention_name(db, "220750")
+
+    assert name == ""

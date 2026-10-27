@@ -272,6 +272,12 @@ class DingTalkRobotSender:
             if "IM_GROUP" in resolved_open_space_id
             else []
         )
+        # An unresolved staff ID is sent with its raw ID as the display name,
+        # which DingTalk cannot turn into an @ mention. Keep it out of the
+        # visible prefix and payload instead of leaking the ID into the card.
+        mention_entries = [
+            (entry_id, name) for entry_id, name in mention_entries if name != entry_id
+        ]
         if mention_entries:
             mention_text = " ".join(f"@{name}" for _, name in mention_entries)
             content = f"{mention_text}\n\n{content}"
@@ -291,7 +297,10 @@ class DingTalkRobotSender:
             card_template_id=card_template_id,
             card_param_map=card_param_map,
             open_space_id=open_space_id,
-            mention_user_ids=mention_user_ids,
+            mention_user_ids=[
+                f"{entry_id}:{name}" for entry_id, name in mention_entries
+            ]
+            or None,
         )
         if not result.get("success"):
             return result

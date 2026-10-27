@@ -18,6 +18,7 @@ import hmac
 import logging
 import re
 import time
+from collections.abc import Mapping
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -83,15 +84,19 @@ async def _lookup_dingtalk_mention_name(db: Session, user_id: str) -> str:
     if not email:
         email = await _lookup_employee_email(user_id)
     user_info_url = _get_dingtalk_user_info_url()
-    if not email or not user_info_url:
+    if not user_info_url:
         return ""
+
+    # The enterprise directory accepts employee IDs as well as emails, so a
+    # staff ID can still resolve when ERP lookup is unavailable.
+    lookup_key = email or user_id
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.post(
                 user_info_url,
                 headers={"Content-Type": "application/json"},
-                json={"emails": [email]},
+                json={"emails": [lookup_key]},
             )
             response.raise_for_status()
             users = response.json()
@@ -106,7 +111,15 @@ async def _lookup_dingtalk_mention_name(db: Session, user_id: str) -> str:
 
     if not users:
         return ""
-    name = str(users[0].get("NAME") or "").strip()
+    record = users[0] if isinstance(users[0], Mapping) else {}
+    if record.get("notExist"):
+        logger.info(
+            "[SubscriptionNotificationDispatcher] DingTalk staff ID %s is not "
+            "in the enterprise directory",
+            user_id,
+        )
+        return ""
+    name = str(record.get("NAME") or "").strip()
     if name:
         await cache_manager.set(cache_key, name, expire=86400)
     return name
