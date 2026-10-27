@@ -394,6 +394,7 @@ export function TaskActivityView({
       handleFileSelect: attachmentSelection.handleFileSelect,
       addExistingAttachment: attachmentSelection.addExistingAttachment,
       removeAttachment: attachmentSelection.removeAttachment,
+      dismissAttachmentError: attachmentSelection.dismissAttachmentError,
       resetAttachments: attachmentSelection.resetAttachments,
       listLocalSkills: async () => [],
       listLocalApps: async () => [],
