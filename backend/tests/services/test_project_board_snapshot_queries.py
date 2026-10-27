@@ -243,6 +243,39 @@ def test_snapshot_rechecks_access_after_membership_is_revoked(
     assert denied.value.status_code == 404
 
 
+def test_board_and_page_bindings_only_expose_the_readers_own_tasks(
+    test_db: Session, test_user: User
+) -> None:
+    project_id, item_ids = _project(test_db, test_user.id, 1)
+    project = test_db.get(CloudProject, project_id)
+    member = (
+        test_db.query(User).filter(User.user_name.like(f"{project.public_id}-%")).one()
+    )
+    for owner_id in [test_user.id, member.id]:
+        test_db.add(
+            LoopItemTaskBinding(
+                id=uuid.uuid4().hex,
+                cloud_project_id=project_id,
+                loop_item_id=item_ids[0],
+                task_user_id=owner_id,
+                linked_by_user_id=owner_id,
+                device_id=f"device-{owner_id}",
+                task_id=f"private-task-{owner_id}",
+            )
+        )
+    test_db.commit()
+    for reader_id in [test_user.id, member.id]:
+        snapshot, _ = _snapshot(test_db, project_id, reader_id)
+        page_bindings = loop_item_service.list_project_task_bindings(
+            test_db, project_id, reader_id, item_ids=item_ids
+        )
+        for bindings in [snapshot.task_bindings, page_bindings]:
+            assert [binding.task_user_id for binding in bindings] == [reader_id]
+            assert [binding.task_id for binding in bindings] == [
+                f"private-task-{reader_id}"
+            ]
+
+
 def test_viewer_snapshot_omits_members_and_runtime_bindings(
     test_db: Session, test_user: User
 ) -> None:

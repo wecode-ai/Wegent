@@ -566,24 +566,28 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
         })
     }
 
-    /// `LoopItemService.list_task_bindings`: active bindings for the item,
+    /// Caller-owned active bindings for the item,
     /// newest first, selected with the source's labeled `loop_items`
     /// projection. The recorded contract filters `resource_type='execution'`
     /// bindings whose `unlinked_at` is unset; it does not filter
     /// `deleted_at`, so the statement stays compatible with the recorded
     /// exchange.
-    pub async fn list_task_bindings(&self, item_id: &str) -> MysqlResult<Vec<BindingRow>> {
+    pub async fn list_task_bindings(
+        &self,
+        item_id: &str,
+        user_id: i32,
+    ) -> MysqlResult<Vec<BindingRow>> {
         self.mysql
             .fetch_all(
                 &format!(
                     "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
-                     WHERE loop_items.loop_item_id = ? \
+                     WHERE loop_items.loop_item_id = ? AND loop_items.task_user_id = ? \
                      AND (loop_items.unlinked_at IS NULL OR loop_items.unlinked_at IN \
                          ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
                      AND loop_items.resource_type IN ('execution') \
                      ORDER BY loop_items.linked_at DESC, loop_items.id DESC",
                 ),
-                (item_id,),
+                (item_id, user_id),
             )
             .await
     }

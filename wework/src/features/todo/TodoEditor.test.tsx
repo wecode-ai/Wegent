@@ -728,7 +728,11 @@ describe('TodoEditor external item sync', () => {
           initialTaskBindings={[taskBinding as unknown as LoopItemTaskBinding]}
         />
       )
-      await screen.findByTestId('cloud-todo-tasks')
+      if (binding.task_user_id === 1) {
+        await screen.findByTestId('cloud-todo-tasks')
+      } else {
+        expect(screen.queryByTestId('cloud-todo-tasks')).not.toBeInTheDocument()
+      }
       await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
       expect(onCreateTask).toHaveBeenCalledOnce()
       expect(onOpenTaskConversation).not.toHaveBeenCalled()
@@ -934,6 +938,7 @@ describe('TodoEditor external item sync', () => {
         {
           id: 7,
           device_id: 'local-device',
+          task_user_id: 1,
           task_id: 'local-task',
           task_title: '立即显示的本地任务',
         },
@@ -1031,6 +1036,7 @@ describe('TodoEditor external item sync', () => {
           {
             id: 8,
             device_id: 'local-device',
+            task_user_id: 1,
             task_id: 'board-task',
             task_title: '看板已加载的任务',
           },
@@ -1065,6 +1071,7 @@ describe('TodoEditor external item sync', () => {
     const initialBinding = {
       id: 8,
       device_id: 'local-device',
+      task_user_id: 1,
       task_id: 'board-task',
       task_title: '看板任务',
     }
@@ -1118,6 +1125,7 @@ describe('TodoEditor external item sync', () => {
           {
             id: 8,
             device_id: 'local-device',
+            task_user_id: 1,
             task_id: 'first-task',
             task_title: '第一个 Issue 的任务',
           },
@@ -1127,6 +1135,7 @@ describe('TodoEditor external item sync', () => {
           {
             id: 9,
             device_id: 'local-device',
+            task_user_id: 1,
             task_id: 'second-task',
             task_title: '第二个 Issue 的任务',
           },
@@ -1171,6 +1180,7 @@ describe('TodoEditor external item sync', () => {
         {
           id: 10,
           device_id: 'local-device',
+          task_user_id: 1,
           task_id: 'stale-task',
           task_title: '过期刷新结果',
         },

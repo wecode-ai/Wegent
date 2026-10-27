@@ -158,13 +158,24 @@ export function TodoEditor(props: TodoEditorProps) {
       },
     }
   }, [props.api, props.projectChatAgentApi, props.sharedApi])
-  const port = useMemo(
-    () =>
-      createSharedIssueDetailPort(workspaceApi, async (blob, filename) => {
-        await saveBlobToDownloads(blob, filename)
-      }),
-    [workspaceApi]
-  )
+  const port = useMemo(() => {
+    const detailPort = createSharedIssueDetailPort(workspaceApi, async (blob, filename) => {
+      await saveBlobToDownloads(blob, filename)
+    })
+    return {
+      ...detailPort,
+      taskBindings: {
+        async list(...args: Parameters<typeof detailPort.taskBindings.list>) {
+          const tasks = await detailPort.taskBindings.list(...args)
+          return tasks.filter(
+            task =>
+              props.currentUserId !== undefined &&
+              String(task.task_user_id) === String(props.currentUserId)
+          )
+        },
+      },
+    }
+  }, [workspaceApi, props.currentUserId])
   const loadTeams = useCallback(
     () => props.teamApi?.listTeams() ?? Promise.resolve([]),
     [props.teamApi]
@@ -293,7 +304,11 @@ export function TodoEditor(props: TodoEditorProps) {
     showCurrentTaskOnly: props.showCurrentTaskOnly,
     defaultAssistant: props.defaultAssistant,
     taskRefreshKey: props.taskRefreshKey,
-    initialTaskBindings: props.initialTaskBindings as SharedIssueDetailTaskBinding[] | undefined,
+    initialTaskBindings: props.initialTaskBindings?.filter(
+      task =>
+        props.currentUserId !== undefined &&
+        String(task.task_user_id) === String(props.currentUserId)
+    ) as SharedIssueDetailTaskBinding[] | undefined,
     taskExecutionStates: props.taskExecutionStates,
     deviceNamesById: props.deviceNamesById,
     headerActions: props.headerActions,

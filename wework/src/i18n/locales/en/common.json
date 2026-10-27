@@ -4948,6 +4948,8 @@
     "execution_tasks": "Execution tasks",
     "no_running_task": "No task is currently running",
     "no_linked_task": "No linked tasks",
+    "linked_task_archived": "This task has been archived. Restore it from archived tasks before opening it.",
+    "linked_task_unavailable": "Unable to open this task. It may have been deleted. Refresh and try again.",
     "no_execution_tasks": "No execution tasks yet",
     "issue_task_composer_empty": "Describe what this task should accomplish. Sending creates the task and links it to this issue.",
     "issue_task_composer_placeholder": "Describe the task to run",
