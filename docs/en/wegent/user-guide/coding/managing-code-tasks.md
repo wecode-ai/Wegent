@@ -233,6 +233,8 @@ After entering a message, use the down arrow on the right side of the send butto
 
 The queue sends messages serially from top to bottom. A turn-terminal event alone does not trigger delivery; Wework sends the first queued message only after the local Executor task snapshot confirms that execution is idle. After submission, it also waits for that message's new turn to confirm that it started before allowing another queued message to send, preventing concurrent submissions. When several messages are queued, drag the handle on the left of a message to reorder the list with live feedback. Stopping the current response also pauses the queue instead of immediately sending the next message. Selecting **Continue sending** restores the guidance state and sends the first queued message immediately.
 
+Authoritative conversation history from the Executor can also confirm idle execution. Running snapshots from an already completed older turn cannot overwrite a later turn's state, mark an idle task as running again, or block queued messages. A new turn still requires an actual send, runtime event, or Executor-confirmed state.
+
 If you submit new composer text while the queue is paused, Wework asks how to handle the existing queue:
 
 - **Keep and continue**: sends the new composer message first, then continues the preserved queue; the composer is cleared after submission.
