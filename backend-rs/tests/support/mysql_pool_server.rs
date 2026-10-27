@@ -27,6 +27,7 @@ pub(crate) async fn read_packet(stream: &mut TcpStream) -> Option<Vec<u8>> {
     Some(body)
 }
 
+/// Complete the SDK's protocol 4.1 authentication against a local fixture.
 pub(crate) async fn handshake(stream: &mut TcpStream) {
     let capabilities: u32 = 0x0008_a208; // protocol 4.1, transactions, auth, database
     let mut hello = vec![10];

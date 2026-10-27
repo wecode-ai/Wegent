@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   RuntimeConversationItem,
   RuntimeConversationTurn,
+  RuntimePaneMessageAction,
 } from "./runtime-conversation";
 import {
   hydrateRuntimeConversationTurns,
@@ -27,6 +28,68 @@ const ids = (turns: RuntimeConversationTurn[]) =>
   turns[0].items.map((item) => item.id);
 
 describe("native conversation ordering contract", () => {
+  const recovery: RuntimePaneMessageAction = {
+    type: "block_created",
+    subtaskId: "turn",
+    block: {
+      id: "reconnecting-turn",
+      type: "tool",
+      toolName: "runtime_reconnecting",
+      status: "streaming",
+      createdAt: 2,
+    },
+  };
+  const overloaded = (): RuntimeConversationTurn => ({
+    ...turn([item("native-progress", 1)]),
+    status: "failed",
+    error: "Selected model is at capacity.",
+    completedAt: "2026-10-23T00:00:01Z",
+  });
+
+  it.each([false, true])(
+    "keeps live recovery over an in-flight failure snapshot (applied: %s)",
+    (alreadyApplied) => {
+      const local = [turn([])];
+      const observed = alreadyApplied
+        ? reduceRuntimeConversationTurns(local, recovery)
+        : local;
+      const result = hydrateRuntimeConversationTurns(
+        observed,
+        [overloaded()],
+        [recovery],
+        alreadyApplied,
+      );
+
+      expect(result[0].status).toBe("streaming");
+      expect(result[0].error).toBeUndefined();
+      expect(result[0].completedAt).toBeUndefined();
+      expect(ids(result)).toContain("native-progress");
+      expect(ids(result)).toContain("reconnecting-turn");
+
+      const terminal = { ...overloaded(), error: "Permission denied" };
+      const refreshed = hydrateRuntimeConversationTurns(result, [terminal], []);
+      expect(refreshed[0].status).toBe("failed");
+      expect(refreshed[0].error).toBe("Permission denied");
+    },
+  );
+
+  it("preserves a terminal live error after recovery instead of an older overload", () => {
+    const result = hydrateRuntimeConversationTurns(
+      [turn([])],
+      [overloaded()],
+      [
+        recovery,
+        {
+          type: "assistant_error",
+          subtaskId: "turn",
+          error: "Permission denied",
+        },
+      ],
+    );
+    expect(result[0].status).toBe("failed");
+    expect(result[0].error).toBe("Permission denied");
+  });
+
   it.each(["mcp_form", "mcp_url"])(
     "does not alias a pending %s turn to an answered turn that reused its request id",
     (interactionKind) => {
