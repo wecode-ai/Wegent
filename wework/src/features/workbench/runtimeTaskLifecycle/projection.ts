@@ -245,7 +245,7 @@ function isRuntimeTaskRunningStatus(status: string | null | undefined): boolean 
   return normalized === 'active' || normalized === 'inprogress' || normalized === 'running'
 }
 
-function isRuntimeTurnRunningStatus(status: string | null | undefined): boolean {
+export function isRuntimeTurnRunningStatus(status: string | null | undefined): boolean {
   const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
   return (
     normalized === 'active' ||

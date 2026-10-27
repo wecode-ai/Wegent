@@ -987,6 +987,33 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.id).toBe('continuation-turn')
   })
 
+  test('retains a restored native Goal turn identity until its completion arrives', () => {
+    const store = new RuntimeTaskLifecycleStore('restored-goal-identity')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          threadStatus: 'active',
+          turnStatus: 'inProgress',
+          goalStatus: 'active',
+          runtimeHandle: { lastTurnId: 'native-goal-turn' },
+        })
+      )
+    )
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [{ id: 'stale-running-state-turn', status: 'streaming', items: [] }],
+      })
+    )
+    expect(store.getTask(address)?.turn.id).toBe('native-goal-turn')
+    store.goalStatusReceived(address, 'complete')
+    store.turnSettled(address, 'native-goal-turn', 'succeeded')
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+    expect(store.getTask(address)?.derived.canSend).toBe(true)
+  })
+
   test('settles a live turn when its active Goal is explicitly paused', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))

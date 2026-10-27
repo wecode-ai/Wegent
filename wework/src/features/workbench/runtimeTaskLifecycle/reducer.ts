@@ -3,6 +3,7 @@ import {
   isRuntimeGoalExecutionActive,
   isRuntimeTaskAuthoritativeCompletion,
   isRuntimeTaskConfirmedActive,
+  isRuntimeTurnRunningStatus,
 } from './projection'
 import type { RuntimeTaskLifecycleEvent, RuntimeTaskLifecycleState } from './types'
 
@@ -72,10 +73,23 @@ export function reduceRuntimeTaskLifecycle(
             : snapshotRunning === true
               ? 'running'
               : state.executionPhase
+      const restoredTurnId =
+        !hasIdentifiedActiveTurn &&
+        snapshotConfirmsAutonomousTurn &&
+        isRuntimeTurnRunningStatus(event.task.turnStatus) &&
+        typeof event.task.runtimeHandle?.lastTurnId === 'string'
+          ? event.task.runtimeHandle.lastTurnId
+          : null
       const turnPhase =
-        queuedStatus || terminalStatus || snapshotRunning === false ? 'idle' : state.turnPhase
+        queuedStatus || terminalStatus || snapshotRunning === false
+          ? 'idle'
+          : restoredTurnId
+            ? 'streaming'
+            : state.turnPhase
       const activeTurnId =
-        queuedStatus || terminalStatus || snapshotRunning === false ? null : state.activeTurnId
+        queuedStatus || terminalStatus || snapshotRunning === false
+          ? null
+          : (state.activeTurnId ?? restoredTurnId)
       const hasInteractionStatus = Object.hasOwn(event.task, 'interactionStatus')
       const snapshotInteractionStatus = hasInteractionStatus
         ? (event.task.interactionStatus ?? null)
