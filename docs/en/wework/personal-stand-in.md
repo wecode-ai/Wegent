@@ -35,3 +35,9 @@ Follow-up messages concerning the same concrete matter can join existing work. U
 Answer operation approvals directly in the work-list preview. The same approval appears in the conversation input area with clickable actions; no typed “yes” is required. DingTalk reply approvals show the outgoing text bound to the original tool call. Approval-before-operations uses runtime enforcement for file writes, commands requiring elevated permissions, and MCP tools with write annotations. Approval applies to the individual operation, without persistent allow rules. This policy currently requires the Codex runtime.
 
 Disable **Receive new work** and save to pause new intake while retaining existing work. Source and startup failures remain visible for retry after fixing authentication, model selection, or connection settings. Message cursors, deduplication records, and associations persist across executor restarts.
+
+## Issue assignment reception receipts
+
+Inside the assignee dropdown control, an outlined person with a check marks **Read by recipient** and a filled person with a check marks **Received by stand-in**. Hover to view the status and timestamp. A successful detail open records the human receipt; a stand-in records reception once its task is accepted, before execution completes. Both receipts retain their own timestamps and do not complete the Issue. Notification previews, marking all notifications as read, and background reads do not record a human receipt.
+
+Assigners and recipients can view the receipts, which refresh while details remain open. Reassignment starts a new receipt history. Older assignments without reliable evidence show “No receipt recorded.” Executors retain pending cloud receipts for up to 30 days, increasing failed retry intervals to at most one hour. Restarting preserves the retry delay. Local-project receipts stay on the owning Executor.

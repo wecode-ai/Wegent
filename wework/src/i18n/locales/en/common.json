@@ -4187,6 +4187,11 @@
     "source_unavailable": "The source conversation is unavailable. Existing messages can still be kept or removed."
   },
   "todo": {
+    "assignment_human_read": "Read by recipient",
+    "assignment_stand_in_received": "Received by stand-in",
+    "assignment_unread": "Unread",
+    "assignment_receipt_unknown": "No receipt recorded",
+    "assignment_receipt_sync_failed": "Receipt sync failed",
     "issue_badges_title": "Related information",
     "issue_pr_loading": "Loading status…",
     "load_tag_catalog_failed": "Failed to load tag catalog",

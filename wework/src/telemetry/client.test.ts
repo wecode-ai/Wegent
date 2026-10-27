@@ -806,3 +806,84 @@ describe('telemetry client', () => {
     )
   })
 })
+
+describe('durable public stand-in transport', () => {
+  const uuid = '12345678-1234-4234-8234-123456789012'
+  const event = {
+    name: 'stand_in_execution_completed' as const,
+    properties: {
+      domain: 'stand_in' as const,
+      executor_location: 'local' as const,
+      identity: 'role' as const,
+      source: 'local_project' as const,
+      trigger: 'automatic' as const,
+      result: 'success' as const,
+      duration_ms: 12,
+    },
+  }
+  beforeEach(() => {
+    vi.resetModules()
+    vi.unstubAllEnvs()
+    vi.stubEnv('VITE_WEWORK_POSTHOG_KEY', 'project-key')
+    vi.stubEnv('VITE_WEWORK_SENTRY_DSN', '')
+    localStorage.clear()
+  })
+
+  test('uses SDK transport receipts and preserves UUID, occurrence time and anonymous identity', async () => {
+    const send = vi.fn(options => options.callback({ statusCode: 200 }))
+    posthogMocks.init.mockReturnValue({
+      opt_in_capturing: vi.fn(),
+      get_distinct_id: () => 'anonymous',
+      calculateEventProperties: (_name: string, properties: object) => ({
+        ...properties,
+        $current_url: 'private-url',
+      }),
+      analyticsDefaultEndpoint: '/custom-events/',
+      requestRouter: {
+        endpointFor: (_target: string, path: string) => `https://posthog.invalid${path}`,
+      },
+      _send_request: send,
+    })
+    const { installTelemetry, durablePublicIdentity, deliverDurablePublicEvent } =
+      await import('./client')
+    await installTelemetry(true)
+    const identity = (await durablePublicIdentity())!
+    expect(await deliverDurablePublicEvent(event, uuid, '2026-10-27T00:00:00.000Z', identity)).toBe(
+      true
+    )
+    const request = send.mock.calls[0]![0]
+    expect(request.url).toBe('https://posthog.invalid/custom-events/')
+    expect(request.data.uuid).toBe(uuid)
+    expect(request.data.timestamp.toISOString()).toBe('2026-10-27T00:00:00.000Z')
+    expect(request.data.properties.distinct_id).toBe('anonymous')
+    expect(request.data.properties).not.toHaveProperty('$current_url')
+    expect(request.noRetries).toBe(true)
+    expect(request).not.toHaveProperty('timestampMode')
+    send.mockImplementation(options => options.callback({ statusCode: 503 }))
+    expect(await deliverDurablePublicEvent(event, uuid, '2026-10-27T00:00:00.000Z', identity)).toBe(
+      false
+    )
+    expect(send.mock.calls[0]![0].data).toEqual(send.mock.calls[1]![0].data)
+  })
+
+  test('validates numeric durations and clears all pending public queues on opt-out', async () => {
+    posthogMocks.init.mockReturnValue({
+      opt_in_capturing: vi.fn(),
+      opt_out_capturing: vi.fn(),
+      reset: vi.fn(),
+    })
+    const { installTelemetry, setTelemetryEnabled, sanitizeAnalyticsProperties } =
+      await import('./client')
+    await installTelemetry(true)
+    for (const duration_ms of [-1, NaN, Infinity, 2592000001]) {
+      expect(
+        sanitizeAnalyticsProperties(event.name, { ...event.properties, duration_ms })
+      ).not.toHaveProperty('duration_ms')
+    }
+    localStorage.setItem('wework.stand-in-telemetry:public:old-account', 'pending')
+    localStorage.setItem('wework.stand-in-telemetry:public:offline-device', 'pending')
+    await setTelemetryEnabled(false)
+    expect(localStorage.getItem('wework.stand-in-telemetry:public:old-account')).toBeNull()
+    expect(localStorage.getItem('wework.stand-in-telemetry:public:offline-device')).toBeNull()
+  })
+})

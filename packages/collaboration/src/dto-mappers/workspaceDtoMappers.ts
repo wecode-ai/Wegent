@@ -480,6 +480,15 @@ export function mapCollaborationAssignmentDto(
     id: String(row.id),
     issue_id: String(row.issue_id ?? row.issueId ?? row.loop_item_id ?? ""),
     target_type: rawType === "agent" ? "agent" : "human",
+    ...(row.receipt_tracking !== undefined
+      ? { receipt_tracking: row.receipt_tracking === true }
+      : {}),
+    ...(row.human_read_at !== undefined
+      ? { human_read_at: nullableString(row.human_read_at) }
+      : {}),
+    ...(row.stand_in_received_at !== undefined
+      ? { stand_in_received_at: nullableString(row.stand_in_received_at) }
+      : {}),
     target_id: String(row.target_id ?? row.targetId ?? ""),
     target_name: String(row.target_name ?? row.targetName ?? ""),
     body: String(row.body ?? ""),

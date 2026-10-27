@@ -12,6 +12,7 @@ import {
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
+import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -134,6 +135,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
   'stand-in-list-confirmation': './scenarios/stand-in-list-confirmation.scenario.mjs',
   'stand-in-profile-settings': './scenarios/stand-in-profile.scenario.mjs',
+  'stand-in-telemetry': './scenarios/stand-in-telemetry.scenario.mjs',
   'stand-in-model-catalog': './scenarios/stand-in-model-catalog.scenario.mjs',
   'stand-in-identities': './scenarios/stand-in-identities.scenario.mjs',
   'stand-in-connections': './scenarios/stand-in-connections.scenario.mjs',
@@ -261,6 +263,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'stand-in-action-confirmation',
   'stand-in-list-confirmation',
   'stand-in-profile-settings',
+  'stand-in-telemetry',
   'stand-in-model-catalog',
   'stand-in-identities',
   'stand-in-connections',
@@ -417,13 +420,13 @@ function runTaskFlow(args, env, label) {
     })
     child.once('exit', (code, signal) => {
       clearInterval(heartbeat)
-      resolvePromise({
+      rejectRecordedCheckpointFailure({
         code: code ?? 1,
         durationMs: Date.now() - startedAt,
         resultDir,
         signal,
         stderrTail,
-      })
+      }).then(resolvePromise, reject)
     })
   })
 }

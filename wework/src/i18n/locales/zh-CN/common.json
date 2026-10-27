@@ -4184,6 +4184,11 @@
     "source_unavailable": "来源会话不可用，已收录的内容仍可保留或移除。"
   },
   "todo": {
+    "assignment_human_read": "本人已读",
+    "assignment_stand_in_received": "分身已接收",
+    "assignment_unread": "未读",
+    "assignment_receipt_unknown": "暂无接收记录",
+    "assignment_receipt_sync_failed": "回执同步失败",
     "issue_badges_title": "关联信息",
     "issue_pr_loading": "正在查询状态…",
     "load_tag_catalog_failed": "加载标签目录失败",

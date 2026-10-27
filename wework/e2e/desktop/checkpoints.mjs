@@ -21,6 +21,7 @@ export const DESKTOP_CHECKPOINTS = [
   'stand-in-action-confirmation',
   'stand-in-list-confirmation',
   'stand-in-profile',
+  'stand-in-telemetry',
   'stand-in-profile-settings',
   'stand-in-model-catalog',
   'stand-in-identities',
