@@ -361,11 +361,18 @@ export class AppUpdateService {
       'ELECTRON_RUN_AS_NODE',
     ])
       delete environment[key]
-    await execute(release.executable, ['--wework-prepare-release', request], {
-      env: environment,
-      timeout: 300_000,
-      maxBuffer: 1024 * 1024,
-    })
+    await execute(
+      release.executable,
+      [
+        join(release.resources, 'app.asar', 'dist', 'runtime', 'release-preparation-cli.js'),
+        request,
+      ],
+      {
+        env: { ...environment, ELECTRON_RUN_AS_NODE: '1' },
+        timeout: 300_000,
+        maxBuffer: 1024 * 1024,
+      }
+    )
   }
 
   createInstallAction(): () => Promise<void> {

@@ -7,23 +7,21 @@ import { optionalText, ReleaseStore } from './runtime/release-store.js'
 import { restoreReleaseData } from './runtime/release-snapshot.js'
 import { currentCoreProfile, selectReleaseProfile } from './runtime/release-profile.js'
 
+const pendingUrls: string[] = []
+const captureUrl = (event: Electron.Event, url: string): void => {
+  event.preventDefault()
+  pendingUrls.push(url)
+}
+app.on('open-url', captureUrl)
+const forwardedArguments = (): string[] => [...process.argv.slice(1), ...pendingUrls]
+
 const metadata = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 const packaged = app.isPackaged
-const preparationIndex = process.argv.indexOf('--wework-prepare-release')
 
 try {
-  if (preparationIndex >= 0) {
-    if (!packaged) throw new Error('Release preparation requires a packaged app')
-    const { prepareReleaseEnvironment } = await import('./runtime/release-preparation.js')
-    await prepareReleaseEnvironment(
-      process.argv[preparationIndex + 1],
-      process.resourcesPath,
-      metadata.version,
-      metadata.weworkDataSchema,
-      metadata.weworkReadableDataSchemas
-    )
-    app.exit(0)
-  } else if (await routeRelease()) {
+  if (await routeRelease()) {
+    app.removeListener('open-url', captureUrl)
+    process.argv.push(...pendingUrls)
     await import('./main.js')
   }
 } catch (error) {
@@ -32,8 +30,7 @@ try {
 
 function failStartup(error: unknown): void {
   console.error('[release-bootstrap]', error instanceof Error ? error.message : 'Startup failed')
-  if (preparationIndex < 0)
-    dialog.showErrorBox('Wework', error instanceof Error ? error.message : 'Startup failed')
+  dialog.showErrorBox('Wework', error instanceof Error ? error.message : 'Startup failed')
   app.exit(1)
 }
 
@@ -54,10 +51,24 @@ async function routeRelease(): Promise<boolean> {
     throw new Error('Release root does not match the application data directory')
   }
   const store = new ReleaseStore(root)
+  const supervisedId = process.env.WEWORK_RELEASE_SUPERVISED
+  delete process.env.WEWORK_RELEASE_SUPERVISED
+  const bridge = await optionalText(join(root, 'bridge'))
+  if (!supervisedId && bridge && resolve(bridge) !== resolve(process.execPath)) {
+    // An old installed entry only forwards. Recovery must use the latest healthy
+    // release, which understands snapshots created by that release's updater.
+    void app
+      .whenReady()
+      .then(() => {
+        app.relaunch({ execPath: bridge, args: forwardedArguments() })
+        app.exit(0)
+      })
+      .catch(failStartup)
+    return false
+  }
   const active = await store.active()
   if (!active) return true
-  const supervised = process.env.WEWORK_RELEASE_SUPERVISED === active.id
-  delete process.env.WEWORK_RELEASE_SUPERVISED
+  const supervised = supervisedId === active.id
   // Only the independent launcher grants a child this one-use handoff.
   if (supervised && resolve(active.executable) === resolve(process.execPath)) {
     process.env.WEWORK_HARNESS_RUNTIME_ROOT = active.runtimeRoot
@@ -121,7 +132,12 @@ async function launchSelectedRelease(
         process.env.WEGENT_EXECUTOR_HOME?.trim() || dataDirectory
       )
     await store.rollback()
-  } else if (activation && (await optionalText(join(root, 'attempted'))) === activation.token) {
+  } else if (
+    activation &&
+    (await optionalText(join(root, 'attempted'))) === activation.token &&
+    ((await optionalText(join(root, 'failed'))) === activation.token ||
+      (await optionalText(join(root, 'healthy'))) === activation.token)
+  ) {
     const healthy = await optionalText(join(root, 'healthy'))
     if (healthy === activation.token) {
       await store.confirm(activation.to)
@@ -172,6 +188,6 @@ async function launchSelectedRelease(
   )
   if (!existsSync(launcher)) throw new Error('Independent Wework launcher is missing')
   // Electron's relaunch helper waits for the stable entry to exit and release native locks.
-  app.relaunch({ execPath: resolve(launcher), args: [root, bridge, ...process.argv.slice(1)] })
+  app.relaunch({ execPath: resolve(launcher), args: [root, bridge, ...forwardedArguments()] })
   app.exit(0)
 }

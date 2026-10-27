@@ -158,6 +158,30 @@ export async function createDesktopScenario(options) {
 
   const installedVersion = async () =>
     JSON.parse(await control.command('getInstalledAppVersion', 'body')).version
+  const compositions = []
+  const assertSelectedComposition = async version => {
+    const id = (await readFile(join(root, 'active'), 'utf8')).trim()
+    const slot = join(root, 'slots', id)
+    const release = JSON.parse(await readFile(join(slot, 'release.json'), 'utf8'))
+    const { components } = JSON.parse(await readFile(join(slot, 'prepared.json'), 'utf8'))
+    const { release: actual } = JSON.parse(
+      await control.command('getDesktopRuntimeDiagnostics', 'body')
+    )
+    assert.equal(release.version, version)
+    assert.equal(actual.id, id)
+    for (const [key, expected] of Object.entries({
+      hostExecutable: release.executable,
+      runtimeRoot: release.runtimeRoot,
+      coreDshPath: components.coreDsh,
+      corePluginsPath: components.weworkCorePlugins,
+      executorPath: components.executor,
+      codexPath: components.codex,
+      dwsPath: components.dws,
+    })) {
+      assert.equal(resolve(actual[key]), resolve(expected), `Selected release ${key} differs`)
+    }
+    compositions.push({ version, ...actual, coreDsh: components.coreDsh })
+  }
   const about = async () => {
     await control.command('click', '[data-testid="settings-button"]')
     await control.command('click', '[data-testid="about-menu-button"]')
@@ -176,6 +200,16 @@ export async function createDesktopScenario(options) {
     usesReleasePackageRuntimeAssets: true,
     appEnvironment,
     async prepareApp({ appEnvironment: sourceEnvironment }) {
+      // Exercise each delivered package's own executor and coding CLIs. Fixed
+      // runner binary overrides would otherwise survive into the target release.
+      for (const key of [
+        'WEWORK_EXECUTOR_PATH',
+        'WEWORK_EXECUTOR_SIDECAR',
+        'CODEX_BINARY_PATH',
+        'CODEX_BIN',
+        'DWS_BINARY_PATH',
+      ])
+        delete sourceEnvironment[key]
       await mkdir(electronUserDataDirectory, { recursive: true })
       await writeFile(
         join(electronUserDataDirectory, 'renderer-local-storage.json'),
@@ -216,12 +250,33 @@ export async function createDesktopScenario(options) {
         })
       )
       console.log(`[upgrade-e2e] Preparing the installed source ${pair.from.version}`)
-      await promisify(execFile)(pair.from.executable, ['--wework-prepare-release', request], {
-        env: sourceEnvironment,
-        timeout: 300_000,
-        maxBuffer: 1024 * 1024,
-        windowsHide: true,
-      })
+      const preparation = promisify(execFile)(
+        pair.from.executable,
+        [join(resources, 'app.asar', 'dist', 'runtime', 'release-preparation-cli.js'), request],
+        {
+          env: { ...sourceEnvironment, ELECTRON_RUN_AS_NODE: '1' },
+          timeout: 300_000,
+          maxBuffer: 1024 * 1024,
+          windowsHide: true,
+        }
+      )
+      try {
+        await preparation
+      } catch (error) {
+        await writeFile(
+          join(resultDir, 'source-preparation-result.json'),
+          JSON.stringify({
+            pid: preparation.child?.pid,
+            code: error.code,
+            signal: error.signal,
+            killed: error.killed,
+          })
+        )
+        throw new Error(
+          `Source preparation failed: code=${error.code}, signal=${error.signal}, killed=${error.killed}`,
+          { cause: error }
+        )
+      }
       console.log('[upgrade-e2e] Installed source prepared from its delivered package')
     },
     async handleHttp(request, response, url) {
@@ -341,6 +396,7 @@ export async function createDesktopScenario(options) {
         )
           await control.command('click', '[data-testid="settings-back-button"]')
         await send(`${PROMPT} continue after failed activation`)
+        await assertSelectedComposition(pair.from.version)
         console.log('[upgrade-e2e] Automatic recovery preserved a usable task')
         await writeFile(
           join(resultDir, 'upgrade-recovery-result.json'),
@@ -383,6 +439,7 @@ export async function createDesktopScenario(options) {
       })
       const beforeRequests = modelRequests
       await send(`${PROMPT} continue after upgrade`)
+      await assertSelectedComposition(pair.to.version)
       assert.ok(
         modelRequests > beforeRequests,
         'The restored task did not execute through the real runtime'
@@ -446,6 +503,7 @@ export async function createDesktopScenario(options) {
         )
           await control.command('click', '[data-testid="settings-back-button"]')
         await send(`${PROMPT} continue after rollback`)
+        await assertSelectedComposition(pair.from.version)
         if (restoreRequired) {
           const { readdir } = await import('node:fs/promises')
           const preserved = await readdir(join(root, 'preserved-data'))
@@ -480,6 +538,7 @@ export async function createDesktopScenario(options) {
           ? 'passed'
           : 'not-run',
         requests,
+        compositions,
       })
       await writeFile(join(resultDir, 'upgrade-edge-result.json'), evidence)
       if (process.env.WEWORK_E2E_UPGRADE_EVIDENCE)
@@ -489,6 +548,18 @@ export async function createDesktopScenario(options) {
     async cleanup() {
       if (control) await control.command('quitApp', 'body').catch(() => undefined)
       const fs = await import('node:fs/promises')
+      // A failed activation can leave the native recovery shell waiting for
+      // confirmation before it connects to the renderer control channel.
+      const recoveryPid = Number(
+        await fs.readFile(join(root, 'recovery-pid'), 'utf8').catch(() => '0')
+      )
+      if (recoveryPid && !passed) {
+        try {
+          process.kill(recoveryPid)
+        } catch (error) {
+          if (error.code !== 'ESRCH') throw error
+        }
+      }
       const pid = Number(await fs.readFile(join(root, 'active-pid'), 'utf8').catch(() => '0'))
       if (pid) {
         const deadline = Date.now() + 10_000

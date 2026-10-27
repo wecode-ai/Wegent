@@ -137,6 +137,8 @@ export class ReleaseStore {
       throw new Error('Release changed before startup confirmation')
     await atomicReleaseWrite(join(this.root, 'previousHealthy'), activation.from)
     await atomicReleaseWrite(join(this.root, 'last-activation.json'), JSON.stringify(activation))
+    const healthy = await this.read(id)
+    await atomicReleaseWrite(join(this.root, 'bridge'), healthy.executable)
     await atomicReleaseWrite(join(this.root, 'healthy'), activation.token)
     await this.finishActivation()
   }
@@ -158,7 +160,22 @@ export class ReleaseStore {
       join(this.root, 'rolled-back-versions.json'),
       JSON.stringify([...new Set([...versions, rejected.version])])
     )
+    if (
+      activation.restoreRequired &&
+      (await optionalText(join(this.root, 'data-opened'))) === activation.token
+    ) {
+      // Profiles can contain newer user plugin data. Retain that complete slot
+      // alongside restored database backups rather than garbage-collecting it.
+      const preserved = join(this.root, 'preserved-data', activation.snapshot)
+      await mkdir(preserved, { recursive: true, mode: 0o700 })
+      await atomicReleaseWrite(join(preserved, 'retained-release'), rejected.id)
+      await atomicReleaseWrite(
+        join(this.slot(rejected.id), 'preserved-data-snapshot'),
+        activation.snapshot
+      )
+    }
     await atomicReleaseWrite(join(this.root, 'active'), previous.id)
+    await atomicReleaseWrite(join(this.root, 'bridge'), previous.executable)
     if (activation.rollbackRequested) await rm(join(this.root, 'previousHealthy'), { force: true })
     await this.finishActivation()
     return previous
@@ -195,8 +212,9 @@ export class ReleaseStore {
     const activation = await this.activation()
     const retained = new Set([active.id, previous, activation?.from, activation?.to])
     for (const entry of await readdir(join(this.root, 'slots'), { withFileTypes: true })) {
-      if (entry.isDirectory() && !retained.has(entry.name))
-        await removePhysicalRelease(this.slot(entry.name))
+      if (!entry.isDirectory() || retained.has(entry.name)) continue
+      if (await optionalText(join(this.slot(entry.name), 'preserved-data-snapshot'))) continue
+      await removePhysicalRelease(this.slot(entry.name))
     }
     const last = await optionalText(join(this.root, 'last-activation.json'))
     const lastSnapshot = last ? (JSON.parse(last) as ReleaseActivation).snapshot : undefined

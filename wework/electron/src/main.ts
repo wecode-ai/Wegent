@@ -1,6 +1,7 @@
 import './host/process-output-bootstrap.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
+import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
 import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
 
 import {
@@ -216,6 +217,12 @@ function logStartupStep(
   status: 'started' | 'completed' | 'failed',
   details: Record<string, unknown> = {}
 ): void {
+  recordReleaseDiagnostic('startup-step', {
+    step,
+    status,
+    elapsedMs: Math.round(performance.now() - startupStartedAt),
+    errorType: details.errorType,
+  })
   console.info('[startup]', {
     step,
     status,
@@ -435,6 +442,10 @@ app.on('web-contents-created', (_event, contents) => {
       console.info(redactLog(message).slice(0, 1024))
     }
     if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
+      recordReleaseDiagnostic('renderer-error', {
+        message: redactLog(message).slice(0, 4096),
+        sourcePath: URL.canParse(sourceId) ? redactLog(new URL(sourceId).pathname) : undefined,
+      })
       console.warn('[renderer-error]', {
         webContentsId: contents.id,
         message: redactLog(message).slice(0, 4096),
@@ -2155,13 +2166,24 @@ async function configureDesktopRuntime(): Promise<void> {
           dismissPopout: () => popoutWindow?.hide(),
           dismissSystemDragPanel: () => systemDragWindow?.hide(),
           getSystemDragContext: () => systemDragContext,
-          runtimeDiagnostics: () =>
-            desktopRuntime?.diagnostics() ?? {
+          runtimeDiagnostics: () => ({
+            ...(desktopRuntime?.diagnostics() ?? {
               coreDshPid: null,
               developmentPlugin: null,
               executorPid: null,
               workbenchRuntimes: [],
+            }),
+            release: {
+              id: process.env.WEWORK_ACTIVE_RELEASE_ID ?? null,
+              hostExecutable: process.execPath,
+              runtimeRoot: startupRuntimeEnvironment?.WEWORK_HARNESS_RUNTIME_ROOT,
+              coreDshPath: startupRuntimeEnvironment?.WEWORK_HARNESS_RESOURCE_ROOT,
+              corePluginsPath: startupRuntimeEnvironment?.WEWORK_CORE_PLUGIN_ROOT,
+              executorPath: startupRuntimeEnvironment?.WEWORK_EXECUTOR_PATH,
+              codexPath: startupRuntimeEnvironment?.CODEX_BINARY_PATH,
+              dwsPath: startupRuntimeEnvironment?.DWS_BINARY_PATH,
             },
+          }),
           scheduleCoreDshRestart,
           setSystemDragContext: context => {
             systemDragContext = context

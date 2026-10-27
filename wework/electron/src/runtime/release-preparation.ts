@@ -33,16 +33,22 @@ export async function prepareReleaseEnvironment(
     throw new Error('Target release identity does not match the selected package')
   const store = new ReleaseStore(request.storeRoot)
   const sourceRevision = await cloneReleaseProfile(request.sourceProfile, release.profileRoot)
+  const bundledAssetsOnly: typeof fetch = async () => {
+    throw new Error('The complete release package is missing preparation assets')
+  }
   const manager = new ComponentUpdateManager({
     resourcesRoot: resources,
     dataDirectory: store.slot(release.id),
     currentAppVersion: version,
     updateBaseUrl: '',
+    fetch: bundledAssetsOnly,
     validateExecutor: path =>
       assertExecutorWorkbenchCompatibility({ ...process.env, WEWORK_EXECUTOR_PATH: path }),
   })
   const components = await manager.prepareStartup()
-  await materializeBundledRuntimes(components.coreDsh, release.runtimeRoot, ['core'])
+  await materializeBundledRuntimes(components.coreDsh, release.runtimeRoot, ['core', 'workbench'], {
+    fetch: bundledAssetsOnly,
+  })
   const preparationHome = join(store.slot(release.id), 'preparation')
   // The prepared profile is isolated; DSH's live data stays in the stable DSH_HOME.
   await mkdir(join(preparationHome, 'dsh-core', 'profiles'), { recursive: true, mode: 0o700 })

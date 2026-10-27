@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
@@ -36,7 +36,7 @@ async function fixture() {
   return { store, before, after, root }
 }
 test('activation retains its source until runtime and renderer confirmation', async () => {
-  const { store, after, root } = await fixture()
+  const { store, before, after, root } = await fixture()
   await store.activate(after, 'snapshot')
   expect(await store.activation()).toMatchObject({
     from: 'before',
@@ -46,11 +46,13 @@ test('activation retains its source until runtime and renderer confirmation', as
   await store.confirm('before')
   expect(await store.activation()).not.toBeNull()
   await store.confirm('after')
+  expect(await readFile(join(root, 'bridge'), 'utf8')).toBe(after.executable)
   expect(await store.activation()).toBeNull()
   expect(await readFile(join(root, 'previousHealthy'), 'utf8')).toBe('before')
   await store.requestRollback()
   expect((await store.rollback()).id).toBe('before')
   expect((await store.active())?.id).toBe('before')
+  expect(await readFile(join(root, 'bridge'), 'utf8')).toBe(before.executable)
 })
 test('concurrent activation cannot overwrite the recovery journal', async () => {
   const { store, after } = await fixture()
@@ -111,4 +113,22 @@ test('cleanup retains the active and previous healthy release', async () => {
   await expect(readFile(join(root, 'slots/abandoned/release.json'))).rejects.toMatchObject({
     code: 'ENOENT',
   })
+})
+test('cleanup preserves newer plugin data after an incompatible rollback', async () => {
+  const { store, after } = await fixture()
+  const release = { ...after, profileRoot: join(store.slot(after.id), 'profile') }
+  await store.save(release)
+  await mkdir(release.profileRoot)
+  const state = join(release.profileRoot, '.wework-core-plugins.json')
+  await writeFile(state, '{"disabled":["new-user-plugin"]}')
+  await store.activate(release, 'snapshot')
+  await atomicReleaseWrite(join(store.root, 'data-opened'), (await store.activation())!.token)
+  await store.confirm(release.id)
+  await store.requestRollback()
+  await store.rollback()
+  await store.prune()
+  expect(await readFile(state, 'utf8')).toContain('new-user-plugin')
+  expect(await readFile(join(store.root, 'preserved-data/snapshot/retained-release'), 'utf8')).toBe(
+    release.id
+  )
 })

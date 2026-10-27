@@ -26,19 +26,21 @@ Plugin configuration changes invalidate preparation. Recheck before switching in
 
 Confirmed manual rollback records its transaction direction independently. After an interruption, resume rollback instead of treating the target's earlier healthy marker as a new startup confirmation.
 
+Incompatible restoration retains the rejected slot so subsequent cleanup cannot remove newer user plugin data. `preserved-data/<snapshot>/retained-release` identifies it. Preserved data does not expire automatically.
+
 ## Maintain three verification layers
 
-| Layer | Inputs | Purpose | Authorizes a production edge |
-| --- | --- | --- | --- |
-| Policy and transaction tests | Small manifests and temporary directories | Floors, routing, revocation, journals, snapshot boundaries | No |
-| Mechanism E2E | Independently built and signed A/B regression packages | Real transport, extraction, Electron/Executor, switching, restoration, task continuation | No |
-| Release-pair E2E | Immutable delivered source and target archives | A specific real upgrade and rollback | Only for the tested platform, architecture, and hashes |
+| Layer                        | Inputs                                                 | Purpose                                                                                  | Authorizes a production edge                           |
+| ---------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Policy and transaction tests | Small manifests and temporary directories              | Floors, routing, revocation, journals, snapshot boundaries                               | No                                                     |
+| Mechanism E2E                | Independently built and signed A/B regression packages | Real transport, extraction, Electron/Executor, switching, restoration, task continuation | No                                                     |
+| Release-pair E2E             | Immutable delivered source and target archives         | A specific real upgrade and rollback                                                     | Only for the tested platform, architecture, and hashes |
 
 Maintain shared behavior in `app-upgrade.scenario.mjs` and the acceptance version/checkpoint list in `upgrade-suite.mjs`. Normal upgrade, manual rollback, interrupted-rollback recovery, and failed-activation recovery each establish their own fixtures. The shared runner prepares packages once. Versions are test data, not branches selecting assertions.
 
 Only model services may be replaced. Serve actual package files over real HTTP; use real signature checks, storage, native launcher, and Executor. Fault injection terminates the actual target process. Regression fixtures deliberately exercise incompatible data declarations and snapshot restoration. Build them from source; never rename an archive or rewrite a signed package. Mark results as `regression`; promotion rejects them as release proof.
 
-Each checkpoint first invokes the source package's preparation entry to establish an installed client's runtime before UI actions. The target must still extract and prepare its independent slot. Fixture output is separate from formal packages and other checkpoints' applications.
+Each checkpoint first invokes the source package's headless preparation entry to establish an installed client's runtime before UI actions. The target must still extract and prepare its independent slot. After upgrading and rolling back, assert the actual host, Core, plugins, executor, Codex, and DWS paths against that slot's prepared composition; never inherit fixed source binary overrides. Fixture output is separate from formal packages and other checkpoints' applications.
 
 ```bash
 node --test wework/scripts/upgrade-policy.test.mjs wework/scripts/upgrade-evidence.test.mjs
@@ -47,6 +49,8 @@ pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback
 ```
 
 For existing pairs, provide `WEWORK_E2E_UPGRADE_PAIR`, `WEWORK_E2E_APP_BIN`, and `WEWORK_E2E_EXECUTOR_BIN`. Set `WEWORK_E2E_REQUIRE_RELEASE_PACKAGE=1` to preserve original identity/signatures. Change the shared scenario for behavior changes; change pair data for releases. Increment the suite version when acceptance changes materially. Preserve failure logs and fix causes before rerunning. Do not retry, skip, or weaken assertions. Run macOS arm64, macOS x64, and Windows x64 independently. Never commit screenshots, packages, snapshots, sessions, or temporary recovery files.
+
+The `Wework Upgrade E2E` workflow runs the complete three-platform matrix for non-draft PRs under `ci:all` and supports manual dispatch. Keep acceptance versions in `upgrade-suite.mjs`; rebuild fixtures after strengthening assertions instead of reusing old proof.
 
 The existing `app-update-full` checkpoint shares the real-package scenario and retains delayed full-transfer, nonblocking acceptance, no Range/blockmap, and repeated-preparation reuse assertions. CI runs it alongside the four upgrade/rollback checkpoints on each platform. It no longer copies and renames a ZIP or appends bytes to impersonate a new version.
 

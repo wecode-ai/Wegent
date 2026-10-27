@@ -1,34 +1,9 @@
 name: Wework Upgrade E2E
 
 on:
-  push:
-    paths:
-      - .github/workflows/wework-upgrade-e2e.yml
-      - .github/workflows/wework-app.yml
-      - wework/upgrade-policy.json
-      - wework/launcher/**
-      - wework/electron/src/bootstrap.ts
-      - wework/electron/src/main.ts
-      - wework/electron/src/runtime/**
-      - wework/electron/src/host/*app-update*
-      - wework/electron/src/host/electron-capabilities.ts
-      - wework/electron/src/host/capability-router.ts
-      - wework/electron/src/host/preferences-store*
-      - wework/electron/src/host/renderer-storage-store*
-      - wework/electron/scripts/**
-      - wework/electron/electron-builder.config.cjs
-      - wework/electron/package.json
-      - wework/e2e/desktop/scenarios/app-upgrade.scenario.mjs
-      - wework/e2e/desktop/scenarios/app-update-full.scenario.mjs
-      - wework/e2e/desktop/upgrade-suite.mjs
-      - wework/e2e/desktop/checkpoints.mjs
-      - wework/e2e/desktop/run-checkpoints.mjs
-      - wework/scripts/*upgrade*
-      - wework/scripts/lib/portable-desktop-release.mjs
-      - wework/scripts/lib/upgrade-evidence.mjs
-      - wework/src/features/app-update/**
-      - wework/src/lib/app-updater.ts
-      - wework/src/components/settings/AboutSettingsPage.tsx
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
   workflow_dispatch:
 
 concurrency:
@@ -41,6 +16,7 @@ permissions:
 jobs:
   upgrade-and-rollback:
     name: Upgrade and rollback (${{ matrix.name }})
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:all') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     strategy:
       fail-fast: false
       matrix:
@@ -61,6 +37,8 @@ jobs:
       WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/setup-node-workspace
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8f
       - uses: ./.github/actions/setup-sccache
