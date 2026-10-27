@@ -594,6 +594,20 @@ function writeResponsesToolCalls(
  * Create the mock HTTP server
  */
 const server = http.createServer((req, res) => {
+  const pathname = req.url?.split('?')[0]
+  if (
+    pathname &&
+    [
+      '/health',
+      '/captured-requests',
+      '/clear-requests',
+      '/stream-rules',
+      '/tool-scenarios',
+    ].includes(pathname)
+  ) {
+    // Control requests can outlive an idle pooled socket while the browser drives a scenario.
+    res.setHeader('Connection', 'close')
+  }
   let body = ''
 
   req.on('data', chunk => {

@@ -56,7 +56,14 @@ async fn task_lookup_reports_missing_and_archived_without_device_offline_error()
             .await
             .unwrap();
         assert_eq!(result["success"], false);
-        assert_eq!(result["code"], "task_not_found");
+        assert_eq!(
+            result["code"],
+            if task_id == "archived" {
+                "task_archived"
+            } else {
+                "task_not_found"
+            }
+        );
     }
     assert!(handler
         .dispatch("runtime.tasks.get", json!({}))

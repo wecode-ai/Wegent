@@ -53,7 +53,8 @@ portable-pty = "0.9"
 pulldown-cmark = { version = "0.13", default-features = false }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# Forward opaque MCP metadata without changing serialized manifest key order.
+serde_json = { version = "1.0", features = ["preserve_order"] }
 sha2 = "0.10"
 tar = "0.4"
 tempfile = "3.23"

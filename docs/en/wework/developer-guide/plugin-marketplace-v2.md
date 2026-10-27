@@ -347,6 +347,8 @@ The current implementation converges marketplace Release transactions on
 
 An HTTP endpoint must not spawn `publish_official_plugin.py` and must not duplicate publisher logic.
 
+First publication uses `ensure_catalog_plugin` to atomically insert the `catalog_namespace + slug` identity before locking its existing row. Duplicate identities preserve publisher ownership, origin, and catalog metadata. Publications for one identity serialize while distinct identities can proceed concurrently. Do not select a missing identity with `FOR UPDATE` before insertion: under MySQL REPEATABLE READ, gap locks can deadlock with concurrent inserts.
+
 ### 6.6 Marketplace installation and update
 
 Installation, update, and device synchronization contracts remain unchanged. `kinds/InstalledPlugin` is account desired state, `plugin_device_installations` is device actual state, and Codex App Server is the local installation authority. New installs select `latest_release_id`; auto-update advances only to an immutable `ready + scan passed` Release. Failure cannot replace `actual_release_id`. Three consecutive failures pause automatic retry, while a manual update or new desired Release resets the count.
@@ -379,7 +381,7 @@ Normal uninstall removes the confirmed runtime entry and installation record but
 | GET    | `/admin/plugins/publication-requests`                              | Paginated administrator list, filters, and counts                                     |
 | GET    | `/admin/plugins/publication-requests/{id}`                         | Complete administrator evidence and event view                                        |
 | POST   | `/admin/plugins/publication-requests/{id}/return`                  | Return the current revision with required reason and changes                          |
-| POST   | `/admin/plugins/publication-requests/{id}/accept`                  | Idempotently materialize a branch and MR; never publish                         |
+| POST   | `/admin/plugins/publication-requests/{id}/accept`                  | Idempotently materialize a branch and MR; never publish                               |
 | POST   | `/admin/plugins/publication-requests/{id}/reconcile`               | Retry materialization or actively reconcile GitLab state                              |
 
 ### 7.3 Internal APIs
@@ -433,13 +435,13 @@ For this phase:
 
 ### 10.1 Implemented on the current feature branch
 
-| Area                   | Current branch implementation                                                                                                                                                                   |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Wework                 | Two scopes, three-step application drawer, five-stage progress, complete Request/Revision history, and a ready gate that waits for both ACL and publication state before submission             |
+| Area                   | Current branch implementation                                                                                                                                                             |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Wework                 | Two scopes, three-step application drawer, five-stage progress, complete Request/Revision history, and a ready gate that waits for both ACL and publication state before submission       |
 | Backend                | `catalog_namespace`, personal/enterprise origin links, Request/Revision/Check/Event, user/admin/internal APIs, idempotent MR materialization, and status-only Webhooks                    |
 | Web                    | Publication queue and filters, revision evidence detail, return for changes, confirmed Accept and create MR, retry, and reconciliation                                                    |
-| Release                | dedicated `plugin_release` machine identity, Bearer-only internal endpoint, trusted GitLab/master provenance checks, idempotency, and preservation of the previous enterprise version             |
-| Compatibility boundary | Legacy `/plugins/submissions` accepts `restricted_share + personal` only; legacy direct review and its script exist solely to drain historical records and are never used by the new flow       |
+| Release                | dedicated `plugin_release` machine identity, Bearer-only internal endpoint, trusted GitLab/master provenance checks, idempotency, and preservation of the previous enterprise version     |
+| Compatibility boundary | Legacy `/plugins/submissions` accepts `restricted_share + personal` only; legacy direct review and its script exist solely to drain historical records and are never used by the new flow |
 
 The current branch adds a new Alembic revision for namespaces, origin links, and publication-domain tables, with upgrade → downgrade → upgrade and collision-blocking coverage. Local tests prove the code and migration implementation only; they do not replace real production configuration or an end-to-end publication rehearsal.
 

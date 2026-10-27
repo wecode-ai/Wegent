@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 use uuid::Uuid;
 
+mod assignment_receipts;
 mod code_projects;
 pub(crate) mod execution_workspace;
 mod issue_badges;
@@ -64,7 +65,10 @@ mod stand_in_memories;
 #[path = "stand_in_inbox.rs"]
 mod stand_in_inbox;
 
-const LOCAL_SCHEMA_VERSION: i64 = 10;
+#[path = "stand_in_telemetry.rs"]
+pub(crate) mod stand_in_telemetry;
+
+const LOCAL_SCHEMA_VERSION: i64 = 11;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
 const DEFAULT_WORK_ITEM_PROJECT_KEY: &str = "WORK";
 const RUNTIME_PROJECTION_METADATA_KEY: &str = "runtime_projection";
@@ -656,6 +660,7 @@ impl LocalTaskStore {
                 input.assignee_user_id,
             ],
         )?;
+        assignment_receipts::sync_assignment_receipt(&transaction, project_id, &id, &metadata)?;
         if let Some(group) = assigned_group.as_ref() {
             dispatch_collaboration_group_assignment(
                 &transaction,
@@ -939,6 +944,7 @@ impl LocalTaskStore {
         if changed != 1 {
             return Err(TaskRuntimeError::VersionConflict);
         }
+        assignment_receipts::sync_assignment_receipt(&transaction, project_id, task_id, &metadata)?;
         if let Some(position) = input.position.as_ref() {
             ordering::move_task(
                 &transaction,
@@ -3824,6 +3830,7 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
            WHERE id = NEW.id;
          END;",
     )?;
+    stand_in_telemetry::migrate(connection)?;
     ensure_default_work_item_project(connection)?;
     local_execution_activity::repair_missing_execution_activity(connection)?;
     connection.execute(
@@ -5116,6 +5123,7 @@ fn record_assignment_change(
         .expect("assignment history must be an array");
     entries.push(json!({
         "by_user_id": by_user_id,
+        "receipt_tracking": true,
         "to_type": to_type,
         "to_id": to_id,
         "to_name": to_name,

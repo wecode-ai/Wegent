@@ -1,3 +1,4 @@
+import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
 import { describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -35,6 +36,8 @@ describe('markdownAttachmentRows', () => {
 })
 
 const api = {
+  getIssueAssignmentReceipts: vi.fn(async () => []),
+  acknowledgeIssueAssignment: vi.fn(async () => ({ acknowledged: true })),
   listDeliveries: vi.fn(async () => ({ items: [] })),
   listTaskBindings: vi.fn(async () => []),
   listLoopItemAttachments: vi.fn(async () => []),
@@ -184,7 +187,8 @@ describe('TodoEditor external item sync', () => {
   )
 
   it('restores rejected status changes without discarding the content draft', async () => {
-    const user = userEvent.setup()
+    // Text-entry pacing is irrelevant here; avoid a timed-out interaction leaking into the next test.
+    const user = userEvent.setup({ delay: null })
     const item = { ...baseItem, status: 'inbox' }
     const updateLoopItem = vi.fn().mockRejectedValueOnce(
       Object.assign(new Error('No execution environment is authorized for this selection'), {
@@ -792,13 +796,49 @@ describe('TodoEditor external item sync', () => {
           initialTaskBindings={[taskBinding as unknown as LoopItemTaskBinding]}
         />
       )
-      await screen.findByTestId('cloud-todo-tasks')
+      if (binding.task_user_id === 1) {
+        await screen.findByTestId('cloud-todo-tasks')
+      } else {
+        expect(screen.queryByTestId('cloud-todo-tasks')).not.toBeInTheDocument()
+      }
       await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
       expect(onCreateTask).toHaveBeenCalledOnce()
       expect(onOpenTaskConversation).not.toHaveBeenCalled()
       expect(screen.getByTestId('cloud-todo-personal-task-start')).toHaveTextContent('创建任务')
     }
   )
+
+  it('keeps local Runtime task ownership independent from the assigned cloud user', async () => {
+    const item = { ...baseItem, assignee_user_id: 1, assignee_agent_id: null }
+    const onCreateTask = vi.fn()
+    const binding = {
+      id: 99,
+      task_user_id: 0,
+      device_id: 'local-device',
+      task_id: 'local-task',
+      task_title: 'Local task',
+      linked_at: '2026-10-14T08:00:00Z',
+      loop_item_id: item.id,
+    } as LoopItemTaskBinding
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={item}
+        project={{ ...project, project_store: 'local' }}
+        allItems={[item]}
+        api={{ ...api, listTaskBindings: vi.fn(async () => [binding]) }}
+        currentUserId={1}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onCreateTask={onCreateTask}
+        initialTaskBindings={[binding]}
+      />
+    )
+    expect(await screen.findByTestId('cloud-todo-open-task-conversation-99')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
+    expect(onCreateTask).toHaveBeenCalledOnce()
+  })
 
   it('shows running and recent tasks directly and uses expand only for the remaining tasks', async () => {
     const onCreateTask = vi.fn()
@@ -998,6 +1038,7 @@ describe('TodoEditor external item sync', () => {
         {
           id: 7,
           device_id: 'local-device',
+          task_user_id: 1,
           task_id: 'local-task',
           task_title: '立即显示的本地任务',
         },
@@ -1095,6 +1136,7 @@ describe('TodoEditor external item sync', () => {
           {
             id: 8,
             device_id: 'local-device',
+            task_user_id: 1,
             task_id: 'board-task',
             task_title: '看板已加载的任务',
           },
@@ -1129,6 +1171,7 @@ describe('TodoEditor external item sync', () => {
     const initialBinding = {
       id: 8,
       device_id: 'local-device',
+      task_user_id: 1,
       task_id: 'board-task',
       task_title: '看板任务',
     }
@@ -1182,6 +1225,7 @@ describe('TodoEditor external item sync', () => {
           {
             id: 8,
             device_id: 'local-device',
+            task_user_id: 1,
             task_id: 'first-task',
             task_title: '第一个 Issue 的任务',
           },
@@ -1191,6 +1235,7 @@ describe('TodoEditor external item sync', () => {
           {
             id: 9,
             device_id: 'local-device',
+            task_user_id: 1,
             task_id: 'second-task',
             task_title: '第二个 Issue 的任务',
           },
@@ -1235,6 +1280,7 @@ describe('TodoEditor external item sync', () => {
         {
           id: 10,
           device_id: 'local-device',
+          task_user_id: 1,
           task_id: 'stale-task',
           task_title: '过期刷新结果',
         },
@@ -3031,4 +3077,89 @@ describe('TodoEditor shared attachments', () => {
       expect(teamApi.listTeams).toHaveBeenCalledTimes(1)
     })
   })
+})
+
+describe('assignment receipt icons inside the Issue assignee selector', () => {
+  it.each([undefined, 'workspace-panel'] as const)(
+    'renders exactly one receipt surface in %s',
+    async presentation => {
+      const item = { ...baseItem, assignee_agent_id: null, assignee_user_id: 2 }
+      const receiptApi = {
+        ...api,
+        getIssueAssignmentReceipts: vi.fn(async () => [
+          {
+            id: 'assignment',
+            target_type: 'human',
+            target_id: '2',
+            target_name: 'Recipient',
+            receipt_tracking: true,
+            human_read_at: null,
+            stand_in_received_at: null,
+          },
+        ]),
+      }
+      render(
+        <TodoEditor
+          mode="edit"
+          presentation={presentation}
+          readFirst
+          item={item}
+          project={project}
+          allItems={[item]}
+          api={receiptApi as never}
+          currentUserId={1}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+        />
+      )
+      expect(await screen.findByText('未读')).toBeInTheDocument()
+      expect(screen.getByTestId('cloud-todo-detail-assignee')).toContainElement(
+        screen.getByTestId('issue-assignment-receipts')
+      )
+      expect(screen.getAllByTestId('issue-assignment-receipts')).toHaveLength(1)
+    }
+  )
+})
+
+it('routes local assignment receipts through the same project-space adapter as the Issue', async () => {
+  const localList = vi.fn(async () => [
+    {
+      id: 'local-assignment',
+      target_type: 'human',
+      target_id: '2',
+      target_name: 'Recipient',
+      receipt_tracking: true,
+      human_read_at: null,
+      stand_in_received_at: null,
+    },
+  ])
+  const cloudList = vi.fn(async () => {
+    throw new Error('Cloud API must not own local receipts')
+  })
+  const local = createWeworkDeliverySharedWorkspaceApi({
+    ...api,
+    getIssueAssignmentReceipts: localList,
+  } as never)
+  const sharedApi = { ...local, agents: { list: async () => [] } }
+  const item = { ...baseItem, assignee_agent_id: null, assignee_user_id: 2 }
+  render(
+    <TodoEditor
+      mode="edit"
+      presentation="workspace-panel"
+      item={item}
+      project={project}
+      allItems={[item]}
+      sharedApi={sharedApi}
+      api={{ ...api, getIssueAssignmentReceipts: cloudList } as never}
+      currentUserId={1}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />
+  )
+  expect(await screen.findByText('未读')).toBeInTheDocument()
+  expect(screen.getByTestId('cloud-todo-detail-assignee')).toContainElement(
+    screen.getByTestId('issue-assignment-receipts')
+  )
+  expect(localList).toHaveBeenCalledWith(item.id)
+  expect(cloudList).not.toHaveBeenCalled()
 })

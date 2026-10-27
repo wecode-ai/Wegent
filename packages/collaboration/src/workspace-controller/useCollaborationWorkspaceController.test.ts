@@ -852,6 +852,31 @@ describe("collaboration workspace controller", () => {
     expect(state.comments).toEqual([comment]);
   });
 
+  it("keeps an assignment saved from the board before the first detail load finishes", async () => {
+    const response = deferred<CollaborationIssue>();
+    const api = createApi();
+    api.issues.get = vi.fn().mockReturnValue(response.promise);
+    const { commands } = createController(api);
+
+    // Navigation starts detail hydration before the board has populated the catalog.
+    const load = commands.loadSelectedIssue(issue.id);
+    expect(state.selectedIssue).toBeNull();
+    state = collaborationWorkspaceControllerReducer(state, {
+      type: "project-loaded",
+      project,
+      snapshot: { items: [issue], members: [], agents: [], taskBindings: [] },
+    });
+    const saved = { ...issue, assignee_user_id: 2, version: 2 };
+    commands.replaceIssue(saved);
+    expect(state.issues).toEqual([saved]);
+    expect(state.selectedIssue).toBeNull();
+
+    response.resolve(issue);
+    expect(await load).toEqual(saved);
+    expect(state.selectedIssue).toEqual(saved);
+    expect(state.issues).toEqual([saved]);
+  });
+
   it("ignores a collection mutation that belongs to another issue", () => {
     const otherIssue = {
       ...issue,

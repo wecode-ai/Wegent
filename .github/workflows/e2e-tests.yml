@@ -37,6 +37,7 @@ jobs:
           fetch-depth: 0
 
       - name: Classify changed paths
+        if: github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all'
         id: classify
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
@@ -199,9 +200,9 @@ jobs:
       - name: Resolve Backend Rust E2E runtime
         id: runtime
         env:
-          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**') }}
+          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', '.github/runtime-images/backend-rs-e2e.Dockerfile') }}
         run: |
-          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-backend-rs-e2e:v1-$SOURCE_DIGEST" \
+          echo "image=$(.github/scripts/resolve-backend-rs-e2e-runtime.sh)" \
             >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
@@ -276,14 +277,8 @@ jobs:
             .ci-artifacts/backend-rs-image/attachment-s3-e2e
           cp .ci-artifacts/attachment-hosting-e2e \
             .ci-artifacts/backend-rs-image/attachment-hosting-e2e
-          printf '%s\n' \
-            'FROM scratch' \
-            'COPY wegent-backend-rs /app/wegent-backend-rs' \
-            'COPY attachment-s3-e2e /app/attachment-s3-e2e' \
-            'COPY attachment-hosting-e2e /app/attachment-hosting-e2e' \
-            'ENTRYPOINT ["/app/wegent-backend-rs"]' \
-            > .ci-artifacts/backend-rs-image/Dockerfile
           docker build \
+            --file .github/runtime-images/backend-rs-e2e.Dockerfile \
             --tag "$IMAGE" \
             .ci-artifacts/backend-rs-image
           docker push "$IMAGE"
@@ -459,140 +454,6 @@ jobs:
           retention-days: 1
           compression-level: 0
 
-  attachment-s3-e2e:
-    name: Attachment ${{ matrix.name }} E2E
-    needs: build-backend-rs-e2e-runtime
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: S3 Upload
-            suite: s3-upload
-            binary: attachment-s3-e2e
-            script: attachment_s3_upload.py
-          - name: Media Hosting
-            suite: media-hosting
-            binary: attachment-hosting-e2e
-            script: attachment_media_hosting.py
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: wegent-e2e-secret
-          MYSQL_DATABASE: wegent_s3_e2e
-        ports: [3306/tcp]
-        options: >-
-          --health-cmd="mysqladmin ping"
-          --health-interval=2s
-          --health-timeout=5s
-          --health-start-period=5s
-          --health-retries=30
-      redis:
-        image: redis:7-alpine
-        ports: [6379/tcp]
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=2s
-          --health-timeout=5s
-          --health-retries=15
-      minio:
-        image: bitnamilegacy/minio:2025.7.23-debian-12-r0
-        env:
-          MINIO_ROOT_USER: wegent-e2e
-          MINIO_ROOT_PASSWORD: wegent-e2e-secret
-        ports: [9000/tcp]
-        options: >-
-          --health-cmd="curl -f http://localhost:9000/minio/health/live"
-          --health-interval=2s
-          --health-timeout=5s
-          --health-start-period=5s
-          --health-retries=30
-    env:
-      SECRET_KEY: attachment-s3-e2e-secret-key
-      ENVIRONMENT: development
-      DB_AUTO_MIGRATE: "false"
-      INIT_DATA_ENABLED: "false"
-      E2E_MINIO_ROOT_USER: wegent-e2e
-      E2E_MINIO_ROOT_PASSWORD: wegent-e2e-secret
-      E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/attachment-${{ matrix.suite }}
-      WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/${{ matrix.binary }}
-      WEGENT_HOSTING_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/${{ matrix.binary }}
-      ATTACHMENT_PUBLIC_BASE_URL: ""
-      INTERNAL_SERVICE_TOKEN: attachment-hosting-e2e-service-token
-      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/backend
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-      - name: Set up Python 3.11 and uv
-        uses: ./.github/actions/setup-python-uv-cache
-        with:
-          python-version: "3.11"
-      - name: Install Backend dependencies
-        working-directory: backend
-        run: uv sync --dev --frozen
-      - name: Install media validation tools
-        if: matrix.suite == 'media-hosting'
-        run: |
-          # Use Ubuntu's signed HTTPS archive directly. The hosted runner's
-          # Azure mirror stalled codec downloads until the job timed out.
-          source_list="$RUNNER_TEMP/attachment-media-tools.list"
-          printf '%s\n' \
-            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble main universe' \
-            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble-updates main universe' \
-            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://security.ubuntu.com/ubuntu noble-security main universe' \
-            > "$source_list"
-          apt_options=(
-            -o "Dir::Etc::sourcelist=$source_list"
-            -o 'Dir::Etc::sourceparts=-'
-            -o 'APT::Get::List-Cleanup=0'
-          )
-          sudo apt-get "${apt_options[@]}" update
-          sudo apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
-      - name: Configure real service endpoints
-        env:
-          S3_E2E_MYSQL_PORT: ${{ job.services.mysql.ports['3306'] }}
-          S3_E2E_REDIS_PORT: ${{ job.services.redis.ports['6379'] }}
-          S3_E2E_MINIO_PORT: ${{ job.services.minio.ports['9000'] }}
-        run: |
-          {
-            echo "DATABASE_URL=mysql+pymysql://root:wegent-e2e-secret@127.0.0.1:${S3_E2E_MYSQL_PORT}/wegent_s3_e2e"
-            echo "REDIS_URL=redis://127.0.0.1:${S3_E2E_REDIS_PORT}/0"
-            echo "E2E_MINIO_URL=http://127.0.0.1:${S3_E2E_MINIO_PORT}"
-          } >> "$GITHUB_ENV"
-      - name: Download Backend Rust E2E runtime
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: .github/scripts/download-actions-artifact.sh backend-rs-e2e-runtime .ci-artifacts
-      - name: Prepare real database
-        working-directory: backend
-        run: uv run --no-sync alembic upgrade head
-      - name: Run real attachment E2E
-        working-directory: backend
-        env:
-          E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          ATTACHMENT_E2E_SCRIPT: ${{ matrix.script }}
-        run: |
-          set -o pipefail
-          mkdir -p "$E2E_REPORT_DIR"
-          chmod 0755 "$WEGENT_RS_BINARY_PATH"
-          export E2E_TEST_SHA="$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)"
-          test "$E2E_TEST_SHA" = "$E2E_EXPECTED_SHA"
-          uv run --no-sync python "tests/e2e/$ATTACHMENT_E2E_SCRIPT" \
-            2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
-      - name: Upload real attachment E2E evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: attachment-${{ matrix.suite }}-e2e
-          path: .ci-artifacts/attachment-${{ matrix.suite }}/
-          if-no-files-found: error
-          retention-days: 14
-
   # Runs browser and API tests with sharding. Executor-heavy coverage runs separately.
   e2e-tests:
     name: E2E Tests (Shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
@@ -623,8 +484,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shardIndex: [1, 2, 3, 4]
-        shardTotal: [4]
+        # Run 40558717377: provider shard 1 took 120s while shard 3 was empty.
+        # Exchange those logical shards without changing users or runner count.
+        include:
+          - shardIndex: 1
+            shardTotal: 4
+            providerShardIndex: 3
+          - shardIndex: 2
+            shardTotal: 4
+            providerShardIndex: 2
+          - shardIndex: 3
+            shardTotal: 4
+            providerShardIndex: 1
+          - shardIndex: 4
+            shardTotal: 4
+            providerShardIndex: 4
 
     services:
       mysql:
@@ -640,26 +514,6 @@ jobs:
           --health-retries=30
 
       redis:
-        image: redis:7-alpine
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=2s
-          --health-timeout=5s
-          --health-retries=15
-
-      mysql-replica:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: test123
-          MYSQL_DATABASE: wegent_test
-        options: >-
-          --health-cmd="mysqladmin ping"
-          --health-interval=2s
-          --health-timeout=5s
-          --health-start-period=5s
-          --health-retries=30
-
-      attachment-redis:
         image: redis:7-alpine
         options: >-
           --health-cmd="redis-cli ping"
@@ -828,6 +682,62 @@ jobs:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
         run: |
           uv run --no-sync alembic upgrade head
+
+      # Runs 40548056927 and 40547828678: shard 1 was slowest; shard 3
+      # had the shortest browser phase and shard 4 had room for remote indexing.
+      - name: Run attachment storage E2E on shared services
+        if: matrix.shardIndex == 2 || matrix.shardIndex == 3
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/15
+          SECRET_KEY: attachment-s3-e2e-secret-key
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "false"
+          E2E_MINIO_ROOT_USER: wegent-e2e
+          E2E_MINIO_ROOT_PASSWORD: wegent-e2e-secret
+          E2E_MINIO_URL: http://127.0.0.1:9000
+          ATTACHMENT_PUBLIC_BASE_URL: ""
+          INTERNAL_SERVICE_TOKEN: attachment-hosting-e2e-service-token
+          PYTHONPATH: ..:.
+          E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
+          E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -o pipefail
+          suite=s3-upload
+          script=attachment_s3_upload.py
+          binary=attachment-s3-e2e
+          if [[ "$E2E_SHARD_INDEX" == "3" ]]; then
+            suite=media-hosting
+            script=attachment_media_hosting.py
+            binary=attachment-hosting-e2e
+          fi
+          export E2E_REPORT_DIR="$GITHUB_WORKSPACE/.ci-artifacts/attachment-$suite"
+          export WEGENT_RS_BINARY_PATH="$GITHUB_WORKSPACE/.ci-artifacts/$binary"
+          export WEGENT_HOSTING_BINARY_PATH="$WEGENT_RS_BINARY_PATH"
+          E2E_TEST_SHA="$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)"
+          export E2E_TEST_SHA
+          test "$E2E_TEST_SHA" = "$E2E_EXPECTED_SHA"
+          chmod 0755 "$WEGENT_RS_BINARY_PATH"
+          mkdir -p "$E2E_REPORT_DIR"
+          # Preserve the fixtures' loopback-only storage boundary while reusing MinIO.
+          socat TCP-LISTEN:9000,bind=127.0.0.1,reuseaddr,fork TCP:minio:9000 &
+          relay_pid=$!
+          trap 'kill "$relay_pid"; wait "$relay_pid" || true' EXIT
+          curl --fail --retry 10 --retry-connrefused --retry-delay 1 \
+            "$E2E_MINIO_URL/minio/health/live"
+          uv run --no-sync python "tests/e2e/$script" \
+            2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
+
+      - name: Upload attachment storage E2E evidence
+        if: always() && (matrix.shardIndex == 2 || matrix.shardIndex == 3)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: attachment-${{ matrix.shardIndex == 2 && 's3-upload' || 'media-hosting' }}-e2e
+          path: .ci-artifacts/attachment-${{ matrix.shardIndex == 2 && 's3-upload' || 'media-hosting' }}/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Verify DingTalk sync MySQL transaction rollback
         if: matrix.shardIndex == 1
@@ -1143,7 +1053,7 @@ jobs:
           retention-days: 14
 
       - name: Run attachment upload MySQL replication E2E
-        if: matrix.shardIndex == 1
+        if: matrix.shardIndex == 3
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -1158,14 +1068,15 @@ jobs:
           E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/attachment-upload-replica
           E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           PYTHONPATH: ..:.
+          E2E_DOCKER_NETWORK: ${{ job.container.network }}
         run: |
           set -o pipefail
           mkdir -p "$E2E_REPORT_DIR"
-          uv run --no-sync python tests/e2e/attachment_upload_replica.py \
+          ../.github/scripts/run-attachment-replica-e2e.sh \
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
 
       - name: Upload attachment upload replication E2E report
-        if: always() && matrix.shardIndex == 1
+        if: always() && matrix.shardIndex == 3
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: attachment-upload-replica-e2e
@@ -1174,7 +1085,7 @@ jobs:
           retention-days: 14
 
       - name: Run knowledge remote index E2E
-        if: matrix.shardIndex == 1
+        if: matrix.shardIndex == 4
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -1233,7 +1144,7 @@ jobs:
           node ./node_modules/@playwright/test/cli.js test \
             --project=provider-native-chromium \
             --workers=1 \
-            --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} \
+            --shard=${{ matrix.providerShardIndex }}/${{ matrix.shardTotal }} \
             --no-deps
 
       - name: Stop Backend index worker
@@ -1917,7 +1828,6 @@ jobs:
       - build-executor-e2e-runtime
       - e2e-tests
       - executor-e2e-tests
-      - attachment-s3-e2e
     if: always() && !cancelled()
     runs-on: ubuntu-latest
 
@@ -1930,7 +1840,6 @@ jobs:
           EXECUTOR_BUILD_RESULT: ${{ needs.build-executor-e2e-runtime.result }}
           PLATFORM_E2E_RESULT: ${{ needs.e2e-tests.result }}
           EXECUTOR_E2E_RESULT: ${{ needs.executor-e2e-tests.result }}
-          ATTACHMENT_S3_RESULT: ${{ needs.attachment-s3-e2e.result }}
         run: |
           if [[ "$CHANGES_RESULT" != "success" ]]; then
             echo "Platform E2E change detection completed with: $CHANGES_RESULT"
@@ -1955,4 +1864,3 @@ jobs:
           assert_success "$EXECUTOR_BUILD_RESULT" "Executor E2E build"
           assert_success "$PLATFORM_E2E_RESULT" "Platform E2E"
           assert_success "$EXECUTOR_E2E_RESULT" "Executor E2E"
-          assert_success "$ATTACHMENT_S3_RESULT" "Attachment Upload E2E (S3 and media hosting)"

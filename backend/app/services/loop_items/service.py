@@ -2960,6 +2960,7 @@ class LoopItemService:
             db.query(LoopItemTaskBinding)
             .filter(
                 LoopItemTaskBinding.loop_item_id == item_id,
+                LoopItemTaskBinding.task_user_id == user_id,
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
                 loop_datetime_is_unset(LoopItemTaskBinding.deleted_at),
             )
@@ -2979,13 +2980,16 @@ class LoopItemService:
         item_ids: list[str],
     ) -> list[LoopItemTaskBinding]:
         access = require_cloud_project_role(db, project_id, user_id)
-        return self.list_project_task_bindings_for_access(db, access, item_ids=item_ids)
+        return self.list_project_task_bindings_for_access(
+            db, access, user_id=user_id, item_ids=item_ids
+        )
 
     def list_project_task_bindings_for_access(
         self,
         db: Session,
         access: CloudProjectAccess,
         *,
+        user_id: int,
         item_ids: list[str],
     ) -> list[LoopItemTaskBinding]:
         if not item_ids:
@@ -2994,6 +2998,7 @@ class LoopItemService:
             db.query(LoopItemTaskBinding)
             .filter(
                 LoopItemTaskBinding.cloud_project_id == access.project.id,
+                LoopItemTaskBinding.task_user_id == user_id,
                 LoopItemTaskBinding.loop_item_id.in_(item_ids),
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
                 loop_datetime_is_unset(LoopItemTaskBinding.deleted_at),

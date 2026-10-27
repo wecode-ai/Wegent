@@ -784,7 +784,7 @@ fn persistent_app_server_uses_codex_deferred_mcp_tools() {
         .contains(&"features.tool_search_always_defer_mcp_tools=false".to_owned()));
     assert!(config
         .config_overrides
-        .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
+        .contains(&CODEX_ENABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
     assert!(config
         .config_overrides
         .contains(&CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned()));
@@ -1653,7 +1653,7 @@ fn codex_launch_config_enables_streaming_patch_updates() {
         .contains(&CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned()));
     assert!(launch_config
         .config_overrides
-        .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
+        .contains(&CODEX_ENABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
     assert!(launch_config
         .config_overrides
         .contains(&CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned()));
@@ -4511,22 +4511,19 @@ fn codex_thread_launch_enables_user_input_in_default_mode() {
 }
 
 #[test]
-fn codex_thread_launch_disables_tool_call_mcp_elicitation() {
+fn codex_thread_launch_isolates_mcp_approvals_from_ordinary_user_input() {
     let request = ExecutionRequest::default();
-    let mut launch_config = CodexLaunchConfig::default();
-    launch_config
-        .config_overrides
-        .push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
+    let launch_config = CodexLaunchConfig {
+        config_overrides: codex_runtime_default_config_overrides(),
+        ..CodexLaunchConfig::default()
+    };
 
     let thread_start = thread_start_params(&request, &launch_config);
     let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
     let thread_fork = thread_fork_params("thread-1", None, &request, &launch_config);
 
     for params in [thread_start, thread_resume, thread_fork] {
-        assert_eq!(
-            params["config"]["features.tool_call_mcp_elicitation"],
-            false
-        );
+        assert_eq!(params["config"]["features.tool_call_mcp_elicitation"], true);
         assert_eq!(
             params["approvalPolicy"]["granular"]["mcp_elicitations"],
             true
@@ -4906,10 +4903,9 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
         .iter()
         .find(|value| value.starts_with("skills.config="))
         .expect("skills config override should be present");
-    assert_eq!(
-        skills_override,
-        "skills.config=[{enabled=false,name=\"browser:control-in-app-browser\"},{enabled=false,name=\"chrome:control-chrome\"}]"
-    );
+    let parsed_override: Value = toml_edit::de::from_str(skills_override)
+        .expect("skills config override should be valid TOML");
+    assert_eq!(parsed_override["skills"]["config"], config["skills.config"]);
     assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
     assert!(!config.contains_key("features.code_mode.direct_only_tool_namespaces"));
     assert_eq!(
@@ -5047,6 +5043,41 @@ fn codex_launch_config_includes_computer_use_mcp_server() {
     );
 
     let _ = fs::remove_dir_all(home);
+}
+
+#[test]
+fn source_collaboration_approval_exemption_survives_start_resume_fork_and_turn() {
+    let _environment = environment::LaunchEnvironment::new();
+    for kind in ["connection_work", "dingtalk_work", "issue_dispatch"] {
+        for ask in [false, true] {
+            let request = serde_json::from_value(json!({
+                "task_id":"source-collaboration-review",
+                "origin":{"type":kind,"initiatedBy":"stand_in","askBeforeAct":ask,
+                    "cloudProjectId":"project-1","loopItemId":"issue-1"}
+            }))
+            .unwrap();
+            let launch = build_codex_launch_config(&request).unwrap();
+            let key = "mcp_servers.wework_space.default_tools_approval_mode";
+            assert_eq!(
+                launch.config_overrides.iter().filter(|entry| entry.starts_with(&format!("{key}="))).count(),
+                2,
+                "One managed default and one source policy override; never apply source policy twice"
+            );
+            for params in [
+                thread_start_params(&request, &launch),
+                thread_resume_params("thread", &request, &launch),
+                thread_fork_params("thread", None, &request, &launch),
+            ] {
+                assert_eq!(params["config"][key], "approve");
+                assert_eq!(
+                    params["approvalsReviewer"],
+                    external_work::reviewer(&request)
+                );
+            }
+            let turn = turn_start_params("thread", &request, &launch, vec![]);
+            assert_eq!(turn["approvalsReviewer"], external_work::reviewer(&request));
+        }
+    }
 }
 
 #[test]

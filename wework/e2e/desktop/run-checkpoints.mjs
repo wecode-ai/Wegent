@@ -12,6 +12,7 @@ import {
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
+import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -32,6 +33,7 @@ const CHECKPOINT_RESOURCES = new Map([
 const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-home-preload': './scenarios/collaboration-home-preload.scenario.mjs',
   'device-artifact-declaration': './scenarios/device-artifact-declaration.scenario.mjs',
+  'mcp-apps': './scenarios/mcp-apps.scenario.mjs',
   'notification-tab-navigation': './scenarios/notification-tab-navigation.scenario.mjs',
   'voice-input': './scenarios/voice-input.scenario.mjs',
   'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
@@ -95,7 +97,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
 
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
   'codex-invalid-launch-cwd': './scenarios/codex-invalid-launch-cwd.scenario.mjs',
-  'executor-stream-recovery': './scenarios/executor-stream-recovery.scenario.mjs',
+  'executor-stream-recovery': './scenarios/executor-retry-status.scenario.mjs',
   'model-overload-recovery': './scenarios/goal-overload-recovery.scenario.mjs',
   'transcript-sync': './scenarios/transcript-sync.scenario.mjs',
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
@@ -136,6 +138,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
   'stand-in-list-confirmation': './scenarios/stand-in-list-confirmation.scenario.mjs',
   'stand-in-profile-settings': './scenarios/stand-in-profile.scenario.mjs',
+  'stand-in-telemetry': './scenarios/stand-in-telemetry.scenario.mjs',
   'stand-in-model-catalog': './scenarios/stand-in-model-catalog.scenario.mjs',
   'stand-in-identities': './scenarios/stand-in-identities.scenario.mjs',
   'stand-in-connections': './scenarios/stand-in-connections.scenario.mjs',
@@ -195,6 +198,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-home-preload',
   'device-artifact-declaration',
+  'mcp-apps',
   'notification-tab-navigation',
   'voice-input',
   'archived-worktree-cleanup',
@@ -265,6 +269,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'stand-in-action-confirmation',
   'stand-in-list-confirmation',
   'stand-in-profile-settings',
+  'stand-in-telemetry',
   'stand-in-model-catalog',
   'stand-in-identities',
   'stand-in-connections',
@@ -422,13 +427,13 @@ function runTaskFlow(args, env, label) {
     })
     child.once('exit', (code, signal) => {
       clearInterval(heartbeat)
-      resolvePromise({
+      rejectRecordedCheckpointFailure({
         code: code ?? 1,
         durationMs: Date.now() - startedAt,
         resultDir,
         signal,
         stderrTail,
-      })
+      }).then(resolvePromise, reject)
     })
   })
 }

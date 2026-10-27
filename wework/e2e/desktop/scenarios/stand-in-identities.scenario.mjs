@@ -162,7 +162,7 @@ export function createDesktopScenario({
       await control.command('waitFor', CHAT)
       await captureScreenshot(control, '07-role-conversation.png', ROOT)
       await control.command('click', '[data-testid="stand-in-settings-open"]')
-      await control.command('click', '[data-testid="stand-in-connections-open"]')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-connections-open"]')
       await control.command('click', '[data-testid="stand-in-add-connection"]')
       await control.command('click', '[data-testid="stand-in-add-dingtalk-connection"]')
       await control.command('click', '[data-testid="stand-in-dingtalk-add"]')

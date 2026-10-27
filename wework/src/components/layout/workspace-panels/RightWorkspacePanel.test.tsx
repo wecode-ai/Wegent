@@ -1,3 +1,4 @@
+import { registerMcpAppPanel } from '@/features/mcp-apps/workspacePanels'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { describe, expect, test, vi } from 'vitest'
@@ -82,6 +83,48 @@ function renderPanel(overrides: Partial<ComponentProps<typeof RightWorkspacePane
     />
   )
 }
+
+describe('MCP App workspace panels', () => {
+  test.each([
+    { deviceId: 'device', taskId: 'task', paneId: 'single', mounted: true },
+    { deviceId: 'other', taskId: 'task', paneId: 'single', mounted: false },
+    { deviceId: 'device', taskId: 'other', paneId: 'single', mounted: false },
+    { deviceId: 'device', taskId: 'task', paneId: 'other', mounted: false },
+  ])(
+    'mounts an app only in its owning task and device: %j',
+    ({ deviceId, taskId, paneId, mounted }) => {
+      const frame = document.createElement('iframe')
+      frame.dataset.testid = 'owned-app-frame'
+      const attach = vi.fn((anchor: HTMLDivElement) => {
+        anchor.append(frame)
+        return () => frame.remove()
+      })
+      const dispose = registerMcpAppPanel({
+        id: 'mcp-app:owned',
+        address: { deviceId: 'device', taskId: 'task' },
+        paneId,
+        title: 'Counter App',
+        attach,
+        dismiss: vi.fn(),
+      })
+      const view = renderPanel({
+        currentRuntimeTask: { deviceId, taskId },
+        activeView: 'mcp-app:owned',
+        openTabs: ['mcp-app:owned'],
+      })
+      try {
+        expect(attach).toHaveBeenCalledTimes(mounted ? 1 : 0)
+        if (mounted) {
+          expect(screen.getByTestId('mcp-app-workspace-panel')).toContainElement(frame)
+          expect(frame).toBeVisible()
+        } else expect(screen.queryByTestId('owned-app-frame')).not.toBeInTheDocument()
+      } finally {
+        view.unmount()
+        dispose()
+      }
+    }
+  )
+})
 
 describe('RightWorkspacePanel workspace target errors', () => {
   test.each([

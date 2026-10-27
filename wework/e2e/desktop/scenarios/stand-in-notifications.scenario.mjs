@@ -1,3 +1,4 @@
+import { verifyIssueAssignmentReceipts } from '../modules/issue-assignment-receipts.mjs'
 import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
 import { verifyLocalStandInStatuses } from '../modules/stand-in-status-flows.mjs'
 import { createStandInFailureRegression } from '../modules/stand-in-failure-notification.mjs'
@@ -254,6 +255,7 @@ export function createDesktopScenario({
         '在通知内继续处理分身任务'
       )
       await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
+      await verifyIssueAssignmentReceipts(control, project.id, uiTimeoutMs, captureScreenshot)
       await verifyLocalStandInStatuses(control, project.id, uiTimeoutMs, modelResponseTimeoutMs)
       await failureRegression.verify(control, project.id, uiTimeoutMs, modelResponseTimeoutMs)
       await subscriptionRegression.verify(

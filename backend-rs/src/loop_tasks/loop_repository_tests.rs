@@ -5,6 +5,23 @@
 use super::*;
 use crate::loop_tasks::loop_columns::CLOUD_CONTEXT_COLUMNS;
 
+#[tokio::test]
+async fn issue_task_bindings_are_scoped_to_the_requesting_owner() {
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    LoopItemRepository::new(&mysql)
+        .list_task_bindings("ISSUE-1", 86)
+        .await
+        .unwrap();
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 1);
+    assert_eq!(queries[0].args, 2);
+    assert!(
+        queries[0]
+            .sql
+            .contains("loop_items.loop_item_id = ? AND loop_items.task_user_id = ?")
+    );
+}
+
 #[test]
 fn splits_external_item_ids() {
     assert_eq!(

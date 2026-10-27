@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 from app.core.security import create_access_token, get_password_hash
 from app.models.delivery import (
     CloudProject,
+    LoopItem,
+    LoopItemActiveAssignment,
     LoopItemTaskBinding,
     WorkspaceCleanupIntent,
 )
@@ -389,3 +391,70 @@ def test_client(test_client):
 
     with component_client(test_client, ("execution_statuses",)) as client:
         yield client
+
+
+def test_active_assignment_index_follows_reassignment_and_transaction_rollback(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    project: CloudProject,
+    test_user: User,
+) -> None:
+    assignee, _ = _member(test_db, project)
+    issue = _assigned_issue(test_client, project, test_token, assignee)
+
+    assert LoopItemActiveAssignment.__table__ is LoopItem.__table__
+    child = test_client.post(
+        f"/api/v1/cloud-projects/{project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Unrelated child", "parent_id": issue["id"]},
+    )
+    assert child.status_code == 201, child.text
+
+    def indexed_ids() -> set[str]:
+        return {
+            row.loop_item_id
+            for row in test_db.query(LoopItemActiveAssignment)
+            .filter_by(parent_id=issue["id"])
+            .filter(LoopItemActiveAssignment.loop_item_id.isnot(None))
+            .all()
+        }
+
+    original = indexed_ids()
+    assert original == {
+        event.id
+        for event in issue_assignment_service.active_for_issue(test_db, issue["id"])
+    }
+    assert len(original) == 1
+    nested = test_db.begin_nested()
+    replacement, _ = issue_assignment_service.record(
+        test_db,
+        project_id=project.id,
+        issue_id=issue["id"],
+        member_type="human",
+        member_id=str(assignee.id),
+        assigned_by_user_id=assignee.id,
+        workflow_step=None,
+        notify=False,
+        trigger="test",
+        replace_root_assignments=True,
+    )
+    assert indexed_ids() == {replacement.id}
+    assert (
+        test_client.get(
+            f"/api/v1/loop-items/{child.json()['id']}", headers=_auth(test_token)
+        ).status_code
+        == 200
+    )
+    nested.rollback()
+    assert indexed_ids() == original
+
+    assignment = issue_assignment_service.remove(
+        test_db,
+        project_id=int(project.id),
+        issue_id=issue["id"],
+        assignment_id=next(iter(original)),
+        user_id=test_user.id,
+    )
+    assert assignment.id in original
+    assert indexed_ids() == set()

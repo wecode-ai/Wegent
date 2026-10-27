@@ -557,6 +557,25 @@ impl TaskRuntime {
         }
     }
 
+    pub fn assignment_receipts(
+        &self,
+        project: &str,
+        issue: &str,
+    ) -> Result<Vec<Value>, TaskRuntimeError> {
+        self.local_store.assignment_receipts(project, issue)
+    }
+
+    pub fn acknowledge_assignment(
+        &self,
+        project: &str,
+        issue: &str,
+        assignment: &str,
+        user: i64,
+    ) -> Result<(), TaskRuntimeError> {
+        self.local_store
+            .acknowledge_assignment(project, issue, assignment, user, false)
+    }
+
     pub async fn mark_task_read(
         &self,
         project_id: &str,
