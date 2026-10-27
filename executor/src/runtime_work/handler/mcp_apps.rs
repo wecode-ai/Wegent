@@ -49,6 +49,16 @@ fn same_app(source: &Value, server: &Value, tool: &Value) -> bool {
         && context["linkId"] == tool["_meta"]["link_id"]
 }
 
+fn app_resources(source: &Value, server: &Value, key: &str) -> Vec<Value> {
+    server[key]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|resource| same_app(source, server, resource))
+        .cloned()
+        .collect()
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn mcp_app_request(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
@@ -158,10 +168,12 @@ impl RuntimeWorkRpcHandler {
             "tools/list" => {
                 Ok(json!({"tools":catalog.into_iter().filter(app_visible).collect::<Vec<_>>()}))
             }
-            "resources/list" => Ok(json!({"resources":server_catalog["resources"]})),
-            "resources/templates/list" => {
-                Ok(json!({"resourceTemplates":server_catalog["resourceTemplates"]}))
+            "resources/list" => {
+                Ok(json!({"resources":app_resources(source, &server_catalog, "resources")}))
             }
+            "resources/templates/list" => Ok(
+                json!({"resourceTemplates":app_resources(source, &server_catalog, "resourceTemplates")}),
+            ),
             "tools/call" => {
                 let tool = catalog
                     .iter()
@@ -272,6 +284,26 @@ mod tests {
         assert!(source_call(&thread, "foreign").is_none());
     }
 
+    #[test]
+    fn hosted_resource_lists_do_not_disclose_other_connector_accounts() {
+        let source =
+            json!({"server":"codex_apps","appContext":{"connectorId":"mail","linkId":"work"}});
+        let resources = json!([
+            {"uri":"ui://work","_meta":{"connector_id":"mail","link_id":"work"}},
+            {"uri":"ui://personal","_meta":{"connector_id":"mail","link_id":"personal"}},
+            {"uri":"ui://unscoped"}
+        ]);
+        let server = json!({"resources": resources, "resourceTemplates": resources});
+        for key in ["resources", "resourceTemplates"] {
+            let visible = app_resources(&source, &server, key);
+            assert_eq!(visible.len(), 1);
+            assert_eq!(visible[0]["uri"], "ui://work");
+            assert_eq!(
+                app_resources(&json!({"server":"local"}), &server, key).len(),
+                3
+            );
+        }
+    }
     #[test]
     fn app_tools_cannot_cross_plugins_or_hosted_connector_accounts() {
         let source =
