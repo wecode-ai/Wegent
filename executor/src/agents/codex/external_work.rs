@@ -68,9 +68,35 @@ pub(super) fn permission_config(request: &ExecutionRequest) -> Map<String, Value
         (SOURCE_PROJECT_PROFILE, CODEX_WORKSPACE_PERMISSION_PROFILE),
     ] {
         config.insert(format!("permissions.{name}.extends"), json!(baseline));
+        if cfg!(windows) {
+            let project_access = if name == SOURCE_PROJECT_PROFILE {
+                "write"
+            } else {
+                "read"
+            };
+            config.insert(
+                format!("permissions.{name}.filesystem"),
+                source_filesystem(project_access),
+            );
+        }
         config.insert(format!("permissions.{name}.network.enabled"), json!(true));
     }
     config
+}
+
+fn source_filesystem(project_access: &str) -> Value {
+    // The unelevated restricted-token backend cannot enforce split permissions.
+    // Mirror Codex's workspace-write projection so its writable roots match.
+    json!({
+        ":root":"read",
+        ":project_roots":{
+            ".":project_access,
+            ".git":"read",
+            ".agents":"read",
+            ".codex":"read",
+            ".aws":"read"
+        }
+    })
 }
 
 pub(super) fn profile(request: &ExecutionRequest) -> Option<&'static str> {
@@ -192,6 +218,12 @@ mod tests {
             params["config"]["permissions.wework-source-project.extends"],
             CODEX_WORKSPACE_PERMISSION_PROFILE
         );
+        let filesystem = &params["config"]["permissions.wework-source-project.filesystem"];
+        assert_eq!(filesystem.is_object(), cfg!(windows));
+        if cfg!(windows) {
+            assert_eq!(filesystem[":root"], "read");
+            assert_eq!(filesystem[":project_roots"]["."], "write");
+        }
         assert_eq!(
             params["config"]["mcp_servers.internal.default_tools_approval_mode"],
             "prompt"
@@ -257,10 +289,14 @@ mod tests {
                     CODEX_WORKSPACE_PERMISSION_PROFILE
                 }
             );
-            assert!(
-                catalog.keys().all(|key| !key.ends_with(".filesystem")),
-                "Native baselines must not be shadowed by non-escalatable deny rules"
-            );
+            let filesystem_key = format!("permissions.{selected}.filesystem");
+            assert_eq!(catalog.contains_key(&filesystem_key), cfg!(windows));
+            if cfg!(windows) {
+                assert_eq!(
+                    catalog[&filesystem_key][":project_roots"]["."],
+                    if ask { "read" } else { "write" }
+                );
+            }
             assert_eq!(
                 catalog[&format!("permissions.{selected}.network.enabled")],
                 true
@@ -279,5 +315,21 @@ mod tests {
             }
         }
         assert!(permission_config(&ExecutionRequest::default()).is_empty());
+    }
+
+    #[test]
+    fn source_profile_uses_windows_workspace_write_metadata_boundaries() {
+        let filesystem = source_filesystem("write");
+        assert_eq!(filesystem[":project_roots"]["."], "write");
+        assert_eq!(filesystem[":root"], "read");
+        assert!(filesystem.get(":minimal").is_none());
+        let project_roots = filesystem[":project_roots"]
+            .as_object()
+            .expect("Windows project roots must carry scoped metadata rules");
+        assert_eq!(project_roots["."], "write");
+        for metadata in [".git", ".agents", ".codex", ".aws"] {
+            assert_eq!(project_roots[metadata], "read");
+        }
+        assert_eq!(filesystem.as_object().unwrap().len(), 2);
     }
 }
