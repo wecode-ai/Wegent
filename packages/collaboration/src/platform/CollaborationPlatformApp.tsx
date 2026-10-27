@@ -3431,6 +3431,10 @@ export function CollaborationPlatformApp({
   }, [state.navigationProjects]);
   const hasFullWorkspaceAccess =
     state.workspace?.id === host.location.workspaceId;
+  const workspaceAccessRef = useRef(hasFullWorkspaceAccess);
+  useLayoutEffect(() => {
+    workspaceAccessRef.current = hasFullWorkspaceAccess;
+  }, [hasFullWorkspaceAccess]);
   const scopedApi = useMemo<SharedWorkspaceApi>(() => {
     if (!host.location.workspaceId) return api;
     const workspaceId = host.location.workspaceId;
@@ -3446,21 +3450,17 @@ export function CollaborationPlatformApp({
             );
             if (selectedProject) return [selectedProject];
           }
-          const projects = await (hasFullWorkspaceAccess
+          const hasWorkspaceAccess = workspaceAccessRef.current;
+          const projects = await (hasWorkspaceAccess
             ? api.projects.list(workspaceId)
             : api.projects.list());
-          if (hasFullWorkspaceAccess || !projectId) return projects;
+          if (hasWorkspaceAccess || !projectId) return projects;
           return projects.filter((project) => project.id === projectId);
         },
         create: (input) => api.projects.create({ ...input, workspaceId }),
       },
     };
-  }, [
-    api,
-    host.location.projectId,
-    host.location.workspaceId,
-    hasFullWorkspaceAccess,
-  ]);
+  }, [api, host.location.projectId, host.location.workspaceId]);
   const workspaceAgentConfigurationApi = useMemo(
     () =>
       host.location.workspaceId

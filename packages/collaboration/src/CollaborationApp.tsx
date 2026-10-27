@@ -210,7 +210,7 @@ export function CollaborationApp({
     useIssueAssignmentsByIssueId({
       assignmentsApi: api.assignments,
       issues,
-      enabled: project !== null,
+      enabled: project !== null && host.location.view === "table",
     });
   const environmentReadiness = useProjectExecutionEnvironmentReadiness({
     api,

@@ -91,6 +91,7 @@ def test_rust_owned_route_is_not_registered_in_python(method: str, path: str) ->
 @pytest.mark.parametrize(
     ("method", "path"),
     [
+        ("POST", "/internal/callback"),
         ("POST", "/teams"),
         ("PUT", "/teams/{team_id}"),
         ("POST", "/v1/wework-notifications"),

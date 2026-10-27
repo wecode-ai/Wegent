@@ -12,6 +12,10 @@ import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 const collaborationAppMocks = vi.hoisted(() => ({
   useController: vi.fn(),
+  useAssignments: vi.fn(() => ({
+    assignmentsByIssueId: {},
+    replaceIssueAssignments: vi.fn(),
+  })),
   stateSetters: [] as Array<{
     initialValue: unknown;
     setter: ReturnType<typeof vi.fn>;
@@ -44,6 +48,11 @@ vi.mock("react", async (importOriginal) => {
 
 vi.mock("./workspace-controller", () => ({
   useCollaborationWorkspaceController: collaborationAppMocks.useController,
+}));
+
+vi.mock("./platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./platform")>()),
+  useIssueAssignmentsByIssueId: collaborationAppMocks.useAssignments,
 }));
 
 vi.mock("./project-board/projectBoardDnd", async (importOriginal) => ({
@@ -226,6 +235,7 @@ function createWorkspaceHomeHost(): WorkspaceProjectsHomeHost {
 
 describe("CollaborationApp API boundary", () => {
   beforeEach(() => {
+    collaborationAppMocks.useAssignments.mockClear();
     collaborationAppMocks.useController.mockReset();
     collaborationAppMocks.stateSetters.length = 0;
     collaborationAppMocks.useController.mockReturnValue({
@@ -255,6 +265,24 @@ describe("CollaborationApp API boundary", () => {
       },
     });
   });
+
+  it.each(["board", "calendar", "gantt", "files", "manage", "table"] as const)(
+    "loads assignment records only when the active view is table (%s)",
+    (view) => {
+      const project = createProject(1);
+      collaborationAppMocks.useController.mockReturnValue(
+        controllerWithProject(project),
+      );
+      const host = createHost(false, undefined);
+      host.location = { projectId: project.id, issueId: null, view };
+
+      renderApp(host);
+
+      expect(collaborationAppMocks.useAssignments).toHaveBeenCalledWith(
+        expect.objectContaining({ enabled: view === "table" }),
+      );
+    },
+  );
 
   it("accepts the grouped SharedWorkspaceApi as its only cloud API", () => {
     expectTypeOf<
