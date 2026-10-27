@@ -63,6 +63,39 @@ fn response_normalizes_empty_values_like_python_readers() {
 }
 
 #[test]
+fn nullable_schema_keeps_optional_foreign_and_unique_columns_unset() {
+    let sql = asset_insert_sql(&HashSet::new());
+    for column in [
+        "local_project_id",
+        "assignee_team_id",
+        "backend_task_id",
+        "parent_id",
+        "public_id",
+        "project_key",
+        "storage_prefix",
+    ] {
+        assert!(
+            !sql.contains(column),
+            "{column} must retain its NULL default"
+        );
+    }
+    assert_eq!(sql.matches('?').count(), 10);
+}
+
+#[test]
+fn sentinel_schema_supplies_only_the_required_optional_columns() {
+    let required = ["local_project_id", "public_id", "metadata", "deleted_at"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let sql = asset_insert_sql(&required);
+    assert!(sql.contains("public_id, local_project_id, deleted_at, metadata"));
+    assert!(sql.ends_with("'', 0, '1970-01-01 00:00:01', '{}')"));
+    assert!(!sql.contains("assignee_team_id"));
+    assert_eq!(sql.matches('?').count(), 10);
+}
+
+#[test]
 fn validates_version_title_and_delivery_status() {
     assert!(validate(&input(), &delivery(), &[]).is_ok());
     let mut update = input();

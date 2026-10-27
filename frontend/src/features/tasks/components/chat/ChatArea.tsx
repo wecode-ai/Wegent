@@ -1186,6 +1186,9 @@ function ChatAreaContent({
   // Extract values for dependency array
   const selectedTeam = chatState.selectedTeam
   const isTeamSelectionReady =
+    (!teamIdFromUrl ||
+      ignoredTeamIdParamRef.current === teamIdFromUrl ||
+      selectedTeam?.id === Number(teamIdFromUrl)) &&
     initializedTeamSelection?.scope === teamSelectionScope &&
     initializedTeamSelection.teamId != null &&
     initializedTeamSelection.teamId === selectedTeam?.id

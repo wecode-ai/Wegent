@@ -386,27 +386,116 @@ async fn commit_update<T: MysqlTransaction>(
     {
         tx.execute("DELETE FROM loop_items WHERE id = ? AND delivery_id = ? AND resource_type = 'delivery_asset'", (asset.id.as_str(), delivery.id.as_str())).await?;
     }
-    for asset in assets {
-        tx.execute(
-            "INSERT INTO loop_items (id, resource_type, project_space, cloud_project_id, parent_id,
-             loop_item_id, delivery_id, public_id, project_key, name, title, description, storage_prefix,
-             sequence_number, next_item_number, created_by_user_id, updated_by_user_id, assignee_user_id,
-             user_id, added_by_user_id, source, status, priority, start_at, due_at, sort_order,
-             current_delivery_id, local_project_id, device_id, is_default, task_user_id, assignee_agent_id,
-             assignee_team_id, task_id, task_title, backend_task_id, linked_by_user_id, linked_at, unlinked_at,
-             path, kind, display_name, relative_path, object_key, content_type, size_bytes, sha256,
-             source_task_binding_id, source_task_snapshot, markdown_object_key, chat_object_key,
-             manifest_object_key, metadata, version, created_at, updated_at, completed_at, delivered_at, deleted_at)
-             VALUES (?, 'delivery_asset', 'default', ?, '', ?, ?, '', '', '', '', '', '', 0, 1,
-             0, 0, 0, 0, 0, '', 'delivered', '', '1970-01-01 00:00:01', '1970-01-01 00:00:01', 0,
-             '', 0, '', 0, 0, '', 0, '', '', 0, 0, '1970-01-01 00:00:01', '1970-01-01 00:00:01',
-             '', 'file', ?, ?, ?, ?, ?, ?, '', '{}', '', '', '', '{}', 1, UTC_TIMESTAMP(), UTC_TIMESTAMP(),
-             '1970-01-01 00:00:01', '1970-01-01 00:00:01', '1970-01-01 00:00:01')",
-            (asset.id.as_str(), project_id, delivery.loop_item_id.as_str(), delivery.id.as_str(),
-                asset.display_name.as_str(), asset.relative_path.as_str(), asset.object_key.as_str(), asset.content_type.as_deref().unwrap_or(""), asset.size_bytes, asset.sha256.as_str()),
+    if !assets.is_empty() {
+        #[derive(FromMysqlRow)]
+        struct RequiredColumn {
+            name: String,
+        }
+        let required: Vec<RequiredColumn> = tx.fetch_all(
+            "SELECT COLUMN_NAME AS name FROM information_schema.columns WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'loop_items' AND IS_NULLABLE = 'NO'", (),
         ).await?;
+        let required: HashSet<_> = required.into_iter().map(|column| column.name).collect();
+        let sql = asset_insert_sql(&required);
+        for asset in assets {
+            let content_type = asset
+                .content_type
+                .as_deref()
+                .or_else(|| required.contains("content_type").then_some(""));
+            tx.execute(
+                &sql,
+                (
+                    asset.id.as_str(),
+                    project_id,
+                    delivery.loop_item_id.as_str(),
+                    delivery.id.as_str(),
+                    asset.display_name.as_str(),
+                    asset.relative_path.as_str(),
+                    asset.object_key.as_str(),
+                    content_type,
+                    asset.size_bytes,
+                    asset.sha256.as_str(),
+                ),
+            )
+            .await?;
+        }
     }
     Ok(())
+}
+
+/// Match the Python LoopNode adapter: sentinels apply only to actual NOT NULL columns.
+fn asset_insert_sql(required: &HashSet<String>) -> String {
+    let mut columns = vec![
+        "id",
+        "resource_type",
+        "project_space",
+        "cloud_project_id",
+        "loop_item_id",
+        "delivery_id",
+        "kind",
+        "display_name",
+        "relative_path",
+        "object_key",
+        "content_type",
+        "size_bytes",
+        "sha256",
+        "description",
+        "sort_order",
+        "assignee_agent_id",
+        "next_item_number",
+        "version",
+        "created_at",
+        "updated_at",
+    ];
+    let mut values = vec![
+        "?",
+        "'delivery_asset'",
+        "'default'",
+        "?",
+        "?",
+        "?",
+        "'file'",
+        "?",
+        "?",
+        "?",
+        "?",
+        "?",
+        "?",
+        "''",
+        "0",
+        "''",
+        "1",
+        "1",
+        "UTC_TIMESTAMP()",
+        "UTC_TIMESTAMP()",
+    ];
+    for (names, value) in [
+        (
+            "parent_id public_id project_key name title storage_prefix source status priority current_delivery_id device_id task_id task_title path source_task_binding_id markdown_object_key chat_object_key manifest_object_key",
+            "''",
+        ),
+        (
+            "sequence_number created_by_user_id updated_by_user_id assignee_user_id assignee_team_id user_id added_by_user_id local_project_id is_default task_user_id backend_task_id linked_by_user_id",
+            "0",
+        ),
+        (
+            "start_at due_at linked_at unlinked_at completed_at delivered_at deleted_at",
+            "'1970-01-01 00:00:01'",
+        ),
+        ("source_task_snapshot metadata", "'{}'"),
+    ] {
+        for name in names
+            .split_whitespace()
+            .filter(|name| required.contains(*name))
+        {
+            columns.push(name);
+            values.push(value);
+        }
+    }
+    format!(
+        "INSERT INTO loop_items ({}) VALUES ({})",
+        columns.join(", "),
+        values.join(", ")
+    )
 }
 
 async fn cleanup(state: &AppState, keys: &[&str]) {

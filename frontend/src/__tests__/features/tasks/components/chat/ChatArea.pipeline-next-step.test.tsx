@@ -456,6 +456,7 @@ describe('ChatArea pipeline next-step dialog', () => {
     mockRecentTeamIds = []
     mockRecentTeamsLoading = false
     mockEarlyDefaultTeam = null
+    mockRequestedTeam = null
     mockUseStatefulSelection = false
     mockHandleTeamChange.mockReset()
     mockChatAreaSelectedModel = null
@@ -761,6 +762,7 @@ describe('ChatArea selection while the catalog loads', () => {
     mockRecentTeamsLoading = false
     mockNewChatTeam = null
     mockEarlyDefaultTeam = null
+    mockRequestedTeam = null
     mockUseStatefulSelection = false
     mockTaskMessages = new Map()
     mockHandleTeamChange.mockReset().mockImplementation((team: Team | null) => {
@@ -908,6 +910,35 @@ describe('ChatArea selection while the catalog loads', () => {
     rerender(<ChatArea teams={[defaultTeam]} isTeamsLoading={false} taskType="chat" />)
     expect(mockNewChatTeam?.id).toBe(requested.id)
     mockRequestedTeam = null
+  })
+
+  it('waits for the requested agent before auto-sending instead of using the catalog default', async () => {
+    jest.useFakeTimers()
+    mockUseStatefulSelection = true
+    const requested = { ...mockSelectedTeam, bind_mode: ['chat'] } as Team
+    mockNewChatParams = new URLSearchParams(`teamId=${requested.id}&q=hello&autoSend=true`)
+    mockAutoSentTeamIds = []
+    try {
+      const view = render(<ChatArea teams={[defaultTeam]} isTeamsLoading={false} taskType="chat" />)
+      await act(async () => {
+        jest.advanceTimersByTime(400)
+      })
+      expect(mockHandleSendMessage).not.toHaveBeenCalled()
+      mockRequestedTeam = requested
+      view.rerender(<ChatArea teams={[defaultTeam]} isTeamsLoading={false} taskType="chat" />)
+      await act(async () => {
+        jest.advanceTimersByTime(400)
+      })
+      expect(mockAutoSentTeamIds).toEqual([requested.id])
+      expect(mockHandleSendMessage).toHaveBeenCalledWith('hello')
+      await act(async () => {
+        jest.advanceTimersByTime(1000)
+      })
+      expect(mockHandleSendMessage).toHaveBeenCalledTimes(1)
+      view.unmount()
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it('keeps an explicitly supplied new-task agent', () => {

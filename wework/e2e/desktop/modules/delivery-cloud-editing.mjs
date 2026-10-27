@@ -119,8 +119,13 @@ export function createCloudDeliveryEditingRegression({ uiTimeoutMs }) {
       })
       hiddenIssue = await request(`/api/v1/cloud-projects/${project.id}/loop-items`, {
         method: 'POST',
-        body: { title: '不可访问的交付', security_level: 'related' },
+        body: { title: '不可访问的交付' },
       })
+      hiddenIssue = await request(`/api/v1/loop-items/${hiddenIssue.id}`, {
+        method: 'PATCH',
+        body: { version: hiddenIssue.version, security_level: 'related' },
+      })
+      await request(`/api/v1/loop-items/${hiddenIssue.id}`, { token: editorToken, status: 404 })
       ;({ delivery, asset } = await createDelivery(issue.id, '云端原始标题'))
       foreignAsset = (await createDelivery(issue.id, '其他交付')).asset
     },
