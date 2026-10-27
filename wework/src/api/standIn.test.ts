@@ -175,3 +175,26 @@ it('reads list items from the object envelope required by remote Runtime RPC', a
     'mac'
   )
 })
+
+it('routes telemetry policy, replay and ACK to the explicitly selected Executor', async () => {
+  const request = vi.fn().mockResolvedValue({ items: [] })
+  const api = createStandInExecutorApi(request)
+  await api.configureTelemetry(7, 'remote', true, 1234)
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.stand_in.telemetry.configure',
+    { userId: 7, enabled: true, enabledSince: 1234 },
+    'remote'
+  )
+  await api.telemetryFacts(7, 'remote')
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.stand_in.telemetry.list',
+    { userId: 7 },
+    'remote'
+  )
+  await api.acknowledgeTelemetry(7, 'remote', ['event-id'])
+  expect(request).toHaveBeenLastCalledWith(
+    'runtime.stand_in.telemetry.ack',
+    { userId: 7, ids: ['event-id'] },
+    'remote'
+  )
+})

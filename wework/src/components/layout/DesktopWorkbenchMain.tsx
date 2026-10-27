@@ -1,3 +1,9 @@
+import {
+  getMcpAppPanel,
+  isMcpAppPanelTab,
+  useMcpAppWorkspacePanels,
+} from '@/features/mcp-apps/workspacePanels'
+import { createMcpAppConversationServices } from '@/features/mcp-apps/conversationServices'
 import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
 import { BackgroundTerminalsSummary } from './BackgroundTerminalsSummary'
 import { conversationTerminals } from './backgroundTerminals'
@@ -578,7 +584,9 @@ function normalizeRightWorkspacePanelTab(
 function normalizeRightWorkspacePanelView(
   view: RightWorkspacePanelView | 'browser' | 'terminal'
 ): RightWorkspacePanelView {
-  return view === 'launcher' ? view : normalizeRightWorkspacePanelTab(view)
+  return view === 'launcher' || isMcpAppPanelTab(view)
+    ? 'launcher'
+    : normalizeRightWorkspacePanelTab(view)
 }
 
 function getRightWorkspaceHarnessSessionId(tab: RightWorkspaceHarnessTab) {
@@ -1194,7 +1202,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     createDeviceDirectory,
     startNewChat,
   } = useWorkbenchPaneContext()
-  const { services, openRuntimeTask, workspaceTabId, loadRuntimeTranscriptForPane } = useWorkbench()
+  const {
+    services,
+    openRuntimeTask,
+    workspaceTabId,
+    loadRuntimeTranscriptForPane,
+    sendRuntimePaneMessage,
+  } = useWorkbench()
   const deviceApi = services?.deviceApi
   const { t } = useTranslation('common')
   const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
@@ -1391,6 +1405,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem && boundProjectSpaceApi
   )
   const issueExecutionReadOnly = Boolean(currentProjectSpaceRuntimeTask?.issueExecution)
+  const mcpAppConversationServices = useMemo(
+    () =>
+      createMcpAppConversationServices({
+        address: currentRuntimeTask,
+        api: services?.runtimeWorkApi,
+        readOnly: issueExecutionReadOnly,
+        sendMessage: sendRuntimePaneMessage,
+      }),
+    [currentRuntimeTask, services?.runtimeWorkApi, issueExecutionReadOnly, sendRuntimePaneMessage]
+  )
   const supervisor = runtimeTaskSummary?.supervisor ?? null
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
     ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
@@ -1669,7 +1693,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     const restoredTabs = (initialWorkspaceState?.rightPanelTabs ?? []) as Array<
       RightWorkspacePanelTab | 'browser' | 'terminal'
     >
-    return restoredTabs.map(normalizeRightWorkspacePanelTab)
+    return restoredTabs.filter(tab => !isMcpAppPanelTab(tab)).map(normalizeRightWorkspacePanelTab)
   })
   const [selectedAssistantPlan, setSelectedAssistantPlan] = useState<SelectedAssistantPlan | null>(
     () => initialWorkspaceState?.selectedAssistantPlan ?? null
@@ -4001,6 +4025,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [openRightPanelTab, setSelectedAssistantPlan]
   )
   const closeRightPanelTab = (tab: RightWorkspacePanelTab) => {
+    if (isMcpAppPanelTab(tab)) {
+      const panel = getMcpAppPanel(tab)
+      if (panel) {
+        panel.dismiss()
+        return
+      }
+    }
     const extensionState = isRightWorkspaceExtensionTab(tab)
       ? rightPanelExtensionTabsRef.current[tab]
       : undefined
@@ -4088,6 +4119,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setRightPanelView(nextTabs[nextTabs.length - 1])
     }
   }
+  useMcpAppWorkspacePanels({
+    address: currentRuntimeConversationSource,
+    openTab: openRightPanelTab,
+    closeTab: closeRightPanelTab,
+  })
   const closeRightPanelTabFromExtension = useEffectEvent((tab: RightWorkspacePanelTab) => {
     closeRightPanelTab(tab)
   })
@@ -5256,6 +5292,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   onClick={focusComposerFromConversationClick}
                 >
                   <ScrollableMessageArea
+                    mcpApp={mcpAppConversationServices}
                     searchActive={paneActive && paneVisible && workbenchVisible}
                     workspacePath={composerWorkspaceTarget?.path}
                     imageTarget={remoteImageTarget}

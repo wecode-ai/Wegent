@@ -493,7 +493,9 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 .any(|result| result.get("status").and_then(Value::as_str) != Some("superseded"))
         {
             self.store
-                .garbage_collect_unreferenced_managed_plugins(&manifest)?;
+                .garbage_collect_unreferenced_managed_plugins(&manifest, |path| {
+                    activation.observe_cleanup_path(path);
+                })?;
             self.store.manifest.save_with_revision_bump(manifest)?;
         }
         drop(_binding);

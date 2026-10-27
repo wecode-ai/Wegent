@@ -6,6 +6,7 @@ import { useEffect, useMemo, useReducer, useRef } from "react";
 
 import { collectIssueSubtreeIds, removeIssueSubtree } from "../board";
 import { isIssueVersionConflict } from "../issue-detail/issueVersionConflict";
+import { traceIssueStateChange } from "./issueStateDiagnostics";
 import {
   mergeIssueReadConfirmation,
   mergeIssueReadState,
@@ -308,11 +309,24 @@ export function collaborationWorkspaceControllerReducer(
   state: CollaborationWorkspaceControllerState,
   action: CollaborationWorkspaceControllerAction,
 ): CollaborationWorkspaceControllerState {
-  return mergeIssueReadState(
+  const next = mergeIssueReadState(
     state,
     reduceWorkspaceState(state, action),
     action.type === "issue-read" ? action.issue : undefined,
   );
+  traceIssueStateChange(action.type, state.selectedIssue, next.selectedIssue);
+  return next;
+}
+
+function resolveLoadedIssue(
+  state: Pick<
+    CollaborationWorkspaceControllerState,
+    "issues" | "selectedIssue"
+  >,
+  incoming: CollaborationIssue,
+): CollaborationIssue {
+  const listed = state.issues.find((issue) => issue.id === incoming.id);
+  return newestIssue(state.selectedIssue, newestIssue(listed, incoming));
 }
 
 function reduceWorkspaceState(
@@ -517,7 +531,7 @@ function reduceWorkspaceState(
     case "issue-loaded":
       return {
         ...state,
-        selectedIssue: newestIssue(state.selectedIssue, action.issue),
+        selectedIssue: resolveLoadedIssue(state, action.issue),
         attachments:
           action.preserveAttachments &&
           state.selectedIssue?.id === action.issue.id
@@ -1258,8 +1272,13 @@ export function createCollaborationWorkspaceControllerCommands({
             : Promise.resolve([]),
         ]);
         if (revision !== selectedIssueLoadRevision) return null;
-        const currentIssue = getSelectedIssue();
-        const resolvedIssue = newestIssue(currentIssue, issue);
+        const resolvedIssue = resolveLoadedIssue(
+          {
+            issues: getExternalBoardState().issues,
+            selectedIssue: getSelectedIssue(),
+          },
+          issue,
+        );
         dispatch({
           type: "issue-loaded",
           issue: resolvedIssue,
@@ -1430,6 +1449,11 @@ export function createCollaborationWorkspaceControllerCommands({
       dispatch({ type: "append-issue", issue });
     },
     replaceIssue: (issue) => {
+      console.debug("[collaboration-workspace] received issue replacement", {
+        issueId: issue.id,
+        version: issue.version,
+        selectedIssueId: getSelectedIssue()?.id ?? null,
+      });
       markProjectMutated(issue.cloud_project_id);
       dispatch({ type: "replace-issue", issue });
     },
@@ -1479,7 +1503,18 @@ function scopedWorkspaceReducer(
       state: action.state,
     };
   }
-  if (action.scope !== current.scope) return current;
+  if (action.scope !== current.scope) {
+    if (action.action.type === "replace-issue") {
+      console.warn(
+        "[collaboration-workspace] ignored issue update from previous API scope",
+        {
+          issueId: action.action.issue.id,
+          version: action.action.issue.version,
+        },
+      );
+    }
+    return current;
+  }
   return {
     ...current,
     state: collaborationWorkspaceControllerReducer(

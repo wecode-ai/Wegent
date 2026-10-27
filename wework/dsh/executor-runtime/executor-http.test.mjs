@@ -2,7 +2,97 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 import test from 'node:test'
-import { handleExecutorEvents, handleExecutorRpc } from './index.js'
+import { apply, handleExecutorEvents, handleExecutorRpc } from './index.js'
+import { ExecutorRuntimeClient, ExecutorRuntimeError } from './executor-runtime-client.js'
+
+test('GET and HEAD describe use the negotiated identity without issuing another RPC', async t => {
+  const description = {
+    protocol_version: 1,
+    device_id: 'stable-device',
+    device_route_id: 'app-record-70',
+    runtime_instance_id: 'runtime-1',
+    renderer_methods: ['runtime.codex.models.list'],
+  }
+  let requests = 0
+  const describe = await registeredDescribeHandler(t, {
+    describe: () => description,
+    request: async () => {
+      requests++
+      return { ...description, device_route_id: 'app-record-71' }
+    },
+  })
+
+  for (const method of ['GET', 'HEAD']) {
+    const request = executorEventRequest()
+    request.method = method
+    const response = responseFixture()
+
+    await describe(request, response)
+
+    assert.equal(response.status, 200)
+    assert.equal(response.headers['cache-control'], 'no-store')
+    if (method === 'GET') {
+      assert.deepEqual(JSON.parse(response.body).executor, description)
+    } else {
+      assert.equal(response.body, '')
+    }
+  }
+  assert.equal(requests, 0)
+})
+
+test('describe remains unavailable until the bridge has a negotiated method table', async t => {
+  let ready = false
+  let requests = 0
+  const description = {
+    protocol_version: 1,
+    device_id: 'stable-device',
+    runtime_instance_id: 'runtime-2',
+    renderer_methods: ['runtime.codex.models.list'],
+  }
+  const describe = await registeredDescribeHandler(t, {
+    describe: () => {
+      if (!ready) throw new ExecutorRuntimeError('runtime_not_ready', 'Not negotiated', true)
+      return description
+    },
+    request: async () => {
+      requests++
+      return description
+    },
+  })
+  const unavailable = responseFixture()
+
+  await describe(executorEventRequest(), unavailable)
+
+  assert.equal(unavailable.status, 503)
+  assert.equal(JSON.parse(unavailable.body).error.code, 'runtime_not_ready')
+  assert.equal(JSON.parse(unavailable.body).error.retryable, true)
+  ready = true
+  const recovered = responseFixture()
+
+  await describe(executorEventRequest(), recovered)
+
+  assert.equal(recovered.status, 200)
+  assert.deepEqual(JSON.parse(recovered.body).executor, description)
+  assert.equal(requests, 0)
+})
+
+async function registeredDescribeHandler(t, client) {
+  t.mock.method(ExecutorRuntimeClient, 'fromEnvironment', () => ({
+    start: async () => {},
+    ...client,
+  }))
+  const handlers = new Map()
+  await apply({
+    sessions: {},
+    webServer: {
+      register: ({ path, handler }) => handlers.set(path, handler),
+    },
+    effect: (callback, label) => {
+      if (label.startsWith('wework-executor-runtime: /')) callback()
+    },
+  })
+  return handlers.get('/wework/executor/v1')
+}
 
 test('preserves one request id across browser, DSH, and executor RPC', async () => {
   const request = executorRpcRequest(

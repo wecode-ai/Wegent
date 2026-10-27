@@ -884,7 +884,24 @@ function PlatformControllerHarness({
 }
 
 const originalGetAnimations = Element.prototype.getAnimations;
+const originalDialogMethods = Object.getOwnPropertyDescriptors(
+  HTMLDialogElement.prototype,
+);
 beforeEach(() => {
+  Object.defineProperties(HTMLDialogElement.prototype, {
+    showModal: {
+      configurable: true,
+      value(this: HTMLDialogElement) {
+        this.open = true;
+      },
+    },
+    close: {
+      configurable: true,
+      value(this: HTMLDialogElement) {
+        this.open = false;
+      },
+    },
+  });
   Object.defineProperty(Range.prototype, "getClientRects", {
     configurable: true,
     value: () => [],
@@ -919,6 +936,12 @@ afterEach(async () => {
   vi.useRealTimers();
   container.remove();
   vi.unstubAllGlobals();
+  for (const method of ["showModal", "close"]) {
+    const original = originalDialogMethods[method];
+    if (original)
+      Object.defineProperty(HTMLDialogElement.prototype, method, original);
+    else Reflect.deleteProperty(HTMLDialogElement.prototype, method);
+  }
   if (originalGetAnimations)
     Element.prototype.getAnimations = originalGetAnimations;
   else Reflect.deleteProperty(Element.prototype, "getAnimations");
@@ -5266,6 +5289,28 @@ describe("CollaborationPlatformApp real component flow", () => {
       assigneeId: String(member.user_id),
       notifyAssignee: true,
     });
+  });
+
+  it("clears the assignment draft after the persisted Issue replaces its source", async () => {
+    const api = await renderIssueWithCollaborationGroup();
+    vi.mocked(api.issues.assign).mockResolvedValue({
+      ...issue,
+      version: issue.version + 1,
+      assignee_user_id: member.user_id,
+      assignee_agent_id: null,
+      assignee_team_id: null,
+      assignee_group_id: null,
+    });
+    await click(byTestId("cloud-todo-detail-assignee"));
+    await click(
+      portalByTestId(
+        `cloud-todo-detail-assignee-option-user:${member.user_id}`,
+      ),
+    );
+    await click(byTestId("cloud-todo-save"));
+    expect(
+      container.querySelector('[data-testid="cloud-todo-save"]'),
+    ).toBeNull();
   });
 
   it("mentions and assigns a project agent", async () => {

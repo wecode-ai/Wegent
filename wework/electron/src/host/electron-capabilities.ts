@@ -1,4 +1,5 @@
 import { registerModelConfigurationCapabilities } from './model-configuration-capabilities.js'
+import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
 import {
   app,
@@ -7,6 +8,7 @@ import {
   dialog,
   Notification,
   powerMonitor,
+  protocol,
   shell,
   type WebContents,
   type FileFilter,
@@ -14,10 +16,10 @@ import {
   type OpenDialogOptions,
   type SaveDialogOptions,
 } from 'electron'
-import { stat } from 'node:fs/promises'
+import { stat, writeFile } from 'node:fs/promises'
 import { cpus } from 'node:os'
 import { availableMemoryRatio } from './maintenance-memory.js'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import {
   HOST_CAPABILITIES,
   HostCapabilityError,
@@ -869,6 +871,62 @@ export function createElectronCapabilityRouter(
   router.register('dialog.message', params =>
     dialog.showMessageBox(requiredWindow(window), messageBoxOptions(params))
   )
+  const mcpAppDocuments = new McpAppDocuments()
+  protocol.handle(MCP_APP_SCHEME, request => mcpAppDocuments.respond(request))
+  app.once('will-quit', () => {
+    protocol.unhandle(MCP_APP_SCHEME)
+    mcpAppDocuments.dispose()
+  })
+  router.register('mcpApps.createDocument', params =>
+    mcpAppDocuments.create(stringParam(params, 'html'), objectParam(params, 'metadata'))
+  )
+  router.register('mcpApps.releaseDocument', params => {
+    mcpAppDocuments.release(stringParam(params, 'id'))
+    return {}
+  })
+  router.register('mcpApps.renewDocument', params => {
+    mcpAppDocuments.renew(stringParam(params, 'id'))
+    return {}
+  })
+  router.register('mcpApps.saveFile', async params => {
+    if (typeof params.data !== 'string') throw new Error('Missing MCP App download data')
+    const data = params.data
+    if (data.length > 28 * 1024 * 1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
+      throw new Error('Invalid or oversized MCP App download')
+    }
+    const result =
+      e2eSaveDialogOverride() ??
+      (await dialog.showSaveDialog(requiredWindow(window), {
+        defaultPath: basename(stringParam(params, 'name')),
+      }))
+    if (result.canceled || !result.filePath) return { isError: true }
+    await writeFile(result.filePath, Buffer.from(data, 'base64'))
+    return {}
+  })
+  router.register('e2e.mcpAppFrame', async params => {
+    assertE2EEnabled('MCP App frame controls')
+    const url = stringParam(params, 'url')
+    if (params.action === 'document-status') {
+      return mcpAppDocuments.respond(new Request(url)).status
+    }
+    if (!mcpAppDocuments.owns(url)) throw new Error('Unknown MCP App document')
+    const contents = e2eHost.captureTarget('main')
+    const frame = contents?.mainFrame.framesInSubtree.find(frame => frame.url === url)
+    if (!frame) throw new Error('MCP App frame is not loaded')
+    const action = stringParam(params, 'action')
+    if (!['text', 'click', 'fill', 'attribute', 'value'].includes(action))
+      throw new Error('Unsupported MCP App test action')
+    return frame.executeJavaScript(`(() => {
+      const element = document.querySelector(${JSON.stringify(stringParam(params, 'selector'))});
+      if (!element) throw new Error('MCP App target not found');
+      const action = ${JSON.stringify(action)};
+      if (action === 'click') element.click();
+      if (action === 'fill') { element.value = ${JSON.stringify(optionalStringParam(params, 'value') ?? '')}; element.dispatchEvent(new Event('input', { bubbles: true })); }
+      if (action === 'attribute') return element.getAttribute(${JSON.stringify(optionalStringParam(params, 'value') ?? '')});
+      if (action === 'value') return element.value;
+      return element.textContent;
+    })()`)
+  })
   router.register('filesystem.stat', async params => {
     const path = stringParam(params, 'path')
     const metadata = await stat(path)

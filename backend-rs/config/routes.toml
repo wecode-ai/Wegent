@@ -1050,3 +1050,12 @@ path = "/api/internal/robot-queue/emit-runtime-rpc"
 [[routes]]
 methods = ["POST"]
 path = "/api/v1/cloud-projects/:project_id/executions/statuses"
+
+# Assignment-scoped reception acknowledgements; never change Issue lifecycle state.
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/loop-items/:item_id/assignments/:assignment_id/receipt"
+
+[[routes]]
+methods = ["PATCH"]
+path = "/api/v1/deliveries/:delivery_id"
