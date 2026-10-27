@@ -201,11 +201,14 @@ export function requestExecutor<Result>(
 }
 
 export function prepareManagedExecutorEnvironment(
-  options: Pick<ManagedExecutorRuntimeOptions, 'environment' | 'dataDirectory'>
+  options: Pick<ManagedExecutorRuntimeOptions, 'environment' | 'dataDirectory'> & {
+    command?: string
+  }
 ): NodeJS.ProcessEnv {
   const executorHome = managedExecutorHome(options)
   const codexHome = options.environment.WEGENT_CODEX_HOME?.trim() || join(executorHome, 'codex')
   const nativeCodexHome = resolveNativeCodexHome(options.environment, codexHome)
+  const configuredFileEditHook = options.environment.WEGENT_FILE_EDIT_HOOK_COMMAND?.trim()
   if (nativeCodexHome) {
     if (isCodexSubscriptionEnabled(options.environment)) {
       prepareCodexAuth(nativeCodexHome, codexHome)
@@ -215,12 +218,23 @@ export function prepareManagedExecutorEnvironment(
   }
   return {
     ...options.environment,
+    ...(options.command && !configuredFileEditHook
+      ? { WEGENT_FILE_EDIT_HOOK_COMMAND: defaultFileEditHookCommand(options.command) }
+      : {}),
     CODEX_HOME: codexHome,
     WEGENT_CODEX_HOME: codexHome,
     WEGENT_EXECUTOR_HOME: executorHome,
     WEGENT_PLUGIN_RUNTIME_TARGET: 'codex',
     WEGENT_EXECUTOR_DISABLE_FILE_LOG: 'true',
   }
+}
+
+function defaultFileEditHookCommand(command: string): string {
+  const executable =
+    process.platform === 'win32'
+      ? `"${command.replace(/"/g, '""')}"`
+      : `"${command.replace(/(["\\$`])/g, '\\$1')}"`
+  return `${executable} file-change-sender`
 }
 
 export function managedExecutorHome(

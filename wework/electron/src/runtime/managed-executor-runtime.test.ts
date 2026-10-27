@@ -43,6 +43,44 @@ describe('managed executor runtime', () => {
     expect(environment.CLAUDE_CONFIG_DIR).toBe('/native/claude')
   })
 
+  test('injects the file edit hook command for the managed executor', () => {
+    const environment = prepareManagedExecutorEnvironment({
+      dataDirectory: '/unused-electron-data',
+      command: '/Applications/Wework App/wegent-executor',
+      environment: {
+        VITE_WEWORK_E2E: 'true',
+      },
+    })
+
+    expect(environment.WEGENT_FILE_EDIT_HOOK_COMMAND).toBe(
+      '"/Applications/Wework App/wegent-executor" file-change-sender'
+    )
+  })
+
+  test('preserves a custom file edit hook command', () => {
+    const environment = prepareManagedExecutorEnvironment({
+      dataDirectory: '/unused-electron-data',
+      command: '/executor/wegent-executor',
+      environment: {
+        VITE_WEWORK_E2E: 'true',
+        WEGENT_FILE_EDIT_HOOK_COMMAND: 'custom-file-edit-hook --stdin',
+      },
+    })
+
+    expect(environment.WEGENT_FILE_EDIT_HOOK_COMMAND).toBe('custom-file-edit-hook --stdin')
+  })
+
+  test('does not synthesize a file edit hook command without an executor command', () => {
+    const environment = prepareManagedExecutorEnvironment({
+      dataDirectory: '/unused-electron-data',
+      environment: {
+        VITE_WEWORK_E2E: 'true',
+      },
+    })
+
+    expect(environment.WEGENT_FILE_EDIT_HOOK_COMMAND).toBeUndefined()
+  })
+
   test('preserves the executor log path contract for supervisor-owned logs', () => {
     expect(
       managedExecutorLogPath({
