@@ -228,7 +228,7 @@ export function ProjectAgentConfiguration({
               : agent.location !== "local";
           if (
             matchesLocation &&
-            agent.status === "available" &&
+            (agent.status === "available" || agent.status === "unchecked") &&
             (agent.team_id || agent.project_binding_input)
           )
             selectable.set(String(agent.team_id ?? agent.id), agent);
