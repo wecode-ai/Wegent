@@ -1,6 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { waitForCatalogRestart } from '../e2e/desktop/scenarios/codex-catalog-context.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from '../e2e/desktop/modules/shared.mjs'
 
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal()
@@ -73,7 +74,7 @@ test.each([{ started: false }, { served: false }, { ok: false }])(
       waitForCatalogRestart(control, '/fixture/executor.log', 0)
     ).rejects.toThrow('The saved Catalog was not loaded by a restarted Codex app-server')
 
-    await vi.advanceTimersByTimeAsync(10_000)
+    await vi.advanceTimersByTimeAsync(DEFAULT_STEP_TIMEOUT_MS)
     await rejected
   }
 )
