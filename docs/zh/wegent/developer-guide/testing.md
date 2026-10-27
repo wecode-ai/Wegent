@@ -10,6 +10,8 @@ sidebar_position: 4
 
 同一仓库的多个 worktree 通过 Git common directory 中的进程锁依次执行推送前检查，独立仓库仍可并行执行。检查范围和失败退出码保持不变。Electron 单元测试继承当前 Wework 检查的 worker 预算（`WEWORK_PRE_PUSH_TEST_WORKERS`），避免无上限并发；该限制不增加测试超时，也不重试失败测试。
 
+Wework 完整渲染单元测试由一个 Vitest 进程运行，默认使用一个 worker；`WEWORK_PRE_PUSH_TEST_WORKERS` 直接控制该套件的总 worker 数，不再由并发的本地分片重复分配。GitHub CI 的分片保持独立，完整套件的测试范围和既有超时不变。
+
 ## 概述
 
 该项目为所有模块提供了全面的单元测试支持：

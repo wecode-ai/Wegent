@@ -10,6 +10,8 @@ Pre-push checks run the complete frontend unit suite with two Jest workers by de
 
 Worktrees of the same repository serialize pre-push checks through a process lock in their Git common directory; independent repositories can still run concurrently. Check coverage and failure exit codes are preserved. Electron unit tests inherit the current Wework check's worker budget (`WEWORK_PRE_PUSH_TEST_WORKERS`) to prevent unbounded concurrency, without extending test timeouts or retrying failures.
 
+The complete Wework renderer unit suite runs in one Vitest process with one worker by default. `WEWORK_PRE_PUSH_TEST_WORKERS` controls the suite's total worker count directly, without multiplying it across concurrent local shards. GitHub CI sharding remains independent; test coverage and existing timeouts are unchanged.
+
 ## Overview
 
 The project includes comprehensive unit testing support across all modules:

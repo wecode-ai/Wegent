@@ -293,21 +293,37 @@ bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_FULL_TEST_OUT
 refs/heads/topic $WEWORK_FULL_LOCAL_SHA refs/heads/topic $WEWORK_FULL_BASE_SHA
 EOF
 
-if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --shard=1/2$' "$CALL_LOG" ||
-    ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --shard=2/2$' "$CALL_LOG"; then
-    echo "Expected full renderer tests to exclude Electron-owned test files and use two shards."
+if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000$' "$CALL_LOG" ||
+    [ "$(grep -c '^pnpm --filter wework exec vitest run --dir src ' "$CALL_LOG")" -ne 1 ]; then
+    echo "Expected one full renderer invocation to own the complete worker budget."
     echo "Calls:"
     cat "$CALL_LOG"
     exit 1
 fi
 
-if ! grep -qE 'Running full renderer unit tests in 2 shards with 1 worker each' "$WEWORK_FULL_TEST_OUT"; then
-    echo "Expected full Wework renderer tests to stay within two workers across both shards."
+if ! grep -qE 'Running full renderer unit tests with 1 worker' "$WEWORK_FULL_TEST_OUT"; then
+    echo "Expected full Wework renderer tests to use one worker by default."
     cat "$WEWORK_FULL_TEST_OUT"
     exit 1
 fi
 
 assert_renderer_tests_follow_static_checks
+
+: > "$CALL_LOG"
+
+WEWORK_PRE_PUSH_TEST_WORKERS=3 \
+AI_VERIFIED=1 \
+PATH="$TMP_DIR/bin:$PATH" \
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_FULL_TEST_OUT" 2>&1
+refs/heads/topic $WEWORK_FULL_LOCAL_SHA refs/heads/topic $WEWORK_FULL_BASE_SHA
+EOF
+
+if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 3 --testTimeout 15000$' "$CALL_LOG" ||
+    [ "$(grep -c '^pnpm --filter wework exec vitest run --dir src ' "$CALL_LOG")" -ne 1 ]; then
+    echo "Expected an explicit worker budget to apply once to the complete suite."
+    cat "$CALL_LOG"
+    exit 1
+fi
 
 : > "$CALL_LOG"
 
