@@ -134,7 +134,10 @@ export function createConversationSwitchingChecks({ uiTimeoutMs, modelResponseTi
           'clickWhenEnabled',
           `[data-testid="runtime-local-task-row-${address.taskId}"]`
         )
-        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: SUFFIX.trim() })
+        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+          text: SUFFIX.trim(),
+          timeoutMs: modelResponseTimeoutMs,
+        })
         await waitForWorkbenchDebugState(
           control,
           snapshot =>
