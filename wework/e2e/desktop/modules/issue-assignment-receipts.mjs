@@ -135,13 +135,49 @@ export async function verifyCloudAssignmentReceipts(
   const assignments = await request(`/v1/loop-items/${issueId}/assignments`)
   assert.ok(assignments.items.some(row => row.human_read_at && row.stand_in_received_at))
   await captureScreenshot(control, 'assignment-receipts-cloud-both.png', CONTENT)
+  await verifyIndexedReceipts(issueId, assignments, request, cloud.database)
   await verifyReceiptPermissions(issueId, assignments.items[0], cloud)
+}
+
+async function verifyIndexedReceipts(issueId, expected, request, database) {
+  const activity = Array.from({ length: 512 }, (_, index) => [
+    `receipt-history-${process.pid}-${index}`,
+    issueId,
+  ])
+  await database.executeDatabase(
+    `INSERT INTO loop_items (id,resource_type,loop_item_id,description,metadata,created_at,updated_at)
+     VALUES ${activity.map(() => "(%s,'comment',%s,'',JSON_OBJECT('event_type','receipt_fixture'),UTC_TIMESTAMP(),UTC_TIMESTAMP())").join(',')}`,
+    activity.flat()
+  )
+  // Emulate an existing Issue with no derived index, while preserving all audit data.
+  await database.executeDatabase(
+    "DELETE FROM loop_items WHERE parent_id=%s AND resource_type='assignment_index'",
+    [issueId]
+  )
+  const path = `/v1/loop-items/${issueId}/assignments`
+  const results = await Promise.all([request(path), request(path)])
+  for (const result of results) assert.deepEqual(result, expected)
+  const plan = await database.queryDatabase(
+    `EXPLAIN SELECT event.id,event.metadata FROM loop_items active
+     JOIN loop_items event ON event.id=active.loop_item_id
+     WHERE active.parent_id=%s AND active.resource_type='assignment_index' AND event.resource_type='comment'`,
+    [issueId]
+  )
+  const active = plan.find(row => row.table === 'active')
+  const event = plan.find(row => row.table === 'event')
+  assert.ok(active?.key?.includes('parent') && active.type !== 'ALL', JSON.stringify(plan))
+  assert.equal(event?.key, 'PRIMARY', JSON.stringify(plan))
+  assert.deepEqual(
+    await request(path),
+    expected,
+    'Warm receipt reads preserve the first timestamps'
+  )
 }
 
 async function verifyReceiptPermissions(
   issueId,
   assignment,
-  { backendUrl, authToken, workspaceId }
+  { backendUrl, authToken, workspaceId, database }
 ) {
   const http = async (token, path, method = 'GET', body, expected = 200) => {
     const response = await fetch(`${backendUrl}/api${path}`, {
@@ -189,9 +225,51 @@ async function verifyReceiptPermissions(
     { kind: 'stand_in_received', device_id: 'unowned', task_id: 'unbound' },
     403
   )
+  const device = `receipt-device-${process.pid}`
+  const bindingId = `receipt-binding-${process.pid}`
+  const [issue] = await database.queryDatabase(
+    'SELECT cloud_project_id FROM loop_items WHERE id=%s',
+    [issueId]
+  )
+  await database.executeDatabase(
+    "INSERT INTO kinds(user_id,kind,name,namespace,json,is_active,created_at,updated_at) VALUES (%s,'Device',%s,'default',JSON_OBJECT('spec',JSON_OBJECT('deviceType','local')),1,UTC_TIMESTAMP(),UTC_TIMESTAMP())",
+    [Number(assignment.target_id), device]
+  )
+  try {
+    await database.executeDatabase(
+      "INSERT INTO loop_items(id,resource_type,cloud_project_id,loop_item_id,description,task_user_id,device_id,task_id,linked_by_user_id,linked_at,metadata,created_at,updated_at) VALUES (%s,'execution',%s,%s,'',%s,%s,%s,%s,UTC_TIMESTAMP(),JSON_OBJECT('assignment_id',%s),UTC_TIMESTAMP(),UTC_TIMESTAMP())",
+      [
+        bindingId,
+        issue.cloud_project_id,
+        issueId,
+        Number(assignment.target_id),
+        device,
+        bindingId,
+        Number(assignment.target_id),
+        assignment.id,
+      ]
+    )
+    const payload = { kind: 'stand_in_received', device_id: device, task_id: bindingId }
+    await http(authToken, ack, 'POST', payload)
+    await database.executeDatabase(
+      "UPDATE kinds SET is_active=0 WHERE user_id=%s AND kind='Device' AND namespace='default' AND name=%s",
+      [Number(assignment.target_id), device]
+    )
+    await http(authToken, ack, 'POST', payload, 403)
+  } finally {
+    await database.executeDatabase('DELETE FROM loop_items WHERE id=%s', [bindingId])
+    await database.executeDatabase(
+      "DELETE FROM kinds WHERE user_id=%s AND kind='Device' AND namespace='default' AND name=%s",
+      [Number(assignment.target_id), device]
+    )
+  }
   await http(authToken, `${path}/superseded/receipt`, 'POST', { kind: 'human_read' }, 409)
   await http(authToken, ack, 'POST', { kind: 'human_read' })
   const repeated = await http(authToken, path)
+  assert.equal(
+    repeated.items.find(row => row.id === assignment.id).stand_in_received_at,
+    assignment.stand_in_received_at
+  )
   assert.equal(
     repeated.items.find(row => row.id === assignment.id).human_read_at,
     assignment.human_read_at

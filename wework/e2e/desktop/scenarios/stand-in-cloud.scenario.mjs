@@ -388,6 +388,7 @@ export function createDesktopScenario({
           backendUrl,
           authToken,
           workspaceId: workspace.id,
+          database: cloud,
         })
         await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
 

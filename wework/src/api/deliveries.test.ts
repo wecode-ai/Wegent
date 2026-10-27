@@ -52,6 +52,16 @@ describe('createDeliveryApi queue and assignment routes', () => {
     }
   })
 
+  it('loads receipts through the indexed current-assignment endpoint', async () => {
+    const human = { id: 'assignment', target_type: 'human', human_read_at: '2026-10-27T00:00:00Z' }
+    const get = vi.fn(async () => ({ items: [human] }))
+    const api = createDeliveryApi(clientWith({ get }))
+
+    expect(await api.getIssueAssignmentReceipts('ISSUE/1')).toEqual([human])
+    expect(get).toHaveBeenCalledOnce()
+    expect(get).toHaveBeenCalledWith('/v1/loop-items/ISSUE%2F1/assignments')
+  })
+
   it('recognizes only the canonical default work-item project', () => {
     const canonical = {
       id: DEFAULT_WORK_ITEM_PROJECT_ID,

@@ -23,6 +23,7 @@ export function GlobalIconButtonTooltip() {
   const [position, setPosition] = useState<CSSProperties>()
   const showTimerRef = useRef<number | null>(null)
   const tooltipRef = useRef<HTMLSpanElement>(null)
+  const hoveredTriggerRef = useRef<Element | null>(null)
 
   const hide = useCallback(() => {
     if (showTimerRef.current !== null) {
@@ -40,6 +41,7 @@ export function GlobalIconButtonTooltip() {
       if (
         !label ||
         button.closest('[data-tooltip-trigger]') ||
+        (hoveredTriggerRef.current && button.contains(hoveredTriggerRef.current)) ||
         (eventTarget instanceof Element && eventTarget.closest('[data-tooltip-trigger]'))
       ) {
         hide()
@@ -63,10 +65,19 @@ export function GlobalIconButtonTooltip() {
         ? eventTarget.closest<HTMLButtonElement>('button[aria-label]')
         : null
     const handlePointerOver = (event: PointerEvent) => {
+      hoveredTriggerRef.current =
+        event.target instanceof Element ? event.target.closest('[data-tooltip-trigger]') : null
       const button = buttonFromTarget(event.target)
       if (button) schedule(button, event.target)
     }
     const handlePointerOut = (event: PointerEvent) => {
+      if (
+        hoveredTriggerRef.current &&
+        (!(event.relatedTarget instanceof Node) ||
+          !hoveredTriggerRef.current.contains(event.relatedTarget))
+      ) {
+        hoveredTriggerRef.current = null
+      }
       const button = buttonFromTarget(event.target)
       if (
         !button ||

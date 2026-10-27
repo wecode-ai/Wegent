@@ -44,13 +44,31 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn flush_assignment_receipts(&self) -> Result<(), AppIpcError> {
+        self.flush_assignment_receipts_at(chrono::Utc::now()).await
+    }
+
+    async fn flush_assignment_receipts_at(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppIpcError> {
         let gate = self.task_send_gate("assignment-receipt-sync");
         let _guard = gate.lock().await;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        // Authorization can recover; retain failures for 30 days instead of guessing from 403/404.
+        store
+            .expire_assignment_receipts(&(now - chrono::Duration::days(30)).to_rfc3339())
+            .map_err(settings_error)?;
         for (id, receipt) in store
             .pending_assignment_receipts()
             .map_err(settings_error)?
         {
+            if receipt["nextAttemptAt"]
+                .as_str()
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                .is_some_and(|retry_at| retry_at > now)
+            {
+                continue;
+            }
             let Some(connection) = self.backend_connection_snapshot()? else {
                 continue;
             };
@@ -67,6 +85,10 @@ impl RuntimeWorkRpcHandler {
                 }
                 _ => None,
             };
+            if verified.is_none() {
+                defer_receipt(&store, &id, &receipt, now)?;
+                continue;
+            }
             if verified.as_ref().map(|user| &user["id"]) != Some(&receipt["userId"]) {
                 continue;
             }
@@ -81,12 +103,38 @@ impl RuntimeWorkRpcHandler {
                 Ok(response) if response.status().is_success() || response.status() == reqwest::StatusCode::CONFLICT => {
                     store.complete_assignment_receipt(&id).map_err(settings_error)?;
                 }
-                Ok(response) => log_executor_event("Assignment receipt pending", &[("receipt_id", id), ("status", response.status().to_string())]),
-                Err(error) => log_executor_event("Assignment receipt pending", &[("receipt_id", id), ("error", error.message)]),
+                Ok(response) => {
+                    defer_receipt(&store, &id, &receipt, now)?;
+                    log_executor_event("Assignment receipt pending", &[("receipt_id", id), ("status", response.status().to_string())]);
+                }
+                Err(error) => {
+                    defer_receipt(&store, &id, &receipt, now)?;
+                    log_executor_event("Assignment receipt pending", &[("receipt_id", id), ("error", error.message)]);
+                }
             }
         }
         Ok(())
     }
+}
+
+fn defer_receipt(
+    store: &LocalTaskStore,
+    id: &str,
+    receipt: &Value,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(), AppIpcError> {
+    let attempts = receipt["retryCount"]
+        .as_u64()
+        .unwrap_or_default()
+        .min(u32::MAX as u64) as u32;
+    let delay = (5i64 * (1i64 << attempts.min(10))).min(3600);
+    store
+        .defer_assignment_receipt(
+            id,
+            attempts.saturating_add(1),
+            &(now + chrono::Duration::seconds(delay)).to_rfc3339(),
+        )
+        .map_err(settings_error)
 }
 
 #[cfg(test)]
@@ -97,6 +145,25 @@ mod tests {
         Json, Router,
     };
     use std::sync::atomic::{AtomicU16, AtomicUsize};
+
+    #[tokio::test]
+    async fn assignment_receipt_retention_is_bounded_without_dropping_recent_authorization_failures(
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        store
+            .queue_assignment_receipt(&json!({"assignmentId":"one","issueId":"issue","userId":7}))
+            .unwrap();
+        handler.flush_assignment_receipts().await.unwrap();
+        assert_eq!(store.pending_assignment_receipts().unwrap().len(), 1);
+        handler
+            .flush_assignment_receipts_at(chrono::Utc::now() + chrono::Duration::days(31))
+            .await
+            .unwrap();
+        assert!(store.pending_assignment_receipts().unwrap().is_empty());
+    }
 
     #[tokio::test]
     async fn assignment_receipt_keeps_the_verified_connection_when_settings_change() {
@@ -186,9 +253,15 @@ mod tests {
 
     #[tokio::test]
     async fn assignment_receipt_sync_survives_failure_and_restart_without_cross_account_replay() {
+        for status in [403, 404, 500] {
+            verify_retry_after_restart(status).await;
+        }
+    }
+
+    async fn verify_retry_after_restart(failure_status: u16) {
         let root = tempfile::tempdir().unwrap();
         let user = Arc::new(AtomicUsize::new(8));
-        let status = Arc::new(AtomicU16::new(500));
+        let status = Arc::new(AtomicU16::new(failure_status));
         let writes = Arc::new(AtomicUsize::new(0));
         let current_user = user.clone();
         let response_status = status.clone();
@@ -236,6 +309,16 @@ mod tests {
         let restarted = make_handler();
         status.store(200, Ordering::SeqCst);
         restarted.flush_assignment_receipts().await.unwrap();
+        assert_eq!(
+            writes.load(Ordering::SeqCst),
+            1,
+            "Restart must retain the backoff"
+        );
+        assert_eq!(store.pending_assignment_receipts().unwrap().len(), 1);
+        restarted
+            .flush_assignment_receipts_at(chrono::Utc::now() + chrono::Duration::seconds(6))
+            .await
+            .unwrap();
         assert!(store.pending_assignment_receipts().unwrap().is_empty());
         assert!(restarted.local_task_links(true).is_empty());
         store.queue_assignment_receipt(&receipt).unwrap();

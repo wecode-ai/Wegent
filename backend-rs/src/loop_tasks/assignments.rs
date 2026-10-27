@@ -21,6 +21,7 @@
 //!    through the session's identity map (`db.get(User, id)`).
 use brz_http_server::StatusCode;
 use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 
 use crate::board_snapshot::external_provider as provider;
 use crate::board_snapshot::repository::{BoardSnapshotRepository, ProjectAccess, ProjectRow};
@@ -73,12 +74,29 @@ async fn list_issue_assignments(
     list_assignments(state, item_id, &current_user).await
 }
 
-/// Handler body for `GET /api/v1/loop-items/{item_id}/assignments`.
 pub(super) async fn list_assignments(
     state: &AppState,
     item_id: &str,
     current_user: &FlexibleUser,
 ) -> Result<IssueAssignmentListResponse, FastApiError> {
+    require_issue_read(state, item_id, current_user).await?;
+    super::assignment_index::ensure_active_index(state, item_id).await?;
+    let comments = LoopItemRepository::new(&state.mysql)
+        .list_active_assignment_comments(item_id)
+        .await
+        .map_err(internal)?;
+    let mut items = Vec::new();
+    for event in active_events(&comments) {
+        items.push(assignment_response(state, &event, current_user).await?);
+    }
+    Ok(IssueAssignmentListResponse { items })
+}
+
+pub(super) async fn require_issue_read(
+    state: &AppState,
+    item_id: &str,
+    current_user: &FlexibleUser,
+) -> Result<(), FastApiError> {
     let repository = LoopItemRepository::new(&state.mysql);
 
     // `is_external_item(db, item_id)`.
@@ -91,7 +109,7 @@ pub(super) async fn list_assignments(
     }
 
     // `project_for_issue(db, issue_id=item_id, user_id=current_user.id)`.
-    let item = assignment_repository::loop_item(&state.mysql, item_id)
+    let item = assignment_repository::loop_item_access(&state.mysql, item_id)
         .await
         .map_err(internal)?
         .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Issue not found"))?;
@@ -112,15 +130,7 @@ pub(super) async fn list_assignments(
         ));
     }
 
-    let comments = repository
-        .list_item_comments(item_id)
-        .await
-        .map_err(internal)?;
-    let mut items = Vec::new();
-    for event in active_events(&comments) {
-        items.push(assignment_response(state, &event, current_user).await?);
-    }
-    Ok(IssueAssignmentListResponse { items })
+    Ok(())
 }
 
 /// `require_cloud_project_role(db, project_id, user_id, Viewer)`.
@@ -291,6 +301,7 @@ pub(crate) fn item_number(item_id: &str) -> Option<i64> {
 pub(crate) struct ActiveEvent<'a> {
     pub(crate) comment: &'a CommentRow,
     pub(crate) metadata: &'a AssignmentMetadata,
+    #[cfg(test)]
     key: (String, String, String),
 }
 
@@ -298,7 +309,7 @@ pub(crate) struct ActiveEvent<'a> {
 /// applying the `unassign` cancellations, in activity order. A repeated member
 /// key keeps its first position and takes the newest event.
 pub(crate) fn active_events(comments: &[CommentRow]) -> Vec<ActiveEvent<'_>> {
-    let cancelled: Vec<&str> = comments
+    let cancelled: HashSet<&str> = comments
         .iter()
         .filter_map(|comment| {
             let metadata = comment.assignment()?;
@@ -308,6 +319,7 @@ pub(crate) fn active_events(comments: &[CommentRow]) -> Vec<ActiveEvent<'_>> {
         })
         .collect();
     let mut active: Vec<ActiveEvent<'_>> = Vec::new();
+    let mut positions = HashMap::new();
     for comment in comments {
         let Some(metadata) = comment.assignment() else {
             continue;
@@ -330,16 +342,21 @@ pub(crate) fn active_events(comments: &[CommentRow]) -> Vec<ActiveEvent<'_>> {
                 .trim()
                 .to_string(),
         );
-        match active.iter_mut().find(|event| event.key == key) {
-            Some(existing) => {
+        match positions.get(&key).copied() {
+            Some(index) => {
+                let existing: &mut ActiveEvent<'_> = &mut active[index];
                 existing.comment = comment;
                 existing.metadata = metadata;
             }
-            None => active.push(ActiveEvent {
-                comment,
-                metadata,
-                key,
-            }),
+            None => {
+                positions.insert(key.clone(), active.len());
+                active.push(ActiveEvent {
+                    comment,
+                    metadata,
+                    #[cfg(test)]
+                    key,
+                });
+            }
         }
     }
     active
