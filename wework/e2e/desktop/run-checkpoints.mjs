@@ -26,9 +26,10 @@ import { extractRuntimeArchive } from '../../scripts/lib/extract-runtime-archive
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_RESOURCES = new Map([
-  // These macOS checkpoints move native windows and require a foreground renderer for cursor arrival.
+  // These macOS checkpoints need exclusive native focus or application activation.
   ['browser-toolbar-actions', ['macos-inspector-foreground']],
   ['tray-lifecycle', ['macos-inspector-foreground']],
+  ['window-lifecycle', ['macos-inspector-foreground']],
   ['browser-annotation-design', ['macos-inspector-foreground']],
   ['project-assignment-notification', ['macos-inspector-foreground']],
 ])
@@ -471,6 +472,7 @@ function checkpointScenarioEnv(env, checkpoint) {
   if (
     checkpoint === 'application-menu' ||
     checkpoint === 'native-window-chrome' ||
+    checkpoint === 'window-lifecycle' ||
     checkpoint === 'browser-multi-tabs' ||
     checkpoint === 'core-task-flow' ||
     checkpoint === 'project-assignment-notification'
