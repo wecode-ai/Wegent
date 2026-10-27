@@ -680,3 +680,7 @@ fn active_task_lease(home: &Path, root: &Path, task_id: &str) -> Result<bool, St
 #[cfg(test)]
 #[path = "instance_home_tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "pipeline_session_archive_tests.rs"]
+mod pipeline_session_archive_tests;
