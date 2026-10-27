@@ -233,10 +233,10 @@ Run this scenario after `permission-modes` confirms Full access and before switc
 
 ## Real Timeout Verification
 
-`permission-modes` sets `WEGENT_CODEX_MCP_ELICITATION_TIMEOUT_MS=60000` for its
+`permission-modes` sets `WEGENT_CODEX_MCP_ELICITATION_TIMEOUT_MS=5000` for its
 isolated application and Executor. Concurrent form expiry, URL authorization
-expiry, and ordinary form expiry each use a real 60-second timer, totaling about
-three minutes of fixed waits. Other checkpoints do not automatically set this
+expiry, and ordinary form expiry each use a real five-second timer, totaling about
+15 seconds of fixed waits. Other checkpoints do not automatically set this
 configuration. With no valid override, production defaults remain ten minutes
 for URLs and five minutes for forms. Ordinary execution approval timeouts are
 unaffected.

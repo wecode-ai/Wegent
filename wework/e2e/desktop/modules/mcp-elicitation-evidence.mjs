@@ -1,7 +1,7 @@
 import { performance } from 'node:perf_hooks'
 import { assert, readFile, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 
-export const MCP_ELICITATION_TIMEOUT_MS = 60_000
+export const MCP_ELICITATION_TIMEOUT_MS = 5_000
 
 export async function readElicitationEvidence(evidencePath) {
   return (await readFile(evidencePath, 'utf8'))

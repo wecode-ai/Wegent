@@ -145,12 +145,12 @@ mod tests {
         }
         for params in [url, form] {
             assert_eq!(
-                configured_timeout(&params, Some("60000")),
-                Duration::from_secs(60)
+                configured_timeout(&params, Some("5000")),
+                Duration::from_secs(5)
             );
         }
         assert_eq!(
-            configured_timeout(&json!({}), Some("60000")),
+            configured_timeout(&json!({}), Some("5000")),
             Duration::from_secs(300)
         );
     }

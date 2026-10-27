@@ -70,11 +70,7 @@ async function verifyMcpElicitationInFullAccess(control) {
     assert.ok(formText.includes(expectedText), `The MCP elicitation form omitted ${expectedText}`)
   }
   const countdown = await control.command('getText', '[data-testid="request-user-input-deadline"]')
-  assert.match(
-    countdown,
-    /(?:1:00|0:[0-5]\d)/,
-    'A new MCP form must use the configured one-minute deadline'
-  )
+  assert.match(countdown, /0:0[0-5]/, 'A new MCP form must use the configured five-second deadline')
   const formSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
     formSnapshot.testIds.includes('request-user-input-option-__codex_approval-0'),
@@ -374,7 +370,7 @@ async function verifyElicitationTimeout(control, taskId, evidencePath, scenario,
   assert.ok(remainingSeconds > 0 && remainingSeconds <= durationMs / 1000)
   assert.match(
     await control.command('getText', '[data-testid="request-user-input-deadline"]'),
-    /(?:1:00|0:[0-5]\d)/
+    /0:0[0-5]/
   )
   assert.equal(original.interactionKind === 'mcp_url', isUrl)
   const requests = (await readElicitationEvidence(evidencePath)).filter(

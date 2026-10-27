@@ -234,8 +234,8 @@ default_tools_approval_mode = "approve"
 ## 真实超时验证
 
 `permission-modes` 为隔离的应用及其 Executor 设置
-`WEGENT_CODEX_MCP_ELICITATION_TIMEOUT_MS=60000`。并发问答中的表单超时、URL
-授权超时和普通表单超时均使用 60 秒的真实计时器，三次固定等待合计约 3 分钟。
+`WEGENT_CODEX_MCP_ELICITATION_TIMEOUT_MS=5000`。并发问答中的表单超时、URL
+授权超时和普通表单超时均使用 5 秒的真实计时器，三次固定等待合计约 15 秒。
 其他 checkpoint 不自动设置该配置。未配置或配置无效时，生产默认值仍为 URL
 10 分钟、表单 5 分钟；普通执行审批的超时不受该配置影响。
 
