@@ -1,5 +1,9 @@
 import { beforeEach, expect, test, vi } from 'vitest'
-import { verifyReadOnlyBoardDrag } from '../e2e/desktop/modules/collaboration-board-field-drag.mjs'
+import {
+  assertLaneOrder,
+  verifyReadOnlyBoardDrag,
+  waitForBoardCard,
+} from '../e2e/desktop/modules/collaboration-board-field-drag.mjs'
 import {
   openProjectBoard,
   selectProjectBoardGrouping,
@@ -63,4 +67,33 @@ test('still rejects a persisted mutation after a Viewer drag', async () => {
   await expect(verifyReadOnlyBoardDrag(control, options)).rejects.toThrow(
     'Viewer drag changed version'
   )
+})
+
+test.each([false, true])(
+  'reveals lane cards without hiding incorrect order (reversed=%s)',
+  async reversed => {
+    let visibleCard = null
+    const control = {
+      command: vi.fn(async (method, selector, options) => {
+        if (method === 'scrollIntoView') visibleCard = selector
+        if (method === 'waitFor' && options?.visible === true) expect(visibleCard).toBe(selector)
+        if (method === 'getTestIdOrder') {
+          const ids = ['cloud-todo-card-anchor', 'cloud-todo-card-moving']
+          return JSON.stringify(reversed ? ids.reverse() : ids)
+        }
+        return ''
+      }),
+    }
+    const check = assertLaneOrder(control, selector => selector, 'tag-drag-A', ['anchor', 'moving'])
+    if (reversed) await expect(check).rejects.toThrow('deep-equal')
+    else await check
+  }
+)
+
+test('does not scroll a card that must be absent', async () => {
+  const control = { command: vi.fn() }
+  await waitForBoardCard(control, 'missing-card', false)
+  expect(control.command).toHaveBeenCalledExactlyOnceWith('waitFor', 'missing-card', {
+    visible: false,
+  })
 })
