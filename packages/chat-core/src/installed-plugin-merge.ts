@@ -377,7 +377,9 @@ function localRowsMatchingCloudPlugin(
   localItems: InstalledPlugin[],
   cloud: InstalledPlugin
 ): InstalledPlugin[] {
-  return localItems.filter(local => localMatchesCloudPlugin(local, cloud))
+  return localItems.filter(
+    local => hasLocalCodexMaterialization(local) && localMatchesCloudPlugin(local, cloud)
+  )
 }
 
 function pickPreferredLocalMaterialization(

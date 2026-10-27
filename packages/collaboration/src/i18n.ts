@@ -8,6 +8,7 @@ import { projectWorkMessages } from "./controls/projectWorkMessages";
 import { conversationMessages } from "./conversation/messages";
 import { boardCardMessages } from "./issue-card/messages";
 import { boardSortMessages } from "./project-board/messages";
+import { boardViewMessages } from "./project-board/viewMessages";
 import { composerMessages } from "./controls/messages";
 import { modelMessages } from "./controls/modelMessages";
 import { markdownMessages } from "./markdown/MarkdownServices";
@@ -453,10 +454,13 @@ const sharedMessages: Record<
     "todo.issue_security": "任务可见范围",
     "todo.issue_security_open": "项目可访问者可见",
     "todo.issue_security_related": "仅相关人员可见",
+    "todo.batch_status_failed": "部分任务更新失败，请查看以下原因并重试。",
     "todo.project_tags": "标签",
     "todo.project_tags_description": "用于区分任务类型并筛选看板。",
     "todo.create_tag": "新建标签",
     "todo.tag_name_placeholder": "输入标签名称",
+    "todo.tag_name_too_long": "标签名称不能超过 32 个字符",
+    "todo.tag_limit_exceeded": "最多添加 20 个不同标签",
     "todo.confirm_rename": "确认重命名",
     "todo.cancel_rename": "取消重命名",
     "todo.tag_menu": "{{tag}} 标签菜单",
@@ -977,10 +981,14 @@ const sharedMessages: Record<
     "todo.issue_security": "Issue visibility",
     "todo.issue_security_open": "Visible to project users",
     "todo.issue_security_related": "Related people only",
+    "todo.batch_status_failed":
+      "Some issues could not be updated. Review the errors and retry.",
     "todo.project_tags": "Tags",
     "todo.project_tags_description": "Classify issues and filter the board.",
     "todo.create_tag": "New tag",
     "todo.tag_name_placeholder": "Tag name",
+    "todo.tag_name_too_long": "Tag names cannot exceed 32 characters",
+    "todo.tag_limit_exceeded": "Cannot have more than 20 distinct tags",
     "todo.confirm_rename": "Confirm rename",
     "todo.cancel_rename": "Cancel rename",
     "todo.tag_menu": "{{tag}} tag menu",
@@ -1338,6 +1346,7 @@ export function createCollaborationTranslator(
       modelMessages[locale][key] ??
       boardCardMessages[locale][key] ??
       boardSortMessages[locale][key] ??
+      boardViewMessages[locale][key as keyof typeof boardViewMessages.en] ??
       markdownMessages[locale][key as keyof typeof markdownMessages.en] ??
       runtimeProfileMessages[locale][key] ??
       executionEnvironmentMessages[locale][key] ??

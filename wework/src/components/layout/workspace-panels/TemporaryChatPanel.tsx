@@ -28,7 +28,6 @@ import {
 } from '@/components/chat/RequestUserInputCard'
 import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
 import {
-  applyRequestUserInputResponseToBlock,
   findRequestUserInputPayload,
   isAsyncRequestUserInputPayload,
   requestUserInputPayloadKey,
@@ -54,7 +53,6 @@ import {
   getRuntimeConversationTurnIds,
   removeRuntimeConversationTurn,
   subscribeRuntimeConversation,
-  updateRuntimeConversationBlocks,
 } from '@/features/workbench/runtimeConversationCache'
 import {
   useRuntimeTaskLifecycle,
@@ -828,19 +826,12 @@ export function TemporaryChatPanel({
         conversationQueue.enqueue(answerMessage)
         return sendQueuedMessageAsGuidance(answerMessage)
       }
-      const sent = await sendRuntimePaneMessage({
+      return sendRuntimePaneMessage({
         address,
         message: requestUserInputResponseText(response),
         requestUserInputResponse: response,
         ...runtimeContext,
       })
-      if (!sent) return false
-      setMessages(
-        updateRuntimeConversationBlocks(address, block =>
-          applyRequestUserInputResponseToBlock(block, response)
-        )
-      )
-      return true
     },
     [
       address,
