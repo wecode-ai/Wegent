@@ -60,6 +60,7 @@ export async function createDesktopScenario({
   workspacePath,
 }) {
   let cloud
+  let environment
   let cloudProxy
   let blockingNetworkProxy
   let fixture
@@ -197,6 +198,9 @@ export async function createDesktopScenario({
           ? 'drop-response'
           : null
     },
+    setCloudEnvironment(value) {
+      environment = value
+    },
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -213,7 +217,7 @@ export async function createDesktopScenario({
       return true
     },
     async verify(control) {
-      const local = await cloud.waitForConnectedAppDevice()
+      const local = await environment.waitForConnectedAppDevice()
       fixture = await installFixture(
         cloud,
         control,
