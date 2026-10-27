@@ -95,6 +95,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         []
       )
       await rpc('runtime.stand_in.telemetry.configure', { userId: OFFLINE_USER, enabled: false })
+      console.log('[stand-in-telemetry] Background execution, reload persistence and ACK verified')
 
       await rpc('runtime.stand_in.telemetry.configure', { userId: USER, enabled: true })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
@@ -136,6 +137,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
           assert.ok(!Object.hasOwn(event.properties, key), `Unexpected private property: ${key}`)
         }
       }
+      console.log('[stand-in-telemetry] Public delivery, completion count and privacy verified')
     },
   }
 }
