@@ -9,6 +9,7 @@ import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
 import { verifyLocalBoardUnread } from './local-board-unread.mjs'
 import { verifyMcpElicitationInFullAccess } from './mcp-elicitation-flow.mjs'
+import { MCP_ELICITATION_TIMEOUT_MS } from './mcp-elicitation-evidence.mjs'
 import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
 
 import {
@@ -1348,6 +1349,9 @@ async function main() {
       WEGENT_STANDALONE_WORKSPACE_ROOT: join(homePath, 'Documents', 'Codex'),
       WEGENT_CODEX_HOME: codexHome,
       WEGENT_EXECUTOR_HOME: executorHome,
+      ...(DESKTOP_SEGMENT === 'permission-modes'
+        ? { WEGENT_CODEX_MCP_ELICITATION_TIMEOUT_MS: String(MCP_ELICITATION_TIMEOUT_MS) }
+        : {}),
       WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'false',
       WEGENT_EXECUTOR_LOG_DIR: resultDir,
       WEGENT_EXECUTOR_LOG_FILE: 'executor.log',

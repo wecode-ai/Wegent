@@ -1,6 +1,8 @@
 import { performance } from 'node:perf_hooks'
 import { assert, readFile, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 
+export const MCP_ELICITATION_TIMEOUT_MS = 60_000
+
 export async function readElicitationEvidence(evidencePath) {
   return (await readFile(evidencePath, 'utf8'))
     .split('\n')
@@ -61,12 +63,12 @@ export async function waitForRealMcpTimeout(evidencePath, scenario, durationMs) 
       assert.deepEqual(records[0].result, { action: 'cancel' })
       assert.ok(
         records[0].elapsedMs >= durationMs,
-        `The ${scenario} was cancelled before its production ${durationMs}ms deadline`
+        `The ${scenario} was cancelled before its configured ${durationMs}ms deadline`
       )
       return
     }
     if (performance.now() >= nextProgress) {
-      console.log(`Waiting for the real ${scenario} deadline; no clock or timeout overrides`)
+      console.log(`Waiting for the real ${scenario} timer (${durationMs}ms); no clock overrides`)
       nextProgress += 60_000
     }
     await new Promise(resolve => setTimeout(resolve, 1000))

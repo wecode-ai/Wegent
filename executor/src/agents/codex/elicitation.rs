@@ -18,6 +18,24 @@ fn now_ms() -> u64 {
 }
 
 pub(super) fn timeout_for(params: &Value) -> Duration {
+    configured_timeout(
+        params,
+        std::env::var("WEGENT_CODEX_MCP_ELICITATION_TIMEOUT_MS")
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn configured_timeout(params: &Value, override_ms: Option<&str>) -> Duration {
+    // Approval requests share this lifecycle, but keep their own default timeout.
+    if matches!(params["mode"].as_str(), Some("url" | "form")) {
+        if let Some(ms) = override_ms
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|ms| *ms > 0)
+        {
+            return Duration::from_millis(ms);
+        }
+    }
     if params["mode"] == "url" {
         URL_TIMEOUT
     } else {
@@ -110,5 +128,30 @@ pub(super) fn copy_lifecycle(params: &Value, payload: &mut Value) {
         if let Some(value) = params.get(key) {
             payload[key] = value.clone();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mcp_timeout_defaults_and_overrides() {
+        let url = json!({"mode": "url"});
+        let form = json!({"mode": "form"});
+        for invalid in [None, Some(""), Some("0"), Some("-1"), Some("invalid")] {
+            assert_eq!(configured_timeout(&url, invalid), Duration::from_secs(600));
+            assert_eq!(configured_timeout(&form, invalid), Duration::from_secs(300));
+        }
+        for params in [url, form] {
+            assert_eq!(
+                configured_timeout(&params, Some("60000")),
+                Duration::from_secs(60)
+            );
+        }
+        assert_eq!(
+            configured_timeout(&json!({}), Some("60000")),
+            Duration::from_secs(300)
+        );
     }
 }

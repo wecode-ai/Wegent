@@ -22,6 +22,7 @@ import {
   concurrentPrompt,
 } from './mcp-concurrent-model.mjs'
 import {
+  MCP_ELICITATION_TIMEOUT_MS,
   readElicitationEvidence,
   readMatchingElicitation,
   readMcpInteractions,
@@ -113,9 +114,12 @@ async function settleMcp(control, action) {
         return readMcpResult(action)
       },
       'The real concurrent MCP form did not expire',
-      300_000 + DEFAULT_STEP_TIMEOUT_MS
+      MCP_ELICITATION_TIMEOUT_MS + DEFAULT_STEP_TIMEOUT_MS
     )
-    assert.ok(result.elapsedMs >= 300_000, 'Concurrent form expired before the production deadline')
+    assert.ok(
+      result.elapsedMs >= MCP_ELICITATION_TIMEOUT_MS,
+      'Concurrent form expired before the configured deadline'
+    )
   } else {
     await control.command(
       'click',
