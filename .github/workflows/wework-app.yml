@@ -192,7 +192,7 @@ jobs:
       matrix:
         include:
           - name: macOS arm64
-            runner: macos-14
+            runner: macos-15
             platform: macos
             arch: arm64
             cargo_target: aarch64-apple-darwin
@@ -367,6 +367,7 @@ jobs:
         run: |
           pnpm --filter wework e2e:desktop -- \
             --parallel-segments release-package-startup,component-update
+          pnpm --filter wework e2e:desktop -- --segment app-update-full
 
       - name: Prune formal release verification diagnostics
         if: failure() && matrix.platform == 'macos' && matrix.arch == 'arm64'

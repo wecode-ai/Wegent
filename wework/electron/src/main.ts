@@ -484,6 +484,7 @@ const appUpdates = new AppUpdateService({
   log: event => appUpdateLogger.info(event),
   shutdown: async () => {
     await prepareApplicationShutdown()
+    await Promise.all([preferences?.close(), rendererStorage?.close()])
     await appUpdateLogger
       .flush()
       .catch(error =>

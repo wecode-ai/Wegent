@@ -2,7 +2,12 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
-import { atomicReleaseWrite, ReleaseStore, type DesktopRelease } from './release-store.js'
+import {
+  atomicReleaseWrite,
+  optionalText,
+  ReleaseStore,
+  type DesktopRelease,
+} from './release-store.js'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -52,6 +57,23 @@ test('concurrent activation cannot overwrite the recovery journal', async () => 
   await store.activate(after, 'snapshot')
   await expect(store.activate(after, 'other')).rejects.toThrow('already in progress')
   expect((await store.activation())?.snapshot).toBe('snapshot')
+})
+test('an interrupted manual rollback retains its intent despite an earlier healthy marker', async () => {
+  const { store, after, root } = await fixture()
+  await store.activate(after, 'snapshot')
+  const token = (await store.activation())!.token
+  await atomicReleaseWrite(join(root, 'attempted'), token)
+  await store.confirm(after.id)
+  await store.requestRollback()
+  const reopened = new ReleaseStore(root)
+  expect(await optionalText(join(root, 'healthy'))).toBe(token)
+  expect(await reopened.activation()).toMatchObject({
+    rollbackRequested: true,
+    restoreRequired: true,
+    from: 'before',
+    to: 'after',
+  })
+  expect((await reopened.rollback()).id).toBe('before')
 })
 test('an interrupted pointer switch still has a usable source descriptor', async () => {
   const { store, after, root } = await fixture()

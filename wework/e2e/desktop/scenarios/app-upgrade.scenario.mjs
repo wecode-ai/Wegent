@@ -358,12 +358,22 @@ export async function createDesktopScenario(options) {
         )
           await control.command('click', '[data-testid="settings-back-button"]')
         await send(`${PROMPT} continue after rollback`)
-        if (restoreRequired)
-          assert.ok(
-            (await (await import('node:fs/promises')).readdir(join(root, 'preserved-data')))
-              .length > 0,
-            'Newer local data was not preserved'
+        if (restoreRequired) {
+          const { readdir } = await import('node:fs/promises')
+          const preserved = await readdir(join(root, 'preserved-data'))
+          assert.equal(preserved.length, 1, 'Expected one preserved post-update data set')
+          const storage = JSON.parse(
+            await readFile(
+              join(root, 'preserved-data', preserved[0], 'renderer-local-storage.json'),
+              'utf8'
+            )
           )
+          assert.equal(
+            storage.entries[STORAGE_KEY],
+            'after-update',
+            'Rollback did not preserve the newer local data'
+          )
+        }
       }
       const evidence = JSON.stringify({
         schemaVersion: 1,

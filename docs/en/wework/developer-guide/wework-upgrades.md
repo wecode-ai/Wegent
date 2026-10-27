@@ -24,6 +24,8 @@ Compatible rollback switches directly. Incompatible rollback after the target op
 
 Plugin configuration changes invalidate preparation. Recheck before switching instead of repairing large installations after restart.
 
+Confirmed manual rollback records its transaction direction independently. After an interruption, resume rollback instead of treating the target's earlier healthy marker as a new startup confirmation.
+
 ## Maintain three verification layers
 
 | Layer | Inputs | Purpose | Authorizes a production edge |

@@ -315,6 +315,8 @@ validate_registered_checkpoint_coverage() {
   if ! (
     cd "$repository_root"
     node --input-type=module -e '
+      import { readFileSync } from "node:fs"
+      import { UPGRADE_CHECKPOINT_GROUP } from "./wework/e2e/desktop/upgrade-suite.mjs"
       import {
         DESKTOP_CHECKPOINTS,
         DESKTOP_CHECKPOINT_GROUPS,
@@ -325,7 +327,12 @@ validate_registered_checkpoint_coverage() {
         console.error("Registered desktop checkpoint catalog is empty")
         process.exit(1)
       }
-      const covered = new Set(expandDesktopCheckpoints(process.argv.slice(1)))
+      const upgradeWorkflow = readFileSync(".github/workflows/wework-upgrade-e2e.yml", "utf8")
+      if (!upgradeWorkflow.includes(`--parallel-segments ${UPGRADE_CHECKPOINT_GROUP}`)) {
+        console.error("The upgrade workflow must invoke its registered checkpoint group")
+        process.exit(1)
+      }
+      const covered = new Set(expandDesktopCheckpoints([...process.argv.slice(1), UPGRADE_CHECKPOINT_GROUP]))
       for (const checkpoint of registered) {
         if (!covered.has(checkpoint)) {
           console.error(`Registered desktop checkpoint missing from CI catalogs: ${checkpoint}`)

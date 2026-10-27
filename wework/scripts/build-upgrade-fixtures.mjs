@@ -28,12 +28,13 @@ const buildApplication =
 await mkdir(output, { recursive: true })
 await rm(join(output, 'pair.json'), { force: true })
 const builds = []
+const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 // Use one prepared dependency set, then independently package each version from source.
 for (const [version, dataSchema] of [
   [sourceVersion, 1],
   [targetVersion, 2],
 ]) {
-  await run('pnpm', ['--dir', 'electron', 'run', 'build'], root)
+  await run(pnpmCommand, ['--dir', 'electron', 'run', 'build'], root)
   await run(process.execPath, ['scripts/package-app.mjs'], join(root, 'electron'), {
     WEWORK_UPGRADE_FIXTURE_VERSION: version,
     WEWORK_UPGRADE_FIXTURE_DATA_SCHEMA: String(dataSchema),

@@ -110,7 +110,18 @@ async function launchSelectedRelease(
   root: string
 ): Promise<void> {
   const activation = await store.activation()
-  if (activation && (await optionalText(join(root, 'attempted'))) === activation.token) {
+  if (activation?.rollbackRequested) {
+    // Confirmation was recorded before beginning this manual rollback. Resume
+    // an interrupted restore even if the target's earlier healthy marker exists.
+    if (activation.restoreRequired)
+      await restoreReleaseData(
+        dataDirectory,
+        root,
+        activation.snapshot,
+        process.env.WEGENT_EXECUTOR_HOME?.trim() || dataDirectory
+      )
+    await store.rollback()
+  } else if (activation && (await optionalText(join(root, 'attempted'))) === activation.token) {
     const healthy = await optionalText(join(root, 'healthy'))
     if (healthy === activation.token) {
       await store.confirm(activation.to)

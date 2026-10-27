@@ -21,6 +21,7 @@ export interface ReleaseActivation {
   to: string
   snapshot: string
   restoreRequired: boolean
+  rollbackRequested?: boolean
 }
 
 export function releaseId(value: string): string {
@@ -93,7 +94,11 @@ export class ReleaseStore {
     const activation = JSON.parse(value) as ReleaseActivation
     for (const id of [activation.token, activation.from, activation.to, activation.snapshot])
       releaseId(id)
-    if (typeof activation.restoreRequired !== 'boolean')
+    if (
+      typeof activation.restoreRequired !== 'boolean' ||
+      (activation.rollbackRequested !== undefined &&
+        typeof activation.rollbackRequested !== 'boolean')
+    )
       throw new Error('Invalid release activation')
     return activation
   }
@@ -148,7 +153,10 @@ export class ReleaseStore {
     if (await this.activation()) throw new Error('A release activation is already in progress')
     const last = await optionalText(join(this.root, 'last-activation.json'))
     if (!last) throw new Error('No previous healthy release is available')
-    await atomicReleaseWrite(join(this.root, 'activation.json'), last)
+    await atomicReleaseWrite(
+      join(this.root, 'activation.json'),
+      JSON.stringify({ ...JSON.parse(last), rollbackRequested: true })
+    )
     const activation = await this.activation()
     if (!activation || (await this.active())?.id !== activation.to) {
       await rm(join(this.root, 'activation.json'), { force: true })
