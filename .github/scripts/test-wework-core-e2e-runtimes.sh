@@ -15,6 +15,15 @@ ruby -ryaml -e '
   publish = producer.fetch("steps").find { |s| s["name"] == "Publish content-addressed Backend Rust E2E image" }.fetch("if")
   consumer_workflow = YAML.safe_load(File.read(ARGV[2]))
   consumer = consumer_workflow.fetch("jobs").fetch("build-wework-desktop-core-e2e")
+  producer_digest = producer.fetch("steps").find { |candidate| candidate["name"] == "Resolve Backend Rust E2E runtime" }.fetch("env").fetch("SOURCE_DIGEST")
+  warmup_workflow = YAML.safe_load(File.read(ARGV[3]))
+  [consumer_workflow, warmup_workflow].each do |definition|
+    resolvers = definition.fetch("jobs").values.flat_map { |job| job.fetch("steps", []) }
+      .select { |candidate| candidate["name"] == "Resolve shared Rust E2E runtimes" }
+    raise "shared Rust runtime resolver must be unique" unless resolvers.length == 1
+    consumer_digest = resolvers.first.fetch("env").fetch("BACKEND_RS_SOURCE_DIGEST")
+    raise "Backend Rust image producer and consumer digests differ" unless consumer_digest == producer_digest
+  end
   producer_seconds = Integer(producer.fetch("timeout-minutes")) * 60
   consumer_seconds = Integer(consumer.fetch("timeout-minutes")) * 60
   oci_seconds = Integer(step.fetch("env").fetch("OCI_RUNTIME_WAIT_SECONDS"))
@@ -53,7 +62,7 @@ ruby -ryaml -e '
       end
     end
   end
-' "$script_dir/../actions/build-wework-core-e2e/action.yml" "$script_dir/../workflows/e2e-tests.yml" "$script_dir/../workflows/wework-e2e.yml"
+' "$script_dir/../actions/build-wework-core-e2e/action.yml" "$script_dir/../workflows/e2e-tests.yml" "$script_dir/../workflows/wework-e2e.yml" "$script_dir/../workflows/ci-cache-warmup.yml"
 ruby -ryaml -e '
   action = YAML.safe_load(File.read(ARGV[0]))
   step = action.fetch("runs").fetch("steps").find { |s| s["env"]&.key?("EXECUTOR_IMAGE") }
