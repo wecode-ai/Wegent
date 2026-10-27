@@ -41,6 +41,24 @@ const taskRecord = {
   metadata: { tags: ['local'] },
 }
 
+test.each(['renamed', null])(
+  'forwards atomic tag change target %s to local storage',
+  async target => {
+    const request = vi.fn().mockResolvedValue({ ...projectRecord, version: 2 })
+    const api = createLocalDeliveryApi(request)
+
+    await api.updateCloudProject(projectRecord.id, {
+      version: 1,
+      tag_change: { source: 'old', target },
+    })
+
+    expect(request).toHaveBeenCalledExactlyOnceWith('projects.update', {
+      project_id: projectRecord.id,
+      project: { version: 1, tag_change: { source: 'old', target } },
+    })
+  }
+)
+
 test('loads task context from its known binding without rediscovering the project', async () => {
   const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
     if (method === 'runtime_tasks.context') {

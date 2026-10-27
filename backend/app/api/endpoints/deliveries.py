@@ -602,7 +602,10 @@ async def update_loop_item(
 
     refresh_execution = bool(
         existing.assignee_agent_id
-        and "assignee_agent_id" not in values.model_fields_set
+        and (
+            "assignee_agent_id" not in values.model_fields_set
+            or values.assignee_agent_id == existing.assignee_agent_id
+        )
         and not values.assignee_group_id
         and ("execution_config" in values.model_fields_set or entered_processing)
     )

@@ -19,6 +19,7 @@ mod code_projects;
 pub(crate) mod execution_workspace;
 mod issue_badges;
 mod ordering;
+mod project_tags;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
@@ -326,6 +327,20 @@ impl LocalTaskStore {
         project_id: &str,
         input: ProjectUpdate,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        if let Some(change) = input.tag_change.as_ref() {
+            let mut fields = serde_json::to_value(&input)
+                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
+            fields
+                .as_object_mut()
+                .unwrap()
+                .retain(|key, value| key != "version" && key != "tag_change" && !value.is_null());
+            if !fields.as_object().unwrap().is_empty() {
+                return Err(TaskRuntimeError::Invalid(
+                    "Tag changes cannot be combined with other project updates".into(),
+                ));
+            }
+            return self.change_project_tag(project_id, input.version, change);
+        }
         let project = self.get_project(project_id)?;
         if project.version != input.version {
             return Err(TaskRuntimeError::VersionConflict);

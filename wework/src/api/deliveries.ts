@@ -717,6 +717,7 @@ export function createDeliveryApi(client: HttpClient) {
     updateCloudProject(
       projectId: CloudProjectIdInput,
       data: {
+        tag_change?: { source: string; target: string | null }
         name?: string
         description?: string
         tags?: string[]

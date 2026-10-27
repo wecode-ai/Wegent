@@ -241,7 +241,15 @@ class CloudProjectService(CloudProjectMemberService):
         project = require_cloud_project_role(
             db, project_id, user_id, BaseRole.Maintainer
         ).project
-        updates = values.model_dump(exclude={"version"}, exclude_none=True)
+        if values.tag_change is not None:
+            from app.services.cloud_projects.tags import change_project_tag
+
+            return change_project_tag(
+                db, project_id, user_id, values.version, values.tag_change
+            )
+        updates = values.model_dump(
+            exclude={"version", "tag_change"}, exclude_none=True
+        )
         if (
             "membership_mode" in values.model_fields_set
             or "tags" in values.model_fields_set

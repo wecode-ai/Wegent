@@ -8,6 +8,7 @@ import asyncio
 import io
 import json
 import uuid
+from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any, BinaryIO
 from unittest.mock import AsyncMock, MagicMock
@@ -1246,7 +1247,7 @@ def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
     wake.assert_awaited_once_with()
 
 
-@pytest.mark.parametrize("change", ["status", "execution_config"])
+@pytest.mark.parametrize("change", ["status", "execution_config", "same_agent_config"])
 def test_runner_rejection_does_not_commit_issue_changes(
     test_client: TestClient,
     test_db: Session,
@@ -1294,9 +1295,23 @@ def test_runner_rejection_does_not_commit_issue_changes(
         status="queued",
     )
     test_db.add(execution)
+    if change == "same_agent_config":
+        from app.services.issue_assignments import issue_assignment_service
+
+        issue_assignment_service.record(
+            test_db,
+            project_id=delivery_project.id,
+            issue_id=item.id,
+            member_type="agent",
+            member_id=agent.id,
+            assigned_by_user_id=test_user.id,
+            workflow_step=None,
+            notify=False,
+            trigger="manual",
+        )
     test_db.commit()
     execution_id = execution.id
-    before = (item.status, item.version, dict(item.metadata_json or {}))
+    before = (item.status, item.version, deepcopy(item.metadata_json or {}))
     wake = AsyncMock()
     monkeypatch.setattr("app.tasks.robot_queue_tasks.consume_queues_background", wake)
     patch = (
@@ -1309,6 +1324,8 @@ def test_runner_rejection_does_not_commit_issue_changes(
             }
         }
     )
+    if change == "same_agent_config":
+        patch["assignee_agent_id"] = agent.id
 
     response = test_client.patch(
         f"/api/v1/loop-items/{item.id}",

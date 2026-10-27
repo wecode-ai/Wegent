@@ -19,7 +19,7 @@ from app.core.provider_credentials import mask_provider_config
 from app.schemas.base_role import BaseRole
 from app.schemas.board_views import BoardViews
 from app.schemas.issue_workflow import ProjectWorkflowDefinition
-from app.schemas.tagging import MAX_TAGS_PER_ITEM, normalize_tags
+from app.schemas.tagging import MAX_TAG_LENGTH, MAX_TAGS_PER_ITEM, normalize_tags
 from app.schemas.types import SnowflakeId
 from app.schemas.workspace import (
     ExecutionEnvironmentConfig,
@@ -222,7 +222,22 @@ class CloudProjectPullRequestAutomation(BaseModel):
         return list(dict.fromkeys(value))
 
 
+class ProjectTagChange(BaseModel):
+    """Rename or remove a project tag and all of its references atomically."""
+
+    source: str = Field(min_length=1, max_length=MAX_TAG_LENGTH)
+    target: str | None = Field(max_length=MAX_TAG_LENGTH)
+
+    @field_validator("source", "target")
+    @classmethod
+    def validate_tag(cls, value: str | None) -> str | None:
+        if value is not None and (not value.strip() or value != value.strip()):
+            raise ValueError("Tag names must be nonblank and trimmed")
+        return value
+
+
 class CloudProjectUpdate(BaseModel):
+    tag_change: ProjectTagChange | None = None
     membership_mode: Literal["inherit", "restricted"] | None = None
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = None
@@ -247,6 +262,13 @@ class CloudProjectUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_provider(self) -> "CloudProjectUpdate":
+        if self.tag_change is not None and self.model_fields_set - {
+            "version",
+            "tag_change",
+        }:
+            raise ValueError(
+                "Tag changes cannot be combined with other project updates"
+            )
         if self.visibility == "private" and self.public_access is not None:
             raise ValueError("Private projects cannot grant public access")
         if self.provider_config is not None:

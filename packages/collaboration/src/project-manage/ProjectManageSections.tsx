@@ -140,12 +140,14 @@ export function ProjectTagsSection({
                         setRenameValue(tag)
                       },
                       testId: `cloud-project-tag-rename-${tag}`,
+                      disabled: tagBusy,
                     },
                     {
                       label: host.translate('todo.delete_tag', '删除标签'),
                       icon: Trash2,
                       onSelect: () => deleteTag(tag),
                       testId: `cloud-project-tag-delete-${tag}`,
+                      disabled: tagBusy,
                       danger: true,
                     },
                   ],

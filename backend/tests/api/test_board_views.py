@@ -125,8 +125,9 @@ def test_views_preserve_history_extensions_and_old_client_writes(
 
 
 @pytest.mark.parametrize("role", ["Developer", "Viewer"])
+@pytest.mark.parametrize("field", ["board_views", "tag_change"])
 def test_only_project_administrators_can_save_views(
-    test_client: TestClient, test_db: Session, test_token: str, role: str
+    test_client: TestClient, test_db: Session, test_token: str, role: str, field: str
 ) -> None:
     owner = {"Authorization": f"Bearer {test_token}"}
     project = test_client.post(
@@ -159,7 +160,11 @@ def test_only_project_administrators_can_save_views(
         headers=headers,
         json={
             "version": project["version"],
-            "board_views": {"schema_version": 1, "views": []},
+            field: (
+                {"schema_version": 1, "views": []}
+                if field == "board_views"
+                else {"source": "old", "target": "new"}
+            ),
         },
     )
     assert result.status_code == 403

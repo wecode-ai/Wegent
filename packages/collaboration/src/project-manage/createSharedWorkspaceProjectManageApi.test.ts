@@ -23,7 +23,6 @@ const issue = {
 function createWorkspaceApi() {
   const getProject = vi.fn().mockResolvedValue(project)
   const updateProject = vi.fn().mockResolvedValue(project)
-  const updateIssue = vi.fn().mockResolvedValue(issue)
   const getBoardSnapshot = vi.fn().mockResolvedValue({
     items: [issue],
     members: [],
@@ -55,7 +54,6 @@ function createWorkspaceApi() {
     projects: { get: getProject, update: updateProject },
     issues: {
       getBoardSnapshot,
-      update: updateIssue,
     },
     members: {
       list: listMembers,
@@ -70,7 +68,6 @@ function createWorkspaceApi() {
     workspaceApi,
     getProject,
     updateProject,
-    updateIssue,
     getBoardSnapshot,
     listMembers,
     searchUsers,
@@ -81,6 +78,22 @@ function createWorkspaceApi() {
 }
 
 describe('createSharedWorkspaceProjectManageApi', () => {
+  it.each(['renamed', null])('sends one atomic tag operation with target %s', async target => {
+    const mocks = createWorkspaceApi()
+    const api = createSharedWorkspaceProjectManageApi(mocks.workspaceApi)
+
+    await api.updateProject('project-1', {
+      version: 2,
+      tag_change: { source: 'old', target },
+    })
+
+    expect(mocks.updateProject).toHaveBeenCalledOnce()
+    expect(mocks.updateProject).toHaveBeenCalledWith(
+      'project-1',
+      expect.objectContaining({ version: 2, tagChange: { source: 'old', target } })
+    )
+  })
+
   it('maps project, issue, member, and user reads to the canonical workspace API', async () => {
     const mocks = createWorkspaceApi()
     const api = createSharedWorkspaceProjectManageApi(mocks.workspaceApi)
@@ -124,7 +137,6 @@ describe('createSharedWorkspaceProjectManageApi', () => {
     const api = createSharedWorkspaceProjectManageApi(mocks.workspaceApi)
     const statuses = [{ id: 'todo', name: 'Todo', color: 'gray' as const }]
 
-    await api.updateItem('issue-1', { version: 3, tags: ['bug'] })
     await api.updateProject('project-1', {
       version: 2,
       tags: ['backend'],
@@ -144,13 +156,10 @@ describe('createSharedWorkspaceProjectManageApi', () => {
       },
     })
 
-    expect(mocks.updateIssue).toHaveBeenCalledWith('issue-1', {
-      version: 3,
-      tags: ['bug'],
-    })
     expect(mocks.updateProject).toHaveBeenCalledWith('project-1', {
       version: 2,
       tags: ['backend'],
+      tagChange: undefined,
       boardViews: { schema_version: 1, views: [] },
       visibility: 'public',
       providerConfig: { repository: 'wecode-ai/Wegent' },

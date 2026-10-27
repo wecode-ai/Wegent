@@ -83,6 +83,7 @@ export interface ProjectManageItem {
 
 export interface ProjectManageUpdate {
   version: number
+  tag_change?: { source: string; target: string | null }
   tags?: string[]
   board_views?: import('../project-board/projectBoardViews').ProjectBoardViews
   membership_mode?: 'inherit' | 'restricted'
@@ -124,7 +125,6 @@ export interface ProjectManageApi<
     }
   ): Promise<Member>
   removeMember(projectId: string, userId: number): Promise<void>
-  updateItem(itemId: string, values: { version: number; tags: string[] }): Promise<Item>
   updateProject(projectId: string, values: ProjectManageUpdate): Promise<Project>
 }
 

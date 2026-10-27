@@ -22,8 +22,8 @@ pub use model::{
     ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, DeliveryFinalize,
     IssueComment, LocalComment, LocalCommentCreate, LocalExecution, LocalExecutionClaim,
     LocalRuntimeCommentStart, LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile,
-    ProjectStoreKind, ProjectUpdate, RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate,
-    TaskProviderKind, TaskReorder, TaskSearch, TaskUpdate,
+    ProjectStoreKind, ProjectTagChange, ProjectUpdate, RuntimeTaskAddress, TaskAttachment,
+    TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskSearch, TaskUpdate,
 };
 pub use router::TaskRuntime;
 pub use store::{LocalTaskStore, TaskRuntimeError};

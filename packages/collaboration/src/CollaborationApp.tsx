@@ -1,9 +1,11 @@
-import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
-import { saveProjectBoardViews } from "./project-board/saveProjectBoardViews";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { bulkIssueStatus } from './platform/bulkIssueStatus'
+import { runnerEnvironmentError } from './execution-environment/runnerEnvironmentError'
+import { BrowserTaskDrafts } from './issue-detail/BrowserTaskDrafts'
+import { saveProjectBoardViews } from './project-board/saveProjectBoardViews'
 import { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -920,25 +922,24 @@ export function CollaborationApp({
                             }
                           : undefined
                       }
-                      onBulkStatusChange={async (selectedIssues, status) => {
-                        const results = await Promise.allSettled(
-                          selectedIssues.map((issue) =>
+                      batchFailedLabel={translate(
+                        'todo.batch_status_failed',
+                        '部分任务更新失败，请查看以下原因并重试。'
+                      )}
+                      onBulkStatusChange={(selectedIssues, status) =>
+                        bulkIssueStatus(
+                          selectedIssues,
+                          issue =>
                             commands.updateIssue(
                               issue.id,
-                              {
-                                version: issue.version,
-                                status,
-                              },
-                              { throwOnError: true },
+                              { version: issue.version, status },
+                              { throwOnError: true }
                             ),
-                          ),
-                        );
-                        if (
-                          results.some((result) => result.status === "rejected")
-                        ) {
-                          throw new Error(messages.saveFailed);
-                        }
-                      }}
+                          error =>
+                            runnerEnvironmentError(error, translate) ??
+                            (error instanceof Error ? error.message : messages.saveFailed)
+                        )
+                      }
                       statusName={(status) =>
                         projectStatuses(project, messages, translate).find(
                           (candidate) => candidate.id === status,

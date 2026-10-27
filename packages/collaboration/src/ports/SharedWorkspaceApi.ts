@@ -49,6 +49,7 @@ export interface WorkspaceProjectCreateInput {
 
 export interface WorkspaceProjectUpdateInput {
   version: number;
+  tagChange?: { source: string; target: string | null };
   name?: string;
   description?: string;
   tags?: string[];

@@ -4,8 +4,8 @@
 
 // @vitest-environment jsdom
 
-import { act, Children, type ReactElement, type ReactNode } from "react";
-import { createRoot } from "react-dom/client";
+import { act, Children, type ReactElement, type ReactNode } from 'react'
+import { createRoot } from 'react-dom/client'
 import { describe, expect, it, vi } from "vitest";
 import { ProjectBoardColumnSortPicker } from "./ProjectBoardColumnSortPicker";
 import { createProjectBoardSortLabels } from "./projectBoardSorting";
@@ -106,46 +106,39 @@ function props(): ProjectBoardBodyProps<{ id: string }> {
 }
 
 describe("ProjectBoardBody", () => {
-  it("keeps card nodes mounted when successful drop feedback moves or clears", () => {
-    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-    const container = document.createElement("div");
-    const root = createRoot(container);
-    const options = props();
-    options.renderItem = (item) => <button>{item.id}</button>;
+  it('keeps card nodes mounted when successful drop feedback moves or clears', () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const options = props()
+    options.renderItem = item => <button>{item.id}</button>
     const renderCards = () => {
-      const board = descendants(ProjectBoardBody(options)).find(
-        (node) => node.type === KanbanBoard,
-      )!;
+      const board = descendants(ProjectBoardBody(options)).find(node => node.type === KanbanBoard)!
       act(() =>
         root.render(
-          ["first", "second"].map((id) => (
-            <div key={id}>
-              {board.props.renderItem({ id }, options.columns[0])}
-            </div>
-          )),
-        ),
-      );
-    };
+          ['first', 'second'].map(id => (
+            <div key={id}>{board.props.renderItem({ id }, options.columns[0])}</div>
+          ))
+        )
+      )
+    }
     try {
-      renderCards();
-      const cards = [...container.querySelectorAll("button")];
-      for (const itemId of ["first", "second", null]) {
-        options.dropFeedback = itemId
-          ? { itemId, columnKey: "inbox", message: "Moved" }
-          : null;
-        renderCards();
-        const current = [...container.querySelectorAll("button")];
-        expect(current[0]).toBe(cards[0]);
-        expect(current[1]).toBe(cards[1]);
+      renderCards()
+      const cards = [...container.querySelectorAll('button')]
+      for (const itemId of ['first', 'second', null]) {
+        options.dropFeedback = itemId ? { itemId, columnKey: 'inbox', message: 'Moved' } : null
+        renderCards()
+        const current = [...container.querySelectorAll('button')]
+        expect(current[0]).toBe(cards[0])
+        expect(current[1]).toBe(cards[1])
         expect(
-          container.querySelector('[data-testid="board-drop-highlight"]')
-            ?.textContent ?? null,
-        ).toBe(itemId);
+          container.querySelector('[data-testid="board-drop-highlight"]')?.textContent ?? null
+        ).toBe(itemId)
       }
     } finally {
-      act(() => root.unmount());
+      act(() => root.unmount())
     }
-  });
+  })
 
   it("scopes copies of the same Issue to their current group and column", () => {
     const options = props();

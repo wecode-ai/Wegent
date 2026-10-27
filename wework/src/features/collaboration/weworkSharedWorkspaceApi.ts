@@ -434,6 +434,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               >[1]['provider_config'],
               board_config: input.boardConfig,
               board_views: input.boardViews,
+              tag_change: input.tagChange,
               card_display: input.cardDisplay,
               pull_request_automation: input.pullRequestAutomation as Parameters<
                 DeliveryApi['updateCloudProject']

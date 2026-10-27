@@ -1068,6 +1068,7 @@ export function createLocalDeliveryApi(
     async updateCloudProject(
       projectId: CloudProjectId,
       data: {
+        tag_change?: { source: string; target: string | null }
         name?: string
         description?: string
         tags?: string[]

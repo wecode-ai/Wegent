@@ -482,33 +482,39 @@ export function ProjectManageView<
     }
   }
 
+  async function changeTag(source: string, target: string | null, scope: typeof projectScope) {
+    setError(null)
+    dirtyRef.current.tags = true
+    try {
+      const updated = await updateProject({ tag_change: { source, target } }, scope)
+      if (projectScopeRef.current !== scope) return
+      setTags(updated.tags)
+      setItems(current =>
+        current.map(item => ({
+          ...item,
+          tags: [
+            ...new Set(
+              item.tags.flatMap(tag => (tag === source ? (target === null ? [] : [target]) : [tag]))
+            ),
+          ],
+        }))
+      )
+      setTagLoadRevision(current => current + 1)
+    } finally {
+      if (projectScopeRef.current === scope) dirtyRef.current.tags = false
+    }
+  }
+
   async function renameTag(source: string) {
+    if (tagBusy) return
     const target = renameValue.trim()
     setRenamingTag(null)
     if (!target || target === source || allTags.includes(target)) return
     const scope = projectScopeRef.current
     setTagBusy(true)
     try {
-      const boardViews = updateBoardViewTag(project.board_views, source, target, host.translate)
-      const changed = await Promise.all(
-        items
-          .filter(item => (item.tags ?? []).includes(source))
-          .map(item =>
-            api.updateItem(item.id, {
-              version: item.version,
-              tags: (item.tags ?? []).map(tag => (tag === source ? target : tag)),
-            })
-          )
-      )
-      if (projectScopeRef.current !== scope) return
-      setItems(current => current.map(item => changed.find(next => next.id === item.id) ?? item))
-      if (tags.includes(source) || boardViews) {
-        await persistTags(
-          tags.map(tag => (tag === source ? target : tag)),
-          scope,
-          boardViews
-        )
-      }
+      updateBoardViewTag(project.board_views, source, target, host.translate)
+      await changeTag(source, target, scope)
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
       reportError(cause, host.translate('todo.rename_tag_failed', '重命名标签失败'))
@@ -518,6 +524,7 @@ export function ProjectManageView<
   }
 
   async function deleteTag(tag: string) {
+    if (tagBusy) return
     let boardViews: ProjectManageUpdate['board_views']
     try {
       boardViews = updateBoardViewTag(project.board_views, tag, null, host.translate)
@@ -547,25 +554,7 @@ export function ProjectManageView<
     const scope = projectScopeRef.current
     setTagBusy(true)
     try {
-      const changed = await Promise.all(
-        items
-          .filter(item => (item.tags ?? []).includes(tag))
-          .map(item =>
-            api.updateItem(item.id, {
-              version: item.version,
-              tags: (item.tags ?? []).filter(value => value !== tag),
-            })
-          )
-      )
-      if (projectScopeRef.current !== scope) return
-      setItems(current => current.map(item => changed.find(next => next.id === item.id) ?? item))
-      if (tags.includes(tag) || boardViews) {
-        await persistTags(
-          tags.filter(value => value !== tag),
-          scope,
-          boardViews
-        )
-      }
+      await changeTag(tag, null, scope)
     } catch (cause) {
       if (projectScopeRef.current !== scope) return
       reportError(cause, host.translate('todo.delete_tag_failed', '删除标签失败'))
@@ -912,7 +901,15 @@ export function ProjectManageView<
             translate={(key, fallback, options) => host.translate(key, fallback ?? key, options)}
           />
         )}
-        {error && <p className="pb-6 text-xs text-destructive">{error}</p>}
+        {error && (
+          <p
+            role="alert"
+            data-testid="cloud-project-manage-error"
+            className="pb-6 text-xs text-destructive"
+          >
+            {error}
+          </p>
+        )}
       </div>
     </div>
   )

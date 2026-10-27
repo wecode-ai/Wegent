@@ -241,6 +241,28 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         `${laneSelector(column)} [data-testid="cloud-todo-card-${issue.id}"]`,
         { timeoutMs: uiTimeoutMs }
       )
+    await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+    await control.command('click', scoped('[data-testid="collaboration-project-settings-project"]'))
+    await control.command('click', scoped('[data-testid="cloud-project-manage-tags-toggle"]'))
+    await control.command('waitFor', scoped('[data-testid="cloud-project-tag-beta"]'))
+    await control.command('hover', scoped('[data-testid="cloud-project-tag-beta"]'))
+    await control.command('click', scoped('[data-testid="cloud-project-tag-menu-beta"]'))
+    await control.command('click', '[data-testid="cloud-project-tag-rename-beta"]')
+    await control.command('fill', scoped('[data-testid="cloud-project-tag-rename-input-beta"]'), {
+      value: 'reviewed',
+    })
+    await control.command('press', scoped('[data-testid="cloud-project-tag-rename-input-beta"]'), {
+      key: 'Enter',
+    })
+    await control.command('waitFor', scoped('[data-testid="cloud-project-tag-reviewed"]'))
+    await assertItem('completed', ['shared', 'reviewed'])
+    const renamed = (await request(`/api/v1/cloud-projects/${project.id}`)).board_views.views[0]
+    assert.equal(renamed.columns.find(column => column.id === beta).value, 'reviewed')
+    await openBoard(control)
+    await control.command(
+      'waitFor',
+      `${laneSelector(beta)} [data-testid="cloud-todo-card-${issue.id}"]`
+    )
     await control.command('click', scoped('[data-testid="board-view-picker"]'))
     await control.command('click', '[data-testid="board-view-edit"]')
     await control.command('click', '[data-testid="board-view-delete"]')
@@ -254,7 +276,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       (await request(`/api/v1/cloud-projects/${project.id}`)).board_views.default_view_id,
       'default'
     )
-    await assertItem('completed', ['shared', 'beta'])
+    await assertItem('completed', ['shared', 'reviewed'])
   }
 
   async function verifyLocalBoard(control) {
