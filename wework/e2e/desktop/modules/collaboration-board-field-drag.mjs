@@ -6,6 +6,7 @@ import {
   selectProjectBoardSort,
 } from './collaboration-board-personal-view.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
+import { waitForVisibleBoardCard } from './collaboration-board-flows.mjs'
 
 const card = (column, id) =>
   `[data-testid="cloud-todo-column-${column}"] [data-testid="cloud-todo-card-${id}"]`
@@ -13,7 +14,7 @@ const card = (column, id) =>
 export async function assertLaneOrder(control, scoped, columnKey, ids) {
   const selector = scoped(`[data-testid="cloud-todo-column-${columnKey}"]`)
   for (const id of ids) {
-    await control.command('waitFor', scoped(card(columnKey, id)), { visible: true })
+    await waitForVisibleBoardCard(control, scoped(card(columnKey, id)))
   }
   await control.command('waitFor', selector, { stableMs: 300 })
   const testIds = JSON.parse(await control.command('getTestIdOrder', selector))
@@ -188,7 +189,7 @@ export async function verifyBoardFieldDrag(control, { scoped, request, project, 
     }
     await reloadMainWindow(control, 'The cross-column field mutation did not reload')
     await openProjectBoard(control, scoped, project)
-    await control.command('waitFor', scoped(card(move.target, moving.id)), { visible: true })
+    await waitForVisibleBoardCard(control, scoped(card(move.target, moving.id)))
     await control.command('waitFor', scoped(card(move.source, moving.id)), { visible: false })
     console.log(
       `[desktop-e2e] PASS board-drag: ${move.group} cross-column ${move.source} -> ${move.target} persisted and survived reload`
@@ -228,7 +229,7 @@ export async function verifyReadOnlyBoardDrag(
   ]) {
     await selectProjectBoardGrouping(control, scoped, group)
     const sourceCard = scoped(card(source, moving.id))
-    await control.command('waitFor', sourceCard, { visible: true })
+    await waitForVisibleBoardCard(control, sourceCard)
     assert.equal(
       await control.command('getAttribute', sourceCard, { value: 'aria-roledescription' }),
       '',
@@ -251,7 +252,7 @@ export async function verifyReadOnlyBoardDrag(
     await control.command('waitFor', scoped(card(target, moving.id)), { visible: false })
     await reloadMainWindow(control, 'The Viewer board drag attempt did not reload')
     await openProjectBoard(control, scoped, project)
-    await control.command('waitFor', sourceCard, { visible: true })
+    await waitForVisibleBoardCard(control, sourceCard)
     await control.command('waitFor', scoped(card(target, moving.id)), { visible: false })
     console.log(
       `[desktop-e2e] PASS board-drag: Viewer cannot drag in ${group} grouping; backend and reload unchanged`

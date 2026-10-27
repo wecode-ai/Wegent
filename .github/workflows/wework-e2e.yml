@@ -465,10 +465,11 @@ jobs:
       - changes
     if: needs.changes.outputs.windows_desktop_core_e2e == 'true'
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       ELECTRON_CACHE: ${{ github.workspace }}/.ci-cache/electron
       WEGENT_CODEX_CACHE_DIR: ${{ github.workspace }}/.ci-cache/codex
+      WEWORK_CODEX_PROFILE: ci
 
     steps:
       - name: Checkout code
@@ -661,16 +662,20 @@ jobs:
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Windows Wework desktop Core E2E build
-        uses: actions/download-artifact@v6
-        with:
-          name: wework-desktop-windows-core-e2e-build
-          path: wework/electron/release/WeWork-win32-x64
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            wework-desktop-windows-core-e2e-build \
+            wework/electron/release/WeWork-win32-x64
 
       - name: Download Windows Redis E2E tools
-        uses: actions/download-artifact@v6
-        with:
-          name: wework-desktop-windows-redis-e2e-tools
-          path: wework/test-results/windows-e2e-tools/redis
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            wework-desktop-windows-redis-e2e-tools \
+            wework/test-results/windows-e2e-tools/redis
 
       - name: Configure Windows Redis E2E tools
         shell: pwsh

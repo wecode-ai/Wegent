@@ -365,6 +365,23 @@ impl CodexNotificationEventMapper {
                         "is_subagent",
                         self.is_subagent_delta(notification.params).to_string(),
                     ),
+                    (
+                        "item_id",
+                        notification_item_id(notification.params).unwrap_or_default(),
+                    ),
+                    (
+                        "resolved_phase",
+                        self.agent_message_phases
+                            .phase_for_delta(notification.params)
+                            .unwrap_or_default(),
+                    ),
+                    (
+                        "emitted_at_ms",
+                        message
+                            .get("emittedAtMs")
+                            .map(Value::to_string)
+                            .unwrap_or_default(),
+                    ),
                 ],
             );
         }

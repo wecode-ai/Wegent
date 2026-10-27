@@ -73,6 +73,8 @@ for transferred accounts do not initiate DWS login.
 
 ## CI and official distribution
 
+The Plugin Auth SDK workflow downloads and verifies the pinned source once during input preparation, then supplies that archive as a workflow artifact to the Linux, macOS and Windows native jobs. Every platform verifies the same bytes again through `--source-archive` and retains all native builds and tests. Missing artifacts and checksum mismatches fail; workflow reruns overwrite the named input artifact. Test jobs no longer contact the source download domain individually.
+
 The plugin-local `.wework-build.json` declares a Python build entry and generated
 directories. All inputs live under `plugins/dingtalk/.wework-build/`, so selecting
 and mirroring the plugin into an internal MR retains the complete build contract.

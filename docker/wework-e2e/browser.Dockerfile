@@ -16,8 +16,13 @@ RUN apt-get update \
     | env UV_INSTALL_DIR=/usr/local/bin sh
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV UV_PYTHON=3.11 \
+    UV_PYTHON_PREFERENCE=only-managed \
+    UV_PYTHON_INSTALL_DIR=/opt/uv/python
 
-RUN node --version \
+RUN uv python install "$UV_PYTHON" \
+  && uv run --no-project python -c 'import ssl; print(ssl.OPENSSL_VERSION)' \
+  && node --version \
   && docker --version \
   && pnpm --version \
   && uv --version \

@@ -61,6 +61,8 @@ sidebar_position: 4
 
 ## 后端测试
 
+平台 E2E 的第 1 分片运行 `backend/tests/integration/task_project_links_mysql.py`，使用独立临时 MySQL 数据库验证项目任务关联清理与任务创建的并发。回归在保持无关占位任务主键锁的情况下，要求空项目及已有任务的项目清理都能完成；另验证发现任务后发生的项目迁移不会被清理覆盖。Store 单测同时检查用户、客户端范围与事务回滚。
+
 ### 运行测试
 
 ```bash
@@ -249,6 +251,12 @@ pnpm --dir wework test -- runtimePaneMessages.test.ts
 选项原样传递给测试运行器。运行聚焦测试时，应确认输出中的 `Test Files` 数量符合
 预期，避免误跑全量测试。
 
+开发构建监听使用同一套输入版本快照每 350 毫秒检查变化，排除产物目录，串行运行
+新的 Vite 构建实例。macOS 原生目录事件没有就绪信号，不能作为首次编辑已被订阅的
+保证；快照检查是唯一监听路径，不叠加事件或重试。该扫描只在显式启动开发构建监听
+时运行。回归必须保留真实文件编辑、构建失败恢复、CSS 资源更新，并覆盖首次构建
+期间的修改合并和关闭后的停止观察。
+
 ## Wework 桌面云设备测试
 
 从仓库根目录运行云设备功能 E2E：
@@ -291,6 +299,41 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 
 CI 稳定性依赖以下约束：
 
+- 平台 E2E 的 `Attachment S3 Upload E2E` 必须连接真实 MySQL、Redis 和 MinIO，
+  执行 `Run real S3 attachment upload E2E`；不能用签名单测替代完整上传验证。
+
+- 执行器已确认的旧轮次快照，在后续轮次完成后仍须拒绝，不能重新显示运行中；
+  仅在历史中出现、尚未获执行器确认的轮次不能据此判定为旧轮次。保留新执行恢复、
+  同秒内连续启动、设备别名归并和已停止 Goal 的回归断言。
+- macOS 关闭到托盘保留 WebView。窗口生命周期检查必须确认隐藏、恢复可见以及
+  原控制连接保留；随后显式重载 WebView，再验证新连接身份与旧连接不能抢取命令，
+  同时保持原 executor 进程和运行任务。
+
+- `core-task-flow` 在任务详情的滚动文档中先等待动态输入框挂载，再滚动到输入框并
+  验证可见性。该检查点还在 1024×600 视口下从详情顶部滚动到输入框，断言输入框
+  完整位于详情可视区域内，然后继续验证评论发送和协作页动态一致性。不要把挂载
+  等同于进入视口，也不要通过延长普通 UI 等待时间解决缺少滚动操作的问题。
+
+- 云端第 7 分片同时运行 `plugin-composer-long-list` 和
+  `plugin-collaboration-composer-isolation`，验证协作输入框与普通任务的插件目录隔离。
+  合并 CI 分类或目录上下文逻辑时必须保留两个检查点。
+
+- 智能应用列表刷新已有卡片时必须保留卡片及模型控件，只在没有可显示卡片时使用
+  全页加载占位。停止一个应用后的刷新成功或失败均不得卸载其他应用的模型控件；
+  生命周期 E2E 继续直接验证原有控件和模型切换断言。
+
+- 原生历史压力场景在最终回答标记之前先处理 520 条进度消息，使用已有的模型响应预算
+  `modelResponseTimeoutMs`（默认 30 秒）。任务切换等后续 UI 交互使用普通 10 秒预算；
+  历史条数、顺序、身份和去重断言保持完整。
+- 持有流式模型响应的场景必须在释放响应前保留失败现场；释放会完成原生轮次，
+  使随后采集的消息无法反映超时时的状态。会话切换场景记录模型批次写入、刷新、
+  UI 等待的时间戳及释放前消息。需要进一步取证时，用
+  `WEGENT_CODEX_STREAM_DEBUG=1` 显式启用原生流诊断，核对 item 身份和 phase。
+  诊断不改变断言或等待时限，且不得记录认证信息。
+- 模型测试服务器通过 `trackModelServerConnections` 统一管理连接错误，包括升级后的
+  WebSocket。场景不要重复把模型客户端的 `ECONNRESET` 转成服务器错误：客户端可能
+  在预热或完成回复后断开，而 UI 断言或截图仍在进行。请求次数、完成文本和错误状态
+  仍须独立断言；其他连接错误及非模型连接的错误仍必须失败。
 - 平台 E2E 的 MySQL 服务必须为首次初始化保留启动宽限。健康检查的
   `start-period` 应覆盖共享 runner 上的冷启动，再通过检查间隔和重试次数判断失败；
   不要依赖重跑掩盖初始化超时。
@@ -324,6 +367,9 @@ CI 稳定性依赖以下约束：
   Dockerfile 的内容哈希决定；工作流只在该标签不存在时构建并发布镜像，后续任务
   直接在镜像容器中运行，不再逐任务安装 Node、pnpm、uv、Rust、Playwright 浏览器
   或桌面系统包。本地调试命令不会构建这些 CI 镜像。
+- 平台 E2E 浏览器镜像内由 uv 安装 Python 3.11，并在构建时导入 `ssl` 验证 TLS
+  支持。容器分片只恢复 uv 下载缓存，不使用宿主机工具缓存中的 Python，避免 runner
+  系统升级后解释器与容器系统库不兼容。
 - uv 只缓存下载和构建结果，不缓存项目 `.venv`。缓存 key 包含对应 `uv.lock`，
   按 Python 3.10、3.11、3.12 各维护一份共享缓存，保存前执行 CI prune。
 - Playwright browser、Next.js build cache、本地 harness CLI 和桌面 Cargo target
@@ -332,10 +378,16 @@ CI 稳定性依赖以下约束：
   依赖图和包完整性的 npm 安装。
 - Rust 单测、Windows check、发布、快照和 macOS 内存门禁通过 sccache 复用编译器
   输出。`main` 预热会在 `macos-14` 上执行与内存门禁一致的 Electron 桌面构建，
-  非 `main` 任务以只读模式访问共享 sccache。sccache 临时无法安装时，任务会输出
-  告警并直接编译，不会因为缓存优化不可用而失败。
+  非 `main` 任务以只读模式访问共享 sccache。安装或缓存后端启动不可用时，任务会
+  告警并直接编译。配置通过 `sccache --start-server` 验证后端可用后才启用
+  `RUSTC_WRAPPER`；`--show-stats` 在服务未启动时也可成功，不能作为健康检查。
+  启动诊断输出不进入 CI 日志，避免缓存服务的临时签名 URL 泄漏；实际编译和测试
+  仍照常执行并保留失败结果。
 - Wework Desktop Core E2E 继续使用 `main` 拥有的 Cargo target cache，因为它需要
   在多个桌面 job 之间复用同一套完整二进制产物。
+- Windows Codex 在每次工作流执行时都走相同的缓存校验和构建流程，不依赖首轮
+  workflow attempt 的 artifact。缓存仍由 `main` 写入；复用前检查源码版本、构建
+  recipe 和两个可执行文件的哈希，并重新运行原生权限测试。
 - 平台 E2E、Release 和 Snapshot 的 Docker BuildKit cache 存放在对应 GHCR 镜像的
   build cache tag，不占用 GitHub Actions dependency cache 配额。
 - 非 Wework E2E 的 Executor 和 Electron 系统依赖安装前先检查 runner 已安装的软件包；

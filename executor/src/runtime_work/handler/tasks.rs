@@ -688,7 +688,22 @@ impl RuntimeWorkRpcHandler {
         if request.project_workspace_path.as_deref() != Some(workspace_path.as_str()) {
             request.project_workspace_path = Some(workspace_path.clone());
         }
+        let preparation_started = std::time::Instant::now();
+        let log_preparation_stage = |stage: &str| {
+            log_executor_event(
+                "runtime task create preparation",
+                &[
+                    ("task_id", local_task_id.clone()),
+                    ("stage", stage.to_owned()),
+                    (
+                        "elapsed_ms",
+                        preparation_started.elapsed().as_millis().to_string(),
+                    ),
+                ],
+            );
+        };
         self.apply_project_workspace_roots(&mut request);
+        log_preparation_stage("workspace_roots_applied");
 
         let mut link = RuntimeTaskLink::new_pending_with_runtime(
             local_task_id.clone(),
@@ -764,7 +779,9 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let mut runtime_handle = runtime_handle_json(&link);
+        log_preparation_stage("runtime_handle_prepared");
         self.upsert_local_task(link);
+        log_preparation_stage("local_task_persisted");
         self.schedule_worktree_prune();
         if is_claude_runtime(&runtime) {
             self.prepare_claude_goal(&local_task_id, &mut request, &payload);

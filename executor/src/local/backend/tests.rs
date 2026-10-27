@@ -450,7 +450,11 @@ fn normalizes_backend_context_for_local_task_mcp() {
     let config = backend_config("local-device");
     let mut request = ExecutionRequest::default();
 
-    normalize_local_task_request(&mut request, &config);
+    normalize_local_task_request(
+        &mut request,
+        &config,
+        connection_snapshot_from_config(&config).as_ref(),
+    );
 
     assert_eq!(
         request.backend_url.as_deref(),
@@ -458,6 +462,23 @@ fn normalizes_backend_context_for_local_task_mcp() {
     );
     assert_eq!(request.auth_token.as_deref(), Some("token"));
     assert_eq!(request.runtime_auth_token.as_deref(), Some("runtime-token"));
+    assert_eq!(request.device_id.as_deref(), Some("local-device"));
+}
+
+#[test]
+fn task_execution_uses_refreshed_runtime_credentials() {
+    let config = backend_config("local-device");
+    let mut connection = connection_snapshot_from_config(&config).unwrap();
+    connection.runtime_auth_token = "refreshed-runtime-token".to_owned();
+    let mut request = ExecutionRequest::default();
+
+    normalize_local_task_request(&mut request, &config, Some(&connection));
+
+    assert_eq!(
+        request.runtime_auth_token.as_deref(),
+        Some("refreshed-runtime-token")
+    );
+    assert_eq!(request.auth_token.as_deref(), Some("token"));
     assert_eq!(request.device_id.as_deref(), Some("local-device"));
 }
 
@@ -479,7 +500,11 @@ fn local_project_request_keeps_device_without_backend_context() {
     request
         .extra
         .insert("origin".into(), json!({"projectStore":"local"}));
-    normalize_local_task_request(&mut request, &config);
+    normalize_local_task_request(
+        &mut request,
+        &config,
+        connection_snapshot_from_config(&config).as_ref(),
+    );
     assert_eq!(request.device_id.as_deref(), Some("local-device"));
     assert!(request.backend_url.is_none());
     assert!(request.auth_token.is_none());

@@ -103,6 +103,33 @@ function localCodexPlugin(overrides?: {
 }
 
 describe('mergeInstalledPlugins', () => {
+  test.each(['not_installed', 'installed'] as const)(
+    'does not treat cached cloud %s membership as local materialization',
+    installState => {
+      const cloud = cloudPlugin({ installState, version: '1.0.0' })
+      cloud.status.devices = [
+        {
+          deviceId: 'current-device',
+          desiredReleaseId: 6,
+          actualReleaseId: null,
+          state: 'pending',
+          attemptCount: 0,
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ]
+      const cached = structuredClone(cloud)
+
+      const merged = mergeInstalledPlugins([cloud], [cached], 'current-device')
+
+      if (installState === 'not_installed') {
+        expect(merged).toEqual([])
+      } else {
+        expect(merged).toHaveLength(1)
+        expect(hasLocalCodexMaterialization(merged[0]!)).toBe(false)
+        expect(merged[0]?.spec.sourcePayload).toBeNull()
+      }
+    }
+  )
   test.each([false, true])('requires local evidence in cached account rows: %s', localPresent => {
     const cloud = cloudPlugin({ installState: 'not_installed', version: '1.0.0' })
     cloud.status.devices = [

@@ -1,9 +1,10 @@
 export async function sendNativeKeyAndWait(
   target: HTMLElement,
   phase: 'press' | 'down' | 'up',
-  send: () => Promise<unknown>
+  send: () => Promise<unknown>,
+  options: { waitForRelease?: boolean } = {}
 ): Promise<void> {
-  const type = phase === 'up' ? 'keyup' : 'keydown'
+  const type = phase === 'up' || (phase === 'press' && options.waitForRelease) ? 'keyup' : 'keydown'
   let acknowledge: () => void
   let reject: (error: Error) => void
   const received = new Promise<void>((resolve, rejectEvent) => {

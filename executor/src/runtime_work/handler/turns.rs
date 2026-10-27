@@ -661,9 +661,11 @@ impl RuntimeWorkRpcHandler {
             .and_then(|value| value.as_str().map(ToOwned::to_owned));
         let worktrees = self.worktrees.clone();
         let worktree_id = turn.local_task_id.clone();
-        let previous_root = source_path.clone();
-        let record =
-            tokio::task::spawn_blocking(move || match (planned_path, repo_root_fingerprint) {
+        let mut workspace_roots = turn.request.runtime_workspace_roots.clone();
+        let (record, workspace_roots) = tokio::task::spawn_blocking(move || {
+            let previous_root = fs::canonicalize(&source_path)
+                .map_err(|error| format!("Failed to resolve Worktree source: {error}"))?;
+            let record = match (planned_path, repo_root_fingerprint) {
                 (Some(planned_path), Some(repo_root_fingerprint)) => worktrees.prepare_planned(
                     Path::new(&source_path),
                     &worktree_id,
@@ -685,21 +687,24 @@ impl RuntimeWorkRpcHandler {
                     git_ref.as_deref(),
                     false,
                 ),
-            })
-            .await
-            .map_err(|error| {
-                AppIpcError::new(
-                    "worktree_prepare_failed",
-                    format!("Worktree preparation task failed: {error}"),
-                )
-            })?
-            .map_err(|error| AppIpcError::new(worktree_error_code(&error), error))?;
-        turn.request.project_workspace_path = Some(record.path.clone());
-        for root in &mut turn.request.runtime_workspace_roots {
-            if *root == previous_root {
-                *root = record.path.clone();
+            }?;
+            for root in &mut workspace_roots {
+                if fs::canonicalize(&*root).is_ok_and(|path| path == previous_root) {
+                    *root = record.path.clone();
+                }
             }
-        }
+            Ok::<_, String>((record, workspace_roots))
+        })
+        .await
+        .map_err(|error| {
+            AppIpcError::new(
+                "worktree_prepare_failed",
+                format!("Worktree preparation task failed: {error}"),
+            )
+        })?
+        .map_err(|error| AppIpcError::new(worktree_error_code(&error), error))?;
+        turn.request.project_workspace_path = Some(record.path.clone());
+        turn.request.runtime_workspace_roots = workspace_roots;
         self.store.update_task(&turn.local_task_id, |link| {
             link.workspace_path = record.path.clone();
             link.updated_at = now_ms();

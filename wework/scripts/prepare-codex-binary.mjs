@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
 import { extract } from 'tar'
 import { acquireProcessLock } from './lib/process-lock.mjs'
+import { buildWindowsCodex, CODEX_SOURCE_VERSION } from './lib/codex-windows-source.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -312,8 +313,7 @@ async function prepareTarget(target, entry) {
     ),
   ]
   const outputTargetRoot = join(outputRoot, target)
-  const targetRoot = extractedRoot
-  const binaryPath = join(targetRoot, entry.binaryPath)
+  const binaryPath = join(extractedRoot, entry.binaryPath)
   const codeModeHostPath = join(
     dirname(binaryPath),
     target === 'x86_64-pc-windows-msvc' ? 'codex-code-mode-host.exe' : 'codex-code-mode-host'
@@ -335,7 +335,21 @@ async function prepareTarget(target, entry) {
 
   await ensureTarballIntegrity(tarballPath, entry, target)
 
-  await ensureExtractedTarget(tarballPath, targetRoot, binaryPath, codeModeHostPath)
+  await ensureExtractedTarget(tarballPath, extractedRoot, binaryPath, codeModeHostPath)
+  let targetRoot = extractedRoot
+  let sourceBuild = null
+  if (target === 'x86_64-pc-windows-msvc') {
+    if (entry.version !== `${CODEX_SOURCE_VERSION}-win32-x64`) {
+      throw new Error('Windows Codex package does not match the reviewed source version')
+    }
+    if (process.platform !== 'win32') {
+      throw new Error('Windows Codex must be prepared on Windows to verify its permission broker')
+    }
+    sourceBuild = await buildWindowsCodex(sharedCacheRoot)
+    targetRoot = join(sharedCacheRoot, 'windows-source', sourceBuild.recipe, 'package')
+    await cp(extractedRoot, targetRoot, { recursive: true })
+    await cp(sourceBuild.binary, join(targetRoot, entry.binaryPath))
+  }
   await exposeTarget(targetRoot, outputTargetRoot)
   await writeFile(
     join(outputTargetRoot, 'WEGENT_CODEX_BINARY.json'),
@@ -346,6 +360,15 @@ async function prepareTarget(target, entry) {
         binaryPath: entry.binaryPath,
         tarball: entry.tarball,
         integrity: entry.integrity,
+        ...(sourceBuild
+          ? {
+              sourceBuild: {
+                sourceCommit: sourceBuild.sourceCommit,
+                recipe: sourceBuild.recipe,
+                sha256: sourceBuild.sha256,
+              },
+            }
+          : {}),
       },
       null,
       2

@@ -53,9 +53,10 @@ export function createDesktopScenario({
   const quote = value => "'" + value.replaceAll("'", "'\\''") + "'"
   const powershellQuote = value => "'" + value.replaceAll("'", "''") + "'"
   let networkProbeRequests = 0
-  let verifiedSandbox = false
+  let verifiedPermissions = false
   let allowedReviews = 0
   let deniedReviews = 0
+  let commandReviews = 0
   return {
     async prepareApp({ codexHome }) {
       pluginSkill = join(
@@ -77,7 +78,9 @@ export function createDesktopScenario({
       })
     },
     reviewApproval(body) {
-      const dangerous = JSON.stringify(body.input ?? []).includes('REVIEW_PRIVATE_READ')
+      const reviewInput = JSON.stringify(body.input ?? [])
+      const dangerous = reviewInput.includes('REVIEW_PRIVATE_ACCESS')
+      if (reviewInput.includes('source-approved-proof.txt')) commandReviews++
       if (dangerous) deniedReviews++
       else allowedReviews++
       return {
@@ -92,7 +95,7 @@ export function createDesktopScenario({
     async handleHttp(request, response, url) {
       if (url.pathname === '/external-source-probe') {
         networkProbeRequests++
-        response.writeHead(200)
+        response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' })
         response.end('AUTHORIZED_NETWORK_READ')
         return true
       }
@@ -107,23 +110,36 @@ export function createDesktopScenario({
           assert.ok(!output.includes('SYNTHETIC_SOURCE_PRIVATE_DATA'))
           assert.ok(/denied|reject|not authorized|declined/i.test(output), output)
           assert.ok(allowedReviews > 0, 'The native reviewer must approve the context read')
-          assert.ok(deniedReviews > 0, 'The native reviewer must deny the private read')
-          verifiedSandbox = true
+          assert.ok(deniedReviews > 0, 'The native reviewer must deny unrelated private access')
+          assert.equal(await readFile(privateFile, 'utf8'), 'SYNTHETIC_SOURCE_PRIVATE_DATA')
+          verifiedPermissions = true
         } else if (requestContainsToolOutput(body, 'source-escalation-not-persistent')) {
           const output = toolOutputText(body, 'source-escalation-not-persistent') ?? ''
-          assert.ok(output.includes('SOURCE_OUTSIDE_WRITE_BLOCKED'), output)
-          assert.ok(!output.includes('SOURCE_OUTSIDE_WRITE_ALLOWED'), output)
-          assert.equal(await readFile(elevatedFile, 'utf8'), 'approved-escalation')
+          const expectedAccess =
+            process.platform === 'win32'
+              ? 'SOURCE_OUTSIDE_WRITE_ALLOWED'
+              : 'SOURCE_OUTSIDE_WRITE_BLOCKED'
+          const unexpectedAccess =
+            process.platform === 'win32'
+              ? 'SOURCE_OUTSIDE_WRITE_BLOCKED'
+              : 'SOURCE_OUTSIDE_WRITE_ALLOWED'
+          assert.ok(output.includes(expectedAccess), output)
+          assert.ok(!output.includes(unexpectedAccess), output)
+          assert.equal(
+            (await readFile(elevatedFile, 'utf8')).trimEnd(),
+            process.platform === 'win32' ? 'approved-escalationunapproved' : 'approved-escalation'
+          )
           const command =
             process.platform === 'win32'
-              ? `Get-Content -LiteralPath '${privateFile.replaceAll("'", "''")}' # REVIEW_PRIVATE_READ`
-              : `cat ${quote(privateFile)} # REVIEW_PRIVATE_READ`
+              ? `Remove-Item -LiteralPath ${powershellQuote(privateFile)} -Force -ErrorAction Stop # REVIEW_PRIVATE_ACCESS`
+              : `cat ${quote(privateFile)} # REVIEW_PRIVATE_ACCESS`
           const tool = selectShellToolCommand(body, command, undefined)
           tool.arguments.sandbox_permissions = 'require_escalated'
           tool.arguments.justification =
-            'REVIEW_PRIVATE_READ: source requests an unrelated private file'
+            'REVIEW_PRIVATE_ACCESS: source requests an unrelated private file'
           events = functionCall('source-private-review', tool.name, tool.arguments)
         } else if (requestContainsToolOutput(body, 'source-approved-escalation')) {
+          assert.ok(commandReviews > 0, 'Explicit command approval must reach the native reviewer')
           const output = toolOutputText(body, 'source-approved-escalation') ?? ''
           assert.ok(output.includes('SOURCE_ESCALATION_SUCCEEDED'), output)
           assert.equal(await readFile(elevatedFile, 'utf8'), 'approved-escalation')
@@ -138,16 +154,23 @@ export function createDesktopScenario({
           for (const marker of [
             'SOURCE_PLUGIN_RESOURCE_READABLE',
             'SOURCE_GH_CONFIG_READABLE',
-            'SOURCE_OUTSIDE_WRITE_BLOCKED',
+            process.platform === 'win32'
+              ? 'SOURCE_OUTSIDE_WRITE_ALLOWED'
+              : 'SOURCE_OUTSIDE_WRITE_BLOCKED',
             'AUTHORIZED_NETWORK_READ',
           ]) {
             assert.ok(output.includes(marker), output)
           }
-          assert.ok(!output.includes('SOURCE_OUTSIDE_WRITE_ALLOWED'), output)
-          await assert.rejects(readFile(elevatedFile), { code: 'ENOENT' })
+          if (process.platform === 'win32') {
+            assert.ok(!output.includes('SOURCE_OUTSIDE_WRITE_BLOCKED'), output)
+            assert.equal(await readFile(elevatedFile, 'utf8'), 'unapproved')
+          } else {
+            assert.ok(!output.includes('SOURCE_OUTSIDE_WRITE_ALLOWED'), output)
+            await assert.rejects(readFile(elevatedFile), { code: 'ENOENT' })
+          }
           const command =
             process.platform === 'win32'
-              ? `Set-Content -LiteralPath ${powershellQuote(elevatedFile)} -Value 'approved-escalation' -NoNewline -ErrorAction Stop; Write-Output 'SOURCE_ESCALATION_SUCCEEDED'`
+              ? `Remove-Item -LiteralPath ${powershellQuote(elevatedFile)} -Force -ErrorAction Stop; Set-Content -LiteralPath ${powershellQuote(elevatedFile)} -Value 'approved-escalation' -NoNewline -ErrorAction Stop; Write-Output 'SOURCE_ESCALATION_SUCCEEDED'`
               : `printf 'approved-escalation' > ${quote(elevatedFile)} && printf 'SOURCE_ESCALATION_SUCCEEDED'`
           const tool = selectShellToolCommand(body, command, undefined)
           tool.arguments.sandbox_permissions = 'require_escalated'
@@ -388,7 +411,7 @@ export function createDesktopScenario({
         await new Promise(resolve => setTimeout(resolve, 200))
       }
       assert.equal(task?.status, 'done', JSON.stringify(task))
-      assert.equal(verifiedSandbox, true)
+      assert.equal(verifiedPermissions, true)
       assert.equal(networkProbeRequests, 1)
       assert.equal(
         await readFile(join(task.workspacePath, 'source-sandbox-proof.txt'), 'utf8'),

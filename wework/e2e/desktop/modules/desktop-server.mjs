@@ -1,4 +1,5 @@
 import { nativeApprovalModelResponse } from './native-approval-model.mjs'
+import { trackModelServerConnections } from './model-server-connections.mjs'
 import {
   installedMiniProgramPlugin,
   installedSitesPlugin,
@@ -447,6 +448,7 @@ class DesktopE2EServer {
     this.server = createServer((request, response) => {
       void this.handle(request, response).catch(error => this.fail(error, response))
     })
+    trackModelServerConnections(this.server)
     this.setDesktopScenario(desktopScenario)
     this.controlServer = createServer((request, response) => {
       void this.handleControl(request, response).catch(error => this.fail(error, response))

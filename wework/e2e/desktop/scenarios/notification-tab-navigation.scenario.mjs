@@ -55,7 +55,17 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       const boardTab = await control.command('getAttribute', '[role="tab"][aria-selected="true"]', {
         value: 'data-testid',
       })
-      const source = JSON.parse(await control.command('snapshot', 'body'))
+      // The board renders before its asynchronous project lookup updates the tab URL.
+      const source = await waitFor(
+        control,
+        async () => JSON.parse(await control.command('snapshot', 'body')),
+        value => {
+          const params = new URL(value.location).searchParams
+          return Boolean(params.get('projectId')) && params.get('workspaceTabTitle') === projectName
+        },
+        'The source project route did not finish opening',
+        uiTimeoutMs
+      )
       const boardLocation = source.location
       assert.ok(
         new URL(boardLocation).searchParams.get('projectId'),

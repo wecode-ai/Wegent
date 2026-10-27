@@ -288,6 +288,17 @@ and verification in the configured release environment.
 
 ### Local authorization diagnostic stream
 
+CI enables host-owned temporary stage files with `WEGENT_PLUGIN_AUTH_DIAGNOSTICS=1`;
+files are removed after the invocation. On `plugin_auth_timeout`, the Executor records the host transport stage and the
+last SDK milestone: `imported`, `ready`, `nonce_read`, `connected`, or `nonce_sent`, with
+`not_observed` when none arrived. These fixed markers distinguish interpreter
+startup, capability reads, and loopback authentication without recording raw
+stderr, capabilities, credentials, or configuration. `imported` and `ready` mark
+transport module loading and completion of SDK imports, respectively. Stage files
+contain only fixed enums; the host reads at most 32 bytes and ignores unknown values.
+Unavailable diagnostics do not affect authentication. Adapter stdout, stderr, and
+existing execution deadlines remain unchanged.
+
 Local authorization commands can emit JSON lines prefixed with
 `WEWORK_PLUGIN_AUTH_DIAGNOSTIC:` on stderr. The Executor consumes them before the
 command exits and records allowlisted fields in the existing `executor.log`,

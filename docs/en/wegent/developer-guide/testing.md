@@ -61,6 +61,8 @@ The project includes comprehensive unit testing support across all modules:
 
 ## Backend Tests
 
+Platform E2E shard 1 runs `backend/tests/integration/task_project_links_mysql.py` against an isolated temporary MySQL database. While an unrelated reserved task's primary key remains locked, cleanup must complete for both empty projects and projects with linked tasks. It also verifies that cleanup preserves a project move committed after task discovery. Store unit tests cover owner and client scope and transaction rollback.
+
 ### Running Tests
 
 ```bash
@@ -250,6 +252,15 @@ passes all remaining file filters and Vitest options through unchanged. For a
 focused run, confirm that the reported `Test Files` count matches the intended
 scope so an accidental full-suite run is caught immediately.
 
+The development build watcher checks the same input-version snapshots every
+350 milliseconds, excludes emitted output, and serializes fresh Vite builds.
+Native macOS directory events have no readiness signal and cannot guarantee
+subscription before the first edit. Snapshot checks are the sole observation
+path, without an additional event or retry path, and run only while the explicit
+development build watcher is active. Regressions retain real file edits, build
+failure recovery, and CSS asset updates, and cover coalescing edits during the
+initial build and stopping observation after close.
+
 ## Wework Desktop Cloud Device Tests
 
 Run the cloud-device feature E2E from the repository root:
@@ -298,6 +309,55 @@ unrelated modules do not make the summary fail.
 
 CI reliability depends on these invariants:
 
+- The platform `Attachment S3 Upload E2E` job connects to real MySQL, Redis,
+  and MinIO and executes `Run real S3 attachment upload E2E`. Signing unit
+  tests do not replace the full upload verification.
+
+- Snapshots from executor-confirmed earlier turns remain stale after a later turn
+  completes and must not revive its running state. A turn seen only in history
+  still needs executor confirmation before it can be classified as an earlier
+  turn. Preserve recovery, same-second admissions, device-alias merging, and
+  stopped-Goal regression assertions.
+- Closing to the tray on macOS retains the WebView. The window-lifecycle check
+  verifies hiding, restored visibility, and the retained control connection, then
+  explicitly reloads the WebView to verify replacement-client identity and
+  stale-client command isolation while keeping the executor and task alive.
+
+- In the scrolling task-detail document, `core-task-flow` waits for the activity
+  composer to mount, scrolls to it, and checks visibility. At a 1024×600 viewport,
+  it also scrolls from the top of the detail to the composer and asserts that the
+  entire editor fits inside the visible detail area before continuing the comment
+  submission and collaboration-page parity checks. Mounting does not imply
+  viewport visibility; extending the ordinary UI timeout cannot replace scrolling.
+
+- Cloud shard 7 runs both `plugin-composer-long-list` and
+  `plugin-collaboration-composer-isolation` to verify plugin catalog isolation
+  between collaboration composers and ordinary tasks. Preserve both checkpoints
+  when merging CI classification or catalog context changes.
+
+- Refreshing Smart app cards keeps their existing model controls mounted. Show
+  the full-page loading placeholder only when there are no cards to display. A
+  successful or failed refresh after stopping one app must not unmount another
+  app’s model control. Keep the lifecycle E2E model-selection assertions intact.
+
+- The native-history stress fixture processes 520 progress messages before its
+  final-answer marker, so that wait uses the existing `modelResponseTimeoutMs` budget (30 seconds
+  by default). Subsequent UI interactions, including task switching, use the
+  ordinary 10-second budget. Preserve all history-count, ordering, identity, and
+  deduplication assertions.
+- Scenarios holding a streaming model response must capture failures before
+  releasing it: release completes the native turn and changes the messages seen
+  by later diagnostics. The conversation-switching scenario records model batch
+  writes, flushes, UI wait timestamps, and messages before release. Explicitly set
+  `WEGENT_CODEX_STREAM_DEBUG=1` when native stream diagnostics are needed to
+  correlate item identities and phases.
+  Diagnostics must preserve assertions and timeouts and never record credentials.
+- Model fixtures use `trackModelServerConnections` to own connection errors,
+  including upgraded WebSockets. Scenarios must not forward a model client's
+  `ECONNRESET` as a server error: clients can disconnect after warmup or a completed
+  response while UI assertions or screenshots are still running. Request counts,
+  completion text, and error states still require independent assertions; other
+  connection errors and errors on non-model connections must remain fatal.
 - The platform E2E MySQL service must allow enough startup grace for its first
   initialization. Its health-check `start-period` should cover a cold start on
   a shared runner before the interval and retry count determine failure; reruns
@@ -334,6 +394,10 @@ CI reliability depends on these invariants:
 Large caches are prewarmed and owned by `main`. Pull requests and merge-queue
 runs may restore the default-branch cache, but they do not save another copy:
 
+- The platform E2E browser image installs Python 3.11 through uv and imports
+  `ssl` during the build to verify TLS support. Container shards restore the uv
+  download cache and use the image-owned interpreter, avoiding incompatible host
+  Python tool caches after runner OS upgrades.
 - Linux workspace `node_modules` has one shared cache keyed by the Node version
   and `pnpm-lock.yaml`. Tests, Lint, and platform E2E reuse it.
 - Wework browser and desktop E2E use dependency images published to GHCR. Image
@@ -352,10 +416,18 @@ runs may restore the default-branch cache, but they do not save another copy:
 - Rust unit tests, the Windows check, release and snapshot binaries, and the
   macOS memory gate use sccache. The `main` warmup runs the same Electron
   desktop build on `macos-14`; non-`main` jobs access the shared compiler cache
-  in read-only mode. If sccache installation is temporarily unavailable, jobs
-  emit a warning and compile without the cache instead of failing.
+  in read-only mode. Unavailable installation or cache backend startup produces
+  a warning and direct compilation. Configuration enables `RUSTC_WRAPPER` only
+  after `sccache --start-server` verifies backend availability; `--show-stats`
+  can succeed without a running server and is not a health check. Startup
+  diagnostics stay out of CI logs to avoid exposing temporary signed cache URLs.
+  Actual compilation and tests still run normally and retain their failures.
 - Wework Desktop Core E2E retains its `main`-owned Cargo target cache because
   several desktop jobs must reuse the same complete binary output.
+- Windows Codex uses the same cache verification and build flow on every workflow
+  attempt, without depending on an artifact from the first attempt. Only `main`
+  saves the cache. Reuse checks the source version, build recipe, and both
+  executable hashes, then reruns the native permission tests.
 - Platform E2E, Release, and Snapshot Docker BuildKit caches live in
   corresponding GHCR build-cache tags instead of consuming GitHub Actions
   dependency cache storage.

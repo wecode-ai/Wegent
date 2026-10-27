@@ -1,0 +1,189 @@
+import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, expect, test, vi } from 'vitest'
+import {
+  CODEX_SOURCE_COMMIT,
+  configurePinnedSourceCheckout,
+  patchWindowsReadBroker,
+  patchWindowsNoFollow,
+  verifyWindowsCodexBundle,
+  windowsCodexRecipe,
+  verifyWorkspaceVersionRefresh,
+  verifyWindowsCodexCompilerProfile,
+  CODEX_SOURCE_VERSION,
+} from './codex-windows-source.mjs'
+
+const roots = []
+afterEach(async () => {
+  vi.unstubAllEnvs()
+  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+})
+
+async function fixture() {
+  const root = await mkdtemp(join(tmpdir(), 'codex-windows-source-'))
+  roots.push(root)
+  const recipe = await windowsCodexRecipe()
+  const cache = join(root, 'cache')
+  const built = join(cache, 'windows-source', recipe)
+  await mkdir(built, { recursive: true })
+  const binary = Buffer.from('built runtime fixture')
+  const tests = Buffer.from('native test binary fixture')
+  const hash = bytes => createHash('sha256').update(bytes).digest('hex')
+  await writeFile(join(built, 'codex.exe'), binary)
+  await writeFile(join(built, 'permissions.exe'), tests)
+  await writeFile(
+    join(built, 'verified.json'),
+    JSON.stringify({
+      recipe,
+      sourceCommit: CODEX_SOURCE_COMMIT,
+      sha256: hash(binary),
+      testSha256: hash(tests),
+    })
+  )
+  return { root, built, cache, recipe, binary, tests }
+}
+
+test('rejects unreviewed upstream source before applying a compatibility patch', () => {
+  expect(() => patchWindowsReadBroker('let command = self.sandbox_command(sandbox)?;')).toThrow(
+    'does not match the reviewed version'
+  )
+})
+
+const workspaceLock = 'version = 4\n\n[[package]]\nname = "workspace"\nversion = "0.0.0"\n'
+const registryLock =
+  '\n[[package]]\nname = "registry"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "fixed"\n'
+
+test('release stamping refreshes only local workspace versions', () => {
+  const before = workspaceLock + registryLock
+  const after = workspaceLock.replace('0.0.0', CODEX_SOURCE_VERSION) + registryLock
+  expect(verifyWorkspaceVersionRefresh(before, after)).toBe(1)
+})
+
+test.each([
+  'version = "1.0.0"',
+  'checksum = "fixed"',
+  'source = "registry+https://example.test/index"',
+])('rejects an external dependency change to %s', field => {
+  const before = workspaceLock + registryLock
+  const after = before.replace('0.0.0', CODEX_SOURCE_VERSION).replace(field, `${field}-changed`)
+  expect(() => verifyWorkspaceVersionRefresh(before, after)).toThrow('dependency graph changed')
+})
+
+test('rejects newly resolved dependencies', () => {
+  expect(() => verifyWorkspaceVersionRefresh(workspaceLock, workspaceLock + registryLock)).toThrow(
+    'dependency graph changed'
+  )
+})
+
+test.each(['mod.rs', 'windows.rs'])('rejects changed upstream no-follow source: %s', kind => {
+  expect(() => patchWindowsNoFollow('unreviewed filesystem implementation', kind)).toThrow(
+    'does not match the reviewed version'
+  )
+})
+
+test('pinned checkout overrides CRLF conversion and enables complete Windows paths', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'codex-checkout-'))
+  roots.push(root)
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))
+  )
+  const git = args =>
+    execFileSync('git', args, {
+      cwd: root,
+      env,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim()
+  git(['init'])
+  git(['config', '--local', 'core.autocrlf', 'true'])
+  const canonical = 'fn main() {\n    println!("fixture");\n}\n'
+  const file = join(root, 'fixture.rs')
+  await writeFile(file, canonical)
+  git(['add', 'fixture.rs'])
+  await rm(file)
+  git(['checkout-index', '--all', '--force'])
+  expect(await readFile(file, 'utf8')).toBe(canonical.replaceAll('\n', '\r\n'))
+  await configurePinnedSourceCheckout(root, env)
+  await rm(file)
+  git(['checkout-index', '--all', '--force'])
+  expect(await readFile(file, 'utf8')).toBe(canonical)
+  expect(git(['config', '--get', 'core.longpaths'])).toBe('true')
+})
+
+test.each(['release', 'ci'])('%s cache verifies both executable identities', async profile => {
+  vi.stubEnv('WEWORK_CODEX_PROFILE', profile)
+  const item = await fixture()
+  const metadata = await verifyWindowsCodexBundle(item.built, item.recipe)
+  expect(metadata.sha256).toBe(createHash('sha256').update(item.binary).digest('hex'))
+  expect(metadata.testSha256).toBe(createHash('sha256').update(item.tests).digest('hex'))
+  expect(await readFile(join(item.built, 'codex.exe'))).toEqual(item.binary)
+  expect(await readFile(join(item.built, 'permissions.exe'))).toEqual(item.tests)
+})
+
+test('rejects a cache built with a different optimization profile', async () => {
+  vi.stubEnv('WEWORK_CODEX_PROFILE', 'release')
+  const item = await fixture()
+  vi.stubEnv('WEWORK_CODEX_PROFILE', 'ci')
+  await expect(verifyWindowsCodexBundle(item.built, await windowsCodexRecipe())).rejects.toThrow(
+    'integrity mismatch'
+  )
+})
+
+test('rejects an unsupported Windows Codex build profile', async () => {
+  vi.stubEnv('WEWORK_CODEX_PROFILE', 'unsupported')
+  await expect(windowsCodexRecipe()).rejects.toThrow('Unsupported Windows Codex profile')
+})
+
+test('packaging defaults to the release profile', async () => {
+  vi.stubEnv('WEWORK_CODEX_PROFILE', '')
+  expect(await windowsCodexRecipe()).toBe(await windowsCodexRecipe('release'))
+  expect(await windowsCodexRecipe()).not.toBe(await windowsCodexRecipe('ci'))
+})
+
+test.each([
+  ['release', '3'],
+  ['ci', '0'],
+])('%s compiler output retains release conditions', (profile, optLevel) => {
+  expect(() =>
+    verifyWindowsCodexCompilerProfile(
+      { opt_level: optLevel, debug_assertions: false, overflow_checks: false },
+      profile
+    )
+  ).not.toThrow()
+})
+
+test.each([{ debug_assertions: true }, { overflow_checks: true }, { opt_level: '3' }])(
+  'rejects a CI compiler configuration mismatch: %j',
+  override => {
+    expect(() =>
+      verifyWindowsCodexCompilerProfile(
+        { opt_level: '0', debug_assertions: false, overflow_checks: false, ...override },
+        'ci'
+      )
+    ).toThrow('compilation profile mismatch')
+  }
+)
+
+test.each(['codex.exe', 'permissions.exe'])(
+  'rejects a modified cached %s before use',
+  async file => {
+    const item = await fixture()
+    await writeFile(join(item.built, file), 'modified executable')
+    await expect(verifyWindowsCodexBundle(item.built, item.recipe)).rejects.toThrow(
+      'integrity mismatch'
+    )
+  }
+)
+
+test.each(['sourceCommit', 'recipe'])('rejects a cache with a different %s', async field => {
+  const item = await fixture()
+  const metadata = JSON.parse(await readFile(join(item.built, 'verified.json'), 'utf8'))
+  metadata[field] = 'different identity'
+  await writeFile(join(item.built, 'verified.json'), JSON.stringify(metadata))
+  await expect(verifyWindowsCodexBundle(item.built, item.recipe)).rejects.toThrow(
+    'integrity mismatch'
+  )
+})

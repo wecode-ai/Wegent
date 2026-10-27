@@ -1,4 +1,3 @@
-import { existsSync, watch } from 'node:fs'
 import path from 'node:path'
 import { developmentBuildInputs } from './development-build-inputs.mjs'
 
@@ -9,12 +8,10 @@ export async function watchDevelopmentBuild({
   ignored = [],
   build,
   onError,
-  debounceMs = 350,
+  intervalMs = 350,
 }) {
-  const watchers = []
   let closed = false
   let pending = false
-  let timer
   let running
   const excluded = (filename, directory) =>
     ignored.some(root => filename === root || filename.startsWith(`${root}${path.sep}`)) ||
@@ -22,7 +19,10 @@ export async function watchDevelopmentBuild({
       .relative(directory, filename)
       .split(path.sep)
       .some(part => ['node_modules', '.git', 'dist'].includes(part))
-  let inputChanged
+  const inputChanged = developmentBuildInputs({ directories, files, excluded })
+  const inputs = directories
+    .map(directory => [directory, directory])
+    .concat(files.map(filename => [filename, path.dirname(filename)]))
   const drain = async () => {
     do {
       pending = false
@@ -33,10 +33,15 @@ export async function watchDevelopmentBuild({
       }
     } while (pending && !closed)
   }
-  const schedule = () => {
-    if (closed) return
-    clearTimeout(timer)
-    timer = setTimeout(() => {
+  // Native directory subscriptions have no readiness signal on macOS and can
+  // lose the first edit. Compare the existing input snapshots as the sole source.
+  const timer = setInterval(() => {
+    try {
+      let changed = false
+      for (const [filename, directory] of inputs) {
+        if (inputChanged(filename, directory)) changed = true
+      }
+      if (!changed) return
       if (running) {
         pending = true
         return
@@ -44,48 +49,28 @@ export async function watchDevelopmentBuild({
       running = drain().finally(() => {
         running = undefined
       })
-    }, debounceMs)
-  }
-  const observe = (directory, recursive, accept) => {
-    if (!existsSync(directory)) return
-    const watcher = watch(directory, { recursive }, (_event, filename) => {
-      if (!filename) return schedule()
-      const resolved = path.resolve(directory, String(filename))
-      if (excluded(resolved, directory) || !accept(resolved)) return
-      try {
-        if (inputChanged(resolved, directory)) schedule()
-      } catch (error) {
-        onError(error)
-      }
-    })
-    watcher.on('error', onError)
-    watchers.push(watcher)
-  }
-  for (const directory of directories) observe(directory, true, () => true)
-  const parents = new Map()
-  for (const file of files) {
-    const parent = path.dirname(file)
-    const names = parents.get(parent) ?? new Set()
-    names.add(file)
-    parents.set(parent, names)
-  }
-  for (const [parent, names] of parents) observe(parent, false, filename => names.has(filename))
+    } catch (error) {
+      onError(error)
+    }
+  }, intervalMs)
   try {
-    inputChanged = developmentBuildInputs({ directories, files, excluded })
     running = build()
     await running
   } catch (error) {
-    for (const watcher of watchers) watcher.close()
+    clearInterval(timer)
     throw error
   } finally {
     running = undefined
   }
-  if (pending) schedule()
+  if (pending) {
+    running = drain().finally(() => {
+      running = undefined
+    })
+  }
   return {
     async close() {
       closed = true
-      clearTimeout(timer)
-      for (const watcher of watchers) watcher.close()
+      clearInterval(timer)
       await running
     },
   }

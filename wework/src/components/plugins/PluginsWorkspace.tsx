@@ -3900,14 +3900,19 @@ export function PluginsWorkspace({
     }
 
     const refreshCatalog = async () => {
-      if (!syncIsCurrent()) return
+      if (!syncScopeIsCurrent()) return
+      const inventoryAtRefreshStart = getPluginMarketplaceCache(marketplaceCacheKeyValue)
       const [cloud, installed] = await Promise.all([
         pluginApi.listMarketplacePlugins({
           deviceId,
         }),
         pluginApi.listInstalledPlugins(deviceId),
       ])
-      if (!syncIsCurrent()) return
+      if (
+        !syncScopeIsCurrent() ||
+        !pluginInventoryReadIsCurrent(marketplaceCacheKeyValue, inventoryAtRefreshStart)
+      )
+        return
       const nextInstalled = mergeInstalledPlugins(
         installed.items,
         installedPluginsRef.current.map(plugin => plugin.raw).filter(hasLocalCodexMaterialization),

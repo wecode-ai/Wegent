@@ -70,6 +70,8 @@ App 自己启动的 executor 和 DSH 归 Electron 主进程管理：macOS/Linux 
 
 Executor 启动的设备命令必须关闭 stdin，不能继承承载 App JSONL 协议的进程 stdin，否则子命令读取标准输入时会窃取请求字节并破坏后续协议帧。Executor 按字节读取并以换行符划分 App IPC 帧，再单独验证每一帧的 UTF-8；非法帧只记录长度和错误偏移后丢弃，不能终止整个 executor 或中断其他正在运行的任务。检测到 executor runtime instance 变化后，Wework 会重新获取受影响任务的列表和 transcript；已被 transcript 确认接收的排队消息会从队列移除，断线时尚未确认的发送会恢复为可重试的排队状态。
 
+大体积 transcript 使用版本化的无损 gzip 快照分块传输，客户端收齐分块后一次性恢复会话条目。JSON 序列化通过有界写缓冲进入压缩器，避免逐个字符串片段调用压缩。桌面验证使用 debug Executor 时，Cargo 仅对 `miniz_oxide` 开启 `opt-level = 3`，以保持压缩热路径的执行效率；Executor 自身保留 debug 配置，调试断言与溢出检查保持启用。debug 构建沿用相同的协议格式、压缩级别和分块契约。
+
 本地 runtime 事件通道和 App IPC 写入队列使用有界缓冲，容量均为 8192。IPC 写入将 Responses 文本、终态、错误和 RPC 响应放入高优先级队列，将工具块、诊断、计划和文件变化事件放入低优先级队列。高优先级队列满时发送方显式等待并记录背压；低优先级队列满时丢弃当前可恢复事件、记录背压并发送 `executor.event_lagged`，避免直到 broadcast 覆盖旧事件后才发现消息缺失。
 
 工具输出事件最多携带 64 KiB，文件变化事件中的 diff 预览最多携带 128 KiB；完整 patch 仍保存在可读取的 artifact 中。Wework 收到 `executor.event_lagged` 后会重新拉取当前任务和全部运行中任务的 transcript，并使用稳定的客户端消息 ID 将 transcript 与尚未落盘的乐观用户消息合并。因此任务切换或事件积压后，运行状态、用户输入和 AI 输出会从同一份恢复结果重新收敛。同一工具块的空历史输出不能覆盖已收到的实时结果；此规则同时适用于命令、Node REPL 和其他 MCP 工具，并保留输出截断与加载引用信息。
@@ -106,6 +108,8 @@ Git worktree 会话设置 `PNPM_CONFIG_IGNORE_SCRIPTS=true` 和 `PNPM_CONFIG_ENA
 
 共享插件包按内容哈希保存并保留旧包；Codex 原生缓存目录使用插件清单中的版本号。不能给该缓存版本追加哈希，否则 Codex 原生安装会清理该目录并使工作台保存的路径失效。插件认证 SDK 从 Executor 的 `capabilities/manifest-v2.json` 解析当前安装身份，不能读取迁移后残留的旧清单。
 
+`WEGENT_PLUGIN_RUNTIME_TARGET` 由默认插件 Store 入口读取，供应用选择 Codex 单运行时。显式构造的 `GlobalCapabilityStore` 默认管理两种运行时，需要 Codex 单运行时的调用方显式设置该选项，避免注入的独立目录受到宿主环境影响。
+
 续聊保留任务 ID，但每轮使用新的子任务 ID，以刷新 MCP 上下文并区分消息。会话读取和续聊使用首次执行所属的原生 Home；不同 Home 的 Codex 查询进程互相隔离，历史刷新只读且不恢复会话，以免占用下一轮执行所需的写锁；续轮保存用户及 Team 身份但不保存凭据。后端 Team 的原生 Home 位于工作台根目录的 `agents/<执行用户名>/<namespace>/<Team 名称>`。流水线中各 Bot 使用其下的 `bots/<Bot ID>`，分别保存配置、会话和执行锁；按任务调用技能时，只有持有执行锁且记录了该任务的 Home 才能消除多个阶段之间的歧义。Wework 直接运行的配置（`team_id = 0`）继续使用应用管理的原生 Home，负责人续轮时保留此标记；其选择的后端技能部署到任务工作区的 `.codex/skills`，原生插件技能仍由 Codex 管理。共享 Codex 进程因环境变化重启前，必须等待活跃回合和未完成的 RPC 全部结束。
 
 同名 Home 的复用不再要求后端 URL、Team ID、Bot ID 或 Shell 类型与旧标记一致；任务绑定和会话仍保留。任务技能查询要求认证用户 ID 和已记录的任务绑定匹配，但不使用后端 URL 作为身份。因此，共享工作台根目录不会隔离用户和任务 ID 重叠的独立后端；支持这种隔离需要由认证协议提供稳定后端身份。
@@ -138,7 +142,11 @@ Electron 启动主窗口时必须保持主窗口隐藏，并由独立的 startup
 
 为跨 Wework 或 executor 重启恢复真正运行中的目标，runtime work 会把 active Goal 执行记录写入加密的 turn 队列。恢复依据是这条执行记录，而不是仅凭 `goalStatus=active` 推断运行：只有重启前仍在执行的 Goal 才会重新绑定。恢复时 executor 必须先订阅事件，再调用 Codex `thread/resume`，不得额外创建 `turn/start`、伪造用户消息或注入续聊提示；后续轮次仍由 Codex 的原生 Goal 协议驱动。目标暂停、清除或完成后必须删除对应执行记录，防止下次启动错误恢复。
 
+Codex 进程退出或通知流关闭时，不得把 Goal 上一轮的完成结果用于结束当前执行。executor 正常关闭应保留中断标记和待恢复记录；非预期的 Codex 退出应报告错误，不能投影为成功或删除尚未完成的 Goal。
+
 恢复后的 Goal turn 使用新的原生 turn 身份，不得复用已持久化请求中的 `clientUserMessageId`、用户消息展示绑定或生成用户消息标记。原用户消息与原 turn 的映射保持不变；该规则同样适用于需要用户操作后的原生 Goal 恢复。
+
+原生轮次可能先写入历史时间线，稍后才送达绑定实时缓存的通知。读取最新历史页时，executor 使用本地尚未请求停止的执行记录和原生终态边界，校正 `thread/turns/list` 对新轮次暂时合成的 `interrupted` 状态，避免历史快照提前关闭轮次并丢弃后续实时回答。已经观察过的旧轮次、真实停止、原生失败、明确的终态边界和较旧的历史页保持原有状态；不能仅凭 active Goal 恢复运行态。
 
 executor 的活动 transcript 缓存同时累计 `item/agentMessage/delta` 和 `item/plan/delta`，按原生 item ID 更新条目。历史加载必须能读取尚未收到 `item/completed` 的部分文本；用户停止执行时，这些文本以中断状态持久化，后续追问或重新打开任务不能将其丢弃。最终 item 快照替换已累计文本，避免重复拼接。
 
@@ -443,6 +451,10 @@ Plugin 上报必须包含其内部 Skill 列表。Executor 会扫描每个 Plugi
 项目任务使用本地 executor 执行时，任务级 `CLAUDE_CONFIG_DIR` 会同时暴露全局 `skills` 和 `plugins` 目录，并从本机 `~/.claude/settings.json` 继承 `enabledPlugins`、`extraKnownMarketplaces` 等非敏感插件配置，使 Claude Code 能加载全局 Skill 以及 Plugin 内部提供的 Skill。模型、Token 等敏感配置仍通过运行时环境变量注入，不会从全局 settings 写入任务目录。
 
 Claude Code、Agno 运行时和 Codex 任务 shell 都会收到一组任务身份环境变量。`WEGENT_TASK_ID` 标识当前 Task，`WEWORK_PARENT_TITLE` 提供当前任务标题，`AUTH_TOKEN` 提供本轮任务访问 Backend API 的 bearer token，`WEGENT_RUNTIME_AUTH_TOKEN` 提供本地 Skill 访问 Wegent runtime API 的 bearer token，`WEGENT_SKILL_IDENTITY_TOKEN` 和 `WEGENT_SKILL_USER_NAME` 用于任务内 Skill 操作的身份校验与展示。Claude Code 和 Agno 通过子进程环境注入；Codex 通过 thread 级 `shell_environment_policy.set.*` 注入，身份值不会进入共享 app-server 进程环境，避免跨任务泄漏。Wework 连接云端后会通过 `POST /api/users/me/wegent-runtime-token` 获取 runtime token，并按响应的 `expires_in` 提前刷新；断开云端时会移除本地 Codex 配置中的 `WEGENT_RUNTIME_AUTH_TOKEN`。executor 不向这些子运行时注入 `WEGENT_SUBTASK_ID`。
+
+运行凭证和 Socket 登录凭证分别管理。`executor.backend.configure` 只更新 `runtime_auth_token` 时，会更新共享的 `ConnectionConfig` 内存快照并保留已注册的 Socket 连接；RuntimeWork RPC 和 `task:execute` 都从这份快照为后续执行补齐凭证。这样，页面重载或定时刷新运行凭证不会断开连接，让历史读取请求落到旧 Socket。Backend URL、Socket URL、登录凭证或注册设备类型变化时，执行器仍会断开旧连接并重新注册。
+
+Wework 从本地存储或桌面偏好恢复云端连接时，保留此前解析并保存的 Socket 地址，避免在服务器配置请求完成前临时切回 Backend 地址。用户显式覆盖和当前安装包中的 Socket 配置仍具有更高优先级；服务器重新声明地址后，连接按最新声明更新。
 
 项目模式下访问 Claude 或 Codex 模型 API 时，executor 会在直接启动的运行时上下文中加入 `wecode-project: <project_id>` 请求头，并补齐 `wecode-action: wegent`、`wecode-source: wegent-local`、`wecode-executor: <runtime>` 来源标识，其中 Claude Code 使用 `claudecode`，Codex 使用 `codex`。Claude Code 本地模式会先合并 executor 启动进程环境和运行时环境里已有的 `ANTHROPIC_CUSTOM_HEADERS`，再追加 project 标识，并同时写入 `ANTHROPIC_CUSTOM_HEADERS` 与 `DEFAULT_HEADERS`/`default_headers` 环境变量，保证直接 Claude Code 子进程和下游模型网关读取到一致的 header 集合；Codex 在 Wegent 管理 provider 配置时写入 provider 的 `http_headers`，使用个人 Codex 配置且显式指定 provider 时也会对该 provider 注入同一 project 请求头。
 

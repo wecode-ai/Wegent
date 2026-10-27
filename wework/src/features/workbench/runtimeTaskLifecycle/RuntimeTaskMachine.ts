@@ -9,7 +9,8 @@ import type {
 export class RuntimeTaskMachine {
   private state: RuntimeTaskLifecycleState
   private revision = 0
-  private readonly observedTurnIds = new Set<string>()
+  // History can reveal a turn before an executor snapshot confirms it.
+  private readonly observedTurns = new Map<string, boolean>()
 
   constructor(address: RuntimeTaskAddress, unread = false) {
     this.state = {
@@ -40,7 +41,7 @@ export class RuntimeTaskMachine {
     }
     const previous = this.state
     this.state = reduceRuntimeTaskLifecycle(previous, event)
-    if (this.state.latestTurnId) this.observeTurn(this.state.latestTurnId)
+    if (this.state.latestTurnId) this.observeTurn(this.state.latestTurnId, true)
     const changed = this.state !== previous
     if (changed) this.revision += 1
     return changed
@@ -48,19 +49,23 @@ export class RuntimeTaskMachine {
 
   isPriorTurn(turnId: string): boolean {
     return (
-      this.observedTurnIds.has(turnId) &&
+      this.observedTurns.has(turnId) &&
       (turnId !== (this.state.activeTurnId ?? this.state.latestTurnId) ||
         this.state.turnPhase === 'submitting' ||
         this.state.turnPhase === 'awaiting')
     )
   }
 
-  observeTurn(turnId: string): void {
-    this.observedTurnIds.add(turnId)
+  hasAcceptedTurn(turnId: string): boolean {
+    return this.observedTurns.get(turnId) === true
+  }
+
+  observeTurn(turnId: string, accepted = false): void {
+    this.observedTurns.set(turnId, accepted || this.hasAcceptedTurn(turnId))
   }
 
   mergeTurnHistory(previous: RuntimeTaskMachine): void {
-    for (const turnId of previous.observedTurnIds) this.observedTurnIds.add(turnId)
+    for (const [turnId, accepted] of previous.observedTurns) this.observeTurn(turnId, accepted)
   }
 
   getState(): RuntimeTaskLifecycleState {

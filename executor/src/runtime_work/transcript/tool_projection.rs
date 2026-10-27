@@ -714,6 +714,7 @@ pub(super) fn tool_status(item: &Value) -> String {
     if status.eq_ignore_ascii_case("failed")
         || status.eq_ignore_ascii_case("failure")
         || status.eq_ignore_ascii_case("error")
+        || status.eq_ignore_ascii_case("declined")
         || bool_field(item, "success").is_some_and(|success| !success)
         || has_error_value(item)
     {

@@ -20,14 +20,12 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import tool  # noqa: E402 - load canonical source without installing the package
+from wegent_plugin_auth import local_configuration  # noqa: E402
 from wegent_plugin_auth import (  # noqa: E402
     AccountAuthAdapter,
     AuthError,
 )
 from wegent_plugin_auth import adapter as adapter_module  # noqa: E402
-from wegent_plugin_auth import (  # noqa: E402
-    local_configuration,
-)
 from wegent_plugin_auth.transport import (  # noqa: E402
     MAX_FRAME_BYTES,
     open_pipe,
@@ -74,6 +72,62 @@ def frame(payload):
 
 
 class SDKTests(unittest.TestCase):
+    def test_import_trace_brackets_sdk_loading(self):
+        code = """
+import builtins, os, sys
+sys.path.insert(0, sys.argv[1])
+original = builtins.__import__
+observed = []
+def observe(name, *args, **kwargs):
+    if name == "urllib.error":
+        with open(os.environ["WEGENT_PLUGIN_AUTH_TRACE_FILE"], "rb") as source:
+            assert source.read() == b"imported"
+        observed.append(True)
+    return original(name, *args, **kwargs)
+builtins.__import__ = observe
+import wegent_plugin_auth
+assert observed
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            trace = Path(directory) / "stage"
+            trace.write_bytes(b"")
+            result = subprocess.run(
+                [sys.executable, "-c", code, str(ROOT)],
+                env={**os.environ, "WEGENT_PLUGIN_AUTH_TRACE_FILE": str(trace)},
+                capture_output=True,
+                check=True,
+                timeout=10,
+            )
+            self.assertEqual(result.stdout + result.stderr, b"")
+            self.assertEqual(trace.read_bytes(), b"ready")
+
+    def test_transport_trace_is_opt_in_and_uses_fixed_milestones(self):
+        from wegent_plugin_auth import transport
+
+        with tempfile.TemporaryDirectory() as directory:
+            trace = Path(directory) / "stage"
+            trace.write_bytes(b"")
+            with patch.dict(os.environ, {}, clear=True):
+                transport._trace_stage("nonce_read")
+            self.assertEqual(trace.read_bytes(), b"")
+            with patch.dict(
+                os.environ, {"WEGENT_PLUGIN_AUTH_TRACE_FILE": str(trace)}, clear=True
+            ):
+                transport._trace_stage("nonce_read")
+                transport._trace_stage(SECRET)
+            self.assertEqual(trace.read_bytes(), b"nonce_read")
+
+    def test_unavailable_trace_does_not_interrupt_authentication(self):
+        from wegent_plugin_auth import transport
+
+        with tempfile.TemporaryDirectory() as directory:
+            trace = Path(directory) / "absent"
+            with patch.dict(
+                os.environ, {"WEGENT_PLUGIN_AUTH_TRACE_FILE": str(trace)}, clear=True
+            ):
+                transport._trace_stage("ready")
+            self.assertFalse(trace.exists())
+
     def test_local_configuration_is_explicit_bounded_and_does_not_override_environment(
         self,
     ):

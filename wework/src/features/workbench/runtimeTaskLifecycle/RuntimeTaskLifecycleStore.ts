@@ -359,6 +359,7 @@ export class RuntimeTaskLifecycleStore {
     const hasStreamingTurn = Boolean(streamingTurn)
     const current = this.getTask(address)
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
+    const knownTurnId = currentTurn?.id ?? currentTurn?.latestId
     if (hasStreamingTurn) {
       if (ignoreStaleRunningTranscript) {
         const machine = this.ensureMachine(this.canonicalizeAddress(address))
@@ -370,10 +371,11 @@ export class RuntimeTaskLifecycleStore {
         return
       }
       if (
-        currentTurn?.active &&
-        streamingTurn?.id &&
-        (this.isPriorTurn(address, streamingTurn.id) ||
-          (transcript.running === false && currentTurn.id && streamingTurn.id !== currentTurn.id))
+        (transcript.running === false &&
+          streamingTurn?.id &&
+          knownTurnId &&
+          streamingTurn.id !== knownTurnId) ||
+        (currentTurn?.active && streamingTurn?.id && this.isPriorTurn(address, streamingTurn.id))
       )
         return
       this.executorStarted(address)
@@ -443,12 +445,14 @@ export class RuntimeTaskLifecycleStore {
       event.type === 'executor_snapshot_received' ? { ...event, address: canonicalAddress } : event
     const machine = this.ensureMachine(canonicalAddress)
     const previous = machine.getSnapshot()
+    // A previous turn's snapshot stays stale after the current turn settles.
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
-      previous.turn.active &&
+      previous.task !== null &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
       machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId) &&
-      previous.task?.completedAt != null
+      (previous.turn.active ||
+        machine.hasAcceptedTurn(canonicalEvent.task.runtimeHandle.lastTurnId))
     )
       return false
     const key = previous.key

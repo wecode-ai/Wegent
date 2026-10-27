@@ -15,6 +15,26 @@ const newContent = 'New release upgrade marker'
 const E2E_CATALOG_REFRESH_OBSERVATION_MS = 15_000
 const PLUGIN_SYNC_TIMEOUT_MS = 30_000
 
+export function assertUnrelatedPluginPreserved(managed, capabilities, key) {
+  const actual = capabilities.plugins[key]
+  const before = managed.plugin_sync_generation
+  const after = actual?.plugin_sync_generation
+  const complete = capabilities.plugin_sync?.complete_generation
+  if (after !== before) {
+    assert.ok(
+      after > before && after === complete,
+      'Only a newer complete snapshot may advance an unrelated plugin generation'
+    )
+  }
+  assert.deepEqual(
+    actual,
+    after === before
+      ? managed
+      : { ...managed, plugin_sync_generation: after, updated_at: actual.updated_at },
+    'Installing other plugins must preserve the existing plugin; only complete-sync metadata may change'
+  )
+}
+
 async function waitForManagedPlugin(manifestPath, managedKey, timeoutMs = PLUGIN_SYNC_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -123,11 +143,7 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
       'Each concurrent install must synchronize only its affected plugin'
     )
   }
-  assert.deepEqual(
-    (await readCapabilities()).plugins[managedKey],
-    managed,
-    'Installing other plugins must preserve the existing plugin and its sync generation'
-  )
+  assertUnrelatedPluginPreserved(managed, await readCapabilities(), managedKey)
   await Promise.all(
     parallelInstalls.map(async installation => {
       // Uninstall answers 204 No Content, so the JSON helper cannot parse it.

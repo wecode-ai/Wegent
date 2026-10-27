@@ -6,6 +6,7 @@ import {
   selectProjectBoardSort,
 } from './collaboration-board-personal-view.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
+import { waitForVisibleBoardCard } from './collaboration-board-flows.mjs'
 import {
   assertLaneOrder,
   verifyBoardFieldDrag,
@@ -17,15 +18,15 @@ const TAGS = ['drag-A', 'drag-B', 'drag-C']
 const column = key => `[data-testid="cloud-todo-column-${key}"]`
 const card = (key, id) => `${column(key)} [data-testid="cloud-todo-card-${id}"]`
 
-async function assertIssueColumns(control, scoped, issueId, tags) {
-  for (const tag of TAGS) {
-    await control.command('waitFor', scoped(card(`tag-${tag}`, issueId)), {
-      visible: tags.includes(tag),
-    })
+export async function assertIssueColumns(control, scoped, issueId, tags) {
+  for (const [key, present] of [
+    ...TAGS.map(tag => [`tag-${tag}`, tags.includes(tag)]),
+    ['tag-untagged', tags.length === 0],
+  ]) {
+    const selector = scoped(card(key, issueId))
+    if (present) await waitForVisibleBoardCard(control, selector)
+    else await control.command('waitFor', selector, { visible: false })
   }
-  await control.command('waitFor', scoped(card('tag-untagged', issueId)), {
-    visible: tags.length === 0,
-  })
 }
 
 async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }) {

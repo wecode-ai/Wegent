@@ -14,6 +14,27 @@ from typing import Any, BinaryIO
 MAX_FRAME_BYTES = 65536
 
 
+def _trace_stage(stage: str) -> None:
+    # Host-owned diagnostics must never change output or credential transport.
+    path = os.environ.get("WEGENT_PLUGIN_AUTH_TRACE_FILE")
+    if path and stage in {
+        "imported",
+        "ready",
+        "nonce_read",
+        "connected",
+        "nonce_sent",
+    }:
+        try:
+            with open(path, "r+b") as target:
+                target.write(stage.encode("ascii"))
+                target.truncate()
+        except OSError:
+            pass
+
+
+_trace_stage("imported")
+
+
 class AuthError(RuntimeError):
     """A failure whose message contains no credential material."""
 
@@ -46,9 +67,12 @@ def _open_socket(mode: str) -> BinaryIO:
     if not 1 <= port <= 65535:
         raise AuthError("Invalid broker transport")
     nonce = _read_exact(sys.stdin.buffer, 32)
+    _trace_stage("nonce_read")
     with socket.create_connection(("127.0.0.1", port), timeout=5) as connection:
+        _trace_stage("connected")
         connection.set_inheritable(False)
         connection.sendall(nonce)
+        _trace_stage("nonce_sent")
         return connection.makefile(mode)
 
 

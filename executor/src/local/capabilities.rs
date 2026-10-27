@@ -540,7 +540,7 @@ impl GlobalCapabilityStore {
             store_dir: base.join(".wegent/workbench/executor/capabilities/store"),
             plugin_store_dir_override: None,
             shared_packages: false,
-            codex_only_plugins: env::var("WEGENT_PLUGIN_RUNTIME_TARGET").as_deref() == Ok("codex"),
+            codex_only_plugins: false,
             workbench_root_override: None,
         }
     }

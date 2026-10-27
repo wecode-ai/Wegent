@@ -6,6 +6,8 @@ use std::{fs, os::unix::fs::PermissionsExt};
 
 use super::*;
 
+// Protocol reuse assertions require a stable epoch while publication tests run.
+
 #[tokio::test]
 async fn native_search_hydrates_complete_match_turn_and_pages_neighbor_context() {
     let _environment = crate::agents::CodexLaunchEnvironment::new();

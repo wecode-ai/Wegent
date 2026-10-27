@@ -126,6 +126,20 @@ impl LocalBackendConnectionController {
             *snapshot = profile.as_ref().map(|value| value.connection.clone());
         }
 
+        if let (Some(current), Some(next)) = (&state.profile, &profile) {
+            let same_transport = current.connection.backend_url == next.connection.backend_url
+                && current.connection.socket_url == next.connection.socket_url
+                && current.connection.auth_token == next.connection.auth_token
+                && current.registration_device_type == next.registration_device_type;
+            if same_transport {
+                state.profile = profile;
+                write_executor_log_line(
+                    "local backend runtime credentials updated; transport retained",
+                );
+                return true;
+            }
+        }
+
         if let Some(task) = state.task.take() {
             self.connection_status.store(false, Ordering::Release);
             task.abort();
@@ -154,12 +168,14 @@ impl LocalBackendConnectionController {
                     event_hub.clone(),
                 )
             } else {
-                LocalBackendRunner::new_for_app_sidecar(
+                LocalBackendRunner::new_for_app_sidecar_with_connection(
                     LocalBackendConfig::from_device_config(config),
                     transport.clone(),
+                    Arc::clone(&self.connection_snapshot),
                 )
             }
-            .with_connection_status(Arc::clone(&self.connection_status));
+            .with_connection_status(Arc::clone(&self.connection_status))
+            .with_backend_connection(Arc::clone(&self.connection_snapshot));
             state.transport = Some(transport);
             state.task = Some(tokio::spawn(async move {
                 if let Err(error) = runner.run_forever().await {
@@ -494,6 +510,79 @@ mod tests {
             .expect("backend status should be available");
         assert_eq!(status["configured"], true);
         assert_eq!(status["connected"], false);
+    }
+
+    #[tokio::test]
+    async fn runtime_token_refresh_preserves_the_registered_transport() {
+        let controller = LocalBackendConnectionController::start(DeviceConfig::default()).await;
+        let params = json!({
+            "backend_url": "https://backend.example.com",
+            "socket_url": "https://socket.example.com",
+            "auth_token": "login-token",
+            "runtime_auth_token": "runtime-before",
+            "device_type": "app",
+        });
+        let original = connection_profile_from_params(&params).unwrap();
+        let task = tokio::spawn(std::future::pending::<()>());
+        let task_id = task.id();
+        {
+            let mut state = controller.state.lock().await;
+            state.profile = original.clone();
+            state.task = Some(task);
+        }
+        *controller.connection_snapshot.lock().unwrap() =
+            original.map(|profile| profile.connection);
+        controller
+            .connection_status
+            .store(true, std::sync::atomic::Ordering::Release);
+        let mut refreshed = params;
+        refreshed["runtime_auth_token"] = json!("runtime-after");
+
+        let result = controller
+            .configure_backend(refreshed.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(result["changed"], true);
+        assert!(controller
+            .connection_status
+            .load(std::sync::atomic::Ordering::Acquire));
+        {
+            let state = controller.state.lock().await;
+            assert_eq!(state.task.as_ref().unwrap().id(), task_id);
+        }
+        assert_eq!(
+            controller
+                .connection_snapshot
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .runtime_auth_token,
+            "runtime-after"
+        );
+        assert_eq!(
+            controller.configure_backend(refreshed).await.unwrap()["changed"],
+            false
+        );
+        let mut changed_login = json!({
+            "backend_url": "https://backend.example.com",
+            "socket_url": "https://socket.example.com",
+            "auth_token": "changed-login-token",
+            "runtime_auth_token": "runtime-after",
+            "device_type": "app",
+        });
+        controller
+            .configure_backend(changed_login.take())
+            .await
+            .unwrap();
+        assert!(!controller
+            .connection_status
+            .load(std::sync::atomic::Ordering::Acquire));
+        let mut state = controller.state.lock().await;
+        let replacement = state.task.take().unwrap();
+        assert_ne!(replacement.id(), task_id);
+        replacement.abort();
     }
 
     #[tokio::test]

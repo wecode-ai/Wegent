@@ -20,10 +20,11 @@ const PROMPT = 'WEWORK_NATIVE_ORDER_TASK_SWITCH'
 const OTHER = 'WEWORK_NATIVE_ORDER_OTHER_TASK'
 const PREFIX = 'TASK_SWITCH_RUNNING'
 const SUFFIX = '\n\nTASK_SWITCH_BACKGROUND_UPDATE'
-const LONG_RESPONSE_TIMEOUT_MS = 30_000
 
-export function createConversationSwitchingChecks({ uiTimeoutMs }) {
-  const longResponseTimeoutMs = Math.max(uiTimeoutMs, LONG_RESPONSE_TIMEOUT_MS)
+export function createConversationSwitchingChecks({ uiTimeoutMs, modelResponseTimeoutMs }) {
+  const timeline = []
+  let failureSnapshot
+  const record = (stage, details = {}) => timeline.push({ stage, at: Date.now(), ...details })
   let releaseTail
   let releaseDone
   const tail = new Promise(resolve => {
@@ -62,8 +63,14 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
       )
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.flushHeaders()
-      response.write(sse(events))
+      const batch = sse(events)
+      record('prefix-batch-write', { bytes: Buffer.byteLength(batch), events: events.length })
+      const writable = response.write(batch, error =>
+        record(error ? 'prefix-batch-write-failed' : 'prefix-batch-flushed', { code: error?.code })
+      )
+      record('prefix-batch-queued', { writable })
       await tail
+      record('tail-released')
       response.write(sse(textDeltaEvents(final.itemId, SUFFIX, PREFIX.length, 520)))
       await done
       output.push(final.finish.find(event => event.type === 'response.output_item.done').item)
@@ -81,10 +88,13 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
         await openNewChatWithE2EModel(control, uiTimeoutMs)
         await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+        record('prefix-wait-started')
+        // The final-answer marker follows 520 native history items, before ordinary UI checks.
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
           text: PREFIX,
-          timeoutMs: longResponseTimeoutMs,
+          timeoutMs: modelResponseTimeoutMs,
         })
+        record('prefix-visible')
         const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         const address = debug.workbench?.currentRuntimeTask
         assert.ok(address?.taskId, 'The long running task has no address')
@@ -126,7 +136,7 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
         )
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
           text: SUFFIX.trim(),
-          timeoutMs: longResponseTimeoutMs,
+          timeoutMs: modelResponseTimeoutMs,
         })
         await waitForWorkbenchDebugState(
           control,
@@ -162,11 +172,33 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
           1,
           'Restoration duplicated a background update'
         )
+      } catch (error) {
+        record('verification-failed')
+        // Capture the held turn before cleanup completes the response and changes its state.
+        try {
+          failureSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+          const address = failureSnapshot.workbench?.currentRuntimeTask
+          if (address?.taskId) {
+            failureSnapshot.messages = JSON.parse(
+              await control.command('getRuntimeConversationMessages', 'body', {
+                value: JSON.stringify(address),
+              })
+            )
+          }
+        } catch (diagnosticError) {
+          record('failure-snapshot-error', { error: String(diagnosticError) })
+        }
+        throw error
       } finally {
         releaseTail?.()
         releaseDone?.()
+        console.log('[desktop-e2e] conversation-switching timeline', JSON.stringify(timeline))
       }
       await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
+    },
+
+    diagnostics() {
+      return { timeline, failureSnapshot }
     },
   }
 }

@@ -1583,19 +1583,19 @@ export function WorkbenchProvider({
     user,
   ])
 
+  const skillProjectWorkspace = findProjectDeviceWorkspace(
+    state.runtimeWork,
+    activeProject?.id,
+    state.selectedDeviceWorkspaceId
+  )
+  const skillWorkspacePath =
+    state.currentRuntimeTask?.workspacePath ??
+    skillProjectWorkspace?.workspacePath ??
+    state.standaloneWorkspacePath ??
+    null
   const listLocalSkills = useCallback(
     async (forceReload = false) => {
-      const selectedProjectWorkspace = findProjectDeviceWorkspace(
-        state.runtimeWork,
-        activeProject?.id,
-        state.selectedDeviceWorkspaceId
-      )
-      const cwd =
-        state.currentRuntimeTask?.workspacePath ??
-        selectedProjectWorkspace?.workspacePath ??
-        state.standaloneWorkspacePath ??
-        null
-      const cwds = cwd ? [cwd] : []
+      const cwds = skillWorkspacePath ? [skillWorkspacePath] : []
       const cacheKey = cwds.length > 0 ? cwds.join('\u0000') : 'default'
 
       const cached = localSkillsCacheRef.current.get(cacheKey)
@@ -1610,14 +1610,7 @@ export function WorkbenchProvider({
       })
       return skills
     },
-    [
-      activeProject?.id,
-      localPluginApi,
-      state.currentRuntimeTask?.workspacePath,
-      state.runtimeWork,
-      state.selectedDeviceWorkspaceId,
-      state.standaloneWorkspacePath,
-    ]
+    [localPluginApi, skillWorkspacePath]
   )
 
   const availableSkills = skillSelection.skills

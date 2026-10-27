@@ -8,5 +8,7 @@ mod core;
 #[path = "tests_stream.rs"]
 mod stream;
 
+#[path = "tests_commands.rs"]
+mod commands;
 #[path = "tests_unphased.rs"]
 mod unphased;

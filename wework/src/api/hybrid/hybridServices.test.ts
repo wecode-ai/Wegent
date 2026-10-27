@@ -2625,6 +2625,51 @@ describe('createHybridWorkbenchServices', () => {
     )
   })
 
+  it('publishes current APP transport aliases discovered after the local device snapshot', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      {
+        id: 0,
+        device_id: 'electron-current-app',
+        runtime_instance_id: 'current-app-runtime',
+        name: 'Current App',
+        status: 'online',
+        is_default: true,
+        device_type: 'local',
+      },
+    ])
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 73,
+        device_id: 'logical-current-app',
+        socket_device_id: 'app-record-73',
+        app_device_id: 'electron-current-app',
+        runtime_instance_id: 'current-app-runtime',
+        name: 'Current App Registration',
+        status: 'online',
+        is_default: false,
+        device_type: 'app',
+      },
+    ])
+    const services = createServices()
+    await services.deviceApi.listDevices()
+    const listener = vi.fn()
+    expect(services.subscribeRuntimeDevices).toBeTypeOf('function')
+    const unsubscribe = services.subscribeRuntimeDevices!(listener)
+    expect(listener.mock.lastCall?.[0][0].runtime_routes).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ runtime_device_id: 'app-record-73' })])
+    )
+
+    await expect(services.cloudBackgroundApi!.listDevices!()).resolves.toEqual([])
+    expect(listener.mock.lastCall?.[0]).toHaveLength(1)
+    expect(listener.mock.lastCall?.[0][0].runtime_routes).toEqual(
+      expect.arrayContaining([expect.objectContaining({ runtime_device_id: 'app-record-73' })])
+    )
+    unsubscribe()
+    listener.mockClear()
+    await services.deviceApi.listDevices()
+    expect(listener).not.toHaveBeenCalled()
+  })
+
   it('routes the current app record execution target through the local runtime', async () => {
     mocks.localListDevices.mockResolvedValue([
       {

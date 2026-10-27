@@ -757,8 +757,26 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn upsert_local_task(&self, link: RuntimeTaskLink) {
+        let started = std::time::Instant::now();
+        let local_task_id = link.local_task_id.clone();
         self.project_runtime_link_status(&link);
+        let projection_elapsed = started.elapsed();
         self.store.upsert_task(link);
+        if started.elapsed() >= std::time::Duration::from_secs(1) {
+            log_executor_event(
+                "runtime task persistence delayed",
+                &[
+                    ("local_task_id", local_task_id),
+                    ("projection_ms", projection_elapsed.as_millis().to_string()),
+                    (
+                        "persistence_ms",
+                        (started.elapsed() - projection_elapsed)
+                            .as_millis()
+                            .to_string(),
+                    ),
+                ],
+            );
+        }
     }
 
     pub(super) fn running_task_count(&self) -> Value {

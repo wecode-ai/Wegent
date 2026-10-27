@@ -4,6 +4,8 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import { waitForProcessExit } from '../process-lifecycle.mjs'
+import { installSocketDiagnostics } from '../socket-diagnostics.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
@@ -1084,6 +1086,7 @@ async function writeLocalHarnessDiagnostics(control, resultDir) {
 }
 
 async function main() {
+  const setSocketDiagnosticPhase = installSocketDiagnostics()
   validateDesktopSegmentOptions()
   const runsProjectPluginE2E = DESKTOP_SEGMENT === 'project-ai-settings'
   await mkdir(resultDir, { recursive: true })
@@ -1510,6 +1513,17 @@ async function main() {
         'Wework did not persist a valid Electron device identity before restart'
       )
       const readyCountBeforeRestart = control.readyCount
+      if (process.platform === 'win32' && options?.graceful === true) {
+        // taskkill /T can kill Codex before its executor observes owner shutdown.
+        // A normal restart must let the native quit path persist active Goals.
+        const activated = JSON.parse(
+          await control.command('activateApplicationMenu', 'body', {
+            value: JSON.stringify({ id: 'application.quit' }),
+          })
+        )
+        assert.equal(activated, true, 'The native application quit action was unavailable')
+        await waitForProcessExit(app, DEFAULT_STEP_TIMEOUT_MS)
+      }
       await stopDesktopAppProcess(app)
       await beforeStart?.()
       if (typeof options === 'object' && options?.appEnvironmentOverrides) {
@@ -1645,6 +1659,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
     if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
       phase = 'desktop-extension-scenario'
+      setSocketDiagnosticPhase(phase)
       await desktopScenario.verify(control)
       if (DESKTOP_SEGMENT === 'local-harness') {
         await writeLocalHarnessDiagnostics(control, resultDir)
@@ -4690,6 +4705,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
   } finally {
     const teardownFailures = []
     const runTeardownStep = async (label, action) => {
+      setSocketDiagnosticPhase(`teardown:${label}`)
       try {
         await action()
       } catch (error) {

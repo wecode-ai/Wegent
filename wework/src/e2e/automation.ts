@@ -1,4 +1,5 @@
 import { rendererCrashStore } from './rendererCrashStore'
+import { createNetworkTimingRecorder } from './network-timing-recorder'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { removeToken, setToken } from '@/api/auth'
@@ -109,6 +110,7 @@ import {
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
+let readNetworkTimings: ReturnType<typeof createNetworkTimingRecorder> | undefined
 
 interface DesktopControlResult {
   id: string
@@ -586,6 +588,8 @@ export async function installWeworkAutomationBridge(
   if (!isWeworkAutomationEnabled() || typeof window === 'undefined') {
     return
   }
+
+  readNetworkTimings ??= createNetworkTimingRecorder()
 
   if (isDesktopRuntime()) {
     await loadDesktopE2ERuntimeConfig()
@@ -1156,8 +1160,11 @@ async function pressNativeDesktopControlKey(
   window.addEventListener(eventType, recordKey, true)
   try {
     trace('key-start')
-    await sendNativeKeyAndWait(element, phase, () =>
-      invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase, focus: false })
+    await sendNativeKeyAndWait(
+      element,
+      phase,
+      () => invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase, focus: false }),
+      { waitForRelease: observation !== null }
     )
     trace('key-observed')
   } finally {
@@ -3238,22 +3245,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
-        network: performance.getEntriesByType('resource').map(entry => {
-          const timing = entry as PerformanceResourceTiming
-          return {
-            path: new URL(timing.name, location.href).pathname,
-            initiatorType: timing.initiatorType,
-            startTime: timing.startTime,
-            duration: timing.duration,
-            fetchStart: timing.fetchStart,
-            connectStart: timing.connectStart,
-            connectEnd: timing.connectEnd,
-            requestStart: timing.requestStart,
-            responseStart: timing.responseStart,
-            responseEnd: timing.responseEnd,
-            nextHopProtocol: timing.nextHopProtocol,
-          }
-        }),
+        networkTimeOrigin: performance.timeOrigin,
+        network: readNetworkTimings?.() ?? [],
       })
     case 'getLocalHarnessDiagnostics':
       return JSON.stringify(await collectLocalHarnessDiagnostics())

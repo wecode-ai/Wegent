@@ -1003,7 +1003,7 @@ async function verifyGoalRestartRecoveryLifecycle({
   assert.ok(executorProcessIdBeforeRestart, 'The original executor process ID was not recorded')
   const restartExecutorLogOffset = (await readFile(executorLogPath, 'utf8')).length
 
-  await restartDesktopApp()
+  await restartDesktopApp({ graceful: true })
 
   const executorReadyAfterRestart = await waitForExecutorRuntimeEvidence(
     control,

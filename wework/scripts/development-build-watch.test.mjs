@@ -4,6 +4,55 @@ import path from 'node:path'
 import { test, expect, vi, onTestFinished } from 'vitest'
 import { watchDevelopmentBuild } from './lib/development-build-watch.mjs'
 
+test('retains startup edits, serializes builds, and stops observing after close', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+  const root = await mkdtemp(path.join(tmpdir(), 'development-build-startup-'))
+  const source = path.join(root, 'entry.js')
+  await writeFile(source, 'one')
+  const started = Promise.withResolvers()
+  const release = Promise.withResolvers()
+  const rebuilt = Promise.withResolvers()
+  const snapshots = []
+  let active = 0
+  let maximumActive = 0
+  const onError = vi.fn()
+  const watching = watchDevelopmentBuild({
+    directories: [root],
+    files: [],
+    intervalMs: 20,
+    onError,
+    build: async () => {
+      maximumActive = Math.max(maximumActive, ++active)
+      snapshots.push(await readFile(source, 'utf8'))
+      if (snapshots.length === 1) {
+        started.resolve()
+        await release.promise
+      } else rebuilt.resolve()
+      active -= 1
+    },
+  })
+  onTestFinished(async () => {
+    release.resolve()
+    await (await watching).close()
+    vi.useRealTimers()
+    await rm(root, { recursive: true, force: true })
+  })
+  await started.promise
+  await writeFile(source, 'two')
+  await vi.advanceTimersByTimeAsync(20)
+  await writeFile(source, 'three')
+  await vi.advanceTimersByTimeAsync(20)
+  release.resolve()
+  const watcher = await watching
+  await rebuilt.promise
+  await watcher.close()
+  await writeFile(source, 'four')
+  await vi.advanceTimersByTimeAsync(40)
+  expect(snapshots).toEqual(['one', 'three'])
+  expect(maximumActive).toBe(1)
+  expect(onError).not.toHaveBeenCalled()
+})
+
 test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules/checkout'])(
   'builds changes under %s, recovers from failure, and ignores output',
   async checkout => {
@@ -31,7 +80,7 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
       ignored: [output],
       build,
       onError,
-      debounceMs: 20,
+      intervalMs: 20,
     })
     onTestFinished(async () => {
       await watcher.close()
@@ -68,7 +117,7 @@ test('rebuilds unchanged CSS assets and publishes subsequent asset edits with fr
     directories: [root],
     files: [],
     ignored: [output],
-    debounceMs: 20,
+    intervalMs: 20,
     onError,
     build: async () => {
       await viteBuild({

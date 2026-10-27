@@ -72,7 +72,11 @@ import { preferWeworkPersonalInstalled } from '@/features/plugins/personalPlugin
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import { slimPluginComponentsForCache } from '@/features/plugins/slimPluginComponents'
 import { slimPluginManifestForCache } from '@/features/plugins/slimPluginManifest'
-import { mergeLocalInstalledWithStorePackages } from '@/components/plugins/installedPluginMerge'
+import {
+  hasLocalCodexMaterialization,
+  localMaterializedVersion,
+  mergeLocalInstalledWithStorePackages,
+} from '@/components/plugins/installedPluginMerge'
 import { installedPluginMarketplaceId } from '@/components/plugins/pluginDistribution'
 
 const MAX_PERSONAL_PLUGIN_PACKAGE_BYTES = 50 * 1024 * 1024
@@ -344,6 +348,7 @@ const MAX_DURABLE_READ_STATE_ENTRIES = 4
 let cachedState: LocalCodexPluginsState | null = null
 let cachedStateGeneration = 0
 let nextReadStateGeneration = 1
+let readStateCacheInvalidation = 0
 let cachedStateAt = 0
 let cachedStateParamsKey = ''
 let activeReadStateDeviceId: string | null = null
@@ -368,6 +373,7 @@ type PersistedReadStateStore = {
 
 /** Clears the short-lived readState cache. Intended for tests and explicit invalidation. */
 export function clearLocalCodexPluginsReadStateCache(): void {
+  readStateCacheInvalidation += 1
   cachedState = null
   cachedStateGeneration = nextReadStateGeneration++
   cachedStateAt = 0
@@ -1880,14 +1886,11 @@ export function applyInstalledPluginsToMarketplaceItems(
       return item
     }
     const id = installedPluginId(installed)
-    const installedLocally =
-      typeof installed.spec.pluginId !== 'number' ||
-      installed.spec.sourcePayload?.localPresent === true
+    const installedLocally = hasLocalCodexMaterialization(installed)
     const installedVersion =
-      (typeof installed.spec.sourcePayload?.localVersion === 'string'
-        ? installed.spec.sourcePayload.localVersion.trim()
-        : '') ||
-      installed.spec.version?.trim() ||
+      localMaterializedVersion(installed) ||
+      (typeof installed.spec.pluginId !== 'number' ? installed.spec.version?.trim() : null) ||
+      (item.installedLocally ? item.installedVersion : null) ||
       null
     const catalogVersion = (item.version ?? '').trim()
     const localVersionLags = Boolean(
@@ -1898,6 +1901,7 @@ export function applyInstalledPluginsToMarketplaceItems(
       item.installedPluginId != null &&
       !installedLocally &&
       item.enabled === installed.spec.enabled &&
+      (item.installedVersion ?? null) === installedVersion &&
       !localVersionLags
     ) {
       return item
@@ -1910,7 +1914,7 @@ export function applyInstalledPluginsToMarketplaceItems(
         (installed.spec.sourcePayload?.cloudInstalledPluginId as string | number | undefined) ??
         (typeof id === 'string' || typeof id === 'number' ? id : null),
       installedLocally: item.installedLocally || installedLocally,
-      installedVersion: installedVersion || item.installedVersion || null,
+      installedVersion,
       enabled: installed.spec.enabled,
       updateAvailable: Boolean(item.updateAvailable) || localVersionLags,
       currentDeviceInstallation: item.currentDeviceInstallation,
@@ -1929,7 +1933,11 @@ async function readState(
   } = {}
 ): Promise<LocalCodexPluginsState> {
   if (!isDesktopRuntime()) return emptyState
+  const invalidation = readStateCacheInvalidation
   const executorStatus = await ensureLocalExecutorStarted()
+  if (invalidation !== readStateCacheInvalidation) {
+    throw new Error('Local plugin catalog read was invalidated while starting executor')
+  }
   const deviceId = executorStatus.deviceId?.trim() ?? ''
   resetInMemoryReadStateForDevice(deviceId)
   hydrateReadStateCacheFromSession(deviceId)

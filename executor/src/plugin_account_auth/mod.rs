@@ -19,6 +19,7 @@ pub use migration::{migrate, resolve_managed_package, PreparedPackage};
 mod local_configuration;
 pub mod local_lifecycle;
 mod process;
+mod process_diagnostics;
 mod revocation;
 pub use gateway::{ConnectionMetadata, NativeAuthGateway};
 pub use revocation::revoke_pending;

@@ -110,7 +110,10 @@ export function createDesktopScenario({
   const markdownLinks = createMarkdownLinkChecks({ captureScreenshot, workspacePath, uiTimeoutMs })
   const fileCitations = createFileCitationChecks({ workspacePath, uiTimeoutMs })
   const transcriptIdentity = createStreamingTranscriptIdentityChecks({ uiTimeoutMs })
-  const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs })
+  const conversationSwitching = createConversationSwitchingChecks({
+    uiTimeoutMs,
+    modelResponseTimeoutMs,
+  })
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   const captureSubagent = (control, name) => captureScreenshot(control, name, 'body')
   const subagentToolRenderTimeoutMs =
@@ -916,7 +919,10 @@ export function createDesktopScenario({
     },
 
     diagnostics() {
-      return { receivedTargetRequest: Boolean(targetRequest) }
+      return {
+        receivedTargetRequest: Boolean(targetRequest),
+        conversationSwitching: conversationSwitching.diagnostics(),
+      }
     },
   }
 }

@@ -63,7 +63,7 @@ if (runs.length) console.log(runs[0].id, runs[0].status)
     artifacts_json="$(request \
       "$api_url/repos/$repository/actions/runs/$run_id/artifacts?per_page=100")"
     artifact_id="$(
-      python3 -c '
+      uv run --no-project python -c '
 import json
 import sys
 
@@ -95,15 +95,18 @@ if matches:
   sleep 2
 done
 
+echo "[actions-artifact] downloading name=$artifact_name id=$artifact_id"
 request \
   --output "$archive" \
   "$api_url/repos/$repository/actions/artifacts/$artifact_id/zip"
 
+echo "[actions-artifact] downloaded bytes=$(wc -c < "$archive"); extracting locally"
 mkdir -p "$destination"
-python3 -c '
+uv run --no-project python -c '
 import sys
 import zipfile
 
 with zipfile.ZipFile(sys.argv[1]) as archive:
     archive.extractall(sys.argv[2])
 ' "$archive" "$destination"
+echo "[actions-artifact] extraction complete name=$artifact_name"

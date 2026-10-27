@@ -19,6 +19,14 @@ pub(super) fn reviewer(request: &ExecutionRequest) -> &'static str {
     }
 }
 
+pub(super) fn approval_policy(request: &ExecutionRequest, windows: bool) -> Value {
+    // UnlessTrusted routes to human approval, even with an automatic reviewer.
+    if windows && applies(request) && crate::runtime_work::stand_in_requires_confirmation(request) {
+        return json!("untrusted");
+    }
+    json!({"granular":{"sandbox_approval":true,"rules":false,"skill_approval":false,"request_permissions":false,"mcp_elicitations":true}})
+}
+
 /// Persist native review evidence through the same lifecycle as other activities.
 pub(super) fn project_review_notification(mut message: Value) -> Value {
     super::elicitation::prepare(&mut message);
@@ -60,9 +68,10 @@ pub(super) fn permission_config(request: &ExecutionRequest) -> Map<String, Value
     // Codex rebuilds session config without the thread/start permission override.
     // Keep the catalog valid and select the same boundary during those reloads.
     config.insert("default_permissions".into(), json!(default_profile));
-    // Reuse native baselines: normal reads, workspace/temp writes in automatic
-    // mode, and real per-command escalation after the selected reviewer approves.
-    // A root deny survives approval and makes successful reviews ineffective.
+    if cfg!(windows) {
+        return config;
+    }
+    // Reuse native baselines so an approved escalation can take effect.
     for (name, baseline) in [
         (SOURCE_READ_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE),
         (SOURCE_PROJECT_PROFILE, CODEX_WORKSPACE_PERMISSION_PROFILE),
@@ -75,7 +84,9 @@ pub(super) fn permission_config(request: &ExecutionRequest) -> Map<String, Value
 
 pub(super) fn profile(request: &ExecutionRequest) -> Option<&'static str> {
     applies(request).then(|| {
-        if crate::runtime_work::stand_in_requires_confirmation(request) {
+        if cfg!(windows) {
+            CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+        } else if crate::runtime_work::stand_in_requires_confirmation(request) {
             SOURCE_READ_PROFILE
         } else {
             SOURCE_PROJECT_PROFILE
@@ -101,10 +112,6 @@ pub(super) fn configure(
     )?;
     config.config_overrides.extend(overrides);
     config.thread_config.extend(permission_config(request));
-    #[cfg(windows)]
-    config
-        .thread_config
-        .insert("windows.sandbox".into(), json!("unelevated"));
     config
         .thread_config
         .insert("approvals_reviewer".into(), json!(reviewer(request)));
@@ -128,6 +135,28 @@ mod tests {
 
     fn request(ask: bool) -> ExecutionRequest {
         serde_json::from_value(json!({"origin":{"type":"dingtalk_work","initiatedBy":"stand_in","askBeforeAct":ask},"runtime_permission_profile":":danger-full-access"})).unwrap()
+    }
+
+    #[test]
+    fn automatic_source_approval_routes_to_native_review_on_every_platform() {
+        for windows in [false, true] {
+            for kind in ["connection_work", "dingtalk_work", "issue_dispatch"] {
+                let mut automatic = request(false);
+                automatic.extra.get_mut("origin").unwrap()["type"] = json!(kind);
+                assert_eq!(reviewer(&automatic), "auto_review");
+                let policy = approval_policy(&automatic, windows);
+                assert_eq!(policy["granular"]["sandbox_approval"], true);
+                assert_eq!(policy["granular"]["mcp_elicitations"], true);
+                assert_ne!(
+                    policy, "untrusted",
+                    "UnlessTrusted bypasses automatic review"
+                );
+
+                automatic.extra.get_mut("origin").unwrap()["askBeforeAct"] = json!(true);
+                assert_eq!(reviewer(&automatic), "user");
+                assert_eq!(approval_policy(&automatic, windows) == "untrusted", windows);
+            }
+        }
     }
 
     #[test]
@@ -179,19 +208,30 @@ mod tests {
         configure(&request(false), &mut launch, root.path()).unwrap();
         let mut params = Map::new();
         append_thread_launch_params(&mut params, &launch);
-        assert_eq!(
-            params["config"]["permissions.wework-source-project.network.enabled"],
-            true
-        );
         assert_eq!(params["config"]["approvals_reviewer"], "auto_review");
-        assert_eq!(
-            codex_runtime_approval_policy(&request(false))["granular"]["sandbox_approval"],
-            true
-        );
-        assert_eq!(
-            params["config"]["permissions.wework-source-project.extends"],
-            CODEX_WORKSPACE_PERMISSION_PROFILE
-        );
+        assert!(params["config"].get("windows.sandbox").is_none());
+        if cfg!(windows) {
+            assert!(params["config"]
+                .get("permissions.wework-source-project.extends")
+                .is_none());
+            assert_eq!(
+                codex_runtime_approval_policy(&request(false))["granular"]["sandbox_approval"],
+                true
+            );
+        } else {
+            assert_eq!(
+                params["config"]["permissions.wework-source-project.network.enabled"],
+                true
+            );
+            assert_eq!(
+                codex_runtime_approval_policy(&request(false))["granular"]["sandbox_approval"],
+                true
+            );
+            assert_eq!(
+                params["config"]["permissions.wework-source-project.extends"],
+                CODEX_WORKSPACE_PERMISSION_PROFILE
+            );
+        }
         assert_eq!(
             params["config"]["mcp_servers.internal.default_tools_approval_mode"],
             "prompt"
@@ -203,12 +243,73 @@ mod tests {
         assert!(params["config"]
             .get("mcp_servers.internal.enabled")
             .is_none());
-        assert_ne!(
+        assert_eq!(
             codex_runtime_permission_profile(&request(false)),
-            CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+            if cfg!(windows) {
+                CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+            } else {
+                SOURCE_PROJECT_PROFILE
+            }
         );
         assert!(!codex_auto_approve_mcp_tool_calls(&request(false)));
         assert_eq!(reviewer(&request(true)), "user");
+    }
+
+    #[test]
+    fn issue_and_stand_in_permissions_follow_the_platform_execution_contract() {
+        let root = tempfile::tempdir().unwrap();
+        let requests = [
+            serde_json::from_value(json!({"origin":{"type":"issue_dispatch"}})).unwrap(),
+            request(false),
+            request(true),
+        ];
+        for request in requests {
+            let mut launch = CodexLaunchConfig::default();
+            configure(&request, &mut launch, root.path()).unwrap();
+            for params in [
+                thread_start_params(&request, &launch),
+                thread_resume_params("thread", &request, &launch),
+                thread_fork_params("thread", None, &request, &launch),
+            ] {
+                assert!(params["config"].get("windows.sandbox").is_none());
+                for profile in [SOURCE_READ_PROFILE, SOURCE_PROJECT_PROFILE] {
+                    let key = format!("permissions.{profile}.filesystem");
+                    if cfg!(windows) {
+                        assert!(params["config"].get(&key).is_none());
+                    } else {
+                        assert!(params["config"].get(&key).is_none());
+                        assert_eq!(
+                            params["config"][format!("permissions.{profile}.extends")],
+                            if profile == SOURCE_READ_PROFILE {
+                                CODEX_READ_ONLY_PERMISSION_PROFILE
+                            } else {
+                                CODEX_WORKSPACE_PERMISSION_PROFILE
+                            }
+                        );
+                    }
+                }
+                assert_eq!(
+                    params["permissions"] == CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+                    cfg!(windows)
+                );
+                assert!(!codex_auto_approve_mcp_tool_calls(&request));
+                if cfg!(windows) && crate::runtime_work::stand_in_requires_confirmation(&request) {
+                    assert_eq!(params["approvalPolicy"], "untrusted");
+                } else {
+                    assert_eq!(
+                        params["approvalPolicy"]["granular"]["sandbox_approval"],
+                        true
+                    );
+                    assert_eq!(
+                        params["approvalPolicy"]["granular"]["mcp_elicitations"],
+                        true
+                    );
+                }
+            }
+        }
+        let mut ordinary = CodexLaunchConfig::default();
+        configure(&ExecutionRequest::default(), &mut ordinary, root.path()).unwrap();
+        assert!(ordinary.thread_config.is_empty());
     }
 
     #[test]
@@ -223,10 +324,23 @@ mod tests {
                 turn_start_params("thread", &request, &launch, vec![]),
             ] {
                 assert_eq!(params["approvalsReviewer"], reviewer(&request));
-                assert_ne!(
-                    params["permissions"],
-                    CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+                assert_eq!(
+                    params["permissions"] == CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+                    cfg!(windows)
                 );
+                assert!(!codex_auto_approve_mcp_tool_calls(&request));
+                if cfg!(windows) && crate::runtime_work::stand_in_requires_confirmation(&request) {
+                    assert_eq!(params["approvalPolicy"], "untrusted");
+                } else {
+                    assert_eq!(
+                        params["approvalPolicy"]["granular"]["sandbox_approval"],
+                        true
+                    );
+                    assert_eq!(
+                        params["approvalPolicy"]["granular"]["mcp_elicitations"],
+                        true
+                    );
+                }
             }
         }
         assert!(thread_start_params(&ExecutionRequest::default(), &launch)
@@ -249,22 +363,27 @@ mod tests {
             let catalog = permission_config(&request);
             let selected = codex_runtime_permission_profile(&request);
             assert_eq!(catalog["default_permissions"], selected);
-            assert_eq!(
-                catalog[&format!("permissions.{selected}.extends")],
-                if ask {
-                    CODEX_READ_ONLY_PERMISSION_PROFILE
-                } else {
-                    CODEX_WORKSPACE_PERMISSION_PROFILE
-                }
-            );
-            assert!(
-                catalog.keys().all(|key| !key.ends_with(".filesystem")),
-                "Native baselines must not be shadowed by non-escalatable deny rules"
-            );
-            assert_eq!(
-                catalog[&format!("permissions.{selected}.network.enabled")],
-                true
-            );
+            if cfg!(windows) {
+                assert_eq!(selected, CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE);
+                assert_eq!(catalog.len(), 1);
+            } else {
+                assert_eq!(
+                    catalog[&format!("permissions.{selected}.extends")],
+                    if ask {
+                        CODEX_READ_ONLY_PERMISSION_PROFILE
+                    } else {
+                        CODEX_WORKSPACE_PERMISSION_PROFILE
+                    }
+                );
+                assert!(
+                    catalog.keys().all(|key| !key.ends_with(".filesystem")),
+                    "Native baselines must not be shadowed by non-escalatable deny rules"
+                );
+                assert_eq!(
+                    catalog[&format!("permissions.{selected}.network.enabled")],
+                    true
+                );
+            }
             let mut launch = CodexLaunchConfig::default();
             launch.thread_config.extend(catalog);
             for params in [

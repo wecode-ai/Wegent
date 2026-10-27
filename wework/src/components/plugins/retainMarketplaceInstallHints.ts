@@ -45,7 +45,7 @@ export function retainMarketplaceInstallHints(
     return {
       ...item,
       installed: true,
-      installedLocally: previous.installedLocally ?? true,
+      installedLocally: previous.installedLocally ?? item.installedLocally,
       installedPluginId: previous.installedPluginId,
       enabled: previous.enabled,
       currentDeviceInstallation:

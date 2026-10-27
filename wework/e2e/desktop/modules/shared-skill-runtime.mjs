@@ -156,6 +156,7 @@ export function createSharedSkillRuntime({
       options: CLOUD_PUBLIC_MODEL_OPTIONS,
     }
     let address
+    const mcpProbes = []
     const runTurn = async (version, index) => {
       turn = {
         index,
@@ -220,6 +221,13 @@ export function createSharedSkillRuntime({
         assert.equal(typeof probe.token, 'string', 'MCP subtask context must be present')
         assert.match(probe.token, /^[A-Za-z0-9_-]+$/)
         assert.ok(turn.mcpOutput.includes(`MCP_CONTEXT:${probe.token}`))
+        assert.match(probe.instanceId, /^[0-9a-f-]{36}$/)
+        assert.ok(turn.mcpOutput.includes(`MCP_INSTANCE:${probe.instanceId}`))
+        mcpProbes.push({ turn: index, pid: probe.pid, instanceId: probe.instanceId })
+        await writeFile(
+          join(resultDir, 'claude-mcp-process-instances.json'),
+          JSON.stringify(mcpProbes, null, 2)
+        )
       }
     }
 
@@ -274,8 +282,8 @@ export function createSharedSkillRuntime({
     } else {
       secondProbe = JSON.parse(await readFile(join(resultDir, 'claude-mcp-probe.json'), 'utf8'))
       assert.notEqual(
-        secondProbe.pid,
-        firstProbe.pid,
+        secondProbe.instanceId,
+        firstProbe.instanceId,
         'Omitted skill MCP was not started on continuation'
       )
       assert.notEqual(secondProbe.token, firstProbe.token, 'MCP task context was not refreshed')
@@ -296,6 +304,7 @@ export function createSharedSkillRuntime({
       const thirdProbe = JSON.parse(
         await readFile(join(resultDir, 'claude-mcp-probe.json'), 'utf8')
       )
+      assert.notEqual(thirdProbe.instanceId, secondProbe.instanceId)
       assert.notEqual(thirdProbe.token, secondProbe.token)
       const mcpAfter = await stat(mcpPath, { bigint: true })
       assert.equal(mcpAfter.ino, mcpBefore.ino)

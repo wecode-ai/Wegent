@@ -18,6 +18,8 @@ runs:
       id: install
       continue-on-error: true
       uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+      env:
+        SCCACHE_IDLE_TIMEOUT: "0"
       with:
         version: ${{ inputs.version }}
 
@@ -47,6 +49,8 @@ runs:
       shell: bash
       run: |
         export CARGO_INCREMENTAL=0
+        # A single Rust compile can outlast the daemon's ten-minute request timer.
+        export SCCACHE_IDLE_TIMEOUT=0
         export SCCACHE_BASEDIRS="$GITHUB_WORKSPACE"
         export SCCACHE_GHA_ENABLED=true
         export SCCACHE_GHA_VERSION="wegent-sccache-v1-$RUNNER_OS-$RUNNER_ARCH"
@@ -62,7 +66,7 @@ runs:
 
         {
           echo "RUSTC_WRAPPER=sccache"
-          for variable in CARGO_INCREMENTAL SCCACHE_BASEDIRS SCCACHE_GHA_ENABLED SCCACHE_GHA_VERSION SCCACHE_GHA_RW_MODE; do
+          for variable in CARGO_INCREMENTAL SCCACHE_IDLE_TIMEOUT SCCACHE_BASEDIRS SCCACHE_GHA_ENABLED SCCACHE_GHA_VERSION SCCACHE_GHA_RW_MODE; do
             if declare -p "$variable" >/dev/null 2>&1; then
               printf '%s=%s\n' "$variable" "${!variable}"
             fi

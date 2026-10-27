@@ -528,6 +528,49 @@ describe('SmartAppsMarketplacePage', () => {
     expect(await screen.findByTestId('harness-app-open-research-desk')).toBeInTheDocument()
   })
 
+  test.each(['success', 'failure'])(
+    'keeps other installed model controls mounted while a stopped app refreshes (%s)',
+    async outcome => {
+      const stopped = { ...importedInstallation, id: 'stopped-app' }
+      const running = {
+        ...importedInstallation,
+        id: 'running-app',
+        state: 'running' as const,
+        webUrl: 'http://127.0.0.1:3080',
+      }
+      listInstalled.mockResolvedValue([stopped, running])
+      const smartAppsApi = api([])
+      const { unmount } = render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+      const modelControl = await screen.findByTestId('harness-app-model-stopped-app')
+      await waitFor(() => expect(screen.getByTestId('smart-apps-created-list')).toBeInTheDocument())
+      let resolveRefresh: (value: { items: SmartAppMarketplaceItem[] }) => void = () => undefined
+      let rejectRefresh: (error: Error) => void = () => undefined
+      vi.mocked(smartAppsApi.listOwned).mockReturnValueOnce(
+        new Promise((resolve, reject) => {
+          resolveRefresh = resolve
+          rejectRefresh = reject
+        })
+      )
+      listInstalled.mockResolvedValue([stopped, { ...running, state: 'installed', webUrl: null }])
+      fireEvent.click(screen.getByTestId('smart-app-actions-running-app'))
+      fireEvent.pointerDown(screen.getByTestId('smart-app-stop-menu-running-app'))
+      await waitFor(() => expect(smartAppsApi.listOwned).toHaveBeenCalledTimes(2))
+
+      try {
+        expect(screen.getByTestId('harness-app-model-stopped-app')).toBe(modelControl)
+        expect(modelControl).toBeEnabled()
+        await act(async () => {
+          if (outcome === 'failure') rejectRefresh(new Error('Cloud refresh failed'))
+          else resolveRefresh({ items: [] })
+        })
+        expect(screen.getByTestId('harness-app-model-stopped-app')).toBe(modelControl)
+      } finally {
+        await act(async () => resolveRefresh({ items: [] }))
+        unmount()
+      }
+    }
+  )
+
   test('does not replace marketplace results when an owned-page stop finishes late', async () => {
     const ownedItem = item({
       id: 8,

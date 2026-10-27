@@ -328,6 +328,16 @@ for manifest in "${node_manifests[@]}"; do
 done
 
 python_action="$action_dir/setup-python-uv-cache/action.yml"
+ruby -r yaml - "$workflow_dir/lint.yml" <<'RUBY'
+workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+steps = workflow.fetch("jobs").fetch("check-settings-config").fetch("steps")
+setup = steps.index { |step| step["uses"] == "./.github/actions/setup-python-uv-cache" }
+tests = steps.index { |step| step["run"] == ".github/scripts/test-ci-cache-policy.sh" }
+unless setup && tests && setup < tests
+  abort "CI cache policy regressions require Python and uv setup before execution"
+end
+RUBY
+
 # GitHub expressions are matched literally in action source.
 # shellcheck disable=SC2016
 if ! grep -Fq 'default: "false"' "$python_action" ||
@@ -563,6 +573,20 @@ fi
 wework_workflow="$workflow_dir/wework-e2e.yml"
 wework_browser_image="$script_dir/../../docker/wework-e2e/browser.Dockerfile"
 wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
+if ! grep -Fq 'UV_PYTHON=3.11' "$wework_browser_image" ||
+  ! grep -Fq 'UV_PYTHON_PREFERENCE=only-managed' "$wework_browser_image" ||
+  ! grep -Fq 'uv python install "$UV_PYTHON"' "$wework_browser_image" ||
+  ! grep -Fq 'import ssl' "$wework_browser_image"; then
+  fail "The platform E2E image must own and validate its Python TLS runtime"
+fi
+ruby -r yaml - "$platform_e2e_workflow" <<'RUBY'
+workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+steps = workflow.fetch("jobs").fetch("e2e-tests").fetch("steps")
+setup = steps.find { |step| step["uses"] == "./.github/actions/setup-python-uv-cache" }
+unless setup && setup.fetch("with").fetch("setup-python", "true") == "false"
+  abort "Container E2E must not use the host runner's Python tool cache"
+end
+RUBY
 if ! grep -Fq 'ARG UV_VERSION=0.11.17' "$wework_browser_image" ||
   ! grep -Fq '"https://astral.sh/uv/${UV_VERSION}/install.sh"' \
     "$wework_browser_image" ||
@@ -587,7 +611,28 @@ step = desktop[prepare]
 abort 'GitHub CLI preparation must be scoped to account auth checkpoints' unless step['if'] == "contains(matrix.segments, 'plugin-account-auth')"
 abort 'GitHub CLI preparation must install and verify the real binary' unless step['run'].include?('find_missing_apt_packages gh') && step['run'].include?('gh --version')
 
-native = YAML.load_file(ARGV[1])['jobs']['native']['steps']
+sdk_jobs = YAML.load_file(ARGV[1]).fetch('jobs')
+inputs = sdk_jobs.fetch('changes').fetch('steps')
+source = inputs.index { |item| item['name'] == 'Prepare pinned DWS source archive' }
+upload = inputs.index { |item| item['uses'].to_s.start_with?('actions/upload-artifact@') }
+abort 'DWS source must be prepared and verified once before platform builds' unless source && upload && source < upload
+abort 'DWS source preparation must reuse the pinned checksum validator' unless inputs[source]['run'].include?('prepare_source_archive(directory, None)')
+gate = "steps.classify.outputs.plugin_auth_sdk == 'true'"
+abort 'DWS source preparation must be scoped to SDK changes' unless [source, upload].all? { |index| inputs[index]['if'] == gate && !inputs[index]['continue-on-error'] }
+artifact = inputs[upload].fetch('with')
+abort 'DWS source uploads must be complete and safe to rerun' unless artifact['if-no-files-found'] == 'error' && artifact['overwrite'] == true
+dws = sdk_jobs.fetch('dws-native')
+abort 'DWS platform builds must depend on the verified input producer' unless dws['needs'] == 'changes'
+abort 'DWS native verification must keep all three platforms' unless dws.dig('strategy', 'matrix', 'os') == ['ubuntu-latest', 'macos-latest', 'windows-latest']
+steps = dws.fetch('steps')
+download = steps.index { |item| item['uses'].to_s.start_with?('actions/download-artifact@') }
+build = steps.index { |item| item['name'] == 'Build and test the pinned DWS native companion' }
+abort 'DWS platform builds must consume the shared source before building' unless download && build && download < build
+archive_directory = '${{ runner.temp }}/dws-auth-source'
+abort 'DWS platform builds must consume exactly the prepared source artifact' unless artifact['path'] == "#{archive_directory}/source.tar.gz" && steps[download].dig('with', 'name') == artifact['name'] && steps[download].dig('with', 'path') == archive_directory
+abort 'DWS builds must verify the shared source and run native tests' unless steps[build]['run'].include?(%Q{--source-archive "#{archive_directory}/source.tar.gz"}) && steps[build]['run'].include?('--test') && !steps[build]['continue-on-error'] && !steps[download]['continue-on-error']
+
+native = sdk_jobs.fetch('native').fetch('steps')
 prepare = native.index { |item| item['name'] == 'Resolve the native adapter Python interpreter' }
 run = native.index { |item| item['name'] == 'Test native transport, OAuth lifecycle, and process cleanup' }
 abort 'Native auth tests must pin the uv interpreter before invoking adapters' unless prepare && run && prepare < run && native[prepare]['run'].include?('uv python find') && native[prepare]['run'].include?('WEGENT_TEST_PYTHON=')

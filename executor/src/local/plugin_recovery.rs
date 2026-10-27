@@ -18,7 +18,12 @@ pub fn default_plugin_store() -> GlobalCapabilityStore {
                 .unwrap_or_else(|| Path::new("."))
                 .join("claude")
         });
-    plugin_store(default_manifest_path(), &codex_home, &claude_home)
+    let store = plugin_store(default_manifest_path(), &codex_home, &claude_home);
+    if std::env::var("WEGENT_PLUGIN_RUNTIME_TARGET").as_deref() == Ok("codex") {
+        store.with_codex_only_plugins()
+    } else {
+        store
+    }
 }
 
 fn plugin_store(

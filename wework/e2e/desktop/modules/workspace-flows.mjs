@@ -4,6 +4,7 @@ import { waitForSnapshot } from './conversation-layout.mjs'
 import {
   assertFullscreenIssueComposerColumn,
   assertFullscreenIssueComposerColumnAtWindowSize,
+  assertIssueComposerReachableInCompactWindow,
 } from './issue-composer-layout.mjs'
 import { verifyWorkspaceTabReturn } from './workspace-tab-return.mjs'
 import { verifyNewTaskBoardAssociation } from './new-task-board-association.mjs'
@@ -1582,8 +1583,17 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
   })
   const activityComposer = `${issuePanel} [data-testid="cloud-task-activity-composer"]`
   await control.command('waitFor', activityComposer, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  // The detail is a scrolling document; its composer can mount below the fold.
+  await control.command('scrollIntoView', activityComposer)
+  await control.command('waitFor', activityComposer, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await assertIssueComposerReachableInCompactWindow(control, {
+    composerSelector: activityComposer,
+    scrollSelector: `${issuePanel} [data-testid="cloud-todo-detail-scroll"]`,
   })
   await control.command('fill', activityComposer, { value: comment })
   await control.command(
