@@ -77,7 +77,12 @@ export class ExecutorRuntimeClient {
           this.request(method, params, timeoutMs, requestId)
         )
       }
-      assertRendererMethod(method, this.description?.renderer_methods)
+      if (!this.description) {
+        return Promise.reject(
+          new ExecutorRuntimeError('runtime_not_ready', 'Executor runtime is not ready', true)
+        )
+      }
+      assertRendererMethod(method, this.description.renderer_methods)
     }
     if (!this.started && method !== 'executor.protocol.describe') {
       return Promise.reject(

@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 
 const WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER = `${WORKBENCH} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -207,6 +208,10 @@ export function createDesktopScenario({
       seedHistory(codexSqliteHome, task.threadId)
       const row = `[data-testid="runtime-local-task-row-${address.taskId}"]`
       await control.command('click', '[data-testid="new-chat-button"]')
+      // The seed turn's terminal reconciliation can cache the newly inserted history.
+      // Reopen from a fresh renderer so this first read exercises native pagination.
+      await reloadMainWindow(control, 'The history fixture did not reopen in a fresh renderer')
+      await control.command('waitFor', row)
       await control.command('click', row)
       await waitForPane(
         control,

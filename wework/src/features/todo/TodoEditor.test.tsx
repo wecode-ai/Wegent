@@ -1,5 +1,6 @@
+import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
 import { describe, expect, it, vi } from 'vitest'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { startTransition, Suspense, useState } from 'react'
 import '@/i18n'
@@ -35,6 +36,8 @@ describe('markdownAttachmentRows', () => {
 })
 
 const api = {
+  getIssueAssignmentReceipts: vi.fn(async () => []),
+  acknowledgeIssueAssignment: vi.fn(async () => ({ acknowledged: true })),
   listDeliveries: vi.fn(async () => ({ items: [] })),
   listTaskBindings: vi.fn(async () => []),
   listLoopItemAttachments: vi.fn(async () => []),
@@ -79,6 +82,70 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it('preserves a newly opened delivery edit when an earlier save finishes', async () => {
+    const first = {
+      id: 'delivery-first',
+      title: 'First delivery',
+      version: 1,
+      loop_item_id: baseItem.id,
+      created_by_user_id: 1,
+      source_task_binding_id: null,
+      source_task_snapshot: null,
+      status: 'delivered',
+      created_at: '2026-10-27T00:00:00Z',
+      delivered_at: '2026-10-27T00:00:00Z',
+      markdown: 'First notes',
+      chat: null,
+      assets: [],
+      fulfillments: [],
+    }
+    const second = {
+      ...first,
+      id: 'delivery-second',
+      title: 'Second delivery',
+      markdown: 'Second notes',
+    }
+    const pending = deferred<typeof first>()
+    const updateDelivery = vi.fn(() => pending.promise)
+    const deliveryApi = {
+      ...api,
+      updateDelivery,
+      listDeliveries: vi.fn(async () => ({ items: [first, second] })),
+      getDelivery: vi.fn(async (id: string) => (id === first.id ? first : second)),
+    } as never
+    const user = userEvent.setup()
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        readFirst
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={deliveryApi}
+        currentUserId={1}
+      />
+    )
+    await user.click(await screen.findByTestId(`todo-detail-open-delivery-${first.id}`))
+    await user.click(await screen.findByTestId('delivery-edit'))
+    await user.click(screen.getByTestId('delivery-edit-save'))
+    await waitFor(() => expect(updateDelivery).toHaveBeenCalledOnce())
+    await user.click(screen.getByTestId('todo-detail-delivery-back'))
+    await user.click(screen.getByTestId(`todo-detail-open-delivery-${second.id}`))
+    await user.click(await screen.findByTestId('delivery-edit'))
+    fireEvent.change(screen.getByTestId('delivery-edit-notes'), {
+      target: { value: 'Keep this new draft' },
+    })
+    await act(async () => {
+      pending.resolve({ ...first, version: 2 })
+      await pending.promise
+    })
+    expect(screen.getByTestId('delivery-edit-notes')).toHaveValue('Keep this new draft')
+    expect(screen.getByTestId('delivery-edit-title')).toHaveValue('Second delivery')
+  })
+
   it.each(['draft', 'source'] as const)(
     'preserves newer %s status changes when a pending save is rejected',
     async change => {
@@ -120,7 +187,8 @@ describe('TodoEditor external item sync', () => {
   )
 
   it('restores rejected status changes without discarding the content draft', async () => {
-    const user = userEvent.setup()
+    // Text-entry pacing is irrelevant here; avoid a timed-out interaction leaking into the next test.
+    const user = userEvent.setup({ delay: null })
     const item = { ...baseItem, status: 'inbox' }
     const updateLoopItem = vi.fn().mockRejectedValueOnce(
       Object.assign(new Error('No execution environment is authorized for this selection'), {
@@ -2967,4 +3035,89 @@ describe('TodoEditor shared attachments', () => {
       expect(teamApi.listTeams).toHaveBeenCalledTimes(1)
     })
   })
+})
+
+describe('assignment receipt icons inside the Issue assignee selector', () => {
+  it.each([undefined, 'workspace-panel'] as const)(
+    'renders exactly one receipt surface in %s',
+    async presentation => {
+      const item = { ...baseItem, assignee_agent_id: null, assignee_user_id: 2 }
+      const receiptApi = {
+        ...api,
+        getIssueAssignmentReceipts: vi.fn(async () => [
+          {
+            id: 'assignment',
+            target_type: 'human',
+            target_id: '2',
+            target_name: 'Recipient',
+            receipt_tracking: true,
+            human_read_at: null,
+            stand_in_received_at: null,
+          },
+        ]),
+      }
+      render(
+        <TodoEditor
+          mode="edit"
+          presentation={presentation}
+          readFirst
+          item={item}
+          project={project}
+          allItems={[item]}
+          api={receiptApi as never}
+          currentUserId={1}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+        />
+      )
+      expect(await screen.findByText('未读')).toBeInTheDocument()
+      expect(screen.getByTestId('cloud-todo-detail-assignee')).toContainElement(
+        screen.getByTestId('issue-assignment-receipts')
+      )
+      expect(screen.getAllByTestId('issue-assignment-receipts')).toHaveLength(1)
+    }
+  )
+})
+
+it('routes local assignment receipts through the same project-space adapter as the Issue', async () => {
+  const localList = vi.fn(async () => [
+    {
+      id: 'local-assignment',
+      target_type: 'human',
+      target_id: '2',
+      target_name: 'Recipient',
+      receipt_tracking: true,
+      human_read_at: null,
+      stand_in_received_at: null,
+    },
+  ])
+  const cloudList = vi.fn(async () => {
+    throw new Error('Cloud API must not own local receipts')
+  })
+  const local = createWeworkDeliverySharedWorkspaceApi({
+    ...api,
+    getIssueAssignmentReceipts: localList,
+  } as never)
+  const sharedApi = { ...local, agents: { list: async () => [] } }
+  const item = { ...baseItem, assignee_agent_id: null, assignee_user_id: 2 }
+  render(
+    <TodoEditor
+      mode="edit"
+      presentation="workspace-panel"
+      item={item}
+      project={project}
+      allItems={[item]}
+      sharedApi={sharedApi}
+      api={{ ...api, getIssueAssignmentReceipts: cloudList } as never}
+      currentUserId={1}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />
+  )
+  expect(await screen.findByText('未读')).toBeInTheDocument()
+  expect(screen.getByTestId('cloud-todo-detail-assignee')).toContainElement(
+    screen.getByTestId('issue-assignment-receipts')
+  )
+  expect(localList).toHaveBeenCalledWith(item.id)
+  expect(cloudList).not.toHaveBeenCalled()
 })

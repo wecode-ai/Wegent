@@ -14,8 +14,14 @@ import { observePluginSyncTransport } from '../modules/plugin-sync-observer.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 
-const MIN_RECONCILE_DELAY_MS = 600_000
-const MAX_RECONCILE_DELAY_MS = 720_000
+const RECONCILE_ENV = {
+  LOCAL_PLUGIN_RECONCILE_INTERVAL: '90',
+  LOCAL_PLUGIN_RECONCILE_JITTER: '18',
+  LOCAL_HEARTBEAT_INTERVAL: '1',
+}
+const MIN_RECONCILE_DELAY_MS = Number(RECONCILE_ENV.LOCAL_PLUGIN_RECONCILE_INTERVAL) * 1_000
+const MAX_RECONCILE_DELAY_MS =
+  MIN_RECONCILE_DELAY_MS + Number(RECONCILE_ENV.LOCAL_PLUGIN_RECONCILE_JITTER) * 1_000
 const REGISTRATION_ACK_TIMEOUT_MS = 10_000
 
 // A complete reconciliation advances ordering metadata for all managed plugins.
@@ -41,7 +47,7 @@ function pluginRuntime(plugin) {
 }
 
 // Only the selected real Socket.IO change frame is withheld. MySQL, APIs,
-// Electron, IPC, Executor, package storage and the production timer remain real.
+// Electron, IPC, Executor, package storage and the timer remain real.
 export async function createDesktopScenario({
   captureScreenshot,
   executorHome,
@@ -49,7 +55,7 @@ export async function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   const objectStorage = await startRealObjectStorage(resultDir, workbenchReadyTimeoutMs)
-  const appEnvironment = {}
+  const appEnvironment = { ...RECONCILE_ENV }
   const evidence = []
   let cloud
   let proxy
@@ -193,7 +199,7 @@ export async function createDesktopScenario({
         assert.ok(
           elapsedMs >= MIN_RECONCILE_DELAY_MS &&
             elapsedMs <= MAX_RECONCILE_DELAY_MS + REGISTRATION_ACK_TIMEOUT_MS,
-          `Periodic request did not use the real 600–720 second schedule: ${elapsedMs}ms`
+          `Periodic request did not use the configured ${MIN_RECONCILE_DELAY_MS}–${MAX_RECONCILE_DELAY_MS}ms schedule: ${elapsedMs}ms`
         )
         return { current, request, elapsedMs }
       }
@@ -244,6 +250,7 @@ export async function createDesktopScenario({
     assert.equal(changed.affected, 1, 'Cloud identity fixture must update exactly its owned row')
     cloud.remoteExecutorEnv.WEGENT_BACKEND_URL = cloudProxy.url
     cloud.remoteExecutorEnv.WEGENT_SOCKET_URL = cloudProxy.url
+    Object.assign(cloud.remoteExecutorEnv, RECONCILE_ENV)
     cloud.remoteExecutor = await cloud.spawnExecutor(
       cloud.remoteExecutorEnv,
       cloud.remoteExecutorLogPath

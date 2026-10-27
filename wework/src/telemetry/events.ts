@@ -1,4 +1,9 @@
 import {
+  STAND_IN_EVENT_PROPERTY_KEYS,
+  STAND_IN_EVENT_VALUE_CONSTRAINTS,
+  type StandInGeneratedEventMap,
+} from './generated/standInEvents'
+import {
   PLUGIN_EVENT_PROPERTY_KEYS,
   PLUGIN_EVENT_VALUE_CONSTRAINTS,
   type PluginGeneratedEventMap,
@@ -16,7 +21,8 @@ export type TelemetryResult = 'success' | 'cancelled' | 'failure'
 export type TelemetryFailureReason = 'network_error' | 'model_error' | 'runtime_error' | 'unknown'
 export type TelemetryDataSource = 'local' | 'cloud' | 'unknown'
 
-export interface AnalyticsEventMap extends SmartAppGeneratedEventMap, PluginGeneratedEventMap {
+export interface AnalyticsEventMap
+  extends SmartAppGeneratedEventMap, PluginGeneratedEventMap, StandInGeneratedEventMap {
   $ai_trace: {
     $ai_trace_id: string
     $ai_trace_phase: 'start' | 'end'
@@ -339,11 +345,18 @@ export const ANALYTICS_EVENT_PROPERTY_KEYS: {
   workspace_panel_removed: ['panel'],
   ...SMART_APP_EVENT_PROPERTY_KEYS,
   ...PLUGIN_EVENT_PROPERTY_KEYS,
+  ...STAND_IN_EVENT_PROPERTY_KEYS,
 }
 
 type PropertyValueConstraint<Property> =
   | ReadonlyArray<Property>
-  | { enum?: ReadonlyArray<Property>; maxLength?: number; pattern?: RegExp }
+  | {
+      enum?: ReadonlyArray<Property>
+      maxLength?: number
+      pattern?: RegExp
+      min?: number
+      max?: number
+    }
 
 const SAFE_LABEL_PATTERN = /^[A-Za-z0-9._+-]+$/
 
@@ -582,6 +595,7 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
   },
   ...SMART_APP_EVENT_VALUE_CONSTRAINTS,
   ...PLUGIN_EVENT_VALUE_CONSTRAINTS,
+  ...STAND_IN_EVENT_VALUE_CONSTRAINTS,
 }
 
 export type AnalyticsEvent = {

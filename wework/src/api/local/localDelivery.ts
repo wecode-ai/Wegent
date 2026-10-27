@@ -1,3 +1,4 @@
+import type { IssueAssignmentReceipt } from '@/api/deliveries'
 import type { RunnerSelection } from '@wegent/collaboration'
 import { createRequestCache } from '@wegent/chat-core/request-cache'
 import type {
@@ -1329,6 +1330,23 @@ export function createLocalDeliveryApi(
       taskProjects.set(record.id, projectId)
       return localTask(record)
     },
+    async getIssueAssignmentReceipts(itemId: string): Promise<IssueAssignmentReceipt[]> {
+      const projectId = await resolveProjectId(itemId)
+      return request('todos.assignment_receipts', { project_id: projectId, task_id: itemId })
+    },
+    async acknowledgeIssueAssignment(
+      itemId: string,
+      assignmentId: string,
+      userId: number
+    ): Promise<unknown> {
+      const projectId = await resolveProjectId(itemId)
+      return request('todos.acknowledge_assignment', {
+        project_id: projectId,
+        task_id: itemId,
+        assignment_id: assignmentId,
+        user_id: userId,
+      })
+    },
     async markLoopItemRead(itemId: string, activitySequence?: number) {
       const projectId = await resolveProjectId(itemId)
       const record = await request<LocalLoopItemRecord>('todos.mark_read', {
@@ -1615,7 +1633,13 @@ export function createLocalDeliveryApi(
       })
       return { items: records.map(localProjectFile) }
     },
-    listProjectDeliveryFiles: async () => ({ items: [] }),
+    async listProjectDeliveryFiles(projectId: CloudProjectId) {
+      const items = await request<import('@/api/deliveries').ProjectDeliveryFile[]>(
+        'deliveries.list_files',
+        { project_id: projectId }
+      )
+      return { items }
+    },
     async createCloudFolder(projectId: CloudProjectId, path: string) {
       const record = await request<LocalProjectFileRecord>('files.create_folder', {
         project_id: projectId,
@@ -1668,6 +1692,23 @@ export function createLocalDeliveryApi(
         project_id: projectId,
         item_id: itemId,
         delivery: data,
+      })
+    },
+    async updateDelivery(
+      deliveryId: string,
+      input: import('@wegent/collaboration').WorkspaceDeliveryUpdate
+    ) {
+      return request<DeliveryDetail>('deliveries.update', {
+        delivery_id: deliveryId,
+        delivery: {
+          ...input,
+          files: await Promise.all(
+            input.files.map(async entry => ({
+              relative_path: entry.relative_path,
+              file: await fileInput(entry.file),
+            }))
+          ),
+        },
       })
     },
     async addAsset(deliveryId: string, file: File, relativePath: string) {
