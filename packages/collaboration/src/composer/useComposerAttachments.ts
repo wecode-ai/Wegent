@@ -5,7 +5,7 @@ export interface MultiAttachmentUploadState {
   uploadingFiles: Map<string, { file: File; progress: number; previewUrl?: string }>
   errors: Map<string, string>
 }
-import { isValidFileSize, releaseAttachmentPreview, isWorkspaceImageFile } from './attachmentFiles'
+import { releaseAttachmentPreview, isWorkspaceImageFile } from './attachmentFiles'
 import { readTextAttachmentMetadata } from '../issue-detail/attachmentPresentation'
 import { isPastedTextFile } from './pastedTextAttachment'
 
@@ -98,20 +98,13 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
         // include size/lastModified and the in-batch index for a stable key.
         const fileId = `${file.name}:${file.size}:${file.lastModified}:${index}`
 
-        if (!isValidFileSize(file.size)) {
-          updateScopeState(targetScopeKey, current => {
-            const errors = new Map(current.errors)
-            errors.set(fileId, 'File is too large')
-            return { ...current, errors }
-          })
-          continue
-        }
-
         const previewUrl = createImagePreview(file)
         updateScopeState(targetScopeKey, current => {
           const uploadingFiles = new Map(current.uploadingFiles)
+          const errors = new Map(current.errors)
+          errors.delete(file.name)
           uploadingFiles.set(fileId, { file, progress: 0, previewUrl })
-          return { ...current, uploadingFiles }
+          return { ...current, uploadingFiles, errors }
         })
 
         let previewTransferred = false
@@ -136,7 +129,11 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
                 text_length: attachment.text_length ?? textMetadata.text_length,
               }
             : attachment
-          if (isPastedTextFile(file)) enrichedAttachment = { ...enrichedAttachment, ui_kind: 'pasted-text' }
+          if (isPastedTextFile(file))
+            enrichedAttachment = {
+              ...enrichedAttachment,
+              ui_kind: 'pasted-text',
+            }
           if (previewUrl) {
             if (enrichedAttachment.local_preview_url !== previewUrl) {
               releaseAttachmentPreview(enrichedAttachment)
@@ -164,7 +161,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
             const uploadingFiles = new Map(current.uploadingFiles)
             const errors = new Map(current.errors)
             uploadingFiles.delete(fileId)
-            errors.set(fileId, error instanceof Error ? error.message : 'Upload failed')
+            errors.set(file.name, error instanceof Error ? error.message : 'Upload failed')
             return { ...current, uploadingFiles, errors }
           })
         } finally {
@@ -175,6 +172,18 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
       }
     },
     [updateScopeState, uploadAttachment, options.onAction]
+  )
+
+  const dismissAttachmentErrorForScope = useCallback(
+    (targetScopeKey: string, filename: string) => {
+      updateScopeState(targetScopeKey, current => {
+        if (!current.errors.has(filename)) return current
+        const errors = new Map(current.errors)
+        errors.delete(filename)
+        return { ...current, errors }
+      })
+    },
+    [updateScopeState]
   )
 
   const removeAttachmentForScope = useCallback(
@@ -235,6 +244,10 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
     () => resetAttachmentsForScope(scopeKey),
     [resetAttachmentsForScope, scopeKey]
   )
+  const dismissAttachmentError = useCallback(
+    (filename: string) => dismissAttachmentErrorForScope(scopeKey, filename),
+    [dismissAttachmentErrorForScope, scopeKey]
+  )
 
   return {
     state,
@@ -242,6 +255,8 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
     attachments: state.attachments,
     uploadingFiles: state.uploadingFiles,
     errors: state.errors,
+    dismissAttachmentError,
+    dismissAttachmentErrorForScope,
     isUploading,
     isAttachmentReadyToSend,
     handleFileSelect,

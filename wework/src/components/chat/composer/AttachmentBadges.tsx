@@ -19,6 +19,7 @@ interface AttachmentBadgesProps {
   errors: Map<string, string>
   codeComments?: CodeCommentContext[]
   onRemoveAttachment: (attachmentId: number) => void
+  onDismissAttachmentError?: (filename: string) => void
   onShowTextAttachment?: (attachment: Attachment) => void
   onClearCodeComments?: () => void
 }
@@ -101,6 +102,19 @@ export function AttachmentBadges({
     <>
       <ComposerAttachmentBadges<Attachment>
         {...props}
+        onRemoveAttachment={id => {
+          if (
+            props.attachments.find(attachment => attachment.id === id)?.filename ===
+            openError?.filename
+          ) {
+            setOpenError(null)
+          }
+          props.onRemoveAttachment(id)
+        }}
+        onDismissAttachmentError={filename => {
+          setOpenError(current => (current?.filename === filename ? null : current))
+          props.onDismissAttachmentError?.(filename)
+        }}
         imageServices={imageServices}
         onOpenAttachment={attachment => void openAttachment(attachment)}
         errors={
@@ -111,6 +125,7 @@ export function AttachmentBadges({
         labels={{
           showText: t('workbench.show_text_attachment_in_composer'),
           addingText: t('workbench.adding_pasted_text_attachment'),
+          dismissError: t('workbench.dismiss_attachment_error'),
           pastedText: t('workbench.pasted_text_attachment'),
           appshot: t('workbench.appshot_attachment_label', '应用快照'),
         }}

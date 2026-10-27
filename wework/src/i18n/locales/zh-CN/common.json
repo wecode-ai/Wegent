@@ -4590,6 +4590,7 @@
     "markdown_placeholder": "写下任务背景、问题、要求或任何模型需要读取的内容…",
     "drop_files_hint": "可拖拽文件到编辑器",
     "remove_attachment": "移除附件",
+    "dismiss_attachment_error": "关闭附件错误",
     "properties_optional": "全部可选，可创建后再补充",
     "priority_none": "优先级：无",
     "priority_none_short": "无",
