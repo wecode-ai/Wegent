@@ -106,3 +106,66 @@ test('clears a previous error when the same file is reselected and completes the
   expect(result.current.attachments).toEqual([attachment])
   expect(result.current.isAttachmentReadyToSend).toBe(true)
 })
+
+test.each(['before', 'after'])(
+  'ignores an older attempt failing %s the reselected file succeeds',
+  async failureOrder => {
+    let failFirst!: (error: Error) => void
+    let finishRetry!: (attachment: Attachment) => void
+    const upload = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<Attachment>((_, reject) => (failFirst = reject)))
+      .mockImplementationOnce(() => new Promise<Attachment>(resolve => (finishRetry = resolve)))
+    const { result } = renderHook(() => useWorkbenchAttachments({ uploadAttachment: upload }))
+    const file = new File(['test'], 'valid.pdf')
+    let first!: Promise<void>
+    let retry!: Promise<void>
+    act(() => {
+      first = result.current.handleFileSelect(file)
+      retry = result.current.handleFileSelect(file)
+    })
+    expect(result.current.uploadingFiles.size).toBe(2)
+
+    const fail = async () => {
+      await act(async () => {
+        failFirst(new Error('older failure'))
+        await first
+      })
+      expect(result.current.errors.size).toBe(0)
+    }
+    if (failureOrder === 'before') await fail()
+    await act(async () => {
+      finishRetry(attachment)
+      await retry
+    })
+    if (failureOrder === 'after') await fail()
+
+    expect(result.current.attachments).toEqual([attachment])
+    expect(result.current.uploadingFiles.size).toBe(0)
+    expect(result.current.isAttachmentReadyToSend).toBe(true)
+  }
+)
+
+test('tracks concurrent failures of the same filename independently in each scope', async () => {
+  const failures: Array<(error: Error) => void> = []
+  const upload = vi.fn(() => new Promise<Attachment>((_, reject) => failures.push(reject)))
+  const { result } = renderHook(() =>
+    useWorkbenchAttachments({ scopeKey: 'first', uploadAttachment: upload })
+  )
+  const file = new File(['test'], 'same.pdf')
+  let first!: Promise<void>
+  let second!: Promise<void>
+  act(() => {
+    first = result.current.handleFileSelect(file)
+    second = result.current.handleFileSelectForScope('second', file)
+  })
+  await act(async () => {
+    failures[0](new Error('first scope failure'))
+    await first
+    failures[1](new Error('second scope failure'))
+    await second
+  })
+
+  expect(result.current.errors.get('same.pdf')).toBe('first scope failure')
+  expect(result.current.stateByScope.second.errors.get('same.pdf')).toBe('second scope failure')
+})

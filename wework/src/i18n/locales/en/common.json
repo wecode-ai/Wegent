@@ -76,6 +76,7 @@
     }
   },
   "workbench": {
+    "dismiss_attachment_error": "Dismiss attachment error",
     "reply_prediction_generating": "Generating a suggestion…",
     "reply_prediction_failed": "Could not generate a reply suggestion. Check the current model’s connection and authentication settings.",
     "reply_prediction_accept": "Accept suggestion",
@@ -4593,7 +4594,6 @@
     "markdown_placeholder": "Add the task background, problem, requirements, or anything the model should read…",
     "drop_files_hint": "Drop files into the editor",
     "remove_attachment": "Remove attachment",
-    "dismiss_attachment_error": "Dismiss attachment error",
     "properties_optional": "All optional and can be completed after creation",
     "priority_none": "Priority: none",
     "priority_none_short": "None",
