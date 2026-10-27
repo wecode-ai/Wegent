@@ -3,6 +3,8 @@
 
 """Map Kind grants to Workspace API values."""
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -13,6 +15,9 @@ from app.schemas.base_role import BaseRole
 from app.services.device.runtime_route import runtime_device_route_id
 from app.services.team_access_policy import can_edit_team
 from app.services.workspaces.storage import workspace_from_kind
+
+if TYPE_CHECKING:
+    from app.services.execution.readiness_context import TeamReadinessContext
 
 
 def agent_values(
@@ -186,6 +191,7 @@ def agent_status(
     team: Kind,
     *,
     execution_user_id: int,
+    readiness: "TeamReadinessContext | None" = None,
 ) -> str:
     """Return whether the Agent can execute for the requesting user."""
     if not team.is_active:
@@ -200,6 +206,7 @@ def agent_status(
             db,
             team=team,
             execution_user_id=execution_user_id,
+            context=readiness,
         )
     except ValueError:
         return "unavailable"

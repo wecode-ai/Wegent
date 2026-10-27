@@ -5,6 +5,8 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.resource_member import ResourceMember
+from app.services.execution.readiness_context import TeamReadinessContext
 from app.services.execution.team_readiness import (
     validate_team_execution_readiness,
 )
@@ -120,9 +122,11 @@ def _team_graph(
     return team
 
 
+@pytest.mark.parametrize("batched", [False, True])
 def test_team_readiness_accepts_complete_execution_graph(
     test_db: Session,
     test_user,
+    batched: bool,
 ) -> None:
     team = _team_graph(test_db, user_id=test_user.id)
 
@@ -130,6 +134,9 @@ def test_team_readiness_accepts_complete_execution_graph(
         test_db,
         team=team,
         execution_user_id=test_user.id,
+        context=(
+            TeamReadinessContext(test_db, [team], test_user.id) if batched else None
+        ),
     )
 
 
@@ -147,11 +154,13 @@ def test_team_readiness_accepts_complete_execution_graph(
         ),
     ],
 )
+@pytest.mark.parametrize("batched", [False, True])
 def test_team_readiness_rejects_incomplete_execution_graph(
     test_db: Session,
     test_user,
     graph_options: dict,
     error: str,
+    batched: bool,
 ) -> None:
     team = _team_graph(test_db, user_id=test_user.id, **graph_options)
 
@@ -160,4 +169,148 @@ def test_team_readiness_rejects_incomplete_execution_graph(
             test_db,
             team=team,
             execution_user_id=test_user.id,
+            context=(
+                TeamReadinessContext(test_db, [team], test_user.id) if batched else None
+            ),
         )
+
+
+@pytest.mark.parametrize("batched", [False, True])
+def test_readiness_keeps_model_reference_in_execution_users_scope(
+    test_db: Session, test_user, test_admin_user, batched: bool
+) -> None:
+    team = _team_graph(test_db, user_id=test_admin_user.id)
+    model = (
+        test_db.query(Kind)
+        .filter_by(
+            kind="Model",
+            user_id=test_admin_user.id,
+            namespace="default",
+            name="readiness-model",
+        )
+        .one()
+    )
+    grant = ResourceMember.create(
+        resource_type="Model",
+        resource_id=model.id,
+        entity_type="user",
+        entity_id=str(test_user.id),
+        role="Reporter",
+        status="approved",
+        invited_by_user_id=test_admin_user.id,
+    )
+    test_db.add(grant)
+    for status in ["pending", "approved", "rejected"]:
+        grant.status = status
+        test_db.commit()
+        context = (
+            TeamReadinessContext(test_db, [team], test_user.id) if batched else None
+        )
+        if status == "approved":
+            validate_team_execution_readiness(
+                test_db, team=team, execution_user_id=test_user.id, context=context
+            )
+        else:
+            with pytest.raises(ValueError, match="model is unavailable"):
+                validate_team_execution_readiness(
+                    test_db, team=team, execution_user_id=test_user.id, context=context
+                )
+
+
+@pytest.mark.parametrize("batched", [False, True])
+def test_readiness_preserves_public_model_whitelist(
+    test_db: Session, test_user, batched: bool
+) -> None:
+    team = _team_graph(test_db, user_id=test_user.id)
+    model = (
+        test_db.query(Kind)
+        .filter_by(
+            kind="Model",
+            user_id=test_user.id,
+            namespace="default",
+            name="readiness-model",
+        )
+        .one()
+    )
+    model.user_id = 0
+    for allowed in [True, False]:
+        model.json = {
+            **model.json,
+            "spec": {
+                **model.json["spec"],
+                "allowedUsersEnabled": True,
+                "allowedUsers": [test_user.user_name] if allowed else [],
+            },
+        }
+        test_db.commit()
+        context = (
+            TeamReadinessContext(test_db, [team], test_user.id) if batched else None
+        )
+        if allowed:
+            validate_team_execution_readiness(
+                test_db, team=team, execution_user_id=test_user.id, context=context
+            )
+        else:
+            with pytest.raises(ValueError, match="model is unavailable"):
+                validate_team_execution_readiness(
+                    test_db, team=team, execution_user_id=test_user.id, context=context
+                )
+
+
+@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("cycle", [False, True])
+def test_readiness_follows_model_pointers(
+    test_db: Session, test_user, batched: bool, cycle: bool
+) -> None:
+    team = _team_graph(test_db, user_id=test_user.id)
+    model = test_db.query(Kind).filter_by(kind="Model", user_id=test_user.id).one()
+    target = _resource(
+        user_id=test_user.id,
+        kind="Model",
+        name="target-model",
+        spec=(
+            {"modelConfig": {"bind_model": model.name}} if cycle else model.json["spec"]
+        ),
+    )
+    model.json = {
+        **model.json,
+        "spec": {"modelConfig": {"bind_model": target.name}},
+    }
+    test_db.add(target)
+    test_db.commit()
+    context = TeamReadinessContext(test_db, [team], test_user.id) if batched else None
+
+    if cycle:
+        with pytest.raises(ValueError, match="too deep or cyclic"):
+            validate_team_execution_readiness(
+                test_db, team=team, execution_user_id=test_user.id, context=context
+            )
+    else:
+        validate_team_execution_readiness(
+            test_db, team=team, execution_user_id=test_user.id, context=context
+        )
+
+
+@pytest.mark.parametrize("batched", [False, True])
+def test_readiness_retains_runner_selected_models(
+    test_db: Session, test_user, batched: bool
+) -> None:
+    team = _team_graph(test_db, user_id=test_user.id, include_model=False)
+    bot = test_db.query(Kind).filter_by(kind="Bot", user_id=test_user.id).one()
+    bot.json = {
+        **bot.json,
+        "spec": {
+            **bot.json["spec"],
+            "execution_policy": {"mode": "user_select"},
+        },
+    }
+    test_db.commit()
+
+    validate_team_execution_readiness(
+        test_db,
+        team=team,
+        execution_user_id=test_user.id,
+        context=(
+            TeamReadinessContext(test_db, [team], test_user.id) if batched else None
+        ),
+    )

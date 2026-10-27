@@ -16,6 +16,8 @@ from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.resource_member import ResourceMember
 from app.services.adapters.team_kinds import team_kinds_service
+from app.services.execution.readiness_context import TeamReadinessContext
+from app.services.execution.team_readiness import validate_team_execution_readiness
 
 
 @pytest.fixture(scope="module")
@@ -110,3 +112,78 @@ def test_namespace_grants_with_connection_collation(
     assert [row.team_id for row in rows] == [team.id]
     assert rows[0].access_source == "namespace_authorization"
     assert rows[0].restricted_guest_access == (member_role == "RestrictedAnalyst")
+
+
+def _resource(kind: str, name: str, spec: dict, user_id: int = 1) -> Kind:
+    return Kind(
+        user_id=user_id,
+        kind=kind,
+        name=name,
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": kind,
+            "metadata": {"name": name, "namespace": "default"},
+            "spec": spec,
+        },
+    )
+
+
+@pytest.mark.parametrize("collation", ["utf8mb4_0900_ai_ci", "utf8mb4_unicode_ci"])
+@pytest.mark.parametrize("referenced_model", [False, True])
+def test_batched_readiness_preserves_database_name_matching(
+    mysql_db: Session, collation: str, referenced_model: bool
+) -> None:
+    mysql_db.execute(text(f"SET NAMES utf8mb4 COLLATE {collation}"))
+    model = _resource(
+        "Model",
+        "MixedCaseModel",
+        {"modelConfig": {"env": {"model": "openai", "model_id": "test"}}},
+        user_id=2 if referenced_model else 1,
+    )
+    team = _resource(
+        "Team",
+        "Team",
+        {
+            "members": [{"botRef": {"name": "mixedcasebot", "namespace": "default"}}],
+            "collaborationModel": "solo",
+        },
+    )
+    mysql_db.add_all(
+        [
+            model,
+            team,
+            _resource("Shell", "MixedCaseShell", {"shellType": "Chat"}),
+            _resource("Ghost", "MixedCaseGhost", {"systemPrompt": "Test."}),
+            _resource(
+                "Bot",
+                "MixedCaseBot",
+                {
+                    "ghostRef": {"name": "mixedcaseghost", "namespace": "default"},
+                    "shellRef": {"name": "mixedcaseshell", "namespace": "default"},
+                    "modelRef": {"name": "mixedcasemodel", "namespace": "default"},
+                },
+            ),
+        ]
+    )
+    mysql_db.flush()
+    if referenced_model:
+        mysql_db.add(
+            ResourceMember(
+                resource_type="Model",
+                resource_id=model.id,
+                entity_type="user",
+                entity_id="1",
+                role="Developer",
+                status="approved",
+            )
+        )
+        mysql_db.flush()
+
+    validate_team_execution_readiness(mysql_db, team=team, execution_user_id=1)
+    validate_team_execution_readiness(
+        mysql_db,
+        team=team,
+        execution_user_id=1,
+        context=TeamReadinessContext(mysql_db, [team], 1),
+    )

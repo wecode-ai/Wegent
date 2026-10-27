@@ -12,6 +12,7 @@ from app.core.async_utils import run_in_threadpool_with_cleanup
 from app.models.kind import Kind
 from app.models.share_link import ResourceType
 from app.models.user import User
+from app.services.execution.readiness_context import TeamReadinessContext
 from app.services.workspaces.environment_status import execution_environment_statuses
 from app.services.workspaces.resource_mapping import (
     agent_display_name,
@@ -75,6 +76,7 @@ class WorkspacePersonalResourceService:
             resource_ids=[device.id for device in devices],
         )
         environment_ids = [str(device.id) for device in devices]
+        readiness = TeamReadinessContext(db, teams, user_id)
         return _PersonalResourceCatalog(
             owner=user,
             agents=[
@@ -89,6 +91,7 @@ class WorkspacePersonalResourceService:
                         db,
                         team,
                         execution_user_id=user_id,
+                        readiness=readiness,
                     ),
                     "execution_environment_ids": environment_ids,
                     "workspace_ids": team_workspace_ids.get(team.id, []),
