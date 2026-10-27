@@ -1075,6 +1075,7 @@ export function WeworkSharedProject({
             onDelete,
           }) => (
             <IssueConversationDrawers
+              key={issue.id}
               label={createCollaborationTranslator(locale)('todo.issue_details')}
               conversation={taskComposer?.issue.id === issue.id ? conversationPanel : null}
               conversationKey={taskComposer?.conversationKey}
@@ -1381,6 +1382,8 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     String(props.activeProjectRef?.projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
       ? null
       : (props.activeProjectRef ?? null)
+  const routedProjectId = activeProject ? String(activeProject.projectId) : null
+  const routedProjectStore = activeProject?.projectStore
   const [location, setLocation] = useState<CollaborationPlatformLocation>(() => ({
     ...(routeProjectLocation(activeProject, props.focusedItemId ?? null) ?? initialLocation),
   }))
@@ -1434,43 +1437,42 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
   ])
 
   useEffect(() => {
-    const activeProjectId = activeProject ? String(activeProject.projectId) : null
+    const activeProjectId = routedProjectId
     if (pendingNavigationProjectIdRef.current !== undefined) {
       if (pendingNavigationProjectIdRef.current !== activeProjectId) return
       pendingNavigationProjectIdRef.current = undefined
     }
-    if (!platformApi?.projects.get || !activeProject) return
+    if (!platformApi?.projects.get || !activeProjectId || !routedProjectStore) return
     let cancelled = false
-    const target = routeProjectLocation(activeProject, props.focusedItemId ?? null)
+    const target = routeProjectLocation(
+      { projectId: activeProjectId, projectStore: routedProjectStore },
+      props.focusedItemId ?? null
+    )
     if (target) {
       const routedFocus = props.focusedItemId ?? null
-      const projectAlreadyOnScreen = String(location.projectId ?? '') === target.projectId
-      // The route names a project, and only sometimes the Issue to open. Once
-      // that project is on screen the Issue the reader opened inside it — or
-      // the one the platform opened itself — stands, so only a routed focus
-      // moves the location.
-      if (!projectAlreadyOnScreen || (routedFocus !== null && location.issueId !== routedFocus)) {
-        queueMicrotask(() => {
-          if (cancelled) return
-          setLocation(current => {
-            const movingProject = String(current.projectId ?? '') !== target.projectId
-            const issueId = movingProject ? routedFocus : (routedFocus ?? current.issueId)
-            if (
-              !movingProject &&
-              current.issueId === issueId &&
-              current.workspaceView === target.workspaceView &&
-              current.projectView === target.projectView
-            )
-              return current
-            return {
-              ...current,
-              ...target,
-              issueId,
-              projectSettingsSection: null,
-            }
-          })
+      // Apply a notification focus when its route changes, not again when the
+      // reader selects another Issue before the old focus is cleared.
+      queueMicrotask(() => {
+        if (cancelled) return
+        setLocation(current => {
+          const movingProject = String(current.projectId ?? '') !== target.projectId
+          if (!movingProject && routedFocus === null) return current
+          const issueId = movingProject ? routedFocus : (routedFocus ?? current.issueId)
+          if (
+            !movingProject &&
+            current.issueId === issueId &&
+            current.workspaceView === target.workspaceView &&
+            current.projectView === target.projectView
+          )
+            return current
+          return {
+            ...current,
+            ...target,
+            issueId,
+            projectSettingsSection: null,
+          }
         })
-      }
+      })
     }
 
     // The workspace the board belongs to is the one thing the route cannot name,
@@ -1478,10 +1480,11 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     if (resolvedWorkspaceProjectRef.current !== activeProjectId) {
       resolvedWorkspaceProjectRef.current = activeProjectId
       void platformApi.projects
-        .get(String(activeProject.projectId))
+        .get(activeProjectId)
         .then(project => {
           if (cancelled) return
           setLocation(current => {
+            if (String(current.projectId ?? '') !== activeProjectId) return current
             const collaborationDomain = project.project_store === 'local' ? 'local' : 'cloud'
             const workspaceId = project.workspace_id ?? null
             if (
@@ -1500,9 +1503,8 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       cancelled = true
     }
   }, [
-    activeProject,
-    location.issueId,
-    location.projectId,
+    routedProjectId,
+    routedProjectStore,
     navigationSyncRevision,
     platformApi,
     props.focusedCommentId,

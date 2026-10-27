@@ -65,7 +65,15 @@ async function fixture() {
     hookIndex = 0
     return entries.get('wework.composer.action')[0].component(props).children[0].props
   }
-  return { ctx, entries, listeners, cleanups, contributions, publish, renderComposer }
+  return {
+    ctx,
+    entries,
+    listeners,
+    cleanups,
+    contributions,
+    publish,
+    renderComposer,
+  }
 }
 
 test('invalidates captured insertions across session changes, including returning to the same session', async () => {
@@ -147,4 +155,17 @@ test('mounts only the official voice bundle preparation in General settings and 
   assert.equal(f.entries.get('wework.settings.section')[0].options.inject, inject)
   assert.equal(f.entries.get('wework.shell.overlay')[0].options.inject, inject)
   assert.equal(f.contributions[0][1].page, 'general')
+})
+
+test('forwards voice activity changes to the owning composer', async () => {
+  const f = await fixture()
+  f.publish('conversation.input.activity', [{ component() {}, locale: 'voice-input', options: {} }])
+  const activity = []
+  const onActiveChange = active => activity.push(active)
+  const voice = f.renderComposer({ sessionId: 'a', onActiveChange })
+  assert.equal(voice.onActiveChange, onActiveChange)
+  voice.onActiveChange(true)
+  voice.onActiveChange(false)
+  voice.onActiveChange(true)
+  assert.deepEqual(activity, [true, false, true])
 })
