@@ -93,11 +93,17 @@ export async function resolveRuntime(
   request: APIRequestContext,
   manager: string,
   taskId: number,
-  headers: Record<string, string>
+  headers: Record<string, string>,
+  mode: 'executor' | 'sandbox'
 ): Promise<Runtime> {
-  const sandbox = await request.get(`${manager}/sandboxes/${taskId}`)
-  if (sandbox.ok()) return { executor_namespace: '', ...(await sandbox.json()) }
-  expect(sandbox.status()).toBe(404)
+  if (mode === 'sandbox') {
+    const sandbox = await request.get(`${manager}/sandboxes/${taskId}`)
+    expect(sandbox.ok(), await sandbox.text()).toBe(true)
+    const runtime = await sandbox.json()
+    expect(runtime.status).toBe('running')
+    expect(runtime.base_url).toBeTruthy()
+    return { executor_namespace: '', ...runtime }
+  }
   const response = await request.get(
     `${process.env.E2E_API_URL || 'http://localhost:8000'}/api/tasks/${taskId}`,
     { headers }

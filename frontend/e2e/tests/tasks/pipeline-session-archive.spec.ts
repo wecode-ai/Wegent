@@ -42,6 +42,7 @@ test.describe('Pipeline native session archive and continuation', () => {
         const user = await getJson(request, `${API}/api/users/me`, headers)
         let taskId: number | undefined
         let runtime: Runtime | undefined
+        let sandboxCreated = false
         try {
           const model = `${prefix}-model`
           const shell = `${prefix}-shell`
@@ -160,7 +161,7 @@ test.describe('Pipeline native session archive and continuation', () => {
             )
             .toBe(1)
           await completed(request, taskId!, headers)
-          runtime = await resolveRuntime(request, MANAGER, taskId!, headers)
+          runtime = await resolveRuntime(request, MANAGER, taskId!, headers, 'executor')
           const roots = (await postJson(request, `${runtime.base_url}/api/runtime/prepare`, {
             task_id: taskId,
           })) as Roots
@@ -215,6 +216,31 @@ test.describe('Pipeline native session archive and continuation', () => {
           })
 
           await runtimeProcess(request, runtime, SESSION_FILES, { ...params, action: 'erase' })
+          if (mode === 'sandbox') {
+            const detail = await getJson(request, `${API}/api/tasks/${taskId}`, headers)
+            const subtasks = detail.subtasks as Array<{ id: number; executor_name?: string }>
+            const first = subtasks
+              .filter(subtask => subtask.executor_name === runtime!.container_name)
+              .sort((a, b) => a.id - b.id)[0]
+            expect(first, 'The original container creation subtask is required').toBeTruthy()
+            const originalName = runtime.container_name
+            await postJson(request, `${MANAGER}/executor/delete`, {
+              executor_name: originalName,
+              executor_namespace: runtime.executor_namespace,
+            })
+            sandboxCreated = true
+            const sandbox = await postJson(request, `${MANAGER}/sandboxes`, {
+              shell_type: engine,
+              user_id: user.id,
+              user_name: user.user_name,
+              metadata: { task_id: taskId, subtask_id: first.id },
+            })
+            // The backend must continue to dispatch into the recreated runtime.
+            expect(sandbox.container_name).toBe(originalName)
+            runtime = await resolveRuntime(request, MANAGER, taskId!, headers, 'sandbox')
+            // SandboxManager restores the archive during real sandbox creation.
+            expect(await snapshot()).toEqual(before)
+          }
           const restored = await postJson(request, `${runtime.base_url}/api/restore`, {
             task_id: taskId,
             runtime_type: mode,
@@ -307,7 +333,11 @@ test.describe('Pipeline native session archive and continuation', () => {
         } finally {
           // Delete only resources created by this scenario, even after assertion failures.
           const failures: string[] = []
-          if (runtime) {
+          if (sandboxCreated) {
+            const deleted = await request.delete(`${MANAGER}/sandboxes/${taskId}`)
+            if (![200, 404].includes(deleted.status()))
+              failures.push(`sandbox: ${await deleted.text()}`)
+          } else if (runtime) {
             const deleted = await request.post(`${MANAGER}/executor/delete`, {
               data: {
                 executor_name: runtime.container_name,
