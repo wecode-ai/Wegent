@@ -127,22 +127,18 @@ async def _resolve_dingtalk_mention_user_ids(
     """Attach display names to DingTalk mention IDs for card rendering."""
     resolved: List[str] = []
     for value in values or []:
-        raw = value.strip()
-        if not raw:
+        staff_id = value.strip()
+        if not staff_id:
             continue
-        staff_id, separator, _ = raw.partition(":")
-        lookup_id = (
-            staff_id.strip() if separator and staff_id.strip().isdigit() else raw
-        )
-        if not lookup_id.isdigit():
-            resolved.append(lookup_id)
+        if not staff_id.isdigit():
+            resolved.append(staff_id)
             continue
-        name = _DINGTALK_MENTION_NAME_CACHE.get(lookup_id, "")
+        name = _DINGTALK_MENTION_NAME_CACHE.get(staff_id, "")
         if not name:
-            name = await _lookup_dingtalk_mention_name(db, lookup_id)
+            name = await _lookup_dingtalk_mention_name(db, staff_id)
             if name:
-                _DINGTALK_MENTION_NAME_CACHE[lookup_id] = name
-        resolved.append(f"{lookup_id}:{name}" if name else lookup_id)
+                _DINGTALK_MENTION_NAME_CACHE[staff_id] = name
+        resolved.append(f"{staff_id}:{name}" if name else staff_id)
     return resolved
 
 

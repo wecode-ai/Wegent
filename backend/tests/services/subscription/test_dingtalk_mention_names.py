@@ -17,7 +17,7 @@ async def test_resolve_dingtalk_mention_user_ids_appends_display_names(monkeypat
     notification_dispatcher._DINGTALK_MENTION_NAME_CACHE.clear()
 
     resolved = await notification_dispatcher._resolve_dingtalk_mention_user_ids(
-        None, ["41068", "220750", "999", "41068:旧名称"]
+        None, ["41068", "220750", "999", "41068"]
     )
 
     assert resolved == ["41068:陈波", "220750:李四", "999", "41068:陈波"]

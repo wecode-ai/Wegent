@@ -50,20 +50,19 @@ def _normalize_mention_ids(raw: str) -> list[str]:
 
     Only numeric staff IDs are kept so an empty or malformed control such as
     ``【@列表：】`` cannot turn its marker text into a bogus mention target.
+    Display names are resolved from the staff ID, so anything after a colon is
+    dropped.
     """
     result: list[str] = []
     for part in _MENTION_ID_SPLIT_PATTERN.split(raw):
         user_id = part.strip(_MENTION_ID_EDGE_PUNCTUATION)
         if not user_id:
             continue
-        head, separator, display_name = user_id.replace("：", ":").partition(":")
+        head, _separator, _display_name = user_id.replace("：", ":").partition(":")
         head = head.strip(_MENTION_ID_EDGE_PUNCTUATION)
         if not head or not head.isdigit():
             continue
-        if separator and display_name.strip():
-            result.append(f"{head}:{display_name.strip(_MENTION_ID_EDGE_PUNCTUATION)}")
-        else:
-            result.append(head)
+        result.append(head)
     return result
 
 

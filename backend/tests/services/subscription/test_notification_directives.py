@@ -120,12 +120,12 @@ def test_parse_notification_directives_keeps_body_mentions() -> None:
     assert directives.mention_staff_ids == ()
 
 
-def test_parse_notification_directives_normalizes_mention_display_names() -> None:
+def test_parse_notification_directives_drops_mention_display_names() -> None:
     directives = parse_notification_directives(
         "Alert needs attention.\n\n[@列表:41068：张三,220750:李四]"
     )
 
-    assert directives.mention_staff_ids == ("41068:张三", "220750:李四")
+    assert directives.mention_staff_ids == ("41068", "220750")
 
 
 @pytest.mark.parametrize(
