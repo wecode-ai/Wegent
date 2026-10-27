@@ -371,10 +371,11 @@ export class RuntimeTaskLifecycleStore {
         return
       }
       if (
-        currentTurn?.active &&
         streamingTurn?.id &&
-        (this.isPriorTurn(address, streamingTurn.id) ||
-          (transcript.running === false && currentTurn.id && streamingTurn.id !== currentTurn.id))
+        ((currentTurn?.active && this.isPriorTurn(address, streamingTurn.id)) ||
+          (transcript.running === false &&
+            (currentTurn?.id ?? currentTurn?.latestId) &&
+            streamingTurn.id !== (currentTurn?.id ?? currentTurn?.latestId)))
       )
         return
       this.executorStarted(address)
@@ -444,9 +445,18 @@ export class RuntimeTaskLifecycleStore {
       event.type === 'executor_snapshot_received' ? { ...event, address: canonicalAddress } : event
     const machine = this.ensureMachine(canonicalAddress)
     const previous = machine.getSnapshot()
+    const hasPendingSend =
+      previous.turn.active &&
+      previous.turn.id === null &&
+      machine.getState().expectedExecutorRunning === true
+    const confirmsPendingSend =
+      hasPendingSend &&
+      canonicalEvent.type === 'executor_snapshot_received' &&
+      canonicalEvent.task.running === true
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
       previous.turn.active &&
+      !confirmsPendingSend &&
       previous.task !== null &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
       machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId)
@@ -455,6 +465,7 @@ export class RuntimeTaskLifecycleStore {
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
       canonicalEvent.task.running === true &&
+      !confirmsPendingSend &&
       !isRuntimeGoalExecutionActive(canonicalEvent.task) &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
       machine.isSettledTurn(canonicalEvent.task.runtimeHandle.lastTurnId)
@@ -465,7 +476,7 @@ export class RuntimeTaskLifecycleStore {
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
       previous.task &&
-      !shouldReplaceRuntimeTaskProjection(previous.task, canonicalEvent.task)
+      !shouldReplaceRuntimeTaskProjection(previous.task, canonicalEvent.task, hasPendingSend)
     ) {
       return false
     }

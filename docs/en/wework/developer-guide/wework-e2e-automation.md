@@ -224,7 +224,6 @@ scrolling, and missing history.
 Shards are balanced from observed CI durations; a new or
 materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures.
-Long scenarios are split into independent checkpoints as well as balanced shards:
 The Issue notification read scenario waits for the close button to disappear after
 closing a drawer before interacting with the board. Closing commits after the exit
 animation; clicking a covered card earlier can let the delayed close affect the
@@ -237,6 +236,22 @@ turns remains independent of turn completion and is confirmed by the executor.
 Read-only board drag checks scroll the source card into view after grouping changes
 and reloads. Windows can have a narrower available viewport, so priority and tag
 columns cannot all be assumed visible. Permission and persistence assertions remain.
+Tracked task activity composers also scroll into view before visibility checks.
+Executor environment verification resolves real filesystem paths through Node to
+compare Windows native paths with the Bash working directory correctly.
+Foreground plugin installation pauses automatic page updates and synchronization
+until completion, preventing stale inventory from triggering a full replay.
+Cloud restoration retains the resolved socket endpoint so reloads do not reset an
+active connection and lose transcript requests. Goal restoration preserves the
+known turn and rejects a different stale streaming history.
+Long history hydration polls use `performanceSnapshot` with `collectMemory: false`
+to avoid forced GC on every poll; final memory assertions retain full sampling.
+Timeout diagnostics include the last snapshot. Permission modes use dedicated
+Core shard 11, retaining real MCP deadlines within the serial Windows shard budget.
+Source project configuration no longer forces the Windows unelevated sandbox,
+which rejects split writable roots; other permission and approval settings remain.
+
+Long scenarios are split into independent checkpoints as well as balanced shards:
 
 The newly merged `stand-in-project-enable` checkpoint has no historical sample.
 It shares preparation with the stand-in configuration flows in Core shard 3,

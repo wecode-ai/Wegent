@@ -2456,6 +2456,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     }
     case 'performanceSnapshot': {
+      const { collectMemory = true } = JSON.parse(command.value ?? '{}') as {
+        collectMemory?: boolean
+      }
       const debugSnapshot = getWorkbenchDebugSnapshot()
       const currentRuntimeTask = debugSnapshot.workbench?.currentRuntimeTask
       const runtimeMessages = currentRuntimeTask
@@ -2477,10 +2480,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         document.querySelectorAll<HTMLElement>('[data-testid="assistant-message-content"]')
       )
       const [processMemory, rendererHeap] = await Promise.all([
-        navigator.platform.toLowerCase().includes('mac')
+        collectMemory && navigator.platform.toLowerCase().includes('mac')
           ? invokeDesktopHost('e2e.getProcessSnapshot')
           : null,
-        invokeDesktopHost('e2e.getRendererHeapUsage'),
+        collectMemory ? invokeDesktopHost('e2e.getRendererHeapUsage') : null,
       ])
       return JSON.stringify({
         timestamp: Date.now(),

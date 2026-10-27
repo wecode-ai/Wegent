@@ -3732,6 +3732,7 @@ export function PluginsWorkspace({
   useEffect(() => {
     if (!cloudMarketplaceAvailable || !cloudToken || !currentDeviceId) return
     if (!deviceCloudConnected) return
+    if (installingMarketplacePluginIds.size > 0) return
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
     const autoUpdateCandidateReleaseKeys = pluginMarketplaceState.items.flatMap(item => {
@@ -3871,6 +3872,7 @@ export function PluginsWorkspace({
     currentDeviceId,
     deviceCloudConnected,
     installedPlugins,
+    installingMarketplacePluginIds,
     localInstalledStateReadyKey,
     marketplaceCacheKeyValue,
     pluginApi,
@@ -3881,6 +3883,7 @@ export function PluginsWorkspace({
 
   useEffect(() => {
     if (!cloudMarketplaceAvailable || !cloudToken || !currentDeviceId) return
+    if (installingMarketplacePluginIds.size > 0) return
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
     const deviceId = currentDeviceId
@@ -4041,6 +4044,7 @@ export function PluginsWorkspace({
     currentDeviceId,
     deviceCloudConnected,
     installedPlugins,
+    installingMarketplacePluginIds,
     localInstalledStateReadyKey,
     marketplaceCacheKeyValue,
     pluginApi,

@@ -97,7 +97,8 @@ export function runtimeTaskReconciliationSnapshot(task: RuntimeTaskSummary): {
 
 export function shouldReplaceRuntimeTaskProjection(
   currentTask: RuntimeTaskSummary,
-  candidateTask: RuntimeTaskSummary
+  candidateTask: RuntimeTaskSummary,
+  hasPendingSend = false
 ): boolean {
   const current = normalizeRuntimeTaskSummary(currentTask)
   const candidate = normalizeRuntimeTaskSummary(candidateTask)
@@ -112,7 +113,8 @@ export function shouldReplaceRuntimeTaskProjection(
     const candidateTurnId = candidate.runtimeHandle?.lastTurnId
     // A delayed start snapshot cannot revive the same completed provider turn.
     // Turn identity is authoritative even when native timestamps lose precision.
-    if (currentCompleted && currentTurnId && currentTurnId === candidateTurnId) return false
+    if (currentCompleted && currentTurnId && currentTurnId === candidateTurnId && !hasPendingSend)
+      return false
     if (candidateCompleted) {
       if (!isRuntimeTaskExecutionRunning(current)) return true
       // Completion belongs to its turn, not to a later metadata refresh.
