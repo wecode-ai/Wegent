@@ -33,6 +33,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
+from app.models.wework_notification import WeworkNotification
 from app.services import runtime_work_service
 from app.services.delivery import delivery_service
 from app.services.delivery.storage import (
@@ -1942,6 +1943,58 @@ def test_loop_item_unread_follows_content_revision_and_read_cursor(
     assert refreshed_member_item.status_code == 200
     assert refreshed_member_item.json()["content_revision"] == 2
     assert refreshed_member_item.json()["is_unread"] is True
+
+
+def test_reading_issue_consumes_only_its_readers_notifications(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Notification read synchronization"},
+    )
+    assert created.status_code == 201
+    item = test_db.get(LoopItem, created.json()["id"])
+    user_id = item.created_by_user_id
+    rows = [
+        WeworkNotification(
+            id=str(uuid.uuid4()),
+            user_id=recipient,
+            kind="mention",
+            title="Issue notification",
+            body="Read the Issue",
+            payload=payload,
+            is_read=already_read,
+        )
+        for recipient, payload, already_read in [
+            (user_id, {"itemId": item.id}, False),
+            (user_id, {"issueId": item.id}, False),
+            (user_id, {"itemId": item.id}, True),
+            (user_id, {"itemId": "another-issue"}, False),
+            (user_id + 1, {"itemId": item.id}, False),
+            (user_id, {}, False),
+        ]
+    ]
+    test_db.add_all(rows)
+    test_db.commit()
+    original_read_at = rows[2].read_at
+
+    # Reading the Issue directly must work without clicking an inbox entry.
+    for _ in range(2):
+        response = test_client.post(
+            f"/api/v1/loop-items/{item.id}/read",
+            headers=_auth(test_token),
+            json={"activity_sequence": 0},
+        )
+        assert response.status_code == 200
+        for row in rows:
+            test_db.refresh(row)
+        assert [row.is_read for row in rows] == [True, True, True, False, False, False]
+        assert all(row.read_at is not None for row in rows[:3])
+        assert rows[2].read_at == original_read_at
 
 
 def test_mark_loop_item_read_repairs_legacy_metadata_without_read_revisions(

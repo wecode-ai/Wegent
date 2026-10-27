@@ -8,6 +8,42 @@ import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import { createSharedIssueDetailPort } from "./createSharedIssueDetailPort";
 
 describe("createSharedIssueDetailPort", () => {
+  it("loads all source pages through the injected host transcript reader", async () => {
+    const read = vi
+      .fn()
+      .mockResolvedValueOnce({
+        messages: [{ id: "new" }],
+        hasMoreBefore: true,
+        beforeCursor: "older",
+      })
+      .mockResolvedValueOnce({
+        messages: [{ id: "old" }],
+        hasMoreBefore: false,
+      });
+    const api = {
+      deliveries: {},
+      issues: {},
+      attachments: {},
+      collaborators: {},
+      taskBindings: {},
+      members: {},
+      agents: {},
+    } as unknown as Parameters<typeof createSharedIssueDetailPort>[0];
+    const port = createSharedIssueDetailPort(api, vi.fn(), read);
+    const detail = {
+      source_task_snapshot: { device_id: "device-1", task_id: "task-1" },
+    } as Parameters<NonNullable<typeof port.deliveries.loadSourceMessages>>[0];
+    await expect(port.deliveries.loadSourceMessages!(detail)).resolves.toEqual([
+      { id: "old" },
+      { id: "new" },
+    ]);
+    expect(read).toHaveBeenLastCalledWith({
+      deviceId: "device-1",
+      taskId: "task-1",
+      beforeCursor: "older",
+      includeFullContent: true,
+    });
+  });
   it("owns the single cloud-to-detail mapping and delegates host file saving", async () => {
     const create = vi.fn().mockResolvedValue({ id: "issue-1" });
     const update = vi.fn().mockResolvedValue({ id: "issue-1" });

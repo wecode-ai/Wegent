@@ -9,6 +9,7 @@ export * from "./CollaborationApp";
 export * from "./CollaborationProjectSummary";
 export * from "./CollaborationSettings";
 export * from "./dto-mappers";
+export * from "./deliveryUpdateForm";
 export * from "./execution-environment/IssueExecutionEnvironmentNotice";
 export * from "./execution-environment/issueEnvironmentReadiness";
 export * from "./execution-environment/runnerEnvironmentError";

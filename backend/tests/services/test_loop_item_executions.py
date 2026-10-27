@@ -3487,6 +3487,58 @@ def test_runtime_event_opens_activity_when_start_report_races_ahead(
     assert message.content == "hello from the executor"
 
 
+def test_streaming_event_binds_turn_when_created_event_was_not_accepted(
+    test_db: Session, test_user: User
+) -> None:
+    from app.schemas.runtime_execution_snapshot import RuntimeExecutionSnapshot
+    from app.services.project_chat.execution_snapshot import (
+        reconcile_execution_snapshot,
+    )
+
+    execution, _, activity = _make_running_automation_execution(test_db, test_user)
+    assert "runtime_turn_id" not in activity.metadata_json
+    accepted = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=execution.runtime_device_id,
+        runtime_task_id=execution.runtime_task_id,
+        event_name="response.output_text.delta",
+        payload={"eventSeq": 3, "subtaskId": "native-turn", "data": {"delta": "Hi"}},
+        owner_user_id=test_user.id,
+    )
+    assert accepted is not None
+    test_db.refresh(activity)
+    assert activity.metadata_json["runtime_turn_id"] == "native-turn"
+
+    rejected = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=execution.runtime_device_id,
+        runtime_task_id=execution.runtime_task_id,
+        event_name="response.created",
+        payload={"eventSeq": 2, "subtaskId": "stale-turn", "data": {}},
+        owner_user_id=test_user.id,
+    )
+    assert rejected is None
+    test_db.refresh(activity)
+    assert activity.metadata_json["runtime_turn_id"] == "native-turn"
+
+    snapshot = RuntimeExecutionSnapshot.model_validate(
+        {
+            "deviceId": execution.runtime_device_id,
+            "taskId": execution.runtime_task_id,
+            "running": False,
+            "completeHistory": False,
+            "turns": [{"id": "native-turn", "status": "done", "userMessageIds": []}],
+        }
+    )
+    changed = reconcile_execution_snapshot(
+        test_db, user_id=test_user.id, snapshot=snapshot
+    )
+    assert len(changed) == 1
+    test_db.refresh(execution)
+    test_db.refresh(activity)
+    assert execution.status == activity.status == "completed"
+
+
 def test_runtime_running_event_projects_child_task_and_activity(
     test_db: Session, test_user: User
 ) -> None:

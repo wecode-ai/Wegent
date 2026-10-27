@@ -37,6 +37,9 @@ mod native_timeline_tests;
 #[path = "runtime_rpc_tests.rs"]
 mod runtime_rpc_tests;
 
+#[path = "text_generation_tests.rs"]
+mod text_generation_tests;
+
 #[path = "local_history_tests.rs"]
 mod local_history_tests;
 

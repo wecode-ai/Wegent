@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 
 import { verifySilentIssueSaves } from '../modules/issue-save-notification-flows.mjs'
 import { verifyLinkedTasksScrolling } from '../modules/issue-linked-tasks.mjs'
+import { verifyIssuePersonalTaskPrivacy } from '../modules/issue-personal-task-privacy.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
@@ -876,6 +877,16 @@ export function createDesktopScenario({
         request: ownerRequest,
         projectId: project.id,
         issueId: issue.id,
+      })
+      await verifyIssuePersonalTaskPrivacy({
+        control,
+        request: ownerRequest,
+        requestJson: (token, path, options) => requestJson(backendUrl, token, path, options),
+        backendUrl,
+        projectId: project.id,
+        issueId: issue.id,
+        taskId: runtimeTaskId,
+        uiTimeoutMs,
       })
     },
 

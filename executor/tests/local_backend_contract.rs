@@ -80,7 +80,7 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
         .await
         .unwrap();
 
-    assert!(registered);
+    assert!(registered.is_some());
     let calls = transport.calls();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].event, "device:register");
@@ -159,7 +159,7 @@ async fn local_backend_accepts_socketio_wrapped_registration_ack() {
         .await
         .unwrap();
 
-    assert!(registered);
+    assert!(registered.is_some());
 }
 
 #[tokio::test]

@@ -48,6 +48,8 @@ class VideoGenerationExtension(Protocol):
         *,
         type_data: dict[str, Any],
         media_type: str,
+        user_id: int,
+        attachment_id: int,
     ) -> Optional[dict[str, Any]]:
         """Resolve an attachment into a provider-independent descriptor."""
 
@@ -105,12 +107,17 @@ def register_video_generation_extension(extension: VideoGenerationExtension) -> 
 def resolve_external_material(
     type_data: dict[str, Any],
     media_type: str,
+    *,
+    user_id: int,
+    attachment_id: int,
 ) -> Optional[dict[str, Any]]:
     """Resolve an attachment using registered extensions."""
     for extension in _extensions:
         descriptor = extension.resolve_material(
             type_data=type_data,
             media_type=media_type,
+            user_id=user_id,
+            attachment_id=attachment_id,
         )
         if descriptor is not None:
             return descriptor
