@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { verifyVoiceToolbar } from '../modules/voice-toolbar-flow.mjs'
 
-export async function createDesktopScenario() {
+export async function createDesktopScenario({ resultDir }) {
   let restartDesktopApp
   return {
     setRestartDesktopApp(value) {
@@ -30,6 +31,7 @@ export async function createDesktopScenario() {
       await control.command('waitFor', '[data-testid="new-chat-button"]')
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', `${voice} button:not(:disabled)`)
+      await verifyVoiceToolbar({ control, resultDir, restartDesktopApp })
     },
   }
 }
