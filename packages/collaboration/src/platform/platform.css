@@ -4194,6 +4194,13 @@
 
 .collaboration-workspace-create-dialog {
   width: min(520px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  color: inherit;
+}
+
+.collaboration-workspace-create-dialog::backdrop {
+  background: rgb(0 0 0 / 0.35);
 }
 
 .collaboration-workspace-picker {

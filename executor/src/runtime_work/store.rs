@@ -53,6 +53,7 @@ static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone)]
 pub(crate) struct RuntimeWorkStore {
     index_path: PathBuf,
+    telemetry_path: Arc<Mutex<Option<PathBuf>>>,
     index: Arc<Mutex<RuntimeWorkIndex>>,
     index_signature: Arc<Mutex<Option<IndexFileSignature>>>,
     write_lock: Arc<Mutex<()>>,
@@ -370,6 +371,7 @@ impl RuntimeWorkStore {
             .then(|| serialize_index(&index).ok())
             .flatten();
         let store = Self {
+            telemetry_path: Arc::new(Mutex::new(None)),
             index_path,
             index: Arc::new(Mutex::new(index)),
             index_signature: Arc::new(Mutex::new(index_signature)),
@@ -385,7 +387,23 @@ impl RuntimeWorkStore {
     }
 
     pub fn from_env() -> Self {
-        Self::new(default_index_path())
+        let store = Self::new(default_index_path());
+        store.set_telemetry_path(crate::task_runtime::LocalTaskStore::default_path());
+        store
+    }
+
+    pub fn set_telemetry_path(&self, path: PathBuf) {
+        if let Ok(mut target) = self.telemetry_path.lock() {
+            *target = Some(path);
+        }
+    }
+
+    fn observe_stand_in(&self, task: &RuntimeTaskLink) {
+        if let Ok(path) = self.telemetry_path.lock() {
+            if let Some(path) = path.as_ref() {
+                super::stand_in_telemetry::observe(path, task);
+            }
+        }
     }
 
     pub fn list_task_summaries(&self, include_archived: bool) -> Vec<RuntimeTaskLink> {
@@ -478,6 +496,7 @@ impl RuntimeWorkStore {
         let Some(mut index) = self.index.lock().ok() else {
             return;
         };
+        self.observe_stand_in(&link);
         index.tasks.insert(link.local_task_id.clone(), link);
         drop(index);
         self.persist_current_index();
@@ -522,7 +541,27 @@ impl RuntimeWorkStore {
         let mut index = self.index.lock().ok()?;
         let task = index.tasks.get_mut(local_task_id)?;
         let before = persisted_task_fingerprint(task);
+        let lifecycle_before = (
+            task.running,
+            task.status.clone(),
+            task.turn_status.clone(),
+            task.interaction_status.clone(),
+            task.runtime_handle["lastTurnId"].clone(),
+            task.runtime_handle["origin"].clone(),
+        );
         updater(task);
+        if lifecycle_before
+            != (
+                task.running,
+                task.status.clone(),
+                task.turn_status.clone(),
+                task.interaction_status.clone(),
+                task.runtime_handle["lastTurnId"].clone(),
+                task.runtime_handle["origin"].clone(),
+            )
+        {
+            self.observe_stand_in(task);
+        }
         let updated = task.clone();
         let should_persist = persist && before != persisted_task_fingerprint(task);
         drop(index);
