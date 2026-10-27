@@ -49,6 +49,8 @@ import {
   reconcileRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeTaskAddress } from '@/types/api'
+import type { RuntimeTaskLifecycleSnapshot } from '@/features/workbench/runtimeTaskLifecycle/types'
+import { summarizeRuntimeTaskExecution } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import {
   awaitLocalExecutorRequestHoldForE2E,
   failNextLocalExecutorRequestForE2E,
@@ -80,6 +82,13 @@ import { installDesktopE2EClipboard } from './clipboard'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
 import { readConversationAssetChunk } from '@/features/dsh-runtime/dshConversationTranscript'
+import { RUNTIME_WORK_CHANGED_EVENT } from '@/desktop/runtimeWorkSync'
+import {
+  armRuntimeTransportGate,
+  readRuntimeTransportGate,
+  releaseRuntimeTransportGate,
+  resetRuntimeTransportGates,
+} from './runtime-transport-gates'
 import type {
   WeworkConversationAssetChunk,
   WeworkConversationSnapshot,
@@ -2029,8 +2038,28 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           JSON.parse(command.value ?? '{}')
         )
       )
+    case 'armRuntimeTransportGate':
+      armRuntimeTransportGate(JSON.parse(command.value ?? '{}'))
+      return ''
+    case 'readRuntimeTransportGate':
+      return JSON.stringify(readRuntimeTransportGate(command.value ?? ''))
+    case 'releaseRuntimeTransportGate':
+      releaseRuntimeTransportGate(command.value ?? '')
+      await waitForDesktopControlTick()
+      return ''
+    case 'resetRuntimeTransportGates':
+      resetRuntimeTransportGates(JSON.parse(command.value || '[]'))
+      return ''
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
+    case 'refreshRuntimeWork':
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: RUNTIME_WORK_CHANGED_EVENT,
+          newValue: command.value ?? '{}',
+        })
+      )
+      return ''
     case 'getLocalRuntimeTranscript':
       return JSON.stringify(
         await requestLocalExecutor('runtime.tasks.transcript', JSON.parse(command.value ?? '{}'))
@@ -2156,6 +2185,31 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         return pressDesktopControlKey(command.target ?? command.selector, command.key)
       }
       return ''
+    case 'getRuntimeLifecycleState': {
+      let snapshot: unknown = null
+      window.dispatchEvent(
+        new CustomEvent('wework:e2e:runtime-task-lifecycle', {
+          detail: {
+            address: JSON.parse(command.value ?? '{}'),
+            type: 'capture_snapshot',
+            capture: (state: RuntimeTaskLifecycleSnapshot | null) => {
+              snapshot = state
+                ? {
+                    key: state.key,
+                    execution: state.execution,
+                    turn: state.turn,
+                    goalStatus: state.goalStatus,
+                    unread: state.unread,
+                    derived: state.derived,
+                    task: summarizeRuntimeTaskExecution(state.task),
+                  }
+                : null
+            },
+          },
+        })
+      )
+      return JSON.stringify(snapshot)
+    }
     case 'activateRuntimeTaskCompletionNotification': {
       const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
       await invokeDesktopHost('e2e.activateNotification', {

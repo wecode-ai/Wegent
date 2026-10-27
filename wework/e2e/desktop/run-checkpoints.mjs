@@ -56,6 +56,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-uninstall-reinstall-race': './scenarios/plugin-uninstall-resilience.scenario.mjs',
 
   'plugin-composer-long-list': './scenarios/plugin-composer-long-list.scenario.mjs',
+  'plugin-collaboration-composer-isolation':
+    './scenarios/plugin-collaboration-composer-isolation.scenario.mjs',
   'plugin-runtime-path-recovery': './scenarios/plugin-runtime-path-recovery.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'runtime-input-answer-persistence': './scenarios/runtime-input-answer-persistence.scenario.mjs',
@@ -222,6 +224,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-uninstall-reinstall-race',
 
   'plugin-composer-long-list',
+  'plugin-collaboration-composer-isolation',
   'plugin-runtime-path-recovery',
   'codex-account-login',
   'cloud-space-mention',
