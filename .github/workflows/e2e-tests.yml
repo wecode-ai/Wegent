@@ -538,8 +538,21 @@ jobs:
       - name: Install media validation tools
         if: matrix.suite == 'media-hosting'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          # Use Ubuntu's signed HTTPS archive directly. The hosted runner's
+          # Azure mirror stalled codec downloads until the job timed out.
+          source_list="$RUNNER_TEMP/attachment-media-tools.list"
+          printf '%s\n' \
+            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble main universe' \
+            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble-updates main universe' \
+            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://security.ubuntu.com/ubuntu noble-security main universe' \
+            > "$source_list"
+          apt_options=(
+            -o "Dir::Etc::sourcelist=$source_list"
+            -o 'Dir::Etc::sourceparts=-'
+            -o 'APT::Get::List-Cleanup=0'
+          )
+          sudo apt-get "${apt_options[@]}" update
+          sudo apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
       - name: Configure real service endpoints
         env:
           S3_E2E_MYSQL_PORT: ${{ job.services.mysql.ports['3306'] }}
