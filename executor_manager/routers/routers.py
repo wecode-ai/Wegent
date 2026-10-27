@@ -1543,6 +1543,37 @@ async def task_heartbeat(task_id: str, http_request: Request):
     return {"status": "ok", "task_id": task_id}
 
 
+@api_router.get("/tasks/{task_id}/heartbeat")
+async def get_task_heartbeat_status(task_id: str):
+    """Report whether an executor heartbeat is currently registered.
+
+    Used by the backend stalled-task sweep to distinguish a live-but-silent
+    executor from one that vanished. Returns ``alive=false`` only when no
+    heartbeat key exists for either task or sandbox heartbeats.
+    """
+    from executor_manager.services.heartbeat_manager import (
+        HeartbeatType,
+        get_heartbeat_manager,
+    )
+
+    heartbeat_mgr = get_heartbeat_manager()
+    for heartbeat_type in (HeartbeatType.TASK, HeartbeatType.SANDBOX):
+        last_heartbeat = await heartbeat_mgr.get_last_heartbeat(task_id, heartbeat_type)
+        if last_heartbeat is not None:
+            return {
+                "task_id": task_id,
+                "alive": True,
+                "heartbeat_type": heartbeat_type.value,
+                "last_heartbeat_at": last_heartbeat,
+            }
+    return {
+        "task_id": task_id,
+        "alive": False,
+        "heartbeat_type": None,
+        "last_heartbeat_at": None,
+    }
+
+
 # =============================================================================
 # Workspace Archive/Restore APIs
 # =============================================================================

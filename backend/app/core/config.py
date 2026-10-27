@@ -250,6 +250,15 @@ class Settings(BaseSettings):
     # Cleanup scanning interval seconds
     TASK_EXECUTOR_CLEANUP_INTERVAL_SECONDS: int = 600
 
+    # Stalled RUNNING subtask sweep configuration
+    # A RUNNING subtask untouched for TASK_STALLED_TIMEOUT_SECONDS is inspected;
+    # it fails immediately when its executor Pod is gone, or after the longer
+    # heartbeat window when the Pod exists but no heartbeat is registered.
+    TASK_STALLED_SWEEP_INTERVAL_SECONDS: int = 60
+    TASK_STALLED_TIMEOUT_SECONDS: int = 900
+    TASK_STALLED_HEARTBEAT_TIMEOUT_SECONDS: int = 1800
+    TASK_STALLED_SCAN_LIMIT: int = 50
+
     # Workspace archive configuration
     WORKSPACE_ARCHIVE_MAX_SIZE_MB: int = 2048
     WORKSPACE_ARCHIVE_RETENTION_DAYS: int = 30

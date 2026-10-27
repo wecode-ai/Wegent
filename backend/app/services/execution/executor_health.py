@@ -6,8 +6,11 @@
 
 import asyncio
 import logging
+from typing import Optional
 
+from app.core.config import settings
 from shared.telemetry.decorators import add_span_event, trace_async
+from shared.utils.http_client import traced_async_client
 
 logger = logging.getLogger(__name__)
 
@@ -49,3 +52,41 @@ async def executor_pod_missing(
         )
         return False
     return not alive
+
+
+@trace_async("execution.executor_heartbeat_alive", "execution.schedule")
+async def executor_heartbeat_alive(task_id: int) -> Optional[bool]:
+    """Return the executor heartbeat state, or ``None`` when unknown.
+
+    ``None`` is deliberately distinct from ``False``: a failed or slow probe
+    must never fail a healthy task, so callers only act on an explicit "dead".
+    """
+    url = (
+        f"{settings.EXECUTOR_MANAGER_URL.rstrip('/')}"
+        f"/executor-manager/tasks/{task_id}/heartbeat"
+    )
+    try:
+        async with traced_async_client(timeout=3.0) as client:
+            response = await client.get(url)
+        if response.status_code != 200:
+            logger.debug(
+                "[executor_health] heartbeat probe returned %s for task %s",
+                response.status_code,
+                task_id,
+            )
+            return None
+        payload = response.json()
+    except Exception as exc:
+        logger.warning(
+            "[executor_health] heartbeat probe failed task_id=%s error=%s",
+            task_id,
+            exc,
+        )
+        add_span_event(
+            "execution.executor_heartbeat_alive.check_failed",
+            {"task_id": str(task_id), "error": str(exc)},
+        )
+        return None
+
+    alive = payload.get("alive") if isinstance(payload, dict) else None
+    return alive if isinstance(alive, bool) else None
