@@ -8,16 +8,15 @@
 //! the open-source deployment does not know about:
 //!
 //! - the object-storage backend selected by `ATTACHMENT_STORAGE_BACKEND`
-//!   (`app/services/attachment/storage_factory.py`); a deployment can point it
-//!   at a MinIO/S3 backend through a deployment-specific implementation;
+//!   (`mysql`, `minio` or `s3`); deployments may supply another implementation;
 //! - a best-effort image upload for accepted image types
 //!   through the configured application-owned media service.
 //!
 //! [`AttachmentUploadBackend`] carries that split without putting internal
-//! media or object-store knowledge in this crate, mirroring
+//! media-service knowledge in this crate, mirroring
 //! [`crate::attachments::external_media::ExternalMediaRelay`]. The public
-//! default keeps bytes in `subtask_contexts.binary_data` and performs no image
-//! upload.
+//! default keeps bytes in `subtask_contexts.binary_data`. The configured S3
+//! backend uses real signed object writes; neither uploads images elsewhere.
 use async_trait::async_trait;
 
 /// The metadata the source image upload produces.
