@@ -251,7 +251,11 @@ test.describe('Agent conversation regression', () => {
     await openTaskPage(page, '/chat', chatShellTeam.id, 'chat')
     const input = page.getByTestId('message-input')
     await input.click()
-    await input.type(`@${historyToken}`)
+    // The menu opens on the `@` keystroke; typing the whole query in one burst
+    // outruns the state commit and the menu never appears.
+    await input.type('@')
+    await expect(page.getByTestId('mention-autocomplete')).toBeVisible({ timeout: 10_000 })
+    await input.type(historyToken)
 
     const option = page.getByTestId(`mention-task-option-${sourceTaskId}`)
     await expect(option).toBeVisible({ timeout: 30_000 })
