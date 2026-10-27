@@ -394,6 +394,10 @@ CI reliability depends on these invariants:
 Large caches are prewarmed and owned by `main`. Pull requests and merge-queue
 runs may restore the default-branch cache, but they do not save another copy:
 
+- The Rust Backend E2E image producer and desktop consumer must hash the same
+  source inputs, including `backend-rs/examples/**`. Runtime handoff regression
+  compares their workflow definitions directly so consumers never wait for an
+  unpublished image tag. Longer waits cannot fix mismatched tags.
 - The platform E2E browser image installs Python 3.11 through uv and imports
   `ssl` during the build to verify TLS support. Container shards restore the uv
   download cache and use the image-owned interpreter, avoiding incompatible host

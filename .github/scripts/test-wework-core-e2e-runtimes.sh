@@ -14,6 +14,9 @@ ruby -ryaml -e '
   producer = workflow.fetch("jobs").fetch("build-backend-rs-e2e-runtime")
   publish = producer.fetch("steps").find { |s| s["name"] == "Publish content-addressed Backend Rust E2E image" }.fetch("if")
   consumer_workflow = YAML.safe_load(File.read(ARGV[2]))
+  producer_digest = producer.fetch("steps").find { |s| s["id"] == "runtime" }.fetch("env").fetch("SOURCE_DIGEST")
+  consumer_digest = consumer_workflow.fetch("jobs").fetch("changes").fetch("steps").find { |s| s["id"] == "runtime" }.fetch("env").fetch("BACKEND_RS_SOURCE_DIGEST")
+  raise "Backend runtime producer and consumer must hash the same source inputs" unless producer_digest == consumer_digest
   consumer = consumer_workflow.fetch("jobs").fetch("build-wework-desktop-core-e2e")
   producer_seconds = Integer(producer.fetch("timeout-minutes")) * 60
   consumer_seconds = Integer(consumer.fetch("timeout-minutes")) * 60
