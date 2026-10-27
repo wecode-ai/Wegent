@@ -45,7 +45,7 @@ export function createRuntimeComposerApi(
     readCatalog: async (address: RuntimeComposerCatalogTarget, forceRefresh = false) => {
       if (!address.deviceId.trim() || (!('scope' in address) && !address.taskId.trim()))
         throw new Error('Composer device and task are required')
-      const [response, installed] = await Promise.all([
+      const [response, cloudInventory] = await Promise.all([
         ipc.request<unknown>(
           'runtime.composer.catalog.read',
           {
@@ -56,9 +56,27 @@ export function createRuntimeComposerApi(
           },
           address.deviceId
         ),
-        listCloudInstalledPlugins(address.deviceId),
+        listCloudInstalledPlugins(address.deviceId).then(
+          items => ({ items, error: null }),
+          error => ({
+            items: [] as InstalledPlugin[],
+            error: error instanceof Error ? error : new Error(String(error)),
+          })
+        )
       ])
-      return decodeRuntimeComposerSnapshot(address, response, installed)
+      const snapshot = decodeRuntimeComposerSnapshot(address, response, cloudInventory.items)
+      if (!cloudInventory.error) return snapshot
+      console.warn(
+        '[Wework] Failed to read cloud plugin membership; keeping the runtime catalog.',
+        cloudInventory.error
+      )
+      return {
+        ...snapshot,
+        partial: true,
+        unavailableSources: [
+          ...new Set([...(snapshot.unavailableSources ?? []), 'cloud-installed-plugins']),
+        ],
+      }
     },
     searchWorkspaceEntries: (
       deviceId: string,

@@ -111,6 +111,32 @@ assert_warmup_case "Backend Rust source" "$backend_rs_lock" \
   "backend-rs/src/hybrid.rs"
 assert_warmup_case "Executor source warms desktop sidecar" "$executor_lock" \
   "executor/src/main.rs"
+assert_warmup_case "Executor dependency source warms desktop sidecar" "$executor_lock" \
+  "executor/vendor/tf-rust-socketio/src/ack_id.rs"
+
+if ! ruby - "$workflow_dir" "$script_dir/../.." <<'RUBY'
+workflow_dir, root = ARGV
+['ci-cache-warmup.yml', 'wework-e2e.yml', 'e2e-tests.yml'].each do |name|
+  File.read(File.join(workflow_dir, name)).scan(/hashFiles\([^)]*\)/).each do |expression|
+    next unless expression.include?("'executor/src/")
+    abort "#{name} omits vendored Executor dependencies from its source digest" unless expression.include?("'executor/vendor/**'")
+  end
+end
+[
+  'docker/executor/Dockerfile',
+  'docker/device/Dockerfile',
+  'docker/standalone/Dockerfile',
+  'frontend/e2e/fixtures/claudecode-executor/Dockerfile'
+].each do |name|
+  lines = File.readlines(File.join(root, name))
+  copy = lines.index { |line| line.start_with?('COPY executor/vendor ') }
+  build = lines.index { |line| line.include?('cargo build') }
+  abort "#{name} must copy Executor dependencies before compiling" unless copy && build && copy < build
+end
+RUBY
+then
+  fail "Executor dependency sources must participate in runtime builds and cache keys"
+fi
 
 docker_only="${warmup_all_false/docker=false/docker=true}"
 assert_warmup_case "Executor E2E resolver" "$docker_only" \
@@ -508,6 +534,13 @@ fi
 wework_workflow="$workflow_dir/wework-e2e.yml"
 wework_browser_image="$script_dir/../../docker/wework-e2e/browser.Dockerfile"
 wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
+if ! grep -Eq '^FROM mcr.microsoft.com/playwright:v[0-9.]+-noble$' \
+    "$wework_browser_image" ||
+  ! sed -n '/^  e2e-tests:/,/^  executor-e2e-tests:/p' \
+    "$workflow_dir/e2e-tests.yml" | grep -F 'runs-on: ubuntu-24.04' >/dev/null; then
+  fail "Platform E2E Python tool-cache binaries must match the noble container ABI"
+fi
+
 if ! grep -Fq 'ARG UV_VERSION=0.11.17' "$wework_browser_image" ||
   ! grep -Fq '"https://astral.sh/uv/${UV_VERSION}/install.sh"' \
     "$wework_browser_image" ||

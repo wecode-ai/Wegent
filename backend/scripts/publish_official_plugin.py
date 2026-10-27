@@ -6,14 +6,61 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
+
+from sqlalchemy.exc import OperationalError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db.session import SessionLocal  # noqa: E402
 from app.services.official_plugin_publisher import (  # noqa: E402
+    OfficialPluginPackage,
     official_plugin_publisher,
 )
+from app.services.plugin_marketplace_service import PublishedRelease  # noqa: E402
+
+MYSQL_DEADLOCK_ERROR = 1213
+PUBLISH_ATTEMPTS = 3
+
+
+def _is_mysql_deadlock(error: OperationalError) -> bool:
+    original = error.orig
+    return bool(original.args and original.args[0] == MYSQL_DEADLOCK_ERROR)
+
+
+def publish_release(
+    built: OfficialPluginPackage,
+    args: argparse.Namespace,
+    provenance: dict[str, str],
+) -> PublishedRelease:
+    """Publish one release, retrying transient MySQL deadlocks.
+
+    Parallel publishes of adjacent catalog slugs can deadlock while inserting;
+    MySQL rolls the whole transaction back, so a retry starts from a clean state.
+    """
+    for attempt in range(1, PUBLISH_ATTEMPTS + 1):
+        try:
+            with SessionLocal() as db:
+                return official_plugin_publisher.publish_package(
+                    db,
+                    built=built,
+                    slug=args.slug,
+                    listing_type=args.listing_type,
+                    visibility=args.visibility,
+                    featured_rank=args.featured_rank,
+                    created_by_user_id=args.created_by_user_id,
+                    provenance=provenance,
+                )
+        except OperationalError as exc:
+            if not _is_mysql_deadlock(exc) or attempt == PUBLISH_ATTEMPTS:
+                raise
+            print(
+                f"Retrying plugin publish after MySQL deadlock (attempt {attempt})",
+                file=sys.stderr,
+            )
+            time.sleep(0.2 * attempt)
+    raise AssertionError("unreachable")
 
 
 def main() -> int:
@@ -72,25 +119,15 @@ def main() -> int:
             }.items()
             if value
         }
-        with SessionLocal() as db:
-            result = official_plugin_publisher.publish_package(
-                db,
-                built=built,
-                slug=args.slug,
-                listing_type=args.listing_type,
-                visibility=args.visibility,
-                featured_rank=args.featured_rank,
-                created_by_user_id=args.created_by_user_id,
-                provenance=provenance,
-            )
-            output.update(
-                {
-                    "pluginId": result.release.plugin_id,
-                    "releaseId": result.release.id,
-                    "created": result.created,
-                    "storageKey": result.release.storage_key,
-                }
-            )
+        result = publish_release(built, args, provenance)
+        output.update(
+            {
+                "pluginId": result.release.plugin_id,
+                "releaseId": result.release.id,
+                "created": result.created,
+                "storageKey": result.release.storage_key,
+            }
+        )
     print(json.dumps(output, ensure_ascii=False, sort_keys=True))
     return 0
 

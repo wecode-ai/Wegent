@@ -6,7 +6,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { DESKTOP_CHECKPOINTS, DESKTOP_CHECKPOINT_GROUPS } from './checkpoints.mjs'
+import {
+  DESKTOP_CHECKPOINTS,
+  DESKTOP_CHECKPOINT_GROUPS,
+  expandDesktopCheckpoints,
+} from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
@@ -31,7 +35,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
   'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
   'plugin-toggle-persistence': './scenarios/plugin-toggle-persistence.scenario.mjs',
-  'goal-state-sync': './scenarios/goal-stream-order.scenario.mjs',
+  'goal-state-sync': './scenarios/goal-stopped-state.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
   'task-model-deletion': './scenarios/task-model-deletion.scenario.mjs',
@@ -52,6 +56,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-uninstall-reinstall-race': './scenarios/plugin-uninstall-resilience.scenario.mjs',
 
   'plugin-composer-long-list': './scenarios/plugin-composer-long-list.scenario.mjs',
+  'plugin-collaboration-composer-isolation':
+    './scenarios/plugin-collaboration-composer-isolation.scenario.mjs',
   'plugin-runtime-path-recovery': './scenarios/plugin-runtime-path-recovery.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
@@ -63,6 +69,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'git-commit-generation': './scenarios/git-commit-generation.scenario.mjs',
   'claude-runtime': './scenarios/claude-runtime.scenario.mjs',
   'local-file-preview': './scenarios/local-file-preview.scenario.mjs',
+  'office-file-preview': './scenarios/office-file-preview.scenario.mjs',
   'local-harness': './scenarios/local-terminal.scenario.mjs',
   'harness-app-development': './scenarios/harness-apps.scenario.mjs',
   'harness-app-lifecycle': './scenarios/harness-apps.scenario.mjs',
@@ -108,6 +115,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'cloud-login-proxy': './scenarios/cloud-login-proxy.scenario.mjs',
+  'collaboration-deliveries': './scenarios/collaboration-deliveries.scenario.mjs',
   'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
   'collaboration-issue-task-discovery':
     './scenarios/collaboration-issue-task-discovery.scenario.mjs',
@@ -118,7 +126,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
   'stand-in-list-confirmation': './scenarios/stand-in-list-confirmation.scenario.mjs',
-  'stand-in-profile': './scenarios/stand-in-profile.scenario.mjs',
+  'stand-in-profile-settings': './scenarios/stand-in-profile.scenario.mjs',
+  'stand-in-model-catalog': './scenarios/stand-in-model-catalog.scenario.mjs',
   'stand-in-identities': './scenarios/stand-in-identities.scenario.mjs',
   'stand-in-connections': './scenarios/stand-in-connections.scenario.mjs',
   'stand-in-mcp': './scenarios/stand-in-mcp.scenario.mjs',
@@ -209,6 +218,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-uninstall-reinstall-race',
 
   'plugin-composer-long-list',
+  'plugin-collaboration-composer-isolation',
   'plugin-runtime-path-recovery',
   'codex-account-login',
   'cloud-space-mention',
@@ -217,6 +227,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'git-commit-generation',
   'claude-runtime',
   'local-file-preview',
+  'office-file-preview',
   'local-harness',
   'harness-app-development',
   'harness-app-lifecycle',
@@ -225,6 +236,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-context-resilience',
   'cloud-login-proxy',
   'collaboration-shared-core',
+  'collaboration-deliveries',
   'collaboration-issue-task-discovery',
   'collaboration-app-queue-identity',
   'collaboration-first-use',
@@ -232,7 +244,8 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-local-agent-dispatch',
   'stand-in-action-confirmation',
   'stand-in-list-confirmation',
-  'stand-in-profile',
+  'stand-in-profile-settings',
+  'stand-in-model-catalog',
   'stand-in-identities',
   'stand-in-connections',
   'stand-in-mcp',
@@ -594,7 +607,7 @@ async function prepareSharedHarnessRuntime(appBinary, parentDirectory) {
 function requestedCheckpointRange(args) {
   if (args.length !== 2) return null
   const [flag, checkpoint] = args
-  if (flag === '--segment') return expandCompositeCheckpoints([checkpoint])
+  if (flag === '--segment') return expandDesktopCheckpoints([checkpoint])
   if (flag === '--from-segment') {
     const startCheckpoint = COMPOSITE_CHECKPOINTS.get(checkpoint)?.[0] ?? checkpoint
     const startIndex = DEFAULT_DESKTOP_CHECKPOINTS.indexOf(startCheckpoint)
@@ -602,20 +615,6 @@ function requestedCheckpointRange(args) {
     return DEFAULT_DESKTOP_CHECKPOINTS.slice(startIndex)
   }
   return null
-}
-
-function expandCompositeCheckpoints(checkpoints) {
-  const expanded = []
-  const seen = new Set()
-  for (const checkpoint of checkpoints) {
-    const members = COMPOSITE_CHECKPOINTS.get(checkpoint) ?? [checkpoint]
-    for (const member of members) {
-      if (seen.has(member)) continue
-      seen.add(member)
-      expanded.push(member)
-    }
-  }
-  return expanded
 }
 
 function requestedParallelCheckpoints(args) {
@@ -632,7 +631,7 @@ function requestedParallelCheckpoints(args) {
       throw new Error(`Unknown desktop E2E checkpoint: ${checkpoint}`)
     }
   }
-  return expandCompositeCheckpoints(checkpoints)
+  return expandDesktopCheckpoints(checkpoints)
 }
 
 function parallelCheckpointLimit() {

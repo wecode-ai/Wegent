@@ -1,3 +1,4 @@
+import { IssueDeliveryContent } from "./issue-detail/IssueDeliveryContent";
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
 import { persistIssueDetailFields } from "./issue-detail/persistIssueDetailFields";
 import * as Popover from "@radix-ui/react-popover";
@@ -898,6 +899,10 @@ export function TodoEditor(props: TodoEditorProps) {
   initialTaskBindingsRef.current = props.initialTaskBindings;
   const taskBindingsRequestIdRef = useRef(0);
   const deliveriesRequestIdRef = useRef(0);
+  const currentDeliveryIdRef = useRef(item?.current_delivery_id);
+  useLayoutEffect(() => {
+    currentDeliveryIdRef.current = item?.current_delivery_id;
+  }, [item?.current_delivery_id]);
   const currentDeliveryRequestIdRef = useRef(0);
   const selectedDeliveryRequestIdRef = useRef(0);
   const attachmentsRequestIdRef = useRef(0);
@@ -976,7 +981,19 @@ export function TodoEditor(props: TodoEditorProps) {
         loadedEditItemIdRef.current !== editItemId
       )
         return;
-      setDeliveries(nextDeliveries);
+      setDeliveries((existing) => {
+        const current = existing.find(
+          (delivery) => delivery.id === currentDeliveryIdRef.current,
+        );
+        return current
+          ? [
+              current,
+              ...nextDeliveries.filter(
+                (delivery) => delivery.id !== current.id,
+              ),
+            ]
+          : nextDeliveries;
+      });
     } catch {
       // Independent detail sources fail closed without hiding available data.
     }
@@ -1187,7 +1204,6 @@ export function TodoEditor(props: TodoEditorProps) {
           loadedEditItemIdRef.current !== editItemId
         )
           return;
-        deliveriesRequestIdRef.current += 1;
         setDeliveries((existing) => [
           currentDelivery,
           ...existing.filter((delivery) => delivery.id !== currentDelivery.id),
@@ -1934,10 +1950,25 @@ export function TodoEditor(props: TodoEditorProps) {
 
   if (selectedDelivery && item) {
     return (
-      <aside className="fixed inset-y-0 right-0 z-modal flex w-full min-w-0 flex-col border-l border-border bg-background shadow-xl md:w-[calc(100%-248px)]">
+      <aside
+        data-testid="todo-detail-delivery-panel"
+        className={cn(
+          "flex min-h-0 min-w-0 flex-col overflow-hidden bg-background",
+          workspacePanel
+            ? cn(
+                "task-detail-workspace-panel-shell relative z-10 h-full shrink-0",
+                props.workspacePanelFill &&
+                  "task-detail-workspace-panel-fill w-full min-w-0",
+                fullScreen && "is-expanded",
+              )
+            : "fixed bottom-0 right-0 top-[38px] z-modal w-[min(760px,calc(100vw-48px))] border-l border-border shadow-xl",
+        )}
+        onKeyDown={handleKeyDown}
+      >
         <header className="flex h-12 items-center border-b border-border px-4">
           <button
             type="button"
+            data-testid="todo-detail-delivery-back"
             onClick={() => setSelectedDelivery(null)}
             className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary hover:bg-hover"
           >
@@ -1946,38 +1977,20 @@ export function TodoEditor(props: TodoEditorProps) {
           <span className="flex-1" />
           <button
             type="button"
+            data-testid="todo-detail-delivery-close"
+            aria-label={t("common.close", "关闭")}
             onClick={onClose}
             className="h-7 w-7 rounded-lg hover:bg-hover"
           >
             <X className="mx-auto h-4 w-4" />
           </button>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto p-6">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
           <p className="font-mono text-xs text-text-muted">
             {item.id} · {t("todo.delivered", "已交付")}
           </p>
           <h2 className="mt-2 text-heading-md font-semibold">{item.title}</h2>
-          <article className="mt-6 whitespace-pre-wrap rounded-lg bg-muted/40 p-4 text-sm leading-6 text-text-primary">
-            {selectedDelivery.markdown ||
-              t("todo.no_delivery_description", "无交付说明")}
-          </article>
-          <h3 className="mt-6 text-xs font-semibold text-text-secondary">
-            {t("todo.attachment", "附件")}
-          </h3>
-          <div className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border">
-            {selectedDelivery.assets.map((asset) => (
-              <div
-                key={asset.id}
-                className="flex h-10 items-center gap-2 px-3 text-sm"
-              >
-                <File className="h-4 w-4 text-text-muted" />
-                <span className="min-w-0 flex-1 truncate">
-                  {asset.relative_path}
-                </span>
-                <span className="text-text-muted">{asset.size_bytes} B</span>
-              </div>
-            ))}
-          </div>
+          <IssueDeliveryContent delivery={selectedDelivery} translate={t} />
         </div>
       </aside>
     );
@@ -3320,6 +3333,8 @@ export function TodoEditor(props: TodoEditorProps) {
                       <IssueDeliveries
                         key={`deliveries-${item.id}`}
                         deliveries={deliveries}
+                        getDelivery={editorPort.deliveries.get}
+                        memberName={(id) => memberNameById(projectMembers, id)}
                         onOpen={(id) => void openDelivery(id)}
                         translate={t}
                       />

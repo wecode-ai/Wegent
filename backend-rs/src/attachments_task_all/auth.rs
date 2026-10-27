@@ -171,10 +171,8 @@ struct ApiKeyRow {
     id: i64,
     user_id: i64,
     key_type: String,
-    /// `DATETIME` kept as text; compared lexicographically against the
-    /// current naive-UTC `YYYY-MM-DD HH:MM:SS` timestamp like the source
-    /// (`expires_at < datetime.utcnow()`).
-    expires_at: String,
+    /// Decode MySQL `DATETIME` directly, preserving the source's naive UTC.
+    expires_at: chrono::NaiveDateTime,
 }
 
 /// Task-token JWT claims (`app.services.auth.task_token.verify_task_token`).
@@ -291,7 +289,7 @@ async fn verify_api_key<M: Mysql>(mysql: &M, api_key: &str) -> Result<CurrentUse
     let Some(record) = record else {
         return Err(HttpError::invalid_api_key());
     };
-    if api_key_expired(&record.expires_at) || record.key_type != KEY_TYPE_PERSONAL {
+    if api_key_expired(record.expires_at) || record.key_type != KEY_TYPE_PERSONAL {
         return Err(HttpError::invalid_api_key());
     }
     let user = user_by_id(mysql, record.user_id).await?;
@@ -394,15 +392,14 @@ fn hex_sha256(data: &[u8]) -> String {
     out
 }
 
-/// Expiration check: naive-UTC `YYYY-MM-DD HH:MM:SS` lexicographic
-/// comparison, matching the source `datetime.utcnow()` comparison.
-fn api_key_expired(expires_at: &str) -> bool {
-    let now = chrono::Utc::now()
-        .naive_utc()
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string();
-    expires_at.trim() < now.as_str()
+/// Match the source's `expires_at < datetime.utcnow()` comparison.
+fn api_key_expired(expires_at: chrono::NaiveDateTime) -> bool {
+    expires_at < chrono::Utc::now().naive_utc()
 }
+
+#[cfg(test)]
+#[path = "auth_mysql_tests.rs"]
+mod mysql_tests;
 
 #[cfg(test)]
 mod tests {

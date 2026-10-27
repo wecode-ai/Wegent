@@ -18,6 +18,7 @@ ENV PATH=/root/.cargo/bin:${PATH}
 FROM builder-base AS builder-deps
 
 COPY executor/Cargo.toml executor/Cargo.lock /app/executor/
+COPY executor/vendor /app/executor/vendor
 RUN mkdir -p /app/executor/src/bin \
     && printf 'pub fn placeholder() {}\n' > /app/executor/src/lib.rs \
     && printf 'fn main() {}\n' > /app/executor/src/bin/wegent-executor.rs \
@@ -52,7 +53,7 @@ RUN dnf install -y \
     atk at-spi2-atk libXcomposite libXdamage libXfixes libXrandr libxkbcommon \
     # Skill-creator dependencies (JSON parsing and packaging)
     jq zip \
-    && npm install -g @anthropic-ai/claude-code@2.1.277 @openai/codex@0.155.1 \
+    && npm install -g @anthropic-ai/claude-code@2.1.310 @openai/codex@0.155.1 \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 

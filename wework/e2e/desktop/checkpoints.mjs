@@ -9,6 +9,7 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-model-presets',
   'cloud-space-mention',
   'collaboration-shared-core',
+  'collaboration-deliveries',
   'collaboration-issue-task-discovery',
   'collaboration-app-queue-identity',
   'collaboration-first-use',
@@ -18,6 +19,8 @@ export const DESKTOP_CHECKPOINTS = [
   'stand-in-action-confirmation',
   'stand-in-list-confirmation',
   'stand-in-profile',
+  'stand-in-profile-settings',
+  'stand-in-model-catalog',
   'stand-in-identities',
   'stand-in-connections',
   'stand-in-mcp',
@@ -87,6 +90,7 @@ export const DESKTOP_CHECKPOINTS = [
   'plugin-uninstall-reinstall-race',
 
   'plugin-composer-long-list',
+  'plugin-collaboration-composer-isolation',
   'plugin-runtime-path-recovery',
   'plugin-toggle-persistence',
   'plugin-workspace-publication',
@@ -154,6 +158,7 @@ export const DESKTOP_CHECKPOINTS = [
   'git-commit-generation',
   'claude-runtime',
   'local-file-preview',
+  'office-file-preview',
   'local-harness',
   'harness-apps',
   'harness-app-development',
@@ -180,6 +185,7 @@ export const PLUGIN_SEGMENTS = [
 ]
 
 export const DESKTOP_CHECKPOINT_GROUPS = new Map([
+  ['stand-in-profile', ['stand-in-profile-settings', 'stand-in-model-catalog']],
   [
     'plugin-account-auth',
     [
@@ -231,3 +237,17 @@ export const DESKTOP_CHECKPOINT_GROUPS = new Map([
     ],
   ],
 ])
+
+export function expandDesktopCheckpoints(checkpoints) {
+  const expanded = []
+  const seen = new Set()
+  for (const checkpoint of checkpoints) {
+    const members = DESKTOP_CHECKPOINT_GROUPS.get(checkpoint) ?? [checkpoint]
+    for (const member of members) {
+      if (seen.has(member)) continue
+      seen.add(member)
+      expanded.push(member)
+    }
+  }
+  return expanded
+}

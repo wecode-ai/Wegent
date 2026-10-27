@@ -28,7 +28,7 @@ export function ReviewPatchActionButton({
       title={label}
       aria-label={label}
       onClick={onClick}
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 disabled:opacity-45"
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/35 disabled:opacity-45"
     >
       {pending ? (
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -72,7 +72,7 @@ export function DiffCommentComposer({
         value={comment}
         onChange={event => onCommentChange(event.target.value)}
         placeholder={t('file_changes.comment_placeholder')}
-        className="min-h-20 w-full resize-none rounded-lg border border-border bg-surface p-2 text-sm outline-none focus:border-primary"
+        className="min-h-20 w-full resize-none rounded-lg border border-border bg-surface p-2 text-sm outline-none keyboard:focus:border-primary"
       />
       <div className="mt-2 flex justify-end gap-2">
         <button
