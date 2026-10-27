@@ -1079,6 +1079,26 @@ describe("CollaborationPlatformApp real component flow", () => {
       expect(manageResource).toHaveBeenCalledOnce();
     },
   );
+  it("shows catalog Agents as selectable without claiming execution readiness", async () => {
+    const { api } = createApi({
+      initialResources: {
+        agents: [{ ...agent, status: "unchecked" }],
+        execution_environments: [],
+      },
+    });
+    await render(<PlatformHarness api={api} />);
+    await click(byTestId("collaboration-primary-agents"));
+
+    const status = byTestId(
+      `collaboration-agents-row-${agent.id}`,
+    ).querySelector(".collaboration-resource-row-status");
+    expect(status?.textContent).toBe("可选择");
+    expect(status?.getAttribute("data-tone")).toBe("unchecked");
+    expect(status?.getAttribute("title")).toBe(
+      "执行时会检查智能体配置及当前权限。",
+    );
+  });
+
   it("deletes an agent resource after confirmation", async () => {
     const { api } = createApi();
     await render(<PlatformHarness api={api} />);

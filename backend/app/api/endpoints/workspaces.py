@@ -6,7 +6,7 @@
 import logging
 from time import perf_counter
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -85,13 +85,25 @@ def _response(
     )
 
 
-@resources_router.get("", response_model=PersonalResourcesResponse)
+@resources_router.get(
+    "", response_model=PersonalResourcesResponse, response_model_exclude_unset=True
+)
 async def list_personal_resources(
+    include_readiness: bool = Query(
+        True,
+        description=(
+            "Resolve execution readiness for every Agent. Catalog clients should "
+            "disable this to omit unused binding expansions and return unchecked status."
+        ),
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> PersonalResourcesResponse:
+    """Discover owned resources, resolving execution readiness only on request."""
     return PersonalResourcesResponse.model_validate(
-        await workspace_service.list_personal_resources(db, current_user.id)
+        await workspace_service.list_personal_resources(
+            db, current_user.id, include_readiness=include_readiness
+        )
     )
 
 
