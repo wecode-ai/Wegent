@@ -1379,6 +1379,61 @@ describe('Wework collaboration workspace API', () => {
     )
   })
 
+  it('does not reapply an unchanged notification focus after selecting another Issue', async () => {
+    const project = {
+      id: 'project-a',
+      name: 'Project A',
+      workspace_id: 'cloud-workspace',
+      project_store: 'backend',
+    }
+    const props = {
+      user: { id: 1, user_name: 'admin', email: 'admin@example.com' } as never,
+      localProjects: [],
+      services: {
+        sharedWorkspaceApi: { projects: { get: vi.fn().mockResolvedValue(project) } },
+      } as never,
+      activeProjectRef: { projectStore: 'backend' as const, projectId: project.id },
+      focusedItemId: 'notification-issue',
+      focusedCommentRequestKey: 'first-request',
+    }
+    const view = render(createElement(WeworkCollaborationPlatform, props))
+    await waitFor(() =>
+      expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+        'data-issue-id',
+        'notification-issue'
+      )
+    )
+
+    await act(async () => screen.getByTestId('collaboration-platform-open-issue').click())
+    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+      'data-issue-id',
+      'issue-1'
+    )
+    view.rerender(
+      createElement(WeworkCollaborationPlatform, {
+        ...props,
+        activeProjectRef: { ...props.activeProjectRef },
+      })
+    )
+    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+      'data-issue-id',
+      'issue-1'
+    )
+
+    view.rerender(
+      createElement(WeworkCollaborationPlatform, {
+        ...props,
+        focusedCommentRequestKey: 'second-request',
+      })
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+        'data-issue-id',
+        'notification-issue'
+      )
+    )
+  })
+
   it.each([
     { destination: 'an Issue in the same project', projectId: 'project-a' },
     { destination: 'an Issue in another project', projectId: 'project-b' },
