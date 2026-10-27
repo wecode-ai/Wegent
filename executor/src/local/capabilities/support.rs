@@ -574,61 +574,6 @@ pub(super) fn read_installed_plugins(plugins_dir: &Path) -> Result<Value, Capabi
     )
 }
 
-pub(super) fn scan_plugin_skills(plugin_path: &Path) -> Result<Vec<Value>, CapabilitySyncError> {
-    let skills_dir = plugin_path.join("skills");
-    let mut output = Vec::new();
-    for entry in sorted_dir_entries(&skills_dir)? {
-        let path = entry.path();
-        if !path.is_dir() || !path.join("SKILL.md").is_file() {
-            continue;
-        }
-        let skill_md = fs::read_to_string(path.join("SKILL.md"))?;
-        let metadata = parse_skill_frontmatter(&skill_md);
-        let name = metadata
-            .get("name")
-            .cloned()
-            .or_else(|| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .map(str::to_owned)
-            })
-            .unwrap_or_default();
-        let description = metadata.get("description").cloned().unwrap_or_default();
-        let relative = path
-            .strip_prefix(plugin_path)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        output.push(json!({
-            "name": name,
-            "description": description,
-            "path": relative,
-        }));
-    }
-    Ok(output)
-}
-
-fn parse_skill_frontmatter(content: &str) -> BTreeMap<String, String> {
-    let mut metadata = BTreeMap::new();
-    let mut lines = content.lines();
-    if lines.next() != Some("---") {
-        return metadata;
-    }
-    for line in lines {
-        if line == "---" {
-            break;
-        }
-        let Some((key, value)) = line.split_once(':') else {
-            continue;
-        };
-        metadata.insert(
-            key.trim().to_owned(),
-            value.trim().trim_matches('"').to_owned(),
-        );
-    }
-    metadata
-}
-
 pub(super) fn sorted_dir_entries(path: &Path) -> Result<Vec<fs::DirEntry>, CapabilitySyncError> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,

@@ -81,7 +81,7 @@ impl RecoveryJournal {
         path: &Path,
         spec: &PluginSyncSpec,
         template: &Path,
-        _manifest: &Value,
+        manifest: &Value,
     ) -> Result<Self, CapabilitySyncError> {
         safe_managed_path(store.manifest.path.parent().unwrap(), path, false)?;
         fs::create_dir_all(path.parent().unwrap())?;
@@ -107,10 +107,22 @@ impl RecoveryJournal {
         let transaction_id = uuid::Uuid::new_v4().to_string();
         let timestamp = now_rfc3339_like();
         let mut expected_files = BTreeMap::new();
-        for (index, (target, bytes)) in
-            plan::planned_files(store, spec, template, staging.path(), &timestamp)?
-                .into_iter()
-                .enumerate()
+        let previous_states = manifest
+            .get("plugins")
+            .and_then(|plugins| plugins.get(&spec.key))
+            .and_then(|entry| entry.get("component_states"))
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        for (index, (target, bytes)) in plan::planned_files(
+            store,
+            spec,
+            template,
+            staging.path(),
+            &timestamp,
+            &previous_states,
+        )?
+        .into_iter()
+        .enumerate()
         {
             let name = format!("expected-{index}");
             let file = staging.path().join(&name);

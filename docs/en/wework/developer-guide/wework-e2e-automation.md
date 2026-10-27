@@ -849,7 +849,7 @@ not equivalent coverage.
 Regular draft PRs do not run browser or desktop E2E. Merge queue runs the
 complete browser plus Linux and Windows Desktop Core suites before a commit
 enters `main`; `main` does not repeat checks that already passed for the merge
-group. The macOS memory gate runs only for non-draft PRs carrying `ci:memory` or `ci:all`.
+group. The macOS memory gate runs only for non-draft PRs carrying `ci:all`.
 Regular PRs, scheduled runs, and manual runs do not execute memory E2E. Applying `ci:all` runs browser, Linux desktop, Windows
 desktop, and macOS memory E2E even when the PR's changed paths would not
 normally select Wework E2E. The workflow also runs a regression excluding memory E2E every
