@@ -31,6 +31,7 @@
 pub mod backend;
 #[cfg(test)]
 mod consistency_tests;
+mod csv;
 pub(crate) mod document;
 mod jpeg_metadata;
 pub(crate) mod model_image;
@@ -40,6 +41,8 @@ mod overwrite;
 pub(crate) mod pdf;
 mod resample;
 mod response;
+mod s3;
+pub use s3::S3StorageBackend;
 mod store;
 #[cfg(test)]
 mod tests;
@@ -183,30 +186,7 @@ async fn upload_attachment(
         ));
     }
 
-    // `file: UploadFile = File(...)`: FastAPI rejects a missing field with 422.
-    let Some(file) = multipart.get("file") else {
-        return Err(FastApiError::validation(serde_json::json!([{
-            "type": "missing",
-            "loc": ["body", "file"],
-            "msg": "Field required",
-        }])));
-    };
-    let Some(filename) = file.filename.clone().filter(|name| !name.is_empty()) else {
-        return Err(FastApiError::detail(
-            StatusCode::BAD_REQUEST,
-            "Filename is required",
-        ));
-    };
-    let binary_data = file.bytes.to_vec();
-
-    // `DocumentParser.validate_file_size` before processing.
-    if !document::validate_file_size(binary_data.len() as i64) {
-        let max_size_mb = document::max_file_size() as f64 / (1024.0 * 1024.0);
-        return Err(FastApiError::detail(
-            StatusCode::BAD_REQUEST,
-            format!("File size exceeds maximum limit ({max_size_mb:.1} MB)"),
-        ));
-    }
+    let (filename, binary_data) = bind_upload_file(&multipart, overwrite_attachment_id)?;
 
     let subtask_id = user.subtask_id.unwrap_or(UNLINKED_SUBTASK_ID);
     tracing::info!(
@@ -217,8 +197,8 @@ async fn upload_attachment(
         "[attachments] upload_attachment"
     );
 
-    let image_pid_metadata = upload_image_pid(state, &filename, &binary_data, &user).await;
-    reload_owner_after_image_upload(state, &filename, user.id).await?;
+    let image_pid_metadata = upload_image_pid(state, filename, binary_data, &user).await;
+    reload_owner_after_image_upload(state, filename, user.id).await?;
 
     let outcome = match overwrite_attachment_id {
         Some(context_id) => {
@@ -232,8 +212,8 @@ async fn upload_attachment(
                 state,
                 context_id,
                 user.id,
-                &filename,
-                &binary_data,
+                filename,
+                binary_data,
                 &image_pid_metadata,
             )
             .await?
@@ -242,8 +222,8 @@ async fn upload_attachment(
             upload_new_attachment(
                 state,
                 user.id,
-                &filename,
-                &binary_data,
+                filename,
+                binary_data,
                 subtask_id,
                 &image_pid_metadata,
                 &storage_purpose,
@@ -281,6 +261,41 @@ async fn upload_attachment(
 
     let row = row.ok_or_else(attachment_not_found)?;
     Ok(AttachmentResponse::from_context(&row, truncation_info))
+}
+
+/// Validate uploads before any media-service, storage, or database work.
+/// Empty overwrites retain the existing document-content clearing contract.
+fn bind_upload_file(
+    multipart: &Multipart,
+    overwrite_attachment_id: Option<i64>,
+) -> Result<(&str, &[u8]), FastApiError> {
+    let Some(file) = multipart.get("file") else {
+        return Err(FastApiError::validation(serde_json::json!([{
+            "type": "missing",
+            "loc": ["body", "file"],
+            "msg": "Field required",
+        }])));
+    };
+    let Some(filename) = file.filename.as_deref().filter(|name| !name.is_empty()) else {
+        return Err(FastApiError::detail(
+            StatusCode::BAD_REQUEST,
+            "Filename is required",
+        ));
+    };
+    if file.bytes.is_empty() && overwrite_attachment_id.is_none() {
+        return Err(FastApiError::detail(
+            StatusCode::BAD_REQUEST,
+            "File is empty",
+        ));
+    }
+    if !document::validate_file_size(file.bytes.len() as i64) {
+        let max_size_mb = document::max_file_size() as f64 / (1024.0 * 1024.0);
+        return Err(FastApiError::detail(
+            StatusCode::BAD_REQUEST,
+            format!("File size exceeds maximum limit ({max_size_mb:.1} MB)"),
+        ));
+    }
+    Ok((filename, &file.bytes))
 }
 
 /// The best-effort image PID metadata merged into the attachment's

@@ -1,8 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { createCollaborationTranslator } from '@wegent/collaboration'
-import '@/i18n'
+import i18n from '@/i18n'
+import type { Attachment } from '@/types/api'
+import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { TaskCommentComposer } from './TaskCommentComposer'
 
@@ -123,4 +125,52 @@ describe('TaskCommentComposer', () => {
     expect(input).toHaveValue('Review this')
     expect(screen.getByRole('alert')).toHaveTextContent('Connection lost')
   })
+
+  it.each([
+    ['zh-CN', '关闭附件错误'],
+    ['en', 'Dismiss attachment error'],
+  ])(
+    'dismisses failed attachments in %s while retaining the draft and valid files',
+    async (language, label) => {
+      const { props, rerender } = setup()
+      const uploadAttachment = vi.fn().mockRejectedValue(new Error('disk full'))
+      let controls!: ReturnType<typeof useWorkbenchAttachments>
+      const valid: Attachment = {
+        id: -42,
+        filename: 'valid.pdf',
+        file_size: 4,
+        mime_type: 'application/pdf',
+        file_extension: '.pdf',
+        created_at: '2026-10-27T00:00:00Z',
+        status: 'ready',
+      }
+      function Harness() {
+        controls = useWorkbenchAttachments({ uploadAttachment })
+        return <TaskCommentComposer {...props} controls={{ ...props.controls, ...controls }} />
+      }
+      try {
+        await act(async () => {
+          await i18n.changeLanguage(language)
+        })
+        rerender(<Harness />)
+        await act(async () => {
+          controls.addExistingAttachment(valid)
+          await controls.handleFileSelect(new File(['test'], 'failed.pdf'))
+        })
+        expect(screen.getByTestId('attachment-error-badge')).toHaveTextContent('disk full')
+
+        await userEvent.click(screen.getByRole('button', { name: label }))
+
+        expect(screen.queryByTestId('attachment-error-badge')).not.toBeInTheDocument()
+        expect(screen.getByTestId('cloud-task-activity-composer')).toHaveValue('Review this')
+        expect(screen.getByTestId('attachment-badge')).toHaveTextContent('valid.pdf')
+        expect(controls.errors.size).toBe(0)
+        expect(controls.attachments).toEqual([valid])
+      } finally {
+        await act(async () => {
+          await i18n.changeLanguage('zh-CN')
+        })
+      }
+    }
+  )
 })

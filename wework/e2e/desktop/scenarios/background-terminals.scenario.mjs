@@ -72,7 +72,8 @@ export async function verifyTerminalHistory(control, timeoutMs) {
   const textarea = `${panel} .xterm-helper-textarea`
   await control.command('waitFor', tree, { text: MARKERS[0] })
   const firstRow = `${tree} > [role="listitem"]:first-child[aria-posinset]`
-  await control.command('waitFor', firstRow, { timeoutMs })
+  // A full viewport is required: at the live bottom, new output scrolls it again.
+  await control.command('waitFor', `${firstRow}:not([aria-posinset="1"])`, { timeoutMs })
   let position
   let pages = 0
   do {

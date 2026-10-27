@@ -14,6 +14,15 @@ vi.mock('@/lib/runtime-environment', () => ({
 import { KeyboardShortcutsSettingsPage } from './KeyboardShortcutsSettingsPage'
 
 describe('KeyboardShortcutsSettingsPage', () => {
+  test('shows the configurable collapse read conversations shortcut', () => {
+    render(<KeyboardShortcutsSettingsPage />)
+
+    const row = screen.getByTestId('keyboard-shortcut-row-collapseReadConversations')
+    expect(row).toHaveTextContent('收起已读会话')
+    expect(row).toHaveTextContent('在原有分组中收起其他已读且空闲的会话')
+    expect(row).toHaveTextContent('⌥ ⇧ ⌘ R')
+  })
+
   test('shows the configurable model selector shortcut', () => {
     render(<KeyboardShortcutsSettingsPage />)
 

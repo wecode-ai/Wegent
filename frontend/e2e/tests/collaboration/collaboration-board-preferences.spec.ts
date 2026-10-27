@@ -4,53 +4,19 @@
 import { expect, test, type Locator, type Page, type Request } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { LoginPage } from '../../pages/auth/login.page'
-import { createApiClient } from '../../utils/api-client'
-import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 import { webApi } from '../../utils/collaboration-test-support'
-
-interface Resource {
-  id: string
-  version: number
-}
-
-interface Project extends Resource {
-  board_config: { group_by: string }
-}
-
-interface Issue extends Resource {
-  assignee_user_id: number | null
-  priority: string
-  sort_order: number
-  status: string
-  tags: string[]
-}
+import {
+  boardTest,
+  archive,
+  createIssue,
+  projectApi,
+  projectPath,
+  type Resource,
+  type Project,
+  type Issue,
+} from '../../utils/collaboration-board-fixture'
 
 type GroupBy = 'status' | 'priority' | 'assignee' | 'tag'
-
-function projectPath(workspaceId: string, projectId: string): string {
-  return `/collaboration/workspaces/${workspaceId}/projects/${projectId}`
-}
-
-function projectApi(projectId: string): string {
-  return `/api/v1/cloud-projects/${projectId}`
-}
-
-async function createIssue(
-  page: Page,
-  projectId: string,
-  title: string,
-  overrides: Record<string, unknown> = {}
-): Promise<Issue> {
-  return webApi(page, `${projectApi(projectId)}/loop-items`, {
-    method: 'POST',
-    body: { title, status: 'pending', priority: 'none', tags: [], ...overrides },
-  })
-}
-
-async function archive(page: Page, path: string): Promise<void> {
-  const current = await webApi<Resource>(page, path)
-  await webApi(page, `${path}?version=${current.version}`, { method: 'DELETE' })
-}
 
 async function groupBy(page: Page, value: GroupBy): Promise<void> {
   await page.getByTestId('cloud-board-group-by').click()
@@ -92,204 +58,112 @@ async function switchUser(
 }
 
 for (const role of ['Developer', 'Viewer'] as const) {
-  test(`${role} filters their own Issues without saving shared settings and isolates grouping preferences`, async ({
-    page: ownerPage,
-    browser,
-    request,
-  }) => {
-    test.setTimeout(180_000)
-    await ownerPage.goto('/collaboration')
-    await expect(ownerPage.getByTestId('collaboration-platform-root')).toBeVisible()
-    const suffix = crypto.randomUUID()
-    const workspace = await webApi<Resource>(ownerPage, '/api/v1/workspaces', {
-      method: 'POST',
-      body: { name: `Personal board ${role} ${suffix}` },
-    })
-    const projects: Project[] = []
-    const login = await createApiClient(request).login(
-      REGULAR_USER.username,
-      REGULAR_USER.password,
-      1
-    )
-    expect(login.status).toBe(200)
-    const token = login.data?.access_token
-    if (!token) throw new Error('Regular user login did not return an access token')
-    const context = await browser.newContext({
-      baseURL: process.env.E2E_BASE_URL || 'http://localhost:3000',
-      storageState: buildStorageState(
-        process.env.E2E_BASE_URL || 'http://localhost:3000',
-        token,
-        getJwtExpiryMs(token)
-      ),
-    })
-    const updates: string[] = []
-    const recordUpdate = (request: Request) => {
-      if (
-        request.method() === 'PATCH' &&
-        projects.some(project => new URL(request.url()).pathname === projectApi(project.id))
-      ) {
-        updates.push(request.url())
-      }
-    }
-    context.on('request', recordUpdate)
+  boardTest.describe(role, () => {
+    boardTest.use({ boardRole: role })
+    boardTest.setTimeout(180_000)
 
-    try {
-      const users = await webApi<{ users: Array<{ id: number; user_name: string }> }>(
-        ownerPage,
-        `/api/users/search?q=${encodeURIComponent(REGULAR_USER.username)}&limit=20`
-      )
-      const member = users.users.find(user => user.user_name === REGULAR_USER.username)
-      expect(member, 'Global setup must provision the regular user').toBeDefined()
-      const owner = await webApi<{ id: number }>(ownerPage, '/api/users/me')
-      expect(member!.id).not.toBe(owner.id)
-      for (const name of ['Primary', 'Separate']) {
-        const created = await webApi<Project>(ownerPage, '/api/v1/cloud-projects', {
-          method: 'POST',
-          body: {
-            workspace_id: workspace.id,
-            name: `${name} ${suffix}`,
-            task_provider: 'local',
-            visibility: 'private',
-          },
-        })
-        projects.push(created)
-        await webApi(ownerPage, `${projectApi(created.id)}/members`, {
-          method: 'POST',
-          body: { user_id: member!.id, role: 'Developer' },
-        })
-      }
-      const [project, separate] = projects
-      const mineAlpha = await createIssue(ownerPage, project.id, `Mine alpha ${suffix}`, {
-        assignee_user_id: member!.id,
-        tags: ['alpha', 'keep'],
-      })
-      const mineBeta = await createIssue(ownerPage, project.id, `Mine beta ${suffix}`, {
-        assignee_user_id: member!.id,
-      })
-      const other = await createIssue(ownerPage, project.id, `Other alpha ${suffix}`, {
-        assignee_user_id: owner.id,
-        tags: ['beta'],
-      })
-      const unassigned = await createIssue(ownerPage, project.id, `Unassigned alpha ${suffix}`)
-      const cleared = await webApi<Issue>(ownerPage, `/api/v1/loop-items/${unassigned.id}`, {
-        method: 'PATCH',
-        body: { version: unassigned.version, assignee_user_id: null },
-      })
-      expect(cleared.assignee_user_id).toBeNull()
-      await createIssue(ownerPage, separate.id, `Separate project Issue ${suffix}`)
-      if (role === 'Viewer') {
-        // Viewers cannot receive new assignments; retain real assignments after a role change.
-        for (const project of projects) {
-          await webApi(ownerPage, `${projectApi(project.id)}/members/${member!.id}`, {
-            method: 'PATCH',
-            body: { role: 'Viewer' },
-          })
-        }
-        expect(
-          (await webApi<Issue>(ownerPage, `/api/v1/loop-items/${mineAlpha.id}`)).assignee_user_id
-        ).toBe(member!.id)
-      }
-      const snapshots = await Promise.all(
-        projects.map(project => webApi<Project>(ownerPage, projectApi(project.id)))
-      )
-      const all = [mineAlpha, mineBeta, other, unassigned]
-      let page = await context.newPage()
-      const path = projectPath(workspace.id, project.id)
-      const separatePath = projectPath(workspace.id, separate.id)
-      await page.goto(path)
-      const signedIn = await webApi<{ id: number; role: string }>(page, '/api/users/me')
-      expect(signedIn.id).toBe(member!.id)
-      expect(signedIn.role, 'Permission coverage must use an ordinary global user').toBe('user')
-      expect(
-        await webApi<Array<{ user_id: number; role: string }>>(
-          ownerPage,
-          `${projectApi(project.id)}/members`
+    boardTest(
+      'filters own Issues and isolates personal grouping preferences',
+      async ({ board }) => {
+        const {
+          context,
+          path,
+          separatePath,
+          all,
+          mineAlpha,
+          mineBeta,
+          other,
+          unassigned,
+          owner,
+          member,
+          suffix,
+        } = board
+        let { page } = board
+        await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
+          'data-value',
+          'status'
         )
-      ).toContainEqual(expect.objectContaining({ user_id: member!.id, role }))
-      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', 'status')
-      await expectIssues(page, all, all)
-      await groupBy(page, 'assignee')
-      const filter = page.getByTestId('cloud-board-group-filter')
-      const search = page.getByTestId('cloud-board-search')
-      await filter.selectOption(`assignee-${member!.id}`)
-      await expectIssues(page, all, [mineAlpha, mineBeta])
-      await search.fill('alpha')
-      await expectIssues(page, all, [mineAlpha])
-      await search.fill(`no-match-${suffix}`)
-      await expectIssues(page, all, [])
-      await search.clear()
-      await expectIssues(page, all, [mineAlpha, mineBeta])
-      await filter.selectOption(`assignee-${owner.id}`)
-      await expectIssues(page, all, [other])
-      await filter.selectOption('assignee-unassigned')
-      await expectIssues(page, all, [unassigned])
-      await filter.selectOption('')
-      await expectIssues(page, all, all)
+        await expectIssues(page, all, all)
+        await groupBy(page, 'assignee')
+        const filter = page.getByTestId('cloud-board-group-filter')
+        const search = page.getByTestId('cloud-board-search')
+        await filter.selectOption(`assignee-${member!.id}`)
+        await expectIssues(page, all, [mineAlpha, mineBeta])
+        await search.fill('alpha')
+        await expectIssues(page, all, [mineAlpha])
+        await search.fill(`no-match-${suffix}`)
+        await expectIssues(page, all, [])
+        await search.clear()
+        await expectIssues(page, all, [mineAlpha, mineBeta])
+        await filter.selectOption(`assignee-${owner.id}`)
+        await expectIssues(page, all, [other])
+        await filter.selectOption('assignee-unassigned')
+        await expectIssues(page, all, [unassigned])
+        await filter.selectOption('')
+        await expectIssues(page, all, all)
 
-      // Only grouping is a saved personal preference; search and value filters reset.
-      await filter.selectOption(`assignee-${member!.id}`)
-      await search.fill('alpha')
-      await page.reload()
-      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
-        'data-value',
-        'assignee'
-      )
-      await expect(page.getByTestId('cloud-board-group-filter')).toHaveValue('')
-      await expect(page.getByTestId('cloud-board-search')).toHaveValue('')
-      await expectIssues(page, all, all)
-      await page.close()
-      page = await context.newPage()
-      await page.goto(path)
-      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
-        'data-value',
-        'assignee'
-      )
-      await expectIssues(page, all, all)
+        // Only grouping is a saved personal preference; search and value filters reset.
+        await filter.selectOption(`assignee-${member!.id}`)
+        await search.fill('alpha')
+        await page.reload()
+        await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
+          'data-value',
+          'assignee'
+        )
+        await expect(page.getByTestId('cloud-board-group-filter')).toHaveValue('')
+        await expect(page.getByTestId('cloud-board-search')).toHaveValue('')
+        await expectIssues(page, all, all)
+        await page.close()
+        page = await context.newPage()
+        await page.goto(path)
+        await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
+          'data-value',
+          'assignee'
+        )
+        await expectIssues(page, all, all)
 
-      await page.goto(separatePath)
-      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', 'status')
-      await groupBy(page, 'tag')
-      await page.goto(path)
-      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
-        'data-value',
-        'assignee'
-      )
-      await page.goto(separatePath)
-      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', 'tag')
-      await page.goto(path)
+        await page.goto(separatePath)
+        await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
+          'data-value',
+          'status'
+        )
+        await groupBy(page, 'tag')
+        await page.goto(path)
+        await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
+          'data-value',
+          'assignee'
+        )
+        await page.goto(separatePath)
+        await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', 'tag')
+        await page.goto(path)
 
-      // Switch accounts in the same browser storage so an unscoped key cannot pass.
-      await switchUser(page, REGULAR_USER.username, ADMIN_USER)
-      await page.goto(path)
-      expect((await webApi<{ id: number }>(page, '/api/users/me')).id).toBe(owner.id)
-      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', 'status')
-      await groupBy(page, 'priority')
-      await switchUser(page, ADMIN_USER.username, REGULAR_USER)
-      await page.goto(path)
-      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
-        'data-value',
-        'assignee'
-      )
-      await expectIssues(page, all, all)
+        // Switch accounts in the same browser storage so an unscoped key cannot pass.
+        await switchUser(page, REGULAR_USER.username, ADMIN_USER)
+        await page.goto(path)
+        expect((await webApi<{ id: number }>(page, '/api/users/me')).id).toBe(owner.id)
+        await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
+          'data-value',
+          'status'
+        )
+        await groupBy(page, 'priority')
+        await switchUser(page, ADMIN_USER.username, REGULAR_USER)
+        await page.goto(path)
+        await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute(
+          'data-value',
+          'assignee'
+        )
+        await expectIssues(page, all, all)
+      }
+    )
 
+    boardTest('enforces drag permissions and persists permitted changes', async ({ board }) => {
+      const { page, project, mineAlpha, owner, suffix } = board
       if (role === 'Viewer') {
         await expectViewerCannotDrag(page, project.id, mineAlpha, owner.id)
       } else {
         await expectDeveloperCanMove(page, project.id, owner.id, suffix)
       }
-
-      for (const before of snapshots) {
-        const after = await webApi<Project>(ownerPage, projectApi(before.id))
-        expect(after.board_config).toEqual(before.board_config)
-        expect(after.version).toBe(before.version)
-      }
-      expect(updates, 'Personal view changes must never PATCH a shared project').toEqual([])
-    } finally {
-      await context.close()
-      for (const project of [...projects].reverse())
-        await archive(ownerPage, projectApi(project.id))
-      await archive(ownerPage, `/api/v1/workspaces/${workspace.id}`)
-    }
+    })
   })
 }
 

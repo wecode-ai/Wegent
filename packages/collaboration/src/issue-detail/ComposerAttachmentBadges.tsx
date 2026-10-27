@@ -38,6 +38,7 @@ export interface ComposerAttachmentBadgesProps<T extends ComposerAttachment> {
   >;
   errors: ReadonlyMap<string, string>;
   onRemoveAttachment(id: T["id"]): void;
+  onDismissAttachmentError?(filename: string): void;
   onOpenAttachment?(attachment: T): void;
   onShowTextAttachment?(attachment: T): void;
   imageServices: AttachmentImageServices<T>;
@@ -46,6 +47,7 @@ export interface ComposerAttachmentBadgesProps<T extends ComposerAttachment> {
     appshot: string;
     pastedText: string;
     addingText: string;
+    dismissError?: string;
   };
   leading?: ReactNode;
 }
@@ -286,6 +288,7 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
   onRemoveAttachment,
   onShowTextAttachment,
   onOpenAttachment,
+  onDismissAttachmentError,
 }: ComposerAttachmentBadgesProps<T>) {
   const visibleAttachments = attachments.filter(
     (attachment) => attachment.ui_group_role !== "companion",
@@ -421,11 +424,24 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
         <span
           key={fileId}
           data-testid="attachment-error-badge"
-          className="inline-flex max-w-[260px] items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700"
+          className="inline-flex max-w-[260px] items-center gap-2 rounded-full border border-destructive/20 bg-destructive/5 px-3 py-1.5 text-xs text-destructive"
+          title={`${fileId}: ${error}`}
         >
           <FileText className="h-4 w-4 shrink-0" />
           <span className="min-w-0 truncate">{fileId}</span>
           <span className="min-w-0 truncate">{error}</span>
+          {onDismissAttachmentError && (
+            <button
+              type="button"
+              data-testid="dismiss-attachment-error-button"
+              aria-label={labels.dismissError}
+              title={labels.dismissError}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus md:h-6 md:w-6"
+              onClick={() => onDismissAttachmentError(fileId)}
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          )}
         </span>
       ))}
     </div>
