@@ -526,6 +526,7 @@ function mockSystemSkillsFetch(
     deviceId: string
     marketplaceDeviceState: 'installed' | 'failed' | 'pending'
     marketplaceInstallError: string
+    marketplaceInstallGate: Promise<void>
     marketplaceLogo: string
     marketplaceBrandColor: string
     installedMarketplaceLogo: string
@@ -1217,6 +1218,22 @@ function mockSystemSkillsFetch(
             status: 503,
             text: () =>
               Promise.resolve(JSON.stringify({ detail: overrides.marketplaceInstallError })),
+          })
+        }
+        if (overrides.marketplaceInstallGate) {
+          cloudMarketplacePluginInstalled = true
+          marketplaceDeviceState = 'pending'
+          return overrides.marketplaceInstallGate.then(() => {
+            marketplaceDeviceState = 'installed'
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                plugin: buildInstalledMarketplacePlugin(
+                  requestUrl.searchParams.get('device_id') || undefined
+                ),
+              }),
+            }
           })
         }
         return new Promise(resolve => {
@@ -4275,6 +4292,40 @@ describe('PluginsWorkspace', () => {
     )
     expect(screen.getByTestId('plugin-detail-actions-101')).toBeInTheDocument()
     expectFetchRequest('/api/plugins/marketplace?device_id=current-device')
+  })
+
+  test('does not duplicate a foreground install when account inventory exposes its pending device state', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    let finishInstall!: () => void
+    const marketplaceInstallGate = new Promise<void>(resolve => {
+      finishInstall = resolve
+    })
+    const marketplace = mockSystemSkillsFetch({ marketplaceInstallGate })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
+    await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/plugins/marketplace/101/install?device_id=current-device',
+        expect.objectContaining({ method: 'POST' })
+      )
+    )
+    const installed = await (await fetch('/api/plugins/installed?device_id=current-device')).json()
+    const catalog = await (await fetch('/api/plugins/marketplace?device_id=current-device')).json()
+    await act(async () => {
+      writePluginInventory(pluginMarketplaceCacheKey('/api', 'cloud-token'), 'current-device', {
+        installedPlugins: installed.items,
+        marketplaceItems: catalog.items,
+      })
+    })
+    expect(marketplace.getSyncDeviceCalls()).toBe(0)
+    await act(async () => {
+      finishInstall()
+      await marketplaceInstallGate
+    })
+    expect(await screen.findByTestId('plugin-operation-notice')).toHaveTextContent('已安装')
+    expect(marketplace.getSyncDeviceCalls()).toBe(0)
   })
 
   test('auto-syncs account installs onto the current device once per session', async () => {

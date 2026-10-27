@@ -1124,11 +1124,7 @@ export function WeworkSharedProject({
                   projectChatAgentApi={detailServices?.projectChatAgentApi}
                   projectChatClient={detailServices?.projectChatClient}
                   selfManagedExecution={project.project_store === 'local'}
-                  currentUserId={
-                    project.project_store === 'local'
-                      ? taskOwnerUserId
-                      : (editorProject.current_user_id ?? userId)
-                  }
+                  currentUserId={editorProject.current_user_id ?? userId}
                   currentAssignment={
                     assignments
                       .filter(assignment => assignment.status === 'active')

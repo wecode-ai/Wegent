@@ -136,6 +136,7 @@ function canCreatePersonalTask(props: TodoEditorProps): boolean {
 
 export function TodoEditor(props: TodoEditorProps) {
   const { t, i18n } = useTranslation('common')
+  const taskOwnerUserId = props.project?.project_store === 'local' ? 0 : props.currentUserId
   const showPersonalTaskAction = canCreatePersonalTask(props)
   const [previewAttachment, setPreviewAttachment] = useState<{
     id: string
@@ -186,13 +187,12 @@ export function TodoEditor(props: TodoEditorProps) {
           const tasks = await detailPort.taskBindings.list(...args)
           return tasks.filter(
             task =>
-              props.currentUserId !== undefined &&
-              String(task.task_user_id) === String(props.currentUserId)
+              taskOwnerUserId !== undefined && String(task.task_user_id) === String(taskOwnerUserId)
           )
         },
       },
     }
-  }, [workspaceApi, props.currentUserId, props.getRuntimeTranscript])
+  }, [workspaceApi, taskOwnerUserId, props.getRuntimeTranscript])
   const loadTeams = useCallback(
     () => props.teamApi?.listTeams() ?? Promise.resolve([]),
     [props.teamApi]
@@ -333,9 +333,7 @@ export function TodoEditor(props: TodoEditorProps) {
     defaultAssistant: props.defaultAssistant,
     taskRefreshKey: props.taskRefreshKey,
     initialTaskBindings: props.initialTaskBindings?.filter(
-      task =>
-        props.currentUserId !== undefined &&
-        String(task.task_user_id) === String(props.currentUserId)
+      task => taskOwnerUserId !== undefined && String(task.task_user_id) === String(taskOwnerUserId)
     ) as SharedIssueDetailTaskBinding[] | undefined,
     taskExecutionStates: props.taskExecutionStates,
     deviceNamesById: props.deviceNamesById,

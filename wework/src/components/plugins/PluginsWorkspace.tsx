@@ -332,6 +332,8 @@ export function PluginsWorkspace({
   const [uninstallingPluginIds, setUninstallingPluginIds] = useState<Set<string | number>>(
     () => new Set()
   )
+  const pluginMutationPending =
+    installingMarketplacePluginIds.size > 0 || uninstallingPluginIds.size > 0
   const [updatingPluginPolicyIds, setUpdatingPluginPolicyIds] = useState<Set<string | number>>(
     () => new Set()
   )
@@ -1680,7 +1682,7 @@ export function PluginsWorkspace({
     accountKey: marketplaceCacheKeyValue,
     deviceId: currentDeviceId,
     available: Boolean(cloudToken && cloudMarketplaceAvailable && deviceCloudConnected),
-    busy: installingMarketplacePluginIds.size > 0 || uninstallingPluginIds.size > 0,
+    busy: pluginMutationPending,
     operations: {
       readStore: readPluginReconciliationInventory,
       sync: () => pluginApi.syncInstalledPluginsToDevice(currentDeviceId, true),
@@ -3881,6 +3883,7 @@ export function PluginsWorkspace({
 
   useEffect(() => {
     if (!cloudMarketplaceAvailable || !cloudToken || !currentDeviceId) return
+    if (pluginMutationPending) return
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
     const deviceId = currentDeviceId
@@ -4046,6 +4049,7 @@ export function PluginsWorkspace({
     pluginApi,
     pluginMarketplaceState.isLoading,
     pluginMarketplaceState.items,
+    pluginMutationPending,
   ])
 
   const pendingDevicePackageSync =
