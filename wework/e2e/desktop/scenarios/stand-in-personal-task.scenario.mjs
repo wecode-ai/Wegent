@@ -52,6 +52,14 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
     const steps = [
       { name: 'get_current_context', args: {} },
       {
+        name: 'get_board_item',
+        args: { space_id: String(project.id), item_id: issue.id },
+      },
+      {
+        name: 'get_board_item',
+        args: { space_id: String(project.id), item_id: issue.id },
+      },
+      {
         name: 'add_board_item_comment',
         args: { space_id: String(project.id), item_id: issue.id, body: COLLABORATION },
       },
@@ -91,7 +99,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
   async function assertCollaboration(issue) {
     assert.equal(
       collaborationRuns.get(issue.id)?.step,
-      3,
+      5,
       'All real collaboration tools must finish'
     )
     const persisted = await request(`/v1/loop-items/${issue.id}`)
@@ -132,6 +140,25 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         )
         assert.notEqual(result.task?.status, 'failed', JSON.stringify(result))
         if (result.task?.status === 'done') {
+          if (issue.title.includes(COLLABORATION)) {
+            const transcript = await requestExecutor(
+              control,
+              'runtime.tasks.transcript',
+              { taskId: bindings[0].task_id, limit: 100 },
+              uiTimeoutMs
+            )
+            const blocks = [
+              ...transcript.messages.flatMap(message => message.blocks ?? []),
+              ...(transcript.runtimeTurns ?? []).flatMap(turn =>
+                (turn.items ?? []).map(item => item.block)
+              ),
+            ]
+            assert.equal(
+              blocks.filter(block => block?.tool_name === 'auto_approval_review').length,
+              0,
+              'Collaboration reads, comments and assignments must not trigger AI review'
+            )
+          }
           completed.push(issue.id)
           return bindings[0]
         }

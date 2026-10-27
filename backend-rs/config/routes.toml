@@ -1043,3 +1043,6 @@ path = "/api/internal/robot-queue/emit-runtime-rpc"
 [[routes]]
 methods = ["POST"]
 path = "/api/v1/cloud-projects/:project_id/executions/statuses"
+[[routes]]
+methods = ["PATCH"]
+path = "/api/v1/deliveries/:delivery_id"

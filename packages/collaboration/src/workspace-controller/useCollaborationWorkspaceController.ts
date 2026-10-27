@@ -6,6 +6,7 @@ import { useEffect, useMemo, useReducer, useRef } from "react";
 
 import { collectIssueSubtreeIds, removeIssueSubtree } from "../board";
 import { isIssueVersionConflict } from "../issue-detail/issueVersionConflict";
+import { traceIssueStateChange } from "./issueStateDiagnostics";
 import {
   mergeIssueReadConfirmation,
   mergeIssueReadState,
@@ -308,11 +309,13 @@ export function collaborationWorkspaceControllerReducer(
   state: CollaborationWorkspaceControllerState,
   action: CollaborationWorkspaceControllerAction,
 ): CollaborationWorkspaceControllerState {
-  return mergeIssueReadState(
+  const next = mergeIssueReadState(
     state,
     reduceWorkspaceState(state, action),
     action.type === "issue-read" ? action.issue : undefined,
   );
+  traceIssueStateChange(action.type, state.selectedIssue, next.selectedIssue);
+  return next;
 }
 
 function reduceWorkspaceState(
@@ -1430,6 +1433,11 @@ export function createCollaborationWorkspaceControllerCommands({
       dispatch({ type: "append-issue", issue });
     },
     replaceIssue: (issue) => {
+      console.debug("[collaboration-workspace] received issue replacement", {
+        issueId: issue.id,
+        version: issue.version,
+        selectedIssueId: getSelectedIssue()?.id ?? null,
+      });
       markProjectMutated(issue.cloud_project_id);
       dispatch({ type: "replace-issue", issue });
     },
@@ -1479,7 +1487,18 @@ function scopedWorkspaceReducer(
       state: action.state,
     };
   }
-  if (action.scope !== current.scope) return current;
+  if (action.scope !== current.scope) {
+    if (action.action.type === "replace-issue") {
+      console.warn(
+        "[collaboration-workspace] ignored issue update from previous API scope",
+        {
+          issueId: action.action.issue.id,
+          version: action.action.issue.version,
+        },
+      );
+    }
+    return current;
+  }
   return {
     ...current,
     state: collaborationWorkspaceControllerReducer(
