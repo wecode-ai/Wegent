@@ -52,13 +52,7 @@ class _DingTalkStub(BaseHTTPRequestHandler):
         elif self.path == "/v1.0/card/instances/createAndDeliver":
             group = body["openSpaceId"].startswith("dtv1.card//IM_GROUP.")
             if group and type(self).fail_group:
-                type(self).requests.append(
-                    {
-                        "path": self.path,
-                        "payload": body,
-                        "forced_failure": True,
-                    }
-                )
+                type(self).requests[-1]["forced_failure"] = True
                 self.send_response(500)
                 self.end_headers()
                 return
@@ -82,6 +76,7 @@ def _cards(entries: list[dict], space: str) -> list[dict]:
         entry["payload"]
         for entry in entries
         if entry["path"] == "/v1.0/card/instances/createAndDeliver"
+        and not entry.get("forced_failure")
         and entry["payload"]["openSpaceId"].startswith(f"dtv1.card//{space}.")
     ]
 
@@ -251,7 +246,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
         execution_target = {"type": "managed", "device_id": None}
         if self.shell_type != "Chat":
             execution_target = {
-                "type": "cloud",
+                "type": "local",
                 "device_id": os.environ.get("E2E_DEVICE_ID", "e2e-platform-device-1"),
             }
         self._api(
@@ -381,13 +376,13 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
                     "summary": execution.result_summary,
                     "error": execution.error_message,
                 }
+            state["requests"] = _DingTalkStub.requests
             if state["status"] in (
                 "COMPLETED",
                 "FAILED",
                 "CANCELLED",
                 "COMPLETED_SILENT",
             ):
-                state["requests"] = list(_DingTalkStub.requests)
                 return state
             time.sleep(0.25)
         self.fail(f"execution {execution_id} did not finish: {state}")
@@ -395,6 +390,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
     def _wait_private_card(self, execution: dict) -> dict:
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
+            execution["requests"] = list(_DingTalkStub.requests)
             if _cards(execution["requests"], "IM_ROBOT"):
                 return execution
             time.sleep(0.1)
@@ -404,6 +400,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
         # Give asynchronous group delivery time to finish before asserting absence.
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
+            execution["requests"] = list(_DingTalkStub.requests)
             self.assertEqual(_cards(execution["requests"], "IM_GROUP"), [])
             time.sleep(0.1)
         return execution
@@ -411,14 +408,17 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
     def _wait_group_card(self, execution: dict) -> dict:
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
+            execution["requests"] = list(_DingTalkStub.requests)
             if _cards(execution["requests"], "IM_GROUP"):
                 return execution
             time.sleep(0.1)
         self.fail("group notification was not delivered")
 
-    def _wait_webhook(self, requests: list[dict]) -> list[dict]:
+    def _wait_webhook(self, execution: dict) -> list[dict]:
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
+            requests = list(_DingTalkStub.requests)
+            execution["requests"] = requests
             hooks = [entry for entry in requests if entry["path"] == "/webhook"]
             if hooks:
                 return hooks
@@ -447,7 +447,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
         self.assertEqual(len(group), 1)
         self.assertNotIn("【", group[0]["cardData"]["cardParamMap"]["content"])
 
-        hooks = self._wait_webhook(result["requests"])
+        hooks = self._wait_webhook(result)
         self.assertEqual(len(hooks), 1)
         self.assertIn("测试，现在时间", hooks[0]["payload"]["content"])
 
@@ -460,7 +460,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
         private = _cards(result["requests"], "IM_ROBOT")
         self.assertEqual(len(private), 1)
         self.assertNotIn("静默", private[0]["cardData"]["cardParamMap"]["content"])
-        hooks = self._wait_webhook(result["requests"])
+        hooks = self._wait_webhook(result)
         self.assertNotIn("静默", hooks[0]["payload"]["content"])
 
     def test_mention_real_execution(self) -> None:
