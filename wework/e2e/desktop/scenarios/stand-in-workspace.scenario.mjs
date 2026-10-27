@@ -282,6 +282,9 @@ export function createDesktopScenario({
       await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
+      await control.command('waitFor', '[data-testid="stand-in-overview-role-default"]', {
+        visible: true,
+      })
       await control.command('click', '[data-testid="stand-in-overview-role-default"]')
       await control.command('click', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', '[data-testid="stand-in-advanced-open"]')
@@ -476,6 +479,9 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="stand-in-cancel"]')
       await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
+      await control.command('waitFor', selector(`stand-in-overview-role-${saved.id}`), {
+        visible: true,
+      })
       await control.command('click', selector(`stand-in-overview-role-${saved.id}`))
       await control.command('waitFor', selector(`stand-in-activity-task-${task.taskId}`))
       await control.command('click', selector(`stand-in-activity-task-${task.taskId}`))
