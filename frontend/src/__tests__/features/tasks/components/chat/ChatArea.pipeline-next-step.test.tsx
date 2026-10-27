@@ -54,6 +54,7 @@ let mockTaskType: TaskType = 'chat'
 let mockRecentTeamIds: number[] = []
 let mockRecentTeamsLoading = false
 let mockEarlyDefaultTeam: Team | null = null
+let mockUrlTeam: Team | null = null
 let mockUseStatefulSelection = false
 let mockAutoSentTeamIds: Array<number | null> = []
 const mockHandleTeamChange = jest.fn()
@@ -73,6 +74,9 @@ jest.mock('@/features/tasks/hooks/useRecentTaskTeams', () => ({
 
 jest.mock('@/features/tasks/hooks/useDefaultTeam', () => ({
   useDefaultTeam: (_mode: string, enabled: boolean) => (enabled ? mockEarlyDefaultTeam : null),
+}))
+jest.mock('@/features/tasks/hooks/useUrlTeam', () => ({
+  useUrlTeam: (_id: string | null, enabled: boolean) => (enabled ? mockUrlTeam : null),
 }))
 let mockChatAreaSelectedModel: Record<string, unknown> | null = null
 let mockChatAreaAttachments: Array<Record<string, unknown>> = []
@@ -452,6 +456,7 @@ describe('ChatArea pipeline next-step dialog', () => {
     mockRecentTeamIds = []
     mockRecentTeamsLoading = false
     mockEarlyDefaultTeam = null
+    mockUrlTeam = null
     mockUseStatefulSelection = false
     mockHandleTeamChange.mockReset()
     mockChatAreaSelectedModel = null
@@ -757,6 +762,7 @@ describe('ChatArea selection while the catalog loads', () => {
     mockRecentTeamsLoading = false
     mockNewChatTeam = null
     mockEarlyDefaultTeam = null
+    mockUrlTeam = null
     mockUseStatefulSelection = false
     mockTaskMessages = new Map()
     mockHandleTeamChange.mockReset().mockImplementation((team: Team | null) => {
@@ -883,6 +889,7 @@ describe('ChatArea selection while the catalog loads', () => {
     const manualTeam = { ...mockSelectedTeam, bind_mode: ['chat'] } as Team
     const catalog = [defaultTeam, manualTeam]
     mockNewChatParams = new URLSearchParams(`teamId=${defaultTeam.id}`)
+    mockUrlTeam = defaultTeam
     mockRecentTeamIds = [manualTeam.id]
     const { rerender } = render(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
     expect(mockNewChatTeam?.id).toBe(defaultTeam.id)
@@ -892,6 +899,25 @@ describe('ChatArea selection while the catalog loads', () => {
     rerender(<ChatArea teams={catalog} isTeamsLoading={false} taskType="chat" />)
     expect(mockHandleTeamChange).not.toHaveBeenCalled()
     expect(mockNewChatTeam?.id).toBe(manualTeam.id)
+  })
+
+  it('waits for the URL agent even if concurrent deletions make the catalog omit it', () => {
+    const requestedTeam = { ...mockSelectedTeam, id: 65, bind_mode: ['chat'] } as Team
+    mockNewChatParams = new URLSearchParams('teamId=65')
+    const { rerender } = render(
+      <ChatArea teams={[defaultTeam]} isTeamsLoading={false} taskType="chat" />
+    )
+    expect(mockHandleTeamChange).not.toHaveBeenCalled()
+
+    mockUrlTeam = requestedTeam
+    rerender(<ChatArea teams={[defaultTeam]} isTeamsLoading={false} taskType="chat" />)
+    expect(mockNewChatTeam?.id).toBe(65)
+
+    // Catalog refreshes are not proof that an explicitly fetched agent was deleted.
+    mockHandleTeamChange.mockClear()
+    rerender(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" />)
+    expect(mockNewChatTeam?.id).toBe(65)
+    expect(mockHandleTeamChange.mock.calls.every(([team]) => team?.id === 65)).toBe(true)
   })
 
   it('keeps an explicitly supplied new-task agent', () => {

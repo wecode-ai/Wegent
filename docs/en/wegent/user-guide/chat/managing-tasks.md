@@ -57,6 +57,8 @@ Above the input area, click the agent selector:
 1. **Click the agent dropdown** - Shows available agents
 2. **Select an appropriate agent**
 
+When a new chat link contains `teamId`, the page reads and selects that agent by ID, independently of the paginated catalog. Removing other agents during catalog loading does not replace the requested agent with a default. If the requested agent cannot be read, the page does not automatically send with a different agent.
+
 ### Step 3: Configure Conversation Options (Optional)
 
 Configure the following options as needed:
