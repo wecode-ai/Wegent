@@ -216,7 +216,7 @@ class AttachmentS3Upload(unittest.TestCase):
     def setUp(self) -> None:
         self.log_offsets = [path.stat().st_size for path in self.log_paths]
 
-    def _logs(self, required: list[str]) -> str:
+    def _logs(self, required: dict[str, int]) -> str:
         # Breeze flushes asynchronously once per second; wait for evidence,
         # without repeating any upload or changing its business outcome.
         deadline = time.monotonic() + 5
@@ -227,7 +227,10 @@ class AttachmentS3Upload(unittest.TestCase):
                     log.seek(offset)
                     lines.append(log.read().decode(errors="replace"))
             text = "\n".join(lines)
-            if all(item in text for item in required) or time.monotonic() >= deadline:
+            if (
+                all(text.count(item) >= count for item, count in required.items())
+                or time.monotonic() >= deadline
+            ):
                 return text
             time.sleep(0.05)
 
@@ -267,7 +270,9 @@ class AttachmentS3Upload(unittest.TestCase):
                 "complete_multipart_upload",
             ]
         )
-        logs = self._logs([f'stage="{stage}"' for stage in set(stages)])
+        logs = self._logs(
+            {f'stage="{stage}"': stages.count(stage) for stage in set(stages)}
+        )
         for stage in set(stages):
             self.assertEqual(logs.count(f'stage="{stage}"'), stages.count(stage), logs)
         self.evidence.append(
@@ -336,13 +341,14 @@ class AttachmentS3Upload(unittest.TestCase):
         )
 
     def _assert_part_rejection_logs(self) -> None:
-        required = [
-            'stage="create_multipart_upload"',
-            'stage="upload_part"',
-            'stage="abort_multipart_upload"',
-            's3_code="AccessDenied"',
-            "attachment storage write failed",
-        ]
+        required = {
+            'stage="create_multipart_upload"': 1,
+            'stage="upload_part"': 2,
+            'stage="abort_multipart_upload"': 1,
+            's3_code="AccessDenied"': 1,
+            "status=403": 1,
+            "attachment storage write failed": 1,
+        }
         logs = self._logs(required)
         for expected in required:
             self.assertIn(expected, logs)

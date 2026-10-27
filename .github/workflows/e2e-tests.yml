@@ -491,6 +491,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - name: Set up Python 3.11 and uv
         uses: ./.github/actions/setup-python-uv-cache
         with:
