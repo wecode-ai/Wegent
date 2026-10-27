@@ -85,6 +85,82 @@ require_line "$WORKFLOW" "verify-binary-asset-approval.cjs"
 require_line "$VERIFIER" "review.commit_id !== headSha"
 require_line "$VERIFIER" "response.data.permission === 'admin'"
 
+ruby -ryaml -rjson -e 'puts JSON.generate(YAML.load_file(ARGV.fetch(0)))' \
+    "$WORKFLOW" > "$TMP_DIR/workflow.json"
+
+node - "$TMP_DIR/workflow.json" <<'NODE'
+const assert = require('assert')
+const fs = require('fs')
+const vm = require('vm')
+const workflow = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))
+const job = workflow.jobs['binary-asset-policy']
+const triggers = workflow.on ?? workflow.true
+
+assert.strictEqual(workflow.concurrency['cancel-in-progress'], true)
+assert.deepStrictEqual(triggers.pull_request_review.types, ['submitted', 'dismissed'])
+
+function evaluate(expression, github) {
+  return vm.runInNewContext(expression, { github })
+}
+
+function event(eventName, action, state, base = 'main', number = 4131) {
+  return {
+    workflow: 'Binary Asset Policy',
+    event_name: eventName,
+    run_id: 100,
+    ref: 'refs/heads/merge-queue',
+    event: {
+      action,
+      review: { state },
+      pull_request: { number, base: { ref: base } },
+    },
+  }
+}
+
+const groupExpression = workflow.concurrency.group.replace(/\$\{\{(.*?)\}\}/g, (_, expr) =>
+  '${' + expr + '}',
+)
+function group(github) {
+  return evaluate('`' + groupExpression + '`', github)
+}
+
+const codeUpdate = event('pull_request_target', 'synchronize')
+assert.strictEqual(evaluate(job.if, codeUpdate), true)
+for (const state of ['approved', 'changes_requested']) {
+  const review = event('pull_request_review', 'submitted', state)
+  assert.strictEqual(evaluate(job.if, review), true)
+  assert.strictEqual(group(review), group(codeUpdate))
+}
+assert.strictEqual(
+  evaluate(job.if, event('pull_request_review', 'dismissed', 'dismissed')),
+  true,
+)
+// A skipped required check can count as success, so comments must still run
+// the full verifier while remaining isolated from every other policy run.
+const comment = event('pull_request_review', 'submitted', 'commented')
+assert.strictEqual(evaluate(job.if, comment), true)
+assert.notStrictEqual(group(comment), group(codeUpdate))
+assert.notStrictEqual(group(comment), group({ ...comment, run_id: 101 }))
+const dismissal = event('pull_request_review', 'dismissed', 'dismissed')
+assert.strictEqual(group(dismissal), group(codeUpdate))
+assert.strictEqual(
+  evaluate(job.if, event('pull_request_review', 'submitted', 'approved', 'other')),
+  false,
+)
+assert.strictEqual(
+  evaluate(job.if, event('pull_request_target', 'synchronize', undefined, 'other')),
+  false,
+)
+const mergeGroup = event('merge_group', 'checks_requested')
+delete mergeGroup.event.pull_request
+assert.strictEqual(evaluate(job.if, mergeGroup), true)
+assert.notStrictEqual(group(mergeGroup), group(codeUpdate))
+assert.notStrictEqual(
+  group(event('pull_request_target', 'synchronize', undefined, 'main', 4132)),
+  group(codeUpdate),
+)
+NODE
+
 node - "$VERIFIER" <<'NODE'
 const assert = require('assert')
 const verifyApproval = require(process.argv[2])
@@ -122,6 +198,27 @@ async function run({ reviews, permissions = {}, headSha = 'head' }) {
 }
 
 ;(async () => {
+  assert.strictEqual(
+    (await run({
+      reviews: [
+        { id: 1, commit_id: 'head', state: 'APPROVED', user: { login: 'admin' } },
+        { id: 2, commit_id: 'head', state: 'COMMENTED', user: { login: 'admin' } },
+      ],
+      permissions: { admin: 'admin' },
+    })).length,
+    0,
+  )
+
+  assert.strictEqual(
+    (await run({
+      reviews: [
+        { id: 1, commit_id: 'head', state: 'DISMISSED', user: { login: 'admin' } },
+      ],
+      permissions: { admin: 'admin' },
+    })).length,
+    1,
+  )
+
   assert.strictEqual(
     (await run({
       reviews: [
