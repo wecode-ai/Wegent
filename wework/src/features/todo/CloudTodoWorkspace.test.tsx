@@ -675,7 +675,8 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
         if (url.endsWith('/v1/workspaces')) {
           return { items: [{ id: project.workspace_id, name: 'Shared workspace' }] }
         }
-        if (url.endsWith('/v1/resources')) return { agents: [], execution_environments: [] }
+        if (url.endsWith('/v1/resources?include_readiness=false'))
+          return { agents: [], execution_environments: [] }
         if (url.endsWith(`/v1/workspaces/${project.workspace_id}/agents`)) return { items: [] }
         if (url.endsWith('/chat-agents')) return []
         if (url.endsWith('/comments')) return []

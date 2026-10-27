@@ -35,6 +35,18 @@ function mockClient(overrides = {}) {
 }
 
 describe('attachment API', () => {
+  test('rejects oversized cloud uploads before creating a network request', async () => {
+    const xhr = vi.fn()
+    vi.stubGlobal('XMLHttpRequest', xhr)
+    const file = new File(['test data'], 'large.log')
+    Object.defineProperty(file, 'size', { value: 378989795 })
+
+    await expect(createAttachmentApi().uploadAttachment(file)).rejects.toThrow(
+      'File size exceeds 100 MB'
+    )
+    expect(xhr).not.toHaveBeenCalled()
+  })
+
   beforeEach(() => {
     httpMocks.createHttpClient.mockReset()
   })
