@@ -254,6 +254,20 @@ ZIP fixture 改用 Python 标准库，因此不再恢复完整前端依赖缓存
 路径保留关键里程碑截图，每次运行仍保留日志、状态快照和其他有效诊断；上传前只清理
 无法帮助复现问题的 Chromium 临时缓存。PNG 等已压缩文件上传时禁用二次压缩，避免
 诊断归档延长流水线尾部。
+
+Backend Rust E2E 镜像的构建、桌面消费及预热必须使用相同的内容摘要：包括
+Cargo 清单、锁文件、源码、examples 和定义产物布局的 `e2e-tests.yml`。
+镜像必须同时包含 `wegent-backend-rs` 与 `attachment-s3-e2e`；缺少任一产物时
+恢复立即失败并清理临时容器，不允许回退到不完整缓存。
+`test-backend-rs-e2e-runtime.rb` 由 CI cache policy 检查调用，执行真实 workflow
+中的构建、发布和恢复脚本，验证该契约。
+
+`harness-app-models` 在 Core shard 6 通过真实传输门控暂停额外令牌交接，断言
+运行页签尚未发布，再覆盖关闭、重开、模型调用和路由释放。主进程的 running
+快照不代表 renderer 已完成交接；应用管理页的刷新、打开和重试不得绕过同一
+installation 的在途生命周期。失败时先检查 `harness-model-token-handoff.json`
+中的 delivery 数与 UI 快照，不通过延长等待或修改断言隐藏提前发布。
+
 merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再通过 `push main`
 重复运行同一套 Tests、Lint、Platform E2E 和 Wework E2E。保留 `ci:all` 标签后，后续 push 也会运行完整 Windows Core 分片。
 macOS 的 pre-push 检查通过 `caffeinate -is -w` 保持执行期间唤醒，hook 退出时自动释放，避免系统休眠造成测试超时。

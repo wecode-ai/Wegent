@@ -304,7 +304,25 @@ milestone screenshots, and every run retains logs, state snapshots, and other
 useful diagnostics. Before upload, CI removes only transient Chromium caches
 that cannot help reproduce a failure. Uploads disable redundant compression for
 PNG and other already-compressed evidence so artifact archiving does not extend
-the pipeline tail. Merge queue validates
+the pipeline tail.
+
+The Backend Rust E2E image producer, desktop consumers, and warmup must use the
+same content digest, covering Cargo manifests, the lockfile, source, examples,
+and `e2e-tests.yml`, which defines the artifact layout. The image must contain
+both `wegent-backend-rs` and `attachment-s3-e2e`. Missing artifacts fail restoration
+and release the temporary container; an incomplete cache is not a fallback.
+CI cache policy runs `test-backend-rs-e2e-runtime.rb`, which executes the actual
+workflow build, publish, and restore scripts to check this contract.
+
+In Core shard 6, `harness-app-models` holds the real additional-token handoff,
+asserts that the running tab is not published yet, then checks close, reopen,
+model calls, and route release. A host running snapshot does not mean renderer
+handoff is complete. Management refresh, open, and retry must not bypass the
+installation's pending lifecycle. On failure, compare delivery counts in
+`harness-model-token-handoff.json` with the UI snapshot rather than increasing
+waits or weakening the early-publication assertion.
+
+Merge queue validates
 the final commit that enters `main`, so Tests, Lint, Platform E2E, and Wework E2E
 do not repeat the same validation after the merge through a `push main` trigger. The
 mapping lives in `.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new

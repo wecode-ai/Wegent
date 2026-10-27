@@ -1,5 +1,9 @@
 const operations = new Map<string, Promise<void>>()
 
+export function isHarnessAppRuntimeOperationPending(installationId: string): boolean {
+  return operations.has(installationId)
+}
+
 /**
  * Launch, token handoff and stop are one installation-owned lifecycle.
  * A close must finish releasing the old routes before a reopen can store new ones.

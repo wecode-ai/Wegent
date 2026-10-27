@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import type { UnifiedModel } from '@/types/api'
 import { useHarnessAppManagement } from './useHarnessAppManagement'
+import { runHarnessAppRuntimeOperation } from './harnessAppRuntimeOperations'
+import { clearHarnessAppLaunch, useHarnessAppLaunchState } from './harnessAppLaunchState'
 
 const mocks = vi.hoisted(() => ({
   api: {
@@ -143,6 +145,42 @@ describe('useHarnessAppManagement', () => {
     renderManagement([running])
 
     await waitFor(() => expect(mocks.register).toHaveBeenCalledWith(running))
+  })
+
+  test('does not publish a running host snapshot during token handoff or queued close', async () => {
+    let release: () => void = () => {}
+    const handoff = runHarnessAppRuntimeOperation(
+      running.id,
+      () =>
+        new Promise<void>(resolve => {
+          release = resolve
+        })
+    )
+    const close = runHarnessAppRuntimeOperation(running.id, async () => undefined)
+    await Promise.resolve()
+    const view = renderManagement([running])
+    try {
+      expect(mocks.register).not.toHaveBeenCalled()
+      act(() => view.result.current.open(running))
+      expect(mocks.openTab).toHaveBeenCalledWith(workspaceTabs, running)
+      expect(mocks.register).not.toHaveBeenCalled()
+      const launch = renderHook(() => useHarnessAppLaunchState(running.id))
+      expect(launch.result.current?.status).toBe('starting')
+      act(() => launch.result.current!.retry())
+      expect(mocks.register).not.toHaveBeenCalled()
+      expect(mocks.openTab).toHaveBeenCalledTimes(2)
+      launch.unmount()
+    } finally {
+      view.unmount()
+      await act(async () => {
+        release()
+        await handoff
+        await close
+        clearHarnessAppLaunch(running.id)
+      })
+    }
+    renderManagement([running])
+    expect(mocks.register).toHaveBeenCalledWith(running)
   })
 
   test('opens an installed app through the shared workspace-tab launcher', () => {

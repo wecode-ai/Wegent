@@ -13,7 +13,10 @@ import {
 } from './harnessAppTabs'
 import { beginHarnessAppLaunch, clearHarnessAppLaunch } from './harnessAppLaunchState'
 import { releaseHarnessAppRoutes } from './harnessAppRoutes'
-import { runHarnessAppRuntimeOperation } from './harnessAppRuntimeOperations'
+import {
+  isHarnessAppRuntimeOperationPending,
+  runHarnessAppRuntimeOperation,
+} from './harnessAppRuntimeOperations'
 
 interface HarnessAppManagementOptions {
   installations: HarnessAppInstallation[]
@@ -38,7 +41,14 @@ export function useHarnessAppManagement({
 
   useEffect(() => {
     installations
-      .filter(installation => installation.state === 'running' && installation.webUrl)
+      // Host "running" precedes renderer token handoff. The lifecycle owner
+      // publishes the tab only after handoff (or removes it after queued stop).
+      .filter(
+        installation =>
+          installation.state === 'running' &&
+          installation.webUrl &&
+          !isHarnessAppRuntimeOperationPending(installation.id)
+      )
       .forEach(installation => registerHarnessAppTab(installation))
   }, [installations])
 
@@ -94,13 +104,17 @@ export function useHarnessAppManagement({
           installation.id,
           installation.manifest.displayName,
           () => {
-            registerHarnessAppTab(installation)
+            if (!isHarnessAppRuntimeOperationPending(installation.id)) {
+              registerHarnessAppTab(installation)
+            }
             openHarnessAppTab(workspaceTabs, installation)
           },
           'loadingApp'
         )
       }
-      registerHarnessAppTab(installation)
+      if (!isHarnessAppRuntimeOperationPending(installation.id)) {
+        registerHarnessAppTab(installation)
+      }
       openHarnessAppTab(workspaceTabs, installation)
     },
     [workspaceTabs]
