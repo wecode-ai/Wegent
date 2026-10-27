@@ -1,3 +1,4 @@
+import type { IssueAssignmentReceipt } from '@/api/deliveries'
 import type { RunnerSelection } from '@wegent/collaboration'
 import { createRequestCache } from '@wegent/chat-core/request-cache'
 import type {
@@ -1328,6 +1329,23 @@ export function createLocalDeliveryApi(
       })
       taskProjects.set(record.id, projectId)
       return localTask(record)
+    },
+    async getIssueAssignmentReceipts(itemId: string): Promise<IssueAssignmentReceipt[]> {
+      const projectId = await resolveProjectId(itemId)
+      return request('todos.assignment_receipts', { project_id: projectId, task_id: itemId })
+    },
+    async acknowledgeIssueAssignment(
+      itemId: string,
+      assignmentId: string,
+      userId: number
+    ): Promise<unknown> {
+      const projectId = await resolveProjectId(itemId)
+      return request('todos.acknowledge_assignment', {
+        project_id: projectId,
+        task_id: itemId,
+        assignment_id: assignmentId,
+        user_id: userId,
+      })
     },
     async markLoopItemRead(itemId: string, activitySequence?: number) {
       const projectId = await resolveProjectId(itemId)

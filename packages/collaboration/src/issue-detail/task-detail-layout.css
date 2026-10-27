@@ -671,7 +671,24 @@
   white-space: nowrap;
 }
 
+/* The assignee button owns the full hit area previously covered by its overlay. */
+.task-detail-state-assignee > button {
+  min-height: inherit;
+  margin: 0 -8px;
+  padding: 0 8px;
+}
+
+.task-detail-pill > button[data-testid$="-assignee"] {
+  margin: -6px -12px;
+  padding: 6px 12px;
+}
+
+.task-detail-meta-item > button[data-testid$="-assignee"] {
+  min-height: 24px;
+}
+
 .task-detail-state-assignee:has(select:enabled):hover,
+.task-detail-state-assignee:has(button:enabled):hover,
 .task-detail-state-due:has(input:enabled):hover,
 .task-detail-state-security:has(select:enabled):hover {
   background: rgb(var(--color-bg-muted));
@@ -695,6 +712,7 @@
 }
 
 .task-detail-state-assignee select:disabled,
+.task-detail-state-assignee button:disabled,
 .task-detail-state-due input:disabled,
 .task-detail-state-security select:disabled {
   cursor: default;

@@ -188,6 +188,7 @@ export interface SharedIssueDetailExtensions {
     item: SharedEditorIssue;
     project: SharedEditorProject;
   }): ReactNode;
+  renderAssignmentReceipts?(item: SharedEditorIssue): ReactNode;
   renderAssignmentHistory?(context: {
     anchor: HTMLElement | null;
     entries: NonNullable<SharedEditorIssue["assignment_history"]>;
@@ -2168,7 +2169,26 @@ export function TodoEditor(props: TodoEditorProps) {
       value={assigneeTarget}
       onChange={setAssigneeTarget}
       disabled={!canAssign || saving}
-      className={overlayControlClass}
+      className="relative inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default"
+      triggerContent={
+        <>
+          {assigneeTarget.startsWith("group:") ? (
+            <UsersRound aria-hidden="true" size={15} />
+          ) : assigneeTarget.startsWith("agent:") ||
+            assigneeTarget.startsWith("team:") ? (
+            <Bot aria-hidden="true" size={15} />
+          ) : (
+            <CircleUserRound aria-hidden="true" size={15} />
+          )}
+          <strong className={workspacePanel ? undefined : "font-normal"}>
+            {assigneeName ?? t("todo.unassigned", "未指派")}
+          </strong>
+          {item && !assigneeChanged
+            ? extensions?.renderAssignmentReceipts?.(item)
+            : null}
+          {canAssign ? <ChevronDown aria-hidden="true" size={13} /> : null}
+        </>
+      }
       searchPlaceholder={t("todo.search_assignee", "搜索负责人")}
       emptyLabel={t("todo.no_matching_assignee", "没有匹配的负责人")}
       actions={
@@ -2338,7 +2358,6 @@ export function TodoEditor(props: TodoEditorProps) {
       {statusLabel}
     </>
   );
-  const assigneeDisplayName = assigneeName ?? t("todo.unassigned", "未指派");
   const issueSecurityLabel =
     item?.security_level === "related"
       ? t("todo.issue_security_related", "仅相关人员可见")
@@ -2449,18 +2468,6 @@ export function TodoEditor(props: TodoEditorProps) {
       {priorityChip}
       {showAssignee ? (
         <span className={cn(propChipClass, !assigneeName && "text-text-muted")}>
-          {assigneeGroup ? (
-            <UsersRound className="h-3.5 w-3.5 text-text-muted" />
-          ) : assigneeAgent || assigneeTeam ? (
-            <Bot className="h-3.5 w-3.5 text-violet-600" />
-          ) : (
-            <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
-          )}
-          <span className="text-text-muted">
-            {t("todo.assignee", "负责人")}
-          </span>
-          {assigneeName ?? t("todo.unassigned", "未指派")}
-          <ChevronDown className="h-3 w-3 text-text-muted" />
           {assigneeSelect}
         </span>
       ) : null}
@@ -2981,18 +2988,6 @@ export function TodoEditor(props: TodoEditorProps) {
                 <div className="task-detail-meta-line">
                   {showAssignee ? (
                     <span className="task-detail-meta-item relative cursor-pointer">
-                      {assigneeGroup ? (
-                        <UsersRound className="h-3.5 w-3.5" />
-                      ) : assigneeAgent || assigneeTeam ? (
-                        <Bot className="h-3.5 w-3.5 text-violet-600" />
-                      ) : (
-                        <CircleUserRound className="h-3.5 w-3.5" />
-                      )}
-                      {t("todo.assignee", "负责人")}
-                      <span className="text-text-primary">
-                        {assigneeName ?? t("todo.unassigned", "未指派")}
-                      </span>
-                      <ChevronDown className="h-3 w-3" />
                       {assigneeSelect}
                       {item?.assignment_history?.length ? (
                         <button
@@ -3261,34 +3256,12 @@ export function TodoEditor(props: TodoEditorProps) {
                         </span>
                       </Tooltip>
                       {showAssignee ? (
-                        <Tooltip
-                          label={t(
-                            "todo.assignee_help",
-                            "负责人：{{value}}。负责推进并跟进这个 Issue。",
-                            { value: assigneeDisplayName },
-                          )}
-                          side="bottom"
-                          align="start"
+                        <span
+                          className="task-detail-state-assignee"
+                          data-testid="cloud-todo-state-assignee"
                         >
-                          <span
-                            className="task-detail-state-assignee"
-                            data-testid="cloud-todo-state-assignee"
-                          >
-                            {assigneeTarget.startsWith("group:") ? (
-                              <UsersRound aria-hidden="true" size={15} />
-                            ) : assigneeTarget.startsWith("agent:") ||
-                              assigneeTarget.startsWith("team:") ? (
-                              <Bot aria-hidden="true" size={15} />
-                            ) : (
-                              <CircleUserRound aria-hidden="true" size={15} />
-                            )}
-                            <strong>{assigneeDisplayName}</strong>
-                            {canAssign ? (
-                              <ChevronDown aria-hidden="true" size={13} />
-                            ) : null}
-                            {assigneeSelect}
-                          </span>
-                        </Tooltip>
+                          {assigneeSelect}
+                        </span>
                       ) : null}
                       {assigneeSaveButton}
                       {scheduleRangeControl("task-detail-state-due relative")}
