@@ -260,7 +260,7 @@ export function DeviceGitSyncSection({
                 value={activeSelectedDeviceId}
                 onChange={event => setSelectedDeviceId(event.target.value)}
                 disabled={syncing || eligibleDevices.length === 0}
-                className="mt-2 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-primary disabled:opacity-50"
+                className="mt-2 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-primary disabled:opacity-50"
               >
                 <option value="">
                   {eligibleDevices.length

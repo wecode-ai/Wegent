@@ -203,7 +203,7 @@ function WorkItemComposerGuideContent({
     toolbar ? 'h-8 gap-1.5 rounded-lg px-2' : 'h-9 gap-2 px-2',
     !toolbar ? 'max-w-[48rem] rounded-xl' : '',
     canChangeProject
-      ? 'group transition-[background-color,color] hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30'
+      ? 'group transition-[background-color,color] hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30'
       : '',
     canChangeProject && toolbar ? 'hover:bg-background/70' : '',
     canChangeProject && integrated && !toolbar ? 'hover:bg-background/55' : '',
