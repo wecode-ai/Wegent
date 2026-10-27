@@ -64,7 +64,10 @@ mod stand_in_memories;
 #[path = "stand_in_inbox.rs"]
 mod stand_in_inbox;
 
-const LOCAL_SCHEMA_VERSION: i64 = 10;
+#[path = "stand_in_telemetry.rs"]
+pub(crate) mod stand_in_telemetry;
+
+const LOCAL_SCHEMA_VERSION: i64 = 11;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
 const DEFAULT_WORK_ITEM_PROJECT_KEY: &str = "WORK";
 const RUNTIME_PROJECTION_METADATA_KEY: &str = "runtime_projection";
@@ -3824,6 +3827,7 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
            WHERE id = NEW.id;
          END;",
     )?;
+    stand_in_telemetry::migrate(connection)?;
     ensure_default_work_item_project(connection)?;
     local_execution_activity::repair_missing_execution_activity(connection)?;
     connection.execute(

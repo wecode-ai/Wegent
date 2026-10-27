@@ -5,7 +5,7 @@ import { format, resolveConfig } from 'prettier'
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url))
 const weworkDirectory = path.resolve(scriptDirectory, '..')
-const registryNames = ['smartApp', 'plugin']
+const registryNames = ['smartApp', 'plugin', 'standIn']
 
 const publicCatalogJsonPath = path.join(weworkDirectory, 'telemetry/catalog/public-events.json')
 const publicCatalogMarkdownPath = path.join(weworkDirectory, 'telemetry/catalog/public-events.md')
@@ -23,6 +23,11 @@ const SAFE_PROPERTY_NAMES = new Set([
   'startup_id',
   'surface',
   'enabled',
+  'action',
+  'identity',
+  'trigger',
+  'result',
+  'duration_ms',
 ])
 const SAFE_STRING_PROPERTY_PATTERNS = {
   plugin_id: /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,95}$/,
@@ -166,6 +171,7 @@ function validateEntry(entry, kind, keys) {
         throw new Error(`public property ${property.name} values empty`)
       continue
     }
+    if (property.type === 'number' && property.name === 'duration_ms') continue
     if (property.type !== 'string' || !(property.name in SAFE_STRING_PROPERTY_PATTERNS)) {
       throw new Error(`public property ${property.name} must be an approved enum or string`)
     }
@@ -241,9 +247,11 @@ async function renderTypeScript(catalog, registryName) {
 function renderPropertiesType(properties) {
   const values = properties.map(property => {
     const valueType =
-      property.type === 'string'
-        ? 'string'
-        : property.values.map(value => renderTypeScriptValue(value)).join(' | ')
+      property.type === 'number'
+        ? 'number'
+        : property.type === 'string'
+          ? 'string'
+          : property.values.map(value => renderTypeScriptValue(value)).join(' | ')
     return `${property.name}: ${valueType}`
   })
   return `{ ${values.join('; ')} }`
@@ -251,6 +259,7 @@ function renderPropertiesType(properties) {
 
 function propertyConstraint(property) {
   if (property.type === 'enum') return property.values
+  if (property.type === 'number') return { min: 0, max: 2592000000 }
   return {
     maxLength: property.maxLength,
     pattern: SAFE_STRING_PROPERTY_PATTERNS[property.name],
