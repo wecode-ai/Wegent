@@ -380,6 +380,8 @@ steps; startup, workbench recovery, and the model protocol matrix keep their
 dedicated limits. Set `WEWORK_E2E_STEP_TIMEOUT_MS` to temporarily adjust the
 global default for ordinary steps in a slower diagnostic environment.
 
+Role settings load asynchronously, so source management uses `clickWhenEnabled` before clicking its entry. Catalog saves and restores first use the shared `waitForCatalogRestart` to handle the actual confirmation and verify that a new Codex process serves the catalog after persistence, then assert that the editor closes. A successful IPC request alone does not prove restart completion. These regressions retain the 10-second budget without reruns or expanded timeouts.
+
 The main desktop flow also covers pasting or dropping ordinary files and folders from Finder. The composer must render file and folder path chips without creating an attachment badge. The request sent to Codex must contain the matching absolute paths without inlining file contents. This decision depends on whether the native desktop transfer resolves a file path; the composer must not switch to attachment upload early only because its current workspace is marked as remote. The top quick-send window uses the same rule and reads bytes only for image attachments. Both scenarios use ordinary small files. For focused local diagnosis, run `node wework/e2e/desktop/run-checkpoints.mjs --pasted-workspace-paths-only` or `node wework/e2e/desktop/run-checkpoints.mjs --dropped-workspace-paths-only`.
 
 Following the cc-switch conversion boundary, the mock strictly validates what reaches the model side: authentication, model ID, stream settings, message history, tool choice, shell tools, and either the `apply_patch` Lark grammar or its function wrapper. Any incorrect field returns a non-2xx response and fails the test. The desktop test stores a follow-up screenshot for each interface plus the complete `model-requests.json`; GitHub Actions uploads desktop diagnostics on both success and failure.
@@ -748,6 +750,8 @@ const route = await app.route();
 New E2E tests should prefer this helper and `data-testid` locators instead of unstable CSS selectors or visible copy.
 
 ## CI Guidance
+
+The Backend Rust E2E image contains both `wegent-backend-rs` and `attachment-s3-e2e`. Its producer, desktop consumers, and warmup use the shared `v2` image naming rule in `resolve-backend-rs-e2e-runtime.sh`. Their identical hash inputs include the Rust manifest, lockfile, sources, examples, and `.github/runtime-images/backend-rs-e2e.Dockerfile`. Recipe changes generate a new tag; old `v1` images containing only the API server cannot be reused. Cache hits must still restore the complete payload. CI invokes runtime handoff unit tests that verify matching build, publication, restoration, and upload paths instead of skipping missing files or hiding cache defects behind a fallback.
 
 The platform E2E base image, `docker/wework-e2e/browser.Dockerfile`, preinstalls the Docker CLI through `docker.io` and checks `docker --version` during its build. Shards use that CLI when preparing the remote workspace Executor without running apt update or installation. The Dockerfile content hash determines the image tag, so CI builds a new image after changes and reuses it in subsequent runs.
 
