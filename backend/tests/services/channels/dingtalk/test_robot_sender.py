@@ -115,3 +115,16 @@ def test_group_card_keeps_unresolved_staff_ids_visible(monkeypatch) -> None:
 
     assert captured["card_param_map"]["content"] == "@陈波 @220750\n\nBuild failed"
     assert captured["mention_user_ids"] == ["41068:陈波", "220750"]
+
+
+def test_sender_uses_configured_api_base_url() -> None:
+    """Private deployments can point the sender at another DingTalk endpoint."""
+    sender = DingTalkRobotSender(
+        "client-id",
+        "client-secret",
+        api_base_url="http://127.0.0.1:18080/",
+    )
+
+    assert sender.api_base_url == "http://127.0.0.1:18080"
+    default_sender = DingTalkRobotSender("client-id", "client-secret")
+    assert default_sender.api_base_url == DingTalkRobotSender.BASE_URL

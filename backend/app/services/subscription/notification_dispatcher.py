@@ -529,6 +529,7 @@ class SubscriptionNotificationDispatcher:
             sender = DingTalkRobotSender(
                 client_id=client_id,
                 client_secret=client_secret,
+                api_base_url=config.get("api_base_url"),
             )
 
             # Check if AI card template is configured
