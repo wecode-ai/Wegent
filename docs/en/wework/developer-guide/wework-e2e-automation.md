@@ -255,6 +255,10 @@ known turn and rejects a different stale streaming history.
 Background device refreshes retain app registration aliases that match the current
 native runtime identity, so cloud comment addresses and native completion events
 share one lifecycle. Registrations for older runtimes remain excluded.
+If delivery finalization races the personal-task start transition, re-read the
+Issue once after a version conflict and recompute the update, preserving completed
+Issues. Web task joins resolve streaming state before reading messages so a stream
+finishing during restoration cannot leave an old blank message snapshot.
 Long history hydration polls use `performanceSnapshot` with `collectMemory: false`
 to avoid forced GC on every poll; final memory assertions retain full sampling.
 Timeout diagnostics include the last snapshot. Permission modes use dedicated
