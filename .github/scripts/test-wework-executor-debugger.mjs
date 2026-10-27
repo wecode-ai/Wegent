@@ -15,17 +15,14 @@ try {
     new URL("./run-wework-executor-with-gdb.sh", import.meta.url),
     wrapper,
   );
-  const result = spawnSync(
-    "bash",
-    [wrapper, "--workbench-schema", "--version"],
-    {
-      env: { PATH: process.env.PATH },
-      encoding: "utf8",
-      timeout: 5000,
-    },
-  );
+  const args = ["--workbench-schema", "--version", "argument with spaces"];
+  const result = spawnSync("bash", [wrapper, ...args], {
+    env: { PATH: process.env.PATH },
+    encoding: "utf8",
+    timeout: 5000,
+  });
   assert.equal(result.status, 0, result.stderr || result.error?.message);
-  assert.equal(result.stdout, "--workbench-schema\n--version\n");
+  assert.equal(result.stdout, `${args.join("\n")}\n`);
   assert.equal(result.stderr, "");
   console.log(
     "Executor debugger preserves schema queries with a scrubbed environment",
