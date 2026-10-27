@@ -1,5 +1,6 @@
 import { rendererCrashStore } from './rendererCrashStore'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
+import { createDesktopControlFile } from './file-fixture'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { removeToken, setToken } from '@/api/auth'
@@ -30,6 +31,7 @@ import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
+import { decodeDesktopControlImage } from './desktop-control-image'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
 import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
@@ -52,12 +54,16 @@ import type { RuntimeTaskAddress } from '@/types/api'
 import type { RuntimeTaskLifecycleSnapshot } from '@/features/workbench/runtimeTaskLifecycle/types'
 import { summarizeRuntimeTaskExecution } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import {
+  awaitLocalExecutorRequestHoldForE2E,
   failNextLocalExecutorRequestForE2E,
   ensureBundledPluginInstalled,
   getInitializedBundledPluginMarketplace,
   getBundledPluginUpdateState,
+  getLocalExecutorRequestHoldSnapshotForE2E,
   getLocalExecutorStatus,
+  holdLocalExecutorRequestsForE2E,
   readLocalExecutorLog,
+  releaseLocalExecutorRequestHoldForE2E,
 } from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
@@ -1785,9 +1791,7 @@ function dropDesktopControlFile(command: DesktopControlCommand): string {
   if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
   const filename = command.filename?.trim()
   if (!filename) throw new Error('dropFile requires a filename')
-  const binary = window.atob(command.value ?? '')
-  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0))
-  const file = new File([bytes], filename, { type: command.mimeType ?? '' })
+  const file = createDesktopControlFile(command)
   const transfer = new DataTransfer()
   transfer.items.add(file)
   const event = new DragEvent('drop', {
@@ -1805,9 +1809,7 @@ function pasteDesktopControlFile(command: DesktopControlCommand): string {
   if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
   const filename = command.filename?.trim()
   if (!filename) throw new Error('pasteFile requires a filename')
-  const binary = window.atob(command.value ?? '')
-  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0))
-  const file = new File([bytes], filename, { type: command.mimeType ?? '' })
+  const file = createDesktopControlFile(command)
   const transfer = new DataTransfer()
   transfer.items.add(file)
   const event = new ClipboardEvent('paste', {
@@ -2077,6 +2079,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         await requestLocalExecutor('runtime.tasks.send', { taskId, requestUserInputResponse })
       )
     }
+    case 'cancelRuntimeTaskDirectly': {
+      const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
+      if (!address.deviceId || !address.taskId) {
+        throw new Error('cancelRuntimeTaskDirectly requires deviceId and taskId')
+      }
+      return JSON.stringify(await requestLocalExecutor('runtime.tasks.cancel', { ...address }))
+    }
     case 'restartLocalCodexAppServerIfIdle':
       return JSON.stringify(
         await requestLocalExecutor('runtime.codex.app_server.restart', { ifIdle: true })
@@ -2093,6 +2102,34 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       root[E2E_DROPPED_RUNTIME_EVENTS_KEY] ??= []
       root[E2E_DROPPED_RUNTIME_EVENTS_KEY].push(command.value ?? '')
+      return ''
+    }
+    case 'holdLocalExecutorRequests': {
+      const { method, phase } = JSON.parse(command.value ?? '{}') as {
+        method?: string
+        phase?: 'before-dispatch' | 'after-response'
+      }
+      if (!method) throw new Error('holdLocalExecutorRequests requires a method')
+      holdLocalExecutorRequestsForE2E(method, phase)
+      return ''
+    }
+    case 'awaitLocalExecutorRequestHold':
+      await awaitLocalExecutorRequestHoldForE2E()
+      return JSON.stringify(getLocalExecutorRequestHoldSnapshotForE2E())
+    case 'getLocalExecutorRequestHoldSnapshot':
+      return JSON.stringify(getLocalExecutorRequestHoldSnapshotForE2E())
+    case 'releaseLocalExecutorRequestHold':
+      return String(releaseLocalExecutorRequestHoldForE2E())
+    case 'failNextLocalExecutorRequest': {
+      const { method, message } = JSON.parse(command.value ?? '{}') as {
+        method?: string
+        message?: string
+      }
+      if (!method) throw new Error('failNextLocalExecutorRequest requires a method')
+      void failNextLocalExecutorRequestForE2E(
+        method,
+        message ?? 'Desktop E2E intentional local executor failure'
+      )
       return ''
     }
     case 'clearRuntimeGoalDirectly':
@@ -2582,6 +2619,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'decodeImage': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      return JSON.stringify(await decodeDesktopControlImage(element))
+    }
     case 'getConversationSearchHighlightMetrics': {
       const containers = findDesktopControlElements(command.selector)
         .map(element => ({ element, ...readConversationSearchContent(element) }))

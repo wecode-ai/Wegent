@@ -97,6 +97,12 @@ WebSocket 连接恢复也由状态机按这个顺序统一处理：外部触发�
 
 `chat:done` 只表示当前消息流结束，不等价于任务生命周期终态。若 `chat:done` 后运行态仍阻塞 queued message，`useChatStreamHandlers` 会触发当前任务状态机的 `requestRuntimeCheck('queued-message-blocked')`，让前端重新对齐服务端状态。
 
+### Claude 后台子代理的完成状态
+
+Claude 主代理返回 `end_turn` 时，后台子代理仍可能在执行。Executor 将 CLI 的后台等待上限与 `WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS` 对齐（默认 24 小时），并启用后台任务运行状态报告，避免 CLI 在默认 10 分钟等待结束后提前终止子代理。
+
+CLI 成功退出并不能单独证明任务完成。流结束时若仍有未完成、失败或停止的子代理，或最终 `subagent_stats` 记录了系统终止或未结束的子代理，Executor 返回 `runtime_error`，由现有错误回调将任务标记为 `FAILED`。正常完成的子代理和后续主代理回合仍可得到 `COMPLETED`；显式用户取消仍为 `CANCELLED`。
+
 ### 取消与状态收敛
 
 运行时任务取消必须同时收敛两类状态：

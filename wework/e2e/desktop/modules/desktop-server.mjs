@@ -305,6 +305,7 @@ const EMBEDDED_BROWSER_BRIDGE_COLLISION_SEARCH_ID =
 const EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID = 'wework-embedded-browser-bridge-collision-open'
 const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
+  'decodeImage',
   'getAttribute',
   'getElementCount',
   'getTerminalText',

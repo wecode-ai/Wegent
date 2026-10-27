@@ -242,60 +242,68 @@ describe('useDocuments query parameters', () => {
   })
 
   it('ignores stale responses after query changes', async () => {
-    const requestsByKeyword = new Map<string, Array<ReturnType<typeof deferredResponse>>>()
-    mockListDocuments.mockImplementation((_knowledgeBaseId, params) => {
-      if (!params?.keyword) {
-        return Promise.resolve(
-          createListResponseFromItems([], {
-            total: 2001,
-            returned_count: 0,
-            has_more: true,
-          })
+    // Advance the debounce explicitly so CPU contention cannot consume waitFor's deadline.
+    jest.useFakeTimers()
+    try {
+      const requestsByKeyword = new Map<string, Array<ReturnType<typeof deferredResponse>>>()
+      mockListDocuments.mockImplementation((_knowledgeBaseId, params) => {
+        if (!params?.keyword) {
+          return Promise.resolve(
+            createListResponseFromItems([], {
+              total: 2001,
+              returned_count: 0,
+              has_more: true,
+            })
+          )
+        }
+
+        const keyword = params?.keyword ?? ''
+        const request = deferredResponse(
+          keyword === 'new' ? 2 : 1,
+          keyword === 'new' ? 'new.txt' : 'old.txt'
         )
-      }
+        requestsByKeyword.set(keyword, [...(requestsByKeyword.get(keyword) ?? []), request])
+        return request.promise
+      })
 
-      const keyword = params?.keyword ?? ''
-      const request = deferredResponse(
-        keyword === 'new' ? 2 : 1,
-        keyword === 'new' ? 'new.txt' : 'old.txt'
+      const { result, rerender } = renderHook(
+        ({ keyword }) =>
+          useDocuments({
+            knowledgeBaseId: 1,
+            paginationEnabled: true,
+            keyword,
+          }),
+        { initialProps: { keyword: 'old' } }
       )
-      requestsByKeyword.set(keyword, [...(requestsByKeyword.get(keyword) ?? []), request])
-      return request.promise
-    })
 
-    const { result, rerender } = renderHook(
-      ({ keyword }) =>
-        useDocuments({
-          knowledgeBaseId: 1,
-          paginationEnabled: true,
-          keyword,
-        }),
-      { initialProps: { keyword: 'old' } }
-    )
+      await act(async () => {})
+      expect(requestsByKeyword.get('old')?.length).toBeGreaterThan(0)
 
-    await waitFor(() => expect(requestsByKeyword.get('old')?.length).toBeGreaterThan(0))
+      rerender({ keyword: 'new' })
 
-    rerender({ keyword: 'new' })
+      await act(async () => {
+        jest.advanceTimersByTime(300)
+      })
+      expect(requestsByKeyword.get('new')?.length).toBeGreaterThan(0)
 
-    await waitFor(() => expect(requestsByKeyword.get('new')?.length).toBeGreaterThan(0))
+      await act(async () => {
+        const newRequest = requestsByKeyword.get('new')!.at(-1)!
+        newRequest.resolve()
+        await newRequest.promise
+      })
 
-    await act(async () => {
-      const newRequest = requestsByKeyword.get('new')!.at(-1)!
-      newRequest.resolve()
-      await newRequest.promise
-    })
-
-    await waitFor(() => {
       expect(result.current.documents.map(doc => doc.name)).toEqual(['new.txt'])
-    })
 
-    await act(async () => {
-      const oldRequests = requestsByKeyword.get('old') ?? []
-      oldRequests.forEach(request => request.resolve())
-      await Promise.all(oldRequests.map(request => request.promise))
-    })
+      await act(async () => {
+        const oldRequests = requestsByKeyword.get('old') ?? []
+        oldRequests.forEach(request => request.resolve())
+        await Promise.all(oldRequests.map(request => request.promise))
+      })
 
-    expect(result.current.documents.map(doc => doc.name)).toEqual(['new.txt'])
+      expect(result.current.documents.map(doc => doc.name)).toEqual(['new.txt'])
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it('uses the same fixed id-desc tie-break as the server in local mode', async () => {

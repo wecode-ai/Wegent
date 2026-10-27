@@ -480,7 +480,10 @@ function keysToSnakeCase(value: unknown): unknown {
     Object.entries(value).map(([key, nested]) => {
       const wireKey = snakeCaseKey(key)
       // Model option names belong to the runtime/provider, not the API schema.
-      return [wireKey, wireKey === 'model_options' ? nested : keysToSnakeCase(nested)]
+      return [
+        wireKey,
+        wireKey === 'model_options' || wireKey === 'board_views' ? nested : keysToSnakeCase(nested),
+      ]
     })
   )
 }
