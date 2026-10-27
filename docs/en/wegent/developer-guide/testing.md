@@ -300,6 +300,10 @@ unrelated modules do not make the summary fail.
 
 CI reliability depends on these invariants:
 
+- The platform `Attachment S3 Upload E2E` job connects to real MySQL, Redis,
+  and MinIO and executes `Run real S3 attachment upload E2E`. Signing unit
+  tests do not replace the full upload verification.
+
 - Snapshots from executor-confirmed earlier turns remain stale after a later turn
   completes and must not revive its running state. A turn seen only in history
   still needs executor confirmation before it can be classified as an earlier

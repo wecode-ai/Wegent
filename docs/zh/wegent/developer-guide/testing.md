@@ -293,6 +293,9 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 
 CI 稳定性依赖以下约束：
 
+- 平台 E2E 的 `Attachment S3 Upload E2E` 必须连接真实 MySQL、Redis 和 MinIO，
+  执行 `Run real S3 attachment upload E2E`；不能用签名单测替代完整上传验证。
+
 - 执行器已确认的旧轮次快照，在后续轮次完成后仍须拒绝，不能重新显示运行中；
   仅在历史中出现、尚未获执行器确认的轮次不能据此判定为旧轮次。保留新执行恢复、
   同秒内连续启动、设备别名归并和已停止 Goal 的回归断言。
