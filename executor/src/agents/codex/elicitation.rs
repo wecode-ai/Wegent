@@ -28,7 +28,10 @@ pub(super) fn timeout_for(params: &Value) -> Duration {
 
 fn configured_timeout(params: &Value, override_ms: Option<&str>) -> Duration {
     // Approval requests share this lifecycle, but keep their own default timeout.
-    if matches!(params["mode"].as_str(), Some("url" | "form")) {
+    if matches!(
+        params["mode"].as_str(),
+        Some("url" | "form" | "openai/form")
+    ) {
         if let Some(ms) = override_ms
             .and_then(|value| value.parse::<u64>().ok())
             .filter(|ms| *ms > 0)
