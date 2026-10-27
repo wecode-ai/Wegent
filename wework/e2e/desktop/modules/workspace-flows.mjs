@@ -1566,21 +1566,35 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
 }
 
 async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
+  const issuePanel =
+    '[data-testid="right-workspace-panel-shell"][aria-hidden="false"] [data-testid="work-item-context-panel"]'
+  const comment = '从任务页 Issue 详情发送的动态在协作页保持一致'
   await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'workspace-02-task-associated.png')
   await control.command('click', '[data-testid="work-item-open-details"]')
+  await control.command('waitFor', issuePanel, {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const activityComposer = `${issuePanel} [data-testid="cloud-task-activity-composer"]`
+  await control.command('waitFor', activityComposer, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', activityComposer, { value: comment })
   await control.command(
-    'waitFor',
-    '[data-testid="right-workspace-panel-shell"][aria-hidden="false"] [data-testid="work-item-context-panel"]',
-    {
-      text: 'WEWORK_DESKTOP_E2E_TASK',
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+    'clickWhenEnabled',
+    `${issuePanel} [data-testid="task-comment-form"] [data-testid="send-message-button"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
+  await control.command('waitFor', `${issuePanel} [data-testid="cloud-task-activity-list"]`, {
+    text: comment,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(control, 'workspace-04-details-and-executions.png')
   await control.command('click', '[data-testid="work-item-open-board"]')
   const activeBoardContentSelector = await requireActiveWorkItemsTab(
@@ -1618,6 +1632,11 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="cloud-task-activity-list"]`,
+    { text: comment, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
   const activeTaskConversationSelector = `${activeBoardContentSelector} [data-testid^="cloud-todo-open-task-conversation-"]`
   await control.command('waitFor', activeTaskConversationSelector, {
     visible: true,

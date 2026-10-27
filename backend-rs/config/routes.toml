@@ -708,10 +708,11 @@ path = "/api/git/repositories/search" # app/api/endpoints/repository.py:122
 [[routes]]
 methods = ["POST"]
 path = "/api/internal/api-keys/lookup" # app/api/endpoints/internal/api_keys.py:29
-# Deferred: numeric pipeline stages must preserve manual confirmation semantics.
-[[routes]]
-methods = ["POST"]
-path = "/api/internal/callback" # app/api/endpoints/internal/callback.py:103
+# Keep execution callbacks on Python until subscription completion, inbox
+# updates, notifications, and executor cleanup have full compatibility coverage.
+#[[routes]]
+#methods = ["POST"]
+#path = "/api/internal/callback" # app/api/endpoints/internal/callback.py:103
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/internal/chat/history/:session_id/subtasks" # app/api/endpoints/internal/chat_storage.py:1140

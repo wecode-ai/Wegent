@@ -102,6 +102,30 @@ class IssueAssignmentService:
         """Return active assignments in activity order without a second data source."""
         return list(self._active_events(db, issue_id).values())
 
+    def active_for_issues(
+        self, db: Session, issue_ids: list[str]
+    ) -> dict[str, list[AssignmentEvent]]:
+        """Read assignment histories together and apply the same event reduction."""
+        grouped: dict[str, list[LoopItemComment]] = {key: [] for key in issue_ids}
+        if issue_ids:
+            comments = (
+                db.query(LoopItemComment)
+                .filter(
+                    LoopItemComment.loop_item_id.in_(issue_ids),
+                    loop_datetime_is_unset(LoopItemComment.deleted_at),
+                    LoopItemComment.metadata_json["event_type"].as_string()
+                    == ASSIGNMENT_EVENT_TYPE,
+                )
+                .order_by(LoopItemComment.created_at, LoopItemComment.id)
+                .all()
+            )
+            for comment in comments:
+                grouped[comment.loop_item_id].append(comment)
+        return {
+            key: list(self._reduce_events(comments).values())
+            for key, comments in grouped.items()
+        }
+
     def active(
         self,
         db: Session,
@@ -359,15 +383,14 @@ class IssueAssignmentService:
     def _active_events(
         self, db: Session, issue_id: str
     ) -> dict[tuple[str, str, str], AssignmentEvent]:
-        comments = (
-            db.query(LoopItemComment)
-            .filter(
-                LoopItemComment.loop_item_id == issue_id,
-                loop_datetime_is_unset(LoopItemComment.deleted_at),
-            )
-            .order_by(LoopItemComment.created_at, LoopItemComment.id)
-            .all()
-        )
+        return {
+            (event.member_type, event.member_id, event.workflow_step): event
+            for event in self.active_for_issues(db, [issue_id])[issue_id]
+        }
+
+    def _reduce_events(
+        self, comments: list[LoopItemComment]
+    ) -> dict[tuple[str, str, str], AssignmentEvent]:
         cancelled_event_ids = {
             str(metadata.get("assignment_event_id") or "")
             for comment in comments
