@@ -59,14 +59,12 @@ pub(super) fn apply_plugin_skill_states(
     }
     let paths = plugin_skill_paths(current_runtime)?;
     let resolved = paths.values().cloned().collect();
-    let Some(states) = spec.component_states.as_object() else {
-        return Ok(resolved);
-    };
+    let states = spec.component_states.as_object();
     let mut updates = BTreeMap::new();
     let mut explicit = BTreeSet::new();
     for (name, path) in paths {
         let key = format!("skill:{name}");
-        let state = states.get(&key);
+        let state = states.and_then(|states| states.get(&key));
         let enabled = match state {
             None if previous_states
                 .get(&key)
@@ -468,7 +466,13 @@ mod tests {
         .parse::<DocumentMut>()
         .unwrap();
         let before = document.to_string();
-        apply_plugin_skill_states(&mut document, &spec, &runtime, &json!({})).unwrap();
+        apply_plugin_skill_states(
+            &mut document,
+            &spec,
+            &runtime,
+            &json!({"skill:feature":false}),
+        )
+        .unwrap();
         assert_eq!(document.to_string(), before);
         spec.component_states = json!(null);
         apply_plugin_skill_states(&mut document, &spec, &runtime, &json!({})).unwrap();

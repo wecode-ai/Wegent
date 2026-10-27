@@ -240,6 +240,71 @@ async fn known_plugin_skill_toggles_reload_without_process_invalidation() {
 }
 
 #[tokio::test]
+async fn cleared_plugin_skill_states_restore_defaults_and_remain_idempotent() {
+    for ordered in [false, true] {
+        for (cleared, manifest_states) in [
+            (None, None),
+            (Some(json!(null)), Some(json!(null))),
+            (Some(json!({})), None),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let store = store(root.path());
+            let skill_path = "skills/group/renamed-directory/SKILL.md";
+            let provider = skill_packages_at("v1", "feature", skill_path);
+            let handler =
+                CapabilitySyncHandler::with_package_provider("", store.clone(), provider.clone());
+            let mut payload = plugin_payload(&provider, ordered, 1);
+            payload["plugins"][0]["component_states"] = json!({"skill:feature":false});
+            sync(&handler, payload.clone(), true, true).await;
+            let config_path = store
+                .codex_plugins_dir
+                .parent()
+                .unwrap()
+                .join("config.toml");
+            let config: Value =
+                toml_edit::de::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+            let path = codex_runtime(&store).join(skill_path);
+            assert_eq!(
+                config["skills"]["config"],
+                json!([{"path":path,"enabled":false}])
+            );
+            if let Some(states) = &cleared {
+                payload["plugins"][0]["component_states"] = states.clone();
+            } else {
+                payload["plugins"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("component_states");
+            }
+            next_generation(&mut payload, 2);
+
+            let changed = sync(&handler, payload.clone(), true, true).await;
+
+            assert_eq!(
+                changed["requires_restart"],
+                cleared.as_ref().is_some_and(Value::is_null),
+                "{changed}"
+            );
+            let restored = fs::read_to_string(&config_path).unwrap();
+            let config: Value = toml_edit::de::from_str(&restored).unwrap();
+            assert_eq!(
+                config["skills"]["config"],
+                json!([{"path":path,"enabled":true}])
+            );
+            assert_eq!(
+                store.manifest.load().unwrap()["plugins"]["demo@wegent"].get("component_states"),
+                manifest_states.as_ref()
+            );
+            next_generation(&mut payload, 3);
+            let repeated = sync(&handler, payload, true, false).await;
+            assert_eq!(repeated["requires_restart"], false, "{repeated}");
+            assert_eq!(fs::read_to_string(config_path).unwrap(), restored);
+            assert_eq!(provider.downloads.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+
+#[tokio::test]
 async fn skill_frontmatter_separator_whitespace_preserves_hot_toggle_identity() {
     let root = tempfile::tempdir().unwrap();
     let store = store(root.path());

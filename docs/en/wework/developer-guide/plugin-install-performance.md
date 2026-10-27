@@ -43,7 +43,7 @@ Executor compares effective plugin contents, configuration and independent skill
 
 Boolean toggles for known plugin skills update native Codex skill configuration and reload it. Subsequent turns use the new setting without terminating the current turn. Changes that cannot be confirmed as skill toggles use the existing invalidation and idle rebuild flow. Partially failed batches wait for every write, invalidate caches and reread actual state before returning the original error.
 
-Connector authorization renewal is scheduled ahead of the token's absolute expiry. Token-only changes do not advance the capability revision. Normalized complete tool definitions still detect changes, including descriptions and parameter schemas of tools with unchanged names. Request generations reject late results, and MCP child processes read current authorization when calling tools.
+Connector authorization renewal is scheduled ahead of the token's absolute expiry. Token-only changes do not advance the activation capability revision, but accepted authorization updates, including renewals, advance the connector state revision `revision` and invalidate older in-flight tool discovery. `sync_apps` rejects late results when either the state revision `revision` or request generation `sync_generation` changes. Normalized complete tool definitions still detect changes, including descriptions and parameter schemas of tools with unchanged names. MCP child processes read current authorization when calling tools.
 
 ## Cache reuse and timing
 
