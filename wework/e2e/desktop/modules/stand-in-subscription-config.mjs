@@ -73,8 +73,8 @@ export function createSubscriptionConfigRegression() {
       )
     },
     attachServer(server) {
-      server.on('upgrade', (request, socket) => {
-        if (!request.url?.startsWith('/backend-api/codex/responses')) return
+      server.on('upgrade', (_request, socket) => {
+        // Registering an upgrade listener transfers ownership of every upgraded socket.
         // A model service may require HTTP; Codex handles 426 through its native fallback.
         rejectModelWebSocketUpgrade(server, socket)
       })

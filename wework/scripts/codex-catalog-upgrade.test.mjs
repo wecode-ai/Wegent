@@ -16,6 +16,11 @@ const regressions = [
     path: '/backend-api/codex/responses',
     create: createSubscriptionConfigRegression,
   },
+  {
+    name: 'subscription unrelated upgrade',
+    path: '/socket.io/?EIO=4&transport=websocket',
+    create: createSubscriptionConfigRegression,
+  },
 ]
 
 async function fixture(regression) {

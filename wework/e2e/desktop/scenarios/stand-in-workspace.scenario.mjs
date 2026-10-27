@@ -92,7 +92,7 @@ export function createDesktopScenario({
     async handleHttp(request, response, url) {
       if (url.pathname === '/external-source-probe') {
         networkProbeRequests++
-        response.writeHead(200)
+        response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
         response.end('AUTHORIZED_NETWORK_READ')
         return true
       }
