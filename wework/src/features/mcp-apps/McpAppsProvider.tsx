@@ -93,6 +93,9 @@ export function McpAppsProvider({
 }
 
 function moveDocument(parent: HTMLElement, child: HTMLElement): void {
+  // Task removal can detach both portal roots before nested layout effects finish.
+  // Only live documents need state-preserving relocation; detached ones are tearing down.
+  if (!parent.isConnected || !child.isConnected) return
   // Electron's state-preserving DOM move retains iframe sessions and in-flight RPCs.
   parent.moveBefore(child, null)
 }

@@ -224,6 +224,32 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         visible: false,
       })
       await assert.rejects(fetch(frameUrl))
+      await control.command('click', original + ' [data-testid="mcp-app-expand"]')
+      await control.command(
+        'waitFor',
+        original + ' [data-testid="mcp-app-frame"][data-ready="true"]'
+      )
+      frameUrl = await control.command(
+        'getAttribute',
+        original + ' [data-testid="mcp-app-frame"]',
+        { value: 'src' }
+      )
+      await waitText('Result 0 ui-only-marker')
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', composer)
+      await control.command('waitFor', '[data-testid="mcp-app-frame"]', { visible: false })
+      const releaseDeadline = Date.now() + uiTimeoutMs
+      let released = false
+      do {
+        try {
+          await fetch(frameUrl)
+        } catch {
+          released = true
+          break
+        }
+        await new Promise(resolve => setTimeout(resolve, 100))
+      } while (Date.now() < releaseDeadline)
+      assert.ok(released, 'Leaving the task must release its app document')
       assert.ok(calls >= 8)
     },
   }
