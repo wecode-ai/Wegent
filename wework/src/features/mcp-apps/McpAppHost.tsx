@@ -42,7 +42,12 @@ async function createAppDocument(
   return {
     ...document,
     release: () =>
-      (released ??= invokeDesktopHost<void>('mcpApps.releaseDocument', { id: document.id })),
+      (released ??= invokeDesktopHost<void>('mcpApps.releaseDocument', { id: document.id }).catch(
+        error => {
+          released = undefined
+          throw error
+        }
+      )),
   }
 }
 
@@ -97,6 +102,7 @@ export function McpAppHost({
     }
     try {
       await document?.release()
+      setFailure(undefined)
       setClosed(true)
       setDocument(undefined)
     } catch (error) {

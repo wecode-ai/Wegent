@@ -64,6 +64,15 @@ describe('MCP App discovery', () => {
 })
 
 describe('MCP App close completion', () => {
+  const descriptor = {
+    server: 'app',
+    resource: {
+      contents: [{ uri: 'ui://app', mimeType: 'text/html;profile=mcp-app', text: '<p>App</p>' }],
+    },
+    result: { content: [] },
+    arguments: {},
+  }
+
   it('waits for native document release and releases it only once across close and cleanup', async () => {
     let finishRelease!: () => void
     native.invoke.mockImplementation((method: string) => {
@@ -75,14 +84,6 @@ describe('MCP App close completion', () => {
         })
       throw new Error('Unexpected host method: ' + method)
     })
-    const descriptor = {
-      server: 'app',
-      resource: {
-        contents: [{ uri: 'ui://app', mimeType: 'text/html;profile=mcp-app', text: '<p>App</p>' }],
-      },
-      result: { content: [] },
-      arguments: {},
-    }
     render(
       <McpAppHost
         block={{ ...running, status: 'done' }}
@@ -102,5 +103,40 @@ describe('MCP App close completion', () => {
     expect(
       native.invoke.mock.calls.filter(([method]) => method === 'mcpApps.releaseDocument')
     ).toHaveLength(1)
+  })
+
+  it('allows closing again after native document release fails', async () => {
+    let releaseAttempts = 0
+    native.invoke.mockImplementation((method: string) => {
+      if (method === 'mcpApps.createDocument')
+        return Promise.resolve({ id: 'document', url: 'http://127.0.0.1:9000/document' })
+      if (method === 'mcpApps.releaseDocument') {
+        releaseAttempts++
+        return releaseAttempts === 1
+          ? Promise.reject(new Error('Host temporarily unavailable'))
+          : Promise.resolve()
+      }
+      throw new Error('Unexpected host method: ' + method)
+    })
+    render(
+      <McpAppHost
+        block={{ ...running, status: 'done' }}
+        address={address}
+        api={{ requestMcpApp: vi.fn().mockResolvedValue(descriptor) }}
+      />
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('data-ready', 'true')
+    )
+    fireEvent.click(screen.getByTestId('mcp-app-close'))
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('Host temporarily unavailable')
+    )
+    expect(screen.getByTestId('mcp-app-frame')).toBeInTheDocument()
+    expect(screen.getByTestId('mcp-app-close')).toBeEnabled()
+    fireEvent.click(screen.getByTestId('mcp-app-close'))
+    await waitFor(() => expect(screen.queryByTestId('mcp-app-frame')).not.toBeInTheDocument())
+    expect(releaseAttempts).toBe(2)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })
