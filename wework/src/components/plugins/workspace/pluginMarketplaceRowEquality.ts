@@ -23,6 +23,7 @@ export type PluginMarketplaceRowAction =
 export interface PluginMarketplaceRowProps {
   item: PluginMarketplaceItem
   isLoggedIn: boolean
+  isReconciling: boolean
   isInstalling: boolean
   isUninstalling: boolean
   allowPendingRetry: boolean
@@ -43,6 +44,7 @@ export function arePluginMarketplaceRowPropsEqual(
     previous.item.installedLocally === next.item.installedLocally &&
     previous.item.currentDeviceInstallation?.state === next.item.currentDeviceInstallation?.state &&
     previous.isLoggedIn === next.isLoggedIn &&
+    previous.isReconciling === next.isReconciling &&
     previous.isInstalling === next.isInstalling &&
     previous.isUninstalling === next.isUninstalling &&
     previous.allowPendingRetry === next.allowPendingRetry &&

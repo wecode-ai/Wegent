@@ -205,7 +205,12 @@ export function createDesktopScenario({
   }
   async function openIssueWorkspace(control) {
     await ensureExperimentalFeaturesEnabled(control)
+    await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+      visible: true,
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
     await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+      visible: true,
       timeoutMs: workbenchReadyTimeoutMs,
     })
     await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')

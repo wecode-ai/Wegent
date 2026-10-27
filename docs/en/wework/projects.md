@@ -159,6 +159,29 @@ Each completed step is marked automatically, and the guide hides after all three
 
 Empty columns also explain what belongs in each stage and name the creation action that is currently available. During a drag, the destination column describes the resulting status. The default **My tasks** board uses task terminology, while other project spaces continue to use issue terminology.
 
+## Save and switch board views
+
+The native task board's view dropdown on the right provides switching, creation, and board settings on the same toolbar as **Focus view** and **Archived**. The base board groups Issues by the five default statuses: Inbox, Pending, In progress, In review, and Completed. Status and custom tags remain separate Issue properties.
+
+Project administrators can save multiple views, bind each lane to a status or tag, reorder lanes, configure tag filters, and choose the project default view. Entering a project opens its default; subsequent switches apply to the current visit. Views and their default are shared with project members. Deleting the default view restores the base board. Lane settings and card fields are edited in one dialog and saved together; card fields apply to every view in the project.
+
+Tag names allow up to 32 Unicode code points, including supplementary characters such as emoji. Stored names have no leading or trailing whitespace; lanes and filters must reference the same canonical names. Issue tags, project tags, tag lanes, and filters use the same length limit. Longer input displays an error and cannot be saved; names are never automatically truncated. Historical long tags retain their original values when read or when unrelated fields such as titles change.
+
+Each Issue and the tag catalog saved in project settings allow up to 20 distinct tags. Dragging an Issue with 19 tags into a new tag lane adds its twentieth tag. Adding another tag at the limit displays an error, preserves the original tags and version, and shows no success feedback. Replacing a tag between two tag lanes remains available. Tag lists are never automatically truncated; historical lists above the limit remain intact when read or when unrelated fields change.
+
+Renaming or deleting a tag in a native project saves the catalog, tags on undeleted Issues, lane bindings, and filter references together. A project version conflict or any Issue update failure rolls back the entire operation so it can be retried after resolving the error. Externally hosted Issues do not support this transaction across records. Failed bulk status changes in the table list the affected Issues and reasons; successful Issues are deselected while failed Issues stay selected for retry.
+
+| Drag direction | Issue changes |
+| --- | --- |
+| Status → Status | Update status and keep tags |
+| Status → Tag | Add the destination tag and keep status |
+| Tag → Status | Update status and keep tags |
+| Tag → Tag | Remove the source tag, add the destination tag, and keep other tags and status |
+
+An Issue can appear in both its matching status and tag lanes. After a cross-type drag, the destination card is highlighted and feedback describes the actual change. Dragging into a tag lane never reopens a completed Issue. Custom views with In progress or In review lanes also support Focus view to expand execution progress.
+
+Existing projects keep the base board without converting historical Issue statuses or tags. Concurrent configuration changes produce a conflict message and refresh the latest configuration. Older clients cannot edit unknown view formats created by newer versions.
+
 ## Lane sorting
 
 Each lane on a native project-space board has its own **Sort by** control and defaults to highest priority first. Add ascending or descending rules for priority, creation time, and update time, then move rules up or down or remove them. Rules apply from top to bottom: each subsequent rule breaks ties, and manual order breaks any remaining ties. Choose **Manual order** to reorder cards within status, priority, assignee, or tag lanes, or insert a card into another lane at a specific position. Non-status lanes can mix Issues with different statuses; reordering within a lane preserves status, assignee, and tags. Manual positions use the project’s shared order across groupings. Preferences are saved on the current device by user, project space, grouping, and lane, are restored when reopening the board, and do not affect other members. Drop onto the blank space at the end of a lane to append a card. Group fields and position are saved together; a failed save commits neither. Changes to different lane preferences in multiple windows are retained independently and synchronized to open boards.

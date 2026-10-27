@@ -5,6 +5,7 @@ import { createLocalAppServices } from '@/api/local/localServices'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
 import { WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
+import { unmarkRuntimeConversationArchived } from '@/features/workbench/runtimeConversationCache'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   getArchivedBulkDeleteProgress,
@@ -462,6 +463,7 @@ export function ArchivedConversationsSettingsPage({
       } else {
         const address = archivedConversationAddress(item)
         await api.unarchiveConversation(address)
+        unmarkRuntimeConversationArchived(address)
         await onRefreshWorkLists?.({ unarchivedTasks: [address] })
       }
       if (harnessSessionId) {

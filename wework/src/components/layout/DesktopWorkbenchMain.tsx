@@ -2073,13 +2073,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ? `calc(${rightPanelWidth} - ${rightTitlebarActionsWidth})`
     : '0px'
   const temporaryChatAvailable = !activeLocalHarnessSession
+  const canBrowseFiles = Boolean(
+    workspaceProject ||
+    selectedWorkspaceFile?.target ||
+    openFileRequest?.target ||
+    openFileRequest?.attachment ||
+    Object.keys(fileTabs).length
+  )
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
-    const canBrowseFiles = Boolean(
-      workspaceProject ||
-      openFileRequest?.target ||
-      openFileRequest?.attachment ||
-      Object.keys(fileTabs).length
-    )
     const availableContextTabs = workItemContextAvailable
       ? rightPanelTabs
       : rightPanelTabs.filter(tab => tab !== 'work-item')
@@ -2100,14 +2101,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ? permittedTabs
       : [...permittedTabs, rightPanelView]
   }, [
-    openFileRequest?.target,
-    openFileRequest?.attachment,
-    fileTabs,
+    canBrowseFiles,
     rightPanelTabs,
     rightPanelView,
     temporaryChatAvailable,
     workItemContextAvailable,
-    workspaceProject,
   ])
   const effectiveRightPanelView =
     (!temporaryChatAvailable && rightPanelView.startsWith('chat:')) ||
@@ -2237,12 +2235,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           isDirectory: selectedWorkspaceFile.isDirectory,
         }
       : null
-  const canBrowseFiles = Boolean(
-    workspaceProject ||
-    openFileRequest?.target ||
-    openFileRequest?.attachment ||
-    Object.keys(fileTabs).length
-  )
   const devWorkspacePath = getWeworkDevInstanceInfo()?.worktree?.trim() ?? ''
   const centralHarnessTargetDevice = composerWorkspaceTarget?.deviceId
     ? devices.find(device => device.device_id === composerWorkspaceTarget.deviceId)
@@ -3082,6 +3074,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       attachments: paneSession.attachments,
       uploadingFiles: paneSession.uploadingFiles,
       errors: paneSession.attachmentErrors,
+      dismissAttachmentError: paneSession.dismissAttachmentError,
       handleFileSelect: paneSession.handleFileSelect,
       removeAttachment: paneSession.removeAttachment,
       modelSelectorOpenSignal,
@@ -3104,6 +3097,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [
       modelSelectorOpenSignal,
       paneSession.attachmentErrors,
+      paneSession.dismissAttachmentError,
       paneSession.attachments,
       paneSession.handleFileSelect,
       paneSession.removeAttachment,
@@ -5933,9 +5927,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   <WorkItemContextPanel
                     key={`${boundCloudProject.id}:${boundCloudItem.id}:${boundCloudItem.version}:${currentProjectSpaceRuntimeTask.deviceId}:${currentProjectSpaceRuntimeTask.taskId}`}
                     api={boundProjectSpaceApi}
+                    services={services}
                     project={boundCloudProject}
                     item={boundCloudItem}
                     currentTask={currentProjectSpaceRuntimeTask}
+                    currentUserId={state.user?.id}
+                    localProjects={state.projects}
                     deviceNamesById={getWorkbenchDeviceNamesById(state.devices)}
                     onOpenBoard={openBoundProjectSpaceTask}
                     onOpenTask={openRuntimeTask}

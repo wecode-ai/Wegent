@@ -23,6 +23,7 @@ export type {
 export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
   item,
   isLoggedIn,
+  isReconciling,
   isInstalling,
   isUninstalling,
   allowPendingRetry,
@@ -237,7 +238,11 @@ export const PluginMarketplaceRow = memo(function PluginMarketplaceRow({
             data-testid={`${testIdPrefix}plugin-marketplace-install-${item.id}`}
             aria-label={`${actionLabel} ${item.displayName || item.name}`}
             title={actionLabel}
-            className={['plugin-market-card-install', showFailedState ? 'is-failed' : ''].join(' ')}
+            disabled={isReconciling}
+            className={[
+              'plugin-market-card-install disabled:cursor-not-allowed disabled:opacity-50',
+              showFailedState ? 'is-failed' : '',
+            ].join(' ')}
             onClick={event => {
               event.stopPropagation()
               onAction('install', item)

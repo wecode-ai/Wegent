@@ -140,6 +140,56 @@ describe("model controls without a desktop host", () => {
   );
 
   it.each([false, true])(
+    "separates same-name resource selections from display metadata (mobile=%s)",
+    (isMobile) => {
+      const models: UnifiedModel[] = [1, 2].map((resourceUserId) => ({
+        name: "shared-kimi",
+        displayName: "内网:Kimi-K3",
+        type: "user",
+        namespace: "default",
+        resourceUserId,
+        modelId: "kimi-k3",
+        config: { protocol: "openai-responses" },
+      }));
+      const onSelectModel = vi.fn();
+      act(() =>
+        root.render(
+          <ModelSelector
+            translate={translate}
+            isMobile={isMobile}
+            models={models}
+            getModelOptionId={(model) => `owner-${model.resourceUserId}`}
+            selectedModel={models[1]}
+            selectedModelOptions={{}}
+            disabled={false}
+            onSelectModel={onSelectModel}
+            onSelectModelOption={() => {}}
+            onOpenModelSettings={() => {}}
+          />,
+        ),
+      );
+      act(() => element("model-selector-button").click());
+      const first = element("model-option-owner-1");
+      const second = element("model-option-owner-2");
+      expect(first.textContent).toContain("内网:Kimi-K3");
+      expect(second.textContent).toContain("内网:Kimi-K3");
+      if (isMobile) {
+        expect(first.querySelector(".lucide-check")).toBeNull();
+        expect(second.querySelector(".lucide-check")).not.toBeNull();
+      } else {
+        expect(first.getAttribute("aria-checked")).toBe("false");
+        expect(second.getAttribute("aria-checked")).toBe("true");
+      }
+      act(() => first.click());
+      expect(onSelectModel).toHaveBeenLastCalledWith(models[0]);
+      expect(models.map((model) => model.name)).toEqual([
+        "shared-kimi",
+        "shared-kimi",
+      ]);
+    },
+  );
+
+  it.each([false, true])(
     "selects the preset owner without an explicit effort even when it is second (atomic=%s)",
     (atomic) => {
       const firstModel: UnifiedModel = {

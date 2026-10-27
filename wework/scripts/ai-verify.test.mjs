@@ -79,6 +79,7 @@ describe('AI_VERIFY_ACTIONS', () => {
       'get-attribute': 'getAttribute',
       hover: 'hover',
       metrics: 'getElementMetrics',
+      wheel: 'wheel',
       navigate: 'navigate',
       'paste-paths': 'pastePaths',
       'paste-text': 'pasteText',

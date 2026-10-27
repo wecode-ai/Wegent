@@ -82,6 +82,9 @@ export interface CollaborationProject {
   task_provider: string;
   provider_config: Record<string, unknown>;
   execution_environment?: CollaborationExecutionEnvironmentConfig;
+  board_views?:
+    | import("./project-board/projectBoardViews").ProjectBoardViews
+    | null;
   board_config?: {
     group_by: "status" | "priority" | "assignee" | "tag";
     processing_start_status_id: string | null;

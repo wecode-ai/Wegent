@@ -20,6 +20,7 @@ import {
   inferModelFamily,
   isCodexOfficialModel,
   isSameModelSelection,
+  modelSelectionKey,
   normalizeModelOptionValue,
 } from "./model-ui";
 import { activityClassNames as cn } from "../issue-detail/activityClassNames";
@@ -81,6 +82,7 @@ export function ModelSelector({
   getViewportRightBoundary,
 
   models,
+  getModelOptionId,
   selectedModel,
   selectedModelOptions,
   nextTurn = false,
@@ -573,9 +575,9 @@ export function ModelSelector({
         : undefined;
       return (
         <button
-          key={`${model.type}:${model.name}`}
+          key={modelSelectionKey(model)}
           type="button"
-          data-testid={`model-option-${model.name}`}
+          data-testid={`model-option-${getModelOptionId?.(model) ?? model.name}`}
           data-model-provider-id={codexProviderId(model)}
           role="menuitemradio"
           aria-checked={selected}
@@ -814,6 +816,7 @@ export function ModelSelector({
           mobileModels={mobileModels}
           selectedModel={selectedModel}
           selectedModelOptions={selectedModelOptions}
+          getModelOptionId={getModelOptionId}
           onBlockedModelSelect={onBlockedModelSelect}
           handleSelectModel={handleSelectModel}
           closeMenu={closeMenu}

@@ -16,6 +16,22 @@ function createClient() {
 }
 
 describe('workspace resource configuration adapter', () => {
+  it('preserves opaque view extensions and lane sort IDs in project updates', async () => {
+    const client = createClient()
+    client.patch.mockResolvedValue({})
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+    const boardViews = {
+      schema_version: 1,
+      views: [],
+      futureExtension: { keepCase: true },
+      sorts: { 'Lane-ABC': ['created-asc'] },
+    }
+    await api.projects.update('project/1', { version: 3, boardViews })
+    expect(client.patch).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1', {
+      version: 3,
+      board_views: boardViews,
+    })
+  })
   it('uses canonical member, agent, and execution environment endpoints', async () => {
     const client = createClient()
     client.post

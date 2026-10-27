@@ -21,7 +21,7 @@ from app.schemas.issue_workflow import IssueWorkflowInstance, WorkflowExecutionC
 from app.schemas.loop_item_position import LoopItemPosition
 from app.schemas.runner_routing import RunnerSelection
 from app.schemas.runtime_work import RuntimeModelSelection
-from app.schemas.tagging import MAX_TAGS_PER_ITEM
+from app.schemas.tagging import MAX_TAGS_PER_ITEM, TagName
 from app.schemas.tagging import normalize_tags as _normalize_tags
 from app.utils.schedule_time import normalize_schedule_datetime
 
@@ -40,7 +40,7 @@ class LoopItemCreate(BaseModel):
     start_at: datetime | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
-    tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
+    tags: list[TagName] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
     workflow: IssueWorkflowInstance | None = None
     execution_config: WorkflowExecutionConfig | None = None
     automation_rule_id: str | None = Field(default=None, max_length=64)
@@ -87,7 +87,7 @@ class LoopItemUpdate(BaseModel):
     start_at: datetime | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
-    tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
+    tags: list[TagName] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
     workflow: IssueWorkflowInstance | None = None
     execution_config: WorkflowExecutionConfig | None = None
     automation_rule_id: str | None = Field(default=None, max_length=64)
