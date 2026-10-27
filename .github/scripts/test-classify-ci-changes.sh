@@ -12,7 +12,7 @@ desktop_build_flows="$repo_root/wework/e2e/desktop/modules/desktop-build-flows.m
 desktop_checkpoint_runner="$repo_root/wework/e2e/desktop/run-checkpoints.mjs"
 memory_tool_flows="$repo_root/wework/e2e/desktop/modules/memory-tool-flows.mjs"
 notification_isolation_scenario="$repo_root/wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs"
-backend_rs_runtime_inputs="hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**')"
+backend_rs_runtime_inputs="hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', '.github/runtime-images/backend-rs-e2e.Dockerfile')"
 for runtime_workflow in e2e-tests.yml wework-e2e.yml ci-cache-warmup.yml; do
   if ! grep -Fq "$backend_rs_runtime_inputs" "$repo_root/.github/workflows/$runtime_workflow"; then
     printf 'Backend Rust runtime producer and consumers must hash the same source inputs: %s\n' \

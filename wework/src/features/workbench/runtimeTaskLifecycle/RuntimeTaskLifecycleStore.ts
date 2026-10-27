@@ -461,8 +461,17 @@ export class RuntimeTaskLifecycleStore {
         : previous.turn.outcome !== null && !isRuntimeGoalExecutionActive(canonicalEvent.task)) &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
       machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId)
-    )
+    ) {
+      logRuntimeTaskCreateStage('lifecycle-snapshot-skipped', {
+        taskId: canonicalAddress.taskId,
+        deviceId: canonicalAddress.deviceId,
+        reason: 'prior-turn',
+        receivedTurnId: canonicalEvent.task.runtimeHandle.lastTurnId,
+        activeTurnId: previous.turn.id,
+        latestTurnId: previous.turn.latestId,
+      })
       return false
+    }
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
       canonicalEvent.task.running === true &&
@@ -470,8 +479,17 @@ export class RuntimeTaskLifecycleStore {
       !isRuntimeGoalExecutionActive(canonicalEvent.task) &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
       machine.isSettledTurn(canonicalEvent.task.runtimeHandle.lastTurnId)
-    )
+    ) {
+      logRuntimeTaskCreateStage('lifecycle-snapshot-skipped', {
+        taskId: canonicalAddress.taskId,
+        deviceId: canonicalAddress.deviceId,
+        reason: 'settled-turn',
+        receivedTurnId: canonicalEvent.task.runtimeHandle.lastTurnId,
+        activeTurnId: previous.turn.id,
+        latestTurnId: previous.turn.latestId,
+      })
       return false
+    }
     const key = previous.key
     const wasRunning = previous.derived.isRunning || this.previousRunningTaskKeys.has(key)
     if (

@@ -41,11 +41,11 @@ export class RuntimeTaskMachine {
     }
     const previous = this.state
     this.state = reduceRuntimeTaskLifecycle(previous, event)
-    if (event.type === 'turn_settled' && event.turnId && this.state.turnOutcome !== null) {
-      this.settledTurnIds.add(event.turnId)
-    }
     if (this.state.latestTurnId) this.observeTurn(this.state.latestTurnId)
     const changed = this.state !== previous
+    if (changed && event.type === 'turn_settled' && this.state.latestTurnId) {
+      this.settledTurnIds.add(this.state.latestTurnId)
+    }
     if (changed) this.revision += 1
     return changed
   }
