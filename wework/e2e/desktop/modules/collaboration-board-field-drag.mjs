@@ -13,6 +13,7 @@ const card = (column, id) =>
 export async function assertLaneOrder(control, scoped, columnKey, ids) {
   const selector = scoped(`[data-testid="cloud-todo-column-${columnKey}"]`)
   for (const id of ids) {
+    await control.command('scrollIntoView', scoped(card(columnKey, id)))
     await control.command('waitFor', scoped(card(columnKey, id)), { visible: true })
   }
   await control.command('waitFor', selector, { stableMs: 300 })
@@ -188,6 +189,7 @@ export async function verifyBoardFieldDrag(control, { scoped, request, project, 
     }
     await reloadMainWindow(control, 'The cross-column field mutation did not reload')
     await openProjectBoard(control, scoped, project)
+    await control.command('scrollIntoView', scoped(card(move.target, moving.id)))
     await control.command('waitFor', scoped(card(move.target, moving.id)), { visible: true })
     await control.command('waitFor', scoped(card(move.source, moving.id)), { visible: false })
     console.log(
