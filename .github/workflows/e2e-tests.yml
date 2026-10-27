@@ -477,13 +477,10 @@ jobs:
           --health-start-period=5s
           --health-retries=30
     env:
-      DATABASE_URL: mysql+pymysql://root:wegent-e2e-secret@127.0.0.1:${{ job.services.mysql.ports[3306] }}/wegent_s3_e2e
-      REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports[6379] }}/0
       SECRET_KEY: attachment-s3-e2e-secret-key
       ENVIRONMENT: development
       DB_AUTO_MIGRATE: "false"
       INIT_DATA_ENABLED: "false"
-      E2E_MINIO_URL: http://127.0.0.1:${{ job.services.minio.ports[9000] }}
       E2E_MINIO_ROOT_USER: wegent-e2e
       E2E_MINIO_ROOT_PASSWORD: wegent-e2e-secret
       E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/attachment-s3-upload
@@ -501,6 +498,17 @@ jobs:
       - name: Install Backend dependencies
         working-directory: backend
         run: uv sync --dev --frozen
+      - name: Configure real service endpoints
+        env:
+          S3_E2E_MYSQL_PORT: ${{ job.services.mysql.ports['3306'] }}
+          S3_E2E_REDIS_PORT: ${{ job.services.redis.ports['6379'] }}
+          S3_E2E_MINIO_PORT: ${{ job.services.minio.ports['9000'] }}
+        run: |
+          {
+            echo "DATABASE_URL=mysql+pymysql://root:wegent-e2e-secret@127.0.0.1:${S3_E2E_MYSQL_PORT}/wegent_s3_e2e"
+            echo "REDIS_URL=redis://127.0.0.1:${S3_E2E_REDIS_PORT}/0"
+            echo "E2E_MINIO_URL=http://127.0.0.1:${S3_E2E_MINIO_PORT}"
+          } >> "$GITHUB_ENV"
       - name: Download Backend Rust E2E runtime
         env:
           GITHUB_TOKEN: ${{ github.token }}
