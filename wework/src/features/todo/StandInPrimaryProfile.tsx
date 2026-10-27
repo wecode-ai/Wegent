@@ -163,13 +163,15 @@ export function StandInPrimaryProfile({
           showPrompt={false}
           controls={null}
           onChange={update => {
-            const next = typeof update === 'function' ? update(role) : update
-            setDraft(current => ({
-              ...current,
-              model: next.model,
-              modelOptions: next.modelOptions,
-              workspace: next.workspace,
-            }))
+            setDraft(current => {
+              const next = typeof update === 'function' ? update({ ...role, ...current }) : update
+              return {
+                ...current,
+                model: next.model,
+                modelOptions: next.modelOptions,
+                workspace: next.workspace,
+              }
+            })
           }}
           onSave={async () => {}}
           disabled={saving}

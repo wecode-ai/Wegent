@@ -1434,6 +1434,7 @@ async fn call_tool_with_runtime_context(
                                 project_id,
                                 item_id,
                                 DeliveryCreate {
+                                    title: String::new(),
                                     markdown: arguments
                                         .get("markdown")
                                         .and_then(Value::as_str)

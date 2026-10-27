@@ -27,7 +27,7 @@ export function IssueDeliveryRow({
     if (delivery.markdown !== undefined) return
     let active = true
     getDelivery(delivery.id)
-      .then(value => {
+      .then((value) => {
         if (active) setDetail(value)
       })
       .catch(() => {
@@ -36,34 +36,37 @@ export function IssueDeliveryRow({
     return () => {
       active = false
     }
-  }, [delivery.id, delivery.markdown, getDelivery])
+  }, [delivery.id, delivery.version, delivery.markdown, getDelivery])
 
   const snapshot = delivery.markdown !== undefined ? delivery : detail
-  const notePreview = snapshot?.markdown
-    ?.trim()
-    .split(/\r?\n/, 1)[0]
-    .replace(/^#{1,6}\s+/, '')
+  const notePreview =
+    delivery.title?.trim() ||
+    snapshot?.markdown
+      ?.trim()
+      .split(/\r?\n/, 1)[0]
+      .replace(/^#{1,6}\s+/, '')
   const messageCount = deliveryMessages(snapshot?.chat).length
   const contents: string[] = []
-  if (snapshot?.markdown?.trim()) contents.push(translate('todo.delivery_notes', '交付说明'))
+  if (snapshot?.markdown?.trim())
+    contents.push(translate('todo.delivery_notes', '交付说明'))
   if (messageCount > 0) {
     contents.push(
       translate('todo.delivery_message_count', '{{count}} 条消息', {
         count: messageCount,
-      })
+      }),
     )
   }
   if (delivery.assets.length)
     contents.push(
       translate('todo.attachment_count', '{{count}} 个附件', {
         count: delivery.assets.length,
-      })
+      }),
     )
   if (!snapshot)
     contents.push(
       failed
         ? translate('todo.delivery_summary_failed', '内容加载失败，点击查看')
-        : translate('todo.delivery_summary_loading', '正在加载内容…')
+        : translate('todo.delivery_summary_loading', '正在加载内容…'),
     )
   if (snapshot && contents.length === 0)
     contents.push(translate('todo.delivery_empty', '无交付内容'))
@@ -92,13 +95,19 @@ export function IssueDeliveryRow({
             {notePreview}
           </span>
         )}
-        <span className="block text-sm text-text-primary">{contents.join(' · ')}</span>
+        <span className="block text-sm text-text-primary">
+          {contents.join(' · ')}
+        </span>
         {delivery.assets.length > 0 && (
           <span
             className="mt-0.5 block truncate text-xs text-text-secondary"
-            title={delivery.assets.map(asset => asset.relative_path).join('\n')}
+            title={delivery.assets
+              .map((asset) => asset.relative_path)
+              .join('\n')}
           >
-            {delivery.assets.map(asset => asset.display_name || asset.relative_path).join('、')}
+            {delivery.assets
+              .map((asset) => asset.display_name || asset.relative_path)
+              .join('、')}
           </span>
         )}
         <span className="mt-0.5 block text-xs text-text-muted">

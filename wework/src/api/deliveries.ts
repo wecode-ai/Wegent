@@ -1,5 +1,6 @@
 import type { CollaborationAssignmentReceipt as IssueAssignmentReceipt } from '@wegent/collaboration'
 import type { RunnerSelection } from '@wegent/collaboration'
+import { deliveryUpdateForm } from '@wegent/collaboration'
 import { createIssueTaskBindingApi } from '@wegent/chat-core/issue-task-binding-api'
 import { ApiError, type HttpClient } from './http'
 import type { ProjectChatAgent } from './projectChatAgents'
@@ -35,6 +36,8 @@ export interface DeliveryAsset {
 }
 
 export interface Delivery {
+  title?: string
+  version?: number
   id: string
   loop_item_id: string
   created_by_user_id: number
@@ -53,6 +56,7 @@ export interface DeliveryDetail extends Delivery {
 }
 
 export interface DeliveryCreateInput {
+  title?: string
   markdown: string
   chat?: Record<string, unknown>
   source_task?: RuntimeTaskAddress
@@ -1203,6 +1207,15 @@ export function createDeliveryApi(client: HttpClient) {
     },
     createDelivery(itemId: string, data: DeliveryCreateInput): Promise<Delivery> {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/deliveries`, data)
+    },
+    updateDelivery(
+      deliveryId: string,
+      input: import('@wegent/collaboration').WorkspaceDeliveryUpdate
+    ): Promise<DeliveryDetail> {
+      return client.patch(
+        `/v1/deliveries/${encodeURIComponent(deliveryId)}`,
+        deliveryUpdateForm(input)
+      )
     },
     addAsset(deliveryId: string, file: File, relativePath: string): Promise<DeliveryAsset> {
       const form = new FormData()
