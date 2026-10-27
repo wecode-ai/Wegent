@@ -238,7 +238,7 @@ async def test_lookup_dingtalk_mention_name_ignores_unknown_staff_id(monkeypatch
     db, _captured = _stub_directory_lookup(
         monkeypatch,
         [{"EMAIL": "220750", "notExist": True}],
-        erp_email="yansheng3@staff.weibo.com",
+        erp_email="yansheng3@example.com",
     )
 
     name = await notification_dispatcher._lookup_dingtalk_mention_name(db, "220750")
