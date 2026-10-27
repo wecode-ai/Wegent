@@ -642,7 +642,7 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         WARNINGS+=("Wework: node_modules not found, checks skipped")
     else
         collect_wework_check_scope
-        echo -e "   Running static checks and unit tests in parallel..."
+        echo -e "   Running static checks in parallel before unit tests..."
 
         run_wework_lint &
         ESLINT_PID=$!
@@ -669,9 +669,6 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             fi
         fi
 
-        run_wework_unit_tests &
-        WEWORK_TEST_PID=$!
-
         wait "$ESLINT_PID"
         ESLINT_EXIT=$?
 
@@ -680,7 +677,8 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             TSC_EXIT=$?
         fi
 
-        wait "$WEWORK_TEST_PID"
+        # Let jsdom workers use the renderer budget after static checks release resources.
+        run_wework_unit_tests
         TEST_EXIT=$?
 
         if [ $ESLINT_EXIT -eq 0 ]; then
