@@ -148,11 +148,18 @@ export async function createDesktopScenario({
         'Startup staged a same-version component update'
       )
       const policyChecks = requests.filter(path => path.startsWith('/components-')).length
-      const check = JSON.parse(await control.command('checkForAppUpdate', 'body'))
-      assert.equal(check, null, 'A same-version release must not be offered as an app update')
+      if (process.platform === 'linux') {
+        await assert.rejects(
+          control.command('checkForAppUpdate', 'body'),
+          /Wework updater is not available on Linux/
+        )
+      } else {
+        const check = JSON.parse(await control.command('checkForAppUpdate', 'body'))
+        assert.equal(check, null, 'A same-version release must not be offered as an app update')
+      }
       assert.equal(
         requests.filter(path => path.startsWith('/components-')).length,
-        policyChecks + 1,
+        policyChecks + (process.platform === 'linux' ? 0 : 1),
         'The app update check must read the verified policy from the existing manifest'
       )
       assert.equal(
