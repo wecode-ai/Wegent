@@ -1455,6 +1455,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
         if (cancelled) return
         setLocation(current => {
           const movingProject = String(current.projectId ?? '') !== target.projectId
+          if (!movingProject && routedFocus === null) return current
           const issueId = movingProject ? routedFocus : (routedFocus ?? current.issueId)
           if (
             !movingProject &&

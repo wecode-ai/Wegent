@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import '@/i18n'
+import i18n from '@/i18n'
 import type {
   CollaborationApp,
   CollaborationPlatformLocation,
@@ -264,6 +264,8 @@ vi.mock('@wegent/collaboration', async importOriginal => {
           'data-refresh-key': refreshKey ?? '',
           'data-workspace-locations': host.capabilities.workspaceLocations?.join(',') ?? '',
           'data-issue-id': host.location.issueId ?? '',
+          'data-project-view': host.location.projectView,
+          'data-project-settings-section': host.location.projectSettingsSection ?? '',
         },
         createElement(
           'span',
@@ -357,6 +359,20 @@ vi.mock('@wegent/collaboration', async importOriginal => {
             type: 'button',
           },
           'Open issue'
+        ),
+        createElement(
+          'button',
+          {
+            'data-testid': 'collaboration-platform-manage-project',
+            onClick: () =>
+              host.navigate({
+                ...host.location,
+                projectView: 'manage',
+                projectSettingsSection: 'environments',
+              }),
+            type: 'button',
+          },
+          'Manage project'
         ),
         showLocalProject
           ? renderProject?.({
@@ -1409,12 +1425,14 @@ describe('Wework collaboration workspace API', () => {
       'data-issue-id',
       'issue-1'
     )
-    view.rerender(
-      createElement(WeworkCollaborationPlatform, {
-        ...props,
-        activeProjectRef: { ...props.activeProjectRef },
-      })
-    )
+    await act(async () => {
+      view.rerender(
+        createElement(WeworkCollaborationPlatform, {
+          ...props,
+          activeProjectRef: { ...props.activeProjectRef },
+        })
+      )
+    })
     expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
       'data-issue-id',
       'issue-1'
@@ -1432,6 +1450,55 @@ describe('Wework collaboration workspace API', () => {
         'notification-issue'
       )
     )
+  })
+
+  it('preserves project settings when changing locale without a routed Issue focus', async () => {
+    const previousLanguage = i18n.language
+    const project = {
+      id: 'project-a',
+      name: 'Project A',
+      workspace_id: 'cloud-workspace',
+      project_store: 'backend',
+    }
+    render(
+      createElement(WeworkCollaborationPlatform, {
+        user: { id: 1, user_name: 'admin', email: 'admin@example.com' } as never,
+        localProjects: [],
+        services: {
+          sharedWorkspaceApi: {
+            workspaces: {},
+            projects: { get: vi.fn().mockResolvedValue(project) },
+          },
+          projectSpaceApis: { local: createLocalDeliveryApi() },
+        } as never,
+        activeProjectRef: { projectStore: 'backend', projectId: project.id },
+      })
+    )
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await act(async () => screen.getByTestId('collaboration-platform-manage-project').click())
+    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+      'data-project-view',
+      'manage'
+    )
+    try {
+      await act(async () => {
+        await i18n.changeLanguage(previousLanguage.startsWith('zh') ? 'en' : 'zh-CN')
+      })
+      expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+        'data-project-view',
+        'manage'
+      )
+      expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+        'data-project-settings-section',
+        'environments'
+      )
+    } finally {
+      await act(async () => {
+        await i18n.changeLanguage(previousLanguage)
+      })
+    }
   })
 
   it.each([
