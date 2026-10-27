@@ -70,6 +70,110 @@ fn skill_packages_with_document(
 }
 
 #[tokio::test]
+async fn plugins_without_skill_selectors_sync_duplicate_skill_names() {
+    let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (path, content) in [
+        (
+            ".claude-plugin/plugin.json",
+            r#"{"name":"demo","version":"1.0","skills":"./skills/"}"#,
+        ),
+        ("skills/first/SKILL.md", "---\nname: feature\n---\n# First"),
+        (
+            "skills/group/second/SKILL.md",
+            "---\nname: feature\n---\n# Second",
+        ),
+    ] {
+        archive
+            .start_file(path, zip::write::FileOptions::default())
+            .unwrap();
+        archive.write_all(content.as_bytes()).unwrap();
+    }
+    let mut provider = packages("v1");
+    provider.package.plugin = archive.finish().unwrap().into_inner();
+    for ordered in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let store = store(root.path());
+        let handler =
+            CapabilitySyncHandler::with_package_provider("", store.clone(), provider.clone());
+        let mut payload = plugin_payload(&provider, ordered, 1);
+        for (generation, enabled, states) in [
+            (1, true, json!({})),
+            (3, false, json!({"mcp:service":false})),
+            (5, true, json!({"mcp:service":true})),
+        ] {
+            payload["plugins"][0]["enabled"] = json!(enabled);
+            payload["plugins"][0]["component_states"] = states;
+            next_generation(&mut payload, generation);
+
+            let changed = sync(&handler, payload.clone(), true, true).await;
+
+            assert_eq!(changed["requires_restart"], true, "{changed}");
+            let config: Value = toml_edit::de::from_str(
+                &fs::read_to_string(
+                    store
+                        .codex_plugins_dir
+                        .parent()
+                        .unwrap()
+                        .join("config.toml"),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(config["plugins"]["demo@wegent"]["enabled"], enabled);
+            assert!(config.get("skills").is_none());
+            for relative in ["skills/first/SKILL.md", "skills/group/second/SKILL.md"] {
+                assert!(codex_runtime(&store).join(relative).is_file());
+            }
+            next_generation(&mut payload, generation + 1);
+            let repeated = sync(&handler, payload.clone(), true, false).await;
+            assert_eq!(repeated["requires_restart"], false, "{repeated}");
+        }
+    }
+    assert_eq!(provider.downloads.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn skill_scan_failure_after_publication_requires_invalidation_once() {
+    use super::super::activation_revision::ActivationRevision;
+    use crate::services::capability_activation;
+
+    let root = tempfile::tempdir().unwrap();
+    let store = store(root.path());
+    let provider = skill_packages("v1");
+    let handler = CapabilitySyncHandler::with_package_provider("", store.clone(), provider.clone());
+    let payload = plugin_payload(&provider, true, 1);
+    sync(&handler, payload.clone(), true, true).await;
+    let spec = PluginSyncSpec::from_value(&payload["plugins"][0]).unwrap();
+    let requested = [spec];
+    fs::write(
+        codex_runtime(&store).join("skills/feature/SKILL.md"),
+        [0xff],
+    )
+    .unwrap();
+    let _activation = capability_activation::activate().await;
+    let _publication = store.lock_shared_manifest().unwrap();
+    let revision = capability_activation::revision();
+    let mut activation = ActivationRevision::begin(&store, &requested, &[]).unwrap();
+    let mut manifest = store.manifest.load().unwrap();
+    manifest["plugins"]["demo@wegent"]["component_states"] = json!({"skill:feature":false});
+    store.manifest.save(manifest).unwrap();
+
+    let changed = activation.finish_with_skill_reload().await.unwrap();
+
+    assert!(changed.changed);
+    assert!(changed.requires_restart);
+    assert_eq!(changed.plugins, ["demo@wegent"]);
+    assert_eq!(capability_activation::revision(), revision + 1);
+    assert!(!activation.finish_with_skill_reload().await.unwrap().changed);
+    drop(activation);
+    assert_eq!(capability_activation::revision(), revision + 1);
+    assert_eq!(
+        store.manifest.load().unwrap()["plugins"]["demo@wegent"]["component_states"],
+        json!({"skill:feature":false})
+    );
+}
+
+#[tokio::test]
 async fn known_plugin_skill_toggles_reload_without_process_invalidation() {
     for skill_path in [
         "skills/feature/SKILL.md",

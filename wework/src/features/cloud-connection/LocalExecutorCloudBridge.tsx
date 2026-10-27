@@ -10,19 +10,13 @@ import {
   type LocalExecutorCloudConnection,
 } from './localExecutorCloudConnection'
 import { isCloudConnectionUiAvailable } from './cloudConnectionAvailability'
+import { nextConnectorSyncRevision } from './connectorSyncRevision'
 import {
   refreshLocalExecutorCloudConnectionStatus,
   setLocalExecutorCloudConnectionStatus,
 } from './localExecutorCloudConnectionStatus'
 
 const CONNECTOR_AUTHORIZATION_CHANGED_EVENT = 'wegent:connector-authorization-changed'
-
-let connectorSyncRevision = Date.now() * 1_000
-
-function nextConnectorSyncRevision() {
-  connectorSyncRevision = Math.max(connectorSyncRevision + 1, Date.now() * 1_000)
-  return connectorSyncRevision
-}
 
 function connectorRefreshDelayMs(expiresAtMs: number, expiresInSeconds: number) {
   const leadSeconds = Math.min(60, Math.max(1, expiresInSeconds * 0.2))
@@ -207,8 +201,7 @@ export function LocalExecutorCloudBridge({
               })),
           }
         )
-        if (!isCurrentAttempt()) return
-        if (result.changed) notifyLocalPluginSkillsChanged()
+        if (!cancelled && result.changed) notifyLocalPluginSkillsChanged()
       } catch (error) {
         if (isCurrentAttempt()) {
           console.error('[CloudConnection] Failed to synchronize connector authorization', error)

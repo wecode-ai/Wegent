@@ -2961,40 +2961,57 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       if (data.enabled !== undefined) {
         await writeCodexPluginEnabled(installedPluginConfigId(plugin, id), data.enabled)
       }
-      const componentStates = data.componentStates
-        ? Object.fromEntries(
-            await Promise.all(
-              Object.entries(data.componentStates).map(async ([componentKey, enabled]) => {
-                const skillName = componentKey.startsWith('skill:')
-                  ? componentKey.slice('skill:'.length)
-                  : componentKey
-                const skill = plugin?.spec.components.skills.find(skill => skill.name === skillName)
-                const result = await codexAppServerRequest<{ effectiveEnabled: boolean }>(
-                  'skills/config/write',
-                  {
-                    path: skill?.path ?? null,
-                    name: skill?.path ? null : skillName,
-                    enabled,
-                  }
-                )
-                if (
-                  typeof result?.effectiveEnabled !== 'boolean' ||
-                  result.effectiveEnabled !== enabled
-                ) {
-                  throw new Error('Codex did not apply the requested skill setting')
+      const componentResults = data.componentStates
+        ? await Promise.allSettled(
+            Object.entries(data.componentStates).map(async ([componentKey, enabled]) => {
+              const skillName = componentKey.startsWith('skill:')
+                ? componentKey.slice('skill:'.length)
+                : componentKey
+              const skill = plugin.spec.components.skills.find(skill => skill.name === skillName)
+              const result = await codexAppServerRequest<{ effectiveEnabled: boolean }>(
+                'skills/config/write',
+                {
+                  path: skill?.path ?? null,
+                  name: skill?.path ? null : skillName,
+                  enabled,
                 }
-                return [componentKey, result.effectiveEnabled] as const
-              })
-            )
+              )
+              if (
+                typeof result?.effectiveEnabled !== 'boolean' ||
+                result.effectiveEnabled !== enabled
+              ) {
+                throw new Error('Codex did not apply the requested skill setting')
+              }
+              return [componentKey, result.effectiveEnabled] as const
+            })
           )
         : undefined
       clearLocalCodexPluginsReadStateCache()
+      const failedWrite = componentResults?.find(result => result.status === 'rejected')
+      if (failedWrite) {
+        try {
+          const state = await readState({ refresh: true })
+          const installed = state.installedPlugins.find(
+            plugin => String(installedPluginId(plugin)) === String(id)
+          )
+          if (installed) await readDetailForInstalledPlugin(installed)
+        } catch (error) {
+          clearLocalCodexPluginsReadStateCache()
+          console.warn('[Wework] Failed to reconcile Codex plugin settings after a write failure', {
+            errorType: error instanceof Error ? error.name : 'Unknown',
+          })
+        }
+        throw failedWrite.reason
+      }
       const state = await readState({ refresh: true })
       const installed = state.installedPlugins.find(
         plugin => String(installedPluginId(plugin)) === String(id)
       )
       if (!installed) throw new Error('Updated Codex plugin was not returned by app-server')
-      if (!componentStates) return installed
+      if (!componentResults) return installed
+      const componentStates = Object.fromEntries(
+        componentResults.filter(result => result.status === 'fulfilled').map(result => result.value)
+      )
       const updated = {
         ...installed,
         spec: {

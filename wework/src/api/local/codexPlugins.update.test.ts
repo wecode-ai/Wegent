@@ -31,6 +31,15 @@ const summary = {
   interface: { displayName: 'Demo settings' },
 }
 const marketplace = { name: 'skill-settings-fixture', path: fixtureRoot, plugins: [summary] }
+const skillStates: Record<string, boolean> = { feature: true, unrelated: false }
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(promiseResolve => {
+    resolve = promiseResolve
+  })
+  return { promise, resolve }
+}
 
 async function installedApi(withPath = false) {
   const api = createLocalCodexPluginApi()
@@ -47,7 +56,13 @@ describe('local plugin component settings updates', () => {
     sessionStorage.clear()
     mocks.request.mockReset()
     mocks.writeSkill.mockReset()
-    mocks.writeSkill.mockImplementation(async ({ enabled }) => ({ effectiveEnabled: enabled }))
+    skillStates.feature = true
+    skillStates.unrelated = false
+    mocks.writeSkill.mockImplementation(async ({ enabled, name, path }) => {
+      const skillName = name ?? (path === skillPath ? 'feature' : 'unrelated')
+      skillStates[skillName] = enabled
+      return { effectiveEnabled: enabled }
+    })
     mocks.request.mockImplementation(
       async (method: string, args?: { method: string; params: Record<string, unknown> }) => {
         if (method === 'executor.plugins.store.list') return { storePath: fixtureRoot, plugins: [] }
@@ -64,11 +79,11 @@ describe('local plugin component settings updates', () => {
               summary,
               description: 'Skill settings fixture',
               skills: [
-                { name: 'feature', path: skillPath, enabled: true },
+                { name: 'feature', path: skillPath, enabled: skillStates.feature },
                 {
                   name: 'unrelated',
                   path: `${fixtureRoot}/plugins/demo/skills/unrelated/SKILL.md`,
-                  enabled: false,
+                  enabled: skillStates.unrelated,
                 },
               ],
             },
@@ -120,26 +135,101 @@ describe('local plugin component settings updates', () => {
         api.updateInstalledPlugin(pluginId, { componentStates: { 'skill:feature': false } })
       ).rejects.toThrow('Codex did not apply the requested skill setting')
 
-      expect(mocks.request.mock.calls.some(([, args]) => args?.method === 'plugin/list')).toBe(
-        false
-      )
-      expect(peekLocalCodexPluginsReadState()?.installedPlugins[0]?.spec.componentStates).toEqual(
-        {}
-      )
+      expect(mocks.request.mock.calls.some(([, args]) => args?.method === 'plugin/list')).toBe(true)
+      expect(mocks.request.mock.calls.some(([, args]) => args?.method === 'plugin/read')).toBe(true)
+      expect(peekLocalCodexPluginsReadState()?.installedPlugins[0]?.spec.componentStates).toEqual({
+        'skill:feature': true,
+        'skill:unrelated': false,
+      })
     }
   )
 
-  test('preserves a native write failure without refreshing or reporting a saved setting', async () => {
+  test('preserves a native write failure after reconciling the actual settings', async () => {
     const api = await installedApi(true)
-    mocks.writeSkill.mockRejectedValue(new Error('Native skill configuration failed'))
+    const error = new Error('Native skill configuration failed')
+    mocks.writeSkill.mockRejectedValue(error)
 
     await expect(
       api.updateInstalledPlugin(pluginId, { componentStates: { 'skill:feature': false } })
-    ).rejects.toThrow('Native skill configuration failed')
+    ).rejects.toBe(error)
 
-    expect(mocks.request.mock.calls.some(([, args]) => args?.method === 'plugin/list')).toBe(false)
+    expect(mocks.request.mock.calls.some(([, args]) => args?.method === 'plugin/list')).toBe(true)
+    expect(mocks.request.mock.calls.some(([, args]) => args?.method === 'plugin/read')).toBe(true)
     expect(
       peekLocalCodexPluginsReadState()?.installedPlugins[0]?.spec.componentStates['skill:feature']
     ).toBe(true)
   })
+
+  test('waits for every write before reconciling a partially applied batch', async () => {
+    const api = await installedApi(true)
+    const pendingWrite = deferred<{ effectiveEnabled: boolean }>()
+    const error = new Error('Feature setting rejected')
+    const settled = vi.fn()
+    mocks.writeSkill.mockImplementation(({ path }) =>
+      path === skillPath ? Promise.reject(error) : pendingWrite.promise
+    )
+
+    const update = api.updateInstalledPlugin(pluginId, {
+      componentStates: { 'skill:feature': false, 'skill:unrelated': true },
+    })
+    void update.then(settled, settled)
+    await vi.waitFor(() => expect(mocks.writeSkill).toHaveBeenCalledTimes(2))
+
+    expect(settled).not.toHaveBeenCalled()
+    expect(mocks.request.mock.calls.some(([, args]) => args?.method === 'plugin/list')).toBe(false)
+
+    skillStates.unrelated = true
+    pendingWrite.resolve({ effectiveEnabled: true })
+    await expect(update).rejects.toBe(error)
+
+    const state = await api.readState()
+    expect(state.installedPlugins[0]?.spec.componentStates).toEqual({
+      'skill:feature': true,
+      'skill:unrelated': true,
+    })
+    expect(peekLocalCodexPluginsReadState()?.installedPlugins[0]?.spec.componentStates).toEqual(
+      state.installedPlugins[0]?.spec.componentStates
+    )
+    expect(
+      mocks.request.mock.calls.filter(([, args]) => args?.method === 'plugin/list')
+    ).toHaveLength(1)
+    expect(
+      mocks.request.mock.calls.filter(([, args]) => args?.method === 'plugin/read')
+    ).toHaveLength(1)
+  })
+
+  test.each(['plugin/list', 'plugin/read'])(
+    'preserves the write failure when reconciliation fails at %s',
+    async failedMethod => {
+      const api = await installedApi(true)
+      const writeError = new Error('Native skill configuration failed')
+      const reconcileError = new Error('Plugin settings could not be refreshed')
+      const request = mocks.request.getMockImplementation()!
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      mocks.writeSkill.mockRejectedValue(writeError)
+      mocks.request.mockImplementation((method, args) => {
+        if (args?.method === failedMethod) return Promise.reject(reconcileError)
+        return request(method, args)
+      })
+
+      try {
+        await expect(
+          api.updateInstalledPlugin(pluginId, { componentStates: { 'skill:feature': false } })
+        ).rejects.toBe(writeError)
+
+        expect(warning).toHaveBeenCalledWith(
+          '[Wework] Failed to reconcile Codex plugin settings after a write failure',
+          { errorType: 'Error' }
+        )
+        expect(peekLocalCodexPluginsReadState()).toBeNull()
+
+        mocks.request.mockImplementation(request)
+        const state = await api.readState()
+        const detail = await api.readInstalledPluginDetail(state.installedPlugins[0]!)
+        expect(detail.spec.componentStates['skill:feature']).toBe(true)
+      } finally {
+        warning.mockRestore()
+      }
+    }
+  )
 })

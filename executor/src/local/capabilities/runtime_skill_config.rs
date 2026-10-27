@@ -50,6 +50,13 @@ pub(super) fn apply_plugin_skill_states(
     current_runtime: &Path,
     previous_states: &serde_json::Value,
 ) -> Result<BTreeSet<PathBuf>, CapabilitySyncError> {
+    let has_skill_states = [&spec.component_states, previous_states]
+        .into_iter()
+        .filter_map(serde_json::Value::as_object)
+        .any(|states| states.keys().any(|key| key.starts_with("skill:")));
+    if !has_skill_states {
+        return Ok(BTreeSet::new());
+    }
     let paths = plugin_skill_paths(current_runtime)?;
     let resolved = paths.values().cloned().collect();
     let Some(states) = spec.component_states.as_object() else {
@@ -479,8 +486,11 @@ mod tests {
         )
         .unwrap();
         assert!(plugin_skill_paths(&runtime).is_err());
-        fs::remove_dir_all(runtime.join("skills/group/duplicate")).unwrap();
         spec.component_states = json!({"skill:feature":false});
+        let mut document = DocumentMut::new();
+        assert!(apply_plugin_skill_states(&mut document, &spec, &runtime, &json!({})).is_err());
+        assert!(document.to_string().is_empty());
+        fs::remove_dir_all(runtime.join("skills/group/duplicate")).unwrap();
         let mut document = "[skills]\nconfig='invalid'\n"
             .parse::<DocumentMut>()
             .unwrap();

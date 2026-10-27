@@ -676,7 +676,7 @@ describe('LocalExecutorCloudBridge', () => {
     }
   })
 
-  test('renews connector authorization while the previous synchronization is still pending', async () => {
+  test('notifies an applied change when renewal supersedes a pending synchronization', async () => {
     vi.useFakeTimers()
     const firstSynchronization = deferred<{ changed: boolean }>()
     let synchronizationCount = 0
@@ -713,7 +713,7 @@ describe('LocalExecutorCloudBridge', () => {
         firstSynchronization.resolve({ changed: true })
         await firstSynchronization.promise
       })
-      expect(mocks.notifySkillsChanged).not.toHaveBeenCalled()
+      expect(mocks.notifySkillsChanged).toHaveBeenCalledTimes(1)
     } finally {
       view.unmount()
       vi.useRealTimers()

@@ -116,7 +116,18 @@ impl<'a> ActivationRevision<'a> {
         let after = Snapshot::capture(self.store, &self.paths);
         let skill_only = match (self.before.as_ref(), &after) {
             (Some(Ok(before)), Ok(after)) => {
-                skill_toggles::only_skill_toggles(self.store, before, after)?
+                match skill_toggles::only_skill_toggles(self.store, before, after) {
+                    Ok(skill_only) => skill_only,
+                    Err(error) => {
+                        // Publication already succeeded. An uninspectable selector
+                        // must require process invalidation instead of hot reload.
+                        crate::logging::log_executor_event(
+                            "capability_skill_toggle_detection_failed",
+                            &[("error", error.to_string())],
+                        );
+                        false
+                    }
+                }
             }
             _ => false,
         };

@@ -179,7 +179,9 @@ fn unchanged_skills_preserve_files_even_when_tool_order_changes() {
     let marker = skill.parent().unwrap().join(".wegent-connector");
     let sentinel = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
     for path in [&skill, &marker] {
-        fs::File::open(path)
+        fs::OpenOptions::new()
+            .write(true)
+            .open(path)
             .unwrap()
             .set_times(fs::FileTimes::new().set_modified(sentinel))
             .unwrap();

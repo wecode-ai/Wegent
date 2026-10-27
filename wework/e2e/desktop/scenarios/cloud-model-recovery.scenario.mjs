@@ -81,15 +81,17 @@ async function assertConnectorCallable(mcp, name) {
 
 function connectorRuntime(control, cloud, request, resultDir, timeoutMs) {
   const rpc = (method, params) => requestExecutor(control, method, params, timeoutMs)
-  let syncRevision = 0
   const configure = async (connectorToken, expiresAtMs) => {
-    syncRevision = Math.max(syncRevision + 1, Date.now() * 1_000)
-    const configured = await rpc('runtime.connectors.configure', {
-      apiBaseUrl: `${cloud.backendUrl}/api`,
-      connectorToken,
-      expiresAtMs,
-      syncRevision,
-    })
+    const configured = JSON.parse(
+      await control.command('configureLocalExecutorConnectors', 'body', {
+        value: JSON.stringify({
+          apiBaseUrl: `${cloud.backendUrl}/api`,
+          connectorToken,
+          expiresAtMs,
+        }),
+        timeoutMs,
+      })
+    )
     assert.equal(configured.configured, true)
     assert.notEqual(configured.stale, true, 'The connector refresh was discarded as stale')
   }

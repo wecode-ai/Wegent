@@ -22,13 +22,19 @@ pub(super) fn only_skill_toggles(
         let (Some(old), Some(new)) = (old_plugins.get_mut(&key), new_plugins.get_mut(&key)) else {
             return Ok(false);
         };
+        let Some(changed) = changed_selectors(old, new) else {
+            return Ok(false);
+        };
         let Some(root) = manifest["plugins"][&key]["runtime"]["codex_link"].as_str() else {
             return Ok(false);
         };
         let known = runtime_skill_config::plugin_skill_paths(Path::new(root))?;
-        let Some(changed) = changed_selectors(old, new, &known) else {
+        if changed
+            .iter()
+            .any(|selector| !known.contains_key(selector.strip_prefix("skill:").unwrap()))
+        {
             return Ok(false);
-        };
+        }
         for selector in &changed {
             paths.insert(known[selector.strip_prefix("skill:").unwrap()].clone());
         }
@@ -53,11 +59,7 @@ pub(super) fn only_skill_toggles(
     Ok(old_metadata == new_metadata)
 }
 
-fn changed_selectors(
-    before: &Value,
-    after: &Value,
-    known: &BTreeMap<String, PathBuf>,
-) -> Option<BTreeSet<String>> {
+fn changed_selectors(before: &Value, after: &Value) -> Option<BTreeSet<String>> {
     let old = before["definition"]["component_states"].as_object()?;
     let new = after["definition"]["component_states"].as_object()?;
     let changed = old
@@ -68,8 +70,7 @@ fn changed_selectors(
         .collect::<BTreeSet<_>>();
     if changed.is_empty()
         || changed.iter().any(|key| {
-            !key.strip_prefix("skill:")
-                .is_some_and(|name| known.contains_key(name))
+            !key.starts_with("skill:")
                 || old.get(key).is_some_and(|value| !value.is_boolean())
                 || new.get(key).is_some_and(|value| !value.is_boolean())
         })
