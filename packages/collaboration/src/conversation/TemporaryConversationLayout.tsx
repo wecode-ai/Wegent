@@ -85,7 +85,7 @@ export function TemporaryConversationLayout({
                   ? 'w-[min(68rem,calc(100%_-_2rem))]'
                   : 'w-[min(46rem,calc(100%_-_2rem))]'
               )
-            : 'bg-background py-3'
+            : 'bg-background pb-2 pt-3'
         )}
       >
         {expanded && onRestoreConversation ? (
