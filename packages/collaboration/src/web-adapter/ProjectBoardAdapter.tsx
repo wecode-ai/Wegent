@@ -256,6 +256,10 @@ export function ProjectBoardAdapter({
     [project],
   );
   const controller = useStandardCloudBoardController({
+    tagLimitError: translate(
+      "todo.tag_limit_exceeded",
+      "最多添加 20 个不同标签",
+    ),
     view: savedViews.view,
     viewScope: `${project.id}:${savedViews.view?.id ?? "default"}`,
     defaultColumnSorts: savedViews.view?.sorts,

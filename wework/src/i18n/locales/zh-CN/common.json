@@ -4218,6 +4218,7 @@
     "task_board_group_tag": "标签",
     "task_board_no_priority": "普通",
     "task_board_no_tag": "无标签",
+    "tag_limit_exceeded": "最多添加 20 个不同标签",
     "task_board_unassigned": "未指定",
     "task_board_search_group_fields": "搜索分组字段",
     "task_board_root_label": "任务",

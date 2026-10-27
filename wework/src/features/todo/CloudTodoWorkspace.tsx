@@ -1972,6 +1972,7 @@ export function CloudTodoWorkspace({
     selectedProject?.location === 'local' ||
     ['Owner', 'Maintainer'].includes(selectedProject?.access_role ?? '')
   const standardBoardController = useStandardCloudBoardController({
+    tagLimitError: boardTranslate('todo.tag_limit_exceeded', '最多添加 20 个不同标签'),
     view: savedViews.view,
     viewScope: `${selectedProjectKey}:${savedViews.view?.id ?? 'default'}`,
     defaultColumnSorts: savedViews.view?.sorts,

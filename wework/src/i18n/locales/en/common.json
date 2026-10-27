@@ -4221,6 +4221,7 @@
     "task_board_group_tag": "Tag",
     "task_board_no_priority": "Normal",
     "task_board_no_tag": "No tag",
+    "tag_limit_exceeded": "Cannot have more than 20 distinct tags",
     "task_board_unassigned": "Unassigned",
     "task_board_search_group_fields": "Search group fields",
     "task_board_root_label": "Tasks",

@@ -4,7 +4,7 @@
 import { expect, type Locator, type Page } from '@playwright/test'
 import type { CollaborationView } from '@wegent/collaboration'
 
-export async function dragCollaborationIssueToColumn(
+export async function dragCollaborationIssue(
   page: Page,
   issueId: string,
   targetColumn: string,
@@ -19,14 +19,6 @@ export async function dragCollaborationIssueToColumn(
   await card.scrollIntoViewIfNeeded()
   const from = await card.boundingBox()
   expect(from).not.toBeNull()
-  const mutation = page.waitForResponse(response => {
-    const pathname = new URL(response.url()).pathname
-    return (
-      ['PATCH', 'POST'].includes(response.request().method()) &&
-      (pathname.includes(`/loop-items/${encodeURIComponent(issueId)}`) ||
-        pathname.endsWith('/loop-items/reorder'))
-    )
-  })
   await page.mouse.move(from!.x + 20, from!.y + 20)
   await page.mouse.down()
   try {
@@ -43,6 +35,23 @@ export async function dragCollaborationIssueToColumn(
   } finally {
     await page.mouse.up()
   }
+}
+
+export async function dragCollaborationIssueToColumn(
+  page: Page,
+  issueId: string,
+  targetColumn: string,
+  sourceColumn?: string
+) {
+  const mutation = page.waitForResponse(response => {
+    const pathname = new URL(response.url()).pathname
+    return (
+      ['PATCH', 'POST'].includes(response.request().method()) &&
+      (pathname.includes(`/loop-items/${encodeURIComponent(issueId)}`) ||
+        pathname.endsWith('/loop-items/reorder'))
+    )
+  })
+  await dragCollaborationIssue(page, issueId, targetColumn, sourceColumn)
   const response = await mutation
   if (response.ok()) {
     // The mutation response precedes the persisted-order refresh and card remount.

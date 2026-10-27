@@ -3,12 +3,34 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.schemas.board_views import BoardViewColumn, BoardViewFilter, BoardViews
 from app.schemas.cloud_project import CloudProjectUpdate
 from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.schemas.tagging import normalize_tags
+
+
+@pytest.mark.parametrize(
+    "model,required",
+    [
+        (LoopItemCreate, {"title": "Issue"}),
+        (LoopItemUpdate, {"version": 1}),
+        (CloudProjectUpdate, {"version": 1}),
+    ],
+)
+def test_tag_count_rejects_overflow_after_normalization(
+    model: type[BaseModel], required: dict
+) -> None:
+    tags = [f"tag-{index}" for index in range(20)]
+    assert model.model_validate({**required, "tags": tags[:19]}).tags == tags[:19]
+    assert model.model_validate({**required, "tags": tags}).tags == tags
+    assert (
+        model.model_validate({**required, "tags": [*tags, " tag-0 ", ""]}).tags == tags
+    )
+    with pytest.raises(ValidationError):
+        model.model_validate({**required, "tags": [*tags, "overflow"]})
+    assert normalize_tags([*tags, "overflow"]) == [*tags, "overflow"]
 
 
 @pytest.mark.parametrize("value", [" tag", "tag ", "\ttag", "tag\n", "\u3000tag"])

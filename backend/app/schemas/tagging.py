@@ -27,7 +27,7 @@ TagName = Annotated[
 
 
 def normalize_tags(value: object) -> list[str]:
-    """Trim, dedupe, and cap tag lists; non-list input becomes empty."""
+    """Trim and dedupe without discarding tags before write validation."""
     if not isinstance(value, list):
         return []
     tags: list[str] = []
@@ -35,4 +35,4 @@ def normalize_tags(value: object) -> list[str]:
         tag = str(raw).strip()
         if tag and tag not in tags:
             tags.append(tag)
-    return tags[:MAX_TAGS_PER_ITEM]
+    return tags

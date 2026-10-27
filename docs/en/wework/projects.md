@@ -167,6 +167,8 @@ Project administrators can save multiple views, bind each lane to a status or ta
 
 Tag names allow up to 32 Unicode code points, including supplementary characters such as emoji. Stored names have no leading or trailing whitespace; lanes and filters must reference the same canonical names. Issue tags, project tags, tag lanes, and filters use the same length limit. Longer input displays an error and cannot be saved; names are never automatically truncated. Historical long tags retain their original values when read or when unrelated fields such as titles change.
 
+Each Issue and the tag catalog saved in project settings allow up to 20 distinct tags. Dragging an Issue with 19 tags into a new tag lane adds its twentieth tag. Adding another tag at the limit displays an error, preserves the original tags and version, and shows no success feedback. Replacing a tag between two tag lanes remains available. Tag lists are never automatically truncated; historical lists above the limit remain intact when read or when unrelated fields change.
+
 Renaming or deleting a tag in a native project saves the catalog, tags on undeleted Issues, lane bindings, and filter references together. A project version conflict or any Issue update failure rolls back the entire operation so it can be retried after resolving the error. Externally hosted Issues do not support this transaction across records. Failed bulk status changes in the table list the affected Issues and reasons; successful Issues are deselected while failed Issues stay selected for retry.
 
 | Drag direction | Issue changes |

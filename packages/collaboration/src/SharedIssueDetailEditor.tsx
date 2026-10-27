@@ -4,6 +4,7 @@ import { persistIssueDetailFields } from "./issue-detail/persistIssueDetailField
 import * as Popover from "@radix-ui/react-popover";
 import { runnerEnvironmentError } from "./execution-environment/runnerEnvironmentError";
 import { collectProjectTags } from "./project-board/projectTags";
+import { MAX_TAGS_PER_ITEM } from "./tagging";
 import {
   useCallback,
   useEffect,
@@ -2557,6 +2558,10 @@ export function TodoEditor(props: TodoEditorProps) {
                 disabled={!editable}
                 suggestions={tagSuggestions}
                 lengthErrorLabel={t("todo.tag_name_too_long")}
+                tagLimit={{
+                  max: MAX_TAGS_PER_ITEM,
+                  errorLabel: t("todo.tag_limit_exceeded"),
+                }}
                 placeholder={t("todo.add_tag", "添加标签")}
                 removeLabel={(tag) =>
                   t("todo.remove_name", "删除 {{name}}", { name: tag })
@@ -2886,6 +2891,10 @@ export function TodoEditor(props: TodoEditorProps) {
                     disabled={!editable}
                     suggestions={tagSuggestions}
                     lengthErrorLabel={t("todo.tag_name_too_long")}
+                    tagLimit={{
+                      max: MAX_TAGS_PER_ITEM,
+                      errorLabel: t("todo.tag_limit_exceeded"),
+                    }}
                     placeholder={t("todo.add_tag", "添加标签")}
                     removeLabel={(tag) =>
                       t("todo.remove_name", "删除 {{name}}", { name: tag })

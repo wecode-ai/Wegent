@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useMemo, useState } from "react";
+import { hasTooManyTags } from "../tagging";
 import { matchesBoardView, type SavedBoardView } from "./projectBoardViews";
 
 import {
@@ -408,6 +409,7 @@ export interface StandardCloudBoardControllerOptions<
   extensions: StandardCloudBoardHostExtensions<T>;
   items: T[];
   onCurrentParentIdChange?(parentId: string | null): void;
+  tagLimitError: string;
   onMove(
     item: T,
     column: ProjectBoardColumn,
@@ -721,6 +723,7 @@ export function useStandardCloudBoardController<
   onCurrentParentIdChange,
   onMove,
   supportsOrder = true,
+  tagLimitError,
   view,
   ...stateOptions
 }: StandardCloudBoardControllerOptions<T>) {
@@ -788,6 +791,13 @@ export function useStandardCloudBoardController<
       });
       if (mutation) {
         setLastMove(null);
+        if (mutation.kind === "tag" && hasTooManyTags(mutation.tags)) {
+          setMoveError({
+            message: tagLimitError,
+            scope: stateOptions.viewScope,
+          });
+          return;
+        }
         setMoveError(null);
         void Promise.resolve(onMove(item, column, targetBeforeItemId, mutation))
           .then((result) => {
@@ -813,6 +823,7 @@ export function useStandardCloudBoardController<
       items,
       onMove,
       supportsOrder,
+      tagLimitError,
       stateOptions.viewScope,
     ],
   );

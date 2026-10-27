@@ -19,6 +19,7 @@ interface TagEditorProps {
   placeholder?: string;
   removeLabel?: (tag: string) => string;
   lengthErrorLabel: string;
+  tagLimit?: { max: number; errorLabel: string };
   // Existing project tags offered as autocomplete candidates.
   suggestions?: string[];
   // Prefix for data-testid values so multiple editors never collide.
@@ -39,6 +40,7 @@ function TagEditorField(
     placeholder = "添加标签",
     removeLabel = (tag) => `移除标签 ${tag}`,
     lengthErrorLabel,
+    tagLimit,
     suggestions = [],
     testIdPrefix,
   }: TagEditorProps,
@@ -51,16 +53,26 @@ function TagEditorField(
 
   const normalizedDraft = draft.trim().toLowerCase();
   const tooLong = isTagNameTooLong(draft.replace(/,/g, ""));
+  const exceedsLimit = (tag: string) =>
+    Boolean(tagLimit && new Set([...tags, tag]).size > tagLimit.max);
+  const tooMany =
+    Boolean(draft.trim()) && exceedsLimit(draft.trim().replace(/,/g, ""));
+  const errorLabel = tooLong
+    ? lengthErrorLabel
+    : tooMany
+      ? tagLimit?.errorLabel
+      : null;
   const candidates = suggestions.filter(
     (suggestion) =>
       !tags.includes(suggestion) &&
+      !exceedsLimit(suggestion) &&
       !isTagNameTooLong(suggestion) &&
       (!normalizedDraft || suggestion.toLowerCase().includes(normalizedDraft)),
   );
   const showSuggestions = open && candidates.length > 0;
 
   function add(tag: string) {
-    if (isTagNameTooLong(tag)) return;
+    if (isTagNameTooLong(tag) || exceedsLimit(tag)) return;
     if (!tags.includes(tag)) onChange([...tags, tag]);
     setDraft("");
     setHighlight(0);
@@ -68,7 +80,7 @@ function TagEditorField(
 
   function commit(raw: string) {
     const tag = raw.trim().replace(/,/g, "");
-    if (isTagNameTooLong(tag)) {
+    if (isTagNameTooLong(tag) || (tag && exceedsLimit(tag))) {
       setDraft(tag);
       return;
     }
@@ -139,8 +151,8 @@ function TagEditorField(
           ref={inputRef}
           data-testid={`${testIdPrefix}-input`}
           aria-label={placeholder}
-          aria-invalid={tooLong}
-          aria-describedby={tooLong ? `${testIdPrefix}-error` : undefined}
+          aria-invalid={Boolean(errorLabel)}
+          aria-describedby={errorLabel ? `${testIdPrefix}-error` : undefined}
           value={draft}
           disabled={disabled}
           onChange={(event) => {
@@ -164,13 +176,13 @@ function TagEditorField(
           )}
         />
       )}
-      {tooLong && (
+      {errorLabel && (
         <span
           id={`${testIdPrefix}-error`}
           role="alert"
           className="w-full text-xs text-error"
         >
-          {lengthErrorLabel}
+          {errorLabel}
         </span>
       )}
       {showSuggestions && (

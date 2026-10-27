@@ -14,6 +14,54 @@ from app.models.resource_member import ResourceMember
 from app.models.user import User
 
 
+def test_tag_count_boundary_rejects_writes_without_changing_data(
+    test_client: TestClient, test_token: str
+) -> None:
+    headers = {"Authorization": f"Bearer {test_token}"}
+    tags = [f"tag-{index}" for index in range(19)]
+    project = test_client.post(
+        "/api/v1/cloud-projects", headers=headers, json={"name": "Tag counts"}
+    ).json()
+    project_path = f"/api/v1/cloud-projects/{project['id']}"
+    read_path = f"/api/v1/projects/{project['id']}"
+    project = test_client.patch(
+        project_path,
+        headers=headers,
+        json={"version": project["version"], "tags": tags},
+    ).json()
+    issue = test_client.post(
+        f"{project_path}/loop-items",
+        headers=headers,
+        json={"title": "Count boundary", "status": "inbox", "tags": tags},
+    ).json()
+    issue_path = f"/api/v1/loop-items/{issue['id']}"
+    for tag in ["twentieth", "twenty-first"]:
+        next_tags = [*tags, tag]
+        accepted = len(next_tags) == 20
+        for path, current in [(project_path, project), (issue_path, issue)]:
+            response = test_client.patch(
+                path,
+                headers=headers,
+                json={"version": current["version"], "tags": next_tags},
+            )
+            assert response.status_code == (200 if accepted else 422), response.text
+        if accepted:
+            tags = next_tags
+            project = test_client.get(read_path, headers=headers).json()
+            issue = test_client.get(issue_path, headers=headers).json()
+            assert project["tags"] == issue["tags"] == tags
+            assert issue["status"] == "inbox"
+        else:
+            assert test_client.get(read_path, headers=headers).json() == project
+            assert test_client.get(issue_path, headers=headers).json() == issue
+            rejected_create = test_client.post(
+                f"{project_path}/loop-items",
+                headers=headers,
+                json={"title": "Rejected", "tags": next_tags},
+            )
+            assert rejected_create.status_code == 422, rejected_create.text
+
+
 @pytest.mark.parametrize("character", ["a", "标", "😀"])
 def test_tag_boundaries_preserve_lane_and_filter_matches(
     test_client: TestClient, test_token: str, character: str
@@ -266,8 +314,11 @@ def test_views_preserve_history_extensions_and_old_client_writes(
     ] == {"schema_version": 2, "future": True}
 
 
-def test_historical_long_tags_survive_reads_and_unrelated_writes(
-    test_client: TestClient, test_db: Session, test_token: str
+@pytest.mark.parametrize(
+    "tags", [["historical" * 4], [f"historical-{index}" for index in range(21)]]
+)
+def test_historical_tags_survive_reads_and_unrelated_writes(
+    test_client: TestClient, test_db: Session, test_token: str, tags: list[str]
 ) -> None:
     headers = {"Authorization": f"Bearer {test_token}"}
     project = test_client.post(
@@ -277,10 +328,9 @@ def test_historical_long_tags_survive_reads_and_unrelated_writes(
     issue = test_client.post(
         f"{path}/loop-items", headers=headers, json={"title": "Historical"}
     ).json()
-    tag = "historical" * 4
     for model, item_id in [(CloudProject, project["id"]), (LoopItem, issue["id"])]:
         row = test_db.query(model).filter(model.id == item_id).one()
-        row.metadata_json = {**row.metadata_json, "tags": [tag]}
+        row.metadata_json = {**row.metadata_json, "tags": tags}
     test_db.commit()
     renamed = test_client.patch(
         path,
@@ -294,13 +344,19 @@ def test_historical_long_tags_survive_reads_and_unrelated_writes(
         json={"version": issue["version"], "title": "Renamed Issue"},
     )
     assert updated.status_code == 200, updated.text
-    assert renamed.json()["tags"] == updated.json()["tags"] == [tag]
-    assert test_client.get(f"/api/v1/projects/{project['id']}", headers=headers).json()[
-        "tags"
-    ] == [tag]
-    assert test_client.get(f"/api/v1/loop-items/{issue['id']}", headers=headers).json()[
-        "tags"
-    ] == [tag]
+    assert renamed.json()["tags"] == updated.json()["tags"] == tags
+    assert (
+        test_client.get(f"/api/v1/projects/{project['id']}", headers=headers).json()[
+            "tags"
+        ]
+        == tags
+    )
+    assert (
+        test_client.get(f"/api/v1/loop-items/{issue['id']}", headers=headers).json()[
+            "tags"
+        ]
+        == tags
+    )
 
 
 @pytest.mark.parametrize("role", ["Developer", "Viewer"])

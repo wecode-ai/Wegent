@@ -4,7 +4,85 @@
 
 import { expect } from '@playwright/test'
 import { projectTest, type Resource } from '../../utils/collaboration-project-fixture'
-import { dragCollaborationIssueToColumn, webApi } from '../../utils/collaboration-test-support'
+import {
+  dragCollaborationIssue,
+  dragCollaborationIssueToColumn,
+  webApi,
+} from '../../utils/collaboration-test-support'
+
+projectTest(
+  'adds tag 20, rejects tag 21 without a write or success feedback, and permits replacement',
+  async ({ page, scheduledProject: { path, issueId } }) => {
+    const projectPath = `/api/v1/cloud-projects/${path.split('/').at(-1)!}`
+    const issuePath = `/api/v1/loop-items/${issueId}`
+    const project = await webApi<Resource>(page, projectPath)
+    await webApi(page, projectPath, {
+      method: 'PATCH',
+      body: {
+        version: project.version,
+        board_views: {
+          schema_version: 1,
+          default_view_id: 'counts',
+          views: [
+            {
+              id: 'counts',
+              name: 'Tag counts',
+              columns: [
+                { id: 'done', type: 'status', value: 'completed' },
+                { id: 'twentieth', type: 'tag', value: 'twentieth' },
+                { id: 'twenty-first', type: 'tag', value: 'twenty-first' },
+              ],
+            },
+          ],
+        },
+      },
+    })
+    const tags = Array.from({ length: 19 }, (_, index) => `tag-${index}`)
+    const issue = await webApi<Resource>(page, issuePath)
+    await webApi(page, issuePath, {
+      method: 'PATCH',
+      body: { version: issue.version, status: 'completed', tags },
+    })
+    await page.goto(path)
+    const card = (lane: string) =>
+      page.getByTestId(`cloud-todo-column-${lane}`).getByTestId(`cloud-todo-card-${issueId}`)
+    expect(
+      (await dragCollaborationIssueToColumn(page, issueId, 'twentieth', 'done')).status()
+    ).toBe(200)
+    const full = await webApi<Resource & { tags: string[]; status: string }>(page, issuePath)
+    expect(full.tags).toEqual([...tags, 'twentieth'])
+    expect(full.status).toBe('completed')
+    const writes: string[] = []
+    page.on('request', request => {
+      const pathname = new URL(request.url()).pathname
+      if (
+        ['PATCH', 'POST'].includes(request.method()) &&
+        (pathname === issuePath || pathname.endsWith('/loop-items/reorder'))
+      )
+        writes.push(pathname)
+    })
+    await dragCollaborationIssue(page, issueId, 'twenty-first', 'done')
+    await expect(page.getByTestId('collaboration-board').getByRole('alert')).toContainText(/20/)
+    await expect(page.getByTestId('board-drop-feedback')).toHaveCount(0)
+    await expect(card('done')).toBeVisible()
+    await expect(card('twentieth')).toBeVisible()
+    await expect(card('twenty-first')).toHaveCount(0)
+    expect(await webApi(page, issuePath)).toEqual(full)
+    expect(writes).toEqual([])
+    await page.reload()
+    await expect(card('twentieth')).toBeVisible()
+    await expect(card('twenty-first')).toHaveCount(0)
+    expect(
+      (await dragCollaborationIssueToColumn(page, issueId, 'twenty-first', 'twentieth')).status()
+    ).toBe(200)
+    const replaced = await webApi<{ tags: string[]; status: string }>(page, issuePath)
+    expect(replaced.tags).toEqual([...tags, 'twenty-first'])
+    expect(replaced.status).toBe('completed')
+    await expect(card('twentieth')).toHaveCount(0)
+    await page.reload()
+    await expect(card('twenty-first')).toBeVisible()
+  }
+)
 
 projectTest(
   'retains a 32-character lane after dragging, filtering and reload, and rejects 33 characters',

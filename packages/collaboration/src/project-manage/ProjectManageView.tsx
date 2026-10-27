@@ -21,7 +21,7 @@ import {
 } from './projectMutationQueue'
 import { repositoryAddress, repositoryProviderConfig } from './provider'
 import { collectProjectTags, updateBoardViewTag } from '../project-board/projectTags'
-import { isTagNameTooLong } from '../tagging'
+import { hasTooManyTags, isTagNameTooLong } from '../tagging'
 import type {
   ProjectManageApi,
   ProjectManageCardDisplay,
@@ -468,6 +468,10 @@ export function ProjectManageView<
   async function createTag() {
     const value = newTag.trim()
     if (!value || tagBusy) return
+    if (hasTooManyTags([...tags, value])) {
+      setError(host.translate('todo.tag_limit_exceeded', '最多添加 20 个不同标签'))
+      return
+    }
     if (isTagNameTooLong(value)) {
       setError(host.translate('todo.tag_name_too_long', '标签名称不能超过 32 个字符'))
       return

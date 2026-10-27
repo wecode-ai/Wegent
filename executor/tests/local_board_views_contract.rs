@@ -6,6 +6,103 @@ use serde_json::json;
 use wegent_executor::task_runtime::{LocalTaskStore, ProjectUpdate, TaskRuntimeError};
 
 #[test]
+fn tag_count_boundary_rejects_writes_without_changing_persisted_data() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let project = store
+        .create_project(serde_json::from_value(json!({"name":"Tag counts"})).unwrap())
+        .unwrap();
+    let mut tags: Vec<String> = (0..19).map(|index| format!("tag-{index}")).collect();
+    let project = store
+        .update_project(
+            &project.id,
+            serde_json::from_value(json!({
+                "version":project.version,"tags":tags
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let issue = store
+        .create_task(
+            &project.id,
+            serde_json::from_value(json!({
+                "title":"Count boundary","status":"inbox","tags":tags
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    tags.push("twentieth".into());
+    let project = store
+        .update_project(
+            &project.id,
+            serde_json::from_value(json!({
+                "version":project.version,"tags":tags
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let issue = store
+        .update_task(
+            &project.id,
+            &issue.id,
+            serde_json::from_value(json!({
+                "version":issue.version,"tags":tags
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(project.metadata["tags"], json!(tags));
+    assert_eq!(issue.metadata["tags"], json!(tags));
+    assert_eq!(issue.status.as_deref(), Some("inbox"));
+    tags.push("twenty-first".into());
+    assert!(matches!(
+        store.update_project(
+            &project.id,
+            serde_json::from_value(json!({
+                "version":project.version,"tags":tags
+            }))
+            .unwrap()
+        ),
+        Err(TaskRuntimeError::Invalid(_))
+    ));
+    assert!(matches!(
+        store.create_task(
+            &project.id,
+            serde_json::from_value(json!({
+                "title":"Rejected","tags":tags
+            }))
+            .unwrap()
+        ),
+        Err(TaskRuntimeError::Invalid(_))
+    ));
+    assert!(matches!(
+        store.update_task(
+            &project.id,
+            &issue.id,
+            serde_json::from_value(json!({
+                "version":issue.version,"tags":tags
+            }))
+            .unwrap()
+        ),
+        Err(TaskRuntimeError::Invalid(_))
+    ));
+    drop(store);
+    let reopened = LocalTaskStore::open(&path).unwrap();
+    let persisted = reopened.get_task(&project.id, &issue.id).unwrap();
+    let saved = reopened
+        .list_projects()
+        .unwrap()
+        .into_iter()
+        .find(|item| item.id == project.id)
+        .unwrap();
+    assert_eq!(persisted.metadata, issue.metadata);
+    assert_eq!(persisted.version, issue.version);
+    assert_eq!(saved.metadata, project.metadata);
+    assert_eq!(saved.version, project.version);
+}
+
+#[test]
 fn tag_boundaries_preserve_saved_lane_and_filter_matches() {
     for character in ["a", "标", "😀"] {
         let directory = tempfile::tempdir().unwrap();
