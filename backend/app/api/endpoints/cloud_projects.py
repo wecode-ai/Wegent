@@ -19,6 +19,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.endpoints.adapter.attachments import _build_content_disposition
 from app.core.security import (
     get_current_user,
     get_current_user_jwt_apikey_tasktoken,
@@ -669,7 +670,7 @@ def read_cloud_file(
     return Response(
         content=content,
         media_type=content_type,
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={"Content-Disposition": _build_content_disposition(filename, "inline")},
     )
 
 

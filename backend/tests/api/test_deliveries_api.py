@@ -8,6 +8,7 @@ import asyncio
 import io
 import json
 import uuid
+from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any, BinaryIO
 from unittest.mock import AsyncMock, MagicMock
@@ -23,12 +24,16 @@ from app.models.delivery import (
     Delivery,
     LoopItem,
     ProjectAutomationRun,
+    ProjectChatAgent,
     ProjectIncomingEvent,
 )
+from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
+from app.models.wework_notification import WeworkNotification
 from app.schemas.delivery import LoopItemTaskBindingResponse
 from app.services import runtime_work_service
 from app.services.delivery import delivery_service
@@ -39,7 +44,11 @@ from app.services.delivery.storage import (
 from app.services.loop_items.service import loop_item_service
 from app.services.project_incoming_hooks import project_incoming_hook_service
 from tests.service_results import service_result
-from tests.utils.collaboration import authorize_project
+from tests.utils.collaboration import (
+    authorize_project,
+    authorize_project_agent,
+    authorize_resource,
+)
 
 
 class FakeDeliveryStorage:
@@ -142,6 +151,103 @@ def test_todo_attachment_flow(
     )
     assert deleted.status_code == 204
     assert not delivery_storage.objects
+
+
+@pytest.mark.parametrize(
+    ("filename", "encoded_filename"),
+    [
+        (
+            "截屏 2026-10-19 17.53.45.png",
+            "%E6%88%AA%E5%B1%8F%202026-10-19%2017.53.45.png",
+        ),
+        ("café.png", "caf%C3%A9.png"),
+    ],
+)
+def test_todo_attachment_content_supports_non_ascii_filename(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+    filename: str,
+    encoded_filename: str,
+) -> None:
+    item_id = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Chinese attachment name"},
+    ).json()["id"]
+    uploaded = test_client.post(
+        f"/api/v1/loop-items/{item_id}/attachments",
+        headers=_auth(test_token),
+        files={"file": (filename, b"image-bytes", "image/png")},
+    )
+    assert uploaded.status_code == 201
+
+    content = test_client.get(
+        f"/api/v1/loop-item-attachments/{uploaded.json()['id']}/content",
+        headers=_auth(test_token),
+    )
+
+    assert content.status_code == 200
+    assert content.content == b"image-bytes"
+    assert content.headers["content-type"].startswith("image/png")
+    assert (
+        content.headers["content-disposition"]
+        == f"inline; filename*=UTF-8''{encoded_filename}"
+    )
+    assert len(delivery_storage.objects) == 1
+
+
+@pytest.mark.parametrize(
+    ("filename", "encoded_filename"),
+    [
+        ("结果.txt", "%E7%BB%93%E6%9E%9C.txt"),
+        ("café.txt", "caf%C3%A9.txt"),
+    ],
+)
+def test_delivery_asset_content_supports_non_ascii_filename(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+    filename: str,
+    encoded_filename: str,
+) -> None:
+    item = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Delivery filename"},
+    )
+    assert item.status_code == 201
+    draft = test_client.post(
+        f"/api/v1/loop-items/{item.json()['id']}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "# Result"},
+    )
+    assert draft.status_code == 201
+    delivery_id = draft.json()["id"]
+    uploaded = test_client.post(
+        f"/api/v1/deliveries/{delivery_id}/assets",
+        headers=_auth(test_token),
+        data={"relative_path": "result.txt"},
+        files={"file": (filename, b"delivered result", "text/plain")},
+    )
+    assert uploaded.status_code == 201
+    content_url = f"/api/v1/delivery-assets/{uploaded.json()['id']}/content"
+    assert test_client.get(content_url, headers=_auth(test_token)).status_code == 404
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{delivery_id}/finalize", headers=_auth(test_token)
+    )
+    assert finalized.status_code == 200
+
+    content = test_client.get(content_url, headers=_auth(test_token))
+
+    assert content.status_code == 200
+    assert content.content == b"delivered result"
+    assert content.headers["content-type"].startswith("text/plain")
+    assert content.headers["content-disposition"] == (
+        f"inline; filename*=UTF-8''{encoded_filename}"
+    )
 
 
 @pytest.fixture
@@ -1212,7 +1318,7 @@ def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
     test_db.commit()
     test_db.refresh(item)
 
-    refresh = MagicMock(side_effect=lambda _db, *, item, user_id: item)
+    refresh = MagicMock(side_effect=lambda _db, *, item, user_id, commit: item)
     wake = AsyncMock()
     monkeypatch.setattr(
         deliveries_endpoint.loop_item_service,
@@ -1243,6 +1349,151 @@ def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
 
     assert response.status_code == 200
     refresh.assert_called_once()
+    wake.assert_awaited_once_with()
+
+
+@pytest.mark.parametrize(
+    "change", ["status", "pending", "execution_config", "same_agent_config"]
+)
+def test_runner_rejection_does_not_commit_issue_changes(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    test_user: User,
+    delivery_project: CloudProject,
+    change: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Keep rejected changes atomic", "status": "inbox"},
+    ).json()
+    agent = ProjectChatAgent(
+        id=f"B{uuid.uuid4().hex[:10]}",
+        cloud_project_id=delivery_project.id,
+        name="No authorized runner",
+        title="No authorized runner",
+        created_by_user_id=test_user.id,
+        status="active",
+        metadata_json={
+            "runtime": "codex",
+            "execution_policy": {"mode": "project_pool"},
+            "model_policy": {
+                "mode": "fixed",
+                "model": {
+                    "runtime": "codex",
+                    "provider": "openai",
+                    "model_id": "test-model",
+                },
+            },
+        },
+    )
+    authorize_project_agent(test_db, agent)
+    test_db.add(agent)
+    item = test_db.get(LoopItem, created["id"])
+    item.assignee_agent_id = agent.id
+    execution = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=delivery_project.id,
+        agent_id=agent.id,
+        assigner_user_id=test_user.id,
+        executor_owner_user_id=test_user.id,
+        status="queued",
+    )
+    test_db.add(execution)
+    if change == "same_agent_config":
+        from app.services.issue_assignments import issue_assignment_service
+
+        issue_assignment_service.record(
+            test_db,
+            project_id=delivery_project.id,
+            issue_id=item.id,
+            member_type="agent",
+            member_id=agent.id,
+            assigned_by_user_id=test_user.id,
+            workflow_step=None,
+            notify=False,
+            trigger="manual",
+        )
+    test_db.commit()
+    execution_id = execution.id
+    before = (item.status, item.version, deepcopy(item.metadata_json or {}))
+    wake = AsyncMock()
+    monkeypatch.setattr("app.tasks.robot_queue_tasks.consume_queues_background", wake)
+    patch = (
+        {"status": "pending" if change == "pending" else "in_progress"}
+        if change in {"status", "pending"}
+        else {
+            "execution_config": {
+                "agent_id": agent.id,
+                "workspace_binding": {"type": "standalone"},
+            }
+        }
+    )
+    if change == "same_agent_config":
+        patch["assignee_agent_id"] = agent.id
+
+    response = test_client.patch(
+        f"/api/v1/loop-items/{item.id}",
+        headers=_auth(test_token),
+        json={"version": item.version, **patch},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["error_code"] == "RUNNER_ENVIRONMENT_UNAVAILABLE"
+    test_db.expire_all()
+    persisted = test_db.get(LoopItem, created["id"])
+    assert (persisted.status, persisted.version, persisted.metadata_json) == before
+    assert test_db.get(LoopItemExecution, execution_id).status == "queued"
+    wake.assert_not_awaited()
+
+    device = Kind(
+        kind="Device",
+        name=f"recovery-{uuid.uuid4().hex[:10]}",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {
+                "runnerCatalog": {
+                    "models": [
+                        {
+                            "runtime": "codex",
+                            "provider": "openai",
+                            "model_id": "test-model",
+                            "local_model_id": "test-model",
+                            "label": "Test model",
+                        }
+                    ]
+                }
+            }
+        },
+    )
+    test_db.add(device)
+    test_db.flush()
+    authorize_resource(test_db, delivery_project, device)
+    test_db.commit()
+
+    retried = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": before[1], **patch},
+    )
+
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["version"] == before[1] + 1
+    assert retried.json()["status"] == (
+        patch["status"] if change in {"status", "pending"} else "inbox"
+    )
+    test_db.expire_all()
+    assert test_db.get(LoopItemExecution, execution_id).status == "cancelled"
+    assert (
+        test_db.query(LoopItemExecution)
+        .filter_by(loop_item_id=created["id"], status="queued")
+        .count()
+        == 1
+    )
     wake.assert_awaited_once_with()
 
 
@@ -1699,6 +1950,58 @@ def test_loop_item_unread_follows_content_revision_and_read_cursor(
     assert refreshed_member_item.status_code == 200
     assert refreshed_member_item.json()["content_revision"] == 2
     assert refreshed_member_item.json()["is_unread"] is True
+
+
+def test_reading_issue_consumes_only_its_readers_notifications(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Notification read synchronization"},
+    )
+    assert created.status_code == 201
+    item = test_db.get(LoopItem, created.json()["id"])
+    user_id = item.created_by_user_id
+    rows = [
+        WeworkNotification(
+            id=str(uuid.uuid4()),
+            user_id=recipient,
+            kind="mention",
+            title="Issue notification",
+            body="Read the Issue",
+            payload=payload,
+            is_read=already_read,
+        )
+        for recipient, payload, already_read in [
+            (user_id, {"itemId": item.id}, False),
+            (user_id, {"issueId": item.id}, False),
+            (user_id, {"itemId": item.id}, True),
+            (user_id, {"itemId": "another-issue"}, False),
+            (user_id + 1, {"itemId": item.id}, False),
+            (user_id, {}, False),
+        ]
+    ]
+    test_db.add_all(rows)
+    test_db.commit()
+    original_read_at = rows[2].read_at
+
+    # Reading the Issue directly must work without clicking an inbox entry.
+    for _ in range(2):
+        response = test_client.post(
+            f"/api/v1/loop-items/{item.id}/read",
+            headers=_auth(test_token),
+            json={"activity_sequence": 0},
+        )
+        assert response.status_code == 200
+        for row in rows:
+            test_db.refresh(row)
+        assert [row.is_read for row in rows] == [True, True, True, False, False, False]
+        assert all(row.read_at is not None for row in rows[:3])
+        assert rows[2].read_at == original_read_at
 
 
 def test_mark_loop_item_read_repairs_legacy_metadata_without_read_revisions(

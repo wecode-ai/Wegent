@@ -77,6 +77,7 @@ interface ActionMenuProps {
   submenuCloseDelayMs?: number;
   onContextMenuClose?: () => void;
   onOpenChange?: (open: boolean) => void;
+  portalContainer?: Element | null;
   showTriggerTooltip?: boolean;
 }
 
@@ -102,6 +103,7 @@ export function ActionMenu({
   submenuCloseDelayMs = 100,
   onContextMenuClose,
   onOpenChange,
+  portalContainer,
   showTriggerTooltip = true,
 }: ActionMenuProps) {
   const portalTheme = useCollaborationPortalTheme();
@@ -639,7 +641,7 @@ export function ActionMenu({
               );
             })}
           </div>,
-          document.body,
+          portalContainer ?? document.body,
         )}
       {menuOpen && openSubmenuItem?.children?.length
         ? createPortal(
@@ -721,7 +723,7 @@ export function ActionMenu({
                 );
               })}
             </div>,
-            document.body,
+            portalContainer ?? document.body,
           )
         : null}
     </div>

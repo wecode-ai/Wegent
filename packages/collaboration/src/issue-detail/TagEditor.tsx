@@ -7,6 +7,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { X } from "lucide-react";
+import { isTagNameTooLong } from "../tagging";
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
 }
@@ -17,6 +18,8 @@ interface TagEditorProps {
   disabled?: boolean;
   placeholder?: string;
   removeLabel?: (tag: string) => string;
+  lengthErrorLabel: string;
+  tagLimit?: { max: number; errorLabel: string };
   // Existing project tags offered as autocomplete candidates.
   suggestions?: string[];
   // Prefix for data-testid values so multiple editors never collide.
@@ -36,6 +39,8 @@ function TagEditorField(
     disabled = false,
     placeholder = "添加标签",
     removeLabel = (tag) => `移除标签 ${tag}`,
+    lengthErrorLabel,
+    tagLimit,
     suggestions = [],
     testIdPrefix,
   }: TagEditorProps,
@@ -47,14 +52,27 @@ function TagEditorField(
   const inputRef = useRef<HTMLInputElement>(null);
 
   const normalizedDraft = draft.trim().toLowerCase();
+  const tooLong = isTagNameTooLong(draft.replace(/,/g, ""));
+  const exceedsLimit = (tag: string) =>
+    Boolean(tagLimit && new Set([...tags, tag]).size > tagLimit.max);
+  const tooMany =
+    Boolean(draft.trim()) && exceedsLimit(draft.trim().replace(/,/g, ""));
+  const errorLabel = tooLong
+    ? lengthErrorLabel
+    : tooMany
+      ? tagLimit?.errorLabel
+      : null;
   const candidates = suggestions.filter(
     (suggestion) =>
       !tags.includes(suggestion) &&
+      !exceedsLimit(suggestion) &&
+      !isTagNameTooLong(suggestion) &&
       (!normalizedDraft || suggestion.toLowerCase().includes(normalizedDraft)),
   );
   const showSuggestions = open && candidates.length > 0;
 
   function add(tag: string) {
+    if (isTagNameTooLong(tag) || exceedsLimit(tag)) return;
     if (!tags.includes(tag)) onChange([...tags, tag]);
     setDraft("");
     setHighlight(0);
@@ -62,6 +80,10 @@ function TagEditorField(
 
   function commit(raw: string) {
     const tag = raw.trim().replace(/,/g, "");
+    if (isTagNameTooLong(tag) || (tag && exceedsLimit(tag))) {
+      setDraft(tag);
+      return;
+    }
     if (tag) add(tag);
   }
 
@@ -129,6 +151,8 @@ function TagEditorField(
           ref={inputRef}
           data-testid={`${testIdPrefix}-input`}
           aria-label={placeholder}
+          aria-invalid={Boolean(errorLabel)}
+          aria-describedby={errorLabel ? `${testIdPrefix}-error` : undefined}
           value={draft}
           disabled={disabled}
           onChange={(event) => {
@@ -151,6 +175,15 @@ function TagEditorField(
             "h-6 min-w-16 flex-1 bg-transparent text-xs text-text-primary outline-none placeholder:text-text-muted",
           )}
         />
+      )}
+      {errorLabel && (
+        <span
+          id={`${testIdPrefix}-error`}
+          role="alert"
+          className="w-full text-xs text-error"
+        >
+          {errorLabel}
+        </span>
       )}
       {showSuggestions && (
         <span

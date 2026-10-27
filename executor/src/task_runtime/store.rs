@@ -19,6 +19,7 @@ mod code_projects;
 pub(crate) mod execution_workspace;
 mod issue_badges;
 mod ordering;
+mod project_tags;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
@@ -326,6 +327,20 @@ impl LocalTaskStore {
         project_id: &str,
         input: ProjectUpdate,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        if let Some(change) = input.tag_change.as_ref() {
+            let mut fields = serde_json::to_value(&input)
+                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
+            fields
+                .as_object_mut()
+                .unwrap()
+                .retain(|key, value| key != "version" && key != "tag_change" && !value.is_null());
+            if !fields.as_object().unwrap().is_empty() {
+                return Err(TaskRuntimeError::Invalid(
+                    "Tag changes cannot be combined with other project updates".into(),
+                ));
+            }
+            return self.change_project_tag(project_id, input.version, change);
+        }
         let project = self.get_project(project_id)?;
         if project.version != input.version {
             return Err(TaskRuntimeError::VersionConflict);
@@ -336,6 +351,7 @@ impl LocalTaskStore {
         let provider = task_provider(&project)?;
         let mut metadata = project.metadata;
         if let Some(tags) = input.tags {
+            super::tagging::validate_tags(&tags)?;
             metadata["tags"] = json!(tags);
         }
         if let Some(provider_config) = input.provider_config {
@@ -348,6 +364,10 @@ impl LocalTaskStore {
         }
         if let Some(board_config) = input.board_config {
             metadata["board_config"] = board_config;
+        }
+        if let Some(board_views) = input.board_views {
+            super::board_views::validate_update(&metadata["board_views"], &board_views)?;
+            metadata["board_views"] = board_views;
         }
         if let Some(card_display) = input.card_display {
             metadata["card_display"] = card_display;
@@ -516,6 +536,7 @@ impl LocalTaskStore {
         validate_name(&input.title, "task title")?;
         validate_status(&input.status)?;
         validate_priority(&input.priority)?;
+        super::tagging::validate_tags(&input.tags)?;
         validate_schedule_range(start_at.as_deref(), due_at.as_deref())?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -704,6 +725,9 @@ impl LocalTaskStore {
         }
         if let Some(priority) = input.priority.as_deref() {
             validate_priority(priority)?;
+        }
+        if let Some(tags) = input.tags.as_ref() {
+            super::tagging::validate_tags(tags)?;
         }
         let selected_agent = input
             .assignee_agent_id

@@ -28,7 +28,6 @@ import {
 } from '@/components/chat/RequestUserInputCard'
 import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
 import {
-  applyRequestUserInputResponseToBlock,
   findRequestUserInputPayload,
   isAsyncRequestUserInputPayload,
   requestUserInputPayloadKey,
@@ -54,7 +53,6 @@ import {
   getRuntimeConversationTurnIds,
   removeRuntimeConversationTurn,
   subscribeRuntimeConversation,
-  updateRuntimeConversationBlocks,
 } from '@/features/workbench/runtimeConversationCache'
 import {
   useRuntimeTaskLifecycle,
@@ -269,7 +267,9 @@ export function TemporaryChatPanel({
   const [input, setInput] = useState(initialInput)
   const [replaceDraftKey, setReplaceDraftKey] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [historyLoading, setHistoryLoading] = useState(Boolean(initialAddress && !sendEphemeral))
+  const [historyLoading, setHistoryLoading] = useState(
+    Boolean(initialAddress && (!sendEphemeral || messages.length === 0))
+  )
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [historyRevision, setHistoryRevision] = useState(0)
   const [historyBeforeCursor, setHistoryBeforeCursor] = useState<string | null>(null)
@@ -346,14 +346,14 @@ export function TemporaryChatPanel({
   }, [address])
 
   useEffect(() => {
-    if (!address || sendEphemeral) return
+    if (!address) return
     if (createdAddressKeyRef.current === `${address.deviceId}:${address.taskId}`) return
+    // Ephemeral history comes from the executor cache, not Codex's native history RPCs.
+    if (sendEphemeral && historyRevision === 0 && getRuntimeConversationMessages(address).length) {
+      return
+    }
     let cancelled = false
     historyRequest.current = { loadingMore: false }
-    setHistoryLoading(true)
-    setHistoryError(null)
-    setHistoryBeforeCursor(null)
-    setHistoryLoadingMoreBefore(false)
     const usageRevision = contextUsageStore.getRevision()
     void loadRuntimeTranscriptForPane(address)
       .then(transcript => {
@@ -415,7 +415,11 @@ export function TemporaryChatPanel({
 
   const retryHistory = useCallback(() => {
     if (historyBeforeCursor) void loadMoreHistory()
-    else setHistoryRevision(value => value + 1)
+    else {
+      setHistoryLoading(true)
+      setHistoryError(null)
+      setHistoryRevision(value => value + 1)
+    }
   }, [historyBeforeCursor, loadMoreHistory])
 
   useEffect(() => {
@@ -822,19 +826,12 @@ export function TemporaryChatPanel({
         conversationQueue.enqueue(answerMessage)
         return sendQueuedMessageAsGuidance(answerMessage)
       }
-      const sent = await sendRuntimePaneMessage({
+      return sendRuntimePaneMessage({
         address,
         message: requestUserInputResponseText(response),
         requestUserInputResponse: response,
         ...runtimeContext,
       })
-      if (!sent) return false
-      setMessages(
-        updateRuntimeConversationBlocks(address, block =>
-          applyRequestUserInputResponseToBlock(block, response)
-        )
-      )
-      return true
     },
     [
       address,

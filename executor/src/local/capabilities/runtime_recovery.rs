@@ -10,6 +10,8 @@ use crate::services::workbench::{verify_published_package, PackageKind};
 #[path = "runtime_recovery_journal.rs"]
 mod journal;
 use journal::RecoveryJournal;
+#[path = "runtime_materialization.rs"]
+mod materialization;
 #[path = "runtime_recovery_ownership.rs"]
 mod ownership;
 #[path = "runtime_recovery_plan.rs"]
@@ -378,15 +380,11 @@ impl GlobalCapabilityStore {
         safe_managed_path(root.parent().unwrap_or(root), path, leaf_link)
     }
 
-    fn runtime_state_paths(&self, spec: &PluginSyncSpec) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    pub(super) fn runtime_state_paths(
+        &self,
+        spec: &PluginSyncSpec,
+    ) -> (Vec<PathBuf>, Vec<PathBuf>) {
         let codex_market = self.codex_marketplace_dir(&spec.marketplace);
-        let mut files = vec![
-            codex_market.join(".agents/plugins/marketplace.json"),
-            self.codex_plugins_dir
-                .parent()
-                .unwrap_or(Path::new("."))
-                .join("config.toml"),
-        ];
         let mut directories = vec![
             self.plugin_codex_link(spec),
             codex_market
@@ -395,6 +393,29 @@ impl GlobalCapabilityStore {
         ];
         if !self.codex_only_plugins {
             let market = self.claude_marketplace_dir(&spec.marketplace);
+            directories.extend([
+                self.plugin_runtime_link(spec),
+                market
+                    .join("plugins")
+                    .join(self.marketplace_plugin_name(spec, true)),
+            ]);
+        }
+        directories.sort();
+        directories.dedup();
+        (self.runtime_metadata_paths(&spec.marketplace), directories)
+    }
+
+    pub(super) fn runtime_metadata_paths(&self, marketplace: &str) -> Vec<PathBuf> {
+        let mut files = vec![
+            self.codex_marketplace_dir(marketplace)
+                .join(".agents/plugins/marketplace.json"),
+            self.codex_plugins_dir
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join("config.toml"),
+        ];
+        if !self.codex_only_plugins {
+            let market = self.claude_marketplace_dir(marketplace);
             files.extend([
                 self.plugins_dir.join("known_marketplaces.json"),
                 self.plugins_dir.join("installed_plugins.json"),
@@ -405,18 +426,10 @@ impl GlobalCapabilityStore {
                 market.join(".claude-plugin/marketplace.json"),
                 market.join(".agents/plugins/marketplace.json"),
             ]);
-            directories.extend([
-                self.plugin_runtime_link(spec),
-                market
-                    .join("plugins")
-                    .join(self.marketplace_plugin_name(spec, true)),
-            ]);
         }
         files.sort();
         files.dedup();
-        directories.sort();
-        directories.dedup();
-        (files, directories)
+        files
     }
 
     pub(super) fn ensure_state_path(
@@ -629,12 +642,18 @@ impl GlobalCapabilityStore {
                 .unwrap_or(&Value::Null),
             manifest,
         )?;
+        let reused = if publication.is_none() {
+            self.unchanged_plugin_runtime_paths(spec, store_path)?
+        } else {
+            BTreeSet::new()
+        };
         let (files, mut moved) = self.runtime_state_paths(spec);
         if !self.shared_packages {
             if let Some(old) = &old {
                 moved.extend(self.current_recorded_runtime_paths(&spec.key, old)?);
             }
         }
+        moved.retain(|path| !reused.contains(path));
         let superseded = if publication.is_none() && self.shared_packages {
             RecoveryJournal::pending_identity(self, &spec.key)?
         } else {
@@ -652,13 +671,24 @@ impl GlobalCapabilityStore {
                 publication.publish_files(self)?;
             } else {
                 if !self.codex_only_plugins {
-                    self.install_claude_plugin_runtime_metadata_at(spec, store_path, timestamp)?;
+                    self.install_claude_plugin_runtime_metadata_at(
+                        spec, store_path, timestamp, &reused,
+                    )?;
                 }
                 let codex = self.plugin_codex_link(spec);
-                copy_dir_atomic(store_path, &codex)?;
-                ensure_dual_plugin_manifests(&codex)?;
-                ensure_plugin_hook_permissions(&codex)?;
-                self.install_codex_marketplace_metadata(spec, &codex)?;
+                if !reused.contains(&codex) {
+                    copy_dir_atomic(store_path, &codex)?;
+                    ensure_dual_plugin_manifests(&codex)?;
+                    ensure_plugin_hook_permissions(&codex)?;
+                }
+                self.install_codex_marketplace_metadata(
+                    spec,
+                    &codex,
+                    old.as_ref()
+                        .and_then(|entry| entry.get("component_states"))
+                        .unwrap_or(&json!({})),
+                    &reused,
+                )?;
             }
             let codex = self.plugin_codex_link(spec);
             let mut entry = old.clone().unwrap_or_else(|| json!({}));

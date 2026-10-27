@@ -359,6 +359,18 @@ fn debug_unrouted_codex_notification(message: &Value, reason: &str) {
     );
 }
 
+fn runtime_task_uses_ephemeral_codex_thread(link: &RuntimeTaskLink) -> bool {
+    let mut request = link
+        .runtime_handle
+        .get("executionRequest")
+        .or_else(|| link.runtime_handle.get("execution_request"))
+        .cloned()
+        .and_then(|value| serde_json::from_value::<ExecutionRequest>(value).ok())
+        .unwrap_or_default();
+    request.ephemeral |= link.ephemeral;
+    request.uses_ephemeral_codex_thread()
+}
+
 fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
     let mut request = link
         .runtime_handle
@@ -441,6 +453,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "modelSelection"
                 | "model_selection"
                 | "origin"
+                | "persist_runtime_thread"
                 | "preload_skills"
                 | "projectId"
                 | "project_plugin_ids"

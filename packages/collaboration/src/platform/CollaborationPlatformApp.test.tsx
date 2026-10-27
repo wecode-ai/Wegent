@@ -1056,6 +1056,26 @@ describe("CollaborationPlatformApp real component flow", () => {
       expect(manageResource).toHaveBeenCalledOnce();
     },
   );
+  it("shows catalog Agents as selectable without claiming execution readiness", async () => {
+    const { api } = createApi({
+      initialResources: {
+        agents: [{ ...agent, status: "unchecked" }],
+        execution_environments: [],
+      },
+    });
+    await render(<PlatformHarness api={api} />);
+    await click(byTestId("collaboration-primary-agents"));
+
+    const status = byTestId(
+      `collaboration-agents-row-${agent.id}`,
+    ).querySelector(".collaboration-resource-row-status");
+    expect(status?.textContent).toBe("可选择");
+    expect(status?.getAttribute("data-tone")).toBe("unchecked");
+    expect(status?.getAttribute("title")).toBe(
+      "执行时会检查智能体配置及当前权限。",
+    );
+  });
+
   it("deletes an agent resource after confirmation", async () => {
     const { api } = createApi();
     await render(<PlatformHarness api={api} />);
@@ -5246,6 +5266,28 @@ describe("CollaborationPlatformApp real component flow", () => {
       assigneeId: String(member.user_id),
       notifyAssignee: true,
     });
+  });
+
+  it("clears the assignment draft after the persisted Issue replaces its source", async () => {
+    const api = await renderIssueWithCollaborationGroup();
+    vi.mocked(api.issues.assign).mockResolvedValue({
+      ...issue,
+      version: issue.version + 1,
+      assignee_user_id: member.user_id,
+      assignee_agent_id: null,
+      assignee_team_id: null,
+      assignee_group_id: null,
+    });
+    await click(byTestId("cloud-todo-detail-assignee"));
+    await click(
+      portalByTestId(
+        `cloud-todo-detail-assignee-option-user:${member.user_id}`,
+      ),
+    );
+    await click(byTestId("cloud-todo-save"));
+    expect(
+      container.querySelector('[data-testid="cloud-todo-save"]'),
+    ).toBeNull();
   });
 
   it("mentions and assigns a project agent", async () => {

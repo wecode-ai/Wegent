@@ -16,7 +16,6 @@ on:
   pull_request_review:
     types:
       - submitted
-      - edited
       - dismissed
   merge_group:
     types:
@@ -26,8 +25,9 @@ permissions:
   contents: read
   pull-requests: read
 
+# Comment-only reviews still verify the policy, but cannot supersede code or approval checks.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.ref || github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.ref || github.event.pull_request.number }}-${{ github.event_name == 'pull_request_review' && github.event.action != 'dismissed' && github.event.review.state == 'commented' && github.run_id || 'policy' }}
   cancel-in-progress: true
 
 jobs:

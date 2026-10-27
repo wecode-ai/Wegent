@@ -1,9 +1,25 @@
-import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
+import {
+  handleEmptyReplyPrediction,
+  latestModelInputText,
+  readRequestBody as readJson,
+} from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { selectE2EModel } from '../modules/shared.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
+import {
+  assertTemporaryChatMessages,
+  verifyTemporaryChatCacheRecovery,
+} from '../modules/temporary-chat-cache-recovery.mjs'
+import { restartTemporaryChatCapabilities } from '../modules/temporary-chat-capability-recovery.mjs'
+import {
+  LEGACY_PROMPT,
+  LEGACY_COMPLETION,
+  createLegacyTemporaryChat,
+  assertExpiredLegacyTemporaryChat,
+} from '../modules/temporary-chat-legacy-recovery.mjs'
 
 const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
 const MAIN_COMPOSER = `${ACTIVE_SURFACE} [data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]`
@@ -17,11 +33,42 @@ const INITIAL_PROMPT = 'TEMPORARY_CHAT_INITIAL_MESSAGE'
 const INITIAL_COMPLETION = 'TEMPORARY_CHAT_INITIAL_COMPLETE'
 const FOLLOW_UP_PROMPT = 'TEMPORARY_CHAT_DIRECT_FOLLOW_UP'
 const FOLLOW_UP_COMPLETION = 'TEMPORARY_CHAT_FOLLOW_UP_COMPLETE'
+const RECOVERY_PROMPT = 'TEMPORARY_CHAT_AFTER_CAPABILITY_RESTART'
+const RECOVERY_COMPLETION = 'TEMPORARY_CHAT_CAPABILITY_RESTART_COMPLETE'
 const ATTACHMENT_FILENAME = 'clipboard-text-narrow-chat.txt'
 const ATTACHMENT_TEXT = JSON.stringify({
   cardInstanceId: '501435'.repeat(20),
   content: 'Long attachment preview in a narrow chat '.repeat(20),
 })
+
+async function assertComposerBottomSpacing(control, timeoutMs, expanded = false) {
+  const sideSelector = `${SIDE_CHAT} [data-testid="project-chat-composer"]`
+  await control.command('waitFor', sideSelector, { stableMs: 300, timeoutMs })
+  const [side] = JSON.parse(await control.command('getElementMetrics', sideSelector))
+  const [shell] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${SIDE_CHAT} [data-testid="right-workspace-chat-composer-shell"]`
+    )
+  )
+  assert.ok(side && shell, 'The side-chat composer and its shell were not measurable')
+  assert.ok(
+    Math.abs(shell.bottom - side.bottom - 8) <= 1,
+    `The side-chat composer did not retain an 8px bottom gap: ${JSON.stringify({ side, shell })}`
+  )
+  if (expanded) return
+  const [main] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${ACTIVE_SURFACE} [data-testid="desktop-floating-composer-card"] [data-testid="project-chat-composer"]`
+    )
+  )
+  assert.ok(main, 'The main conversation composer was not measurable')
+  assert.ok(
+    Math.abs(main.bottom - side.bottom) <= 1,
+    `The main and side-chat composers did not align at the bottom: ${JSON.stringify({ main, side })}`
+  )
+}
 
 async function waitForRightPanelWidth(control, predicate, message, timeoutMs) {
   const selector = `${ACTIVE_SURFACE} [data-testid="right-workspace-panel-shell"]`
@@ -319,7 +366,7 @@ async function waitForRuntimeSource(control, taskId, timeoutMs) {
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     lastTask = snapshot.workbench?.currentRuntimeTask ?? null
-    if (lastTask?.taskId === taskId && lastTask.hasRuntimeHandle) return
+    if (lastTask?.taskId === taskId && lastTask.hasRuntimeHandle) return lastTask
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(
@@ -339,6 +386,7 @@ async function waitForFollowUpRequest(getRequestCount, timeoutMs) {
 async function waitForRetainedSideThread(executorLogPath, sourceTaskId, fromOffset, timeoutMs) {
   const startedAt = Date.now()
   let sideThreadId = null
+  let sideTaskId = null
   while (Date.now() - startedAt < timeoutMs) {
     const content = await readFile(executorLogPath, 'utf8').catch(() => '')
     const recentContent = content.slice(fromOffset)
@@ -348,7 +396,9 @@ async function waitForRetainedSideThread(executorLogPath, sourceTaskId, fromOffs
           /codex shared turn request finished task_id=([^\s]+)[^\n]* thread_id=([^\s]+)[^\n]* outcome=completed/g
         ),
       ]
-      sideThreadId = completedTurns.find(match => match[1] !== sourceTaskId)?.[2] ?? null
+      const completed = completedTurns.find(match => match[1] !== sourceTaskId)
+      sideThreadId = completed?.[2] ?? null
+      sideTaskId = completed?.[1] ?? null
     }
     if (sideThreadId !== null) {
       await new Promise(resolve => setTimeout(resolve, 500))
@@ -361,7 +411,7 @@ async function waitForRetainedSideThread(executorLogPath, sourceTaskId, fromOffs
         ),
         'The active temporary-chat thread was unsubscribed before its direct follow-up'
       )
-      return sideThreadId
+      return { taskId: sideTaskId, threadId: sideThreadId }
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
@@ -394,12 +444,14 @@ async function waitForSecondTurnOnSideThread(executorLogPath, sideThreadId, from
 
 export function createDesktopScenario({
   captureScreenshot,
+  executorHome,
   resultDir,
   uiTimeoutMs,
   workspacePath,
 }) {
   let active = false
   let followUpRequestCount = 0
+  let recoveredModelHistory = null
   let releaseSource
   let releaseFollowUp
   const sourceRelease = new Promise(resolve => {
@@ -420,23 +472,21 @@ export function createDesktopScenario({
       }
 
       const body = await readJson(request)
-      const input = JSON.stringify(body.input ?? body.messages ?? [])
+      if (handleEmptyReplyPrediction(body, response)) return true
+      const input = latestModelInputText(body)
       const responseId = `wework-temporary-chat-${Date.now()}`
-      const prompt = input.includes(FOLLOW_UP_PROMPT)
-        ? FOLLOW_UP_PROMPT
-        : input.includes(INITIAL_PROMPT)
-          ? INITIAL_PROMPT
-          : input.includes(SOURCE_PROMPT)
-            ? SOURCE_PROMPT
-            : null
-      if (!prompt) return false
-
-      const completion =
-        prompt === FOLLOW_UP_PROMPT
-          ? FOLLOW_UP_COMPLETION
-          : prompt === INITIAL_PROMPT
-            ? INITIAL_COMPLETION
-            : SOURCE_COMPLETION
+      const match = [
+        [RECOVERY_PROMPT, RECOVERY_COMPLETION],
+        [LEGACY_PROMPT, LEGACY_COMPLETION],
+        [FOLLOW_UP_PROMPT, FOLLOW_UP_COMPLETION],
+        [INITIAL_PROMPT, INITIAL_COMPLETION],
+        [SOURCE_PROMPT, SOURCE_COMPLETION],
+      ].find(([prompt]) => input.includes(prompt))
+      if (!match) return false
+      const [prompt, completion] = match
+      if (prompt === RECOVERY_PROMPT) {
+        recoveredModelHistory = JSON.stringify(body.input ?? body.messages ?? [])
+      }
       if (prompt === FOLLOW_UP_PROMPT) {
         followUpRequestCount += 1
       }
@@ -504,12 +554,13 @@ export function createDesktopScenario({
         text: SOURCE_PROMPT,
         timeoutMs: taskTimeoutMs,
       })
-      await waitForRuntimeSource(control, sourceTaskId, taskTimeoutMs)
+      const sourceAddress = await waitForRuntimeSource(control, sourceTaskId, taskTimeoutMs)
 
       const primary = process.platform === 'darwin' ? 'Meta' : 'Control'
       await control.command('waitFor', ACTIVE_COMPOSER, { visible: true, timeoutMs: uiTimeoutMs })
       await control.command('nativePress', ACTIVE_COMPOSER, { key: `${primary}+Alt+S` })
       await control.command('waitFor', SIDE_COMPOSER, { timeoutMs: uiTimeoutMs })
+      await assertComposerBottomSpacing(control, uiTimeoutMs)
       const executorLogPath = join(resultDir, 'executor.log')
       const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
       await control.command('dropFile', SIDE_COMPOSER, {
@@ -539,11 +590,18 @@ export function createDesktopScenario({
         'The first side-chat message did not start at the top of the viewport'
       )
       await waitForThinkingToSettle(control, taskTimeoutMs)
-      const sideThreadId = await waitForRetainedSideThread(
+      const sideThread = await waitForRetainedSideThread(
         executorLogPath,
         sourceTaskId,
         executorLogOffset,
         taskTimeoutMs
+      )
+      assert.match(
+        (await readFile(executorLogPath, 'utf8')).slice(executorLogOffset),
+        new RegExp(
+          `codex shared thread request finished task_id=${sideThread.taskId}[^\\n]* operation=thread/fork[^\\n]* thread_id=${sideThread.threadId}`
+        ),
+        'The temporary chat did not fork the real source thread'
       )
 
       await narrowSideChatPanel(control, uiTimeoutMs)
@@ -553,12 +611,14 @@ export function createDesktopScenario({
       await control.command('click', expandButton)
       const expandedWidth = await assertTextAttachmentFits(control, uiTimeoutMs)
       assert.ok(expandedWidth > narrowWidth, 'The text attachment did not grow with its container')
+      await assertComposerBottomSpacing(control, uiTimeoutMs, true)
       await control.command('click', expandButton)
       const restoredWidth = await assertTextAttachmentFits(control, uiTimeoutMs)
       assert.ok(
         Math.abs(restoredWidth - narrowWidth) <= 1,
         'The text attachment did not shrink after restoring the panel'
       )
+      await assertComposerBottomSpacing(control, uiTimeoutMs)
       await captureScreenshot(control, 'temporary-chat-text-attachment-narrow.png', SIDE_CHAT)
 
       await expandProject(control, uiTimeoutMs)
@@ -629,11 +689,134 @@ export function createDesktopScenario({
         await waitForThinkingToSettle(control, taskTimeoutMs)
         await waitForSecondTurnOnSideThread(
           executorLogPath,
-          sideThreadId,
+          sideThread.threadId,
           executorLogOffset,
           taskTimeoutMs
         )
+        for (let switchCount = 0; switchCount < 2; switchCount += 1) {
+          await expandProject(control, uiTimeoutMs)
+          await control.command('click', '[data-testid="new-chat-button"]')
+          await control.command('waitFor', MAIN_COMPOSER, {
+            stableMs: 300,
+            timeoutMs: uiTimeoutMs,
+          })
+          await control.command('click', `[data-testid="${sourceTaskRow}"]`)
+          for (const text of [INITIAL_COMPLETION, FOLLOW_UP_COMPLETION]) {
+            await control.command('waitFor', `${SIDE_CHAT} [data-testid="message-assistant"]`, {
+              text,
+              timeoutMs: uiTimeoutMs,
+            })
+          }
+          await assertSideChatBottomOrigin(control)
+        }
         await captureScreenshot(control, '02-temporary-chat-two-turns.png', ACTIVE_SURFACE)
+
+        // A capability update waits for native turns to finish before rebuilding Codex.
+        releaseSource()
+        await control.command(
+          'waitFor',
+          `${ACTIVE_SURFACE} [data-testid="desktop-workbench-main"] [data-testid="message-assistant"]`,
+          { text: SOURCE_COMPLETION, timeoutMs: taskTimeoutMs }
+        )
+        const address = {
+          deviceId: sourceAddress.deviceId,
+          taskId: sideThread.taskId,
+          threadId: sideThread.threadId,
+          workspacePath: sourceAddress.workspacePath,
+        }
+        const expectedMessages = [
+          { role: 'user', content: INITIAL_PROMPT },
+          { role: 'assistant', content: INITIAL_COMPLETION },
+          { role: 'user', content: FOLLOW_UP_PROMPT },
+          { role: 'assistant', content: FOLLOW_UP_COMPLETION },
+        ]
+        const assertions = {
+          address,
+          expectedMessages,
+          sideChatSelector: SIDE_CHAT,
+          forbiddenTexts: [SOURCE_PROMPT, SOURCE_COMPLETION],
+        }
+        await verifyTemporaryChatCacheRecovery(control, {
+          ...assertions,
+          sourceTaskRow,
+          mainComposerSelector: MAIN_COMPOSER,
+          uiTimeoutMs,
+          resultDir,
+        })
+        await captureScreenshot(control, '03-temporary-chat-cache-recovered.png', SIDE_CHAT)
+
+        const legacy = await createLegacyTemporaryChat(control, {
+          workspacePath: sourceAddress.workspacePath,
+          resultDir,
+          uiTimeoutMs: taskTimeoutMs,
+        })
+        const restart = await restartTemporaryChatCapabilities(control, {
+          executorHome,
+          resultDir,
+          workspacePath: sourceAddress.workspacePath,
+          uiTimeoutMs: taskTimeoutMs,
+        })
+        await control.command('fill', SIDE_COMPOSER, { value: RECOVERY_PROMPT })
+        await control.command('press', SIDE_COMPOSER, { key: 'Enter' })
+        await control.command('waitFor', `${SIDE_CHAT} [data-testid="message-assistant"]`, {
+          text: RECOVERY_COMPLETION,
+          timeoutMs: taskTimeoutMs,
+        })
+        await waitForThinkingToSettle(control, taskTimeoutMs)
+        expectedMessages.push(
+          { role: 'user', content: RECOVERY_PROMPT },
+          { role: 'assistant', content: RECOVERY_COMPLETION }
+        )
+        await assertTemporaryChatMessages(control, { ...assertions, requireAllRendered: false })
+        assert.ok(
+          recoveredModelHistory,
+          'The resumed side chat did not reach the real model transport'
+        )
+        let previousIndex = -1
+        for (const { content } of expectedMessages.slice(0, -1)) {
+          const index = recoveredModelHistory.indexOf(content)
+          assert.ok(index > previousIndex, `The resumed model history lost or reordered ${content}`)
+          assert.equal(recoveredModelHistory.indexOf(content, index + content.length), -1)
+          previousIndex = index
+        }
+        const resumedLog = (await readFile(executorLogPath, 'utf8')).slice(restart.afterLogOffset)
+        assert.match(
+          resumedLog,
+          new RegExp(
+            `codex shared thread request finished[^\\n]* operation=thread/resume[^\\n]* thread_id=${sideThread.threadId}`
+          ),
+          'The same temporary-chat thread was not resumed by the rebuilt native Codex'
+        )
+        const listed = await requestExecutor(control, 'runtime.tasks.list', {}, taskTimeoutMs)
+        const listedTasks = listed.workspaces.flatMap(workspace => workspace.tasks)
+        assert.ok(listedTasks.some(task => task.taskId === sourceTaskId))
+        assert.ok(
+          listedTasks.every(
+            task =>
+              task.taskId !== address.taskId && task.runtimeHandle?.threadId !== address.threadId
+          ),
+          'The recovered temporary chat leaked into the task list'
+        )
+        await writeFile(
+          join(resultDir, 'temporary-chat-resumed.json'),
+          JSON.stringify(
+            {
+              address,
+              restart,
+              expectedMessages,
+              modelHistoryVerified: true,
+              listedTaskIds: listedTasks.map(task => task.taskId),
+            },
+            null,
+            2
+          )
+        )
+        await captureScreenshot(control, '04-temporary-chat-capability-resumed.png', SIDE_CHAT)
+        await assertExpiredLegacyTemporaryChat(control, {
+          fixture: legacy,
+          resultDir,
+          uiTimeoutMs: taskTimeoutMs,
+        })
       } finally {
         releaseSource()
         releaseFollowUp()

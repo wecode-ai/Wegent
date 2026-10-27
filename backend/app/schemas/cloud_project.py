@@ -17,8 +17,15 @@ from pydantic import (
 
 from app.core.provider_credentials import mask_provider_config
 from app.schemas.base_role import BaseRole
+from app.schemas.board_views import BoardViews
 from app.schemas.issue_workflow import ProjectWorkflowDefinition
-from app.schemas.tagging import MAX_TAGS_PER_ITEM, normalize_tags
+from app.schemas.tagging import (
+    MAX_TAG_LENGTH,
+    MAX_TAGS_PER_ITEM,
+    TagName,
+    normalize_tags,
+    require_canonical_tag,
+)
 from app.schemas.types import SnowflakeId
 from app.schemas.workspace import (
     ExecutionEnvironmentConfig,
@@ -221,17 +228,31 @@ class CloudProjectPullRequestAutomation(BaseModel):
         return list(dict.fromkeys(value))
 
 
+class ProjectTagChange(BaseModel):
+    """Rename or remove a project tag and all of its references atomically."""
+
+    source: str = Field(min_length=1, max_length=MAX_TAG_LENGTH)
+    target: str | None = Field(max_length=MAX_TAG_LENGTH)
+
+    @field_validator("source", "target")
+    @classmethod
+    def validate_tag(cls, value: str | None) -> str | None:
+        return None if value is None else require_canonical_tag(value)
+
+
 class CloudProjectUpdate(BaseModel):
+    tag_change: ProjectTagChange | None = None
     membership_mode: Literal["inherit", "restricted"] | None = None
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = None
-    tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
+    tags: list[TagName] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
     provider_config: dict[str, object] | None = None
     visibility: ProjectVisibility | None = None
     public_access: PublicAccessGrant | None = None
     default_issue_security: Literal["open", "related"] | None = None
     card_display: CloudProjectCardDisplay | None = None
     board_config: CloudProjectBoardConfig | None = None
+    board_views: BoardViews | None = None
     ai_automation: CloudProjectAiAutomation | None = None
     pull_request_automation: CloudProjectPullRequestAutomation | None = None
     workflow_definition: ProjectWorkflowDefinition | None = None
@@ -245,6 +266,13 @@ class CloudProjectUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_provider(self) -> "CloudProjectUpdate":
+        if self.tag_change is not None and self.model_fields_set - {
+            "version",
+            "tag_change",
+        }:
+            raise ValueError(
+                "Tag changes cannot be combined with other project updates"
+            )
         if self.visibility == "private" and self.public_access is not None:
             raise ValueError("Private projects cannot grant public access")
         if self.provider_config is not None:
@@ -285,6 +313,7 @@ class CloudProjectResponse(BaseModel):
     board_config: CloudProjectBoardConfig = Field(
         default_factory=CloudProjectBoardConfig
     )
+    board_views: dict[str, object] | None = None
     ai_automation: CloudProjectAiAutomation = Field(
         default_factory=CloudProjectAiAutomation
     )
@@ -327,6 +356,7 @@ class CloudProjectResponse(BaseModel):
                 ),
                 "card_display": metadata.get("card_display", {}),
                 "board_config": metadata.get("board_config", {}),
+                "board_views": metadata.get("board_views"),
                 "ai_automation": metadata.get("ai_automation", {}),
                 "pull_request_automation": metadata.get("pull_request_automation", {}),
                 "workflow_definition": metadata.get("workflow_definition", {}),

@@ -393,6 +393,7 @@ export function TaskActivityView({
       handleFileSelect: attachmentSelection.handleFileSelect,
       addExistingAttachment: attachmentSelection.addExistingAttachment,
       removeAttachment: attachmentSelection.removeAttachment,
+      dismissAttachmentError: attachmentSelection.dismissAttachmentError,
       resetAttachments: attachmentSelection.resetAttachments,
       listLocalSkills: async () => [],
       listLocalApps: async () => [],
@@ -524,7 +525,10 @@ export function TaskActivityView({
       issueId: issueTimeline ? task.id : undefined,
       readSequence: task.activity_read_sequence ?? 0,
       unread: Boolean(task.is_unread),
-      unreadRevision: task.is_unread ? (task.content_revision ?? task.version) : undefined,
+      // Inbox notifications can arrive after the Issue content was already read.
+      // A visible visit must still acknowledge them through the shared read API.
+      unreadRevision: task.content_revision ?? task.version,
+      readRequestKey: focusedCommentRequestKey,
       onReadSequence: issueTimeline && projectDeliveryApi ? markActivityRead : undefined,
       linear,
       compact,

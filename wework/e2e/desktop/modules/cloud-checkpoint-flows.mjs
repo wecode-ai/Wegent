@@ -812,7 +812,7 @@ async function verifyCloudCheckpoint({
       return
     case 'priority-filter':
       setPhase('cloud-priority-filter')
-      await verifyPriorityFilter({ composerSelector, control })
+      await verifyPriorityFilter({ composerSelector, control, projectRowSelector })
       return
     case 'automation-lifecycle':
       setPhase('cloud-automation-lifecycle')

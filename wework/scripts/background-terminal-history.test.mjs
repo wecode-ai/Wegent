@@ -12,8 +12,10 @@ function historyControl({
   advanceBeforeKey = false,
   staleAccessibility = false,
   stuckAccessibility = false,
+  initialScrollback = true,
+  missingFirstTick = false,
 } = {}) {
-  let row = 121
+  let row = initialScrollback ? 121 : 1
   let bottom = row
   let advanced = false
   let elapsed = 0
@@ -32,7 +34,9 @@ function historyControl({
       }
       if (action === 'getText') {
         return row === 1
-          ? Array.from({ length: 12 }, (_, index) => `${marker}_TICK_${index + 1}`).join('\n')
+          ? Array.from({ length: 12 }, (_, index) => `${marker}_TICK_${index + 1}`)
+              .slice(missingFirstTick ? 1 : 0)
+              .join('\n')
           : `${marker}_TICK_${row}`
       }
       if (action === 'nativePress') {
@@ -64,6 +68,10 @@ function historyControl({
           : undefined
       }
       if (action === 'waitFor') {
+        if (selector.endsWith(':not([aria-posinset="1"])')) {
+          if (!initialScrollback) row = bottom = 41
+          return
+        }
         if (selector.includes('[aria-posinset="') && stuckAccessibility) {
           throw new Error('Accessibility viewport did not update')
         }
@@ -126,4 +134,23 @@ test('uses the native viewport when the accessibility tree is behind at the key 
 test('still fails when the accessibility viewport never reflects the native page-up', async () => {
   const history = historyControl({ stuckAccessibility: true })
   await assert.rejects(verifyTerminalHistory(history.control, 10000), /viewport did not update/)
+})
+
+test('waits for scrollback before scrolling away from live output', async () => {
+  const history = historyControl({ initialScrollback: false })
+  await verifyTerminalHistory(history.control, 10000)
+  const wait = history.control.calls.findIndex(call =>
+    call.selector.endsWith(':not([aria-posinset="1"])')
+  )
+  const key = history.control.calls.findIndex(call => call.action === 'nativePress')
+  assert.ok(wait >= 0 && wait < key)
+  assert.equal(history.row(), 41)
+})
+
+test('still fails when later ticks exist but the first output was lost', async () => {
+  const history = historyControl({ missingFirstTick: true })
+  await assert.rejects(
+    verifyTerminalHistory(history.control, 10000),
+    /Missing terminal output tick 1/
+  )
 })

@@ -365,58 +365,72 @@ describe('SocketProvider reconnect notification', () => {
   })
 
   it('recreates a fresh authenticated namespace socket after connect_error', async () => {
+    jest.useFakeTimers()
     const firstSocket = createMockSocket()
     const secondSocket = createMockSocket()
     mockIo.mockReturnValueOnce(firstSocket).mockReturnValueOnce(secondSocket)
 
     let socketApi: SocketApi | undefined
-    render(
-      <SocketProvider>
-        <SocketProbe
-          onReady={api => {
-            socketApi = api
-          }}
-        />
-      </SocketProvider>
+    const { unmount } = await act(async () =>
+      render(
+        <SocketProvider>
+          <SocketProbe
+            onReady={api => {
+              socketApi = api
+            }}
+          />
+        </SocketProvider>
+      )
     )
+    try {
+      expect(firstSocket.connect).toHaveBeenCalledTimes(1)
+      expect(socketApi).toBeDefined()
 
-    await waitFor(() => expect(firstSocket.connect).toHaveBeenCalledTimes(1))
-    expect(socketApi).toBeDefined()
-
-    await act(async () => {
-      firstSocket.triggerSocket('connect')
-      firstSocket.triggerSocket('connect_error', new Error('timeout'))
-    })
-
-    expect(firstSocket.connect).toHaveBeenCalledTimes(1)
-    expect(mockIo).toHaveBeenCalledTimes(1)
-    expect(mockIo.mock.calls[0][1]).toEqual(
-      expect.objectContaining({
-        autoConnect: false,
-        reconnection: false,
-        transports: ['websocket', 'polling'],
-        tryAllTransports: true,
+      await act(async () => {
+        firstSocket.triggerSocket('connect')
+        firstSocket.triggerSocket('connect_error', new Error('timeout'))
       })
-    )
-    expect(mockIo.mock.calls[0][1]).not.toHaveProperty('query')
-    await waitFor(() => expect(socketApi?.connectionError?.message).toBe('timeout'))
-    expect(socketApi?.socket?.connected).toBe(false)
-    await waitFor(() => expect(socketApi?.reconnectAttempts).toBe(1))
 
-    await waitFor(() => expect(mockIo).toHaveBeenCalledTimes(2), { timeout: 2000 })
-    expect(mockIo.mock.calls[1][1]).toEqual(
-      expect.objectContaining({
-        auth: { token: 'token' },
-        autoConnect: false,
-        reconnection: false,
-        forceNew: true,
-        multiplex: false,
-        transports: ['websocket', 'polling'],
-        tryAllTransports: true,
+      expect(firstSocket.connect).toHaveBeenCalledTimes(1)
+      expect(mockIo).toHaveBeenCalledTimes(1)
+      expect(mockIo.mock.calls[0][1]).toEqual(
+        expect.objectContaining({
+          autoConnect: false,
+          reconnection: false,
+          transports: ['websocket', 'polling'],
+          tryAllTransports: true,
+        })
+      )
+      expect(mockIo.mock.calls[0][1]).not.toHaveProperty('query')
+      expect(socketApi?.connectionError?.message).toBe('timeout')
+      expect(socketApi?.socket?.connected).toBe(false)
+      expect(socketApi?.reconnectAttempts).toBe(1)
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(999)
       })
-    )
-    expect(mockIo.mock.calls[1][1]).not.toHaveProperty('query')
-    expect(secondSocket.connect).toHaveBeenCalledTimes(1)
+      expect(mockIo).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1)
+      })
+      expect(mockIo).toHaveBeenCalledTimes(2)
+      expect(mockIo.mock.calls[1][1]).toEqual(
+        expect.objectContaining({
+          auth: { token: 'token' },
+          autoConnect: false,
+          reconnection: false,
+          forceNew: true,
+          multiplex: false,
+          transports: ['websocket', 'polling'],
+          tryAllTransports: true,
+        })
+      )
+      expect(mockIo.mock.calls[1][1]).not.toHaveProperty('query')
+      expect(secondSocket.connect).toHaveBeenCalledTimes(1)
+    } finally {
+      unmount()
+      jest.useRealTimers()
+    }
   })
 
   it('waits for the server acknowledgement when cancelling chat', async () => {

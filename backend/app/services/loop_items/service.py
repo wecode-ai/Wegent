@@ -2008,6 +2008,9 @@ class LoopItemService:
             user_id=user_id,
             activity_sequence=activity_sequence,
         )
+        from app.services.wework_notifications import mark_issue_notifications_read
+
+        mark_issue_notifications_read(db, item_id=item.id, user_id=user_id)
         db.commit()
         db.expire(item)
         db.refresh(item)
@@ -3420,6 +3423,7 @@ class LoopItemService:
         *,
         item: LoopItem,
         user_id: int,
+        commit: bool = True,
     ) -> LoopItem:
         if not item.assignee_agent_id:
             return item
@@ -3453,7 +3457,10 @@ class LoopItemService:
                 runtime_subject_user_id=int(agent.created_by_user_id or user_id),
             ),
         )
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(item)
         return item
 

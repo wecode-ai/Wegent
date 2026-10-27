@@ -4,21 +4,44 @@
 
 //! Application-owned seams for `POST /api/attachments/upload`.
 //!
-//! `context_service.upload_attachment` resolves two application-owned pieces
-//! the open-source deployment does not know about:
+//! `context_service.upload_attachment` resolves application-owned storage and
+//! hosting capabilities that the open-source deployment does not know about:
 //!
-//! - the object-storage backend selected by `ATTACHMENT_STORAGE_BACKEND`
-//!   (`app/services/attachment/storage_factory.py`); a deployment can point it
-//!   at a MinIO/S3 backend through a deployment-specific implementation;
+//! - the object-storage backend selected by the application assembly;
 //! - a best-effort image upload for accepted image types
-//!   through the configured application-owned media service.
+//!   through the configured application-owned media service;
+//! - file-type hosting adapters selected by MIME type and upload purpose.
 //!
 //! [`AttachmentUploadBackend`] carries that split without putting internal
-//! media or object-store knowledge in this crate, mirroring
+//! media-service knowledge in this crate, mirroring
 //! [`crate::attachments::external_media::ExternalMediaRelay`]. The public
-//! default keeps bytes in `subtask_contexts.binary_data` and performs no image
-//! upload.
+//! default keeps bytes in `subtask_contexts.binary_data`. Applications can
+//! install [`super::S3StorageBackend`] for real signed object writes while
+//! retaining their own storage configuration and image-upload integration.
 use async_trait::async_trait;
+use serde_json::{Map, Value};
+
+/// Unencrypted attachment bytes routed to a file-type-specific hosting service.
+pub struct ExternalAttachmentUploadRequest<'a> {
+    pub filename: &'a str,
+    pub content: &'a [u8],
+    pub mime_type: &'a str,
+    pub user_id: i64,
+}
+
+/// A hosted attachment that is ready without local document parsing.
+pub struct ExternalAttachmentStorageResult {
+    pub backend_type: String,
+    pub storage_key: String,
+    pub type_data: Map<String, Value>,
+}
+
+/// Preserve upload validation errors separately from provider availability failures.
+#[derive(Debug)]
+pub enum ExternalAttachmentUploadError {
+    InvalidInput(String),
+    Unavailable,
+}
 
 /// The metadata the source image upload produces.
 #[derive(Debug, Clone)]
@@ -61,9 +84,22 @@ impl std::fmt::Display for UploadBackendError {
     }
 }
 
-/// The configured storage backend plus the image-upload capability.
+/// Default binary storage, optional file-type hosting, and image uploads.
 #[async_trait]
 pub trait AttachmentUploadBackend: Send + Sync {
+    /// Select a hosting adapter before constructing the default object store.
+    fn external_storage_backend(&self, _mime_type: &str, _purpose: &str) -> Option<&str> {
+        None
+    }
+
+    /// Store a selected attachment or fail the enclosing database transaction.
+    async fn store_external_attachment(
+        &self,
+        _request: ExternalAttachmentUploadRequest<'_>,
+    ) -> Result<ExternalAttachmentStorageResult, ExternalAttachmentUploadError> {
+        Err(ExternalAttachmentUploadError::Unavailable)
+    }
+
     /// Provider label stored alongside a successfully uploaded image id.
     fn image_pid_source(&self) -> &'static str {
         "image_upload"

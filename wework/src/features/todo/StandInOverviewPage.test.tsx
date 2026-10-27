@@ -348,11 +348,12 @@ it('groups actual stand-in executions by project, excludes ordinary tasks, and o
 it('preserves the mounted conversation when settings refresh fails', async () => {
   const { props } = fixture()
   const { api, settings, conversation } = await renderLoadedOverview(props)
-  vi.mocked(api.personalGet).mockRejectedValueOnce(new Error('settings unavailable'))
+  vi.mocked(api.personalGet).mockRejectedValue(new Error('settings unavailable'))
   act(() => publishPersonalStandIn(settings))
   await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
   expect(await screen.findByRole('alert')).toHaveTextContent('settings unavailable')
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+  vi.mocked(api.personalGet).mockResolvedValue(settings)
   await userEvent.click(screen.getByTestId('stand-in-overview-inline-retry'))
   await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(4))
   await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())

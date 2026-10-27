@@ -1,98 +1,191 @@
 import assert from 'node:assert/strict'
 import { afterEach, expect, test, vi } from 'vitest'
-
 import {
+  addLocalDays,
   calendarDays,
   localDateKey,
+  startOfScheduleWeek,
 } from '../../packages/collaboration/src/project-schedule/model.ts'
-import { verifyCollaborationScheduleViews } from '../e2e/desktop/modules/collaboration-schedule-views.mjs'
+import {
+  collaborationScheduleDates,
+  ensureCalendarScheduleDatesVisible,
+  verifyCollaborationScheduleViews,
+} from '../e2e/desktop/modules/collaboration-schedule-views.mjs'
+
+const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
+const scoped = selector => `${CONTENT} ${selector}`
+const CALENDAR = scoped('[data-testid="collaboration-calendar"]')
+const NEXT_MONTH = `${CALENDAR} [data-testid="collaboration-schedule-next"]`
+const TIMEOUT_MS = 10_000
 
 afterEach(() => vi.useRealTimers())
 
-test.each([
-  ...Array.from({ length: 12 }, (_, month) => new Date(2026, month, 1, 12)),
-  ...Array.from({ length: 12 }, (_, month) => new Date(2026, month, 26, 12)),
-  new Date(2026, 11, 31, 12),
-  new Date(2027, 0, 31, 12),
-  new Date(2028, 1, 29, 12),
-])('keeps both drag ranges in the rendered calendar when run on %s', async today => {
-  vi.useFakeTimers({ toFake: ['Date'] })
-  vi.setSystemTime(today)
-  let visibleMonth = today
-  const dates = {}
-  const navigation = []
-  const reachedDrag = new Error('Reached the real calendar drag boundary')
-  const renderedDates = () => new Set(calendarDays(visibleMonth, true).map(localDateKey))
-  const control = {
-    async command(action, selector, options) {
-      if (action === 'fill') {
-        if (selector.includes('start-date')) dates.start = options.value
-        if (selector.includes('due-date')) dates.end = options.value
-      }
-      if (
-        action === 'click' &&
-        (selector.includes('collaboration-schedule-') ||
-          selector.includes('[aria-label="下一个月"]'))
-      ) {
-        navigation.push(selector)
-        if (selector.includes('today')) visibleMonth = today
-        else if (selector.includes('next') || selector.includes('[aria-label="下一个月"]')) {
-          visibleMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1, 12)
-        } else assert.fail(`Unexpected calendar navigation: ${selector}`)
-      }
-      if (action === 'getElementCount') {
-        const target = selector.match(/collaboration-calendar-day-(\d{4}-\d{2}-\d{2})/)[1]
-        return Number(renderedDates().has(target))
-      }
-      if (action === 'getAttribute') return `${dates.start} → ${dates.end}`
-      if (action !== 'drag') return
+function localDate(key) {
+  const [year, month, day] = key.split('-').map(Number)
+  return new Date(year, month - 1, day, 12)
+}
 
-      assert.ok(selector.includes('collaboration-calendar-issue-'))
-      const target = options.target.match(/collaboration-calendar-day-(\d{4}-\d{2}-\d{2})/)[1]
-      const start = new Date(`${dates.start}T12:00:00`)
-      const end = new Date(`${dates.end}T12:00:00`)
-      const movedStart = new Date(start)
-      const movedEnd = new Date(end)
-      movedStart.setDate(start.getDate() + 7)
-      movedEnd.setDate(end.getDate() + 7)
-      assert.equal(target, localDateKey(movedStart), 'Keep the full one-week calendar move')
-      for (const date of [start, end, movedStart, movedEnd]) {
-        assert.ok(
-          renderedDates().has(localDateKey(date)),
-          `${localDateKey(date)} is outside the calendar`
-        )
+function calendarControl(today, unavailableDates = new Set()) {
+  let month = new Date(today.getFullYear(), today.getMonth(), 1)
+  const calls = []
+  const visibleDates = () => new Set(calendarDays(month, true).map(localDateKey))
+  return {
+    calls,
+    visibleDates,
+    async command(action, selector, options) {
+      calls.push({ action, selector, options })
+      if (action === 'clickWhenEnabled' || action === 'click') {
+        assert.equal(selector, NEXT_MONTH, 'Navigate through the visible calendar toolbar')
+        month = new Date(month.getFullYear(), month.getMonth() + 1, 1)
+        return ''
       }
-      assert.equal(start.getDay(), 1, 'Schedule starts on Monday')
-      const expectedEnd = new Date(start)
-      expectedEnd.setDate(start.getDate() + 2)
-      assert.equal(dates.end, localDateKey(expectedEnd), 'Preserve the three-day task range')
-      assert.ok(start > today, 'Keep the schedule in the future')
-      throw reachedDrag
+      assert.ok(selector.startsWith(`${CALENDAR} `), 'Date queries must stay calendar-scoped')
+      const key = selector.match(
+        /\[data-testid="collaboration-calendar-day-(\d{4}-\d{2}-\d{2})"\]$/
+      )?.[1]
+      assert.ok(key, `Unexpected calendar date selector: ${selector}`)
+      const visible = visibleDates().has(key) && !unavailableDates.has(key)
+      if (action === 'getElementCount') return visible ? '1' : '0'
+      if (action === 'waitFor') {
+        assert.deepEqual(options, { visible: true, timeoutMs: TIMEOUT_MS })
+        if (!visible) throw new Error(`Calendar date is not visible: ${key}`)
+        return ''
+      }
+      throw new Error(`Unexpected calendar action: ${action}`)
     },
   }
+}
+
+const cases = [
+  ['2026-10-25', '2026-10-19', '2026-10-26', 0],
+  ['2026-10-26', '2026-10-26', '2026-11-02', 0],
+  ['2026-05-18', '2026-05-18', '2026-05-25', 0],
+  ['2026-08-31', '2026-08-24', '2026-08-31', 0],
+  ['2026-12-28', '2026-12-28', '2027-01-04', 0],
+  ['2024-02-26', '2024-02-26', '2024-03-04', 0],
+]
+
+test.each(cases)(
+  'keeps the calendar drag source and destination visible on %s',
+  async (todayKey, initialStart, calendarStart, nextMonthCount) => {
+    const today = localDate(todayKey)
+    const originalTime = today.getTime()
+    const keys = collaborationScheduleDates(today)
+    assert.equal(today.getTime(), originalTime, 'Date fixtures must not mutate their clock input')
+    assert.deepEqual(keys, {
+      initialStart,
+      initialEnd: localDateKey(addLocalDays(localDate(initialStart), 2)),
+      calendarStart,
+      calendarEnd: localDateKey(addLocalDays(localDate(calendarStart), 2)),
+      resizedEnd: localDateKey(addLocalDays(localDate(calendarStart), 3)),
+      movedStart: localDateKey(addLocalDays(localDate(calendarStart), 2)),
+      movedEnd: localDateKey(addLocalDays(localDate(calendarStart), 5)),
+    })
+    const control = calendarControl(today)
+
+    await ensureCalendarScheduleDatesVisible({ control, scoped, keys, timeoutMs: TIMEOUT_MS })
+
+    assert.equal(
+      control.calls.filter(({ selector }) => selector === NEXT_MONTH).length,
+      nextMonthCount
+    )
+    const waitedDates = control.calls
+      .filter(({ action }) => action === 'waitFor')
+      .map(({ selector }) => selector.match(/day-(\d{4}-\d{2}-\d{2})/)?.[1])
+    assert.deepEqual(new Set(waitedDates), new Set([initialStart, calendarStart]))
+    assert.ok(control.visibleDates().has(initialStart))
+    assert.ok(control.visibleDates().has(calendarStart))
+  }
+)
+
+test('navigates once when both drag dates are only visible together in the next month', async () => {
+  const control = calendarControl(localDate('2026-10-26'))
+  const keys = { initialStart: '2026-11-02', calendarStart: '2026-11-09' }
+
+  await ensureCalendarScheduleDatesVisible({ control, scoped, keys, timeoutMs: TIMEOUT_MS })
+
+  assert.equal(control.calls.filter(({ selector }) => selector === NEXT_MONTH).length, 1)
+  assert.ok(control.visibleDates().has(keys.initialStart))
+  assert.ok(control.visibleDates().has(keys.calendarStart))
+})
+
+test('retains the current month when switching to the destination month would hide the source', async () => {
+  const today = localDate('2026-05-18')
+  const keys = { initialStart: '2026-05-25', calendarStart: '2026-06-01' }
+  const juneDates = new Set(calendarDays(localDate('2026-06-01'), true).map(localDateKey))
+  assert.equal(juneDates.has(keys.initialStart), false)
+  assert.equal(juneDates.has(keys.calendarStart), true)
+  const control = calendarControl(today)
+
+  await ensureCalendarScheduleDatesVisible({ control, scoped, keys, timeoutMs: TIMEOUT_MS })
+
+  assert.ok(control.calls.every(({ selector }) => selector !== NEXT_MONTH))
+  assert.ok(control.visibleDates().has(keys.initialStart))
+  assert.ok(control.visibleDates().has(keys.calendarStart))
+})
+
+test.each([
+  ['initialStart', '2026-10-25'],
+  ['calendarStart', '2026-10-26'],
+])('fails when %s remains missing after month navigation', async (missingKey, todayKey) => {
+  const today = localDate(todayKey)
+  const keys = collaborationScheduleDates(today)
+  const control = calendarControl(today, new Set([keys[missingKey]]))
 
   await assert.rejects(
-    verifyCollaborationScheduleViews({
-      capture: async () => {},
-      control,
-      issueTitle: 'Schedule boundary regression',
-      scoped: selector => selector,
-      timeoutMs: 10_000,
-    }),
-    error => error === reachedDrag
+    ensureCalendarScheduleDatesVisible({ control, scoped, keys, timeoutMs: TIMEOUT_MS }),
+    new RegExp(`Calendar date is not visible: ${keys[missingKey]}`)
   )
-  const target = new Date(`${dates.start}T12:00:00`)
-  target.setDate(target.getDate() + 7)
-  const needsNextMonth = !calendarDays(today, true).map(localDateKey).includes(localDateKey(target))
-  assert.deepEqual(navigation, [
-    '[data-testid="collaboration-schedule-today"]',
-    ...(needsNextMonth ? ['[data-testid="collaboration-schedule-next"]'] : []),
-  ])
+
+  assert.equal(control.calls.filter(({ selector }) => selector === NEXT_MONTH).length, 1)
+})
+
+test('uses the supplied local Monday near midnight instead of its UTC date', () => {
+  const keys = collaborationScheduleDates(new Date(2026, 9, 26, 0, 30))
+
+  assert.equal(keys.initialStart, '2026-10-26')
+  assert.equal(keys.calendarStart, '2026-11-02')
+})
+
+test('keeps every fixture inside the real calendar and Gantt windows throughout leap and ordinary years', async () => {
+  for (
+    let today = localDate('2024-01-01');
+    today < localDate('2029-01-01');
+    today = addLocalDays(today, 1)
+  ) {
+    const keys = collaborationScheduleDates(today)
+    const control = calendarControl(today)
+
+    await ensureCalendarScheduleDatesVisible({ control, scoped, keys, timeoutMs: TIMEOUT_MS })
+
+    assert.ok(control.calls.filter(({ selector }) => selector === NEXT_MONTH).length <= 1)
+    for (const key of ['initialStart', 'initialEnd', 'calendarStart', 'calendarEnd']) {
+      assert.ok(control.visibleDates().has(keys[key]), `${localDateKey(today)}: calendar ${key}`)
+    }
+    const ganttStart = startOfScheduleWeek(today, true)
+    const ganttDays = new Set(
+      Array.from({ length: 28 }, (_, index) => localDateKey(addLocalDays(ganttStart, index)))
+    )
+    for (const name of ['calendarStart', 'calendarEnd', 'resizedEnd', 'movedStart', 'movedEnd']) {
+      assert.ok(ganttDays.has(keys[name]), `${localDateKey(today)}: Gantt ${name}`)
+    }
+  }
 })
 
 test.each([
   {
     today: '2026-10-19T12:00:00',
+    target: '2026-10-26',
+    navigationCount: 0,
+    ranges: [
+      '2026-10-19 → 2026-10-21',
+      '2026-10-26 → 2026-10-28',
+      '2026-10-26 → 2026-10-29',
+      '2026-10-28 → 2026-10-31',
+    ],
+  },
+  {
+    today: '2026-10-26T12:00:00',
     target: '2026-11-02',
     navigationCount: 0,
     ranges: [
@@ -103,58 +196,43 @@ test.each([
     ],
   },
   {
-    today: '2026-10-26T12:00:00',
-    target: '2026-11-09',
-    navigationCount: 1,
-    ranges: [
-      '2026-11-02 → 2026-11-04',
-      '2026-11-09 → 2026-11-11',
-      '2026-11-09 → 2026-11-12',
-      '2026-11-11 → 2026-11-14',
-    ],
-  },
-  {
     today: '2026-10-05T12:00:00',
-    target: '2026-10-19',
+    target: '2026-10-12',
     navigationCount: 0,
     ranges: [
+      '2026-10-05 → 2026-10-07',
       '2026-10-12 → 2026-10-14',
-      '2026-10-19 → 2026-10-21',
-      '2026-10-19 → 2026-10-22',
-      '2026-10-21 → 2026-10-24',
+      '2026-10-12 → 2026-10-15',
+      '2026-10-14 → 2026-10-17',
     ],
   },
   {
     today: '2026-12-28T12:00:00',
-    target: '2027-01-11',
-    navigationCount: 1,
+    target: '2027-01-04',
+    navigationCount: 0,
     ranges: [
+      '2026-12-28 → 2026-12-30',
       '2027-01-04 → 2027-01-06',
-      '2027-01-11 → 2027-01-13',
-      '2027-01-11 → 2027-01-14',
-      '2027-01-13 → 2027-01-16',
+      '2027-01-04 → 2027-01-07',
+      '2027-01-06 → 2027-01-09',
     ],
   },
 ])('keeps the target date visible when scheduling from $today', async fixture => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date(fixture.today))
-  let navigations = 0
+  const calendar = calendarControl(new Date(fixture.today))
   let rangeIndex = 0
-  const calendarDays = []
-  const target = `collaboration-calendar-day-${fixture.target}`
-  const expectedDaySelectors = [fixture.ranges[0].split(' → ')[0], fixture.target].map(
-    day => `[data-testid="collaboration-calendar-day-${day}"]`
-  )
   const control = {
     async command(action, selector, options) {
-      if (action === 'getElementCount' && selector.includes(target))
-        return String(navigations === fixture.navigationCount ? 1 : 0)
-      if (action === 'click' && /collaboration-schedule-next|下一个月/.test(selector)) navigations++
-      if (action === 'waitFor' && selector.includes('collaboration-calendar-day-')) {
-        expect(selector).toBe(expectedDaySelectors[calendarDays.length])
-        calendarDays.push(selector)
-        assert.equal(navigations, fixture.navigationCount, 'The target month was overshot')
-        assert.equal(options.visible, true)
+      if (
+        (action === 'getElementCount' || action === 'waitFor') &&
+        selector.includes('collaboration-calendar-day-')
+      ) {
+        const day = selector.match(/\[data-testid="collaboration-calendar-day-[^"]+"\]/)?.[0]
+        return calendar.command(action, `${CALENDAR} ${day}`, options)
+      }
+      if (action === 'click' && /collaboration-schedule-next|下一个月/.test(selector)) {
+        return calendar.command(action, NEXT_MONTH, options)
       }
       if (action === 'getAttribute')
         return options.value === 'aria-sort' ? 'ascending' : fixture.ranges[rangeIndex]
@@ -170,11 +248,19 @@ test.each([
     capture: async () => {},
     control,
     issueTitle: 'Calendar navigation regression',
-    scoped: selector => selector,
-    timeoutMs: 100,
+    scoped,
+    timeoutMs: TIMEOUT_MS,
   })
 
-  expect(navigations).toBe(fixture.navigationCount)
-  expect(calendarDays).toEqual(expectedDaySelectors)
+  expect(calendar.calls.filter(({ selector }) => selector === NEXT_MONTH)).toHaveLength(
+    fixture.navigationCount
+  )
+  expect(calendar.visibleDates().has(fixture.target)).toBe(true)
+  expect(
+    calendar.calls.filter(({ action }) => action === 'waitFor').map(({ selector }) => selector)
+  ).toEqual([
+    `${CALENDAR} [data-testid="collaboration-calendar-day-${fixture.ranges[0].split(' → ')[0]}"]`,
+    `${CALENDAR} [data-testid="collaboration-calendar-day-${fixture.target}"]`,
+  ])
   expect(rangeIndex).toBe(3)
 })

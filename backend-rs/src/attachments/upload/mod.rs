@@ -31,7 +31,9 @@
 pub mod backend;
 #[cfg(test)]
 mod consistency_tests;
+mod csv;
 pub(crate) mod document;
+mod external_storage;
 mod jpeg_metadata;
 pub(crate) mod model_image;
 mod model_jpeg;
@@ -40,6 +42,8 @@ mod overwrite;
 pub(crate) mod pdf;
 mod resample;
 mod response;
+mod s3;
+pub use s3::S3StorageBackend;
 mod store;
 #[cfg(test)]
 mod tests;
@@ -47,8 +51,9 @@ pub(crate) mod truncation;
 mod video_metadata;
 
 pub use backend::{
-    AttachmentUploadBackend, ImagePid, ImageUploadRequest, MySqlStorageBackend, StoreObjectRequest,
-    UploadBackendError,
+    AttachmentUploadBackend, ExternalAttachmentStorageResult, ExternalAttachmentUploadError,
+    ExternalAttachmentUploadRequest, ImagePid, ImageUploadRequest, MySqlStorageBackend,
+    StoreObjectRequest, UploadBackendError,
 };
 pub(crate) use overwrite::{OverwriteError, Param, Preflush, overwrite_attachment_internal};
 use response::AttachmentResponse;
@@ -183,30 +188,7 @@ async fn upload_attachment(
         ));
     }
 
-    // `file: UploadFile = File(...)`: FastAPI rejects a missing field with 422.
-    let Some(file) = multipart.get("file") else {
-        return Err(FastApiError::validation(serde_json::json!([{
-            "type": "missing",
-            "loc": ["body", "file"],
-            "msg": "Field required",
-        }])));
-    };
-    let Some(filename) = file.filename.clone().filter(|name| !name.is_empty()) else {
-        return Err(FastApiError::detail(
-            StatusCode::BAD_REQUEST,
-            "Filename is required",
-        ));
-    };
-    let binary_data = file.bytes.to_vec();
-
-    // `DocumentParser.validate_file_size` before processing.
-    if !document::validate_file_size(binary_data.len() as i64) {
-        let max_size_mb = document::max_file_size() as f64 / (1024.0 * 1024.0);
-        return Err(FastApiError::detail(
-            StatusCode::BAD_REQUEST,
-            format!("File size exceeds maximum limit ({max_size_mb:.1} MB)"),
-        ));
-    }
+    let (filename, binary_data) = bind_upload_file(&multipart, overwrite_attachment_id)?;
 
     let subtask_id = user.subtask_id.unwrap_or(UNLINKED_SUBTASK_ID);
     tracing::info!(
@@ -217,8 +199,8 @@ async fn upload_attachment(
         "[attachments] upload_attachment"
     );
 
-    let image_pid_metadata = upload_image_pid(state, &filename, &binary_data, &user).await;
-    reload_owner_after_image_upload(state, &filename, user.id).await?;
+    let image_pid_metadata = upload_image_pid(state, filename, binary_data, &user).await;
+    reload_owner_after_image_upload(state, filename, user.id).await?;
 
     let outcome = match overwrite_attachment_id {
         Some(context_id) => {
@@ -232,8 +214,8 @@ async fn upload_attachment(
                 state,
                 context_id,
                 user.id,
-                &filename,
-                &binary_data,
+                filename,
+                binary_data,
                 &image_pid_metadata,
             )
             .await?
@@ -242,8 +224,8 @@ async fn upload_attachment(
             upload_new_attachment(
                 state,
                 user.id,
-                &filename,
-                &binary_data,
+                filename,
+                binary_data,
                 subtask_id,
                 &image_pid_metadata,
                 &storage_purpose,
@@ -281,6 +263,41 @@ async fn upload_attachment(
 
     let row = row.ok_or_else(attachment_not_found)?;
     Ok(AttachmentResponse::from_context(&row, truncation_info))
+}
+
+/// Validate uploads before any media-service, storage, or database work.
+/// Empty overwrites retain the existing document-content clearing contract.
+fn bind_upload_file(
+    multipart: &Multipart,
+    overwrite_attachment_id: Option<i64>,
+) -> Result<(&str, &[u8]), FastApiError> {
+    let Some(file) = multipart.get("file") else {
+        return Err(FastApiError::validation(serde_json::json!([{
+            "type": "missing",
+            "loc": ["body", "file"],
+            "msg": "Field required",
+        }])));
+    };
+    let Some(filename) = file.filename.as_deref().filter(|name| !name.is_empty()) else {
+        return Err(FastApiError::detail(
+            StatusCode::BAD_REQUEST,
+            "Filename is required",
+        ));
+    };
+    if file.bytes.is_empty() && overwrite_attachment_id.is_none() {
+        return Err(FastApiError::detail(
+            StatusCode::BAD_REQUEST,
+            "File is empty",
+        ));
+    }
+    if !document::validate_file_size(file.bytes.len() as i64) {
+        let max_size_mb = document::max_file_size() as f64 / (1024.0 * 1024.0);
+        return Err(FastApiError::detail(
+            StatusCode::BAD_REQUEST,
+            format!("File size exceeds maximum limit ({max_size_mb:.1} MB)"),
+        ));
+    }
+    Ok((filename, &file.bytes))
 }
 
 /// The best-effort image PID metadata merged into the attachment's
@@ -336,15 +353,14 @@ async fn upload_new_attachment(
     binary_data: &[u8],
     subtask_id: i64,
     extra_type_data: &Map<String, Value>,
-    _storage_purpose: &str,
+    storage_purpose: &str,
 ) -> Result<UploadOutcome, FastApiError> {
     let (extension, mime_type) = validate_input(filename, binary_data)?;
     let file_size = binary_data.len() as i64;
     let backend = Arc::clone(&state.attachment_upload);
-    let backend_type = backend.backend_type().to_string();
-
-    // `get_storage_backend(db)`'s construction (the MinIO bucket probe).
-    backend.ensure_ready().await.map_err(|_| internal_error())?;
+    let backend_type = external_storage::prepare_backend(&*backend, mime_type, storage_purpose)
+        .await
+        .map_err(|_| internal_error())?;
 
     let effective_subtask_id = if subtask_id > 0 {
         subtask_id
@@ -364,7 +380,8 @@ async fn upload_new_attachment(
     let effective_subtask_id_value = effective_subtask_id;
     let user_id_value = user_id;
     let filename_owned = filename.to_string();
-    state
+    let mut validation_error = None;
+    let outcome = state
         .mysql
         .with_transaction(async |transaction| {
             let execution = transaction
@@ -395,11 +412,13 @@ async fn upload_new_attachment(
                 binary_data,
                 storage_key,
                 type_data,
+                storage_purpose,
+                &mut validation_error,
             )
             .await
         })
-        .await
-        .map_err(dependency_error)
+        .await;
+    outcome.map_err(|error| upload_dependency_error(error, validation_error))
 }
 
 /// A `ContextService.upload_attachment` failure that reaches a caller which
@@ -436,11 +455,7 @@ pub(crate) async fn upload_attachment_context(
     let mime_type = document::mime_type(&extension);
     let file_size = binary_data.len() as i64;
     let backend = Arc::clone(&state.attachment_upload);
-    let backend_type = backend.backend_type().to_string();
-
-    // `get_storage_backend(db)`'s construction (the MinIO bucket probe).
-    backend
-        .ensure_ready()
+    let backend_type = external_storage::prepare_backend(&*backend, mime_type, "default")
         .await
         .map_err(|_| UploadContextError)?;
 
@@ -465,6 +480,7 @@ pub(crate) async fn upload_attachment_context(
         UNLINKED_SUBTASK_ID
     };
     let filename_owned = filename.to_string();
+    let mut validation_error = None;
     let outcome = state
         .mysql
         .with_transaction(async |transaction| {
@@ -495,6 +511,8 @@ pub(crate) async fn upload_attachment_context(
                 binary_data,
                 storage_key,
                 type_data,
+                "default",
+                &mut validation_error,
             )
             .await?;
             Ok((context_id, outcome))
@@ -628,7 +646,29 @@ async fn store_and_parse<T: MysqlTransaction>(
     binary_data: &[u8],
     storage_key: String,
     mut type_data: Map<String, Value>,
+    storage_purpose: &str,
+    validation_error: &mut Option<String>,
 ) -> Result<UploadOutcome, brz_mysql::MysqlError> {
+    let mime_type = mime_type_for(extension);
+    if backend
+        .external_storage_backend(mime_type, storage_purpose)
+        .is_some()
+    {
+        return external_storage::store(
+            transaction,
+            backend,
+            context_id,
+            ExternalAttachmentUploadRequest {
+                filename,
+                content: binary_data,
+                mime_type,
+                user_id,
+            },
+            type_data,
+            validation_error,
+        )
+        .await;
+    }
     let encrypt = encryption_enabled();
     let store_data = if encrypt {
         super::crypto::encrypt_attachment(binary_data).unwrap_or_else(|_| binary_data.to_vec())
@@ -822,4 +862,14 @@ fn internal_error() -> FastApiError {
 fn dependency_error(error: brz_mysql::MysqlError) -> FastApiError {
     tracing::error!(%error, "attachment upload dependency failed");
     internal_error()
+}
+
+fn upload_dependency_error(
+    error: brz_mysql::MysqlError,
+    validation_error: Option<String>,
+) -> FastApiError {
+    match validation_error {
+        Some(message) => FastApiError::detail(StatusCode::BAD_REQUEST, message),
+        None => dependency_error(error),
+    }
 }

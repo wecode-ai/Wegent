@@ -76,22 +76,11 @@ DOWNLOAD_TOKEN_SCOPE = "attachment_download"
 
 
 def _build_content_disposition(filename: str, disposition: str = "attachment") -> str:
-    """
-    Build Content-Disposition header value with proper filename encoding.
-
-    For ASCII filenames, use: filename="name.ext"
-    For non-ASCII filenames, use: filename*=UTF-8''encoded_name
-
-    This ensures compatibility with both old and new browsers.
-    """
-    try:
-        filename.encode("latin-1")
-    except UnicodeEncodeError:
-        # Non-ASCII filename: use RFC 5987 encoding
-        encoded = quote(filename)
+    """Use quoted printable ASCII or RFC 5987 UTF-8 for a filename parameter."""
+    if not all(32 <= ord(character) <= 126 for character in filename):
+        encoded = quote(filename, safe="")
         return f"{disposition}; filename*=UTF-8''{encoded}"
 
-    # ASCII filename: use simple quoted string
     escaped = filename.replace("\\", "\\\\").replace('"', '\\"')
     return f'{disposition}; filename="{escaped}"'
 
