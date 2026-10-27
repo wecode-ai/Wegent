@@ -50,6 +50,7 @@ describe('MCP App isolated documents', () => {
             'https://evil.example; default-src *',
             'http://remote.example',
             'http://127.0.0.1:8080',
+            'https://safe.example\u0000',
           ],
           resourceDomains: ['https://*.cdn.example.com', "'unsafe-eval'"],
           frameDomains: ['https://ide.example.com'],
@@ -61,6 +62,24 @@ describe('MCP App isolated documents', () => {
     expect(csp).toContain('https://*.cdn.example.com')
     expect(csp).not.toContain('evil.example')
     expect(csp).not.toContain('remote.example')
+    expect(csp).not.toContain('safe.example')
     expect(csp).toContain("form-action 'none'")
+  })
+
+  it('serves valid HTTP headers for international domains and rejects control characters', async () => {
+    const documents = new McpAppDocuments()
+    try {
+      const document = await documents.create('<p>App</p>', {
+        ui: { csp: { connectDomains: ['https://例子.测试', 'https://safe.example\u0000'] } },
+      })
+      const response = await fetch(document.url)
+      expect(response.ok).toBe(true)
+      expect(response.headers.get('content-security-policy')).toContain(
+        'connect-src https://xn--fsqu00a.xn--0zwm56d'
+      )
+      expect(response.headers.get('content-security-policy')).not.toContain('safe.example')
+    } finally {
+      documents.dispose()
+    }
   })
 })

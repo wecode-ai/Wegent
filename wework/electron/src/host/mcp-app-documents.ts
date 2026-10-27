@@ -11,12 +11,19 @@ function record(value: unknown): Metadata {
 
 function domains(value: unknown): string[] {
   if (!Array.isArray(value)) return []
-  return value.filter((item): item is string => {
-    if (typeof item !== 'string' || /[\s;'"<>]/.test(item)) return false
+  return value.flatMap((item): string[] => {
+    if (typeof item !== 'string' || /[\s;'"<>]/.test(item)) return []
+    const hasControl = Array.from(item).some(character => {
+      const code = character.charCodeAt(0)
+      return code < 0x20 || (code >= 0x7f && code <= 0x9f)
+    })
+    if (hasControl) return []
     try {
+      const wildcard = item.includes('://*.')
       const url = new URL(item.replace('://*.', '://wildcard.'))
-      return (
+      const allowed =
         ['https:', 'wss:', 'http:', 'ws:'].includes(url.protocol) &&
+        !url.hostname.includes('*') &&
         !url.username &&
         !url.password &&
         url.pathname === '/' &&
@@ -24,9 +31,10 @@ function domains(value: unknown): string[] {
         !url.hash &&
         (!['http:', 'ws:'].includes(url.protocol) ||
           ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))
-      )
+      if (!allowed) return []
+      return [wildcard ? url.origin.replace('://wildcard.', '://*.') : url.origin]
     } catch {
-      return false
+      return []
     }
   })
 }

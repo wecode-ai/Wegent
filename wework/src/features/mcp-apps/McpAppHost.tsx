@@ -24,6 +24,28 @@ function record(value: unknown): Record<string, unknown> {
     : {}
 }
 
+interface AppDocument {
+  id: string
+  url: string
+  release: () => Promise<void>
+}
+
+async function createAppDocument(
+  html: string,
+  metadata: Record<string, unknown>
+): Promise<AppDocument> {
+  const document = await invokeDesktopHost<{ id: string; url: string }>('mcpApps.createDocument', {
+    html,
+    metadata,
+  })
+  let released: Promise<void> | undefined
+  return {
+    ...document,
+    release: () =>
+      (released ??= invokeDesktopHost<void>('mcpApps.releaseDocument', { id: document.id })),
+  }
+}
+
 export function McpAppHost({
   block,
   address,
@@ -48,7 +70,7 @@ export function McpAppHost({
   const [mode, setMode] = useState<McpUiDisplayMode>('inline')
   const [height, setHeight] = useState(400)
   const frame = useRef<HTMLIFrameElement>(null)
-  const [document, setDocument] = useState<{ id: string; url: string }>()
+  const [document, setDocument] = useState<AppDocument>()
   const [initializedDocument, setInitializedDocument] = useState<string>()
   const bridge = useRef<AppBridge>(null)
   const teardownSent = useRef(false)
@@ -65,18 +87,24 @@ export function McpAppHost({
     onDisplayModeChange?.(closed ? 'inline' : mode)
   }, [closed, mode, onDisplayModeChange])
   const closeApp = useCallback(async () => {
+    setClosing(true)
     const app = bridge.current
     if (app && !teardownSent.current) {
       teardownSent.current = true
-      setClosing(true)
       await app.teardownResource({}, { timeout: 1000 }).catch(error => {
         console.info('[Wework] MCP App teardown did not acknowledge', { name: error.name })
       })
     }
-    setClosed(true)
-    setClosing(false)
-    setDocument(undefined)
-  }, [])
+    try {
+      await document?.release()
+      setClosed(true)
+      setDocument(undefined)
+    } catch (error) {
+      setFailure(error instanceof Error ? error.message : String(error))
+    } finally {
+      setClosing(false)
+    }
+  }, [document])
 
   const discovered = useRef(false)
   const discoveryPending = useRef(false)
@@ -115,7 +143,7 @@ export function McpAppHost({
   useEffect(() => {
     if (!descriptor || closed) return
     let active = true
-    let created: { id: string; url: string } | undefined
+    let created: AppDocument | undefined
     const load = async () => {
       const content = descriptor.resource.contents.find(item =>
         ['text/html;profile=mcp-app', 'text/html+skybridge', 'text/html'].includes(
@@ -132,12 +160,12 @@ export function McpAppHost({
       const metadata = record(content._meta)
       const modes = appDisplayModes(descriptor)
       if (!modes.length) throw new Error(t('mcp_apps.unsupported_display_mode'))
-      created = await invokeDesktopHost<{ id: string; url: string }>('mcpApps.createDocument', {
-        html: content.mimeType === 'text/html+skybridge' ? legacyWidgetDocument(html) : html,
-        metadata,
-      })
+      created = await createAppDocument(
+        content.mimeType === 'text/html+skybridge' ? legacyWidgetDocument(html) : html,
+        metadata
+      )
       if (!active) {
-        await invokeDesktopHost('mcpApps.releaseDocument', { id: created.id })
+        await created.release()
         return
       }
       const preferred =
@@ -162,7 +190,10 @@ export function McpAppHost({
     return () => {
       active = false
       window.clearInterval(heartbeat)
-      if (created) void invokeDesktopHost('mcpApps.releaseDocument', { id: created.id })
+      if (created)
+        void created.release().catch(error => {
+          console.info('[Wework] MCP App document release failed', { name: error.name })
+        })
       void requestApp({ method: 'release' }).catch(() => {})
     }
   }, [descriptor, closed, t])

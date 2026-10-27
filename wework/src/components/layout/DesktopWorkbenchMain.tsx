@@ -1397,6 +1397,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem && boundProjectSpaceApi
   )
   const issueExecutionReadOnly = Boolean(currentProjectSpaceRuntimeTask?.issueExecution)
+  const mcpAppConversationServices = useMemo(
+    () =>
+      createMcpAppConversationServices({
+        address: currentRuntimeTask,
+        api: services?.runtimeWorkApi,
+        readOnly: issueExecutionReadOnly,
+        sendMessage: sendRuntimePaneMessage,
+      }),
+    [currentRuntimeTask, services?.runtimeWorkApi, issueExecutionReadOnly, sendRuntimePaneMessage]
+  )
   const supervisor = runtimeTaskSummary?.supervisor ?? null
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
     ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
@@ -5243,12 +5253,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   onClick={focusComposerFromConversationClick}
                 >
                   <ScrollableMessageArea
-                    mcpApp={createMcpAppConversationServices({
-                      address: currentRuntimeTask,
-                      api: services?.runtimeWorkApi,
-                      readOnly: issueExecutionReadOnly,
-                      sendMessage: sendRuntimePaneMessage,
-                    })}
+                    mcpApp={mcpAppConversationServices}
                     searchActive={paneActive && paneVisible && workbenchVisible}
                     workspacePath={composerWorkspaceTarget?.path}
                     imageTarget={remoteImageTarget}
