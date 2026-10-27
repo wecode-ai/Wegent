@@ -523,13 +523,18 @@ impl RuntimeWorkRpcHandler {
         if bound.is_some_and(|row| row["device_id"] != self.device_id || !retry) {
             return Ok(());
         }
-        let payload = self.prepare_stand_in_task(config, issue, binding).await?;
-        if bound.is_some() {
-            self.dispatch_stand_in_task(payload, true).await.map(|_| ())
-        } else {
-            self.create_stand_in_task(config, issue, binding, payload)
-                .await
+        let result = async {
+            let payload = self.prepare_stand_in_task(config, issue, binding).await?;
+            if bound.is_some() {
+                self.dispatch_stand_in_task(payload, true).await.map(|_| ())
+            } else {
+                self.create_stand_in_task(config, issue, binding, payload)
+                    .await
+            }
         }
+        .await;
+        self.record_stand_in_dispatch(config, &result);
+        result
     }
 
     async fn create_stand_in_task(
@@ -651,9 +656,14 @@ impl RuntimeWorkRpcHandler {
         {
             return Ok(());
         }
-        let payload = self.prepare_stand_in_task(config, issue, binding).await?;
-        self.create_stand_in_task(config, issue, binding, payload)
-            .await
+        let result = async {
+            let payload = self.prepare_stand_in_task(config, issue, binding).await?;
+            self.create_stand_in_task(config, issue, binding, payload)
+                .await
+        }
+        .await;
+        self.record_stand_in_dispatch(config, &result);
+        result
     }
 
     fn stand_in_task_id(&self, config: &Value, binding: &Value) -> String {

@@ -67,7 +67,7 @@ where
                     ],
                 ));
                 let Some(config) = task_config_from_snapshot(&config, &connection_snapshot) else {
-                    write_executor_log_line("task:execute ignored after backend disconnect");
+                    write_executor_log_line("task:execute ignored for stale backend connection");
                     return None;
                 };
                 normalize_local_task_request(&mut request, &config);

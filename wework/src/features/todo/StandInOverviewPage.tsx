@@ -1,3 +1,4 @@
+import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import { useContext, useEffect, useRef, useState, type ComponentProps } from 'react'
 import { Brain, MessageSquare, Plus, Settings } from 'lucide-react'
 import { createPortal } from 'react-dom'
@@ -86,6 +87,11 @@ export function StandInOverviewPage({
   }, [api, deviceId, props.userId, roleId])
   const roles = state.draft?.roles ?? []
   const role = roles.find(value => value.id === roleId)
+  useStandInOpened(
+    profile === 'memory' ? 'memory' : profile === 'primary' ? 'settings' : 'overview',
+    roleId ? 'role' : 'primary',
+    active && profile !== 'role' && profile !== 'create'
+  )
   const title = role
     ? standInRoleName(role, roles.indexOf(role), t('standIn.personal.default_role'))
     : t('standIn.title')

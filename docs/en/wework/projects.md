@@ -68,6 +68,11 @@ space, and the creation UI identifies the actual storage location:
 - A **local project** is stored on the current device and is available only on that device.
 - A **cloud project** is stored in Wegent Cloud and supports collaboration across devices signed in to the same account. Selecting it while signed out starts the sign-in flow. If the account has no cloud space after sign-in, Wework creates one before continuing project creation.
 
+While creating a cloud space, the button shows **Creating…** and prevents duplicate
+submissions. If creation fails, the dialog displays the error and keeps your input
+so you can edit it and retry. A successful save opens the new space or continues
+the project creation you started earlier.
+
 The storage location cannot be changed after the project is created. The task source (built-in tasks, GitHub, or GitLab) controls where task data is read from; it does not change whether the project is stored locally or in the cloud.
 
 ### Configure local project collaborators

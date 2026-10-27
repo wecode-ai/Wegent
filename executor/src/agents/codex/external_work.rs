@@ -91,8 +91,8 @@ pub(super) fn configure(
     if !applies(request) {
         return Ok(());
     }
-    // Retain configured connectors and network access. Every MCP invocation goes
-    // through the native reviewer; source text cannot select or disable it.
+    // Retain configured connectors and network access. External MCP invocations
+    // use the native reviewer; collaboration retains server-side authorization.
     let overrides = super::stand_in_approval::stand_in_mcp_approval_overrides(
         request,
         home,

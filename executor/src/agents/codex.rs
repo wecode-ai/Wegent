@@ -4035,7 +4035,9 @@ fn build_codex_launch_config_with_route_scope(
         )?;
     launch_config.config_overrides.extend(request_mcp_overrides);
     launch_config.env.extend(request_mcp_environment);
-    if crate::runtime_work::stand_in_requires_confirmation(request) {
+    if crate::runtime_work::stand_in_requires_confirmation(request)
+        && !external_work::applies(request)
+    {
         let approvals = stand_in_mcp_approval_overrides(
             request,
             &codex_home,
