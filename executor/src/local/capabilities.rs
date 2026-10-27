@@ -688,7 +688,7 @@ impl GlobalCapabilityStore {
             self.install_plugin_runtime_metadata(&spec, &store_path, &mut manifest)?;
             restored.push(key);
         }
-        self.garbage_collect_unreferenced_managed_plugins(&manifest)?;
+        self.garbage_collect_unreferenced_managed_plugins(&manifest, |_| {})?;
         self.manifest.save_with_revision_bump(manifest)?;
         Ok(restored)
     }
@@ -696,6 +696,7 @@ impl GlobalCapabilityStore {
     fn garbage_collect_unreferenced_managed_plugins(
         &self,
         manifest: &Value,
+        mut observe_native_change: impl FnMut(&Path),
     ) -> Result<Vec<PathBuf>, CapabilitySyncError> {
         // Live and rollback references span agents and processes. A local manifest
         // cannot prove a shared package or native cache is unreferenced.
@@ -735,11 +736,13 @@ impl GlobalCapabilityStore {
             &self.plugins_dir,
             &self.plugins_dir.join("cache"),
             &expected_claude_cache_paths,
+            &mut observe_native_change,
         )?);
         removed.extend(remove_unreferenced_cloud_plugin_cache(
             &self.codex_plugins_dir,
             &self.codex_plugins_dir.join("cache"),
             &expected_codex_cache_paths,
+            &mut observe_native_change,
         )?);
         for marketplace in CLOUD_MANAGED_PLUGIN_MARKETPLACES {
             let desired_names = plugins
@@ -762,26 +765,31 @@ impl GlobalCapabilityStore {
                 &self.plugins_dir,
                 &claude_marketplace_dir.join("plugins"),
                 &desired_claude_link_names,
+                &mut observe_native_change,
             )?);
             removed.extend(remove_unreferenced_marketplace_links(
                 &self.codex_plugins_dir,
                 &codex_marketplace_dir.join("plugins"),
                 &desired_names,
+                &mut observe_native_change,
             )?);
             prune_unreferenced_marketplace_plugins(
                 &self.plugins_dir,
                 &claude_marketplace_dir.join(".claude-plugin/marketplace.json"),
                 &desired_names,
+                &mut observe_native_change,
             )?;
             prune_unreferenced_marketplace_plugins(
                 &self.plugins_dir,
                 &claude_marketplace_dir.join(".agents/plugins/marketplace.json"),
                 &desired_names,
+                &mut observe_native_change,
             )?;
             prune_unreferenced_marketplace_plugins(
                 &self.codex_plugins_dir,
                 &codex_marketplace_dir.join(".agents/plugins/marketplace.json"),
                 &desired_names,
+                &mut observe_native_change,
             )?;
         }
         Ok(removed)
@@ -1351,7 +1359,7 @@ where
             let _binding = self.plugin_sync_binding.lock_active()?;
             self.store.manifest.load()?
         };
-        let _changed = activation_revision::ActivationRevision::new(
+        let mut _changed = activation_revision::ActivationRevision::new(
             &self.store,
             &manifest,
             &skill_specs,
@@ -1394,7 +1402,9 @@ where
             self.record_mcps(payload.get("mcps"), mode, &mut manifest)?;
         }
         self.store
-            .garbage_collect_unreferenced_managed_plugins(&manifest)?;
+            .garbage_collect_unreferenced_managed_plugins(&manifest, |path| {
+                _changed.observe_cleanup_path(path);
+            })?;
         self.store.manifest.save_with_revision_bump(manifest)?;
         let success = skill_results
             .iter()
@@ -1942,6 +1952,7 @@ fn remove_unreferenced_cloud_plugin_cache(
     managed_root: &Path,
     cache_dir: &Path,
     expected_paths: &BTreeSet<PathBuf>,
+    observe_native_change: &mut impl FnMut(&Path),
 ) -> Result<Vec<PathBuf>, CapabilitySyncError> {
     ensure_managed_path_without_symlinks(managed_root, cache_dir)?;
     let mut removed = Vec::new();
@@ -1961,6 +1972,7 @@ fn remove_unreferenced_cloud_plugin_cache(
                         plugin_dir.display()
                     )));
                 }
+                observe_native_change(&plugin_dir);
                 remove_existing_path(&plugin_dir)?;
                 removed.push(plugin_dir);
                 continue;
@@ -1979,6 +1991,7 @@ fn remove_unreferenced_cloud_plugin_cache(
                 if referenced_legacy_zip {
                     continue;
                 }
+                observe_native_change(&plugin_dir);
                 remove_existing_path(&plugin_dir)?;
                 removed.push(plugin_dir);
                 continue;
@@ -1995,6 +2008,7 @@ fn remove_unreferenced_cloud_plugin_cache(
                     }
                     continue;
                 }
+                observe_native_change(&version_path);
                 remove_existing_path(&version_path)?;
                 removed.push(version_path);
             }
@@ -2009,6 +2023,7 @@ fn remove_unreferenced_marketplace_links(
     managed_root: &Path,
     plugins_dir: &Path,
     desired_names: &BTreeSet<String>,
+    observe_native_change: &mut impl FnMut(&Path),
 ) -> Result<Vec<PathBuf>, CapabilitySyncError> {
     ensure_managed_path_without_symlinks(managed_root, plugins_dir)?;
     let mut removed = Vec::new();
@@ -2018,6 +2033,7 @@ fn remove_unreferenced_marketplace_links(
             continue;
         }
         let path = entry.path();
+        observe_native_change(&path);
         remove_existing_path(&path)?;
         removed.push(path);
     }
@@ -2028,6 +2044,7 @@ fn prune_unreferenced_marketplace_plugins(
     managed_root: &Path,
     manifest_path: &Path,
     desired_names: &BTreeSet<String>,
+    observe_native_change: &mut impl FnMut(&Path),
 ) -> Result<(), CapabilitySyncError> {
     ensure_managed_path_without_symlinks(managed_root, manifest_path)?;
     if !manifest_path.is_file() {
@@ -2045,6 +2062,7 @@ fn prune_unreferenced_marketplace_plugins(
             .is_some_and(|name| desired_names.contains(name))
     });
     if plugins.len() != previous_len {
+        observe_native_change(manifest_path);
         write_json(manifest_path, &marketplace)?;
     }
     Ok(())

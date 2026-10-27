@@ -124,6 +124,79 @@ async fn activation_revision_ignores_repeated_and_superseded_plugin_syncs() {
     );
 }
 
+async fn assert_legacy_cleanup_marks_revision(prune_only: bool, fail_after_cleanup: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let mut store = store(root.path()).with_store_dir(root.path().join("private-store"));
+    store.shared_packages = false;
+    let orphan = store.codex_plugins_dir.join("cache/wegent/orphan/1.0");
+    let marketplace = store
+        .codex_plugins_dir
+        .join("marketplaces/wegent/.agents/plugins/marketplace.json");
+    if prune_only {
+        write_json(&marketplace, &json!({"plugins":[{"name":"orphan"}]})).unwrap();
+    } else {
+        fs::create_dir_all(&orphan).unwrap();
+        fs::write(orphan.join("SKILL.md"), "orphan native capability").unwrap();
+    }
+    if fail_after_cleanup {
+        let invalid = store
+            .codex_plugins_dir
+            .join("marketplaces/wework/.agents/plugins/marketplace.json");
+        fs::create_dir_all(invalid.parent().unwrap()).unwrap();
+        fs::write(invalid, "invalid JSON").unwrap();
+    }
+    let handler = CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v1"));
+    let previous = crate::services::capability_activation::revision();
+
+    let result = handler.apply_sync(json!({"mode":"merge"})).await;
+
+    assert_eq!(result.is_err(), fail_after_cleanup);
+    if prune_only {
+        let value: Value = serde_json::from_slice(&fs::read(marketplace).unwrap()).unwrap();
+        assert_eq!(value["plugins"], json!([]));
+    } else {
+        assert!(!orphan.exists(), "native cleanup must actually happen");
+    }
+    assert!(
+        crate::services::capability_activation::revision() > previous,
+        "native cleanup must invalidate the current capability revision"
+    );
+
+    let _activation = crate::services::capability_activation::activate().await;
+    let manifest = store.manifest.load().unwrap();
+    let mut unchanged = super::super::activation_revision::ActivationRevision::new(
+        &store,
+        &manifest,
+        &[],
+        std::iter::empty(),
+        false,
+        false,
+    );
+    let repeated = store.garbage_collect_unreferenced_managed_plugins(&manifest, |path| {
+        unchanged.observe_cleanup_path(path);
+    });
+    assert_eq!(repeated.is_err(), fail_after_cleanup);
+    assert!(
+        !unchanged.has_changed(),
+        "repeated cleanup with no native changes must remain idempotent"
+    );
+}
+
+#[tokio::test]
+async fn activation_revision_tracks_legacy_native_cache_cleanup() {
+    assert_legacy_cleanup_marks_revision(false, false).await;
+}
+
+#[tokio::test]
+async fn activation_revision_tracks_legacy_marketplace_pruning() {
+    assert_legacy_cleanup_marks_revision(true, false).await;
+}
+
+#[tokio::test]
+async fn activation_revision_tracks_partial_legacy_cleanup() {
+    assert_legacy_cleanup_marks_revision(false, true).await;
+}
+
 #[tokio::test]
 async fn activation_revision_detects_same_name_package_and_component_changes() {
     use super::super::activation_revision::ActivationRevision;

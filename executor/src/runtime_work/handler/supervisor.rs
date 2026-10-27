@@ -595,7 +595,7 @@ impl RuntimeWorkRpcHandler {
                 "source": source.clone(),
             }),
         );
-        let ephemeral = runtime_task_uses_ephemeral_codex_thread(&link);
+        let ephemeral = runtime_task_uses_ephemeral_codex_thread(link);
         self.spawn_turn(SpawnTurnRequest {
             local_task_id: local_task_id.to_owned(),
             runtime: "codex".to_owned(),

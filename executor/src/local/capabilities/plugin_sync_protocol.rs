@@ -330,7 +330,7 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         let _activation = crate::services::capability_activation::activate().await;
         let queued_ms = started.elapsed().as_millis();
         let _publication_lock = self.store.lock_shared_manifest()?;
-        let _changed;
+        let mut _changed;
         let mut manifest;
         let mut results = Vec::new();
         let plugins_superseded;
@@ -509,7 +509,9 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 .any(|result| result.get("status").and_then(Value::as_str) != Some("superseded"))
         {
             self.store
-                .garbage_collect_unreferenced_managed_plugins(&manifest)?;
+                .garbage_collect_unreferenced_managed_plugins(&manifest, |path| {
+                    _changed.observe_cleanup_path(path);
+                })?;
             self.store.manifest.save_with_revision_bump(manifest)?;
         }
         crate::logging::log_executor_event(

@@ -25,7 +25,7 @@ enum State {
 
 pub(super) struct ActivationRevision {
     paths: BTreeMap<PathBuf, StateKind>,
-    before: Vec<State>,
+    before: BTreeMap<PathBuf, State>,
 }
 
 impl ActivationRevision {
@@ -70,6 +70,22 @@ impl ActivationRevision {
 
     pub(super) fn has_changed(&self) -> bool {
         self.before != capture(&self.paths)
+    }
+
+    pub(super) fn observe_cleanup_path(&mut self, path: &Path) {
+        if self.paths.contains_key(path) {
+            return;
+        }
+        let kind = if path
+            .extension()
+            .is_some_and(|extension| extension == "json")
+        {
+            StateKind::Json
+        } else {
+            StateKind::Entry
+        };
+        self.paths.insert(path.to_owned(), kind);
+        self.before.insert(path.to_owned(), read_state(path, kind));
     }
 }
 
@@ -149,10 +165,10 @@ fn add_plugin_paths(
     }
 }
 
-fn capture(paths: &BTreeMap<PathBuf, StateKind>) -> Vec<State> {
+fn capture(paths: &BTreeMap<PathBuf, StateKind>) -> BTreeMap<PathBuf, State> {
     paths
         .iter()
-        .map(|(path, kind)| read_state(path, *kind))
+        .map(|(path, kind)| (path.clone(), read_state(path, *kind)))
         .collect()
 }
 
