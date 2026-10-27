@@ -5943,9 +5943,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   <WorkItemContextPanel
                     key={`${boundCloudProject.id}:${boundCloudItem.id}:${boundCloudItem.version}:${currentProjectSpaceRuntimeTask.deviceId}:${currentProjectSpaceRuntimeTask.taskId}`}
                     api={boundProjectSpaceApi}
+                    services={services}
                     project={boundCloudProject}
                     item={boundCloudItem}
                     currentTask={currentProjectSpaceRuntimeTask}
+                    currentUserId={state.user?.id}
+                    localProjects={state.projects}
                     deviceNamesById={getWorkbenchDeviceNamesById(state.devices)}
                     onOpenBoard={openBoundProjectSpaceTask}
                     onOpenTask={openRuntimeTask}
