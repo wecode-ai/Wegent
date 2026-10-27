@@ -60,6 +60,27 @@ fn config_from_env() -> Option<MinioConfig> {
     Some(config)
 }
 
+/// Write a new object without overwriting an active delivery revision.
+pub async fn write_object(
+    client: &HttpClient,
+    key: &str,
+    bytes: &[u8],
+) -> Result<(), DeliveryReadError> {
+    let config = config_from_env().ok_or(DeliveryReadError::Unavailable)?;
+    ensure_bucket(client, &config).await?;
+    minio_client::put_object(client, &config, key, bytes)
+        .await
+        .map_err(|_| DeliveryReadError::Unavailable)
+}
+
+/// Remove abandoned staging objects or objects superseded by a committed save.
+pub async fn delete_object(client: &HttpClient, key: &str) -> Result<(), DeliveryReadError> {
+    let config = config_from_env().ok_or(DeliveryReadError::Unavailable)?;
+    minio_client::delete_object(client, &config, key)
+        .await
+        .map_err(|_| DeliveryReadError::Unavailable)
+}
+
 /// `DeliveryStorage.get_bytes(object_key)`: ensure the bucket once per process,
 /// then read the object, retrying once on a missing key.
 pub async fn read_object(client: &HttpClient, key: &str) -> Result<Vec<u8>, DeliveryReadError> {

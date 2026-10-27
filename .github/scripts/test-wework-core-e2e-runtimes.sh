@@ -22,6 +22,14 @@ ruby -ryaml -e '
     raise "Backend Rust runtime producer and consumer must hash identical source inputs" unless producer_digest == consumer_digest
   end
   consumer = consumer_workflow.fetch("jobs").fetch("build-wework-desktop-core-e2e")
+  producer_digest = producer.fetch("steps").find { |s| s["env"]&.key?("SOURCE_DIGEST") }.fetch("env").fetch("SOURCE_DIGEST")
+  [consumer_workflow, YAML.safe_load(File.read(File.join(File.dirname(ARGV[2]), "ci-cache-warmup.yml")))].each do |config|
+    digests = config.fetch("jobs").values.flat_map { |job| job.fetch("steps", []) }
+      .map { |s| s["env"]&.fetch("BACKEND_RS_SOURCE_DIGEST", nil) }.compact
+      .select { |digest| digest.include?("backend-rs/src/**" + 39.chr) }
+    raise "Missing shared Backend runtime digest" if digests.empty?
+    raise "Backend runtime image producer and consumer digests differ" unless digests.all? { |digest| digest == producer_digest }
+  end
   producer_seconds = Integer(producer.fetch("timeout-minutes")) * 60
   consumer_seconds = Integer(consumer.fetch("timeout-minutes")) * 60
   oci_seconds = Integer(step.fetch("env").fetch("OCI_RUNTIME_WAIT_SECONDS"))
