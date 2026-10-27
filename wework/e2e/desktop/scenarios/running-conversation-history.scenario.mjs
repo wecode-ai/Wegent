@@ -18,7 +18,11 @@ import {
   createCachedHistoryTask,
   verifyCachedHistorySearch,
 } from '../modules/cached-history-search.mjs'
-import { createSingleRootLocalProject, selectE2EModel, WORKBENCH_READY_TIMEOUT_MS } from '../modules/shared.mjs'
+import {
+  createSingleRootLocalProject,
+  selectE2EModel,
+  WORKBENCH_READY_TIMEOUT_MS,
+} from '../modules/shared.mjs'
 import {
   TERMINAL_HISTORY_TURN_COUNT as LEGACY_TURN_COUNT,
   seedNativeTerminalHistory,
@@ -740,13 +744,13 @@ export function createDesktopScenario({
 
       // Publish capabilities while model work is deliberately held open, then
       // start another real task. This reproduces the queued-writer startup stall.
-      const cleared = await requestExecutor(
-        control,
-        'runtime.connectors.clear',
-        { syncRevision: Date.now() },
-        uiTimeoutMs
+      const cleared = JSON.parse(
+        await control.command('clearLocalExecutorConnectors', 'body', {
+          timeoutMs: uiTimeoutMs,
+        })
       )
       assert.equal(cleared.configured, false)
+      assert.notEqual(cleared.stale, true, 'The connector clear was discarded as stale')
       const rowsBeforePagedTask = new Set(
         JSON.parse(await control.command('snapshot', 'body')).testIds
       )
