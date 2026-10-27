@@ -39,6 +39,7 @@ import { IssueExecutionEnvironmentNotice } from "../execution-environment/IssueE
 import { useProjectExecutionEnvironmentReadiness } from "../execution-environment/issueEnvironmentReadiness";
 import { canAccessCollaborationProjectView } from "../permissions";
 import { ProjectArchiveDialog } from "./ProjectArchiveDialog";
+import { WorkspaceCreateDialog } from "./WorkspaceCreateDialog";
 import { Tooltip } from "../issue-detail/Tooltip";
 import { truncateRuntimeTaskTitle } from "@wegent/chat-core/runtime-task-title";
 import { IssueHomeComposer } from "./IssueHomeComposer";
@@ -217,6 +218,8 @@ const platformMessages = {
     group: "协作小组",
     workspaceHint: "空间是成员、项目、智能体和执行环境的协作边界。",
     createWorkspace: "创建云端空间",
+    creatingWorkspace: "正在创建…",
+    createWorkspaceFailed: "创建云端空间失败，请重试。",
     cloudStorageNotice:
       "空间、项目与 Issue 将保存在 Wegent 云端，可在 Wework 和网页端跨设备协作。",
     localStorage: "本地 · 仅当前设备",
@@ -438,6 +441,8 @@ const platformMessages = {
     workspaceHint:
       "A workspace is the collaboration boundary for members, projects, agents, and execution environments.",
     createWorkspace: "Create cloud space",
+    creatingWorkspace: "Creating…",
+    createWorkspaceFailed: "Failed to create cloud space. Please try again.",
     cloudStorageNotice:
       "The space, projects, and issues are stored in Wegent Cloud for cross-device collaboration in Wework and on the web.",
     localStorage: "Local · This device only",
@@ -4943,98 +4948,6 @@ function WorkspaceProjectPicker({
             </button>
           ) : null}
         </div>
-      </section>
-    </div>
-  );
-}
-
-function WorkspaceCreateDialog({
-  messages,
-  ownerOptions,
-  onClose,
-  onCreate,
-}: {
-  messages: PlatformMessages;
-  ownerOptions?: Array<{ label: string; namespace: string }>;
-  onClose(): void;
-  onCreate(input: {
-    name: string;
-    description?: string;
-    namespace?: string;
-  }): Promise<void>;
-}) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [namespace, setNamespace] = useState("default");
-  const [saving, setSaving] = useState(false);
-  const effectiveOwnerOptions = ownerOptions ?? [
-    { label: messages.personalOwner, namespace: "default" },
-  ];
-  return (
-    <div className="collaboration-dialog-backdrop">
-      <section
-        className="collaboration-dialog collaboration-workspace-create-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={messages.createWorkspace}
-      >
-        <h2>{messages.createWorkspace}</h2>
-        <p className="collaboration-workspace-storage-notice">
-          {messages.cloudStorageNotice}
-        </p>
-        <label>
-          {messages.name}
-          <input
-            autoFocus
-            data-testid="collaboration-workspace-name-input"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-          />
-        </label>
-        <label>
-          {messages.description}
-          <textarea
-            data-testid="collaboration-workspace-description-input"
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-          />
-        </label>
-        <label>
-          {messages.owner}
-          <select
-            data-testid="collaboration-workspace-owner-select"
-            onChange={(event) => setNamespace(event.target.value)}
-            value={namespace}
-          >
-            {effectiveOwnerOptions.map((option) => (
-              <option key={option.namespace} value={option.namespace}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <small>{messages.ownerHint}</small>
-        </label>
-        <footer>
-          <button type="button" onClick={onClose}>
-            {messages.cancel}
-          </button>
-          <button
-            type="button"
-            className="collaboration-primary-button"
-            data-testid="collaboration-workspace-create-confirm"
-            disabled={saving || !name.trim()}
-            onClick={() => {
-              setSaving(true);
-              void onCreate({
-                name: name.trim(),
-                description: description.trim() || undefined,
-                namespace,
-              }).finally(() => setSaving(false));
-            }}
-          >
-            {messages.createWorkspace}
-          </button>
-        </footer>
       </section>
     </div>
   );

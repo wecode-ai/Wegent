@@ -353,6 +353,7 @@ export function createDesktopScenario({
         await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
 
         const workspaceName = `${WORKSPACE_NAME}-${process.pid}`
+        const invalidWorkspaceName = 'x'.repeat(101)
         await control.command('click', scoped('[data-testid="collaboration-workspace-create"]'))
         await control.command(
           'waitFor',
@@ -363,7 +364,7 @@ export function createDesktopScenario({
           'fill',
           scoped('[data-testid="collaboration-workspace-name-input"]'),
           {
-            value: workspaceName,
+            value: invalidWorkspaceName,
           }
         )
         await control.command(
@@ -375,6 +376,32 @@ export function createDesktopScenario({
           'click',
           scoped('[data-testid="collaboration-workspace-create-confirm"]')
         )
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-workspace-create-error"]'),
+          { text: 'Request parameter validation failed', timeoutMs: uiTimeoutMs }
+        )
+        assert.equal(
+          await control.command(
+            'getValue',
+            scoped('[data-testid="collaboration-workspace-name-input"]')
+          ),
+          invalidWorkspaceName,
+          'A failed creation discarded the workspace draft'
+        )
+        await control.command(
+          'fill',
+          scoped('[data-testid="collaboration-workspace-name-input"]'),
+          { value: workspaceName }
+        )
+        await control.command(
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-workspace-create-confirm"]')
+        )
+        await control.command('waitFor', scoped('.collaboration-workspace-create-dialog'), {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
         workspace = await waitForApiValue(
           async () => {
             const response = await request('/api/v1/workspaces')
