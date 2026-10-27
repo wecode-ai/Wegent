@@ -21,6 +21,7 @@ const item = {
 
 const tasks = Array.from({ length: 9 }, (_, index) => ({
   id: index + 1,
+  task_user_id: 1,
   device_id: 'local-device',
   task_id: `task-${index + 1}`,
   task_title: `Task ${index + 1}`,
@@ -56,6 +57,7 @@ function editor(overrides: Partial<ComponentProps<typeof TodoEditor>> = {}) {
       onUpdated={vi.fn()}
       onClose={vi.fn()}
       api={api}
+      currentUserId={1}
       initialTaskBindings={tasks}
       {...overrides}
     />

@@ -796,13 +796,49 @@ describe('TodoEditor external item sync', () => {
           initialTaskBindings={[taskBinding as unknown as LoopItemTaskBinding]}
         />
       )
-      await screen.findByTestId('cloud-todo-tasks')
+      if (binding.task_user_id === 1) {
+        await screen.findByTestId('cloud-todo-tasks')
+      } else {
+        expect(screen.queryByTestId('cloud-todo-tasks')).not.toBeInTheDocument()
+      }
       await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
       expect(onCreateTask).toHaveBeenCalledOnce()
       expect(onOpenTaskConversation).not.toHaveBeenCalled()
       expect(screen.getByTestId('cloud-todo-personal-task-start')).toHaveTextContent('创建任务')
     }
   )
+
+  it('keeps local Runtime task ownership independent from the assigned cloud user', async () => {
+    const item = { ...baseItem, assignee_user_id: 1, assignee_agent_id: null }
+    const onCreateTask = vi.fn()
+    const binding = {
+      id: 99,
+      task_user_id: 0,
+      device_id: 'local-device',
+      task_id: 'local-task',
+      task_title: 'Local task',
+      linked_at: '2026-10-14T08:00:00Z',
+      loop_item_id: item.id,
+    } as LoopItemTaskBinding
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={item}
+        project={{ ...project, project_store: 'local' }}
+        allItems={[item]}
+        api={{ ...api, listTaskBindings: vi.fn(async () => [binding]) }}
+        currentUserId={1}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onCreateTask={onCreateTask}
+        initialTaskBindings={[binding]}
+      />
+    )
+    expect(await screen.findByTestId('cloud-todo-open-task-conversation-99')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
+    expect(onCreateTask).toHaveBeenCalledOnce()
+  })
 
   it('shows running and recent tasks directly and uses expand only for the remaining tasks', async () => {
     const onCreateTask = vi.fn()
@@ -1002,6 +1038,7 @@ describe('TodoEditor external item sync', () => {
         {
           id: 7,
           device_id: 'local-device',
+          task_user_id: 1,
           task_id: 'local-task',
           task_title: '立即显示的本地任务',
         },
@@ -1099,6 +1136,7 @@ describe('TodoEditor external item sync', () => {
           {
             id: 8,
             device_id: 'local-device',
+            task_user_id: 1,
             task_id: 'board-task',
             task_title: '看板已加载的任务',
           },
@@ -1133,6 +1171,7 @@ describe('TodoEditor external item sync', () => {
     const initialBinding = {
       id: 8,
       device_id: 'local-device',
+      task_user_id: 1,
       task_id: 'board-task',
       task_title: '看板任务',
     }
@@ -1186,6 +1225,7 @@ describe('TodoEditor external item sync', () => {
           {
             id: 8,
             device_id: 'local-device',
+            task_user_id: 1,
             task_id: 'first-task',
             task_title: '第一个 Issue 的任务',
           },
@@ -1195,6 +1235,7 @@ describe('TodoEditor external item sync', () => {
           {
             id: 9,
             device_id: 'local-device',
+            task_user_id: 1,
             task_id: 'second-task',
             task_title: '第二个 Issue 的任务',
           },
@@ -1239,6 +1280,7 @@ describe('TodoEditor external item sync', () => {
         {
           id: 10,
           device_id: 'local-device',
+          task_user_id: 1,
           task_id: 'stale-task',
           task_title: '过期刷新结果',
         },

@@ -11,7 +11,7 @@ impl RuntimeWorkRpcHandler {
         let link = self
             .store
             .get_task_summary(&task_id)
-            .filter(|link| link.status != "archived" && !self.archived_link_is_deleted(link));
+            .filter(|link| !self.archived_link_is_deleted(link));
         let Some(mut link) = link else {
             return Ok(json!({
                 "success": false,
@@ -19,6 +19,13 @@ impl RuntimeWorkRpcHandler {
                 "error": "Task not found on the owning Runtime",
             }));
         };
+        if link.status == "archived" {
+            return Ok(json!({
+                "success": false,
+                "code": "task_archived",
+                "error": "This task has been archived. Restore it from archived tasks before opening it.",
+            }));
+        }
         apply_local_execution_state(
             &mut link,
             self.is_active_local_task(&task_id),

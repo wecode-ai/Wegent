@@ -780,7 +780,7 @@ async def test_project_transcript_uses_manual_binding_and_reports_real_device_fa
         projectSession={"projectId": str(s.project.id), "issueId": s.issue.id},
     )
     with pytest.raises(HTTPException) as exc:
-        await get_runtime_transcript(db=s.db, user_id=s.member.id, address=request)
+        await get_runtime_transcript(db=s.db, user_id=s.owner.id, address=request)
     assert exc.value.status_code == 502
     assert "admin-cloud" in exc.value.detail
     assert s.rpc.await_args.kwargs["user_id"] == s.owner.id
