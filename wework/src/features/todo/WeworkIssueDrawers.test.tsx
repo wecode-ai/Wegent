@@ -299,6 +299,20 @@ function Project({
             ]),
           },
           issues: {},
+          taskBindings: {
+            list: vi.fn(async () =>
+              ['run-1', 'run-2'].map(taskId => ({
+                id: `binding-${taskId}`,
+                projectId: 'project',
+                issueId: issue.id,
+                taskUserId: 9001,
+                deviceId: 'device',
+                taskId,
+                backendTaskId: null,
+                linkedAt: '2026-09-20T00:00:00Z',
+              }))
+            ),
+          },
         } as never
       }
       project={
@@ -320,6 +334,7 @@ function Project({
       services={
         {
           teamApi: { listTeams: vi.fn(async () => []) },
+          standInApi: { readTask: vi.fn(async () => ({ success: true })) },
         } as never
       }
       runtimeWork={runtimeWork}
