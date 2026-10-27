@@ -1074,6 +1074,11 @@ jobs:
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
+          if [[ -z "$E2E_SEGMENT" ]]; then
+            xvfb-run -a --server-args="-screen 0 1280x720x24" \
+              pnpm --filter wework "$E2E_COMMAND"
+            exit 0
+          fi
           IFS=',' read -ra segments <<< "$E2E_SEGMENT"
           status=0
           for segment in "${segments[@]}"; do

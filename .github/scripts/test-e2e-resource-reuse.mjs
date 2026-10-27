@@ -13,8 +13,12 @@ import test from "node:test";
 
 const runner = resolve(".github/scripts/run-attachment-replica-e2e.sh");
 
-for (const failFirst of [false, true]) {
-  test(`plugin batch preserves every selected scenario (failure=${failFirst})`, () => {
+for (const [segments, failFirst] of [
+  ["plugin-lifecycle,plugin-composer-network-isolation", false],
+  ["plugin-lifecycle,plugin-composer-network-isolation", true],
+  ["", false],
+]) {
+  test(`plugin batch preserves selected scenarios (${segments || "all"}, failure=${failFirst})`, () => {
     const root = mkdtempSync(join(tmpdir(), "e2e-plugin-batch-"));
     try {
       const workflow = readFileSync(".github/workflows/wework-e2e.yml", "utf8");
@@ -49,14 +53,14 @@ if [[ "$FAIL_FIRST" == true && "\${@: -1}" == plugin-lifecycle ]]; then exit 37;
           WEWORK_E2E_EXECUTOR_BIN: executable,
           WEWORK_E2E_BACKEND_RS_BIN: executable,
           E2E_COMMAND: "e2e:desktop:plugins",
-          E2E_SEGMENT: "plugin-lifecycle,plugin-composer-network-isolation",
+          E2E_SEGMENT: segments,
         },
       });
       assert.equal(result.status, failFirst ? 37 : 0, result.stderr);
-      assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), [
-        "plugin-lifecycle",
-        "plugin-composer-network-isolation",
-      ]);
+      assert.deepEqual(
+        readFileSync(log, "utf8").trim().split("\n"),
+        segments ? segments.split(",") : ["e2e:desktop:plugins"],
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
