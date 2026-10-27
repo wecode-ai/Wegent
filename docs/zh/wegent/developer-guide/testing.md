@@ -623,3 +623,11 @@ pnpm --filter wecode-ai-assistant test -- src/__tests__/utils/test_example.test.
 - [Testing Library](https://testing-library.com/)
 - [Jest 文档](https://jestjs.io/)
 - [GitHub Actions](https://docs.github.com/en/actions)
+
+## E2E 资源复用与分片分配
+
+平台 E2E 保持四个既有分片，S3 上传测试复用 shard 2 的 MySQL、Redis 和 MinIO，媒体托管测试复用 shard 3 的相同服务。测试入口、断言和证据制品保持不变；Redis 使用独立逻辑库，媒体校验工具预装在共享镜像中。复制测试在 shard 3 按需启动专用副本和 broker，结束或失败时保存日志并删除容器，不在其他分片常驻。知识远程索引测试移至 shard 4。
+
+该分配参考成功运行 [40548056927](https://github.com/wecode-ai/Wegent/actions/runs/40548056927) 和 [40547828678](https://github.com/wecode-ai/Wegent/actions/runs/40547828678)：shard 1 的知识索引步骤耗时 149–164 秒，复制步骤耗时 20–26 秒，媒体测试耗时 24–26 秒，S3 测试约 6 秒。移走 shard 1 的额外步骤，并在现有较轻分片承载附件测试；不增加机器，不以增加并行 job 缩短墙钟时间。后续按实际测试步骤耗时与累计 runner 时间复核分配，不计排队时间。
+
+平台 E2E 的普通标签事件不运行测试分类，仅 `ci:all` 标签触发完整回归。桌面 Plugins 的选中场景在一个 job 内依次运行，保留每个场景的独立初始化与失败结果。macOS 共享 job 显示为 `Wework Desktop macOS E2E`：Inspector 按受影响路径自动运行，memory 步骤仍仅对带 `ci:all` 的 PR 执行；定时运行和手动运行不会自动执行 memory 步骤。
