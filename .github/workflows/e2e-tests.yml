@@ -287,7 +287,6 @@ jobs:
             ! docker cp "$container_id:/app/attachment-s3-e2e" \
             /tmp/e2e-attachment-s3-e2e; then
             echo "Cached runtime image is missing required binaries; rebuilding"
-            echo "exists=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           docker pull "$IMAGE"
