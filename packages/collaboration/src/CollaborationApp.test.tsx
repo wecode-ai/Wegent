@@ -74,7 +74,7 @@ import { CollaborationFilesAdapter } from "./web-adapter/CollaborationFilesAdapt
 import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
 import { ProjectBoardAdapter } from "./web-adapter/ProjectBoardAdapter";
 import { ProjectIssueTable } from "./platform";
-import { ProjectBoardBody } from "./project-board";
+import { BoardViewNavigation, ProjectBoardBody } from "./project-board";
 import { WorkspaceProjectsHomeAdapter } from "./web-adapter/WorkspaceProjectsHomeAdapter";
 import {
   CollaborationProjectViewShell,
@@ -802,7 +802,15 @@ describe("CollaborationApp API boundary", () => {
     });
     renderBoardIssueCard.mock.calls[0][0].onMarkRead();
     expect(controller.commands.markIssueRead).toHaveBeenCalledWith(issue);
-    expect(board?.props.onOpenBoardSettings).toEqual(expect.any(Function));
+    expect(board?.props.onSaveViews).toEqual(expect.any(Function));
+    const viewNavigation = findByType(
+      boardBody?.props.viewNavigation,
+      BoardViewNavigation,
+    );
+    expect(viewNavigation?.props.canManage).toBe(true);
+    expect(viewNavigation?.props.controller.saveView).toEqual(
+      expect.any(Function),
+    );
   });
 
   it("passes the selected Issue task bindings to a custom detail renderer", () => {
@@ -908,6 +916,26 @@ describe("CollaborationApp API boundary", () => {
 
     expect(board?.props.onDeleteIssue).toBeUndefined();
     expect(table?.props.onDelete).toBeUndefined();
+  });
+
+  it("propagates failed board writes so the board never announces a successful move", async () => {
+    const host = createHost(false, "home");
+    host.location = { projectId: "project-1", issueId: null, view: "board" };
+    const controller = controllerWithProject(createProject(1));
+    controller.commands.updateIssue.mockRejectedValue(
+      new Error("Permission denied"),
+    );
+    collaborationAppMocks.useController.mockReturnValue(controller);
+    const app = CollaborationApp({ api: createApi(), host });
+    const shell = findByType(app, CollaborationProjectViewShell);
+    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
+    await expect(
+      board!.props.onMove({ id: "issue-1", version: 1 } as CollaborationIssue, {
+        kind: "tag",
+        tags: ["frontend"],
+        optimisticItems: [],
+      }),
+    ).rejects.toThrow("Permission denied");
   });
 
   it("wires completed Issue archiving into board, table, and detail", () => {

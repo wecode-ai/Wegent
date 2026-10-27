@@ -3226,7 +3226,11 @@ def _create_terminal_runtime_activity(
     )
     test_db.add_all([task, execution])
     test_db.flush()
-    metadata = {"execution_id": execution.id, "run_status": "completed"}
+    metadata = {
+        "execution_id": execution.id,
+        "run_status": "completed",
+        "runtime_completed_at": datetime.now(UTC).isoformat(),
+    }
     if turn_id is not None:
         metadata["runtime_turn_id"] = turn_id
     activity = ProjectChatMessage(

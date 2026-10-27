@@ -57,17 +57,26 @@ pub struct ProjectDescriptor {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ProjectUpdate {
     pub version: i64,
+    pub tag_change: Option<ProjectTagChange>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
     pub provider_config: Option<Value>,
     pub board_config: Option<Value>,
+    pub board_views: Option<Value>,
     pub card_display: Option<Value>,
     pub pull_request_automation: Option<Value>,
     pub workflow_definition: Option<Value>,
     pub collaboration_groups: Option<Value>,
     pub automatic_processing_rules: Option<Value>,
     pub execution_environment: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProjectTagChange {
+    pub source: String,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

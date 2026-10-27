@@ -3091,6 +3091,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       attachments: paneSession.attachments,
       uploadingFiles: paneSession.uploadingFiles,
       errors: paneSession.attachmentErrors,
+      dismissAttachmentError: paneSession.dismissAttachmentError,
       handleFileSelect: paneSession.handleFileSelect,
       removeAttachment: paneSession.removeAttachment,
       modelSelectorOpenSignal,
@@ -3113,6 +3114,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [
       modelSelectorOpenSignal,
       paneSession.attachmentErrors,
+      paneSession.dismissAttachmentError,
       paneSession.attachments,
       paneSession.handleFileSelect,
       paneSession.removeAttachment,

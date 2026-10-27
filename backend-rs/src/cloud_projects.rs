@@ -80,6 +80,7 @@ pub struct CloudMetadataInput {
     pub provider_config: Option<OpaqueJson>,
     pub card_display: Option<OpaqueJson>,
     pub board_config: Option<OpaqueJson>,
+    pub board_views: Option<OpaqueJson>,
     pub ai_automation: Option<OpaqueJson>,
     pub pull_request_automation: Option<OpaqueJson>,
     pub workflow_definition: Option<OpaqueJson>,

@@ -11,6 +11,7 @@ core_segments=(
   collaboration-deliveries
   collaboration-issue-task-discovery
   collaboration-app-queue-identity
+  collaboration-runtime-reconciliation
   collaboration-issue-archive
   collaboration-board-sorting
   collaboration-board-move-recovery
@@ -45,6 +46,7 @@ core_segments=(
   collaboration-issue-comment-mention
   collaboration-issue-assignment-activity
   collaboration-issue-comment-attachments
+  collaboration-issue-attachment-preview
   collaboration-issue-comment-notification
   collaboration-issue-mcp-comments
   cloud-space-mention
@@ -64,6 +66,7 @@ core_segments=(
   fork-provider-preservation
   codex-account-login
   permission-modes
+  runtime-input-answer-persistence
   workbench-mode
   computer-use
   task-status-sync
@@ -216,7 +219,7 @@ cloud_shards=(
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
   core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,streaming-conversation-switching,task-status-sync,goal-state-sync,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login,notification-tab-navigation
-  project-assignment-notification,resilience,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle,mcp-apps
+  project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle,mcp-apps
   window-lifecycle,model-routing,collaboration-app-queue-identity,stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,permission-modes,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
   collaboration-board-sorting,component-update,environment-panel-scroll,running-conversation-history,workspace-tabs,collaboration-board-move-recovery,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy
   claude-runtime,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery
@@ -224,7 +227,7 @@ core_shards=(
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference
   conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome
   split-workbench
-  collaboration-shared-core
+  collaboration-shared-core,runtime-input-answer-persistence
 )
 
 validate_core_shards() {
@@ -386,6 +389,7 @@ select_cloud_worktree_checkpoints() {
 }
 
 select_collaboration_dispatch_checkpoints() {
+  select_target "core:collaboration-runtime-reconciliation"
   select_target "core:collaboration-worktree-policy"
   select_target "core:project-assignment-notification"
   select_target "core:collaboration-local-agent-dispatch"
@@ -828,6 +832,15 @@ classify_wework_path() {
       select_target "core:collaboration-app-queue-identity"
       return
       ;;
+    wework/e2e/desktop/scenarios/collaboration-runtime-reconciliation.scenario.mjs | \
+      wework/e2e/desktop/modules/database-lock.mjs | \
+      wework/e2e/desktop/modules/runtime-event-proxy.mjs | \
+      wework/e2e/desktop/modules/runtime-reconciliation-model.mjs | \
+      wework/scripts/runtime-event-proxy.test.mjs | \
+      wework/scripts/runtime-reconciliation-model.test.mjs)
+      select_target "core:collaboration-runtime-reconciliation"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-board-sorting.scenario.mjs)
       select_target "core:collaboration-board-sorting"
       return
@@ -957,6 +970,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-issue-comment-attachments.scenario.mjs)
       select_target "core:collaboration-issue-comment-attachments"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-issue-attachment-preview.scenario.mjs)
+      select_target "core:collaboration-issue-attachment-preview"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-issue-comment-notification.scenario.mjs)
@@ -1135,10 +1152,16 @@ classify_wework_path() {
       ;;
 
     # Right-workspace temporary chats have an independently bootstrapped
-    # ephemeral-thread scenario.
+    # ephemeral-thread scenario. Accepted runtime input answers are shared
+    # between the main pane and temporary chats.
     wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
       wework/e2e/desktop/scenarios/temporary-chat.scenario.mjs)
       select_target "core:temporary-chat"
+      select_target "core:runtime-input-answer-persistence"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/runtime-input-answer-persistence.scenario.mjs)
+      select_target "core:runtime-input-answer-persistence"
       return
       ;;
 
@@ -1201,6 +1224,7 @@ classify_wework_path() {
     # Claude conversations cover both local and remote executor routing.
     wework/src/features/workbench/useWorkbenchRuntimeMessaging*)
       select_target "core:core-task-flow"
+      select_target "core:runtime-input-answer-persistence"
       select_target "core:project-ai-settings"
       select_target "core:claude-runtime"
       select_cloud_worktree_checkpoints
@@ -1403,6 +1427,23 @@ classify_path() {
       select_account_auth_checkpoints
       select_uninstall_checkpoints
       select_target "cloud:plugin-auto-update"
+      ;;
+  esac
+
+  case "$path" in
+    backend/app/api/ws/device_namespace.py | \
+      backend/app/api/endpoints/loop_item_executions.py | \
+      backend/app/schemas/runtime_execution_snapshot.py | \
+      backend/app/services/project_chat/execution_snapshot.py | \
+      backend/app/services/loop_item_executions/* | \
+      backend/tests/api/ws/test_device_namespace*.py | \
+      backend/tests/api/ws/test_device_reconnect_storm.py | \
+      backend/tests/api/ws/test_device_runtime_content_reconciliation.py | \
+      backend/tests/api/test_loop_item_executions_api.py | \
+      backend/tests/schemas/test_runtime_execution_snapshot*.py | \
+      backend/tests/services/test_loop_item_executions.py | \
+      backend/tests/services/test_project_chat_execution_snapshot.py)
+      select_target "core:collaboration-runtime-reconciliation"
       ;;
   esac
 
@@ -1661,6 +1702,7 @@ classify_path() {
       select_target "core:collaboration-issue-comment-mention"
       select_target "core:collaboration-issue-assignment-activity"
       select_target "core:collaboration-issue-comment-attachments"
+      select_target "core:collaboration-issue-attachment-preview"
       select_target "core:collaboration-issue-comment-notification"
       select_target "core:collaboration-board-sorting"
       select_target "core:collaboration-board-move-recovery"
@@ -1675,6 +1717,15 @@ classify_path() {
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites
+      ;;
+    backend/app/api/endpoints/adapter/attachments.py | \
+      backend/tests/api/endpoints/adapter/test_attachment_download_policy_routes.py | \
+      backend/tests/api/endpoints/adapter/test_content_disposition.py | \
+      backend/app/api/endpoints/cloud_projects.py | \
+      backend/app/api/endpoints/deliveries.py | \
+      backend/tests/api/test_cloud_projects_api.py | \
+      backend/tests/api/test_deliveries_api.py)
+      select_target "core:collaboration-issue-attachment-preview"
       ;;
     backend-rs/* | backend-rs/** | \
       wework/e2e/desktop/modules/cloud-environment.mjs | \
