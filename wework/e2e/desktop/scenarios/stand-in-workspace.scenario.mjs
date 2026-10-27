@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { waitForCompletedRuntimeTaskThread } from '../modules/runtime-task-evidence.mjs'
 import {
   createLocalCollaborationProject,
   waitForTestIdByText,
@@ -157,9 +158,12 @@ export function createDesktopScenario({
         } else if (requestContainsToolOutput(body, 'source-context-read')) {
           const command =
             process.platform === 'win32'
-              ? `Set-Content -LiteralPath 'source-sandbox-proof.txt' -Value 'source-sandbox-ok' -NoNewline; (Invoke-WebRequest -Uri '${url.origin}/external-source-probe' -TimeoutSec 5 -UseBasicParsing).Content; Get-Content -LiteralPath ${powershellQuote(pluginSkill)} -ErrorAction Stop; $env:GH_CONFIG_DIR=${powershellQuote(ghConfigDirectory)}; $protocol = gh config get git_protocol; if ($LASTEXITCODE -ne 0 -or $protocol -ne 'ssh') { throw 'GitHub CLI configuration is unreadable' }; Write-Output 'SOURCE_GH_CONFIG_READABLE'; try { Set-Content -LiteralPath ${powershellQuote(elevatedFile)} -Value 'unapproved' -NoNewline -ErrorAction Stop; Write-Output 'SOURCE_OUTSIDE_WRITE_ALLOWED' } catch { Write-Output 'SOURCE_OUTSIDE_WRITE_BLOCKED' }`
+              ? `Set-Content -LiteralPath 'source-sandbox-proof.txt' -Value 'source-sandbox-ok' -NoNewline; $response = Invoke-WebRequest -Uri '${url.origin}/external-source-probe' -TimeoutSec 5 -UseBasicParsing; if ($response.Content -is [byte[]]) { [System.Text.Encoding]::UTF8.GetString($response.Content) } else { Write-Output $response.Content }; Get-Content -LiteralPath ${powershellQuote(pluginSkill)} -ErrorAction Stop; $env:GH_CONFIG_DIR=${powershellQuote(ghConfigDirectory)}; $protocol = gh config get git_protocol; if ($LASTEXITCODE -ne 0 -or $protocol -ne 'ssh') { throw 'GitHub CLI configuration is unreadable' }; Write-Output 'SOURCE_GH_CONFIG_READABLE'; try { Set-Content -LiteralPath ${powershellQuote(elevatedFile)} -Value 'unapproved' -NoNewline -ErrorAction Stop; Write-Output 'SOURCE_OUTSIDE_WRITE_ALLOWED' } catch { Write-Output 'SOURCE_OUTSIDE_WRITE_BLOCKED' }`
               : `printf 'source-sandbox-ok' > source-sandbox-proof.txt && curl -fsS --connect-timeout 3 --max-time 5 ${quote(url.origin + '/external-source-probe')} && cat ${quote(pluginSkill)} && test "$(GH_CONFIG_DIR=${quote(ghConfigDirectory)} gh config get git_protocol)" = ssh && printf 'SOURCE_GH_CONFIG_READABLE'; if printf 'unapproved' > ${quote(elevatedFile)}; then printf 'SOURCE_OUTSIDE_WRITE_ALLOWED'; else printf 'SOURCE_OUTSIDE_WRITE_BLOCKED'; fi`
-          const tool = selectShellToolCommand(body, command, undefined)
+          const tool = selectShellToolCommand(body, command, undefined, {
+            yieldTimeMs: 30_000,
+            timeoutMs: 30_000,
+          })
           tool.arguments.login = false
           events = functionCall('source-sandbox-probe', tool.name, tool.arguments)
         } else {
@@ -282,6 +286,10 @@ export function createDesktopScenario({
       await control.command('click', `${CONTENT} [data-testid="collaboration-primary-stand-in"]`)
       await control.command('waitFor', '[data-testid="stand-in-overview"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-status"]')
+      await control.command('waitFor', '[data-testid="stand-in-overview-role-default"]', {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', '[data-testid="stand-in-overview-role-default"]')
       await control.command('click', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', '[data-testid="stand-in-advanced-open"]')
@@ -388,6 +396,8 @@ export function createDesktopScenario({
         await new Promise(resolve => setTimeout(resolve, 200))
       }
       assert.equal(task?.status, 'done', JSON.stringify(task))
+      const threadId = await waitForCompletedRuntimeTaskThread(control, task.taskId, uiTimeoutMs)
+      assert.ok(threadId, 'The completed stand-in task must expose its Codex session')
       assert.equal(verifiedSandbox, true)
       assert.equal(networkProbeRequests, 1)
       assert.equal(

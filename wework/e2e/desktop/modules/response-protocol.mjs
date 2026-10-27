@@ -803,20 +803,26 @@ function selectShellTool(request, workspacePath) {
   return selectShellToolCommand(request, 'pwd', workspacePath)
 }
 
-function selectShellToolCommand(request, command, workspacePath, { yieldTimeMs = 1000 } = {}) {
+function selectShellToolCommand(
+  request,
+  command,
+  workspacePath,
+  { yieldTimeMs = 1000, timeoutMs = 10_000 } = {}
+) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   if (tools.some(tool => tool?.name === 'exec_command')) {
     return selectTool(request, 'exec_command', {
       cmd: command,
       workdir: workspacePath,
       yield_time_ms: yieldTimeMs,
+      timeout_ms: timeoutMs,
     })
   }
   if (tools.some(tool => tool?.name === 'shell_command')) {
     return selectTool(request, 'shell_command', {
       command,
       workdir: workspacePath,
-      timeout_ms: 10_000,
+      timeout_ms: timeoutMs,
     })
   }
   throw new Error('Real Codex did not advertise a supported shell tool')

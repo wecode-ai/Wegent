@@ -76,6 +76,23 @@ describe('owning executor task evidence', () => {
     expect(control.command).toHaveBeenCalledTimes(2)
   })
 
+  test.each([null, threadId])(
+    'fails immediately for a failed task with thread %s',
+    async failedId => {
+      const control = ownerControl([
+        ownerWork([
+          { taskId: selectedTaskId, threadId: failedId, running: false, status: 'failed' },
+        ]),
+      ])
+
+      await expect(
+        waitForCompletedRuntimeTaskThread(control, selectedTaskId, stepTimeoutMs)
+      ).rejects.toThrow('Codex task failed before completion')
+      expect(control.command).toHaveBeenCalledTimes(1)
+      expect(vi.getTimerCount()).toBe(0)
+    }
+  )
+
   test('waits for explicit owner completion even when the thread already exists', async () => {
     const control = ownerControl(
       [undefined, true, false].map(running =>

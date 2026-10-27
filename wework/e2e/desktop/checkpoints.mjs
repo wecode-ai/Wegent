@@ -19,6 +19,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-worktree-policy',
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
+  'codex-source-session',
   'stand-in-action-confirmation',
   'stand-in-list-confirmation',
   'stand-in-profile',

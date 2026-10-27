@@ -55,6 +55,10 @@ export async function waitForCompletedRuntimeTaskThread(control, taskId, timeout
       taskId: task?.taskId ?? task?.task_id ?? null,
       threadId,
       running: task?.running ?? null,
+      status: task?.status ?? null,
+    }
+    if (task?.status === 'failed' || task?.threadStatus === 'failed') {
+      throw new Error(`Codex task failed before completion: ${JSON.stringify(observedTask)}`)
     }
     if (threadId && task.running === false) return threadId
     await new Promise(resolve => setTimeout(resolve, Math.min(100, deadline - Date.now())))

@@ -134,6 +134,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-local-agent-dispatch':
     './scenarios/collaboration-local-agent-dispatch.scenario.mjs',
   'stand-in-action-confirmation': './scenarios/stand-in-action-confirmation.scenario.mjs',
+  'codex-source-session': './scenarios/codex-source-session.scenario.mjs',
   'stand-in-list-confirmation': './scenarios/stand-in-list-confirmation.scenario.mjs',
   'stand-in-profile-settings': './scenarios/stand-in-profile.scenario.mjs',
   'stand-in-telemetry': './scenarios/stand-in-telemetry.scenario.mjs',
@@ -263,6 +264,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
   'stand-in-action-confirmation',
+  'codex-source-session',
   'stand-in-list-confirmation',
   'stand-in-profile-settings',
   'stand-in-telemetry',

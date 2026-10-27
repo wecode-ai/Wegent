@@ -69,6 +69,7 @@ test('preserves direct shell and stdin tool calls', () => {
     cmd: 'pwd',
     workdir: '/work',
     yield_time_ms: 1000,
+    timeout_ms: 10_000,
   })
   const poll = shellCommandPollResponse(request, 'business-poll-1', 123).at(-1)
   expect(poll.item).toMatchObject({ type: 'function_call', name: 'write_stdin' })
