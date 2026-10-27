@@ -252,11 +252,14 @@ class Settings(BaseSettings):
 
     # Stalled RUNNING subtask sweep configuration
     # A RUNNING subtask untouched for TASK_STALLED_TIMEOUT_SECONDS is inspected;
-    # it fails immediately when its executor Pod is gone, or after the longer
-    # heartbeat window when the Pod exists but no heartbeat is registered.
+    # it fails immediately when its executor Pod is gone. Heartbeat-based
+    # failures are opt-in because not every executor image reports heartbeats;
+    # enable only when every executor type in the deployment sets
+    # HEARTBEAT_ENABLED=true.
     TASK_STALLED_SWEEP_INTERVAL_SECONDS: int = 60
     TASK_STALLED_TIMEOUT_SECONDS: int = 900
     TASK_STALLED_HEARTBEAT_TIMEOUT_SECONDS: int = 1800
+    TASK_STALLED_HEARTBEAT_CHECK_ENABLED: bool = False
     TASK_STALLED_SCAN_LIMIT: int = 50
 
     # Workspace archive configuration

@@ -130,9 +130,11 @@ async def test_classify_ignores_device_executors():
 
 @pytest.mark.asyncio
 async def test_classify_fails_live_pod_without_heartbeat():
-    """A live Pod that stopped heartbeating for the heartbeat window is stalled."""
+    """With heartbeat checks enabled, a silent live Pod is stalled."""
     sweeper = StalledSubtaskSweeper(
-        silent_timeout_seconds=900, heartbeat_timeout_seconds=1800
+        silent_timeout_seconds=900,
+        heartbeat_timeout_seconds=1800,
+        heartbeat_check_enabled=True,
     )
     with (
         patch(
@@ -150,10 +152,34 @@ async def test_classify_fails_live_pod_without_heartbeat():
 
 
 @pytest.mark.asyncio
+async def test_classify_keeps_live_pod_when_heartbeat_check_disabled():
+    """An absent heartbeat must not fail a task by default."""
+    sweeper = StalledSubtaskSweeper(
+        silent_timeout_seconds=900, heartbeat_timeout_seconds=1800
+    )
+    with (
+        patch(
+            "app.services.execution.stalled_tasks.executor_pod_missing",
+            AsyncMock(return_value=False),
+        ),
+        patch(
+            "app.services.execution.stalled_tasks.executor_heartbeat_alive",
+            AsyncMock(return_value=False),
+        ) as heartbeat,
+    ):
+        reason = await sweeper.classify(_candidate(), now=NOW)
+
+    assert reason is None
+    heartbeat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_classify_keeps_live_pod_with_heartbeat():
     """A live Pod with a fresh heartbeat is healthy."""
     sweeper = StalledSubtaskSweeper(
-        silent_timeout_seconds=900, heartbeat_timeout_seconds=1800
+        silent_timeout_seconds=900,
+        heartbeat_timeout_seconds=1800,
+        heartbeat_check_enabled=True,
     )
     with (
         patch(
@@ -174,7 +200,9 @@ async def test_classify_keeps_live_pod_with_heartbeat():
 async def test_classify_does_not_fail_on_unknown_heartbeat():
     """An unreachable heartbeat probe must not fail a running task."""
     sweeper = StalledSubtaskSweeper(
-        silent_timeout_seconds=900, heartbeat_timeout_seconds=1800
+        silent_timeout_seconds=900,
+        heartbeat_timeout_seconds=1800,
+        heartbeat_check_enabled=True,
     )
     with (
         patch(

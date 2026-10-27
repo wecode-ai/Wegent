@@ -107,9 +107,11 @@ class StalledSubtaskSweeper:
         *,
         silent_timeout_seconds: int,
         heartbeat_timeout_seconds: int,
+        heartbeat_check_enabled: bool = False,
     ) -> None:
         self._silent_timeout = timedelta(seconds=silent_timeout_seconds)
         self._heartbeat_timeout = timedelta(seconds=heartbeat_timeout_seconds)
+        self._heartbeat_check_enabled = heartbeat_check_enabled
 
     def candidates(
         self, db: Session, *, now: datetime, limit: int
@@ -140,6 +142,11 @@ class StalledSubtaskSweeper:
 
         if await executor_pod_missing(executor_name, candidate.executor_namespace):
             return (EXECUTOR_MISSING_ERROR, "executor_missing")
+
+        if not self._heartbeat_check_enabled:
+            # Not every executor image reports heartbeats, so an absent key is
+            # not proof of death and must never fail a live Pod by default.
+            return None
 
         # A live Pod may legitimately run a long tool call, so only a clearly
         # longer gap without any heartbeat counts as stalled.
@@ -208,6 +215,7 @@ async def sweep_stalled_subtasks(
     silent_timeout_seconds: int,
     heartbeat_timeout_seconds: int,
     limit: int,
+    heartbeat_check_enabled: bool = False,
     now: Optional[datetime] = None,
 ) -> List[int]:
     """Run one sweep against an ``AsyncSession`` and return failed subtask ids."""
@@ -215,6 +223,7 @@ async def sweep_stalled_subtasks(
     sweeper = StalledSubtaskSweeper(
         silent_timeout_seconds=silent_timeout_seconds,
         heartbeat_timeout_seconds=heartbeat_timeout_seconds,
+        heartbeat_check_enabled=heartbeat_check_enabled,
     )
     candidates = await db.run_sync(
         lambda sync_db: sweeper.candidates(sync_db, now=current_time, limit=limit)

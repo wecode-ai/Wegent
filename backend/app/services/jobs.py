@@ -158,6 +158,9 @@ async def stalled_task_worker(stop_event: asyncio.Event):
                                 settings.TASK_STALLED_HEARTBEAT_TIMEOUT_SECONDS
                             ),
                             limit=settings.TASK_STALLED_SCAN_LIMIT,
+                            heartbeat_check_enabled=(
+                                settings.TASK_STALLED_HEARTBEAT_CHECK_ENABLED
+                            ),
                         )
                     if failed:
                         logger.warning(
