@@ -230,8 +230,9 @@ test.describe('Agent conversation regression', () => {
     page,
     request,
   }) => {
-    // The task title is derived from the first message and capped at 50
-    // characters, so the token stays short enough to remain the whole title.
+    // The title written by the chat flow is not the raw first message, so the
+    // fixture sets the title explicitly after the turn finishes. The task keeps
+    // its real conversation and stays outside the sidebar's recent page.
     const historyToken = makeContextToken('history')
     const continuePrompt = `Continue the older handoff task ${historyToken}`
     const continueMarker = `HANDOFF_HISTORY_OK_${historyToken}`
@@ -245,6 +246,7 @@ test.describe('Agent conversation regression', () => {
     const sourceTaskId = await waitForTaskId(page)
     createdTaskIds.add(sourceTaskId)
     await waitForBackendTerminal(request, sourceTaskId)
+    await touchMentionTask(request, sourceTaskId, historyToken)
 
     await seedMentionTasks(request, 205, index => `Filler conversation ${index}`)
 
