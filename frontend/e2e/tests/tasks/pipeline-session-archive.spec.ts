@@ -44,6 +44,8 @@ test.describe('Pipeline native session archive and continuation', () => {
         let runtime: Runtime | undefined
         let sandboxCreated = false
         try {
+          // This suite has one worker; discard large requests from earlier specs.
+          await postJson(request, `${MOCK}/clear-requests`, {})
           const model = `${prefix}-model`
           const shell = `${prefix}-shell`
           const team = `${prefix}-team`
@@ -166,8 +168,8 @@ test.describe('Pipeline native session archive and continuation', () => {
             task_id: taskId,
           })) as Roots
           const params = { roots, taskId, user: user.user_name, team, botIds, engine, mode }
-          const snapshot = () =>
-            runtimeProcess<Snapshot>(request, runtime!, SESSION_FILES, {
+          const snapshot = (target = runtime!) =>
+            runtimeProcess<Snapshot>(request, target, SESSION_FILES, {
               ...params,
               action: 'snapshot',
             })
@@ -216,46 +218,47 @@ test.describe('Pipeline native session archive and continuation', () => {
           })
 
           await runtimeProcess(request, runtime, SESSION_FILES, { ...params, action: 'erase' })
+          const restoreTargets = [runtime]
           if (mode === 'sandbox') {
             const detail = await getJson(request, `${API}/api/tasks/${taskId}`, headers)
             const subtasks = detail.subtasks as Array<{ id: number; executor_name?: string }>
-            const first = subtasks
+            const stages = subtasks
               .filter(subtask => subtask.executor_name === runtime!.container_name)
-              .sort((a, b) => a.id - b.id)[0]
-            expect(first, 'The original container creation subtask is required').toBeTruthy()
-            const originalName = runtime.container_name
-            await postJson(request, `${MANAGER}/executor/delete`, {
-              executor_name: originalName,
-              executor_namespace: runtime.executor_namespace,
-            })
+              .sort((a, b) => a.id - b.id)
+            expect(stages.length).toBeGreaterThanOrEqual(2)
             sandboxCreated = true
             const sandbox = await postJson(request, `${MANAGER}/sandboxes`, {
               shell_type: engine,
               user_id: user.id,
               user_name: user.user_name,
-              metadata: { task_id: taskId, subtask_id: first.id },
+              metadata: { task_id: taskId, subtask_id: stages[stages.length - 1].id },
             })
-            // The backend must continue to dispatch into the recreated runtime.
-            expect(sandbox.container_name).toBe(originalName)
-            runtime = await resolveRuntime(request, MANAGER, taskId!, headers, 'sandbox')
+            // Tool sandboxes and task executors have distinct heartbeat bindings.
+            expect(sandbox.container_name).not.toBe(runtime.container_name)
+            const sandboxRuntime = await resolveRuntime(
+              request,
+              MANAGER,
+              taskId!,
+              headers,
+              'sandbox'
+            )
             // SandboxManager restores the archive during real sandbox creation.
-            expect(await snapshot()).toEqual(before)
+            expect(await snapshot(sandboxRuntime)).toEqual(before)
+            restoreTargets.push(sandboxRuntime)
           }
-          const restored = await postJson(request, `${runtime.base_url}/api/restore`, {
-            task_id: taskId,
-            runtime_type: mode,
-            download_url: download.download_url,
-          })
-          expect(restored.session_restored).toBe(true)
-          expect(await snapshot()).toEqual(before)
-          await runtimeProcess(request, runtime, SESSION_FILES, { ...params, action: 'verify' })
-          // Repeating a restore with the same content must preserve native IDs and bytes.
-          await postJson(request, `${runtime.base_url}/api/restore`, {
-            task_id: taskId,
-            runtime_type: mode,
-            download_url: download.download_url,
-          })
-          expect(await snapshot()).toEqual(before)
+          for (const target of restoreTargets) {
+            // Repeated restores must preserve native IDs and bytes in both runtimes.
+            for (let attempt = 0; attempt < 2; attempt++) {
+              const restored = await postJson(request, `${target.base_url}/api/restore`, {
+                task_id: taskId,
+                runtime_type: mode,
+                download_url: download.download_url,
+              })
+              expect(restored.session_restored).toBe(true)
+              expect(await snapshot(target)).toEqual(before)
+            }
+            await runtimeProcess(request, target, SESSION_FILES, { ...params, action: 'verify' })
+          }
 
           await postJson(request, `${MOCK}/stream-rules`, {
             matchText: followup,
@@ -337,7 +340,8 @@ test.describe('Pipeline native session archive and continuation', () => {
             const deleted = await request.delete(`${MANAGER}/sandboxes/${taskId}`)
             if (![200, 404].includes(deleted.status()))
               failures.push(`sandbox: ${await deleted.text()}`)
-          } else if (runtime) {
+          }
+          if (runtime) {
             const deleted = await request.post(`${MANAGER}/executor/delete`, {
               data: {
                 executor_name: runtime.container_name,
@@ -377,14 +381,22 @@ async function postJson(
   headers?: Record<string, string>
 ) {
   const response = await request.post(url, { headers, data })
-  expect(response.ok(), await response.text()).toBe(true)
-  return response.json()
+  try {
+    expect(response.ok(), `${response.status()} ${url}`).toBe(true)
+    return await response.json()
+  } finally {
+    await response.dispose()
+  }
 }
 
 async function getJson(request: APIRequestContext, url: string, headers?: Record<string, string>) {
   const response = await request.get(url, { headers })
-  expect(response.ok(), await response.text()).toBe(true)
-  return response.json()
+  try {
+    expect(response.ok(), `${response.status()} ${url}`).toBe(true)
+    return await response.json()
+  } finally {
+    await response.dispose()
+  }
 }
 
 async function completed(
