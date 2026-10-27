@@ -67,6 +67,9 @@ export interface SharedIssueDetailDeliveryAsset {
 }
 
 export interface SharedIssueDetailDelivery {
+  created_by_user_id?: number | null;
+  markdown?: string;
+  chat?: Record<string, unknown> | null;
   id: string;
   loop_item_id: string;
   status: "draft" | "delivered";
@@ -254,6 +257,9 @@ function toDelivery(
 ): SharedIssueDetailDelivery {
   return {
     id: delivery.id,
+    created_by_user_id: delivery.createdByUserId,
+    markdown: delivery.markdown,
+    chat: delivery.chat,
     loop_item_id: delivery.issueId,
     status: delivery.status,
     assets: delivery.assets.map((asset) => ({

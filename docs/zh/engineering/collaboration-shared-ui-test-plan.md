@@ -24,6 +24,23 @@ sidebar_position: 25
 
 ## 目标
 
+### 交付批次与会话快照回归
+
+`collaboration-deliveries` 使用隔离 Electron、真实本地 Executor 和文件存储；无需模型响应。
+每次独立创建项目、Issue 和三批已完成交付：说明＋选中消息＋两个文件、项目讨论会话、单个文件。
+
+1. 列表默认显示最近两批，展开后展示全部批次；显示说明首行、消息数、附件数与文件名、交付人及本地时间。
+2. 点击混合交付，验证说明、Markdown 加粗、从 3 开始的有序列表和附件路径；
+   详情的左边界、宽度必须与原 Issue 抽屉一致，不能再次按侧栏宽度缩窄。
+3. 返回后打开项目讨论会话，按原顺序展示用户和助手消息；同时支持 Runtime 的 `role`
+   与项目讨论的 `sender.type` 快照格式。只有会话时不显示空说明和附件区域。
+4. 只有文件时不显示会话和空说明；关闭并重新打开同一 Issue 后仍可读取持久化的交付。
+5. 单元测试补充不同交付人、成员姓名不可用、内容加载中及失败状态；加载失败不能误报无内容。
+
+聚焦命令：`pnpm --filter wework e2e:desktop -- --segment collaboration-deliveries`。
+该 checkpoint 在统一 runner 与 Core CI shard 中注册。隔离项目与文件随 runner 环境清理；
+日志和截图只保留在 `wework/test-results/`，不提交到仓库。
+
 ### 执行动态顺序回归
 
 在隔离 Electron 中分别运行 `collaboration-local-agent-dispatch` 和

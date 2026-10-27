@@ -5502,6 +5502,7 @@ export function PluginsWorkspace({
           marketplaceCategorySections={marketplaceCategorySections}
           visibleSearchResultLimit={visibleSearchResultLimit}
           isLoggedIn={Boolean(cloudToken && currentDeviceId)}
+          isReconciling={isReconcilingPlugins}
           installingMarketplacePluginIds={installingMarketplacePluginIds}
           uninstallingPluginIds={uninstallingPluginIds}
           allowPendingRetry={deviceAutoSyncSettled || !deviceCloudConnected}
@@ -5522,6 +5523,7 @@ export function PluginsWorkspace({
         <CategoryBrowseDialog
           section={browsingCategorySection}
           isLoggedIn={Boolean(cloudToken && currentDeviceId)}
+          isReconciling={isReconcilingPlugins}
           installingMarketplacePluginIds={installingMarketplacePluginIds}
           uninstallingPluginIds={uninstallingPluginIds}
           allowPendingRetry={deviceAutoSyncSettled || !deviceCloudConnected}
