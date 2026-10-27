@@ -11,7 +11,12 @@ const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const APP_BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:3000'
 
 type BindShell = 'claudecode' | 'openclaw'
-type RegisterAck = { success?: boolean; device_id?: string; error?: string }
+type RegisterAck = {
+  success?: boolean
+  device_id?: string
+  device_route_id?: string
+  error?: string
+}
 
 async function registerDevice(
   token: string,
@@ -25,29 +30,41 @@ async function registerDevice(
     namespace: '/local-executor',
   })
 
-  await client.connect(token)
-  await expect.poll(() => client.getState().isConnected).toBe(true)
+  try {
+    await client.connect(token)
+    await expect.poll(() => client.getState().isConnected).toBe(true)
 
-  const acknowledgement = await new Promise<RegisterAck>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error(`Timed out registering ${deviceId}`)), 10_000)
-    client.socket.emit(
-      'device:register',
-      {
-        device_id: deviceId,
-        name,
-        device_type: 'local',
-        bind_shell: bindShell,
-        executor_version: 'e2e',
-      },
-      (response: RegisterAck) => {
-        clearTimeout(timeout)
-        resolve(response)
-      }
-    )
-  })
+    const acknowledgement = await new Promise<RegisterAck>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error(`Timed out registering ${deviceId}`)),
+        10_000
+      )
+      client.socket.emit(
+        'device:register',
+        {
+          device_id: deviceId,
+          name,
+          device_type: 'local',
+          bind_shell: bindShell,
+          executor_version: 'e2e',
+        },
+        (response: RegisterAck) => {
+          clearTimeout(timeout)
+          resolve(response)
+        }
+      )
+    })
 
-  expect(acknowledgement).toEqual({ success: true, device_id: deviceId })
-  return client
+    expect(acknowledgement).toEqual({
+      success: true,
+      device_id: deviceId,
+      device_route_id: deviceId,
+    })
+    return client
+  } catch (error) {
+    client.dispose()
+    throw error
+  }
 }
 
 async function waitForDevices(

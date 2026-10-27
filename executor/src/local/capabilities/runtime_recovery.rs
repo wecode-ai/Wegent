@@ -10,6 +10,8 @@ use crate::services::workbench::{verify_published_package, PackageKind};
 #[path = "runtime_recovery_journal.rs"]
 mod journal;
 use journal::RecoveryJournal;
+#[path = "runtime_materialization.rs"]
+mod materialization;
 #[path = "runtime_recovery_ownership.rs"]
 mod ownership;
 #[path = "runtime_recovery_plan.rs"]
@@ -640,12 +642,18 @@ impl GlobalCapabilityStore {
                 .unwrap_or(&Value::Null),
             manifest,
         )?;
+        let reused = if publication.is_none() {
+            self.unchanged_plugin_runtime_paths(spec, store_path)?
+        } else {
+            BTreeSet::new()
+        };
         let (files, mut moved) = self.runtime_state_paths(spec);
         if !self.shared_packages {
             if let Some(old) = &old {
                 moved.extend(self.current_recorded_runtime_paths(&spec.key, old)?);
             }
         }
+        moved.retain(|path| !reused.contains(path));
         let superseded = if publication.is_none() && self.shared_packages {
             RecoveryJournal::pending_identity(self, &spec.key)?
         } else {
@@ -663,18 +671,23 @@ impl GlobalCapabilityStore {
                 publication.publish_files(self)?;
             } else {
                 if !self.codex_only_plugins {
-                    self.install_claude_plugin_runtime_metadata_at(spec, store_path, timestamp)?;
+                    self.install_claude_plugin_runtime_metadata_at(
+                        spec, store_path, timestamp, &reused,
+                    )?;
                 }
                 let codex = self.plugin_codex_link(spec);
-                copy_dir_atomic(store_path, &codex)?;
-                ensure_dual_plugin_manifests(&codex)?;
-                ensure_plugin_hook_permissions(&codex)?;
+                if !reused.contains(&codex) {
+                    copy_dir_atomic(store_path, &codex)?;
+                    ensure_dual_plugin_manifests(&codex)?;
+                    ensure_plugin_hook_permissions(&codex)?;
+                }
                 self.install_codex_marketplace_metadata(
                     spec,
                     &codex,
                     old.as_ref()
                         .and_then(|entry| entry.get("component_states"))
                         .unwrap_or(&json!({})),
+                    &reused,
                 )?;
             }
             let codex = self.plugin_codex_link(spec);

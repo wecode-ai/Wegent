@@ -18,7 +18,7 @@ use crate::tasks_search::statements::tasks_by_ids_statement;
 pub use crate::task_store_default::DefaultTaskStore;
 pub use crate::task_store_listing::{
     OwnedTaskPage, SubtaskListing, SubtaskPage, count_subtasks_by_task, load_subtasks_by_ids,
-    page_subtasks_by_task, subtask_context_columns,
+    ordered_subtasks_for_user, page_subtasks_by_task, subtask_context_columns,
 };
 pub use crate::task_store_pipeline::{PipelineStageAdvance, advance_pipeline_stage};
 pub use crate::task_store_project::{
@@ -265,12 +265,7 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         task_id: i64,
         user_id: i32,
     ) -> MysqlResult<Vec<MysqlRow>> {
-        self.mysql
-            .fetch_all(
-                subtasks_by_owner_statement(SUBTASKS_TABLE),
-                (task_id, user_id),
-            )
-            .await
+        ordered_subtasks_for_user(&self.mysql, SUBTASKS_TABLE, task_id, user_id).await
     }
 
     async fn get_active_task_owned(

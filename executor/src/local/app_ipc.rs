@@ -138,6 +138,7 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executor.harnesses.list",
     "executor.harnesses.prepare_launch",
     "executor.health",
+    "executor.plugins.device_route",
     "executor.plugins.initialize_bundled_marketplace",
     "executor.plugins.import_package",
     "executor.plugins.import_package.finalize",
@@ -257,6 +258,10 @@ pub trait BackendConnectionHandler: Send + Sync {
     fn configure_backend<'a>(&'a self, params: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
     fn backend_quota<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
     fn backend_status<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
+    fn plugin_device_route<'a>(
+        &'a self,
+        params: Value,
+    ) -> BoxFuture<'a, Result<Value, AppIpcError>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -375,6 +380,7 @@ where
 pub struct AppIpcServer {
     device_id: String,
     runtime_instance_id: Option<String>,
+    device_route_id: Option<Arc<std::sync::Mutex<Option<String>>>>,
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
     backend_connection_handler: Option<Arc<dyn BackendConnectionHandler>>,
     command_handler: Arc<dyn DeviceCommandHandler>,
@@ -390,6 +396,7 @@ impl Default for AppIpcServer {
         Self {
             device_id: DEFAULT_DEVICE_ID.to_owned(),
             runtime_instance_id: None,
+            device_route_id: None,
             runtime_work_handler: None,
             backend_connection_handler: None,
             command_handler: Arc::new(CommandHandler),
@@ -419,6 +426,15 @@ impl AppIpcServer {
         self.runtime_instance_id = Some(runtime_instance_id.into())
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty());
+        self
+    }
+
+    /// Share the slot holding the backend-assigned device route id.
+    pub fn with_device_route_id_slot(
+        mut self,
+        slot: Arc<std::sync::Mutex<Option<String>>>,
+    ) -> Self {
+        self.device_route_id = Some(slot);
         self
     }
 
@@ -799,6 +815,30 @@ impl AppIpcServer {
             };
         }
 
+        if method == "executor.plugins.device_route" {
+            let device_id = params
+                .get("device_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    AppIpcError::new("invalid_params", "Plugin route requires a desktop identity")
+                })?;
+            if device_id != self.device_id {
+                return Err(AppIpcError::new(
+                    "plugin_route_profile_mismatch",
+                    "Plugin Runtime connection does not match the requested profile",
+                ));
+            }
+            let handler = self.backend_connection_handler.as_ref().ok_or_else(|| {
+                AppIpcError::new(
+                    "plugin_route_unavailable",
+                    "Plugin Runtime is not registered for this connection",
+                )
+            })?;
+            return handler.plugin_device_route(params).await;
+        }
+
         if method == "executor.backend.configure" {
             let Some(handler) = &self.backend_connection_handler else {
                 return Err(AppIpcError::new(
@@ -928,10 +968,15 @@ impl AppIpcServer {
     }
 
     fn protocol_description(&self) -> Value {
+        let device_route_id = self
+            .device_route_id
+            .as_ref()
+            .and_then(|slot| slot.lock().ok().and_then(|value| value.clone()));
         json!({
             "protocol_version": APP_IPC_PROTOCOL_VERSION,
             "device_id": self.device_id,
             "runtime_instance_id": self.runtime_instance_id,
+            "device_route_id": device_route_id,
             "capabilities": APP_IPC_CAPABILITIES,
             "renderer_methods": APP_IPC_RENDERER_METHODS,
             "transports": [

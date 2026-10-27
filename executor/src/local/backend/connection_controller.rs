@@ -27,6 +27,8 @@ use crate::{
 
 use super::{LocalBackendConfig, LocalBackendRunner, LocalBackendTransport, SocketIoTransport};
 
+mod plugin_route;
+
 #[derive(Clone)]
 pub struct LocalBackendConnectionController {
     base_config: DeviceConfig,
@@ -38,6 +40,7 @@ pub struct LocalBackendConnectionController {
     /// credentials without relying on the executor process environment.
     connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
     connection_status: Arc<AtomicBool>,
+    device_route_id: Arc<StdMutex<Option<String>>>,
 }
 
 #[derive(Default)]
@@ -70,7 +73,14 @@ impl LocalBackendConnectionController {
     }
 
     pub async fn start(config: DeviceConfig) -> Self {
-        Self::start_internal(config, None, None, Arc::new(StdMutex::new(None))).await
+        Self::start_internal(
+            config,
+            None,
+            None,
+            Arc::new(StdMutex::new(None)),
+            Arc::new(StdMutex::new(None)),
+        )
+        .await
     }
 
     pub(crate) async fn start_with_runtime(
@@ -78,12 +88,14 @@ impl LocalBackendConnectionController {
         runtime_work_handler: Arc<dyn RuntimeWorkHandler>,
         runtime_event_hub: ExecutorEventHub,
         connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
+        device_route_id: Arc<StdMutex<Option<String>>>,
     ) -> Self {
         Self::start_internal(
             config,
             Some(runtime_work_handler),
             Some(runtime_event_hub),
             connection_snapshot,
+            device_route_id,
         )
         .await
     }
@@ -93,6 +105,7 @@ impl LocalBackendConnectionController {
         runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
         runtime_event_hub: Option<ExecutorEventHub>,
         connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
+        device_route_id: Arc<StdMutex<Option<String>>>,
     ) -> Self {
         let initial_profile = normalized_connection(&config.connection).map(|connection| {
             LocalBackendConnectionProfile {
@@ -108,6 +121,7 @@ impl LocalBackendConnectionController {
             state: Arc::new(Mutex::new(LocalBackendConnectionState::default())),
             connection_snapshot,
             connection_status: Arc::new(AtomicBool::new(false)),
+            device_route_id,
         };
         controller.replace_connection(initial_profile).await;
         controller
@@ -128,7 +142,9 @@ impl LocalBackendConnectionController {
 
         if let Some(task) = state.task.take() {
             self.connection_status.store(false, Ordering::Release);
+            // Stop the old route producer before clearing the shared slot.
             task.abort();
+            let _ = task.await;
         }
         if let Some(transport) = state.transport.take() {
             if let Err(error) = transport.disconnect().await {
@@ -137,6 +153,9 @@ impl LocalBackendConnectionController {
                     &[("error", error)],
                 ));
             }
+        }
+        if let Ok(mut route_id) = self.device_route_id.lock() {
+            *route_id = None;
         }
 
         if let Some(profile) = &profile {
@@ -160,6 +179,7 @@ impl LocalBackendConnectionController {
                 )
             }
             .with_connection_status(Arc::clone(&self.connection_status));
+            let runner = runner.with_device_route_id_slot(Arc::clone(&self.device_route_id));
             state.transport = Some(transport);
             state.task = Some(tokio::spawn(async move {
                 if let Err(error) = runner.run_forever().await {
@@ -208,6 +228,13 @@ impl LocalBackendConnectionController {
 }
 
 impl BackendConnectionHandler for LocalBackendConnectionController {
+    fn plugin_device_route<'a>(
+        &'a self,
+        params: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(self.resolve_plugin_device_route(params))
+    }
+
     fn execute_plugin_auth<'a>(
         &'a self,
         params: Value,
@@ -494,6 +521,46 @@ mod tests {
             .expect("backend status should be available");
         assert_eq!(status["configured"], true);
         assert_eq!(status["connected"], false);
+    }
+
+    #[tokio::test]
+    async fn changing_backend_profile_invalidates_the_previous_plugin_route() {
+        let controller = LocalBackendConnectionController::start(DeviceConfig {
+            connection: ConnectionConfig {
+                backend_url: "http://127.0.0.1:9".to_owned(),
+                auth_token: "old-token".to_owned(),
+                ..ConnectionConfig::default()
+            },
+            ..DeviceConfig::default()
+        })
+        .await;
+        *controller.device_route_id.lock().unwrap() = Some("app-record-42".to_owned());
+        let unchanged = controller
+            .configure_backend(json!({
+                "backend_url": "http://127.0.0.1:9",
+                "auth_token": "old-token",
+            }))
+            .await
+            .unwrap();
+        assert_eq!(unchanged["changed"], false);
+        assert_eq!(
+            controller.device_route_id.lock().unwrap().as_deref(),
+            Some("app-record-42")
+        );
+
+        let changed = controller
+            .configure_backend(json!({
+                "backend_url": "http://127.0.0.1:9",
+                "auth_token": "new-token",
+            }))
+            .await
+            .unwrap();
+        assert_eq!(changed["changed"], true);
+        assert!(controller.device_route_id.lock().unwrap().is_none());
+
+        *controller.device_route_id.lock().unwrap() = Some("app-record-71".to_owned());
+        controller.configure_backend(json!({})).await.unwrap();
+        assert!(controller.device_route_id.lock().unwrap().is_none());
     }
 
     #[tokio::test]
