@@ -3883,6 +3883,7 @@ export function PluginsWorkspace({
     if (!cloudMarketplaceAvailable || !cloudToken || !currentDeviceId) return
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
+    if (installingMarketplacePluginIds.size > 0) return
     const deviceId = currentDeviceId
     const lifetime = deviceSyncLifetimeRef.current
     const inventoryAtStart = getPluginMarketplaceCache(marketplaceCacheKeyValue)
@@ -4040,6 +4041,7 @@ export function PluginsWorkspace({
     cloudToken,
     currentDeviceId,
     deviceCloudConnected,
+    installingMarketplacePluginIds,
     installedPlugins,
     localInstalledStateReadyKey,
     marketplaceCacheKeyValue,

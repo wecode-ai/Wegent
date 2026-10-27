@@ -4277,6 +4277,64 @@ describe('PluginsWorkspace', () => {
     expectFetchRequest('/api/plugins/marketplace?device_id=current-device')
   })
 
+  test('does not repair a transient device gap while a foreground install owns it', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const marketplace = mockSystemSkillsFetch({ deviceAutoSyncSucceeds: true })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const fetchImplementation = vi.mocked(fetch).getMockImplementation()!
+    let releaseInstall = () => {}
+    const installGate = new Promise<void>(resolve => {
+      releaseInstall = resolve
+    })
+    let installStarted = false
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes('/plugins/marketplace/101/install?')) {
+        installStarted = true
+        await installGate
+      }
+      return fetchImplementation(input, init)
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await screen.findByTestId('plugin-marketplace-install-101')
+    await installPluginFromMarketCard('plugin-marketplace-install-101')
+    await waitFor(() => expect(installStarted).toBe(true))
+
+    const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
+    const snapshot = getPluginMarketplaceCache(cacheKey)!
+    await act(async () => {
+      writePluginInventory(cacheKey, 'current-device', {
+        marketplaceItems: snapshot.marketplaceItems.map(item =>
+          item.id === 101
+            ? {
+                ...item,
+                installed: false,
+                installedLocally: false,
+                installedPluginId: 101,
+                currentDeviceInstallation: {
+                  deviceId: 'current-device',
+                  desiredReleaseId: 1001,
+                  actualReleaseId: null,
+                  state: 'pending',
+                  errorCode: null,
+                  errorMessage: null,
+                  attemptCount: 0,
+                  lastSyncAt: null,
+                  updatedAt: new Date().toISOString(),
+                },
+              }
+            : item
+        ),
+      })
+    })
+    try {
+      expect(marketplace.getSyncDeviceCalls()).toBe(0)
+    } finally {
+      releaseInstall()
+    }
+    await screen.findByTestId('plugin-marketplace-actions-101')
+    expect(marketplace.getSyncDeviceCalls()).toBe(0)
+  })
+
   test('auto-syncs account installs onto the current device once per session', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     const marketplaceMock = mockSystemSkillsFetch({

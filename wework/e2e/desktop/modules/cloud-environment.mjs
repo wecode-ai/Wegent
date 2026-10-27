@@ -1059,6 +1059,9 @@ class RealCloudEnvironment {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     })
+    executor.once('exit', (code, signal) => {
+      void appendFile(logPath, `Executor exited: code=${code}, signal=${signal}\n`)
+    })
     await Promise.all([
       appendProcessOutput(executor.stdout, logPath),
       appendProcessOutput(executor.stderr, logPath),

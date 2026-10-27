@@ -639,10 +639,16 @@ function selectOfficialPluginMcpTool(request, argumentsValue) {
   return { namespace: namespace.name, name: tool.name, arguments: argumentsValue }
 }
 
-function selectMcpTool(request, namespaceName, toolName, argumentsValue) {
+function selectMcpTool(request, namespaceName, toolName, argumentsValue, searchCallId) {
   const advertisedTools = Array.isArray(request.tools) ? request.tools : []
-  const namespaces = [...advertisedTools, ...requestToolSearchResults(request)].filter(
-    candidate => candidate?.type === 'namespace' && candidate.name === namespaceName
+  const searchRequest = searchCallId
+    ? { input: request.input?.filter(item => item.call_id === searchCallId) }
+    : request
+  const namespaces = [...advertisedTools, ...requestToolSearchResults(searchRequest)].filter(
+    candidate =>
+      candidate?.type === 'namespace' &&
+      (candidate.name === namespaceName ||
+        (searchCallId && candidate.name === `mcp__${namespaceName}`))
   )
   assert.ok(namespaces.length > 0, `tool_search did not return MCP namespace ${namespaceName}`)
   const namespace = namespaces.find(candidate =>
