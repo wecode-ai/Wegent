@@ -363,10 +363,11 @@ export async function verifyWorkspaceAgentDisplayNames(
     timeoutMs,
   })
 
-  const personal = (await request('/api/v1/resources')).agents?.find(
+  const personal = (await request('/api/v1/resources?include_readiness=false')).agents?.find(
     candidate => candidate.team_id === agent.team_id
   )
   assert.ok(personal, 'The personal resource catalog is missing the Workspace Agent')
+  assert.equal(personal.status, 'unchecked', 'Catalog discovery performed an execution preflight')
   assert.equal(
     personal.name,
     displayName,
