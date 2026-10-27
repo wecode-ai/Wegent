@@ -214,7 +214,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
         self.created.append(("team", team_name))
         return team
 
-    def _create_subscription(self, prompt: str, team: dict[str, Any]) -> int:
+    def _create_messager_channel(self) -> int:
         suffix = self.suffix
         channel = Kind(
             user_id=0,
@@ -417,7 +417,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
     def _execute(self, prompt: str, shell_type: str) -> dict:
         self.shell_type = shell_type
         team = self._create_shell_resources(shell_type)
-        channel_id = self._create_subscription("", team)
+        channel_id = self._create_messager_channel()
         subscription_id = self._create_subscription(prompt, team, channel_id)
         execution = self._api(
             "POST", f"/api/subscriptions/{subscription_id}/trigger"
