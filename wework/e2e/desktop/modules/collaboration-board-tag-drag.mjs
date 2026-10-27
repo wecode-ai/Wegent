@@ -19,15 +19,26 @@ const column = key => `[data-testid="cloud-todo-column-${key}"]`
 const card = (key, id) => `${column(key)} [data-testid="cloud-todo-card-${id}"]`
 
 export async function assertIssueColumns(control, scoped, issueId, tags, timeoutMs) {
-  for (const key of [...TAGS.map(tag => `tag-${tag}`), 'tag-untagged']) {
-    const selector = scoped(card(key, issueId))
-    const expected = key === 'tag-untagged' ? tags.length === 0 : tags.includes(key.slice(4))
-    await waitForBoardValue(
-      async () => Number(await control.command('getElementCount', selector)),
-      expected ? 1 : 0,
-      `Issue ${issueId} has incorrect membership in ${key}`,
-      timeoutMs
-    )
+  const placements = [...TAGS.map(tag => `tag-${tag}`), 'tag-untagged']
+    .map(key => ({
+      selector: scoped(card(key, issueId)),
+      expected: key === 'tag-untagged' ? tags.length === 0 : tags.includes(key.slice(4)),
+    }))
+    .sort((left, right) => Number(right.expected) - Number(left.expected))
+  await waitForBoardValue(
+    async () => {
+      const counts = []
+      // Read required cards first so a loading board cannot satisfy absence checks.
+      for (const { selector } of placements) {
+        counts.push(Number(await control.command('getElementCount', selector)))
+      }
+      return counts
+    },
+    placements.map(({ expected }) => (expected ? 1 : 0)),
+    `Issue ${issueId} has incorrect column membership`,
+    timeoutMs
+  )
+  for (const { selector, expected } of placements) {
     if (expected) {
       await control.command('scrollIntoView', selector)
       await control.command('waitFor', selector, { visible: true, timeoutMs })

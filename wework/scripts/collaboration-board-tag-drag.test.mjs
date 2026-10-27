@@ -51,7 +51,28 @@ test('rejects an unexpected offscreen card instead of treating it as absent', as
 
   const rejected = expect(
     assertIssueColumns(control, scoped, 'issue-1', ['drag-A'], 10)
-  ).rejects.toThrow('Issue issue-1 has incorrect membership in tag-drag-B')
+  ).rejects.toThrow('Issue issue-1 has incorrect column membership')
+  await vi.runAllTimersAsync()
+
+  await rejected
+})
+
+test('checks the whole column set again when cards finish loading during a poll', async () => {
+  vi.useFakeTimers()
+  const control = boardControl(['drag-B'], 'tag-drag-A')
+  const loadedCommand = control.command.bind(control)
+  let loading = true
+  control.command = async (action, selector, options) => {
+    if (action === 'getElementCount' && loading) {
+      loading = false
+      return '0'
+    }
+    return loadedCommand(action, selector, options)
+  }
+
+  const rejected = expect(
+    assertIssueColumns(control, scoped, 'issue-1', ['drag-B'], 200)
+  ).rejects.toThrow('Issue issue-1 has incorrect column membership')
   await vi.runAllTimersAsync()
 
   await rejected
