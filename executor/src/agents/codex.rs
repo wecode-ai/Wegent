@@ -1956,6 +1956,14 @@ async fn run_codex_app_server_turn_on_shared_client(
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
                 thread_fields.push(("operation", operation.to_owned()));
                 thread_fields.extend(mcp_thread_config_fields(&params));
+                if external_work::applies(request) {
+                    thread_fields.extend([
+                        ("permission_profile", params["permissions"].to_string()),
+                        ("cwd", params["cwd"].to_string()),
+                        ("workspace_roots", params["runtimeWorkspaceRoots"].to_string()),
+                        ("windows_sandbox", params["config"]["windows.sandbox"].to_string()),
+                    ]);
+                }
                 log_executor_event("codex shared thread request started", &thread_fields);
                 let response = client.request(operation, params).await?;
                 if external_work::applies(request) {
@@ -6057,15 +6065,27 @@ fn insert_runtime_workspace_roots(
     params: &mut serde_json::Map<String, Value>,
     request: &ExecutionRequest,
 ) {
-    let roots = request
+    let mut roots = request
         .runtime_workspace_roots
         .iter()
         .map(|root| root.trim())
         .filter(|root| !root.is_empty())
+        .map(str::to_owned)
         .collect::<Vec<_>>();
-    if !roots.is_empty() {
-        params.insert("runtimeWorkspaceRoots".to_owned(), json!(roots));
+    if roots.is_empty() {
+        return;
     }
+    if let Some(cwd) = request.cwd() {
+        // Codex's Windows compatibility projection always adds cwd as a writable
+        // root. An ancestor grants access but does not make the root sets equal.
+        if !roots
+            .iter()
+            .any(|root| crate::runtime_work::same_workspace_path(root, cwd))
+        {
+            roots.push(cwd.to_owned());
+        }
+    }
+    params.insert("runtimeWorkspaceRoots".to_owned(), json!(roots));
 }
 
 fn validate_codex_model_provider(

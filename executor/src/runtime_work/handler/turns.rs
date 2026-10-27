@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::agents::CODEX_APP_SERVER_EXECUTOR_SHUTDOWN;
+use crate::runtime_work::util::{comparable_workspace_path, same_workspace_path};
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
@@ -654,6 +655,12 @@ impl RuntimeWorkRpcHandler {
             .extra
             .remove("deferred_worktree_path")
             .and_then(|value| value.as_str().map(PathBuf::from));
+        let workspace_path = turn
+            .request
+            .extra
+            .remove("deferred_worktree_workspace_path")
+            .and_then(|value| value.as_str().map(ToOwned::to_owned))
+            .unwrap_or_else(|| source_path.clone());
         let repo_root_fingerprint = turn
             .request
             .extra
@@ -694,14 +701,42 @@ impl RuntimeWorkRpcHandler {
                 )
             })?
             .map_err(|error| AppIpcError::new(worktree_error_code(&error), error))?;
-        turn.request.project_workspace_path = Some(record.path.clone());
+        let worktree_root = PathBuf::from(&record.path);
+        let canonical_source_root = Path::new(&previous_root)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(&previous_root));
+        let canonical_workspace_path = Path::new(&workspace_path)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(&workspace_path));
+        let worktree_workspace = canonical_workspace_path
+            .strip_prefix(&canonical_source_root)
+            .map(|relative| {
+                if relative.as_os_str().is_empty() {
+                    worktree_root.clone()
+                } else {
+                    worktree_root.join(relative)
+                }
+            })
+            .unwrap_or_else(|_| worktree_root.clone())
+            .display()
+            .to_string();
+        // Only the source repository and selected workspace move into the worktree.
+        // Independent dependency roots must keep their original locations.
         for root in &mut turn.request.runtime_workspace_roots {
-            if *root == previous_root {
-                *root = record.path.clone();
+            if same_workspace_path(root, &previous_root) {
+                *root = worktree_root.display().to_string();
+            } else if same_workspace_path(root, &workspace_path) {
+                *root = worktree_workspace.clone();
             }
         }
+        let mut seen = HashSet::new();
+        turn.request
+            .runtime_workspace_roots
+            .retain(|root| seen.insert(comparable_workspace_path(root)));
+        turn.request.project_workspace_path = Some(worktree_workspace.clone());
         self.store.update_task(&turn.local_task_id, |link| {
-            link.workspace_path = record.path.clone();
+            link.workspace_path = worktree_workspace.clone();
+            link.runtime_workspace_roots = turn.request.runtime_workspace_roots.clone();
             link.updated_at = now_ms();
         });
         self.schedule_worktree_prune();

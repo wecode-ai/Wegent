@@ -705,7 +705,11 @@ fn prompt_is_blank(value: &Value) -> bool {
 }
 
 pub(crate) fn normalize_workspace_path(path: &str) -> String {
-    let trimmed = path.trim().trim_end_matches(['/', '\\']);
+    normalize_path_components(path.trim())
+}
+
+fn normalize_path_components(path: &str) -> String {
+    let trimmed = path.trim_end_matches(['/', '\\']);
     if trimmed.is_empty() {
         return String::new();
     }
@@ -730,6 +734,33 @@ pub(crate) fn path_is_within(root: &str, path: &str) -> bool {
         || path
             .strip_prefix(root)
             .is_some_and(|rest| rest.starts_with('/') || rest.starts_with('\\'))
+}
+
+/// Compare paths after removing Windows verbatim prefixes and normalizing separators and case.
+pub(crate) fn comparable_workspace_path(path: &str) -> String {
+    let path = normalize_path_components(&strip_windows_verbatim_prefix(path.trim()));
+    if cfg!(windows) {
+        path.to_lowercase()
+    } else {
+        path
+    }
+}
+
+pub(crate) fn same_workspace_path(left: &str, right: &str) -> bool {
+    comparable_workspace_path(left) == comparable_workspace_path(right)
+}
+
+fn strip_windows_verbatim_prefix(path: &str) -> String {
+    if let Some(path) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{path}")
+    } else if let Some(path) = path
+        .strip_prefix(r"\\?\")
+        .or_else(|| path.strip_prefix(r"\\.\"))
+    {
+        path.to_owned()
+    } else {
+        path.to_owned()
+    }
 }
 
 fn git_common_workspace_root(path: &str) -> Option<String> {
@@ -891,6 +922,47 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn comparable_workspace_path_normalizes_drive_path_case_only_on_windows() {
+        let path = "C:/Worktree/./task/workspace/";
+        let normalized = PathBuf::from(path)
+            .components()
+            .collect::<PathBuf>()
+            .to_string_lossy()
+            .into_owned();
+
+        assert_eq!(
+            comparable_workspace_path(path),
+            if cfg!(windows) {
+                normalized.to_lowercase()
+            } else {
+                normalized
+            }
+        );
+    }
+
+    #[test]
+    fn same_workspace_path_normalizes_platform_aliases() {
+        assert!(same_workspace_path("/source/./repo", "/source/repo"));
+        assert!(same_workspace_path(
+            r"\\?\D:\work\source",
+            r"D:\work\source"
+        ));
+        assert!(same_workspace_path(
+            r"\\?\UNC\server\share",
+            r"\\server\share"
+        ));
+        assert!(same_workspace_path(
+            "/workspace/project/../project/api",
+            "/workspace/project/api"
+        ));
+        #[cfg(windows)]
+        assert!(same_workspace_path("C:/repo/source", r"C:\repo\source"));
+        #[cfg(windows)]
+        assert!(same_workspace_path(r"C:\repo\Äpi", r"c:\REPO\äPI"));
+        assert!(!same_workspace_path("/source", "/source/api"));
+    }
 
     #[test]
     fn copies_cloud_project_id_from_runtime_payload() {

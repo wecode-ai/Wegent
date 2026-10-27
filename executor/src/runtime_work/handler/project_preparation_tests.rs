@@ -152,6 +152,192 @@ fn project_preparation_clones_before_creating_independent_worktrees() {
 }
 
 #[test]
+fn project_preparation_retargets_source_root_without_replacing_dependency_roots() {
+    let _lock = crate::test_env::lock();
+    let temp = tempfile::tempdir().unwrap();
+    let _env = ScalarEnv::set("WORKSPACE_ROOT", temp.path().to_str().unwrap());
+    let repo = temp.path().join("source");
+    let dependency = temp.path().join("dependency");
+    initialize_test_repository(&repo);
+    fs::create_dir_all(&dependency).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (handler, root) = isolated_runtime_work_handler("project-preparation-multi-root");
+        handler
+            .worktrees
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(temp.path().join("worktrees").display().to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", temp.path().to_str().unwrap());
+        let _codex_home = ScalarEnv::set("CODEX_HOME", temp.path().join("codex").to_str().unwrap());
+        let mut turn = turn_with_setup("multi-root", "");
+        configure(&mut turn.request, &json!({"execution": {
+            "workspace": {"source": "git_worktree"},
+            "environment": {"environmentId": "repository-project", "repositories": [
+                {"name": "repo", "url": repo.display().to_string(), "path": "repo", "primary": true}
+            ], "setupSteps": []}
+        }})).unwrap();
+        handler
+            .prepare_project_environment(&mut turn)
+            .await
+            .unwrap();
+        let base = turn.request.cwd().unwrap().to_owned();
+        let nested_dependency = Path::new(&base).join("nested-dependency");
+        fs::create_dir_all(&nested_dependency).unwrap();
+        let plan = handler
+            .worktrees
+            .plan(Path::new(&base), &turn.local_task_id, None)
+            .unwrap();
+        let planned = plan.path.display().to_string();
+        turn.request
+            .extra
+            .insert("deferred_worktree_path".into(), json!(planned.clone()));
+        turn.request.extra.insert(
+            "deferred_worktree_repo_root_fingerprint".into(),
+            json!(plan.repo_root_fingerprint),
+        );
+        turn.request.extra.insert(
+            "deferred_worktree_workspace_path".into(),
+            json!(base.clone()),
+        );
+        turn.request.runtime_workspace_roots = vec![
+            base.clone(),
+            planned,
+            nested_dependency.display().to_string(),
+            dependency.display().to_string(),
+        ];
+        let mut link =
+            RuntimeTaskLink::new_pending("multi-root".into(), base.clone(), "Multi root".into());
+        link.runtime_workspace_roots = turn.request.runtime_workspace_roots.clone();
+        handler.upsert_local_task(link);
+        handler.prepare_deferred_worktree(&mut turn).await.unwrap();
+        let worktree = turn.request.cwd().unwrap().to_owned();
+        assert_ne!(worktree, base);
+        assert_eq!(
+            turn.request.runtime_workspace_roots,
+            vec![
+                worktree,
+                nested_dependency.display().to_string(),
+                dependency.display().to_string(),
+            ]
+        );
+        assert_eq!(
+            handler
+                .local_task_link("multi-root")
+                .unwrap()
+                .runtime_workspace_roots,
+            turn.request.runtime_workspace_roots
+        );
+        fs::remove_dir_all(root).unwrap();
+    });
+}
+
+#[test]
+fn project_preparation_preserves_selected_subdirectory_in_worktree() {
+    let _lock = crate::test_env::lock();
+    let temp = tempfile::tempdir().unwrap();
+    let _env = ScalarEnv::set("WORKSPACE_ROOT", temp.path().to_str().unwrap());
+    let repo = temp.path().join("source");
+    let workspace = repo.join("services").join("api");
+    let dependency = temp.path().join("dependency");
+    initialize_test_repository(&repo);
+    fs::create_dir_all(&workspace).unwrap();
+    fs::write(workspace.join("service.json"), "{}\n").unwrap();
+    run_test_git(&repo, &["add", "."]);
+    run_test_git(&repo, &["commit", "-m", "add service workspace"]);
+    fs::create_dir_all(&dependency).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (handler, root) = isolated_runtime_work_handler("project-preparation-subdirectory");
+        handler
+            .worktrees
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(temp.path().join("worktrees").display().to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        let plan = handler
+            .worktrees
+            .plan(&workspace, "subdirectory", None)
+            .unwrap();
+        let source_root = plan.source_path.display().to_string();
+        let workspace_path = workspace.display().to_string();
+        let mut request = ExecutionRequest {
+            project_workspace_path: Some(workspace_path.clone()),
+            runtime_workspace_roots: vec![
+                workspace_path.clone(),
+                source_root.clone(),
+                dependency.display().to_string(),
+            ],
+            ..Default::default()
+        };
+        request
+            .extra
+            .insert("deferred_worktree_source_path".into(), json!(source_root));
+        request.extra.insert(
+            "deferred_worktree_workspace_path".into(),
+            json!(workspace_path),
+        );
+        request.extra.insert(
+            "deferred_worktree_path".into(),
+            json!(plan.path.display().to_string()),
+        );
+        request.extra.insert(
+            "deferred_worktree_repo_root_fingerprint".into(),
+            json!(plan.repo_root_fingerprint),
+        );
+        let mut turn = SpawnTurnRequest {
+            local_task_id: "subdirectory".into(),
+            runtime: "codex".into(),
+            request,
+            send_payload: None,
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: None,
+            initial_thread_goal: None,
+        };
+        handler.upsert_local_task(RuntimeTaskLink::new_pending(
+            "subdirectory".into(),
+            workspace.display().to_string(),
+            "Subdirectory".into(),
+        ));
+
+        handler.prepare_deferred_worktree(&mut turn).await.unwrap();
+
+        let expected_root = plan.path.display().to_string();
+        let expected_workspace = plan.path.join("services").join("api").display().to_string();
+        assert_eq!(turn.request.cwd(), Some(expected_workspace.as_str()));
+        assert!(Path::new(&expected_workspace)
+            .join("service.json")
+            .is_file());
+        assert_eq!(
+            turn.request.runtime_workspace_roots,
+            vec![
+                expected_workspace.clone(),
+                expected_root,
+                dependency.display().to_string(),
+            ]
+        );
+        let saved = handler.local_task_link("subdirectory").unwrap();
+        assert_eq!(saved.workspace_path, expected_workspace);
+        assert_eq!(
+            saved.runtime_workspace_roots,
+            turn.request.runtime_workspace_roots
+        );
+        fs::remove_dir_all(root).unwrap();
+    });
+}
+
+#[test]
 fn project_preparation_accepts_without_blocking_and_can_be_cancelled() {
     let _lock = crate::test_env::lock();
     let temp = tempfile::tempdir().unwrap();

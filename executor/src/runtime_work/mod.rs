@@ -51,6 +51,7 @@ pub use handler::RuntimeWorkRpcHandler;
 pub(crate) use handler::CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS;
 pub(crate) use notification_mapping::codex_stream_debug_enabled;
 pub(crate) use util::runtime_task_title;
+pub(crate) use util::same_workspace_path;
 
 pub(crate) fn runtime_features() -> serde_json::Value {
     let gateway_enabled = env_enabled("DEVICE_SESSION_GATEWAY_ENABLED", true);

@@ -4494,6 +4494,115 @@ fn codex_runtime_workspace_roots_are_applied_to_thread_and_turn_requests() {
             json!(["/workspace/web", "/workspace/api"])
         );
     }
+
+    let without_cwd = ExecutionRequest {
+        runtime_workspace_roots: vec!["/workspace/api".to_owned()],
+        ..ExecutionRequest::default()
+    };
+    assert_eq!(
+        thread_start_params(&without_cwd, &launch_config)["runtimeWorkspaceRoots"],
+        json!(["/workspace/api"])
+    );
+}
+
+#[test]
+fn codex_runtime_workspace_roots_include_exact_cwd_even_under_a_parent_root() {
+    let request = ExecutionRequest {
+        project_workspace_path: Some("/workspace/project/api".to_owned()),
+        runtime_workspace_roots: vec!["/workspace/project".to_owned(), "/dependency".to_owned()],
+        ..ExecutionRequest::default()
+    };
+    let launch = CodexLaunchConfig::default();
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("thread", &request, &launch),
+        thread_fork_params("thread", None, &request, &launch),
+        turn_start_params("thread", &request, &launch, Vec::new()),
+    ] {
+        assert_eq!(
+            params["runtimeWorkspaceRoots"],
+            json!([
+                "/workspace/project",
+                "/dependency",
+                "/workspace/project/api"
+            ])
+        );
+    }
+}
+
+#[test]
+fn codex_worktree_turn_roots_include_cwd_and_preserve_independent_roots() {
+    let mut request = ExecutionRequest {
+        project_workspace_path: Some("/runtime/worktrees/task/workspace".to_owned()),
+        runtime_workspace_roots: vec![
+            "/project".to_owned(),
+            "/project/api".to_owned(),
+            "/runtime/worktrees/task/workspace".to_owned(),
+        ],
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "origin".to_owned(),
+        json!({
+            "type":"dingtalk_work",
+            "initiatedBy":"stand_in",
+            "askBeforeAct":false
+        }),
+    );
+    let launch_config = CodexLaunchConfig::default();
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+        turn_start_params("thread-1", &request, &launch_config, Vec::new()),
+    ] {
+        assert_eq!(
+            params["runtimeWorkspaceRoots"],
+            json!([
+                "/project",
+                "/project/api",
+                "/runtime/worktrees/task/workspace"
+            ])
+        );
+        assert_eq!(
+            params["permissions"],
+            crate::agents::codex::external_work::SOURCE_PROJECT_PROFILE
+        );
+    }
+
+    request.runtime_workspace_roots.clear();
+    let params = turn_start_params("thread-1", &request, &launch_config, Vec::new());
+    assert!(params.get("runtimeWorkspaceRoots").is_none());
+}
+
+#[test]
+fn external_task_preserves_source_project_and_never_downgrades_permissions() {
+    let request: ExecutionRequest = serde_json::from_value(json!({
+        "origin":{
+            "type":"dingtalk_work",
+            "initiatedBy":"stand_in",
+            "askBeforeAct":false
+        },
+        "runtime_permission_profile":":danger-full-access"
+    }))
+    .unwrap();
+    let config = task_identity_thread_config(&request);
+
+    assert_eq!(
+        config["permissions.wework-source-project.extends"],
+        crate::agents::CODEX_WORKSPACE_PERMISSION_PROFILE
+    );
+    if cfg!(windows) {
+        assert_eq!(
+            config["permissions.wework-source-project.filesystem"][":project_roots"]["."],
+            "write"
+        );
+    }
+    assert_ne!(
+        config["default_permissions"],
+        crate::agents::CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+    );
 }
 
 #[test]

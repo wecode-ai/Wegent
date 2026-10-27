@@ -648,6 +648,10 @@ impl RuntimeWorkRpcHandler {
                 Value::String(plan.source_path.display().to_string()),
             );
             request.extra.insert(
+                "deferred_worktree_workspace_path".to_owned(),
+                Value::String(source_workspace_path.clone()),
+            );
+            request.extra.insert(
                 "deferred_worktree_path".to_owned(),
                 Value::String(plan.path.display().to_string()),
             );
