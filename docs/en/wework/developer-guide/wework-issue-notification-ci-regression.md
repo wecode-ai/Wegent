@@ -31,6 +31,17 @@ Focused tests additionally cover repeated reads, recipient isolation, unrelated
 notifications, failed reads without refresh and revisiting already-read content.
 Activity must load and become visible before acknowledging a read.
 
+2026-10-27: the isolated Electron `issue-notification-read` checkpoint passed all
+three entry paths and later notifications for the same open drawer. Four Backend
+read API regressions, 37 notification/API tests, 146 activity/routing tests, 19
+shared scrolling tests and four checkpoint contract tests passed. Fixtures retain
+project IDs as strings to avoid JavaScript Number precision loss.
+
+The same CI run exposed a shared desktop artifact build waiting for a nonexistent
+Rust image: its consumer omitted the producer's `backend-rs/examples/**` from the
+source digest. Desktop CI and cache warmup now use the producer's source inputs,
+with a contract check covering all three definitions instead of increasing waits.
+
 ## Evidence and fix boundaries
 
 PR #3763 at `f124f3d2e` failed desktop Core shards 12 and 15:

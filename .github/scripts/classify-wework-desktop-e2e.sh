@@ -775,6 +775,10 @@ classify_wework_path() {
       select_target "core:stand-in-cloud"
       select_target "core:project-assignment-notification"
       select_target "core:notification-tab-navigation"
+      if [[ "$path" == wework/src/features/notifications/WeworkSchemeBridge* || \
+        "$path" == wework/src/features/notifications/scheme* ]]; then
+        select_target "core:collaboration-issue-comment-notification"
+      fi
       return
       ;;
 
@@ -1022,6 +1026,9 @@ classify_wework_path() {
       wework/src/features/todo/WorkItemComposerGuide*)
       select_target "core:task-status-sync"
       select_target "core:task-board-association"
+      if [[ "$path" == wework/src/api/deliveries* ]]; then
+        select_target "core:collaboration-issue-comment-notification"
+      fi
       if [[ "$path" == wework/src/api/local/localDelivery* ]]; then
         select_target "core:collaboration-issue-assignment-activity"
         select_target "core:collaboration-human-round-resume"

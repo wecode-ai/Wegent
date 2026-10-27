@@ -12,6 +12,14 @@ desktop_build_flows="$repo_root/wework/e2e/desktop/modules/desktop-build-flows.m
 desktop_checkpoint_runner="$repo_root/wework/e2e/desktop/run-checkpoints.mjs"
 memory_tool_flows="$repo_root/wework/e2e/desktop/modules/memory-tool-flows.mjs"
 notification_isolation_scenario="$repo_root/wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs"
+backend_rs_runtime_inputs="hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**')"
+for runtime_workflow in e2e-tests.yml wework-e2e.yml ci-cache-warmup.yml; do
+  if ! grep -Fq "$backend_rs_runtime_inputs" "$repo_root/.github/workflows/$runtime_workflow"; then
+    printf 'Backend Rust runtime producer and consumers must hash the same source inputs: %s\n' \
+      "$runtime_workflow" >&2
+    exit 1
+  fi
+done
 wework_app_workflow="$repo_root/.github/workflows/wework-app.yml"
 wework_core_build_action="$repo_root/.github/actions/build-wework-core-e2e/action.yml"
 
@@ -466,6 +474,31 @@ wework_desktop_other_e2e='
     exit 1
   fi
 }
+
+assert_desktop_case "Issue navigation source changes retain existing coverage and select notification reads" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"notification-tab-navigation"},{"id":"core-2","name":"Core / shard 2","segments":"project-assignment-notification"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in-notifications"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-issue-comment-notification,stand-in-cloud,stand-in-assignment-notifications"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/notifications/WeworkSchemeBridge.tsx" \
+  "wework/src/features/notifications/scheme.ts"
+
+assert_desktop_case "Issue read API changes retain board coverage and select notification reads" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"task-status-sync"},{"id":"core-6","name":"Core / shard 6","segments":"task-board-association"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-issue-comment-notification"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/api/deliveries.ts"
+
+assert_desktop_case "Issue notification read scenario selects its existing CI group" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"collaboration-issue-comment-notification"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/issue-notification-read.scenario.mjs"
 
 for terminal_wiring_path in \
   wework/src/components/layout/DesktopWorkbenchMain.tsx \

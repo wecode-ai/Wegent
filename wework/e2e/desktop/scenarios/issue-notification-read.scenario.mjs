@@ -55,7 +55,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         issues.push(issue)
         notices.push(
           await request('/api/v1/wework-notifications', {
-            project_id: Number(project.id),
+            project_id: String(project.id),
             item_id: issue.id,
             title,
             body: 'Read this Issue',
@@ -94,7 +94,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await control.command('waitFor', BADGE, { visible: false })
 
       const later = await request('/api/v1/wework-notifications', {
-        project_id: Number(project.id),
+        project_id: String(project.id),
         item_id: issues[2].id,
         title: 'A later notification for the open Issue',
         body: 'Open the same Issue again',
