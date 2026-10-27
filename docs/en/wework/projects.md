@@ -165,6 +165,8 @@ The native task board's view dropdown on the right provides switching, creation,
 
 Project administrators can save multiple views, bind each lane to a status or tag, reorder lanes, configure tag filters, and choose the project default view. Entering a project opens its default; subsequent switches apply to the current visit. Views and their default are shared with project members. Deleting the default view restores the base board. Lane settings and card fields are edited in one dialog and saved together; card fields apply to every view in the project.
 
+Tag names allow up to 32 Unicode code points, including supplementary characters such as emoji. Issue tags, project tags, tag lanes, and filters use the same limit. Longer input displays an error and cannot be saved; names are never automatically truncated. Historical long tags retain their original values when read or when unrelated fields such as titles change.
+
 Renaming or deleting a tag in a native project saves the catalog, tags on undeleted Issues, lane bindings, and filter references together. A project version conflict or any Issue update failure rolls back the entire operation so it can be retried after resolving the error. Externally hosted Issues do not support this transaction across records. Failed bulk status changes in the table list the affected Issues and reasons; successful Issues are deselected while failed Issues stay selected for retry.
 
 | Drag direction | Issue changes |

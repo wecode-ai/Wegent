@@ -4,9 +4,11 @@
 
 """Saved board projections stored in project metadata, independent of statuses."""
 
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.schemas.tagging import MAX_TAG_LENGTH, TagName
 
 SortRule = Literal[
     "priority-desc",
@@ -25,13 +27,17 @@ class BoardViewColumn(BaseModel):
     type: Literal["status", "tag"]
     value: str = Field(min_length=1, max_length=80)
 
+    @model_validator(mode="after")
+    def validate_tag(self) -> "BoardViewColumn":
+        if self.type == "tag" and len(self.value) > MAX_TAG_LENGTH:
+            raise ValueError(f"tag names must be at most {MAX_TAG_LENGTH} characters")
+        return self
+
 
 class BoardViewFilter(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    tags: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
-        default_factory=list, max_length=50
-    )
+    tags: list[TagName] = Field(default_factory=list, max_length=50)
     match: Literal["any", "all"] = "all"
 
 

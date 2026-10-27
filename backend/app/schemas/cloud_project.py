@@ -19,7 +19,12 @@ from app.core.provider_credentials import mask_provider_config
 from app.schemas.base_role import BaseRole
 from app.schemas.board_views import BoardViews
 from app.schemas.issue_workflow import ProjectWorkflowDefinition
-from app.schemas.tagging import MAX_TAG_LENGTH, MAX_TAGS_PER_ITEM, normalize_tags
+from app.schemas.tagging import (
+    MAX_TAG_LENGTH,
+    MAX_TAGS_PER_ITEM,
+    TagName,
+    normalize_tags,
+)
 from app.schemas.types import SnowflakeId
 from app.schemas.workspace import (
     ExecutionEnvironmentConfig,
@@ -241,7 +246,7 @@ class CloudProjectUpdate(BaseModel):
     membership_mode: Literal["inherit", "restricted"] | None = None
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = None
-    tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
+    tags: list[TagName] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
     provider_config: dict[str, object] | None = None
     visibility: ProjectVisibility | None = None
     public_access: PublicAccessGrant | None = None

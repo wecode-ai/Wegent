@@ -71,7 +71,8 @@ impl LocalTaskStore {
         change: &ProjectTagChange,
     ) -> Result<LoopItem, TaskRuntimeError> {
         for tag in std::iter::once(&change.source).chain(change.target.iter()) {
-            if tag.is_empty() || tag != tag.trim() || tag.chars().count() > 32 {
+            super::super::tagging::validate_tag(tag)?;
+            if tag != tag.trim() {
                 return Err(TaskRuntimeError::Invalid("Invalid tag name".into()));
             }
         }

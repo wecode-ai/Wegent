@@ -14,6 +14,7 @@ pub use store::personal_stand_in;
 mod router;
 pub(crate) mod runner_routing;
 mod store;
+mod tagging;
 
 use serde_json::Value;
 

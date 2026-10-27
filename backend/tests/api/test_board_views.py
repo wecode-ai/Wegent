@@ -9,9 +9,128 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
-from app.models.delivery import CloudProject
+from app.models.delivery import CloudProject, LoopItem
 from app.models.resource_member import ResourceMember
 from app.models.user import User
+
+
+@pytest.mark.parametrize("character", ["a", "标", "😀"])
+def test_tag_boundaries_preserve_lane_and_filter_matches(
+    test_client: TestClient, test_token: str, character: str
+) -> None:
+    headers = {"Authorization": f"Bearer {test_token}"}
+    tag = character * 32
+    oversized = tag + character
+    project = test_client.post(
+        "/api/v1/cloud-projects", headers=headers, json={"name": "Tag boundaries"}
+    ).json()
+    path = f"/api/v1/cloud-projects/{project['id']}"
+    read_path = f"/api/v1/projects/{project['id']}"
+    config = {
+        "schema_version": 1,
+        "views": [
+            {
+                "id": "boundary",
+                "name": "Boundary",
+                "columns": [{"id": "tag", "type": "tag", "value": tag}],
+                "filter": {"tags": [tag], "match": "all"},
+            }
+        ],
+    }
+    saved = test_client.patch(
+        path,
+        headers=headers,
+        json={
+            "version": project["version"],
+            "tags": [tag],
+            "board_views": config,
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    project = saved.json()
+    created = test_client.post(
+        f"{path}/loop-items",
+        headers=headers,
+        json={
+            "title": "Boundary",
+            "tags": [tag],
+        },
+    )
+    assert created.status_code == 201, created.text
+    issue = created.json()
+    item_path = f"/api/v1/loop-items/{issue['id']}"
+    moved = test_client.patch(
+        item_path,
+        headers=headers,
+        json={
+            "version": issue["version"],
+            "tags": [tag],
+        },
+    )
+    assert moved.status_code == 200, moved.text
+    persisted = test_client.get(item_path, headers=headers).json()
+    view = test_client.get(read_path, headers=headers).json()["board_views"]["views"][0]
+    assert persisted["tags"] == [view["columns"][0]["value"]] == view["filter"]["tags"]
+    for fields in [
+        {"tags": [oversized]},
+        {
+            "board_views": {
+                "views": [
+                    {
+                        "id": "bad",
+                        "name": "Bad lane",
+                        "columns": [{"id": "tag", "type": "tag", "value": oversized}],
+                    }
+                ]
+            }
+        },
+        {
+            "board_views": {
+                "views": [
+                    {
+                        "id": "bad",
+                        "name": "Bad filter",
+                        "columns": [{"id": "tag", "type": "tag", "value": tag}],
+                        "filter": {"tags": [oversized]},
+                    }
+                ]
+            }
+        },
+    ]:
+        response = test_client.patch(
+            path,
+            headers=headers,
+            json={
+                "version": project["version"],
+                **fields,
+            },
+        )
+        assert response.status_code == 422, response.text
+    rejected_create = test_client.post(
+        f"{path}/loop-items",
+        headers=headers,
+        json={
+            "title": "Rejected",
+            "tags": [oversized],
+        },
+    )
+    assert rejected_create.status_code == 422, rejected_create.text
+    rejected_update = test_client.patch(
+        item_path,
+        headers=headers,
+        json={
+            "version": persisted["version"],
+            "tags": [oversized],
+        },
+    )
+    assert rejected_update.status_code == 422, rejected_update.text
+    assert test_client.get(item_path, headers=headers).json() == persisted
+    unchanged = test_client.get(read_path, headers=headers).json()
+    assert (unchanged["version"], unchanged["tags"], unchanged["board_views"]) == (
+        project["version"],
+        [tag],
+        project["board_views"],
+    )
 
 
 def test_views_preserve_history_extensions_and_old_client_writes(
@@ -122,6 +241,43 @@ def test_views_preserve_history_extensions_and_old_client_writes(
     assert test_client.get(f"/api/v1/projects/{project['id']}", headers=headers).json()[
         "board_views"
     ] == {"schema_version": 2, "future": True}
+
+
+def test_historical_long_tags_survive_reads_and_unrelated_writes(
+    test_client: TestClient, test_db: Session, test_token: str
+) -> None:
+    headers = {"Authorization": f"Bearer {test_token}"}
+    project = test_client.post(
+        "/api/v1/cloud-projects", headers=headers, json={"name": "Historical tags"}
+    ).json()
+    path = f"/api/v1/cloud-projects/{project['id']}"
+    issue = test_client.post(
+        f"{path}/loop-items", headers=headers, json={"title": "Historical"}
+    ).json()
+    tag = "historical" * 4
+    for model, item_id in [(CloudProject, project["id"]), (LoopItem, issue["id"])]:
+        row = test_db.query(model).filter(model.id == item_id).one()
+        row.metadata_json = {**row.metadata_json, "tags": [tag]}
+    test_db.commit()
+    renamed = test_client.patch(
+        path,
+        headers=headers,
+        json={"version": project["version"], "name": "Renamed project"},
+    )
+    assert renamed.status_code == 200, renamed.text
+    updated = test_client.patch(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=headers,
+        json={"version": issue["version"], "title": "Renamed Issue"},
+    )
+    assert updated.status_code == 200, updated.text
+    assert renamed.json()["tags"] == updated.json()["tags"] == [tag]
+    assert test_client.get(f"/api/v1/projects/{project['id']}", headers=headers).json()[
+        "tags"
+    ] == [tag]
+    assert test_client.get(f"/api/v1/loop-items/{issue['id']}", headers=headers).json()[
+        "tags"
+    ] == [tag]
 
 
 @pytest.mark.parametrize("role", ["Developer", "Viewer"])

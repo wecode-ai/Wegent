@@ -5333,6 +5333,7 @@
       "cloud": "Cloud",
       "limit_tags": "Limit task tags (optional)",
       "add_tag": "Choose or enter a task tag",
+      "tag_too_long": "Tag names cannot exceed 32 characters",
       "remove_tag": "Remove tag {{tag}}",
       "limit_tags_help": "Any selected tag matches. Leave empty to accept all tags.",
       "discard_help": "Discard unsaved changes?",

@@ -13,6 +13,7 @@ import { ProjectBoardColumnSortPicker } from './ProjectBoardColumnSortPicker'
 import { createProjectBoardSortLabels } from './projectBoardSorting'
 import type { BoardViewSaveSettings, SavedBoardView } from './projectBoardViews'
 import { BoardViewTagPicker } from './BoardViewTagPicker'
+import { isTagNameTooLong } from '../tagging'
 
 const control =
   'min-h-11 rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:min-h-8 [&>option]:bg-popover [&>option]:text-text-primary [&>option:disabled]:text-text-muted'
@@ -98,6 +99,14 @@ export function BoardViewEditor({
   }, [dialog, returnFocus])
   const submit = async (remove = false) => {
     if (lock.current) return
+    if (
+      !remove &&
+      (draft.columns.some(column => column.type === 'tag' && isTagNameTooLong(column.value)) ||
+        draft.filter.tags.some(isTagNameTooLong))
+    ) {
+      setError(t('todo.tag_name_too_long'))
+      return
+    }
     const bindings = draft.columns.map(column => JSON.stringify([column.type, column.value]))
     if (
       !remove &&

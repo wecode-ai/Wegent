@@ -4,7 +4,68 @@
 
 import { expect } from '@playwright/test'
 import { projectTest, type Resource } from '../../utils/collaboration-project-fixture'
-import { webApi } from '../../utils/collaboration-test-support'
+import { dragCollaborationIssueToColumn, webApi } from '../../utils/collaboration-test-support'
+
+projectTest(
+  'retains a 32-character lane after dragging, filtering and reload, and rejects 33 characters',
+  async ({ page, scheduledProject: { path, issueId } }) => {
+    const tag = '😀'.repeat(32)
+    const projectPath = `/api/v1/cloud-projects/${path.split('/').at(-1)!}`
+    const issuePath = `/api/v1/loop-items/${issueId}`
+    const issue = await webApi<Resource>(page, issuePath)
+    await webApi(page, issuePath, {
+      method: 'PATCH',
+      body: { version: issue.version, status: 'completed', tags: [] },
+    })
+    await page.goto(path)
+    await page.getByTestId('board-view-picker').click()
+    await page.getByTestId('board-view-new').click()
+    await page.getByTestId('board-view-name').fill('Tag boundary')
+    for (let index = 0; index < 4; index += 1)
+      await page.getByTestId('board-view-lane-remove-0').click()
+    await page.getByTestId('board-view-add-lane').click()
+    await page.getByTestId('board-view-lane-value-1').click()
+    const search = page.getByTestId('board-view-lane-value-1-search')
+    const create = page.getByTestId('board-view-lane-value-1-create')
+    await search.fill(`${tag}😀`)
+    await expect(search).toHaveValue(`${tag}😀`)
+    await expect(search).toHaveAttribute('aria-invalid', 'true')
+    await expect(create).toBeDisabled()
+    await expect(
+      page.getByTestId('board-view-lane-value-1-popover').getByRole('alert')
+    ).toContainText('32')
+    await search.fill(tag)
+    await expect(create).toBeEnabled()
+    await create.click()
+    await page.getByTestId('board-view-set-default').check()
+    await page.getByTestId('board-view-save').click()
+    await expect(page.getByTestId('board-view-editor')).toHaveCount(0)
+    const project = await webApi<{
+      board_views: { views: Array<{ id: string; columns: Array<{ id: string; value: string }> }> }
+    }>(page, projectPath)
+    const [statusLane, tagLane] = project.board_views.views[0].columns
+    expect(tagLane.value).toBe(tag)
+    const moved = await dragCollaborationIssueToColumn(page, issueId, tagLane.id, statusLane.id)
+    expect(moved.status()).toBe(200)
+    const card = page
+      .getByTestId(`cloud-todo-column-${tagLane.id}`)
+      .getByTestId(`cloud-todo-card-${issueId}`)
+    await expect(card).toBeVisible()
+    expect((await webApi<{ tags: string[] }>(page, issuePath)).tags).toEqual([tag])
+    await page.getByTestId('board-view-picker').click()
+    await page.getByTestId('board-view-edit').click()
+    await page.getByTestId(`board-view-filter-tag-${tag}`).check()
+    await page.getByTestId('board-view-save').click()
+    await expect(page.getByTestId('board-view-editor')).toHaveCount(0)
+    await page.reload()
+    await expect(page.getByTestId('board-view-picker')).toContainText('Tag boundary')
+    await expect(card).toBeVisible()
+    const persisted = await webApi<{
+      board_views: { views: Array<{ filter: { tags: string[] } }> }
+    }>(page, projectPath)
+    expect(persisted.board_views.views[0].filter.tags).toEqual([tag])
+  }
+)
 
 projectTest(
   'bulk status changes identify rejected Issues and retain them for retry',

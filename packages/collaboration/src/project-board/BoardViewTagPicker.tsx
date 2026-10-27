@@ -8,6 +8,7 @@ import { useId, useRef, useState, type KeyboardEvent } from 'react'
 import { isImeComposingEvent } from '@wegent/chat-core/ime'
 import type { CollaborationTranslate } from '../i18n'
 import { useCollaborationPortalTheme } from '../theme'
+import { isTagNameTooLong } from '../tagging'
 
 export function BoardViewTagPicker({
   value,
@@ -35,10 +36,11 @@ export function BoardViewTagPicker({
   const listId = useId()
   const portalTheme = useCollaborationPortalTheme()
   const name = query.trim()
+  const tooLong = isTagNameTooLong(name)
   const filtered = tags.filter(tag => tag.toLocaleLowerCase().includes(name.toLocaleLowerCase()))
   const canCreate = Boolean(name && !tags.includes(name))
   const choose = (tag: string) => {
-    if (disabled || usedTags.includes(tag)) return
+    if (disabled || usedTags.includes(tag) || isTagNameTooLong(tag)) return
     onChange(tag)
     setOpen(false)
   }
@@ -112,17 +114,23 @@ export function BoardViewTagPicker({
               ref={searchRef}
               type="search"
               autoComplete="off"
-              maxLength={80}
               value={query}
               disabled={disabled}
               aria-label={t('todo.board_view_tag_search')}
               aria-controls={listId}
+              aria-invalid={tooLong}
+              aria-describedby={tooLong ? `${listId}-error` : undefined}
               placeholder={t('todo.board_view_tag_search')}
               data-testid={`${testId}-search`}
               className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-text-muted"
               onChange={event => setQuery(event.target.value)}
             />
           </label>
+          {tooLong && (
+            <p id={`${listId}-error`} role="alert" className="px-2 py-1 text-xs text-error">
+              {t('todo.tag_name_too_long')}
+            </p>
+          )}
           <div
             ref={listRef}
             id={listId}
@@ -136,7 +144,7 @@ export function BoardViewTagPicker({
                 type="button"
                 role="option"
                 aria-selected={tag === value}
-                disabled={disabled || usedTags.includes(tag)}
+                disabled={disabled || usedTags.includes(tag) || isTagNameTooLong(tag)}
                 tabIndex={tag === value ? 0 : -1}
                 data-testid={`${testId}-option-${tag}`}
                 className={optionStyle}
@@ -154,7 +162,7 @@ export function BoardViewTagPicker({
                 type="button"
                 role="option"
                 aria-selected={false}
-                disabled={disabled}
+                disabled={disabled || tooLong}
                 tabIndex={-1}
                 data-testid={`${testId}-create`}
                 className={optionStyle}

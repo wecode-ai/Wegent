@@ -2556,6 +2556,7 @@ export function TodoEditor(props: TodoEditorProps) {
                 onChange={setTags}
                 disabled={!editable}
                 suggestions={tagSuggestions}
+                lengthErrorLabel={t("todo.tag_name_too_long")}
                 placeholder={t("todo.add_tag", "添加标签")}
                 removeLabel={(tag) =>
                   t("todo.remove_name", "删除 {{name}}", { name: tag })
@@ -2884,6 +2885,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     onChange={setTags}
                     disabled={!editable}
                     suggestions={tagSuggestions}
+                    lengthErrorLabel={t("todo.tag_name_too_long")}
                     placeholder={t("todo.add_tag", "添加标签")}
                     removeLabel={(tag) =>
                       t("todo.remove_name", "删除 {{name}}", { name: tag })

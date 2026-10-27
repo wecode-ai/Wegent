@@ -21,6 +21,7 @@ import {
 } from './projectMutationQueue'
 import { repositoryAddress, repositoryProviderConfig } from './provider'
 import { collectProjectTags, updateBoardViewTag } from '../project-board/projectTags'
+import { isTagNameTooLong } from '../tagging'
 import type {
   ProjectManageApi,
   ProjectManageCardDisplay,
@@ -467,6 +468,10 @@ export function ProjectManageView<
   async function createTag() {
     const value = newTag.trim()
     if (!value || tagBusy) return
+    if (isTagNameTooLong(value)) {
+      setError(host.translate('todo.tag_name_too_long', '标签名称不能超过 32 个字符'))
+      return
+    }
     const scope = projectScopeRef.current
     setTagBusy(true)
     try {
@@ -508,6 +513,10 @@ export function ProjectManageView<
   async function renameTag(source: string) {
     if (tagBusy) return
     const target = renameValue.trim()
+    if (isTagNameTooLong(target)) {
+      setError(host.translate('todo.tag_name_too_long', '标签名称不能超过 32 个字符'))
+      return
+    }
     setRenamingTag(null)
     if (!target || target === source || allTags.includes(target)) return
     const scope = projectScopeRef.current

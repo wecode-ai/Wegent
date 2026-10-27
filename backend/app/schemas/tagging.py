@@ -4,8 +4,13 @@
 
 """Shared tag normalization for loop items and cloud projects."""
 
+from typing import Annotated
+
+from pydantic import Field
+
 MAX_TAGS_PER_ITEM = 20
 MAX_TAG_LENGTH = 32
+TagName = Annotated[str, Field(min_length=1, max_length=MAX_TAG_LENGTH)]
 
 
 def normalize_tags(value: object) -> list[str]:
@@ -14,7 +19,7 @@ def normalize_tags(value: object) -> list[str]:
         return []
     tags: list[str] = []
     for raw in value:
-        tag = str(raw).strip()[:MAX_TAG_LENGTH]
+        tag = str(raw).strip()
         if tag and tag not in tags:
             tags.append(tag)
     return tags[:MAX_TAGS_PER_ITEM]

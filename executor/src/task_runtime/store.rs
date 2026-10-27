@@ -351,6 +351,9 @@ impl LocalTaskStore {
         let provider = task_provider(&project)?;
         let mut metadata = project.metadata;
         if let Some(tags) = input.tags {
+            for tag in &tags {
+                super::tagging::validate_tag(tag)?;
+            }
             metadata["tags"] = json!(tags);
         }
         if let Some(provider_config) = input.provider_config {
@@ -535,6 +538,9 @@ impl LocalTaskStore {
         validate_name(&input.title, "task title")?;
         validate_status(&input.status)?;
         validate_priority(&input.priority)?;
+        for tag in &input.tags {
+            super::tagging::validate_tag(tag)?;
+        }
         validate_schedule_range(start_at.as_deref(), due_at.as_deref())?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -723,6 +729,11 @@ impl LocalTaskStore {
         }
         if let Some(priority) = input.priority.as_deref() {
             validate_priority(priority)?;
+        }
+        if let Some(tags) = input.tags.as_ref() {
+            for tag in tags {
+                super::tagging::validate_tag(tag)?;
+            }
         }
         let selected_agent = input
             .assignee_agent_id

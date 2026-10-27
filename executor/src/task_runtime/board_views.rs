@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use serde::Deserialize;
 use serde_json::Value;
 
+use super::tagging::validate_tag;
 use super::TaskRuntimeError;
 
 #[derive(Deserialize)]
@@ -79,7 +80,11 @@ pub(super) fn validate_update(previous: &Value, next: &Value) -> Result<(), Task
             || view.columns.len() > 50
             || view.filter.tags.len() > 50
             || !matches!(view.filter.r#match.as_str(), "any" | "all")
-            || view.filter.tags.iter().any(|tag| !valid_text(tag, 80))
+            || view
+                .filter
+                .tags
+                .iter()
+                .any(|tag| validate_tag(tag).is_err())
         {
             return Err(invalid());
         }
@@ -88,6 +93,7 @@ pub(super) fn validate_update(previous: &Value, next: &Value) -> Result<(), Task
         for column in &view.columns {
             if !valid_text(&column.id, 128)
                 || !valid_text(&column.value, 80)
+                || (column.r#type == "tag" && validate_tag(&column.value).is_err())
                 || !matches!(column.r#type.as_str(), "status" | "tag")
                 || !column_ids.insert(&column.id)
                 || !bindings.insert((&column.r#type, &column.value))

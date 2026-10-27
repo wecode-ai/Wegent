@@ -6,6 +6,111 @@ use serde_json::json;
 use wegent_executor::task_runtime::{LocalTaskStore, ProjectUpdate, TaskRuntimeError};
 
 #[test]
+fn tag_boundaries_preserve_saved_lane_and_filter_matches() {
+    for character in ["a", "标", "😀"] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&path).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Tags"})).unwrap())
+            .unwrap();
+        let tag = character.repeat(32);
+        let oversized = character.repeat(33);
+        let config = json!({"schema_version":1,"views":[{
+            "id":"boundary","name":"Boundary",
+            "columns":[{"id":"tag","type":"tag","value":tag}],
+            "filter":{"tags":[tag],"match":"all"}
+        }]});
+        let project = store
+            .update_project(
+                &project.id,
+                serde_json::from_value(json!({
+                    "version":project.version,"tags":[tag],"board_views":config
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        let issue = store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({
+                    "title":"Boundary","tags":[tag]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        let issue = store
+            .update_task(
+                &project.id,
+                &issue.id,
+                serde_json::from_value(json!({
+                    "version":issue.version,"tags":[tag]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        for fields in [
+            json!({"tags":[oversized]}),
+            json!({"board_views":{"schema_version":1,"views":[{
+                "id":"bad","name":"Bad lane","columns":[{"id":"tag","type":"tag","value":oversized}]
+            }]}}),
+            json!({"board_views":{"schema_version":1,"views":[{
+                "id":"bad","name":"Bad filter","columns":[{"id":"tag","type":"tag","value":tag}],
+                "filter":{"tags":[oversized],"match":"all"}
+            }]}}),
+        ] {
+            let mut input = fields;
+            input["version"] = json!(project.version);
+            assert!(matches!(
+                store.update_project(&project.id, serde_json::from_value(input).unwrap()),
+                Err(TaskRuntimeError::Invalid(_))
+            ));
+        }
+        assert!(matches!(
+            store.create_task(
+                &project.id,
+                serde_json::from_value(json!({
+                    "title":"Rejected","tags":[oversized]
+                }))
+                .unwrap()
+            ),
+            Err(TaskRuntimeError::Invalid(_))
+        ));
+        assert!(matches!(
+            store.update_task(
+                &project.id,
+                &issue.id,
+                serde_json::from_value(json!({
+                    "version":issue.version,"tags":[oversized]
+                }))
+                .unwrap()
+            ),
+            Err(TaskRuntimeError::Invalid(_))
+        ));
+        drop(store);
+        let reopened = LocalTaskStore::open(&path).unwrap();
+        let persisted = reopened.get_task(&project.id, &issue.id).unwrap();
+        let saved = reopened
+            .list_projects()
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == project.id)
+            .unwrap();
+        assert_eq!(persisted.version, issue.version);
+        assert_eq!(saved.version, project.version);
+        assert_eq!(saved.metadata["board_views"], config);
+        assert_eq!(
+            persisted.metadata["tags"],
+            config["views"][0]["filter"]["tags"]
+        );
+        assert_eq!(
+            persisted.metadata["tags"][0],
+            config["views"][0]["columns"][0]["value"]
+        );
+    }
+}
+
+#[test]
 fn saved_views_survive_old_writes_restart_and_conflicts_without_touching_issues() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("tasks.sqlite");

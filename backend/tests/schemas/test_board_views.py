@@ -6,6 +6,25 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.board_views import BoardViews
+from app.schemas.cloud_project import CloudProjectUpdate
+from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
+from app.schemas.tagging import normalize_tags
+
+
+@pytest.mark.parametrize("character", ["a", "标", "😀"])
+def test_tag_lengths_reject_invalid_writes_and_preserve_historical_reads(
+    character: str,
+) -> None:
+    tag = character * 32
+    for model, required in [
+        (LoopItemCreate, {"title": "Issue"}),
+        (LoopItemUpdate, {"version": 1}),
+        (CloudProjectUpdate, {"version": 1}),
+    ]:
+        assert model.model_validate({**required, "tags": [tag]}).tags == [tag]
+        with pytest.raises(ValidationError):
+            model.model_validate({**required, "tags": [tag + character]})
+    assert normalize_tags([tag + character]) == [tag + character]
 
 
 @pytest.mark.parametrize(

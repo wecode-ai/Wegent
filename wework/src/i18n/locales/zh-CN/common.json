@@ -5330,6 +5330,7 @@
       "cloud": "云端",
       "limit_tags": "限定任务标签（选填）",
       "add_tag": "选择或输入任务标签",
+      "tag_too_long": "标签名称不能超过 32 个字符",
       "remove_tag": "移除标签 {{tag}}",
       "limit_tags_help": "匹配任意标签即可接手；留空表示不限定标签。",
       "discard_help": "有未保存的修改，是否放弃？",
