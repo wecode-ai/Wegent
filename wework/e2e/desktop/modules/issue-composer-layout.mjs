@@ -11,6 +11,52 @@ async function readElementMetrics(control, selector, description) {
   return metrics
 }
 
+async function waitForCompactViewport(control) {
+  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let viewport
+  do {
+    viewport = await readElementMetrics(control, 'html', 'Compact viewport')
+    if (viewport.clientWidth === 1024 && viewport.clientHeight === 600) return viewport
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  } while (Date.now() < deadline)
+  assert.fail(`Viewport did not resize to 1024x600: ${JSON.stringify(viewport)}`)
+}
+
+export async function assertIssueComposerReachableInCompactWindow(
+  control,
+  { composerSelector, scrollSelector }
+) {
+  const previousWindowSize = await control.command('setMainWindowSize', 'body', {
+    value: JSON.stringify({ width: 1024, height: 600 }),
+  })
+  try {
+    const viewport = await waitForCompactViewport(control)
+    await control.command('scrollToRatioAsUser', scrollSelector, { value: '0' })
+    const before = await readElementMetrics(control, composerSelector, 'Issue composer')
+    await control.command('scrollIntoView', composerSelector)
+    await control.command('waitFor', composerSelector, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const composer = await readElementMetrics(control, composerSelector, 'Issue composer')
+    const scroller = await readElementMetrics(control, scrollSelector, 'Issue detail scroller')
+    assert.ok(
+      composer.top >= Math.max(0, scroller.top) &&
+        composer.bottom <= Math.min(viewport.clientHeight, scroller.bottom) &&
+        composer.left >= Math.max(0, scroller.left) &&
+        composer.right <= Math.min(viewport.clientWidth, scroller.right),
+      `Issue composer was not fully reachable after scrolling: ${JSON.stringify({
+        viewport,
+        scroller,
+        composer,
+      })}`
+    )
+    console.log('[task-activity-compact-scroll]', JSON.stringify({ before, composer, scroller }))
+  } finally {
+    await control.command('setMainWindowSize', 'body', { value: previousWindowSize })
+  }
+}
+
 function assertColumnEdgesMatch(actual, expected, description) {
   assert.ok(
     Math.abs(actual.left - expected.left) <= COLUMN_EDGE_TOLERANCE_PX,

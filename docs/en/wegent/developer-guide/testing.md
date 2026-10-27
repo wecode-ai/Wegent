@@ -300,6 +300,13 @@ unrelated modules do not make the summary fail.
 
 CI reliability depends on these invariants:
 
+- In the scrolling task-detail document, `core-task-flow` waits for the activity
+  composer to mount, scrolls to it, and checks visibility. At a 1024×600 viewport,
+  it also scrolls from the top of the detail to the composer and asserts that the
+  entire editor fits inside the visible detail area before continuing the comment
+  submission and collaboration-page parity checks. Mounting does not imply
+  viewport visibility; extending the ordinary UI timeout cannot replace scrolling.
+
 - Cloud shard 7 runs both `plugin-composer-long-list` and
   `plugin-collaboration-composer-isolation` to verify plugin catalog isolation
   between collaboration composers and ordinary tasks. Preserve both checkpoints
