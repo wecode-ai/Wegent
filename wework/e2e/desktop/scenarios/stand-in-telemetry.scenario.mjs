@@ -79,7 +79,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         'success'
       )
       assert.ok(!JSON.stringify(before).includes(MARKER))
+      const readyCountBeforeReload = control.readyCount
       await control.command('reloadMainWindow', 'body')
+      await control.awaitReadyAfter(readyCountBeforeReload)
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
       assert.deepEqual(
         await rpc('runtime.stand_in.telemetry.list', { userId: OFFLINE_USER }),
