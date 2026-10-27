@@ -1228,6 +1228,31 @@ class SqlAlchemySubtaskStore:
             flag_modified(subtask, "result")
         return subtask
 
+    def update_fields_if_status(
+        self,
+        db: Session,
+        *,
+        subtask: Subtask,
+        from_status: SubtaskStatus,
+        **fields: Any,
+    ) -> bool:
+        """Update fields only while the subtask still has ``from_status``.
+
+        Returns True when exactly one row was updated. Callers use this to
+        avoid overwriting a concurrent completion or cancellation with a stale
+        terminal event.
+        """
+        values: dict[Any, Any] = {
+            getattr(Subtask, field): value for field, value in fields.items()
+        }
+        values[Subtask.updated_at] = datetime.now()
+        updated = (
+            db.query(Subtask)
+            .filter(Subtask.id == subtask.id, Subtask.status == from_status)
+            .update(values, synchronize_session=False)
+        )
+        return updated == 1
+
     def transition_status(
         self,
         db: Session,

@@ -92,8 +92,13 @@ class DatabaseHandler:
         error: str | None = None,
         executor_name: str | None = None,
         executor_namespace: str | None = None,
-    ) -> None:
-        """Update subtask status asynchronously."""
+        expected_status: str | None = None,
+    ) -> bool:
+        """Update subtask status asynchronously.
+
+        Returns False when ``expected_status`` was supplied and the subtask no
+        longer has that status, so the caller can drop a stale terminal event.
+        """
         update_result = await self._run_in_executor(
             self._update_subtask_sync,
             subtask_id,
@@ -102,7 +107,10 @@ class DatabaseHandler:
             error,
             executor_name,
             executor_namespace,
+            expected_status,
         )
+        if update_result is None:
+            return False
         if update_result and update_result.auto_advance:
             from app.services.chat.pipeline_advance import (
                 advance_pipeline_stage_from_auto_completion,
@@ -111,6 +119,7 @@ class DatabaseHandler:
             await advance_pipeline_stage_from_auto_completion(
                 update_result.auto_advance
             )
+        return True
 
     def _update_subtask_sync(
         self,
@@ -120,6 +129,7 @@ class DatabaseHandler:
         error: str | None = None,
         executor_name: str | None = None,
         executor_namespace: str | None = None,
+        expected_status: str | None = None,
     ) -> Optional[TaskStatusUpdateResult]:
         """Synchronous subtask update (runs in thread pool)."""
         from app.models.subtask import SubtaskStatus
@@ -196,7 +206,26 @@ class DatabaseHandler:
                         executor_namespace,
                     )
 
-                task_stores.subtask_store.update_fields(db, subtask=subtask, **fields)
+                if expected_status is not None:
+                    changed = task_stores.subtask_store.update_fields_if_status(
+                        db,
+                        subtask=subtask,
+                        from_status=SubtaskStatus(expected_status),
+                        **fields,
+                    )
+                    if not changed:
+                        logger.info(
+                            "[DB] Skipped %s transition for subtask %s: "
+                            "current status is no longer %s",
+                            status,
+                            subtask_id,
+                            expected_status,
+                        )
+                        return None
+                else:
+                    task_stores.subtask_store.update_fields(
+                        db, subtask=subtask, **fields
+                    )
                 task_id = subtask.task_id
             # Context manager commits here, then update task status
             return self._update_task_status_sync(task_id, changed_subtask_id=subtask_id)

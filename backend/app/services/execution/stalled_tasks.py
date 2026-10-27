@@ -209,6 +209,7 @@ async def fail_stalled_subtask(
         subtask_id=candidate.subtask_id,
         executor_name=candidate.executor_name or None,
         executor_namespace=candidate.executor_namespace or None,
+        expected_status=SubtaskStatus.RUNNING.value,
     )
     try:
         await emitter.emit(event)
@@ -218,6 +219,13 @@ async def fail_stalled_subtask(
             "[StalledTasks] Failed to fail subtask %s: %s",
             candidate.subtask_id,
             exc,
+        )
+        return False
+    if emitter.terminal_transition_lost:
+        logger.info(
+            "[StalledTasks] Subtask %s changed state before the failure was "
+            "persisted; leaving it untouched",
+            candidate.subtask_id,
         )
         return False
     return True

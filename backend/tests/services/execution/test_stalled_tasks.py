@@ -17,9 +17,11 @@ from app.services.execution.stalled_tasks import (
     EXECUTOR_SILENT_ERROR,
     StalledCandidate,
     StalledSubtaskSweeper,
+    fail_stalled_subtask,
     list_stalled_candidates,
     sweep_stalled_subtasks,
 )
+from app.stores.tasks import subtask_store
 
 NOW = datetime(2026, 10, 27, 15, 0, 0)
 
@@ -335,3 +337,55 @@ async def test_sweep_fails_stalled_candidates():
     assert failed == [candidate.subtask_id]
     fail.assert_awaited_once()
     assert fail.await_args.kwargs["error_code"] == "executor_missing"
+
+
+def test_update_fields_if_status_only_updates_running(test_db):
+    """The conditional update loses the race once the status changed."""
+    test_db.add(_task(300))
+    test_db.add(_subtask(301, 300, status=SubtaskStatus.RUNNING))
+    test_db.commit()
+    subtask = test_db.get(Subtask, 301)
+
+    changed = subtask_store.update_fields_if_status(
+        test_db,
+        subtask=subtask,
+        from_status=SubtaskStatus.RUNNING,
+        status=SubtaskStatus.FAILED,
+        error_message="boom",
+    )
+    test_db.commit()
+
+    assert changed is True
+    test_db.expire_all()
+    assert test_db.get(Subtask, 301).status == SubtaskStatus.FAILED
+    assert (
+        subtask_store.update_fields_if_status(
+            test_db,
+            subtask=subtask,
+            from_status=SubtaskStatus.RUNNING,
+            status=SubtaskStatus.FAILED,
+            error_message="boom",
+        )
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_fail_stalled_subtask_drops_event_when_status_changed():
+    """A concurrent completion wins over the stale stall error."""
+    emitter = MagicMock()
+    emitter.emit = AsyncMock()
+    emitter.close = AsyncMock()
+    emitter.terminal_transition_lost = True
+
+    with patch(
+        "app.services.execution.stalled_tasks.StatusUpdatingEmitter",
+        return_value=emitter,
+    ):
+        failed = await fail_stalled_subtask(
+            _candidate(),
+            error_message=EXECUTOR_MISSING_ERROR,
+            error_code="executor_missing",
+        )
+
+    assert failed is False
