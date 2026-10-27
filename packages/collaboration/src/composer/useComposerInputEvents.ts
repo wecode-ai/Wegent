@@ -123,8 +123,24 @@ export function useComposerInputEvents({
       return true;
     }
     if (event.key === "Tab" && !event.shiftKey) {
-      if (isComposing || isImeComposingEvent(event)) return false;
-      if (!autocomplete?.isOpen() || !autocomplete.confirm()) return false;
+      const reason =
+        isComposing || isImeComposingEvent(event)
+          ? "tab-composing"
+          : !autocomplete?.isOpen()
+            ? "tab-menu-closed"
+            : !autocomplete.confirm()
+              ? "tab-confirm-rejected"
+              : "tab-confirmed";
+      recordComposerDiagnostic("keyboard-policy", {
+        reason,
+        keyCode: event.keyCode,
+        stateIsComposing: isComposing,
+        eventIsComposing: event.isComposing,
+        valueLength: snapshot.value.length,
+        selectionStart: snapshot.selectionStart,
+        selectionEnd: snapshot.selectionEnd,
+      });
+      if (reason !== "tab-confirmed") return false;
       event.preventDefault();
       event.stopPropagation();
       return true;

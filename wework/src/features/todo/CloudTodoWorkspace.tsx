@@ -5364,6 +5364,7 @@ export function CloudTodoWorkspace({
               (selectedItemProject?.location === 'cloud' ? cloudWorkspaceApi : selectedItemApi) ? (
                 <TodoEditor
                   key={selectedItem.id}
+                  getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
                   mode="edit"
                   presentation="workspace-panel"
                   readFirst

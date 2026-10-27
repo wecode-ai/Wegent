@@ -16,6 +16,10 @@ pnpm --filter wework ai:verify start
 
 命令会输出 session 文件路径和本地控制地址。它会创建独立的 Executor Home、项目目录、设备 ID、IPC socket、Electron app-data namespace 和诊断目录，并启动真实的 `dev-mac-app.sh`。任务、项目、应用数据和单实例锁不会与正式版或其他验证会话共享。所有日志位于 `wework/test-results/ai-verify/<run-id>/`。
 
+## 共享桌面 E2E 运行时镜像
+
+Linux 桌面 E2E 构建和缓存预热使用 `e2e-tests.yml` 生产的 Rust Backend OCI 镜像。消费者必须与生产方的 `SOURCE_DIGEST` 表达式保持一致，包括示例程序源码；只哈希主程序会生成无人发布的镜像标签，最终以 `manifest unknown` 超时失败。修改运行时镜像输入时，运行 `bash .github/scripts/test-wework-core-e2e-runtimes.sh`，检查桌面验证和缓存预热两个消费者与生产方的摘要契约。
+
 ## 操作与断言
 
 后续命令都传入启动命令返回的 session 路径。优先使用稳定的 `data-testid` 选择器。
