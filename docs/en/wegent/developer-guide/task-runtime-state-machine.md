@@ -97,6 +97,12 @@ When a task becomes terminal:
 
 `chat:done` only means the current message stream ended. It does not prove the task lifecycle is terminal. If queued messages are still blocked after `chat:done`, `useChatStreamHandlers` calls the current task machine with `requestRuntimeCheck('queued-message-blocked')` so the frontend converges back to the server state.
 
+### Claude Background Subagent Completion
+
+A Claude parent can return `end_turn` while its background subagents are still running. The executor aligns the CLI background wait ceiling with `WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS` (24 hours by default) and enables background task reporting, preventing the CLI's default ten-minute wait from terminating subagents early.
+
+A successful CLI exit alone does not establish task completion. If the stream ends with unfinished, failed, or stopped subagents, or the final `subagent_stats` reports system-terminated or unfinished subagents, the executor returns `runtime_error`; the existing error callback marks the task `FAILED`. Completed subagents and subsequent parent turns can still produce `COMPLETED`; explicit user cancellation remains `CANCELLED`.
+
 ### Cancellation And State Convergence
 
 Runtime task cancellation must converge two state surfaces:
