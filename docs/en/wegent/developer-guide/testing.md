@@ -252,6 +252,15 @@ passes all remaining file filters and Vitest options through unchanged. For a
 focused run, confirm that the reported `Test Files` count matches the intended
 scope so an accidental full-suite run is caught immediately.
 
+The development build watcher checks the same input-version snapshots every
+350 milliseconds, excludes emitted output, and serializes fresh Vite builds.
+Native macOS directory events have no readiness signal and cannot guarantee
+subscription before the first edit. Snapshot checks are the sole observation
+path, without an additional event or retry path, and run only while the explicit
+development build watcher is active. Regressions retain real file edits, build
+failure recovery, and CSS asset updates, and cover coalescing edits during the
+initial build and stopping observation after close.
+
 ## Wework Desktop Cloud Device Tests
 
 Run the cloud-device feature E2E from the repository root:

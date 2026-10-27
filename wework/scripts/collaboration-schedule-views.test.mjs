@@ -9,11 +9,11 @@ import { verifyCollaborationScheduleViews } from '../e2e/desktop/modules/collabo
 afterEach(() => vi.useRealTimers())
 
 test.each([
-  { today: new Date(2026, 9, 19, 12), start: '2026-10-26', target: '2026-11-02', next: 0 },
-  { today: new Date(2026, 9, 25, 12), start: '2026-10-26', target: '2026-11-02', next: 0 },
-  { today: new Date(2026, 9, 26, 12), start: '2026-11-02', target: '2026-11-09', next: 1 },
-  { today: new Date(2026, 11, 28, 12), start: '2027-01-04', target: '2027-01-11', next: 1 },
-  { today: new Date(2028, 1, 28, 12), start: '2028-03-06', target: '2028-03-13', next: 1 },
+  { today: new Date(2026, 9, 19, 12), start: '2026-10-19', target: '2026-10-26', next: 0 },
+  { today: new Date(2026, 9, 25, 12), start: '2026-10-19', target: '2026-10-26', next: 0 },
+  { today: new Date(2026, 9, 26, 12), start: '2026-10-26', target: '2026-11-02', next: 0 },
+  { today: new Date(2026, 11, 28, 12), start: '2026-12-28', target: '2027-01-04', next: 0 },
+  { today: new Date(2028, 1, 28, 12), start: '2028-02-28', target: '2028-03-06', next: 0 },
 ])('keeps the source and drag target visible for $start → $target', async fixture => {
   vi.useFakeTimers()
   vi.setSystemTime(fixture.today)
