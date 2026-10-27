@@ -80,7 +80,7 @@ function ConnectorSourceDialog({
         data-testid="plugin-connector-source-select"
         value={slug}
         onChange={event => setSlug(event.target.value)}
-        className="mt-2 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus md:h-9"
+        className="mt-2 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:h-9"
       >
         {group.connectors.map(item => (
           <option key={item.slug} value={item.slug} className="bg-background text-text-primary">

@@ -14,7 +14,7 @@ import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/l
 import { CustomModelCapabilitiesForm } from './CustomModelCapabilitiesForm'
 
 const INPUT =
-  'min-h-11 w-full min-w-0 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 md:min-h-8'
+  'min-h-11 w-full min-w-0 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-text-primary focus:outline-none keyboard:focus:ring-2 keyboard:focus:ring-primary/30 md:min-h-8'
 
 const FORMATS = ['openai-responses', 'openai-chat-completions', 'anthropic-messages'] as const
 

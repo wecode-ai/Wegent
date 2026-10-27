@@ -50,7 +50,7 @@ export function buildWorkItemRuntimeContext(
                   },
                 }),
                 '</issue_environment>',
-                'Treat this Issue as immutable execution context. The user message is the concrete task instruction.',
+                'Use this Issue as the default task context. The user message is the concrete task instruction.',
               ].join('\n'),
             },
           }
