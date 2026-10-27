@@ -139,7 +139,7 @@ The `collaboration-runtime-reconciliation` Core checkpoint runs independently an
 The `runtime-input-answer-persistence` Core checkpoint answers real MCP elicitation forms in the main workbench pane and a temporary chat. The Executor, Codex app-server, MCP server, desktop automation transport, and work-list refresh stay real; only the model service is mocked. Executor request gates hold the accepted answer after the real response and hold the terminal continuation so the terminal history deterministically arrives before the work-list refresh completes. The checkpoint asserts that the full answer summary remains visible before and after the refresh. It also verifies that a transport failure and a stale executor rejection never mark the answer as accepted, and that archiving while acceptance is pending does not restore the answer.
 
 The main desktop runner also supports execution through ordered checkpoints.
-The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
+The checkpoints are `mcp-apps`, `remote-device-onboarding`, `workspace-tabs`,
 `cloud-project-creation`, `cloud-space-mention`, `priority-filter`,
 `telemetry-consent`, `automation-lifecycle`, `project-automation`,
 `project-assignment-notification`, `offline-local-project-space`,

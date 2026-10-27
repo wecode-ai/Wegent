@@ -1113,6 +1113,11 @@ export function createHybridWorkbenchServices(
     compactRuntimeTask(data: RuntimeCompactRequest) {
       return routeByAddress(data.address).compactRuntimeTask(data)
     },
+    requestMcpApp<T = unknown>(data: import('@/api/mcpApps').McpAppRequest): Promise<T> {
+      const api = routeByAddress(data.address)
+      if (!api.requestMcpApp) throw new Error('Executor does not support MCP Apps')
+      return api.requestMcpApp<T>(data)
+    },
     cleanRuntimeBackgroundTerminals(address: RuntimeTaskAddress) {
       const api = routeByAddress(address)
       if (!api.cleanRuntimeBackgroundTerminals) {

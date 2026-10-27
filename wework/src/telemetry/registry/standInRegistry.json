@@ -29,18 +29,12 @@
         {
           "name": "domain",
           "type": "enum",
-          "values": [
-            "stand_in"
-          ]
+          "values": ["stand_in"]
         },
         {
           "name": "identity",
           "type": "enum",
-          "values": [
-            "primary",
-            "role",
-            "unknown"
-          ]
+          "values": ["primary", "role", "unknown"]
         },
         {
           "name": "source",
@@ -57,35 +51,17 @@
         {
           "name": "trigger",
           "type": "enum",
-          "values": [
-            "automatic",
-            "manual",
-            "conversation",
-            "unknown"
-          ]
+          "values": ["automatic", "manual", "conversation", "unknown"]
         },
         {
           "name": "action",
           "type": "enum",
-          "values": [
-            "create",
-            "update",
-            "delete",
-            "enable",
-            "disable",
-            "connect",
-            "disconnect"
-          ]
+          "values": ["create", "update", "delete", "enable", "disable", "connect", "disconnect"]
         },
         {
           "name": "executor_location",
           "type": "enum",
-          "values": [
-            "local",
-            "cloud",
-            "remote",
-            "unknown"
-          ]
+          "values": ["local", "cloud", "remote", "unknown"]
         }
       ]
     },
@@ -114,18 +90,12 @@
         {
           "name": "domain",
           "type": "enum",
-          "values": [
-            "stand_in"
-          ]
+          "values": ["stand_in"]
         },
         {
           "name": "identity",
           "type": "enum",
-          "values": [
-            "primary",
-            "role",
-            "unknown"
-          ]
+          "values": ["primary", "role", "unknown"]
         },
         {
           "name": "source",
@@ -142,29 +112,17 @@
         {
           "name": "trigger",
           "type": "enum",
-          "values": [
-            "automatic",
-            "manual",
-            "conversation",
-            "unknown"
-          ]
+          "values": ["automatic", "manual", "conversation", "unknown"]
         },
         {
           "name": "action",
           "type": "enum",
-          "values": [
-            "send"
-          ]
+          "values": ["send"]
         },
         {
           "name": "executor_location",
           "type": "enum",
-          "values": [
-            "local",
-            "cloud",
-            "remote",
-            "unknown"
-          ]
+          "values": ["local", "cloud", "remote", "unknown"]
         }
       ]
     },
@@ -193,18 +151,12 @@
         {
           "name": "domain",
           "type": "enum",
-          "values": [
-            "stand_in"
-          ]
+          "values": ["stand_in"]
         },
         {
           "name": "identity",
           "type": "enum",
-          "values": [
-            "primary",
-            "role",
-            "unknown"
-          ]
+          "values": ["primary", "role", "unknown"]
         },
         {
           "name": "source",
@@ -221,30 +173,17 @@
         {
           "name": "trigger",
           "type": "enum",
-          "values": [
-            "automatic",
-            "manual",
-            "conversation",
-            "unknown"
-          ]
+          "values": ["automatic", "manual", "conversation", "unknown"]
         },
         {
           "name": "action",
           "type": "enum",
-          "values": [
-            "accept",
-            "reject"
-          ]
+          "values": ["accept", "reject"]
         },
         {
           "name": "executor_location",
           "type": "enum",
-          "values": [
-            "local",
-            "cloud",
-            "remote",
-            "unknown"
-          ]
+          "values": ["local", "cloud", "remote", "unknown"]
         }
       ]
     },
@@ -273,18 +212,12 @@
         {
           "name": "domain",
           "type": "enum",
-          "values": [
-            "stand_in"
-          ]
+          "values": ["stand_in"]
         },
         {
           "name": "identity",
           "type": "enum",
-          "values": [
-            "primary",
-            "role",
-            "unknown"
-          ]
+          "values": ["primary", "role", "unknown"]
         },
         {
           "name": "source",
@@ -301,36 +234,17 @@
         {
           "name": "trigger",
           "type": "enum",
-          "values": [
-            "automatic",
-            "manual",
-            "conversation",
-            "unknown"
-          ]
+          "values": ["automatic", "manual", "conversation", "unknown"]
         },
         {
           "name": "action",
           "type": "enum",
-          "values": [
-            "confirm",
-            "retry",
-            "split",
-            "merge",
-            "move",
-            "undo",
-            "adjust",
-            "reply"
-          ]
+          "values": ["confirm", "retry", "split", "merge", "move", "undo", "adjust", "reply"]
         },
         {
           "name": "executor_location",
           "type": "enum",
-          "values": [
-            "local",
-            "cloud",
-            "remote",
-            "unknown"
-          ]
+          "values": ["local", "cloud", "remote", "unknown"]
         }
       ]
     },
@@ -359,18 +273,12 @@
         {
           "name": "domain",
           "type": "enum",
-          "values": [
-            "stand_in"
-          ]
+          "values": ["stand_in"]
         },
         {
           "name": "identity",
           "type": "enum",
-          "values": [
-            "primary",
-            "role",
-            "unknown"
-          ]
+          "values": ["primary", "role", "unknown"]
         },
         {
           "name": "source",
@@ -387,29 +295,17 @@
         {
           "name": "trigger",
           "type": "enum",
-          "values": [
-            "automatic",
-            "manual",
-            "conversation",
-            "unknown"
-          ]
+          "values": ["automatic", "manual", "conversation", "unknown"]
         },
         {
           "name": "action",
           "type": "enum",
-          "values": [
-            "dispatch"
-          ]
+          "values": ["dispatch"]
         },
         {
           "name": "executor_location",
           "type": "enum",
-          "values": [
-            "local",
-            "cloud",
-            "remote",
-            "unknown"
-          ]
+          "values": ["local", "cloud", "remote", "unknown"]
         }
       ]
     }
@@ -430,29 +326,17 @@
         {
           "name": "domain",
           "type": "enum",
-          "values": [
-            "stand_in"
-          ]
+          "values": ["stand_in"]
         },
         {
           "name": "surface",
           "type": "enum",
-          "values": [
-            "overview",
-            "settings",
-            "conversation",
-            "work",
-            "memory"
-          ]
+          "values": ["overview", "settings", "conversation", "work", "memory"]
         },
         {
           "name": "identity",
           "type": "enum",
-          "values": [
-            "primary",
-            "role",
-            "unknown"
-          ]
+          "values": ["primary", "role", "unknown"]
         }
       ]
     },
@@ -471,18 +355,12 @@
         {
           "name": "domain",
           "type": "enum",
-          "values": [
-            "stand_in"
-          ]
+          "values": ["stand_in"]
         },
         {
           "name": "identity",
           "type": "enum",
-          "values": [
-            "primary",
-            "role",
-            "unknown"
-          ]
+          "values": ["primary", "role", "unknown"]
         },
         {
           "name": "source",
@@ -499,22 +377,12 @@
         {
           "name": "trigger",
           "type": "enum",
-          "values": [
-            "automatic",
-            "manual",
-            "conversation",
-            "unknown"
-          ]
+          "values": ["automatic", "manual", "conversation", "unknown"]
         },
         {
           "name": "executor_location",
           "type": "enum",
-          "values": [
-            "local",
-            "cloud",
-            "remote",
-            "unknown"
-          ]
+          "values": ["local", "cloud", "remote", "unknown"]
         }
       ]
     },
@@ -533,18 +401,12 @@
         {
           "name": "domain",
           "type": "enum",
-          "values": [
-            "stand_in"
-          ]
+          "values": ["stand_in"]
         },
         {
           "name": "identity",
           "type": "enum",
-          "values": [
-            "primary",
-            "role",
-            "unknown"
-          ]
+          "values": ["primary", "role", "unknown"]
         },
         {
           "name": "source",
@@ -561,22 +423,12 @@
         {
           "name": "trigger",
           "type": "enum",
-          "values": [
-            "automatic",
-            "manual",
-            "conversation",
-            "unknown"
-          ]
+          "values": ["automatic", "manual", "conversation", "unknown"]
         },
         {
           "name": "executor_location",
           "type": "enum",
-          "values": [
-            "local",
-            "cloud",
-            "remote",
-            "unknown"
-          ]
+          "values": ["local", "cloud", "remote", "unknown"]
         }
       ]
     },
@@ -595,18 +447,12 @@
         {
           "name": "domain",
           "type": "enum",
-          "values": [
-            "stand_in"
-          ]
+          "values": ["stand_in"]
         },
         {
           "name": "identity",
           "type": "enum",
-          "values": [
-            "primary",
-            "role",
-            "unknown"
-          ]
+          "values": ["primary", "role", "unknown"]
         },
         {
           "name": "source",
@@ -623,21 +469,12 @@
         {
           "name": "trigger",
           "type": "enum",
-          "values": [
-            "automatic",
-            "manual",
-            "conversation",
-            "unknown"
-          ]
+          "values": ["automatic", "manual", "conversation", "unknown"]
         },
         {
           "name": "result",
           "type": "enum",
-          "values": [
-            "success",
-            "failure",
-            "cancelled"
-          ]
+          "values": ["success", "failure", "cancelled"]
         },
         {
           "name": "duration_ms",
@@ -646,12 +483,7 @@
         {
           "name": "executor_location",
           "type": "enum",
-          "values": [
-            "local",
-            "cloud",
-            "remote",
-            "unknown"
-          ]
+          "values": ["local", "cloud", "remote", "unknown"]
         }
       ]
     }
