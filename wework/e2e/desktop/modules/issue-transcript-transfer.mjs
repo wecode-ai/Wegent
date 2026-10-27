@@ -223,10 +223,12 @@ export async function verifyIssueTranscriptTransfer({
 
   // Reload clears the renderer cache so the drawer must use its HTTP read path.
   await reloadMainWindow(control, 'The large Issue history did not reload')
-  await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
-    visible: true,
-  })
-  await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+  // The reload remounts the tab strip, so the fixed board tab is not queryable yet.
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="workspace-tab-select-fixed-board"]',
+    { timeoutMs }
+  )
   await control.command(
     'waitFor',
     scope(`[data-testid="collaboration-workspace-project-${fixture.project.id}"]`)

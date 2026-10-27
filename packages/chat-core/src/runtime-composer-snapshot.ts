@@ -32,6 +32,8 @@ export interface RuntimeComposerCatalogSnapshot {
   marketplaces: CodexPluginMarketplaceEntry[]
   store: WegentStoreListResult
   cloudInstalledPlugins: InstalledPlugin[]
+  partial?: boolean
+  unavailableSources?: string[]
 }
 function text(value: unknown): string | null {
   if (value == null) return null
@@ -41,6 +43,11 @@ function text(value: unknown): string | null {
 function enabled(value: unknown): boolean {
   if (value == null) return true
   if (typeof value !== 'boolean') throw new Error('Invalid plugin catalog enabled state')
+  return value
+}
+function optionalBoolean(value: unknown): boolean {
+  if (value == null) return false
+  if (typeof value !== 'boolean') throw new Error('Invalid plugin catalog partial state')
   return value
 }
 function pluginInterface(value: unknown): PluginInterface | null {
@@ -158,5 +165,10 @@ export function decodeRuntimeComposerSnapshot(
       }),
     },
     cloudInstalledPlugins,
+    partial: optionalBoolean(snapshot.partial),
+    unavailableSources:
+      snapshot.unavailableSources == null
+        ? []
+        : catalogArray(snapshot.unavailableSources).map(catalogString),
   }
 }

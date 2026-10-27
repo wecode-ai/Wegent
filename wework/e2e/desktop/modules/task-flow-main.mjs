@@ -1226,6 +1226,7 @@ async function main() {
       modelResponseTimeoutMs: Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000),
       recordScenarioRequest: (scenario, request) =>
         control.recordScenarioRequest(scenario, request),
+      restartDesktopApp: options => restartDesktopApp(options),
       workbenchReadyTimeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       workspacePath,
     })

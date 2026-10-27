@@ -2403,6 +2403,36 @@ describe('Wework collaboration workspace API', () => {
     expect(runningSignature).not.toBe(terminalSignature)
   })
 
+  it('retains the project API when its full workspace catalog arrives', async () => {
+    const listProjects = vi.fn(async () => [{ id: 'project' }])
+    const props = {
+      api: { projects: { list: listProjects }, issues: {} } as unknown as SharedWorkspaceApi,
+      localProjects: [],
+      locale: 'zh-CN' as const,
+      location: { projectId: 'project', projectView: 'board' } as CollaborationPlatformLocation,
+      project: { id: 'project', name: 'Project', project_store: 'backend' } as never,
+      services: {} as never,
+      setLocation: vi.fn(),
+      userId: 1,
+      workspace: { id: 'workspace', name: 'Workspace' } as never,
+    }
+    const { rerender } = render(createElement(WeworkSharedProject, props))
+    const api = renderedProjectApis.get('project')!
+    await api.projects.list()
+    expect(listProjects).toHaveBeenLastCalledWith()
+
+    rerender(
+      createElement(WeworkSharedProject, {
+        ...props,
+        workspace: { id: 'workspace', name: 'Workspace', access_role: 'Owner' } as never,
+      })
+    )
+
+    expect(renderedProjectApis.get('project')).toBe(api)
+    await api.projects.list()
+    expect(listProjects).toHaveBeenLastCalledWith('workspace')
+  })
+
   it('refreshes only the cloud project bound to a changed Runtime task', async () => {
     vi.useFakeTimers()
     const lifecycleStore = new RuntimeTaskLifecycleStore('wework-cloud-status-refresh')
