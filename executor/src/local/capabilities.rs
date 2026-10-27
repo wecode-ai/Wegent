@@ -883,12 +883,15 @@ impl GlobalCapabilityStore {
         spec: &PluginSyncSpec,
         store_path: &Path,
         timestamp: &str,
+        reused: &BTreeSet<PathBuf>,
     ) -> Result<(), CapabilitySyncError> {
         let runtime_path = self.plugin_runtime_link(spec);
-        copy_dir_atomic(store_path, &runtime_path)?;
-        ensure_dual_plugin_manifests(&runtime_path)?;
-        ensure_plugin_hook_permissions(&runtime_path)?;
-        self.install_marketplace_metadata_at(spec, &runtime_path, timestamp)?;
+        if !reused.contains(&runtime_path) {
+            copy_dir_atomic(store_path, &runtime_path)?;
+            ensure_dual_plugin_manifests(&runtime_path)?;
+            ensure_plugin_hook_permissions(&runtime_path)?;
+        }
+        self.install_marketplace_metadata_at(spec, &runtime_path, timestamp, reused)?;
         upsert_installed_plugin_at(&self.plugins_dir, spec, &runtime_path, timestamp)?;
         set_plugin_enabled(&self.plugins_dir, &spec.key, spec.enabled)
     }
@@ -897,12 +900,15 @@ impl GlobalCapabilityStore {
         &self,
         spec: &PluginSyncSpec,
         store_path: &Path,
+        reused: &BTreeSet<PathBuf>,
     ) -> Result<(), CapabilitySyncError> {
         let marketplace_dir = self.codex_marketplace_dir(&spec.marketplace);
         let marketplace_link = marketplace_dir
             .join("plugins")
             .join(self.marketplace_plugin_name(spec, false));
-        link_or_copy_dir(store_path, &marketplace_link)?;
+        if !reused.contains(&marketplace_link) {
+            link_or_copy_dir(store_path, &marketplace_link)?;
+        }
 
         let marketplace_json_path = marketplace_dir.join(".agents/plugins/marketplace.json");
         let mut marketplace = read_json_or_default(&marketplace_json_path, || json!({}))?;
@@ -1028,7 +1034,12 @@ impl GlobalCapabilityStore {
         spec: &PluginSyncSpec,
         store_path: &Path,
     ) -> Result<(), CapabilitySyncError> {
-        self.install_marketplace_metadata_at(spec, store_path, &now_rfc3339_like())
+        self.install_marketplace_metadata_at(
+            spec,
+            store_path,
+            &now_rfc3339_like(),
+            &BTreeSet::new(),
+        )
     }
 
     fn install_marketplace_metadata_at(
@@ -1036,12 +1047,15 @@ impl GlobalCapabilityStore {
         spec: &PluginSyncSpec,
         store_path: &Path,
         timestamp: &str,
+        reused: &BTreeSet<PathBuf>,
     ) -> Result<(), CapabilitySyncError> {
         let marketplace_dir = self.claude_marketplace_dir(&spec.marketplace);
         let marketplace_plugins_dir = marketplace_dir.join("plugins");
         let marketplace_plugin_name = self.marketplace_plugin_name(spec, true);
         let marketplace_link = marketplace_plugins_dir.join(&marketplace_plugin_name);
-        link_or_copy_dir(store_path, &marketplace_link)?;
+        if !reused.contains(&marketplace_link) {
+            link_or_copy_dir(store_path, &marketplace_link)?;
+        }
 
         let marketplace_source = json!({
             "source": "directory",

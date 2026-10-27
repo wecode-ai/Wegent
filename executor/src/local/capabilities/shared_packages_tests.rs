@@ -8,6 +8,9 @@ use std::sync::{
     Arc,
 };
 
+#[path = "shared_packages_bytecode_tests.rs"]
+mod bytecode_tests;
+
 #[derive(Clone)]
 pub(super) struct Packages {
     skill: Vec<u8>,

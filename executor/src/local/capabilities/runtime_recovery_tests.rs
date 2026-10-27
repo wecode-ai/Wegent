@@ -641,11 +641,20 @@ async fn pending_journal_recovers_after_real_metadata_writes_without_a_receipt()
         let journal = RecoveryJournal::prepare(&store, &path, &spec, &template, &manifest).unwrap();
         if !codex_only {
             store
-                .install_claude_plugin_runtime_metadata_at(&spec, &template, &journal.timestamp)
+                .install_claude_plugin_runtime_metadata_at(
+                    &spec,
+                    &template,
+                    &journal.timestamp,
+                    &BTreeSet::new(),
+                )
                 .unwrap();
         }
         store
-            .install_codex_marketplace_metadata(&spec, &store.plugin_codex_link(&spec))
+            .install_codex_marketplace_metadata(
+                &spec,
+                &store.plugin_codex_link(&spec),
+                &BTreeSet::new(),
+            )
             .unwrap();
         assert_ne!(fs::read(&config).unwrap(), before);
         store
