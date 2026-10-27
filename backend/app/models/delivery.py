@@ -178,6 +178,12 @@ class LoopNode(Base):
     )
 
 
+class LoopItemActiveAssignment(LoopNode):
+    """Current-assignment index nodes; parent is the Issue, loop item is the event."""
+
+    __mapper_args__ = {"polymorphic_identity": "assignment_index"}
+
+
 class CloudProject(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "project"}
 
