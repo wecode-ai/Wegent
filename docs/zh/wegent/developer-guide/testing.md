@@ -356,6 +356,9 @@ CI 稳定性依赖以下约束：
   仍照常执行并保留失败结果。
 - Wework Desktop Core E2E 继续使用 `main` 拥有的 Cargo target cache，因为它需要
   在多个桌面 job 之间复用同一套完整二进制产物。
+- Windows Codex 在每次工作流执行时都走相同的缓存校验和构建流程，不依赖首轮
+  workflow attempt 的 artifact。缓存仍由 `main` 写入；复用前检查源码版本、构建
+  recipe 和两个可执行文件的哈希，并重新运行原生权限测试。
 - 平台 E2E、Release 和 Snapshot 的 Docker BuildKit cache 存放在对应 GHCR 镜像的
   build cache tag，不占用 GitHub Actions dependency cache 配额。
 - 非 Wework E2E 的 Executor 和 Electron 系统依赖安装前先检查 runner 已安装的软件包；

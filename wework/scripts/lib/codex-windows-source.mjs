@@ -166,7 +166,7 @@ async function hashFile(path) {
     .digest('hex')
 }
 
-async function verifyBundle(root, key) {
+export async function verifyWindowsCodexBundle(root, key) {
   const expected = JSON.parse(await readFile(join(root, 'verified.json'), 'utf8'))
   if (
     expected.recipe !== key ||
@@ -190,19 +190,6 @@ async function testBroker(root) {
   }
 }
 
-export async function transferWindowsCodex(mode, cacheRoot, bundle) {
-  const key = await windowsCodexRecipe()
-  const root = join(cacheRoot, 'windows-source', key)
-  const [source, destination] = mode === 'stage' ? [root, bundle] : [bundle, root]
-  if (!['stage', 'restore'].includes(mode))
-    throw new Error('Unknown Windows Codex artifact operation')
-  await verifyBundle(source, key)
-  await mkdir(destination, { recursive: true })
-  for (const file of ['codex.exe', 'permissions.exe', 'verified.json']) {
-    await cp(join(source, file), join(destination, file))
-  }
-}
-
 export async function buildWindowsCodex(cacheRoot) {
   const profile = windowsCodexProfile()
   const key = await windowsCodexRecipe(profile)
@@ -216,7 +203,7 @@ export async function buildWindowsCodex(cacheRoot) {
       throw error
     })
     if (ready) {
-      const expected = await verifyBundle(root, key)
+      const expected = await verifyWindowsCodexBundle(root, key)
       await testBroker(root)
       return { binary, sourceCommit: CODEX_SOURCE_COMMIT, recipe: key, sha256: expected.sha256 }
     }
@@ -313,11 +300,4 @@ export async function buildWindowsCodex(cacheRoot) {
   } finally {
     await release()
   }
-}
-
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  transferWindowsCodex(process.argv[2], process.argv[3], process.argv[4]).catch(error => {
-    console.error(error.message)
-    process.exitCode = 1
-  })
 }

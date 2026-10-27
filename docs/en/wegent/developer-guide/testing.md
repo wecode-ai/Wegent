@@ -384,6 +384,10 @@ runs may restore the default-branch cache, but they do not save another copy:
   Actual compilation and tests still run normally and retain their failures.
 - Wework Desktop Core E2E retains its `main`-owned Cargo target cache because
   several desktop jobs must reuse the same complete binary output.
+- Windows Codex uses the same cache verification and build flow on every workflow
+  attempt, without depending on an artifact from the first attempt. Only `main`
+  saves the cache. Reuse checks the source version, build recipe, and both
+  executable hashes, then reruns the native permission tests.
 - Platform E2E, Release, and Snapshot Docker BuildKit caches live in
   corresponding GHCR build-cache tags instead of consuming GitHub Actions
   dependency cache storage.

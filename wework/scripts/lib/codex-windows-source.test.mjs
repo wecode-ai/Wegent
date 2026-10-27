@@ -9,7 +9,7 @@ import {
   configurePinnedSourceCheckout,
   patchWindowsReadBroker,
   patchWindowsNoFollow,
-  transferWindowsCodex,
+  verifyWindowsCodexBundle,
   windowsCodexRecipe,
   verifyWorkspaceVersionRefresh,
   verifyWindowsCodexCompilerProfile,
@@ -43,7 +43,7 @@ async function fixture() {
       testSha256: hash(tests),
     })
   )
-  return { root, built, cache, recipe, binary, tests, bundle: join(root, 'bundle') }
+  return { root, built, cache, recipe, binary, tests }
 }
 
 test('rejects unreviewed upstream source before applying a compatibility patch', () => {
@@ -113,24 +113,21 @@ test('pinned checkout overrides CRLF conversion and enables complete Windows pat
   expect(git(['config', '--get', 'core.longpaths'])).toBe('true')
 })
 
-test.each(['release', 'ci'])('%s artifact preserves both executable identities', async profile => {
+test.each(['release', 'ci'])('%s cache verifies both executable identities', async profile => {
   vi.stubEnv('WEWORK_CODEX_PROFILE', profile)
   const item = await fixture()
-  await transferWindowsCodex('stage', item.cache, item.bundle)
-  const restored = join(item.root, 'restored')
-  await transferWindowsCodex('restore', restored, item.bundle)
-  const build = join(restored, 'windows-source', item.recipe)
-  expect(await readFile(join(build, 'codex.exe'))).toEqual(item.binary)
-  expect(await readFile(join(build, 'permissions.exe'))).toEqual(item.tests)
+  const metadata = await verifyWindowsCodexBundle(item.built, item.recipe)
+  expect(metadata.sha256).toBe(createHash('sha256').update(item.binary).digest('hex'))
+  expect(metadata.testSha256).toBe(createHash('sha256').update(item.tests).digest('hex'))
+  expect(await readFile(join(item.built, 'codex.exe'))).toEqual(item.binary)
+  expect(await readFile(join(item.built, 'permissions.exe'))).toEqual(item.tests)
 })
 
-test('rejects an artifact built with a different optimization profile', async () => {
+test('rejects a cache built with a different optimization profile', async () => {
   vi.stubEnv('WEWORK_CODEX_PROFILE', 'release')
   const item = await fixture()
-  await transferWindowsCodex('stage', item.cache, item.bundle)
   vi.stubEnv('WEWORK_CODEX_PROFILE', 'ci')
-  const restored = join(item.root, 'restored')
-  await expect(transferWindowsCodex('restore', restored, item.bundle)).rejects.toThrow(
+  await expect(verifyWindowsCodexBundle(item.built, await windowsCodexRecipe())).rejects.toThrow(
     'integrity mismatch'
   )
 })
@@ -171,27 +168,22 @@ test.each([{ debug_assertions: true }, { overflow_checks: true }, { opt_level: '
 )
 
 test.each(['codex.exe', 'permissions.exe'])(
-  'rejects a modified %s before restoring artifacts',
+  'rejects a modified cached %s before use',
   async file => {
     const item = await fixture()
-    await transferWindowsCodex('stage', item.cache, item.bundle)
-    await writeFile(join(item.bundle, file), 'modified executable')
-    const restored = join(item.root, 'restored')
-    await expect(transferWindowsCodex('restore', restored, item.bundle)).rejects.toThrow(
+    await writeFile(join(item.built, file), 'modified executable')
+    await expect(verifyWindowsCodexBundle(item.built, item.recipe)).rejects.toThrow(
       'integrity mismatch'
     )
-    await expect(
-      readFile(join(restored, 'windows-source', item.recipe, 'verified.json'))
-    ).rejects.toMatchObject({ code: 'ENOENT' })
   }
 )
 
-test('rejects artifacts from a different source version or build recipe', async () => {
+test.each(['sourceCommit', 'recipe'])('rejects a cache with a different %s', async field => {
   const item = await fixture()
   const metadata = JSON.parse(await readFile(join(item.built, 'verified.json'), 'utf8'))
-  metadata.sourceCommit = 'different commit'
+  metadata[field] = 'different identity'
   await writeFile(join(item.built, 'verified.json'), JSON.stringify(metadata))
-  await expect(transferWindowsCodex('stage', item.cache, item.bundle)).rejects.toThrow(
+  await expect(verifyWindowsCodexBundle(item.built, item.recipe)).rejects.toThrow(
     'integrity mismatch'
   )
 })
