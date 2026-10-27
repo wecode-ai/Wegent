@@ -4,6 +4,16 @@ use super::*;
 const RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const MAX_EVENTS: i64 = 10_000;
 
+pub(crate) struct StandInRunObservation<'a> {
+    pub user: i64,
+    pub task: &'a str,
+    pub turn: &'a str,
+    pub running: bool,
+    pub waiting: bool,
+    pub result: Option<&'a str>,
+    pub properties: &'a Value,
+}
+
 pub(super) fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS stand_in_telemetry_policy (
@@ -207,14 +217,17 @@ impl LocalTaskStore {
 
     pub(crate) fn observe_stand_in_run(
         &self,
-        user: i64,
-        task: &str,
-        turn: &str,
-        running: bool,
-        waiting: bool,
-        result: Option<&str>,
-        properties: &Value,
+        observation: StandInRunObservation<'_>,
     ) -> Result<(), TaskRuntimeError> {
+        let StandInRunObservation {
+            user,
+            task,
+            turn,
+            running,
+            waiting,
+            result,
+            properties,
+        } = observation;
         let mut guard = self.connection()?;
         let tx = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if !enabled(&tx, user)? {
@@ -426,20 +439,28 @@ mod tests {
         let (root, store) = fixture();
         store.configure_stand_in_telemetry(7, true, None).unwrap();
         store
-            .observe_stand_in_run(7, "private-task", "turn", true, false, None, &properties())
+            .observe_stand_in_run(StandInRunObservation {
+                user: 7,
+                task: "private-task",
+                turn: "turn",
+                running: true,
+                waiting: false,
+                result: None,
+                properties: &properties(),
+            })
             .unwrap();
         drop(store);
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         store
-            .observe_stand_in_run(
-                7,
-                "private-task",
-                "turn",
-                false,
-                false,
-                Some("success"),
-                &properties(),
-            )
+            .observe_stand_in_run(StandInRunObservation {
+                user: 7,
+                task: "private-task",
+                turn: "turn",
+                running: false,
+                waiting: false,
+                result: Some("success"),
+                properties: &properties(),
+            })
             .unwrap();
         let initial = facts(&store, 7);
         assert_eq!(initial.len(), 2);
@@ -463,7 +484,15 @@ mod tests {
         store.configure_stand_in_telemetry(7, true, None).unwrap();
         let observe = |turn, running, waiting, result| {
             store
-                .observe_stand_in_run(7, "task", turn, running, waiting, result, &properties())
+                .observe_stand_in_run(StandInRunObservation {
+                    user: 7,
+                    task: "task",
+                    turn,
+                    running,
+                    waiting,
+                    result,
+                    properties: &properties(),
+                })
                 .unwrap()
         };
         observe("", true, false, None);
@@ -505,7 +534,15 @@ mod tests {
             (false, true, Some("success")),
         ] {
             store
-                .observe_stand_in_run(7, "task", "turn", running, waiting, result, &properties())
+                .observe_stand_in_run(StandInRunObservation {
+                    user: 7,
+                    task: "task",
+                    turn: "turn",
+                    running,
+                    waiting,
+                    result,
+                    properties: &properties(),
+                })
                 .unwrap();
         }
         assert_eq!(facts(&store, 7).len(), 3);
@@ -612,18 +649,26 @@ mod retention_tests {
         store.configure_stand_in_telemetry(7, true, None).unwrap();
         let properties = origin_properties(&json!({"type":"stand_in_identity"}));
         store
-            .observe_stand_in_run(7, "task", "turn", true, false, None, &properties)
+            .observe_stand_in_run(StandInRunObservation {
+                user: 7,
+                task: "task",
+                turn: "turn",
+                running: true,
+                waiting: false,
+                result: None,
+                properties: &properties,
+            })
             .unwrap();
         store
-            .observe_stand_in_run(
-                7,
-                "task",
-                "turn",
-                false,
-                false,
-                Some("success"),
-                &properties,
-            )
+            .observe_stand_in_run(StandInRunObservation {
+                user: 7,
+                task: "task",
+                turn: "turn",
+                running: false,
+                waiting: false,
+                result: Some("success"),
+                properties: &properties,
+            })
             .unwrap();
         {
             let connection = store.connection().unwrap();
@@ -635,15 +680,15 @@ mod retention_tests {
                 .unwrap();
         }
         store
-            .observe_stand_in_run(
-                7,
-                "task",
-                "turn",
-                false,
-                false,
-                Some("success"),
-                &properties,
-            )
+            .observe_stand_in_run(StandInRunObservation {
+                user: 7,
+                task: "task",
+                turn: "turn",
+                running: false,
+                waiting: false,
+                result: Some("success"),
+                properties: &properties,
+            })
             .unwrap();
         store.list_stand_in_telemetry(7).unwrap();
         let count: i64 = store

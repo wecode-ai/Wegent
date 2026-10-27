@@ -1,7 +1,8 @@
 //! Observe persisted Runtime transitions independently of connected desktop windows.
 use super::response::RuntimeTaskLink;
 use crate::task_runtime::{
-    stand_in_telemetry::origin_properties, LocalTaskStore, TaskRuntimeError,
+    stand_in_telemetry::{origin_properties, StandInRunObservation},
+    LocalTaskStore, TaskRuntimeError,
 };
 use serde_json::Value;
 use std::path::Path;
@@ -33,15 +34,15 @@ pub(super) fn observe(path: &Path, link: &RuntimeTaskLink) {
         Some("waitingForUserInput" | "awaitingUserReply")
     );
     let outcome = LocalTaskStore::open(path).and_then(|store| {
-        store.observe_stand_in_run(
+        store.observe_stand_in_run(StandInRunObservation {
             user,
-            &link.local_task_id,
+            task: &link.local_task_id,
             turn,
-            link.running,
+            running: link.running,
             waiting,
             result,
-            &origin_properties(origin),
-        )
+            properties: &origin_properties(origin),
+        })
     });
     diagnose(outcome);
 }
