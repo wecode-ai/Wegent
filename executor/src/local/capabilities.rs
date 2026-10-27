@@ -20,6 +20,7 @@ use crate::{config::device::DeviceConfig, protocol::ExecutionRequest};
 
 use super::personal_marketplace_lock::acquire_personal_marketplace_lock;
 
+mod activation_revision;
 mod manifest_migration;
 mod plugin_sync_protocol;
 mod runtime_recovery;
@@ -1322,7 +1323,6 @@ where
         let _sync_guard = self.sync_lock.lock().await;
         let _activation = crate::services::capability_activation::activate().await;
         let queued_ms = started.elapsed().as_millis();
-        let _changed = shared_packages::ActivationRevision;
         let _publication_lock = self.store.lock_shared_manifest()?;
         let plugins_only = payload.get("scope").and_then(Value::as_str) == Some("plugins");
         if plugins_only
@@ -1349,15 +1349,22 @@ where
             .collect::<Result<Vec<_>, _>>()?;
         let mut manifest = {
             let _binding = self.plugin_sync_binding.lock_active()?;
-            if plugin_specs.is_empty() || self.store.shared_packages {
-                self.store.manifest.load()?
-            } else {
-                self.store.load_manifest_with_plugin_store_migration()?
-            }
+            self.store.manifest.load()?
         };
+        let _changed = activation_revision::ActivationRevision::new(
+            &self.store,
+            &manifest,
+            &skill_specs,
+            plugin_specs.iter(),
+            mode == "replace" && !plugins_only,
+            mode == "replace" || plugins_only,
+        );
 
         {
             let _binding = self.plugin_sync_binding.lock_active()?;
+            if !plugin_specs.is_empty() && !self.store.shared_packages {
+                manifest = self.store.load_manifest_with_plugin_store_migration()?;
+            }
             if mode == "replace" || plugins_only {
                 let desired_skills = skill_specs
                     .iter()

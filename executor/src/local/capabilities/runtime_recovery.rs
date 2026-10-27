@@ -378,7 +378,10 @@ impl GlobalCapabilityStore {
         safe_managed_path(root.parent().unwrap_or(root), path, leaf_link)
     }
 
-    fn runtime_state_paths(&self, spec: &PluginSyncSpec) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    pub(super) fn runtime_state_paths(
+        &self,
+        spec: &PluginSyncSpec,
+    ) -> (Vec<PathBuf>, Vec<PathBuf>) {
         let codex_market = self.codex_marketplace_dir(&spec.marketplace);
         let mut files = vec![
             codex_market.join(".agents/plugins/marketplace.json"),

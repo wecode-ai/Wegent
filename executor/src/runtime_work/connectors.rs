@@ -142,8 +142,11 @@ impl ConnectorRuntime {
                 "stale": true,
             }));
         }
-        let skills_result = materialize_skills(&skills_root(), &[]);
-        capability_activation::mark_changed();
+        let mut changed = false;
+        let skills_result = materialize_skills(&skills_root(), &[], &mut changed);
+        if changed {
+            capability_activation::mark_changed();
+        }
         config_result?;
         skills_result?;
         Ok(json!({ "configured": false }))
@@ -193,8 +196,11 @@ impl ConnectorRuntime {
             ));
         }
         self.write_mcp_config(true).await?;
-        let result = materialize_skills(&skills_root(), apps);
-        capability_activation::mark_changed();
+        let mut changed = false;
+        let result = materialize_skills(&skills_root(), apps, &mut changed);
+        if changed {
+            capability_activation::mark_changed();
+        }
         let result = result?;
         *self.synced_apps.write().await = result
             .get("apps")
@@ -303,7 +309,11 @@ fn advance_revision(revision: &AtomicU64, next: u64) -> bool {
     true
 }
 
-fn materialize_skills(skills_root: &Path, apps: &[Value]) -> Result<Value, AppIpcError> {
+fn materialize_skills(
+    skills_root: &Path,
+    apps: &[Value],
+    changed: &mut bool,
+) -> Result<Value, AppIpcError> {
     fs::create_dir_all(skills_root).map_err(|error| {
         AppIpcError::new(
             "connector_skill_sync_failed",
@@ -329,13 +339,15 @@ fn materialize_skills(skills_root: &Path, apps: &[Value]) -> Result<Value, AppIp
             )
         })?;
         let skill_path = skill_dir.join("SKILL.md");
-        let tool_names = app
+        let mut tool_names = app
             .get("tools")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
             .filter_map(|tool| string_field(tool, "name"))
             .collect::<Vec<_>>();
+        tool_names.sort_unstable();
+        tool_names.dedup();
         let tool_section = if tool_names.is_empty() {
             String::new()
         } else {
@@ -351,26 +363,45 @@ fn materialize_skills(skills_root: &Path, apps: &[Value]) -> Result<Value, AppIp
         let body = format!(
             "---\nname: wegent-connector-{slug}\ndescription: Use the administrator-managed Wegent connector app {slug}.\n---\n\n# Wegent connector `{slug}`\n\n{description}\n\nUse the `wegent_apps` MCP server. Only call tools whose names start with `{slug}__`.\nAuthentication and credentials are managed by Wegent; never request or expose them.\n{tool_section}"
         );
-        fs::write(&skill_path, body).map_err(|error| {
-            AppIpcError::new(
-                "connector_skill_sync_failed",
-                format!("Failed to write {}: {error}", skill_path.display()),
-            )
-        })?;
-        fs::write(skill_dir.join(".wegent-connector"), "managed\n")
-            .map_err(|error| AppIpcError::new("connector_skill_sync_failed", error.to_string()))?;
+        write_skill_file(&skill_path, body.as_bytes(), changed)?;
+        write_skill_file(&skill_dir.join(".wegent-connector"), b"managed\n", changed)?;
         materialized.push(json!({
             "slug": slug,
             "skillPath": skill_path.display().to_string(),
         }));
     }
-    remove_inactive_skills(skills_root, &active_dirs)?;
+    remove_inactive_skills(skills_root, &active_dirs, changed)?;
     Ok(json!({ "apps": materialized }))
+}
+
+fn write_skill_file(path: &Path, content: &[u8], changed: &mut bool) -> Result<(), AppIpcError> {
+    let previous = match fs::read(path) {
+        Ok(current) if current == content => return Ok(()),
+        Ok(current) => Some(current),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(AppIpcError::new(
+                "connector_skill_sync_failed",
+                error.to_string(),
+            ))
+        }
+    };
+    if let Err(error) = fs::write(path, content) {
+        // A failed write can still create or truncate the native skill.
+        *changed |= fs::read(path).ok() != previous;
+        return Err(AppIpcError::new(
+            "connector_skill_sync_failed",
+            error.to_string(),
+        ));
+    }
+    *changed = true;
+    Ok(())
 }
 
 fn remove_inactive_skills(
     skills_root: &Path,
     active_dirs: &HashSet<String>,
+    changed: &mut bool,
 ) -> Result<(), AppIpcError> {
     let Ok(entries) = fs::read_dir(skills_root) else {
         return Ok(());
@@ -381,9 +412,16 @@ fn remove_inactive_skills(
             && !active_dirs.contains(&name)
             && entry.path().join(".wegent-connector").is_file()
         {
-            fs::remove_dir_all(entry.path()).map_err(|error| {
-                AppIpcError::new("connector_skill_sync_failed", error.to_string())
-            })?;
+            let skill_path = entry.path().join("SKILL.md");
+            let previous = fs::read(&skill_path).ok();
+            if let Err(error) = fs::remove_dir_all(entry.path()) {
+                *changed |= fs::read(&skill_path).ok() != previous;
+                return Err(AppIpcError::new(
+                    "connector_skill_sync_failed",
+                    error.to_string(),
+                ));
+            }
+            *changed = true;
         }
     }
     Ok(())
@@ -422,6 +460,7 @@ mod tests {
         let result = materialize_skills(
             &skills_root,
             &[json!({"slug": "tickets", "name": "Tickets"})],
+            &mut false,
         )
         .expect("connector skill should materialize");
         let skill_path = skills_root
@@ -434,7 +473,7 @@ mod tests {
             skill_path.display().to_string()
         );
 
-        materialize_skills(&skills_root, &[])
+        materialize_skills(&skills_root, &[], &mut false)
             .expect("stale managed connector skill should be removed");
         assert!(!skill_path.exists());
         assert!(unrelated.join("SKILL.md").exists());
@@ -446,10 +485,78 @@ mod tests {
         let result = materialize_skills(
             temp.path(),
             &[json!({"slug": "../escape", "name": "Escape"})],
+            &mut false,
         );
 
         let error = result.expect_err("unsafe slug should be rejected");
         assert_eq!(error.code, "bad_request");
+    }
+
+    #[test]
+    fn skill_materialization_only_marks_effective_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut apps = vec![json!({
+            "slug": "tickets", "name": "Tickets", "description": "First definition",
+            "tools": [{"name": "tickets__write"}, {"name": "tickets__read"}]
+        })];
+        let mut changed = false;
+        materialize_skills(temp.path(), &apps, &mut changed).unwrap();
+        assert!(changed);
+        let skill = temp.path().join("wegent-connector-tickets/SKILL.md");
+        let modified = fs::metadata(&skill).unwrap().modified().unwrap();
+
+        changed = false;
+        apps[0]["tools"].as_array_mut().unwrap().reverse();
+        materialize_skills(temp.path(), &apps, &mut changed).unwrap();
+        assert!(
+            !changed,
+            "tool ordering must not invalidate native sessions"
+        );
+        assert_eq!(fs::metadata(&skill).unwrap().modified().unwrap(), modified);
+
+        apps[0]["description"] = json!("Changed definition under the same slug");
+        materialize_skills(temp.path(), &apps, &mut changed).unwrap();
+        assert!(changed);
+        assert!(fs::read_to_string(&skill)
+            .unwrap()
+            .contains("Changed definition"));
+
+        changed = false;
+        materialize_skills(temp.path(), &[], &mut changed).unwrap();
+        assert!(changed);
+        assert!(!skill.exists());
+        changed = false;
+        materialize_skills(temp.path(), &[], &mut changed).unwrap();
+        assert!(!changed);
+    }
+
+    #[test]
+    fn partial_skill_failure_keeps_earlier_publication_marked() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut changed = false;
+        let result = materialize_skills(
+            temp.path(),
+            &[
+                json!({"slug": "tickets", "name": "Tickets"}),
+                json!({"slug": "../invalid", "name": "Invalid"}),
+            ],
+            &mut changed,
+        );
+        assert!(result.is_err());
+        assert!(changed);
+        assert!(temp
+            .path()
+            .join("wegent-connector-tickets/SKILL.md")
+            .is_file());
+
+        changed = false;
+        assert!(materialize_skills(
+            temp.path(),
+            &[json!({"slug": "../invalid", "name": "Invalid"})],
+            &mut changed,
+        )
+        .is_err());
+        assert!(!changed, "rejected input must not invalidate sessions");
     }
 
     #[test]

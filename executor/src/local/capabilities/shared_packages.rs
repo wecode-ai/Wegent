@@ -10,8 +10,6 @@ use crate::services::workbench::{
     workbench_root, PackageKind,
 };
 
-pub(super) struct ActivationRevision;
-
 pub(super) struct PublicationLock(fs::File);
 
 impl Drop for PublicationLock {
@@ -33,13 +31,6 @@ pub(super) fn validate_component(value: &str) -> Result<(), CapabilitySyncError>
         ));
     }
     Ok(())
-}
-
-impl Drop for ActivationRevision {
-    fn drop(&mut self) {
-        // Even a partially successful sync can change native configuration.
-        crate::services::capability_activation::mark_changed();
-    }
 }
 
 impl GlobalCapabilityStore {

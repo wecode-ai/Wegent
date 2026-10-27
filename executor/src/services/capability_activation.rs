@@ -23,7 +23,8 @@ pub fn revision() -> u64 {
     REVISION.load(Ordering::Acquire)
 }
 
-// Call while holding the activation writer, including after partial publication.
+// Call under the activation writer after effective native capability changes,
+// including partial publication. Receipts and unchanged refreshes are not changes.
 pub fn mark_changed() {
     REVISION.fetch_add(1, Ordering::AcqRel);
 }

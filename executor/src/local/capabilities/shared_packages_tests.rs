@@ -74,6 +74,176 @@ pub(super) fn store(root: &Path) -> GlobalCapabilityStore {
     store
 }
 
+#[tokio::test]
+async fn activation_revision_ignores_repeated_and_superseded_plugin_syncs() {
+    use super::super::activation_revision::ActivationRevision;
+
+    let root = tempfile::tempdir().unwrap();
+    let store = store(root.path());
+    let bytes = packages("v1");
+    let mut payload = json!({
+        "scope":"plugins",
+        "plugin_sync":{"version":2,"generation":10,"complete":true},
+        "plugins":[{"name":"demo","installed_plugin_id":1,"marketplace":"wegent",
+            "version":"1.0","download_path":"/package","checksum":sha256_digest(&bytes.plugin)}]
+    });
+    let handler = CapabilitySyncHandler::with_package_provider("", store.clone(), bytes);
+    assert_eq!(
+        handler.apply_sync(payload.clone()).await.unwrap()["success"],
+        true
+    );
+    let spec = PluginSyncSpec::from_value(&payload["plugins"][0]).unwrap();
+    let before = ActivationRevision::new(
+        &store,
+        &store.manifest.load().unwrap(),
+        &[],
+        std::iter::once(&spec),
+        false,
+        true,
+    );
+
+    payload["plugin_sync"]["generation"] = json!(11);
+    payload["plugins"][0]["download_path"] = json!("/package?renewed-signature");
+    assert_eq!(
+        handler.apply_sync(payload.clone()).await.unwrap()["success"],
+        true
+    );
+    assert!(
+        !before.has_changed(),
+        "receipts and timestamps are not capability changes"
+    );
+
+    payload["plugin_sync"]["generation"] = json!(9);
+    payload["plugins"][0]["enabled"] = json!(false);
+    let stale = handler.apply_sync(payload).await.unwrap();
+    assert_eq!(stale["plugins"][0]["status"], "superseded");
+    assert!(!before.has_changed());
+    assert_eq!(
+        store.manifest.load().unwrap()["plugins"]["demo@wegent"]["enabled"],
+        true
+    );
+}
+
+#[tokio::test]
+async fn activation_revision_detects_same_name_package_and_component_changes() {
+    use super::super::activation_revision::ActivationRevision;
+
+    let root = tempfile::tempdir().unwrap();
+    let store = store(root.path());
+    let payload = json!({"scope":"plugins", "plugins":[{"name":"demo","installed_plugin_id":1,
+        "marketplace":"wegent","version":"1.0","download_path":"/package"}]});
+    let first = CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v1"));
+    first.apply_sync(payload.clone()).await.unwrap();
+    let spec = PluginSyncSpec::from_value(&payload["plugins"][0]).unwrap();
+    let before = ActivationRevision::new(
+        &store,
+        &store.manifest.load().unwrap(),
+        &[],
+        std::iter::once(&spec),
+        false,
+        true,
+    );
+    let second = CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v2"));
+    assert_eq!(
+        second.apply_sync(payload.clone()).await.unwrap()["success"],
+        true
+    );
+    assert!(before.has_changed());
+    let native = store.plugin_codex_link(&spec);
+    assert_eq!(
+        fs::read_to_string(native.join("payload.txt")).unwrap(),
+        "v2"
+    );
+    {
+        let _activation = crate::services::capability_activation::activate().await;
+        drop(before);
+    }
+
+    let before = ActivationRevision::new(
+        &store,
+        &store.manifest.load().unwrap(),
+        &[],
+        std::iter::once(&spec),
+        false,
+        true,
+    );
+    let mut disabled = payload;
+    disabled["plugins"][0]["enabled"] = json!(false);
+    disabled["plugins"][0]["component_states"] = json!({"skills/example":false});
+    assert_eq!(second.apply_sync(disabled).await.unwrap()["success"], true);
+    assert!(before.has_changed());
+    let config = fs::read_to_string(root.path().join("codex/config.toml"))
+        .unwrap()
+        .parse::<DocumentMut>()
+        .unwrap();
+    assert_eq!(
+        config["plugins"]["demo@wegent"]["enabled"].as_bool(),
+        Some(false)
+    );
+    let _activation = crate::services::capability_activation::activate().await;
+    drop(before);
+}
+
+#[tokio::test]
+async fn activation_revision_keeps_partial_publication_and_ignores_rejected_packages() {
+    use super::super::activation_revision::ActivationRevision;
+
+    let root = tempfile::tempdir().unwrap();
+    let store = store(root.path());
+    let specs = [
+        SkillSyncSpec::from_value(&json!({"name":"valid","skill_id":1})).unwrap(),
+        SkillSyncSpec::from_value(&json!({"name":"rejected","skill_id":2})).unwrap(),
+    ];
+    let handler = CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v1"));
+    let before = ActivationRevision::new(
+        &store,
+        &store.manifest.load().unwrap(),
+        &specs,
+        std::iter::empty(),
+        false,
+        false,
+    );
+    let result = handler
+        .apply_sync(json!({"skills":[
+            {"name":"valid","skill_id":1},
+            {"name":"rejected","skill_id":2,"content_hash":"sha256:bad"}
+        ]}))
+        .await
+        .unwrap();
+    assert_eq!(result["success"], false);
+    assert!(before.has_changed());
+    assert_eq!(
+        fs::read_to_string(store.codex_skills_dir.join("valid/SKILL.md")).unwrap(),
+        "v1"
+    );
+    assert!(!store.codex_skills_dir.join("rejected").exists());
+    {
+        let _activation = crate::services::capability_activation::activate().await;
+        drop(before);
+    }
+
+    let before = ActivationRevision::new(
+        &store,
+        &store.manifest.load().unwrap(),
+        &specs,
+        std::iter::empty(),
+        false,
+        false,
+    );
+    let result = handler
+        .apply_sync(json!({"skills":[
+            {"name":"valid","skill_id":1},
+            {"name":"rejected","skill_id":2,"content_hash":"sha256:bad"}
+        ]}))
+        .await
+        .unwrap();
+    assert_eq!(result["success"], false);
+    assert!(
+        !before.has_changed(),
+        "failed packages must not invalidate unchanged capabilities"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn publication_lock_releases_with_a_retained_descriptor() {

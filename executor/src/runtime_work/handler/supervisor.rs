@@ -595,15 +595,16 @@ impl RuntimeWorkRpcHandler {
                 "source": source.clone(),
             }),
         );
+        let ephemeral = runtime_task_uses_ephemeral_codex_thread(&link);
         self.spawn_turn(SpawnTurnRequest {
             local_task_id: local_task_id.to_owned(),
             runtime: "codex".to_owned(),
             request,
             send_payload: None,
-            direct_thread_id: link.ephemeral.then(|| thread_id.clone()),
+            direct_thread_id: ephemeral.then(|| thread_id.clone()),
             fork_thread_id: None,
             fork_thread_path: None,
-            resume_thread_id: (!link.ephemeral).then_some(thread_id),
+            resume_thread_id: (!ephemeral).then_some(thread_id),
             initial_thread_goal: None,
         })
         .await

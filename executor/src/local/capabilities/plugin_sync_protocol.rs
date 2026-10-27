@@ -329,8 +329,8 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         let _sync_guard = self.sync_lock.lock().await;
         let _activation = crate::services::capability_activation::activate().await;
         let queued_ms = started.elapsed().as_millis();
-        let _changed = shared_packages::ActivationRevision;
         let _publication_lock = self.store.lock_shared_manifest()?;
+        let _changed;
         let mut manifest;
         let mut results = Vec::new();
         let plugins_superseded;
@@ -364,6 +364,27 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 "plugin_sync": {"version": 2, "generation": request.generation, "complete": true}}),
                 );
             }
+            let skills = if full_superseded {
+                &[][..]
+            } else {
+                &request.skills
+            };
+            let plugins = request
+                .plugins
+                .iter()
+                .filter(|spec| !is_superseded(&manifest, spec, request.generation, false));
+            let removals = request
+                .removals
+                .iter()
+                .filter(|spec| !is_superseded(&manifest, spec, request.generation, true));
+            _changed = activation_revision::ActivationRevision::new(
+                &self.store,
+                &manifest,
+                skills,
+                plugins.chain(removals),
+                !request.plugins_only && !full_superseded,
+                request.complete && !plugins_superseded,
+            );
             let advances_full =
                 !request.plugins_only && request.generation > full_generation(&manifest);
             if advances_full {

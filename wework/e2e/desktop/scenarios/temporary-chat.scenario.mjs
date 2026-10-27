@@ -1,4 +1,7 @@
-import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
+import {
+  handleEmptyReplyPrediction,
+  readRequestBody as readJson,
+} from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -22,6 +25,35 @@ const ATTACHMENT_TEXT = JSON.stringify({
   cardInstanceId: '501435'.repeat(20),
   content: 'Long attachment preview in a narrow chat '.repeat(20),
 })
+
+async function assertComposerBottomSpacing(control, timeoutMs, expanded = false) {
+  const sideSelector = `${SIDE_CHAT} [data-testid="project-chat-composer"]`
+  await control.command('waitFor', sideSelector, { stableMs: 300, timeoutMs })
+  const [side] = JSON.parse(await control.command('getElementMetrics', sideSelector))
+  const [shell] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${SIDE_CHAT} [data-testid="right-workspace-chat-composer-shell"]`
+    )
+  )
+  assert.ok(side && shell, 'The side-chat composer and its shell were not measurable')
+  assert.ok(
+    Math.abs(shell.bottom - side.bottom - 8) <= 1,
+    `The side-chat composer did not retain an 8px bottom gap: ${JSON.stringify({ side, shell })}`
+  )
+  if (expanded) return
+  const [main] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${ACTIVE_SURFACE} [data-testid="desktop-floating-composer-card"] [data-testid="project-chat-composer"]`
+    )
+  )
+  assert.ok(main, 'The main conversation composer was not measurable')
+  assert.ok(
+    Math.abs(main.bottom - side.bottom) <= 1,
+    `The main and side-chat composers did not align at the bottom: ${JSON.stringify({ main, side })}`
+  )
+}
 
 async function waitForRightPanelWidth(control, predicate, message, timeoutMs) {
   const selector = `${ACTIVE_SURFACE} [data-testid="right-workspace-panel-shell"]`
@@ -420,6 +452,7 @@ export function createDesktopScenario({
       }
 
       const body = await readJson(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const input = JSON.stringify(body.input ?? body.messages ?? [])
       const responseId = `wework-temporary-chat-${Date.now()}`
       const prompt = input.includes(FOLLOW_UP_PROMPT)
@@ -510,6 +543,7 @@ export function createDesktopScenario({
       await control.command('waitFor', ACTIVE_COMPOSER, { visible: true, timeoutMs: uiTimeoutMs })
       await control.command('nativePress', ACTIVE_COMPOSER, { key: `${primary}+Alt+S` })
       await control.command('waitFor', SIDE_COMPOSER, { timeoutMs: uiTimeoutMs })
+      await assertComposerBottomSpacing(control, uiTimeoutMs)
       const executorLogPath = join(resultDir, 'executor.log')
       const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
       await control.command('dropFile', SIDE_COMPOSER, {
@@ -553,12 +587,14 @@ export function createDesktopScenario({
       await control.command('click', expandButton)
       const expandedWidth = await assertTextAttachmentFits(control, uiTimeoutMs)
       assert.ok(expandedWidth > narrowWidth, 'The text attachment did not grow with its container')
+      await assertComposerBottomSpacing(control, uiTimeoutMs, true)
       await control.command('click', expandButton)
       const restoredWidth = await assertTextAttachmentFits(control, uiTimeoutMs)
       assert.ok(
         Math.abs(restoredWidth - narrowWidth) <= 1,
         'The text attachment did not shrink after restoring the panel'
       )
+      await assertComposerBottomSpacing(control, uiTimeoutMs)
       await captureScreenshot(control, 'temporary-chat-text-attachment-narrow.png', SIDE_CHAT)
 
       await expandProject(control, uiTimeoutMs)
@@ -633,6 +669,22 @@ export function createDesktopScenario({
           executorLogOffset,
           taskTimeoutMs
         )
+        for (let switchCount = 0; switchCount < 2; switchCount += 1) {
+          await expandProject(control, uiTimeoutMs)
+          await control.command('click', '[data-testid="new-chat-button"]')
+          await control.command('waitFor', MAIN_COMPOSER, {
+            stableMs: 300,
+            timeoutMs: uiTimeoutMs,
+          })
+          await control.command('click', `[data-testid="${sourceTaskRow}"]`)
+          for (const text of [INITIAL_COMPLETION, FOLLOW_UP_COMPLETION]) {
+            await control.command('waitFor', `${SIDE_CHAT} [data-testid="message-assistant"]`, {
+              text,
+              timeoutMs: uiTimeoutMs,
+            })
+          }
+          await assertSideChatBottomOrigin(control)
+        }
         await captureScreenshot(control, '02-temporary-chat-two-turns.png', ACTIVE_SURFACE)
       } finally {
         releaseSource()
