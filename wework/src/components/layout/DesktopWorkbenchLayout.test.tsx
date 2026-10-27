@@ -1,4 +1,13 @@
-import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  configure,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useEffect, useMemo, useState } from 'react'
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -2072,7 +2081,29 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
   })
 
-  test('keeps a retained board bound to its own workspace tab route', async () => {
+  test('keeps a retained board bound to its own workspace tab route', async ({
+    onTestFinished,
+  }) => {
+    const dialogMethods = ['showModal', 'close'] as const
+    const descriptors = dialogMethods.map(method =>
+      Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, method)
+    )
+    for (const method of dialogMethods) {
+      Object.defineProperty(HTMLDialogElement.prototype, method, {
+        configurable: true,
+        value: function (this: HTMLDialogElement) {
+          this.open = method === 'showModal'
+        },
+      })
+    }
+    onTestFinished(() => {
+      cleanup()
+      dialogMethods.forEach((method, index) => {
+        const descriptor = descriptors[index]
+        if (descriptor) Object.defineProperty(HTMLDialogElement.prototype, method, descriptor)
+        else Reflect.deleteProperty(HTMLDialogElement.prototype, method)
+      })
+    })
     deliveryApiMock.available = true
     const project = {
       id: 'project-1',
@@ -2142,8 +2173,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    await userEvent.click(screen.getByTestId('collaboration-board-settings'))
-    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('board-view-picker'))
+    await userEvent.click(screen.getByTestId('board-view-edit'))
+    expect(screen.getByTestId('board-view-editor')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '看板设置' })).toHaveClass(
       'text-heading-sm',
       'font-medium'
@@ -2156,7 +2188,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('board-view-editor')).toBeInTheDocument()
     expect(actions.updateActiveTab).not.toHaveBeenCalled()
 
     view.rerender(
@@ -2166,7 +2198,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('board-view-editor')).toBeInTheDocument()
   })
 
   test('returns to the workspace after opening settings from its account menu', async () => {

@@ -116,9 +116,10 @@ function IssueCardHeading({
   const showPriority =
     display.showPriority && (model.priority === 'high' || model.priority === 'urgent')
   const tags = display.showTags ? model.tags : []
+  const statusLabel = model.statusLabel
   return (
     <>
-      {display.showReference !== false || tags.length > 0 || showPriority ? (
+      {statusLabel || display.showReference !== false || tags.length > 0 || showPriority ? (
         <span className="mb-1.5 flex min-w-0 items-center gap-2 pr-5 text-xs text-text-muted">
           {display.showReference !== false ? (
             <span
@@ -129,6 +130,15 @@ function IssueCardHeading({
               {model.shortReference}
             </span>
           ) : null}
+          {statusLabel && (
+            <span
+              data-testid={`cloud-todo-card-status-${itemId}`}
+              title={statusLabel}
+              className="max-w-[40%] shrink-0 truncate rounded bg-muted px-1.5 py-0.5"
+            >
+              {statusLabel}
+            </span>
+          )}
           {tags.length > 0 ? (
             <span className="min-w-0 truncate" title={tags.join(', ')}>
               {tags[0]}

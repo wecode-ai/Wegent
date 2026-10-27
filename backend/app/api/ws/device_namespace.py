@@ -989,6 +989,8 @@ def _project_chat_runtime_event_sync(
             event_name=event_name,
             payload=payload,
             owner_user_id=user_id,
+            accepted_terminal=matched_execution is not None
+            and matched_execution.status == "completed",
         )
         if projected is None:
             return {

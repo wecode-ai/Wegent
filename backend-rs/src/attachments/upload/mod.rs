@@ -40,6 +40,8 @@ mod overwrite;
 pub(crate) mod pdf;
 mod resample;
 mod response;
+mod s3;
+pub use s3::S3StorageBackend;
 mod store;
 #[cfg(test)]
 mod tests;
