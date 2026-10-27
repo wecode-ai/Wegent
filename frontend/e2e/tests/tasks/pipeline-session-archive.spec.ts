@@ -24,13 +24,20 @@ test.describe('Pipeline native session archive and continuation', () => {
   test.describe.configure({ mode: 'default', timeout: 240_000 })
 
   for (const engine of ['ClaudeCode', 'Codex'] as const) {
-    for (const mode of ['executor', 'sandbox'] as const) {
-      test(`${engine}: ${mode} restores both bots and resumes the native conversation`, async ({
+    const variants =
+      engine === 'ClaudeCode'
+        ? (['executor', 'sandbox', 'cancelled-executor'] as const)
+        : (['executor', 'sandbox'] as const)
+    for (const variant of variants) {
+      const mode = variant === 'sandbox' ? 'sandbox' : 'executor'
+      const cancelFirst = variant === 'cancelled-executor'
+      test(`${engine}: ${variant} restores both bots and resumes the native conversation`, async ({
         request,
       }, testInfo) => {
-        const prefix = `e2e-archive-${engine.toLowerCase()}-${mode}-${Date.now()}`
+        const prefix = `e2e-archive-${engine.toLowerCase()}-${variant}-${Date.now()}`
         const seed = `ARCHIVE_SEED_${prefix}`
         const followup = `ARCHIVE_RESUME_WITH_NATIVE_HISTORY_${prefix}`
+        const interrupted = `CANCEL_FIRST_NATIVE_CLAUDE_TURN_${prefix}`
         const cleanup: Array<[string, string]> = []
         const login = await createApiClient(request).login(ADMIN_USER.username, ADMIN_USER.password)
         expect(login.data?.access_token).toBeTruthy()
@@ -100,7 +107,7 @@ test.describe('Pipeline native session archive and continuation', () => {
                 name,
                 shell_name: shell,
                 agent_config: { bind_model: model, bind_model_type: 'user' },
-                system_prompt: `You are pipeline stage ${stage}. Return the model response without using tools.`,
+                system_prompt: `You are pipeline stage ${stage}. Return the model response without using tools.${cancelFirst && stage === 2 ? ` ${interrupted}` : ''}`,
                 inherit_base_capabilities: false,
                 namespace: 'default',
                 is_active: true,
@@ -136,6 +143,15 @@ test.describe('Pipeline native session archive and continuation', () => {
             responseContent: `SEED_OK_${prefix}`,
             chunkDelayMs: 0,
           })
+          if (cancelFirst) {
+            // Hold only the second bot's first native turn open until cancellation.
+            await postJson(request, `${MOCK}/stream-rules`, {
+              matchText: interrupted,
+              responseContent: `INTERRUPTED_${prefix}`,
+              chunkDelayMs: 0,
+              doneDelayMs: 180_000,
+            })
+          }
           const task = await postJson(
             request,
             `${API}/api/tasks/create`,
@@ -162,7 +178,7 @@ test.describe('Pipeline native session archive and continuation', () => {
               { timeout: TIMEOUT }
             )
             .toBe(1)
-          await completed(request, taskId!, headers)
+          if (!cancelFirst) await completed(request, taskId!, headers)
           runtime = await resolveRuntime(request, MANAGER, taskId!, headers, 'executor')
           const roots = (await postJson(request, `${runtime.base_url}/api/runtime/prepare`, {
             task_id: taskId,
@@ -173,6 +189,51 @@ test.describe('Pipeline native session archive and continuation', () => {
               ...params,
               action: 'snapshot',
             })
+          if (cancelFirst) {
+            await expect
+              .poll(
+                async () => {
+                  const captures = await getJson(request, `${MOCK}/captured-requests`)
+                  return captures.some((capture: { body: { system?: unknown } | null }) =>
+                    JSON.stringify(capture.body?.system ?? '').includes(interrupted)
+                  )
+                },
+                { timeout: TIMEOUT }
+              )
+              .toBe(true)
+            // Both native init events must have been persisted while bot 2 is
+            // still running. The old completion-only save cannot satisfy this.
+            await expect
+              .poll(async () => Object.keys((await snapshot()).markers).length, {
+                timeout: TIMEOUT,
+              })
+              .toBe(2)
+            const running = await getJson(request, `${API}/api/tasks/${taskId}`, headers)
+            const assistant = running.subtasks.find(
+              (subtask: { role: string; bot_ids: number[] }) =>
+                subtask.role === 'ASSISTANT' && subtask.bot_ids.includes(botIds[1])
+            )
+            expect(assistant?.status).toBe('RUNNING')
+            await postJson(request, `${API}/api/tasks/${taskId}/cancel`, {}, headers)
+            // The task status changes before the asynchronous executor cancel.
+            // Its assistant callback proves that the real process has stopped.
+            await expect
+              .poll(
+                async () => {
+                  const detail = await getJson(request, `${API}/api/tasks/${taskId}`, headers)
+                  return detail.subtasks.find(
+                    (subtask: { role: string; bot_ids: number[] }) =>
+                      subtask.role === 'ASSISTANT' && subtask.bot_ids.includes(botIds[1])
+                  )?.status
+                },
+                { timeout: TIMEOUT }
+              )
+              .toBe('CANCELLED')
+            const cleared = await request.delete(`${MOCK}/stream-rules`, {
+              params: { matchText: interrupted },
+            })
+            expect(cleared.ok()).toBe(true)
+          }
           const before = await snapshot()
           expect(Object.keys(before.markers)).toHaveLength(2)
           for (const home of before.homes) {
@@ -281,12 +342,15 @@ test.describe('Pipeline native session archive and continuation', () => {
             .poll(
               async () => {
                 const captures = (await getJson(request, `${MOCK}/captured-requests`)) as Array<{
-                  body: unknown
+                  body: { system?: unknown; messages?: unknown }
                 }>
                 return captures.some(
                   capture =>
                     JSON.stringify(capture.body).includes(followup) &&
-                    JSON.stringify(capture.body).includes(`SEED_OK_${prefix}`)
+                    JSON.stringify(capture.body).includes(`SEED_OK_${prefix}`) &&
+                    (!cancelFirst ||
+                      (JSON.stringify(capture.body.system ?? '').includes(interrupted) &&
+                        JSON.stringify(capture.body.messages ?? '').includes(seed)))
                 )
               },
               { timeout: TIMEOUT }
@@ -363,7 +427,7 @@ test.describe('Pipeline native session archive and continuation', () => {
             if (![200, 204, 404].includes(deleted.status()))
               failures.push(`${kind}: ${await deleted.text()}`)
           }
-          for (const matchText of [seed, followup]) {
+          for (const matchText of [seed, followup, interrupted]) {
             const cleared = await request.delete(`${MOCK}/stream-rules`, { params: { matchText } })
             if (!cleared.ok()) failures.push(`model rule: ${await cleared.text()}`)
           }
