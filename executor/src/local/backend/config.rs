@@ -168,7 +168,7 @@ fn normalize_optional_env(name: &str) -> String {
         .unwrap_or_default()
 }
 
-fn duration_from_env(name: &str, default_seconds: u64) -> Duration {
+pub(super) fn duration_from_env(name: &str, default_seconds: u64) -> Duration {
     env::var(name)
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
