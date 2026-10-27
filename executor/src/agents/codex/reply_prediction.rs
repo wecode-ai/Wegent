@@ -445,6 +445,36 @@ done
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn prediction_resumes_reusable_side_chat_but_keeps_its_fork_ephemeral() {
+        let fixture = Fixture::new("complete");
+        let (_cancel, receiver) = oneshot::channel();
+        let mut request = ExecutionRequest {
+            ephemeral: true,
+            ..ExecutionRequest::default()
+        };
+        request.persist_runtime_thread();
+
+        let result = fixture
+            .client
+            .predict_reply_with_launch_config("source", Some("latest"), &request, receiver, None)
+            .await
+            .unwrap();
+
+        assert_eq!(result, json!({"suggestion": "请继续"}));
+        let calls = fixture.calls();
+        assert!(calls.iter().any(|call| {
+            call["method"] == "thread/resume" && call["params"]["threadId"] == "source"
+        }));
+        let fork = calls
+            .iter()
+            .find(|call| call["method"] == "thread/fork")
+            .unwrap();
+        assert_eq!(fork["params"], prediction_fork_params("source"));
+        fixture.stop().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn prediction_does_not_fall_back_to_a_fresh_thread_when_forking_fails() {
         let fixture = Fixture::new("fork-error");
         let (_cancel, receiver) = oneshot::channel();
