@@ -125,7 +125,7 @@ async fn handle_request(request: &Value) -> Option<Value> {
     }
 }
 
-fn mcp_tools(value: &Value) -> Vec<Value> {
+pub(crate) fn mcp_tools(value: &Value) -> Vec<Value> {
     value
         .get("tools")
         .and_then(Value::as_array)
