@@ -677,8 +677,12 @@ class PluginMarketplaceService:
 
         Parallel catalog publications contend on the same plugin rows, and MySQL
         asks the client to restart the transaction when it detects a deadlock.
+        Retrying is only safe when this method owns the transaction: a deferred
+        caller has already claimed idempotency records and locks that a retry
+        here would silently discard.
         """
-        for attempt in range(3):
+        attempts = 1 if defer_commit else 3
+        for attempt in range(attempts):
             try:
                 return self._publish_catalog_release_once(
                     db,
@@ -696,7 +700,7 @@ class PluginMarketplaceService:
                     defer_commit=defer_commit,
                 )
             except OperationalError as error:
-                if not is_mysql_deadlock(error) or attempt == 2:
+                if not is_mysql_deadlock(error) or attempt == attempts - 1:
                     raise
                 db.rollback()
         raise AssertionError("publish_catalog_release retry loop exited")
