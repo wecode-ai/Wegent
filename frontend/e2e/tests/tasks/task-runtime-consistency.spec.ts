@@ -976,7 +976,11 @@ test.describe('Task runtime consistency', () => {
 
   async function ensureTestTeamSelected(page: Page): Promise<void> {
     const messageInput = page.getByTestId('message-input')
-    if (await messageInput.isVisible({ timeout: 5000 }).catch(() => false)) {
+    // Every caller navigates with ?teamId=, so the composer is the primary
+    // signal that the URL-selected team resolved. Give the workbench the same
+    // budget the suite uses elsewhere; a 5s window dropped into the manual
+    // picker before the team list had loaded and timed out there instead.
+    if (await messageInput.isVisible({ timeout: 30_000 }).catch(() => false)) {
       return
     }
 
