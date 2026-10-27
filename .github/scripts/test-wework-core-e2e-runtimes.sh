@@ -30,12 +30,13 @@ ruby -ryaml -e '
   steps = producer.fetch("steps").to_h { |s| [s.fetch("name"), s] }
   build = steps.fetch("Build Backend Rust E2E runtime").fetch("run")
   raise "Backend Rust must compile the attachment S3 example" unless build.include?("--example attachment_s3_e2e")
+  raise "Backend Rust must compile the attachment hosting example" unless build.include?("--example attachment_hosting_e2e")
   publish = steps.fetch("Publish content-addressed Backend Rust E2E image")
   raise "Backend Rust image publication must use its hashed recipe" unless publish.fetch("run").include?("--file #{recipe}")
   dockerfile = File.read(File.join(File.dirname(ARGV[1]), "../runtime-images/backend-rs-e2e.Dockerfile"))
   copies = dockerfile.scan(/^COPY (\S+) (\/app\/\S+)$/)
-  expected = [["wegent-backend-rs", "/app/wegent-backend-rs"], ["attachment-s3-e2e", "/app/attachment-s3-e2e"]]
-  raise "Backend Rust image must contain both runtime binaries" unless copies.sort == expected.sort
+  expected = [["wegent-backend-rs", "/app/wegent-backend-rs"], ["attachment-s3-e2e", "/app/attachment-s3-e2e"], ["attachment-hosting-e2e", "/app/attachment-hosting-e2e"]]
+  raise "Backend Rust image must contain all runtime binaries" unless copies.sort == expected.sort
   restore = steps.fetch("Restore content-addressed Backend Rust E2E binary").fetch("run")
   restored_paths = restore.scan(/"\$container_id:(\/app\/[^"]+)"/).flatten
   raise "Backend Rust cache hits must restore the published payload" unless restored_paths.sort == copies.map(&:last).sort

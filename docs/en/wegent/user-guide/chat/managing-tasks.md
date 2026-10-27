@@ -59,6 +59,8 @@ Above the input area, click the agent selector:
 
 When a new chat link contains `teamId`, the page reads and selects that agent by ID, independently of the paginated catalog. Removing other agents during catalog loading does not replace the requested agent with a default. If the requested agent cannot be read, the page does not automatically send with a different agent.
 
+Details loaded by ID retain the agent's execution configuration, including whether a repository is required. Agents explicitly configured without a repository can send coding tasks directly. Wework preserves supervisor events received after local, cloud, or individual task refresh requests begin, so an older snapshot cannot make a completed review appear to be checking again.
+
 ### Step 3: Configure Conversation Options (Optional)
 
 Configure the following options as needed:
