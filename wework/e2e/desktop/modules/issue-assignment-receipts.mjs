@@ -12,6 +12,22 @@ export async function verifyIssueAssignmentReceipts(
   captureScreenshot
 ) {
   const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
+  const dismissInbox = async () => {
+    const selector = '[data-testid="wework-notifications-popover"]'
+    if (Number(await control.command('getElementCount', selector)) > 0) {
+      await control.command('click', '[data-testid="wework-notifications-button"]')
+      await control.command('waitFor', selector, { visible: false })
+    }
+  }
+  const capture = async name => {
+    // The shared inbox from notification scenarios must not obscure receipt evidence.
+    await dismissInbox()
+    assert.equal(
+      await control.command('getElementCount', '[data-testid="wework-notifications-popover"]'),
+      '0'
+    )
+    await captureScreenshot(control, name, CONTENT)
+  }
   const params = { projectId, userId: 9001, projectStore: 'local' }
   const settings = await rpc('runtime.stand_in.get', params)
   await rpc('runtime.stand_in.save', { ...params, settings: { ...settings, enabled: false } })
@@ -35,7 +51,7 @@ export async function verifyIssueAssignmentReceipts(
     null,
     'The assigner must not acknowledge for the recipient'
   )
-  await captureScreenshot(control, 'assignment-receipts-01-unread.png', CONTENT)
+  await capture('assignment-receipts-01-unread.png')
   await close()
 
   issue = await rpc('todos.update', {
@@ -50,7 +66,7 @@ export async function verifyIssueAssignmentReceipts(
     'waitFor',
     `${CONTENT} [data-testid="cloud-todo-detail-assignee"] [data-testid="issue-assignment-receipts"] svg[data-figure="human"]`
   )
-  await captureScreenshot(control, 'assignment-receipts-02-human-read.png', CONTENT)
+  await capture('assignment-receipts-02-human-read.png')
 
   await rpc('runtime.stand_in.run', { ...params, issueId: issue.id })
   await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
@@ -58,11 +74,16 @@ export async function verifyIssueAssignmentReceipts(
   const both = (await load())[0]
   assert.ok(both.human_read_at && both.stand_in_received_at)
   await control.command('waitFor', `${RECEIPTS} svg[data-figure="stand-in"]`)
-  await captureScreenshot(control, 'assignment-receipts-03-both-received.png', CONTENT)
+  await capture('assignment-receipts-03-both-received.png')
+  await dismissInbox()
   await control.command('hover', `${RECEIPTS} [title^="分身已接收"]`)
   await control.command('waitFor', '[role="tooltip"]', { text: '分身已接收' })
   assert.equal(
     await control.command('getElementCount', '[data-testid="global-icon-button-tooltip"]'),
+    '0'
+  )
+  assert.equal(
+    await control.command('getElementCount', '[data-testid="wework-notifications-popover"]'),
     '0'
   )
   await captureScreenshot(control, 'assignment-receipts-03-reception-tooltip.png', CONTENT)
@@ -73,7 +94,7 @@ export async function verifyIssueAssignmentReceipts(
   await control.command('waitFor', 'html[data-theme="dark"]')
   await open()
   await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
-  await captureScreenshot(control, 'assignment-receipts-03-dark.png', CONTENT)
+  await capture('assignment-receipts-03-dark.png')
   await close()
   await control.command('navigate', 'body', { value: '/settings/appearance' })
   await control.command('waitFor', '[data-testid="appearance-settings-page"]')
@@ -85,7 +106,7 @@ export async function verifyIssueAssignmentReceipts(
   await open()
   await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
   assert.deepEqual((await load())[0], both, 'Reload must preserve both first-reception timestamps')
-  await captureScreenshot(control, 'assignment-receipts-04-persisted.png', CONTENT)
+  await capture('assignment-receipts-04-persisted.png')
   await close()
 
   issue = await rpc('todos.get', { project_id: projectId, task_id: issue.id })
@@ -98,7 +119,7 @@ export async function verifyIssueAssignmentReceipts(
   await control.command('waitFor', RECEIPTS, { text: '未读' })
   assert.notEqual((await load())[0].id, both.id)
   assert.equal((await load())[0].stand_in_received_at, null)
-  await captureScreenshot(control, 'assignment-receipts-05-reassigned.png', CONTENT)
+  await capture('assignment-receipts-05-reassigned.png')
   await close()
 }
 
