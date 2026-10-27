@@ -97,7 +97,7 @@ export function weworkDestinationRoute(
   if (destination.itemId) params.set('itemId', destination.itemId)
   if (destination.commentId) {
     params.set('commentId', destination.commentId)
-    if (focusRequest) params.set('focusRequest', focusRequest)
   }
+  if (destination.itemId && focusRequest) params.set('focusRequest', focusRequest)
   return `/todo?${params}`
 }

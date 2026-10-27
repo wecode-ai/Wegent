@@ -253,12 +253,15 @@ jobs:
             --release \
             --manifest-path backend-rs/Cargo.toml \
             --bin wegent-backend-rs \
-            --example attachment_s3_e2e
+            --example attachment_s3_e2e \
+            --example attachment_hosting_e2e
           mkdir -p .ci-artifacts
           cp "$CARGO_TARGET_DIR/release/wegent-backend-rs" \
             .ci-artifacts/wegent-backend-rs
           cp "$CARGO_TARGET_DIR/release/examples/attachment_s3_e2e" \
             .ci-artifacts/attachment-s3-e2e
+          cp "$CARGO_TARGET_DIR/release/examples/attachment_hosting_e2e" \
+            .ci-artifacts/attachment-hosting-e2e
           chmod 0755 .ci-artifacts/wegent-backend-rs
 
       - name: Publish content-addressed Backend Rust E2E image
@@ -271,10 +274,13 @@ jobs:
             .ci-artifacts/backend-rs-image/wegent-backend-rs
           cp .ci-artifacts/attachment-s3-e2e \
             .ci-artifacts/backend-rs-image/attachment-s3-e2e
+          cp .ci-artifacts/attachment-hosting-e2e \
+            .ci-artifacts/backend-rs-image/attachment-hosting-e2e
           printf '%s\n' \
             'FROM scratch' \
             'COPY wegent-backend-rs /app/wegent-backend-rs' \
             'COPY attachment-s3-e2e /app/attachment-s3-e2e' \
+            'COPY attachment-hosting-e2e /app/attachment-hosting-e2e' \
             'ENTRYPOINT ["/app/wegent-backend-rs"]' \
             > .ci-artifacts/backend-rs-image/Dockerfile
           docker build \
@@ -297,6 +303,9 @@ jobs:
           docker cp \
             "$container_id:/app/attachment-s3-e2e" \
             .ci-artifacts/attachment-s3-e2e
+          docker cp \
+            "$container_id:/app/attachment-hosting-e2e" \
+            .ci-artifacts/attachment-hosting-e2e
           chmod 0755 .ci-artifacts/wegent-backend-rs
 
       - name: Save Backend Rust Cargo sources
@@ -315,6 +324,7 @@ jobs:
           path: |
             .ci-artifacts/wegent-backend-rs
             .ci-artifacts/attachment-s3-e2e
+            .ci-artifacts/attachment-hosting-e2e
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -450,10 +460,22 @@ jobs:
           compression-level: 0
 
   attachment-s3-e2e:
-    name: Attachment S3 Upload E2E
+    name: Attachment ${{ matrix.name }} E2E
     needs: build-backend-rs-e2e-runtime
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: S3 Upload
+            suite: s3-upload
+            binary: attachment-s3-e2e
+            script: attachment_s3_upload.py
+          - name: Media Hosting
+            suite: media-hosting
+            binary: attachment-hosting-e2e
+            script: attachment_media_hosting.py
     services:
       mysql:
         image: mysql:8.0
@@ -494,8 +516,11 @@ jobs:
       INIT_DATA_ENABLED: "false"
       E2E_MINIO_ROOT_USER: wegent-e2e
       E2E_MINIO_ROOT_PASSWORD: wegent-e2e-secret
-      E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/attachment-s3-upload
-      WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/attachment-s3-e2e
+      E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/attachment-${{ matrix.suite }}
+      WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/${{ matrix.binary }}
+      WEGENT_HOSTING_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/${{ matrix.binary }}
+      ATTACHMENT_PUBLIC_BASE_URL: ""
+      INTERNAL_SERVICE_TOKEN: attachment-hosting-e2e-service-token
       PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/backend
     steps:
       - name: Checkout code
@@ -510,6 +535,24 @@ jobs:
       - name: Install Backend dependencies
         working-directory: backend
         run: uv sync --dev --frozen
+      - name: Install media validation tools
+        if: matrix.suite == 'media-hosting'
+        run: |
+          # Use Ubuntu's signed HTTPS archive directly. The hosted runner's
+          # Azure mirror stalled codec downloads until the job timed out.
+          source_list="$RUNNER_TEMP/attachment-media-tools.list"
+          printf '%s\n' \
+            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble main universe' \
+            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble-updates main universe' \
+            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://security.ubuntu.com/ubuntu noble-security main universe' \
+            > "$source_list"
+          apt_options=(
+            -o "Dir::Etc::sourcelist=$source_list"
+            -o 'Dir::Etc::sourceparts=-'
+            -o 'APT::Get::List-Cleanup=0'
+          )
+          sudo apt-get "${apt_options[@]}" update
+          sudo apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
       - name: Configure real service endpoints
         env:
           S3_E2E_MYSQL_PORT: ${{ job.services.mysql.ports['3306'] }}
@@ -528,24 +571,25 @@ jobs:
       - name: Prepare real database
         working-directory: backend
         run: uv run --no-sync alembic upgrade head
-      - name: Run real S3 attachment upload E2E
+      - name: Run real attachment E2E
         working-directory: backend
         env:
           E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ATTACHMENT_E2E_SCRIPT: ${{ matrix.script }}
         run: |
           set -o pipefail
           mkdir -p "$E2E_REPORT_DIR"
           chmod 0755 "$WEGENT_RS_BINARY_PATH"
           export E2E_TEST_SHA="$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)"
           test "$E2E_TEST_SHA" = "$E2E_EXPECTED_SHA"
-          uv run --no-sync python tests/e2e/attachment_s3_upload.py \
+          uv run --no-sync python "tests/e2e/$ATTACHMENT_E2E_SCRIPT" \
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
-      - name: Upload real S3 attachment E2E evidence
+      - name: Upload real attachment E2E evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: attachment-s3-upload-e2e
-          path: .ci-artifacts/attachment-s3-upload/
+          name: attachment-${{ matrix.suite }}-e2e
+          path: .ci-artifacts/attachment-${{ matrix.suite }}/
           if-no-files-found: error
           retention-days: 14
 
@@ -1911,4 +1955,4 @@ jobs:
           assert_success "$EXECUTOR_BUILD_RESULT" "Executor E2E build"
           assert_success "$PLATFORM_E2E_RESULT" "Platform E2E"
           assert_success "$EXECUTOR_E2E_RESULT" "Executor E2E"
-          assert_success "$ATTACHMENT_S3_RESULT" "Attachment S3 Upload E2E"
+          assert_success "$ATTACHMENT_S3_RESULT" "Attachment Upload E2E (S3 and media hosting)"

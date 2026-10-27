@@ -5,6 +5,10 @@ import { join } from 'node:path'
 
 import { isReplyPredictionRequest } from '../modules/response-protocol.mjs'
 import {
+  currentExecutorPid,
+  waitForRestartedExecutor,
+} from '../modules/executor-restart-readiness.mjs'
+import {
   WORKBENCH_READY_TIMEOUT_MS,
   createSingleRootLocalProject,
   fetchJson,
@@ -246,12 +250,6 @@ export function attachCodexModelWebSocket(
   }
 }
 
-async function currentExecutorPid(control) {
-  const diagnostics = JSON.parse(await control.command('getDesktopRuntimeDiagnostics', 'body'))
-  const pid = Number(diagnostics.executorPid)
-  return Number.isInteger(pid) && pid > 0 ? pid : null
-}
-
 async function restartExecutorAfterRemovingCwd(
   control,
   executorLogPath,
@@ -265,20 +263,13 @@ async function restartExecutorAfterRemovingCwd(
   await rm(launchWorkingDirectory, { recursive: true })
   process.kill(originalPid, 'SIGTERM')
 
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < timeoutMs) {
-    const restartedPid = await currentExecutorPid(control)
-    const newLogContent = (await readFile(executorLogPath, 'utf8').catch(() => '')).slice(logOffset)
-    if (
-      restartedPid &&
-      restartedPid !== originalPid &&
-      /method=executor\.protocol\.describe.*ok=true/.test(newLogContent)
-    ) {
-      return restartedPid
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  throw new Error('The executor did not become protocol-ready after the Electron cwd was removed')
+  return waitForRestartedExecutor({
+    control,
+    originalPid,
+    executorLogPath,
+    logOffset,
+    timeoutMs,
+  })
 }
 
 export function createDesktopScenario({
