@@ -152,6 +152,53 @@ fn project_preparation_clones_before_creating_independent_worktrees() {
 }
 
 #[test]
+fn deferred_worktree_rebases_project_roots_using_path_identity() {
+    let _lock = crate::test_env::lock();
+    let temp = tempfile::tempdir().unwrap();
+    let _env = ScalarEnv::set("WORKSPACE_ROOT", temp.path().to_str().unwrap());
+    let repo = temp.path().join("source");
+    let dependency = temp.path().join("dependency");
+    initialize_test_repository(&repo);
+    fs::create_dir(&dependency).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (handler, root) = isolated_runtime_work_handler("worktree-permission-roots");
+        handler
+            .worktrees
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(temp.path().join("worktrees").display().to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        let plan = handler
+            .worktrees
+            .plan(&repo, "permission-roots", None)
+            .unwrap();
+        let source = plan.source_path.display().to_string();
+        let alias = if cfg!(windows) {
+            format!("{}\\", source.replace('/', "\\"))
+        } else {
+            format!("{source}/")
+        };
+        let mut turn = turn_with_setup("permission-roots", "");
+        turn.request.extra.remove(DEFERRED_ENVIRONMENT);
+        turn.request
+            .extra
+            .insert("deferred_worktree_source_path".into(), json!(source));
+        turn.request.runtime_workspace_roots = vec![alias, dependency.display().to_string()];
+        handler.prepare_deferred_worktree(&mut turn).await.unwrap();
+        assert_eq!(
+            turn.request.runtime_workspace_roots,
+            vec![turn.request.cwd().unwrap().to_owned(), dependency.display().to_string()]
+        );
+        fs::remove_dir_all(root).unwrap();
+    });
+}
+
+#[test]
 fn project_preparation_accepts_without_blocking_and_can_be_cancelled() {
     let _lock = crate::test_env::lock();
     let temp = tempfile::tempdir().unwrap();

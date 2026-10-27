@@ -696,7 +696,7 @@ impl RuntimeWorkRpcHandler {
             .map_err(|error| AppIpcError::new(worktree_error_code(&error), error))?;
         turn.request.project_workspace_path = Some(record.path.clone());
         for root in &mut turn.request.runtime_workspace_roots {
-            if *root == previous_root {
+            if crate::runtime_work::worktrees::same_path(root, &previous_root) {
                 *root = record.path.clone();
             }
         }
