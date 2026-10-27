@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { harnessAppsApi } from '@/api/local/harnessApps'
 import {
   beginHarnessAppLaunch,
@@ -44,6 +44,16 @@ export function HarnessAppAutoLauncher({
     () => listLocalHarnessModelOptions('opencode', projectChat.models),
     [projectChat.models]
   )
+  // Effect cleanup also runs when the model catalog changes, so it cannot
+  // stand in for the tab being closed. Only an unmount ends the launch.
+  const unmountedRef = useRef(false)
+
+  useEffect(() => {
+    unmountedRef.current = false
+    return () => {
+      unmountedRef.current = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -68,7 +78,7 @@ export function HarnessAppAutoLauncher({
       .list()
       .then(async installations => {
         const installation = installations.find(item => item.id === installationId)
-        if (!installation || cancelled) {
+        if (!installation || unmountedRef.current) {
           clearHarnessAppLaunch(installationId)
           return
         }
@@ -149,7 +159,7 @@ export function HarnessAppAutoLauncher({
           started = true
           // The tab can close while the runtime is starting; stop and release
           // through the normal failure path instead of leaking the new routes.
-          if (cancelled) {
+          if (unmountedRef.current) {
             throw new Error('Smart app tab closed during launch')
           }
           if (!running.webUrl) {
@@ -206,7 +216,9 @@ export function HarnessAppAutoLauncher({
           if (decisionToken) {
             await decisionApi?.unregister(decisionToken).catch(() => undefined)
           }
-          if (!cancelled) {
+          if (unmountedRef.current) {
+            clearHarnessAppLaunch(installationId)
+          } else {
             failHarnessAppLaunch(
               installationId,
               getSmartAppErrorMessage(
@@ -219,7 +231,7 @@ export function HarnessAppAutoLauncher({
         }
       })
       .catch(error => {
-        if (!cancelled) {
+        if (!unmountedRef.current) {
           beginHarnessAppLaunch(
             installationId,
             t('workbench.smart_apps_title', '智能工作台'),

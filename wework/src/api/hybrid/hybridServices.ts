@@ -1872,6 +1872,7 @@ function filterRuntimeChatStreamHandlers(
     onChatChunk: route(handlers.onChatChunk),
     onChatDone: route(handlers.onChatDone),
     onChatError: route(handlers.onChatError),
+    onChatRecovered: route(handlers.onChatRecovered),
     onBlockCreated: route(handlers.onBlockCreated),
     onBlockUpdated: route(handlers.onBlockUpdated),
     onSubagentActivity: route(handlers.onSubagentActivity),

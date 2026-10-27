@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
   notifyInstallationsChanged: vi.fn(),
 }))
 
+const workbenchState = vi.hoisted(() => ({ models: [] as unknown[] }))
+
 vi.mock('@/api/local/harnessApps', () => ({
   harnessAppsApi: {
     list: mocks.list,
@@ -68,7 +70,7 @@ vi.mock('@/features/local-harness/localHarnessModels', () => ({
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({
-    projectChat: { models: [] },
+    projectChat: { models: workbenchState.models },
     services: {
       localDecisionRouterApi: {
         resolveLaunch: mocks.resolveDecisionLaunch,
@@ -108,6 +110,7 @@ const running = {
 describe('HarnessAppAutoLauncher', () => {
   beforeEach(() => {
     Object.values(mocks).forEach(mock => mock.mockReset())
+    workbenchState.models = []
     mocks.resolveLaunch.mockResolvedValue({
       baseUrl: 'http://127.0.0.1:9000',
       proxyToken: 'proxy-token',
@@ -167,6 +170,32 @@ describe('HarnessAppAutoLauncher', () => {
       })
     )
     expect(mocks.storeAdditionalProxies).toHaveBeenCalledWith('app-1', ['second-token'])
+  })
+
+  test('keeps an in-flight launch when the model catalog refreshes', async () => {
+    let resolveStart: (value: typeof running) => void = () => {}
+    mocks.list.mockResolvedValue([installation])
+    mocks.start.mockReturnValue(
+      new Promise(resolve => {
+        resolveStart = resolve
+      })
+    )
+
+    const view = render(<HarnessAppAutoLauncher installationId="app-1" />)
+    await waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(1))
+
+    workbenchState.models = [{ name: 'model-1' }, { name: 'model-2' }]
+    view.rerender(<HarnessAppAutoLauncher installationId="app-1" />)
+    await Promise.resolve()
+
+    resolveStart(running)
+    await waitFor(() => expect(mocks.register).toHaveBeenCalledWith(running))
+    expect(mocks.stop).not.toHaveBeenCalled()
+    expect(mocks.notifyInstallationsChanged).toHaveBeenCalledWith({
+      type: 'updated',
+      installationId: 'app-1',
+      installation: running,
+    })
   })
 
   test('keeps the default and registered models when another model is unavailable', async () => {

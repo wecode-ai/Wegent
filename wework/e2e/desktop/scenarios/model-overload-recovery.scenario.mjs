@@ -207,17 +207,14 @@ export function createDesktopScenario({
         'The overload scenario did not exercise native direct-provider execution'
       )
       assert.equal(snapshot.pane?.status?.isBusy, true, 'Recovery prematurely ended the task')
-      // The retry request can reach the provider before the renderer clears the
-      // transient error surface; wait for that paint instead of sampling once.
-      await waitUntil(
-        async () =>
-          Number(
-            await control.command(
-              'getElementCount',
-              `${WORKBENCH} [data-testid="assistant-error-retry"]`
-            )
-          ) === 0,
-        uiTimeoutMs,
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `${WORKBENCH} [data-testid="assistant-error-retry"]`
+          )
+        ),
+        0,
         'A recoverable overload rendered a terminal failure'
       )
       releaseCompletion()
