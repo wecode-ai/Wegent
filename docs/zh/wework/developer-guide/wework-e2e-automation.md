@@ -127,7 +127,7 @@ node e2e/utils/mock-connector-upstream-server.mjs
 主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/run-checkpoints.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
 主桌面 runner 也支持按有序 checkpoint 分段执行。当前 checkpoint 依次为
-`remote-device-onboarding`、`workspace-tabs`、`cloud-project-creation`、
+`mcp-apps`、`remote-device-onboarding`、`workspace-tabs`、`cloud-project-creation`、
 `cloud-space-mention`、`priority-filter`、`telemetry-consent`、
 `automation-lifecycle`、`project-automation`、
 `project-assignment-notification`、`offline-local-project-space`、
@@ -143,7 +143,7 @@ node e2e/utils/mock-connector-upstream-server.mjs
 `native-window-chrome`、`renderer-storage`、`tray-lifecycle`、
 `window-lifecycle`、`goal-lifecycle`、`supervisor-lifecycle`、`resilience`、
 `conversation-state`、`temporary-chat`、`workspace-attachments`、
-`mcp-apps`、`rendering-extensions`、`change-request-status`、`claude-runtime`、
+`rendering-extensions`、`change-request-status`、`claude-runtime`、
 `local-file-preview`、`local-harness`、`harness-apps`、`browser-multi-tabs`、
 `embedded-browser` 和 `browser-toolbar-actions`。
 `--segment <checkpoint>` 在公共启动和项目初始化后只运行指定 checkpoint；

@@ -135,7 +135,7 @@ ordinary read within the same renderer process.
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/run-checkpoints.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
 The main desktop runner also supports execution through ordered checkpoints.
-The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
+The checkpoints are `mcp-apps`, `remote-device-onboarding`, `workspace-tabs`,
 `cloud-project-creation`, `cloud-space-mention`, `priority-filter`,
 `telemetry-consent`, `automation-lifecycle`, `project-automation`,
 `project-assignment-notification`, `offline-local-project-space`,
@@ -149,7 +149,7 @@ The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
 `codex-notification-isolation`, `split-workbench`, `native-window-startup`,
 `native-window-chrome`, `renderer-storage`, `tray-lifecycle`, `window-lifecycle`,
 `goal-lifecycle`, `supervisor-lifecycle`, `resilience`, `conversation-state`,
-`temporary-chat`, `workspace-attachments`, `mcp-apps`, `rendering-extensions`,
+`temporary-chat`, `workspace-attachments`, `rendering-extensions`,
 `change-request-status`, `claude-runtime`, `local-file-preview`, `local-harness`,
 `harness-apps`, `browser-multi-tabs`, `embedded-browser`, and
 `browser-toolbar-actions`.
