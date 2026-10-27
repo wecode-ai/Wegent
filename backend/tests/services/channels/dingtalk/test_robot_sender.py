@@ -87,8 +87,8 @@ def test_group_card_content_prepends_visible_mentions(monkeypatch) -> None:
     assert captured["mention_user_ids"] == ["41068:陈波"]
 
 
-def test_group_card_drops_unresolved_staff_ids(monkeypatch) -> None:
-    """Staff IDs without a display name never render as raw @ mentions."""
+def test_group_card_keeps_unresolved_staff_ids_visible(monkeypatch) -> None:
+    """Unresolved staff IDs stay in the card so the gap is obvious."""
     sender = DingTalkRobotSender("client-id", "client-secret")
     captured = {}
 
@@ -113,5 +113,5 @@ def test_group_card_drops_unresolved_staff_ids(monkeypatch) -> None:
         )
     )
 
-    assert captured["card_param_map"]["content"] == "@陈波\n\nBuild failed"
-    assert captured["mention_user_ids"] == ["41068:陈波"]
+    assert captured["card_param_map"]["content"] == "@陈波 @220750\n\nBuild failed"
+    assert captured["mention_user_ids"] == ["41068:陈波", "220750"]

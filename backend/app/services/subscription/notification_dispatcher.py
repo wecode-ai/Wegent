@@ -84,19 +84,15 @@ async def _lookup_dingtalk_mention_name(db: Session, user_id: str) -> str:
     if not email:
         email = await _lookup_employee_email(user_id)
     user_info_url = _get_dingtalk_user_info_url()
-    if not user_info_url:
+    if not email or not user_info_url:
         return ""
-
-    # The enterprise directory accepts employee IDs as well as emails, so a
-    # staff ID can still resolve when ERP lookup is unavailable.
-    lookup_key = email or user_id
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.post(
                 user_info_url,
                 headers={"Content-Type": "application/json"},
-                json={"emails": [lookup_key]},
+                json={"emails": [email]},
             )
             response.raise_for_status()
             users = response.json()

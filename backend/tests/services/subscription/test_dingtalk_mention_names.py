@@ -161,7 +161,7 @@ async def test_lookup_dingtalk_mention_name_falls_back_to_erp(monkeypatch):
     assert name == "刘彦生"
 
 
-def _stub_directory_lookup(monkeypatch, response_payload):
+def _stub_directory_lookup(monkeypatch, response_payload, erp_email=""):
     class FakeQuery:
         def filter(self, *_args, **_kwargs):
             return self
@@ -199,12 +199,16 @@ def _stub_directory_lookup(monkeypatch, response_payload):
     async def ignore_cache_set(*_args, **_kwargs):
         return True
 
-    async def no_erp_email(_staff_id):
-        return ""
+    async def _resolved(_staff_id, value=erp_email):
+        return value
 
     monkeypatch.setattr(cache_manager, "get", no_cached_name)
     monkeypatch.setattr(cache_manager, "set", ignore_cache_set)
-    monkeypatch.setattr(notification_dispatcher, "_lookup_employee_email", no_erp_email)
+    monkeypatch.setattr(
+        notification_dispatcher,
+        "_lookup_employee_email",
+        _resolved,
+    )
     monkeypatch.setattr(
         notification_dispatcher.httpx,
         "AsyncClient",
@@ -219,19 +223,22 @@ def _stub_directory_lookup(monkeypatch, response_payload):
 
 
 @pytest.mark.asyncio
-async def test_lookup_dingtalk_mention_name_uses_staff_id_without_erp(monkeypatch):
+async def test_lookup_dingtalk_mention_name_requires_erp_email(monkeypatch):
+    """Without an ERP email the directory is never queried."""
     db, captured = _stub_directory_lookup(monkeypatch, [{"NAME": "李四"}])
 
     name = await notification_dispatcher._lookup_dingtalk_mention_name(db, "220750")
 
-    assert name == "李四"
-    assert captured["payload"] == {"emails": ["220750"]}
+    assert name == ""
+    assert captured == {}
 
 
 @pytest.mark.asyncio
 async def test_lookup_dingtalk_mention_name_ignores_unknown_staff_id(monkeypatch):
     db, _captured = _stub_directory_lookup(
-        monkeypatch, [{"EMAIL": "220750", "notExist": True}]
+        monkeypatch,
+        [{"EMAIL": "220750", "notExist": True}],
+        erp_email="yansheng3@staff.weibo.com",
     )
 
     name = await notification_dispatcher._lookup_dingtalk_mention_name(db, "220750")
