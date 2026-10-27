@@ -289,7 +289,7 @@ const desktopHostMocks = vi.hoisted(() => {
       if (capability === 'window.getState') return { maximized: false }
       return {}
     }),
-    subscribe: vi.fn((handler: (event: Record<string, unknown>) => void) => {
+    subscribe: vi.fn((handler: (event: Record<string, unknown>) => void): (() => void) => {
       subscribers.add(handler)
       return () => subscribers.delete(handler)
     }),
@@ -14103,28 +14103,21 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('does not reuse a migrated default browser label after switching panes', async () => {
     runtimeMocks.electron = true
-    const browser = await import('@/lib/embedded-browser')
-    const listen = browser.listenEmbeddedBrowserOpenRequests
+    const subscribe = desktopHostMocks.subscribe.getMockImplementation()
+    if (!subscribe) throw new Error('Desktop host subscription mock is not configured')
     const releaseSubscriptions: (() => void)[] = []
-    // Keep native subscription setup pending across the pane switch.
-    const subscription = vi
-      .spyOn(browser, 'listenEmbeddedBrowserOpenRequests')
-      .mockImplementation(handler => {
-        const listener = listen(handler)
-        return (
-          listener?.then(
-            unlisten =>
-              new Promise<typeof unlisten>(resolve => {
-                releaseSubscriptions.push(() => resolve(unlisten))
-              })
-          ) ?? null
-        )
-      })
+    // Native teardown may finish after the synchronous listener cancellation.
+    desktopHostMocks.subscribe.mockImplementation(handler => {
+      const unlisten = subscribe(handler)
+      return () => releaseSubscriptions.push(unlisten)
+    })
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture(2)
     desktopHostMocks.invoke.mockClear()
-    const { rerender, unmount } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+    let unmount: (() => void) | undefined
 
     try {
+      const view = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+      unmount = view.unmount
       await waitFor(() => {
         expect(requestEmbeddedBrowserOpen('https://example.com/')).toBe(true)
       })
@@ -14138,7 +14131,26 @@ describe('DesktopWorkbenchLayout', () => {
         )
       })
 
-      rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+      view.rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+      // Deliver before the old native listener's asynchronous cleanup settles.
+      act(() => {
+        desktopHostMocks.emit({
+          sequence: 1,
+          type: 'browser.event',
+          payload: {
+            sequence: 1,
+            type: 'open-request',
+            payload: {
+              id: 'native-open-after-pane-switch',
+              baseLabel: 'workspace-browser',
+              source: 'user',
+              disposition: 'new-tab',
+              label: 'workspace-browser',
+              url: 'https://example.org/',
+            },
+          },
+        })
+      })
 
       await waitFor(() => {
         expect(requestEmbeddedBrowserOpen('https://example.org/')).toBe(true)
@@ -14160,9 +14172,12 @@ describe('DesktopWorkbenchLayout', () => {
         })
       )
     } finally {
-      unmount()
+      unmount?.()
+      await act(async () => {
+        await Promise.resolve()
+      })
       releaseSubscriptions.forEach(release => release())
-      subscription.mockRestore()
+      desktopHostMocks.subscribe.mockImplementation(subscribe)
       await new Promise(resolve => setTimeout(resolve, 1_100))
     }
   }, 10_000)

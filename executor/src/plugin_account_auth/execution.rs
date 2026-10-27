@@ -52,27 +52,6 @@ async fn after_runtime_preparation<T>(
         .map_err(|_| AuthError("plugin_auth_execution_timeout"))?
 }
 
-#[cfg(test)]
-mod readiness_tests {
-    use super::*;
-
-    #[tokio::test(start_paused = true)]
-    async fn preparation_precedes_action_timeout_and_credential_access() {
-        let preparation = async {
-            tokio::time::sleep(Duration::from_secs(181)).await;
-            Err(AuthError("python_runtime_unavailable"))
-        };
-        let action = async {
-            panic!("No backend credentials or leases may be requested before preparation")
-        };
-
-        assert_eq!(
-            after_runtime_preparation::<()>(preparation, action).await,
-            Err(AuthError("python_runtime_unavailable"))
-        );
-    }
-}
-
 async fn execute_inner<T: LocalBackendTransport>(
     transport: T,
     executor_home: &Path,
@@ -186,4 +165,25 @@ async fn execution_credential<T: LocalBackendTransport>(
         }
     }
     gateway.execution(request).await
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn preparation_precedes_action_timeout_and_credential_access() {
+        let preparation = async {
+            tokio::time::sleep(Duration::from_secs(181)).await;
+            Err(AuthError("python_runtime_unavailable"))
+        };
+        let action = async {
+            panic!("No backend credentials or leases may be requested before preparation")
+        };
+
+        assert_eq!(
+            after_runtime_preparation::<()>(preparation, action).await,
+            Err(AuthError("python_runtime_unavailable"))
+        );
+    }
 }

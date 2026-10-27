@@ -199,7 +199,7 @@ fn registered_python_required(
         )?;
         if plugin["connectors"].as_array().is_some_and(|connectors| {
             connectors.iter().any(|connector| {
-                connector_slug.is_none_or(|slug| connector["slug"] == slug)
+                connector_slug.map_or(true, |slug| connector["slug"] == slug)
                     && connector["accountAuth"]["adapter"]
                         .as_str()
                         .and_then(|adapter| Path::new(adapter).extension())
