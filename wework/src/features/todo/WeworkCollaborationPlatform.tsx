@@ -1105,6 +1105,7 @@ export function WeworkSharedProject({
               {closeDrawers => (
                 <TodoEditor
                   key={issue.id}
+                  getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
                   mode="edit"
                   focusedCommentId={focusedItemId === issue.id ? focusedCommentId : null}
                   focusedCommentRequestKey={

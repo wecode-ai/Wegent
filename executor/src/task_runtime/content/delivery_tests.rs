@@ -7,6 +7,126 @@ use crate::task_runtime::{RuntimeTaskAddress, TaskCreate};
 
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
 
+#[test]
+fn delivered_artifact_can_be_edited_without_republishing() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    let issue_id = task(&store, None);
+    let draft = store.create_delivery(DEFAULT_WORK_ITEM_PROJECT_ID, &issue_id, true, DeliveryCreate {
+        title: "Original title".into(), markdown: "Original notes".into(), chat: Some(json!({"messages": [{"role": "user", "content": "A"}, {"role": "assistant", "content": "B"}]})), source_task: None,
+    }).unwrap();
+    let old = store
+        .add_delivery_asset(
+            &draft.id,
+            "reports/result.txt",
+            BinaryInput {
+                display_name: "result.txt".into(),
+                content_type: None,
+                base64: general_purpose::STANDARD.encode(b"original"),
+            },
+        )
+        .unwrap();
+    let published = store
+        .finalize_delivery(&issue_id, &draft.id, DeliveryFinalize::default())
+        .unwrap();
+    let issue_before = store.get_item(&issue_id, "task").unwrap();
+    let input = super::super::super::model::DeliveryUpdate {
+        title: " Revised title ".into(),
+        version: published.version,
+        markdown: "Revised notes".into(),
+        chat: Some(json!({"messages": [{"role": "assistant", "content": "B"}]})),
+        retained_asset_ids: vec![],
+        files: vec![super::super::super::model::DeliveryUpdateFile {
+            relative_path: "reports/result.txt".into(),
+            file: BinaryInput {
+                display_name: "replacement.txt".into(),
+                content_type: None,
+                base64: general_purpose::STANDARD.encode(b"replacement"),
+            },
+        }],
+    };
+    let updated = store.update_delivery(&draft.id, input.clone()).unwrap();
+    assert_eq!(updated.delivery.id, published.id);
+    assert_eq!(updated.delivery.title, "Revised title");
+    assert_eq!(updated.delivery.version, published.version + 1);
+    assert_eq!(updated.delivery.delivered_at, published.delivered_at);
+    assert_eq!(updated.markdown, "Revised notes");
+    assert_eq!(
+        updated.chat.unwrap()["messages"].as_array().unwrap().len(),
+        1
+    );
+    assert_ne!(updated.delivery.assets[0].id, old.id);
+    assert!(store.delivery_asset_path(&old.id).is_err());
+    assert_eq!(
+        fs::read(
+            store
+                .delivery_asset_path(&updated.delivery.assets[0].id)
+                .unwrap()
+        )
+        .unwrap(),
+        b"replacement"
+    );
+    assert!(matches!(
+        store.update_delivery(&draft.id, input.clone()),
+        Err(TaskRuntimeError::VersionConflict)
+    ));
+    let mut invalid = input.clone();
+    invalid.version += 1;
+    invalid.retained_asset_ids = vec!["foreign".into()];
+    assert!(store.update_delivery(&draft.id, invalid).is_err());
+    assert_eq!(
+        store.delivery_detail(&draft.id).unwrap().delivery.version,
+        published.version + 1
+    );
+    let mut failed = input.clone();
+    failed.version += 1;
+    store.connection().unwrap().execute_batch(
+        "CREATE TRIGGER fail_delivery_asset BEFORE INSERT ON loop_items
+         WHEN NEW.resource_type = 'delivery_asset' BEGIN SELECT RAISE(ABORT, 'forced storage commit failure'); END;"
+    ).unwrap();
+    assert!(store.update_delivery(&draft.id, failed).is_err());
+    let unchanged = store.delivery_detail(&draft.id).unwrap();
+    assert_eq!(unchanged.delivery.version, published.version + 1);
+    assert_eq!(
+        unchanged.delivery.assets[0].id,
+        updated.delivery.assets[0].id
+    );
+    assert_eq!(unchanged.markdown, "Revised notes");
+    store
+        .connection()
+        .unwrap()
+        .execute_batch("DROP TRIGGER fail_delivery_asset")
+        .unwrap();
+    let listed = store
+        .list_project_delivery_files(DEFAULT_WORK_ITEM_PROJECT_ID)
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0]["asset_id"], unchanged.delivery.assets[0].id);
+    let mut next = input;
+    next.version += 1;
+    next.files.clear();
+    next.title = "Second edit".into();
+    store.update_delivery(&draft.id, next).unwrap();
+    assert!(store
+        .list_project_delivery_files(DEFAULT_WORK_ITEM_PROJECT_ID)
+        .unwrap()
+        .is_empty());
+    let issue_after = store.get_item(&issue_id, "task").unwrap();
+    assert_eq!(issue_after.status, issue_before.status);
+    assert_eq!(
+        issue_after.current_delivery_id,
+        issue_before.current_delivery_id
+    );
+    assert_eq!(issue_after.version, issue_before.version);
+    drop(store);
+    let reopened = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+    assert_eq!(
+        reopened.delivery_detail(&draft.id).unwrap().delivery.title,
+        "Second edit"
+    );
+    assert_eq!(reopened.list_deliveries(&issue_id).unwrap().len(), 1);
+}
+
 fn task(store: &LocalTaskStore, parent_id: Option<&str>) -> String {
     store
         .create_task(
@@ -91,6 +211,7 @@ fn finalize_from_issue(
             issue_id,
             true,
             DeliveryCreate {
+                title: String::new(),
                 markdown: "Delivery evidence".to_owned(),
                 chat: None,
                 source_task,
@@ -237,6 +358,7 @@ fn repeated_delivery_directly_to_a_completed_human_assignment_is_rejected() {
             &human_id,
             true,
             DeliveryCreate {
+                title: String::new(),
                 markdown: "Another delivery".to_owned(),
                 chat: None,
                 source_task: None,

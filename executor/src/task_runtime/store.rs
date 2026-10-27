@@ -7299,6 +7299,7 @@ mod tests {
                     &human_task_id,
                     true,
                     DeliveryCreate {
+                        title: String::new(),
                         markdown: "Human review confirms the evidence.".to_owned(),
                         chat: None,
                         source_task: None,
@@ -7561,6 +7562,7 @@ mod tests {
                 &issue.id,
                 true,
                 DeliveryCreate {
+                    title: String::new(),
                     markdown: "CPU load confirmed at 42%.".to_owned(),
                     chat: None,
                     source_task: Some(address),
@@ -10797,6 +10799,7 @@ mod tests {
                 &task.id,
                 true,
                 DeliveryCreate {
+                    title: String::new(),
                     markdown: "# Done".to_owned(),
                     chat: None,
                     source_task: None,
@@ -10855,6 +10858,7 @@ mod tests {
                 "42",
                 false,
                 DeliveryCreate {
+                    title: String::new(),
                     markdown: "External result".to_owned(),
                     chat: None,
                     source_task: None,
@@ -10945,6 +10949,7 @@ mod tests {
                 &task.id,
                 true,
                 DeliveryCreate {
+                    title: String::new(),
                     markdown: "# Done".to_owned(),
                     chat: Some(json!({"messages": [{"role": "assistant", "content": "done"}]})),
                     source_task: Some(address),
