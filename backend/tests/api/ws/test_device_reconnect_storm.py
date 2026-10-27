@@ -83,7 +83,11 @@ async def test_device_register_does_not_wait_for_capability_sync(monkeypatch):
     await asyncio.wait_for(sync_started.wait(), timeout=0.5)
     result = await asyncio.wait_for(register_task, timeout=0.5)
 
-    assert result == {"success": True, "device_id": "device-1"}
+    assert result == {
+        "success": True,
+        "device_id": "device-1",
+        "device_route_id": "device-1",
+    }
     sync_release.set()
 
 
@@ -134,8 +138,16 @@ async def test_device_register_debounces_repeated_db_upserts(monkeypatch):
     first = await namespace.on_device_register("sid-1", payload)
     second = await namespace.on_device_register("sid-2", payload)
 
-    assert first == {"success": True, "device_id": "device-1"}
-    assert second == {"success": True, "device_id": "device-1"}
+    assert first == {
+        "success": True,
+        "device_id": "device-1",
+        "device_route_id": "device-1",
+    }
+    assert second == {
+        "success": True,
+        "device_id": "device-1",
+        "device_route_id": "device-1",
+    }
     assert len(upsert_calls) == 1
 
 
@@ -242,7 +254,12 @@ async def test_local_device_register_does_not_match_cloud_device_by_ip(monkeypat
         },
     )
 
-    assert result == {"success": True, "device_id": "hw-local"}
+    # The fake registration layer returns the route id "device-1".
+    assert result == {
+        "success": True,
+        "device_id": "hw-local",
+        "device_route_id": "device-1",
+    }
     match_cloud_device.assert_not_awaited()
     assert len(upsert_calls) == 1
     assert upsert_calls[0][1][4] == DeviceType.LOCAL.value
@@ -295,7 +312,11 @@ async def test_device_register_uses_tcp_client_ip_not_reported_payload(monkeypat
         },
     )
 
-    assert result == {"success": True, "device_id": "hw-local"}
+    assert result == {
+        "success": True,
+        "device_id": "hw-local",
+        "device_route_id": "device-1",
+    }
     assert upsert_calls[0][1][3] == "203.0.113.20"
     assert upsert_calls[0][1][6] == "192.168.0.190"
     assert set_device_online.await_args.kwargs["client_ip"] == "203.0.113.20"
@@ -361,7 +382,11 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
     if namespace._background_tasks:
         await asyncio.gather(*tuple(namespace._background_tasks))
 
-    assert result == {"success": True, "device_id": "local-app-device"}
+    assert result == {
+        "success": True,
+        "device_id": "local-app-device",
+        "device_route_id": "app-record-70",
+    }
     assert len(upsert_calls) == 1
     assert upsert_calls[0][1][4] == DeviceType.APP.value
     assert upsert_calls[0][1][7] == "runtime-stable"
@@ -423,7 +448,11 @@ async def test_cloud_device_register_matches_cloud_device(monkeypatch):
         },
     )
 
-    assert result == {"success": True, "device_id": "standalone-admin-device"}
+    assert result == {
+        "success": True,
+        "device_id": "standalone-admin-device",
+        "device_route_id": "standalone-admin-device",
+    }
     match_cloud_device.assert_awaited_once_with(
         7,
         "198.18.0.1",
