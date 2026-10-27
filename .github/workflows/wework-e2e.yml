@@ -1078,12 +1078,18 @@ jobs:
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
-          args=()
-          if [[ -n "$E2E_SEGMENT" ]]; then
-            args=(-- --segment "$E2E_SEGMENT")
+          if [[ -z "$E2E_SEGMENT" ]]; then
+            xvfb-run -a --server-args="-screen 0 1280x720x24" \
+              pnpm --filter wework "$E2E_COMMAND"
+            exit 0
           fi
-          xvfb-run -a --server-args="-screen 0 1280x720x24" \
-            pnpm --filter wework "$E2E_COMMAND" "${args[@]}"
+          IFS=',' read -ra segments <<< "$E2E_SEGMENT"
+          status=0
+          for segment in "${segments[@]}"; do
+            xvfb-run -a --server-args="-screen 0 1280x720x24" \
+              pnpm --filter wework "$E2E_COMMAND" -- --segment "$segment" || status=$?
+          done
+          exit "$status"
 
       - name: Prune transient Wework desktop E2E caches
         if: always()
@@ -1133,7 +1139,7 @@ jobs:
           RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.windows_desktop_core_e2e == 'true' }}
           RUN_DESKTOP_CLOUD_E2E: ${{ needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_OTHER_E2E: ${{ needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
-          RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
+          RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')))) }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           WEB_E2E_RESULT: ${{ needs.wework-e2e.result }}
           DESKTOP_CORE_BUILD_RESULT: ${{ needs.build-wework-desktop-core-e2e.result }}
@@ -1209,9 +1215,9 @@ jobs:
           fi
 
   wework-desktop-memory-e2e:
-    name: Wework Desktop Memory E2E
+    name: Wework Desktop macOS E2E
     needs: changes
-    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
     runs-on: macos-14
     timeout-minutes: 45
     permissions:
@@ -1508,12 +1514,12 @@ jobs:
         if: always()
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
-      - name: Upload Wework desktop memory diagnostics
+      - name: Upload Wework desktop macOS diagnostics
         if: always()
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: wework-desktop-memory-e2e-diagnostics
+          name: wework-desktop-macos-e2e-diagnostics
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
