@@ -129,7 +129,7 @@ node e2e/utils/mock-connector-upstream-server.mjs
 `runtime-input-answer-persistence` Core checkpoint 会在主工作区和临时聊天中通过真实交互回答 MCP elicitation 表单。Executor、Codex app-server、MCP server、桌面自动化传输和工作区列表刷新均为真实集成，仅模型服务由 loopback fixture 提供。测试通过 Executor 请求闸门在真实响应后保持已接受的答案待定，并延迟终态续跑响应，从而确定性地建立“接受成功 → 终态历史先到 → 工作区列表刷新后完成”的顺序，并在刷新前后都断言完整答案摘要可见。checkpoint 同时验证传输失败和过期请求的真实拒绝都不会把答案标记为成功，以及等待接受期间归档不会恢复答案。
 
 主桌面 runner 也支持按有序 checkpoint 分段执行。当前 checkpoint 依次为
-`remote-device-onboarding`、`workspace-tabs`、`cloud-project-creation`、
+`mcp-apps`、`remote-device-onboarding`、`workspace-tabs`、`cloud-project-creation`、
 `cloud-space-mention`、`priority-filter`、`telemetry-consent`、
 `automation-lifecycle`、`project-automation`、
 `project-assignment-notification`、`offline-local-project-space`、
