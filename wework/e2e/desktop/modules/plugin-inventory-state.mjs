@@ -36,20 +36,29 @@ export async function verifyPluginEnabledState(control, fixture, enabled, timeou
   await control.command('click', testId('new-chat-button'))
   await control.command('click', testId('composer-plugin-picker-button'))
   await control.command('waitFor', testId('composer-plugin-picker'), { timeoutMs })
-  const state = await until(
-    () => inventory(control),
-    value => {
-      const member = value.sharedInventory.installedPlugins.find(
-        plugin => plugin.pluginKey === fixture.slug
-      )
-      const app = value.composerApps.find(plugin => plugin.pluginKey === fixture.slug)
-      return (
-        member?.enabled === enabled && (enabled ? app?.isEnabled === true : !app || !app.isEnabled)
-      )
-    },
-    'Shared membership and composer did not settle to the enabled state',
-    timeoutMs
-  )
+  let state
+  try {
+    state = await until(
+      async () => {
+        state = await inventory(control)
+        return state
+      },
+      value => {
+        const member = value.sharedInventory.installedPlugins.find(
+          plugin => plugin.pluginKey === fixture.slug
+        )
+        const app = value.composerApps.find(plugin => plugin.pluginKey === fixture.slug)
+        return (
+          member?.enabled === enabled &&
+          (enabled ? app?.isEnabled === true : !app || !app.isEnabled)
+        )
+      },
+      'Shared membership and composer did not settle to the enabled state',
+      timeoutMs
+    )
+  } catch (error) {
+    throw new Error(`${error.message}; inventory=${JSON.stringify(state ?? null)}`)
+  }
   const app = state.composerApps.find(plugin => plugin.pluginKey === fixture.slug)
   assert.ok(
     state.sharedInventory.installedPlugins.some(plugin => plugin.pluginKey === fixture.slug)

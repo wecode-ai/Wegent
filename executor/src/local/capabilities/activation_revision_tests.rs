@@ -432,6 +432,53 @@ async fn legacy_gc_of_orphan_native_registration_changes_capabilities() {
     sync(&handler, payload, true, false).await;
 }
 
+#[tokio::test]
+async fn legacy_gc_of_orphan_native_cache_changes_capabilities() {
+    assert_legacy_cache_cleanup(false).await;
+}
+
+#[tokio::test]
+async fn partial_legacy_gc_of_orphan_native_cache_changes_capabilities() {
+    assert_legacy_cache_cleanup(true).await;
+}
+
+async fn assert_legacy_cache_cleanup(fail_after_cleanup: bool) {
+    let root = tempfile::tempdir().unwrap();
+    let mut store = store(root.path()).with_store_dir(root.path().join("private-store"));
+    store.shared_packages = false;
+    let orphan = store.codex_plugins_dir.join("cache/wegent/orphan/1.0");
+    fs::create_dir_all(&orphan).unwrap();
+    fs::write(orphan.join("SKILL.md"), "orphan native capability").unwrap();
+    if fail_after_cleanup {
+        let invalid = store
+            .codex_marketplace_dir("wework")
+            .join(".agents/plugins/marketplace.json");
+        fs::create_dir_all(invalid.parent().unwrap()).unwrap();
+        fs::write(invalid, "invalid JSON").unwrap();
+    }
+    let handler = CapabilitySyncHandler::with_package_provider("", store.clone(), packages("v1"));
+    let previous = crate::services::capability_activation::revision();
+
+    let result = handler.apply_sync(json!({"mode":"merge"})).await;
+
+    assert_eq!(result.is_err(), fail_after_cleanup);
+    assert!(!orphan.exists(), "native cleanup must actually happen");
+    assert!(crate::services::capability_activation::revision() > previous);
+    if let Ok(result) = result {
+        assert_eq!(result["changed"], true);
+        assert_eq!(result["requires_restart"], true);
+    }
+    let _activation = crate::services::capability_activation::activate().await;
+    let mut unchanged =
+        super::super::activation_revision::ActivationRevision::begin(&store, &[], &[]).unwrap();
+    let repeated = store
+        .garbage_collect_unreferenced_managed_plugins(&store.manifest.load().unwrap(), |path| {
+            unchanged.observe_cleanup_path(path)
+        });
+    assert_eq!(repeated.is_err(), fail_after_cleanup);
+    assert!(!unchanged.finish().changed);
+}
+
 fn plugin_payload(packages: &CountedPackages, ordered: bool, generation: u64) -> Value {
     let mut payload = json!({
         "scope": "plugins", "mode": "replace",
@@ -681,11 +728,12 @@ async fn generated_python_bytecode_is_not_an_effective_plugin_change() {
     }
 
     // Older shared links could also generate bytecode in the published source.
-    // Verification and runtime copying may remove it without changing capability.
+    // Verification removes it from the source; identical native runtimes retain
+    // their generated caches without changing capability definitions.
     next_generation(&mut payload, 2);
     sync(&handler, payload.clone(), true, false).await;
-    for path in &paths {
-        assert!(!path.join(BYTECODE_PATH).exists());
+    for (index, path) in paths.iter().enumerate() {
+        assert_eq!(path.join(BYTECODE_PATH).exists(), index != 0);
         assert_eq!(
             fs::read_to_string(path.join("scripts/helper.py")).unwrap(),
             "VALUE = 1\n"
