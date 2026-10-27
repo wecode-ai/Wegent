@@ -4,6 +4,8 @@
 
 //! `GET /api/v1/loop-items/{item_id}/tasks`.
 
+mod assignment_index;
+mod assignment_receipts;
 pub mod assignment_repository;
 pub mod assignments;
 pub mod auth;

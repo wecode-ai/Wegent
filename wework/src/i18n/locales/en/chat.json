@@ -68,6 +68,7 @@
   },
   "tool_activity": {
     "reconnecting": "Connection interrupted. Reconnecting…",
+    "rate_limit_wait": "Model rate limited. Waiting to retry…",
     "chatgpt_network_unavailable": "The current model uses ChatGPT, but the network is unavailable. Would you like to configure a proxy?",
     "open_proxy_settings": "Configure proxy",
     "summary_one": "Called {{count}} tool",

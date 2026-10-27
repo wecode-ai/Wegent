@@ -122,6 +122,7 @@ impl RestoreStartupGate {
 
 mod active_text;
 mod archives;
+mod assignment_receipts;
 mod automation_rpc;
 mod background_terminals;
 mod claude_turns;
@@ -133,6 +134,7 @@ mod connections;
 mod context_compaction;
 mod fork_transfer;
 mod hooks;
+mod mcp_apps;
 mod notifications;
 mod personal_stand_in;
 mod plugin_install;
@@ -149,6 +151,7 @@ mod stand_in_conversations;
 mod stand_in_events;
 mod stand_in_ingress;
 mod stand_in_memory;
+mod stand_in_telemetry;
 mod stand_in_work;
 mod stand_in_workspace;
 mod supervisor;
@@ -1130,7 +1133,11 @@ impl RuntimeWorkRpcHandler {
         {
             self.reconcile_and_resume_persisted_turns().await;
         }
+        let stand_in_operation = self.stand_in_operation(method, &payload);
         let result = match method {
+            "runtime.stand_in.telemetry.configure"
+            | "runtime.stand_in.telemetry.list"
+            | "runtime.stand_in.telemetry.ack" => self.stand_in_telemetry_rpc(method, payload),
             "runtime.stand_in.list" => self.list_stand_in_settings(payload).await,
             "runtime.stand_in.personal.get" => self.personal_stand_in_settings(payload, false),
             "runtime.stand_in.personal.agents" => self.personal_stand_in_agents(payload).await,
@@ -1205,6 +1212,7 @@ impl RuntimeWorkRpcHandler {
                 self.handle_stand_in_assignment(payload).await?;
                 Ok(json!({"success":true}))
             }
+            "runtime.mcp_apps.request" => self.mcp_app_request(payload).await,
             "runtime.tasks.list" => self.list_tasks(&payload).await,
             "runtime.tasks.get" => self.get_task(&payload),
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
@@ -1380,6 +1388,24 @@ impl RuntimeWorkRpcHandler {
                 format!("Unsupported runtime RPC method: {unsupported}"),
             )),
         };
+        if let Some((user, operation, properties)) = stand_in_operation {
+            // Successful configuration diffs are recorded in the settings transaction.
+            if operation != "configuration" || result.is_err() {
+                let rejected = result
+                    .as_ref()
+                    .ok()
+                    .filter(|value| value["success"] == false || value["accepted"] == false)
+                    .map(|_| {
+                        AppIpcError::new("stand_in_start_failed", "Operation was not accepted")
+                    });
+                self.record_stand_in_result(
+                    user,
+                    operation,
+                    properties,
+                    result.as_ref().err().or(rejected.as_ref()),
+                );
+            }
+        }
         if configure_before_startup_recovery && result.is_ok() {
             self.startup_recovery_deferred
                 .store(false, Ordering::Release);
@@ -1391,7 +1417,9 @@ impl RuntimeWorkRpcHandler {
 
 fn should_resume_persisted_turns_before_rpc(method: &str) -> bool {
     // Connection discovery and transport must never resume unrelated model work.
-    if method.starts_with("runtime.connections.") {
+    if method.starts_with("runtime.connections.")
+        || method.starts_with("runtime.stand_in.telemetry.")
+    {
         return false;
     }
     !matches!(

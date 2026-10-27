@@ -1872,6 +1872,61 @@ describe('ToolBlocksDisplay', () => {
     expect(spinner?.querySelector('svg')).not.toHaveClass('animate-spin')
   })
 
+  test('shows rate-limit waiting immediately without running or proxy guidance and clears on recovery', () => {
+    const block: ProcessingBlock = {
+      id: 'rate-limit-1',
+      type: 'tool',
+      toolName: 'runtime_reconnecting',
+      toolInput: { retry_reason: 'rate_limit', model_kind: 'codex-official' },
+      status: 'streaming',
+      createdAt: Date.now(),
+    }
+    const { rerender } = render(
+      <ToolBlocksDisplay blocks={[completedCommandBlock, block]} isStreaming />
+    )
+    expect(screen.getByTestId('runtime-rate-limit-wait-status')).toHaveTextContent(
+      '模型限流，等待自动重试…'
+    )
+    expect(screen.getByTestId('processing-summary-header')).toHaveTextContent(
+      '模型限流，等待自动重试…'
+    )
+    expect(
+      screen.getByTestId('processing-summary-header').querySelector('.animate-spin')
+    ).toBeNull()
+    expect(screen.queryByTestId('runtime-reconnecting-chatgpt-status')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-reconnecting-open-proxy-settings')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+
+    rerender(
+      <ToolBlocksDisplay
+        blocks={[completedCommandBlock, { ...block, status: 'done' }]}
+        isStreaming
+      />
+    )
+    expect(screen.queryByTestId('runtime-rate-limit-wait-status')).not.toBeInTheDocument()
+    expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('限流')
+  })
+
+  test('does not retain rate-limit waiting on a failed retry block', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            id: 'rate-limit-failed',
+            type: 'tool',
+            toolName: 'runtime_reconnecting',
+            toolInput: { retry_reason: 'rate_limit' },
+            status: 'error',
+            createdAt: Date.now(),
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+    expect(screen.queryByTestId('runtime-rate-limit-wait-status')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-reconnecting-status')).not.toBeInTheDocument()
+  })
+
   test('shows a subtle one-line reconnecting status after a sustained interruption', () => {
     vi.useFakeTimers()
     const reconnectingBlock: ProcessingBlock = {

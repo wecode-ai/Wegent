@@ -18,6 +18,8 @@ Select the microphone at the bottom of the task composer to start voice input. O
 
 Start with **INT8 (lightweight)** for everyday dictation to reduce download size and memory use. If it makes frequent recognition errors, try **FP32 (full precision)**, which retains full 32-bit floating-point precision with a larger download and higher memory use. Both the settings page and the first-use setup dialog explain these choices.
 
+While voice input is requesting microphone access, recording, transcribing, or showing feedback, other actions on the left of the composer are hidden and voice controls remain available. Finishing or cancelling restores those actions. Switching conversations also exits voice input.
+
 Stop recording to transcribe. The recognized text is inserted at the position captured when recording started, ready to review, edit, and send. Cancelling leaves the draft unchanged. If you edit the draft during recording, the transcript is retained; select **Insert text** to insert it at the current cursor position.
 
 Voice input reuses the official DSH plugin. Once downloaded, the default local recognition model transcribes on the device.
@@ -105,9 +107,14 @@ The model provides the AI capability; the device determines where files and comm
 
 The coding-tool selector in the task composer chooses a local runtime such as Codex or Claude Code. The task composer currently does not provide a direct cloud Wegent Agent selector. To have a cloud Agent process project tasks automatically, configure its robot and execution environment under project-space **Automation**.
 
-When the composer has only one model group, the model selector displays all models in that group directly. When multiple groups are available, choose a group first, then select a model from its expanded submenu.
+Open the model selector in the composer to see the account source, selection mode, current model, and reasoning effort in separate rows:
 
-Wework remembers the model and reasoning effort separately for new-task defaults and active tasks:
+- **Recommended model set**: each slider position selects a model and reasoning effort combination. Moving the slider can change models. Other model sets display their own names.
+- **Fixed model**: after you explicitly select a model, the slider changes only that model's reasoning effort. Use the reset button to restore the default recommended model set.
+
+Click the mode or model name to open the full list, organized by local ChatGPT account, cloud models, and custom models. Long model names wrap in full, and the panel scrolls when space is limited.
+
+Wework remembers the model, selection mode, and reasoning effort separately for new-task defaults and active tasks. Returning to the page keeps an explicitly fixed model fixed, even when it also belongs to the recommended set:
 
 - With no task open, the composer selection belongs to the current draft and the next new task. Standalone tasks save this selection as the default for later new tasks.
 - When a local project follows the global default, a project-composer selection updates the global new-task default used by later standalone tasks and other projects that follow the global default. When a project defines its own model and reasoning effort, a temporary composer change applies only to that task; starting another task restores the project default.

@@ -272,7 +272,8 @@ fn action_text_result_is_concise_and_drives_the_next_requested_action() {
     }))
     .unwrap();
 
-    assert!(text.contains("{\"action\":\"fill\",\"success\":true}"));
+    let summary: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    assert_eq!(summary, json!({"action": "fill", "success": true}));
     assert!(text.contains("Continue any remaining requested action"));
     assert!(text.contains("without another inspect"));
     assert!(!text.contains("large-before"));

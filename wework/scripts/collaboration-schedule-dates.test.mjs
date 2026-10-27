@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { afterEach, test, vi } from 'vitest'
 import {
+  calendarDays,
+  localDateKey,
+} from '../../packages/collaboration/src/project-schedule/model.ts'
+import {
   collaborationScheduleDates,
   verifyCollaborationScheduleViews,
 } from '../e2e/desktop/modules/collaboration-schedule-views.mjs'
@@ -59,6 +63,7 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(clock))
     const keys = collaborationScheduleDates()
+    const visibleDates = new Set(calendarDays(new Date(clock), true).map(localDateKey))
     const calls = []
     const captures = []
     let range = `${keys.initialStart} → ${keys.initialEnd}`
@@ -66,6 +71,11 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
     const control = {
       async command(action, selector, options = {}) {
         calls.push({ action, selector, options })
+        if (action === 'getElementCount') {
+          const day = selector.match(/collaboration-calendar-day-(\d{4}-\d{2}-\d{2})/)?.[1]
+          assert.ok(day, `Unexpected calendar day selector: ${selector}`)
+          return visibleDates.has(day) ? '1' : '0'
+        }
         if (action === 'getAttribute') {
           if (options.value === 'title') return range
           assert.equal(options.value, 'aria-sort')
@@ -129,7 +139,8 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
     assert.deepEqual(
       dayWaits.map(call => call.selector),
       [keys.initialStart, keys.calendarStart].map(
-        day => `[data-testid="collaboration-calendar-day-${day}"]`
+        day =>
+          `[data-testid="collaboration-calendar"] [data-testid="collaboration-calendar-day-${day}"]`
       )
     )
     const filterIndex = calls.findIndex(

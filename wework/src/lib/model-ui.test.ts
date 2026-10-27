@@ -13,10 +13,24 @@ import {
   isSameModelSelection,
   isSupportedModelFamily,
   normalizeModelOptions,
+  MODEL_SELECTION_OPTION,
 } from './model-ui'
 import type { UnifiedModel } from '@/types/api'
 
 describe('model-ui', () => {
+  test.each(['model', 'runtime:gpt-6.1-sol:recommended'])(
+    'preserves model selection intent through option normalization (%s)',
+    selection => {
+      const model: UnifiedModel = {
+        name: 'gpt-6.1-sol',
+        type: 'runtime',
+        config: { ui: { family: 'codex-official' } },
+      }
+      expect(normalizeModelOptions(model, { [MODEL_SELECTION_OPTION]: selection })).toMatchObject({
+        [MODEL_SELECTION_OPTION]: selection,
+      })
+    }
+  )
   test('uses configured thinking effort ahead of catalog defaults', () => {
     const model: UnifiedModel = {
       name: 'thudm-glm-5.3-flash-responses',

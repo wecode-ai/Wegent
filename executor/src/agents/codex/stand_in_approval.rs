@@ -1,4 +1,4 @@
-//! Enforce stand-in write confirmation for home, CLI and thread MCP configurations.
+//! Enforce source-work MCP review while preserving the collaboration surface.
 use super::{config_override_entry, toml_json_value, toml_key_path, toml_value, ExecutionRequest};
 use serde_json::{Map, Value};
 use std::{collections::BTreeMap, fs, path::Path};
@@ -55,7 +55,11 @@ pub(super) fn stand_in_mcp_approval_overrides(
     }
     let mut result = Vec::new();
     for (name, tools) in servers {
-        let mode = if super::external_work::applies(request)
+        // Collaboration tools enforce access and dispatch roles on the server.
+        // Do not replace their approval policy with external-source review.
+        let mode = if name == crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME {
+            "approve"
+        } else if super::external_work::applies(request)
             && !crate::runtime_work::stand_in_requires_confirmation(request)
         {
             "prompt"
@@ -89,6 +93,65 @@ pub(super) fn stand_in_mcp_approval_overrides(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn collaboration_is_exempt_without_exempting_other_servers_or_tool_policies() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(
+            root.path().join("config.toml"),
+            r#"
+[mcp_servers.wework_space.tools.get_board_item]
+approval_mode = "prompt"
+[mcp_servers.wework_space.tools.assign_board_item]
+approval_mode = "writes"
+[mcp_servers.business.tools.send]
+approval_mode = "approve"
+"#,
+        )
+        .unwrap();
+        for kind in ["connection_work", "dingtalk_work", "issue_dispatch"] {
+            for ask in [false, true] {
+                let request = serde_json::from_value(json!({
+                    "origin":{"type":kind,"initiatedBy":"stand_in","askBeforeAct":ask}
+                }))
+                .unwrap();
+                let overrides = vec![
+                    "mcp_servers.wework_space.tools.add_board_item_comment.approval_mode=\"prompt\"".into(),
+                    "mcp_servers.wework_space_plugin.default_tools_approval_mode=\"approve\"".into(),
+                ];
+                let thread_config = Map::from_iter([(
+                    "mcp_servers.wework_space.tools.submit_workflow_plan.approval_mode".into(),
+                    json!("prompt"),
+                )]);
+                let result = stand_in_mcp_approval_overrides(
+                    &request,
+                    root.path(),
+                    &overrides,
+                    &thread_config,
+                )
+                .unwrap();
+                for suffix in [
+                    "default_tools_approval_mode",
+                    "tools.get_board_item.approval_mode",
+                    "tools.assign_board_item.approval_mode",
+                    "tools.add_board_item_comment.approval_mode",
+                    "tools.submit_workflow_plan.approval_mode",
+                ] {
+                    assert!(
+                        result.contains(&format!("mcp_servers.wework_space.{suffix}=\"approve\""))
+                    );
+                }
+                let mode = if ask { "writes" } else { "prompt" };
+                for key in [
+                    "business.default_tools_approval_mode",
+                    "business.tools.send.approval_mode",
+                    "wework_space_plugin.default_tools_approval_mode",
+                ] {
+                    assert!(result.contains(&format!("mcp_servers.{key}=\"{mode}\"")));
+                }
+            }
+        }
+    }
 
     #[test]
     fn raw_string_cli_approvals_and_quoted_dotted_keys_are_enforced() {

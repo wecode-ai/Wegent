@@ -56,6 +56,7 @@ import { QueryParamAutoSend } from '../params'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
 import { useModelSelection } from '../../hooks/useModelSelection'
 import { useDefaultTeam } from '../../hooks/useDefaultTeam'
+import { useUrlTeam } from '../../hooks/useUrlTeam'
 import { useRecentTaskTeams } from '../../hooks/useRecentTaskTeams'
 import { useUser } from '@/features/common/UserContext'
 import { QueueMessageHandler } from '@/features/inbox'
@@ -375,13 +376,15 @@ function ChatAreaContent({
       !teamIdFromUrl &&
       !selectedTeamForNewTask
   )
-  // The completed catalog remains authoritative for visibility and refreshes.
+  const urlTeam = useUrlTeam(teamIdFromUrl, !effectiveTaskId && !taskIdFromUrl)
+  // Explicit navigation is resolved by ID; offset pages can omit existing agents.
+  const resolvedTeam = urlTeam ?? earlyDefaultTeam
   const teams = useMemo(
     () =>
-      earlyDefaultTeam && !catalogTeams.some(team => team.id === earlyDefaultTeam.id)
-        ? [earlyDefaultTeam, ...catalogTeams]
+      resolvedTeam && !catalogTeams.some(team => team.id === resolvedTeam.id)
+        ? [resolvedTeam, ...catalogTeams]
         : catalogTeams,
-    [catalogTeams, earlyDefaultTeam]
+    [catalogTeams, resolvedTeam]
   )
 
   // Select the team before resolving generation models. Attachment limits are synchronized
@@ -1178,6 +1181,9 @@ function ChatAreaContent({
   // Extract values for dependency array
   const selectedTeam = chatState.selectedTeam
   const isTeamSelectionReady =
+    (!teamIdFromUrl ||
+      ignoredTeamIdParamRef.current === teamIdFromUrl ||
+      selectedTeam?.id === Number(teamIdFromUrl)) &&
     initializedTeamSelection?.scope === teamSelectionScope &&
     initializedTeamSelection.teamId != null &&
     initializedTeamSelection.teamId === selectedTeam?.id
@@ -1286,16 +1292,13 @@ function ChatAreaContent({
     // Case 2a: teamId URL param present - select specific team regardless of initialization state
     // This handles navigation after accepting a share invite (/chat?teamId=xxx)
     if (!taskIdFromUrl && teamIdFromUrl && teamIdFromUrl !== ignoredTeamIdParamRef.current) {
-      const targetTeamId = Number(teamIdFromUrl)
-      const teamFromUrl =
-        filteredTeams.find(t => t.id === targetTeamId) || teams.find(t => t.id === targetTeamId)
-      if (teamFromUrl) {
-        handleTeamChange(teamFromUrl)
-        markTeamSelectionInitialized(teamFromUrl)
+      if (urlTeam) {
+        handleTeamChange(urlTeam)
+        markTeamSelectionInitialized(urlTeam)
         lastSyncedTaskIdRef.current = null
-        return
       }
-      if (isTeamsLoading || loadError) return
+      // Never silently substitute a default while resolving an explicit agent.
+      return
     }
 
     if (!taskIdFromUrl && selectedTeamForNewTask) {
@@ -1350,6 +1353,7 @@ function ChatAreaContent({
     selectedTaskDetail,
     taskIdFromUrl,
     teamIdFromUrl,
+    urlTeam,
     selectedTeam,
     handleTeamChange,
     markTeamSelectionInitialized,

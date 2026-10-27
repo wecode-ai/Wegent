@@ -3344,8 +3344,9 @@ class LoopItemExecutionService:
                 commit=False,
                 push=False,
             )
-        if event_name == "response.created":
-            self._bind_activity_runtime_turn(db, row, payload)
+        # Any accepted observation identifies the current turn, even when the
+        # created event lost a concurrent lease update or arrived out of order.
+        self._bind_activity_runtime_turn(db, row, payload)
         db.commit()
         db.refresh(row)
         return row

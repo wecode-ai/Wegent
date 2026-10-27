@@ -53,6 +53,7 @@ import {
 } from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
 import type { RefreshWorkLists } from './workbenchContextTypes'
+import { RuntimeSupervisorSnapshots } from './runtimeSupervisorSnapshots'
 import {
   readCachedRemoteRuntimeWork,
   reconcileCachedRemoteRuntimeWork,
@@ -251,6 +252,7 @@ export function useWorkbenchDataRefresh({
     >()
   )
   const runtimeTaskPinRequestIdRef = useRef(0)
+  const supervisorSnapshotsRef = useRef(new RuntimeSupervisorSnapshots())
   const devicesRef = useRef(state.devices)
   const archivedRuntimeTaskAddressesRef = useRef<RuntimeTaskAddress[]>([])
   useEffect(
@@ -270,8 +272,12 @@ export function useWorkbenchDataRefresh({
   }, [])
 
   const applyRuntimeTaskOverrides = useCallback(
-    (runtimeWork: RuntimeWorkListResponse, confirmExecutorState = false) => {
-      let next = runtimeWork
+    (
+      runtimeWork: RuntimeWorkListResponse,
+      confirmExecutorState = false,
+      supervisorRequestRevision = supervisorSnapshotsRef.current.capture()
+    ) => {
+      let next = supervisorSnapshotsRef.current.preserve(runtimeWork, supervisorRequestRevision)
       runtimeTaskTitleOverridesRef.current.forEach((override, key) => {
         const task = findRuntimeTask(runtimeWork, override.address)
         if (confirmExecutorState && task?.title === override.title) {
@@ -306,6 +312,7 @@ export function useWorkbenchDataRefresh({
     }
     runtimeTaskTitleOverridesRef.current.clear()
     runtimeTaskPinOverridesRef.current.clear()
+    supervisorSnapshotsRef.current.clear()
     archivedRuntimeTaskAddressesRef.current = []
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Cached runtime work must switch atomically with the authenticated user.
     updateCloudRuntimeState(
@@ -391,6 +398,7 @@ export function useWorkbenchDataRefresh({
       }
     ) => {
       const backgroundApi = services.cloudBackgroundApi
+      const supervisorRequestRevision = supervisorSnapshotsRef.current.capture()
       const activeChecks: CloudWorkCheckKey[] = []
       if (backgroundApi?.listTeams) activeChecks.push('teams')
       if (backgroundApi?.listDevices) activeChecks.push('devices')
@@ -495,7 +503,11 @@ export function useWorkbenchDataRefresh({
           runtimeWorkResult?.status === 'fulfilled'
             ? {
                 status: 'fulfilled' as const,
-                value: applyRuntimeTaskOverrides(runtimeWorkResult.value),
+                value: applyRuntimeTaskOverrides(
+                  runtimeWorkResult.value,
+                  false,
+                  supervisorRequestRevision
+                ),
               }
             : runtimeWorkResult
         if (filteredRuntimeWorkResult?.status === 'fulfilled') {
@@ -593,6 +605,7 @@ export function useWorkbenchDataRefresh({
     }, 5000)
 
     async function bootstrap() {
+      const supervisorRequestRevision = supervisorSnapshotsRef.current.capture()
       const traceId = createModelLoadingTrace()
       logModelLoading(traceId, 'bootstrap.devices_started')
       const bootstrapRevision = ++workListRefreshRevisionRef.current
@@ -676,7 +689,7 @@ export function useWorkbenchDataRefresh({
         }
         const runtimeWork =
           runtimeWorkResult.status === 'fulfilled'
-            ? applyRuntimeTaskOverrides(runtimeWorkResult.value, true)
+            ? applyRuntimeTaskOverrides(runtimeWorkResult.value, true, supervisorRequestRevision)
             : EMPTY_RUNTIME_WORK
         if (runtimeWorkResult.status === 'fulfilled') {
           localRuntimeWorkRef.current = runtimeWork
@@ -715,6 +728,7 @@ export function useWorkbenchDataRefresh({
 
   const refreshWorkLists: RefreshWorkLists = useCallback(
     async options => {
+      const supervisorRequestRevision = supervisorSnapshotsRef.current.capture()
       if (options?.unarchivedTasks?.length) {
         const unarchivedTaskKeys = new Set(options.unarchivedTasks.map(getRuntimeTaskRouteKey))
         archivedRuntimeTaskAddressesRef.current = archivedRuntimeTaskAddressesRef.current.filter(
@@ -737,7 +751,7 @@ export function useWorkbenchDataRefresh({
         { useCacheFallback: false }
       )
       const filteredRuntimeWorkResult = runtimeWorkResult
-        ? applyRuntimeTaskOverrides(runtimeWorkResult, true)
+        ? applyRuntimeTaskOverrides(runtimeWorkResult, true, supervisorRequestRevision)
         : undefined
       if (filteredRuntimeWorkResult) {
         localRuntimeWorkRef.current = filteredRuntimeWorkResult
@@ -947,6 +961,7 @@ export function useWorkbenchDataRefresh({
 
   const updateLocalRuntimeTaskSupervisor = useCallback(
     (address: RuntimeTaskAddress, supervisor: RuntimeSupervisorState | null) => {
+      supervisorSnapshotsRef.current.update(address, supervisor)
       localRuntimeWorkRef.current = updateRuntimeWorkTask(localRuntimeWorkRef.current, address, {
         supervisor,
       })
@@ -961,10 +976,7 @@ export function useWorkbenchDataRefresh({
 
   const refreshRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
-      const supervisorBeforeRequest = findRuntimeTask(
-        localRuntimeWorkRef.current,
-        address
-      )?.supervisor
+      const supervisorRequestRevision = supervisorSnapshotsRef.current.capture()
       const device = devicesRef.current.find(item => item.device_id === address.deviceId)
       const listCloudRuntimeWork =
         device && (isCloudDevice(device) || isRemoteDevice(device))
@@ -974,16 +986,14 @@ export function useWorkbenchDataRefresh({
         listCloudRuntimeWork
           ? await listCloudRuntimeWork()
           : await executorClient.runtime.listRuntimeWork(),
-        true
+        true,
+        supervisorRequestRevision
       )
       const task = findRuntimeTask(runtimeWork, address)
       if (!task) return null
-      const latestSupervisor = findRuntimeTask(localRuntimeWorkRef.current, address)?.supervisor
       return {
         ...task,
         optimistic: false,
-        supervisor:
-          latestSupervisor !== supervisorBeforeRequest ? latestSupervisor : task.supervisor,
       }
     },
     [applyRuntimeTaskOverrides, executorClient]

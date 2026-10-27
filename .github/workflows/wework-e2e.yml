@@ -135,7 +135,7 @@ jobs:
         id: runtime
         env:
           EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'shared/assets/**') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', '.github/runtime-images/backend-rs-e2e.Dockerfile') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \
@@ -143,9 +143,13 @@ jobs:
             .github/scripts/resolve-executor-e2e-runtime.sh
           executor_image="$(sed -n 's/^image=//p' "$runtime_output")"
           test -n "$executor_image"
+          backend_image="$(
+            SOURCE_DIGEST="$BACKEND_RS_SOURCE_DIGEST" \
+              .github/scripts/resolve-backend-rs-e2e-runtime.sh
+          )"
           {
             echo "executor-ref=$executor_image"
-            echo "backend-rs-ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-backend-rs-e2e:v1-$BACKEND_RS_SOURCE_DIGEST"
+            echo "backend-rs-ref=$backend_image"
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and publish Wework browser E2E image
@@ -395,8 +399,8 @@ jobs:
           pnpm --dir wework/electron install --frozen-lockfile
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
-      - name: Set up real object storage for Issue MCP E2E
-        if: contains(matrix.segments, 'collaboration-issue-mcp-comments')
+      - name: Set up real object storage for collaboration E2E
+        if: contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing')
         uses: ./.github/actions/setup-minio-e2e
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
@@ -718,7 +722,7 @@ jobs:
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Restore real object storage for Issue MCP E2E
-        if: contains(matrix.segments, 'collaboration-issue-mcp-comments')
+        if: (contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing'))
         id: issue-mcp-minio
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -726,14 +730,14 @@ jobs:
           key: ${{ runner.os }}-minio-9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a-go-1.25.9-v1
 
       - name: Set up Go for real object storage
-        if: contains(matrix.segments, 'collaboration-issue-mcp-comments') && steps.issue-mcp-minio.outputs.cache-hit != 'true'
+        if: (contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing')) && steps.issue-mcp-minio.outputs.cache-hit != 'true'
         uses: actions/setup-go@v6
         with:
           go-version: "1.25.9"
           cache: false
 
       - name: Build real object storage
-        if: contains(matrix.segments, 'collaboration-issue-mcp-comments') && steps.issue-mcp-minio.outputs.cache-hit != 'true'
+        if: (contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing')) && steps.issue-mcp-minio.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $env:GOBIN = Join-Path $env:RUNNER_TEMP "wework-minio\bin"
@@ -744,14 +748,14 @@ jobs:
           }
 
       - name: Save real object storage for Issue MCP E2E
-        if: github.ref == 'refs/heads/main' && contains(matrix.segments, 'collaboration-issue-mcp-comments') && steps.issue-mcp-minio.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.issue-mcp-minio.outcome == 'success' && steps.issue-mcp-minio.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ runner.temp }}/wework-minio/bin
           key: ${{ steps.issue-mcp-minio.outputs.cache-primary-key }}
 
       - name: Enable real object storage
-        if: contains(matrix.segments, 'collaboration-issue-mcp-comments')
+        if: (contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing'))
         shell: pwsh
         run: |
           $source = Join-Path $env:RUNNER_TEMP "wework-minio\bin\minio.exe"
@@ -776,12 +780,6 @@ jobs:
         run: |
           pnpm --dir wework/electron install --frozen-lockfile
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
-
-      - name: Set up real object storage for Issue MCP E2E
-        if: contains(matrix.segments, 'collaboration-issue-mcp-comments')
-        uses: ./.github/actions/setup-minio-e2e
-        with:
-          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e
@@ -922,7 +920,7 @@ jobs:
           setup-uv: "false"
 
       - name: Set up real object storage for plugin sync recovery E2E
-        if: contains(matrix.segments, 'plugin-write-coordination')
+        if: contains(matrix.segments, 'plugin-write-coordination') || contains(matrix.segments, 'plugin-runtime-route-refresh') || contains(matrix.segments, 'plugin-background-sync-isolation') || contains(matrix.segments, 'plugin-periodic-reconcile')
         uses: ./.github/actions/setup-minio-e2e
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
@@ -1080,12 +1078,18 @@ jobs:
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
-          args=()
-          if [[ -n "$E2E_SEGMENT" ]]; then
-            args=(-- --segment "$E2E_SEGMENT")
+          if [[ -z "$E2E_SEGMENT" ]]; then
+            xvfb-run -a --server-args="-screen 0 1280x720x24" \
+              pnpm --filter wework "$E2E_COMMAND"
+            exit 0
           fi
-          xvfb-run -a --server-args="-screen 0 1280x720x24" \
-            pnpm --filter wework "$E2E_COMMAND" "${args[@]}"
+          IFS=',' read -ra segments <<< "$E2E_SEGMENT"
+          status=0
+          for segment in "${segments[@]}"; do
+            xvfb-run -a --server-args="-screen 0 1280x720x24" \
+              pnpm --filter wework "$E2E_COMMAND" -- --segment "$segment" || status=$?
+          done
+          exit "$status"
 
       - name: Prune transient Wework desktop E2E caches
         if: always()
@@ -1135,7 +1139,7 @@ jobs:
           RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.windows_desktop_core_e2e == 'true' }}
           RUN_DESKTOP_CLOUD_E2E: ${{ needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_OTHER_E2E: ${{ needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
-          RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
+          RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')))) }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           WEB_E2E_RESULT: ${{ needs.wework-e2e.result }}
           DESKTOP_CORE_BUILD_RESULT: ${{ needs.build-wework-desktop-core-e2e.result }}
@@ -1211,9 +1215,9 @@ jobs:
           fi
 
   wework-desktop-memory-e2e:
-    name: Wework Desktop Memory E2E
+    name: Wework Desktop macOS E2E
     needs: changes
-    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
     runs-on: macos-14
     timeout-minutes: 45
     permissions:
@@ -1510,12 +1514,12 @@ jobs:
         if: always()
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
-      - name: Upload Wework desktop memory diagnostics
+      - name: Upload Wework desktop macOS diagnostics
         if: always()
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: wework-desktop-memory-e2e-diagnostics
+          name: wework-desktop-macos-e2e-diagnostics
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**

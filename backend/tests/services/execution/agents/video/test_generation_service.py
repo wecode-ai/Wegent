@@ -44,8 +44,8 @@ async def test_create_job_stages_images_before_provider_call() -> None:
         ),
         patch(
             "app.services.execution.agents.video.generation_service."
-            "normalize_reference_materials",
-            side_effect=[original, [], []],
+            "resolve_generation_reference_materials",
+            return_value=(original, [], []),
         ),
         patch(
             "app.services.execution.agents.video.generation_service."

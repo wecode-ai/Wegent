@@ -607,7 +607,11 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
       })),
     },
   } as unknown as WorkbenchServices
-  const workbenchServices = { ...baseServices, ...overrides } as WorkbenchServices
+  const workbenchServices = {
+    ...baseServices,
+    standInApi: { readTask: vi.fn(async () => ({ success: true })) },
+    ...overrides,
+  } as WorkbenchServices
   const deliveryApi = workbenchServices.deliveryApi!
   deliveryApi.getBoardSnapshot = vi.fn(async projectId => {
     const [{ items }, members, agents] = await Promise.all([
@@ -2640,6 +2644,64 @@ describe('CloudTodoWorkspace', () => {
       '11'
     )
     expect(screen.getByTestId('project-space-chat-sidebar')).toBeInTheDocument()
+  })
+
+  it('hides another users linked task even when the snapshot contains it', async () => {
+    const workbenchServices = services()
+    const [binding] = await workbenchServices.deliveryApi!.listTaskBindings('WEG-1')
+    vi.mocked(workbenchServices.deliveryApi!.listTaskBindings).mockResolvedValue([
+      {
+        ...binding,
+        id: 'foreign',
+        loop_item_id: 'WEG-1',
+        task_user_id: 2,
+        device_id: 'other-device',
+        task_id: 'private-task',
+        task_title: 'Private task',
+      },
+    ])
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
+    await expandIssueExecutionDetails()
+    expect(screen.queryByText('Private task')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('cloud-todo-open-task-conversation-foreign')
+    ).not.toBeInTheDocument()
+    expect(workbenchServices.standInApi!.readTask).not.toHaveBeenCalled()
+  })
+
+  it('shows an actionable archived task error and opens the task after restoration', async () => {
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.standInApi!.readTask).mockResolvedValueOnce({
+      success: false,
+      code: 'task_archived',
+    })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
+    await expandIssueExecutionDetails()
+    await userEvent.click(await screen.findByTestId('cloud-todo-open-task-conversation-1'))
+    expect(
+      await screen.findByText('该任务已归档，请先在归档任务中恢复后再查看。')
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-todo-open-task-conversation-1'))
+    expect(await screen.findByTestId('ai-chat-modal')).toBeInTheDocument()
   })
 
   it('opens a bound task conversation from the card detail and can jump to the full task', async () => {

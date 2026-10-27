@@ -119,6 +119,8 @@ def resolve_project_transcript(
         raise HTTPException(404, "Project session binding not found")
     if len(owners) != 1:
         raise HTTPException(409, "Project session has conflicting execution owners")
+    if bindings and not executions and user_id not in owners:
+        raise HTTPException(404, "Project session binding not found")
     task_ids = {execution_conversation_task_id(row) for row in executions}
     if len(task_ids) > 1:
         raise HTTPException(

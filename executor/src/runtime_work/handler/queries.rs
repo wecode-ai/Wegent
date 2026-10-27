@@ -11,7 +11,7 @@ impl RuntimeWorkRpcHandler {
         let link = self
             .store
             .get_task_summary(&task_id)
-            .filter(|link| link.status != "archived" && !self.archived_link_is_deleted(link));
+            .filter(|link| !self.archived_link_is_deleted(link));
         let Some(mut link) = link else {
             return Ok(json!({
                 "success": false,
@@ -19,6 +19,13 @@ impl RuntimeWorkRpcHandler {
                 "error": "Task not found on the owning Runtime",
             }));
         };
+        if link.status == "archived" {
+            return Ok(json!({
+                "success": false,
+                "code": "task_archived",
+                "error": "This task has been archived. Restore it from archived tasks before opening it.",
+            }));
+        }
         apply_local_execution_state(
             &mut link,
             self.is_active_local_task(&task_id),
@@ -426,6 +433,27 @@ impl RuntimeWorkRpcHandler {
             }
         }
         if navigation_only {
+            if let Some(link) = local_link.as_ref().filter(|link| link.ephemeral) {
+                let mut messages = cached_temporary_transcript_messages(link);
+                append_unique_transcript_messages(
+                    &mut messages,
+                    self.active_codex_transcript_messages(&local_task_id),
+                );
+                let page_messages = messages.clone();
+                attach_user_message_presentations_for_page(
+                    &mut messages,
+                    user_message_presentations(link),
+                    &page_messages,
+                    &[],
+                    false,
+                    false,
+                );
+                return Ok(transcript_navigation_response(
+                    local_task_id,
+                    link.workspace_path.clone(),
+                    transcript_turn_navigation(&messages),
+                ));
+            }
             if !direct_thread_override
                 && local_link
                     .as_ref()
@@ -568,7 +596,16 @@ impl RuntimeWorkRpcHandler {
                 || session_id.is_none()
                 || (!direct_thread_override && provider_transcript_is_unmaterialized(link))
         }) {
-            let mut messages = cached_runtime_transcript_messages(link);
+            let mut messages = if link.ephemeral {
+                let mut messages = cached_temporary_transcript_messages(link);
+                append_unique_transcript_messages(
+                    &mut messages,
+                    self.active_codex_transcript_messages(&local_task_id),
+                );
+                messages
+            } else {
+                cached_runtime_transcript_messages(link)
+            };
             let page_messages = messages.clone();
             attach_user_message_presentations_for_page(
                 &mut messages,
