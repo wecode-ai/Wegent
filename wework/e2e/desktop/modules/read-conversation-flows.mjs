@@ -39,7 +39,12 @@ export async function verifyActiveConversationSurvivesCollapse({ control, taskId
   )
 }
 
-export async function verifyCollapseReadConversations({ composerSelector, control, taskId }) {
+export async function verifyCollapseReadConversations({
+  composerSelector,
+  control,
+  expandGroupSelector,
+  taskId,
+}) {
   const rowTestId = `runtime-local-task-row-${taskId}`
   const rowSelector = `[data-testid="${rowTestId}"]`
   await control.command('waitFor', rowSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
@@ -87,7 +92,7 @@ export async function verifyCollapseReadConversations({ composerSelector, contro
     if (all) {
       await selectReadConversationAction(control, 'expand-read')
     } else {
-      await control.command('click', '[data-testid="runtime-chat-section-toggle"]')
+      await control.command('click', expandGroupSelector)
     }
     await control.command('waitFor', rowSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   }

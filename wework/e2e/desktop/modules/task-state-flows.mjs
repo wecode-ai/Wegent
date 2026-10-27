@@ -69,7 +69,7 @@ import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './wor
 
 const PRIORITY_FILTER_SHORTCUT = process.platform === 'win32' ? 'Control+Alt+U' : 'Meta+Alt+U'
 
-async function verifyPriorityFilter({ composerSelector, control }) {
+async function verifyPriorityFilter({ composerSelector, control, projectRowSelector }) {
   let requestInputResponseReleased = false
   control.setScenario('request_user_input')
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -245,6 +245,9 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     await verifyCollapseReadConversations({
       composerSelector,
       control,
+      expandGroupSelector: projectRowSelector
+        ? `${projectRowSelector} [data-testid="project-item-button"]`
+        : '[data-testid="runtime-chat-section-toggle"]',
       taskId: requestInputTaskId,
     })
   } finally {
