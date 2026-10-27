@@ -726,10 +726,13 @@ export function createHybridWorkbenchServices(
     }
     throw new Error(`executor-not-found:${normalizedDeviceId}`)
   }
-  const mergeKnownDevices = (localDevices: DeviceInfo[], cloudDevices: DeviceInfo[]) =>
+  const mergeKnownDevices = (
+    localDevices: DeviceInfo[],
+    cloudDevices: DeviceInfo[]
+  ): DeviceInfo[] =>
     mergeDeviceLists(localDevices, [...currentAppDeviceRegistrations(), ...cloudDevices]).filter(
       device => !isAppDeviceRegistration(device)
-    )
+    ) as DeviceInfo[]
   const routeLocalSidebarMutation = async (
     deviceId: string,
     options: LocalRuntimeSidebarOptions | undefined,
@@ -979,9 +982,7 @@ export function createHybridWorkbenchServices(
           error
         )
       }
-      return mergeKnownDevices(localDevices, cloudDevices) as Awaited<
-        ReturnType<WorkbenchServices['deviceApi']['listDevices']>
-      >
+      return mergeKnownDevices(localDevices, cloudDevices)
     },
   }
 
