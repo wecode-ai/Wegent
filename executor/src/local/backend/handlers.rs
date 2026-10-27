@@ -573,43 +573,15 @@ fn task_config_from_snapshot(
         .lock()
         .expect("backend connection snapshot lock")
         .clone()?;
-    let mut config = config.clone();
-    config.backend_url = connection.backend_url;
-    config.auth_token = connection.auth_token;
-    config.runtime_auth_token = connection.runtime_auth_token;
-    Some(config)
-}
-
-#[cfg(test)]
-mod connection_tests {
-    use super::*;
-
-    #[test]
-    fn task_credentials_follow_runtime_token_rotation_and_disconnect() {
-        let config = LocalBackendConfig::from_device_config(DeviceConfig {
-            connection: ConnectionConfig {
-                backend_url: "https://backend.example.com".to_owned(),
-                auth_token: "socket-token".to_owned(),
-                runtime_auth_token: "runtime-before".to_owned(),
-                ..ConnectionConfig::default()
-            },
-            ..DeviceConfig::default()
-        });
-        let snapshot = Mutex::new(connection_snapshot_from_config(&config));
-        snapshot
-            .lock()
-            .unwrap()
-            .as_mut()
-            .unwrap()
-            .runtime_auth_token = "runtime-after".to_owned();
-        let current = task_config_from_snapshot(&config, &snapshot).unwrap();
-        let mut request = ExecutionRequest::default();
-        normalize_local_task_request(&mut request, &current);
-        assert_eq!(request.runtime_auth_token.as_deref(), Some("runtime-after"));
-        assert_eq!(config.runtime_auth_token, "runtime-before");
-        *snapshot.lock().unwrap() = None;
-        assert!(task_config_from_snapshot(&config, &snapshot).is_none());
+    if connection.backend_url != config.backend_url
+        || connection.socket_url != config.socket_url
+        || super::config::normalize_token(&connection.auth_token) != config.auth_token
+    {
+        return None;
     }
+    let mut config = config.clone();
+    config.runtime_auth_token = super::config::normalize_token(&connection.runtime_auth_token);
+    Some(config)
 }
 
 fn log_capability_sync_items(response: &Value, field: &str, capability_type: &str) {
@@ -694,4 +666,63 @@ fn positive_u64(value: Option<&Value>) -> Result<u64, &'static str> {
         .and_then(Value::as_u64)
         .filter(|sequence| *sequence > 0)
         .ok_or("sequence must be a positive JSON integer")
+}
+
+#[cfg(test)]
+mod connection_tests {
+    use super::*;
+
+    fn config_fixture() -> LocalBackendConfig {
+        LocalBackendConfig::from_device_config(DeviceConfig {
+            connection: ConnectionConfig {
+                backend_url: "https://backend.example.com".to_owned(),
+                auth_token: "socket-token".to_owned(),
+                runtime_auth_token: "runtime-before".to_owned(),
+                ..ConnectionConfig::default()
+            },
+            ..DeviceConfig::default()
+        })
+    }
+
+    #[test]
+    fn task_credentials_follow_runtime_token_rotation_and_disconnect() {
+        let config = config_fixture();
+        let snapshot = Mutex::new(connection_snapshot_from_config(&config));
+        snapshot
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .runtime_auth_token = "runtime-after".to_owned();
+        let current = task_config_from_snapshot(&config, &snapshot).unwrap();
+        let mut request = ExecutionRequest::default();
+        normalize_local_task_request(&mut request, &current);
+        assert_eq!(request.runtime_auth_token.as_deref(), Some("runtime-after"));
+        assert_eq!(config.runtime_auth_token, "runtime-before");
+        *snapshot.lock().unwrap() = None;
+        assert!(task_config_from_snapshot(&config, &snapshot).is_none());
+    }
+
+    #[test]
+    fn task_credentials_cannot_cross_backend_sessions() {
+        let config = config_fixture();
+        let connection = connection_snapshot_from_config(&config).unwrap();
+        for changed in [
+            ConnectionConfig {
+                backend_url: "https://other.example.com".to_owned(),
+                ..connection.clone()
+            },
+            ConnectionConfig {
+                auth_token: "another-session".to_owned(),
+                ..connection.clone()
+            },
+            ConnectionConfig {
+                socket_url: "https://other-socket.example.com".to_owned(),
+                ..connection.clone()
+            },
+        ] {
+            let snapshot = Mutex::new(Some(changed));
+            assert!(task_config_from_snapshot(&config, &snapshot).is_none());
+        }
+    }
 }

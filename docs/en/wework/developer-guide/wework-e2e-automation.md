@@ -247,7 +247,10 @@ Foreground plugin installation pauses automatic page updates and synchronization
 until completion, preventing stale inventory from triggering a full replay.
 Cloud restoration retains the resolved socket endpoint. Runtime-token rotation
 updates shared executor credentials while preserving the device connection and
-RPC route, avoiding lost transcript requests during reloads. Goal restoration preserves the
+RPC route, avoiding lost transcript requests during reloads. Traditional tasks read
+rotated runtime tokens only while backend, socket, and session credentials match
+the original connection; switched or disconnected sessions reject old tasks.
+Goal restoration preserves the
 known turn and rejects a different stale streaming history.
 Long history hydration polls use `performanceSnapshot` with `collectMemory: false`
 to avoid forced GC on every poll; final memory assertions retain full sampling.
