@@ -45,6 +45,10 @@ describe('PluginDevelopmentManager', () => {
         WEWORK_NODE_PATH: '/parent/runtime/bin/node',
         WEWORK_NODE_RUNTIME_KIND: 'electron',
         WEWORK_RUNTIME_BIN: '/parent/runtime/bin',
+        WEGENT_PYTHON_PATH: '/parent/runtime/bin/python3',
+        WEWORK_PYTHON_RUNTIME_URL: 'http://127.0.0.1:9876',
+        WEWORK_PYTHON_RUNTIME_TOKEN: 'parent-python-token',
+        WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1',
       },
       {
         name: 'dsh-development',
@@ -68,6 +72,10 @@ describe('PluginDevelopmentManager', () => {
     expect(environment).not.toHaveProperty('WEWORK_NODE_PATH')
     expect(environment).not.toHaveProperty('WEWORK_NODE_RUNTIME_KIND')
     expect(environment).not.toHaveProperty('WEWORK_RUNTIME_BIN')
+    expect(environment).not.toHaveProperty('WEGENT_PYTHON_PATH')
+    expect(environment).not.toHaveProperty('WEWORK_PYTHON_RUNTIME_URL')
+    expect(environment).not.toHaveProperty('WEWORK_PYTHON_RUNTIME_TOKEN')
+    expect(environment).not.toHaveProperty('WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP')
     expect(environment).toMatchObject({
       WEWORK_INSTANCE_MODE: 'core-dsh-plugin-development',
       WEWORK_PLUGIN_DEVELOPMENT_ROOT: '/plugins/dsh-development',
@@ -89,6 +97,7 @@ describe('PluginDevelopmentManager', () => {
         WEWORK_E2E_CONTROL_TOKEN: 'control-token',
         WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
         WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
+        WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1',
       },
       {
         name: 'dsh-development',
@@ -107,6 +116,7 @@ describe('PluginDevelopmentManager', () => {
       WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
       WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
       WEWORK_PLUGIN_DEVELOPMENT_E2E_WINDOW_LABEL: 'plugin-development-development-id',
+      WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1',
     })
   })
 

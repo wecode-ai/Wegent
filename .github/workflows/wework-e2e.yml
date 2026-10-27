@@ -938,8 +938,8 @@ jobs:
           fi
           gh --version
 
-      - name: Prepare the pinned native DWS compiler for account authentication E2E
-        if: contains(matrix.segments, 'plugin-account-auth-dws')
+      - name: Prepare the pinned native compiler for account authentication E2E
+        if: contains(matrix.segments, 'plugin-account-auth-dws') || contains(matrix.segments, 'plugin-account-auth-password')
         uses: actions/setup-go@v6
         with:
           go-version: "1.25.9"

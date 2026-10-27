@@ -605,6 +605,9 @@ export function pluginDevelopmentEnvironment(
   delete environment.WEWORK_NODE_PATH
   delete environment.WEWORK_NODE_RUNTIME_KIND
   delete environment.WEWORK_RUNTIME_BIN
+  delete environment.WEGENT_PYTHON_PATH
+  delete environment.WEWORK_PYTHON_RUNTIME_URL
+  delete environment.WEWORK_PYTHON_RUNTIME_TOKEN
   for (const key of Object.keys(environment)) {
     if (
       key.startsWith('WEWORK_E2E_') ||
@@ -623,6 +626,9 @@ export function pluginDevelopmentEnvironment(
           ...(e2eControlToken ? { WEWORK_E2E_CONTROL_TOKEN: e2eControlToken } : {}),
           WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
           WEWORK_PLUGIN_DEVELOPMENT_E2E_WINDOW_LABEL: `plugin-development-${id}`,
+          ...(base.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP === '1'
+            ? { WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1' }
+            : {}),
         }
       : {}),
     WEWORK_PLUGIN_DEVELOPMENT_ROOT: plugin.sourceRoot,

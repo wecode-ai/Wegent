@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Reconcile installed account adapters without depending on a renderer window.
 
-use super::{migrate, AuthError, NativeAuthGateway};
+use super::{
+    migration::{migrate_prepared, prepare_package_python},
+    AuthError, NativeAuthGateway, PreparedPackage,
+};
 use crate::local::backend::LocalBackendTransport;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -9,6 +12,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -61,18 +65,16 @@ impl Reconciler {
         };
         self.retries
             .retain(|(id, _), until| ids.contains(id) && *until > Instant::now());
-        if !selected.is_empty() {
-            super::migration::ensure_registered_python(home, &selected, None).await?;
-        }
         let response = NativeAuthGateway::new(transport.clone())
             .call(
                 "plugin.auth.automatic",
-                json!({"installed_plugin_ids": selected}),
+                json!({"installed_plugin_ids": selected, "prepare_only": true}),
             )
             .await?;
-        let intents: Vec<Intent> = serde_json::from_value(response["migrations"].clone())
-            .map_err(|_| AuthError("plugin_auth_invalid_response"))?;
-        if intents.len() > 256 {
+        let packages: Vec<PreparedPackage> =
+            serde_json::from_value(response["packages"].clone())
+                .map_err(|_| AuthError("plugin_auth_invalid_response"))?;
+        if packages.len() > 256 {
             return Err(AuthError("plugin_auth_invalid_response"));
         }
         if super::e2e_reconcile_marker().is_some() {
@@ -80,21 +82,23 @@ impl Reconciler {
                 "plugin auth automatic cycle",
                 &[
                     ("installed_count", selected.len().to_string()),
-                    ("intent_count", intents.len().to_string()),
+                    ("target_count", packages.len().to_string()),
                     ("cooldown_count", self.retries.len().to_string()),
                 ],
             );
         }
         let mut pending = tokio::task::JoinSet::new();
-        for intent in intents {
-            let key = (intent.installed_plugin_id, intent.connector_slug);
+        let actions = Arc::new(tokio::sync::Semaphore::new(4));
+        for package in packages {
+            let key = (package.installed_plugin_id, package.connector_slug.clone());
             if !selected.contains(&key.0) || self.retries.contains_key(&key) {
                 continue;
             }
             let transport = transport.clone();
             let home = home.to_owned();
+            let actions = actions.clone();
             pending.spawn(async move {
-                let result = migrate(transport, &home, &intent.id).await;
+                let result = reconcile_target(transport, &home, &package, &actions).await;
                 crate::logging::log_executor_event(
                     "plugin auth automatic enrollment finished",
                     &[
@@ -109,11 +113,6 @@ impl Reconciler {
                 );
                 (key, result.map(|_| ()))
             });
-            if pending.len() >= 4 {
-                if let Some(Ok((key, result))) = pending.join_next().await {
-                    self.record(key, result);
-                }
-            }
         }
         while let Some(result) = pending.join_next().await {
             if let Ok((key, result)) = result {
@@ -149,6 +148,43 @@ impl Reconciler {
         self.retry_signal_value = Some(value);
         self.retries.clear();
     }
+}
+
+async fn reconcile_target<T: LocalBackendTransport>(
+    transport: T,
+    home: &Path,
+    package: &PreparedPackage,
+    actions: &tokio::sync::Semaphore,
+) -> Result<(), AuthError> {
+    prepare_package_python(home, package).await?;
+    // Waiting for Python must not occupy a provider slot or consume an intent's TTL.
+    let _permit = actions
+        .acquire()
+        .await
+        .map_err(|_| AuthError("plugin_auth_owner_unavailable"))?;
+    let response = NativeAuthGateway::new(transport.clone())
+        .call(
+            "plugin.auth.automatic",
+            json!({"installed_plugin_ids": [package.installed_plugin_id], "targets": [{
+                "installed_plugin_id": package.installed_plugin_id,
+                "connector_slug": package.connector_slug,
+            }]}),
+        )
+        .await?;
+    let intents: Vec<Intent> = serde_json::from_value(response["migrations"].clone())
+        .map_err(|_| AuthError("plugin_auth_invalid_response"))?;
+    if intents.len() > 1 {
+        return Err(AuthError("plugin_auth_invalid_response"));
+    }
+    if let Some(intent) = intents.into_iter().next() {
+        if intent.installed_plugin_id != package.installed_plugin_id
+            || intent.connector_slug != package.connector_slug
+        {
+            return Err(AuthError("plugin_auth_invalid_response"));
+        }
+        migrate_prepared(transport, home, &intent.id, package).await?;
+    }
+    Ok(())
 }
 
 fn installed_ids(home: &Path) -> Result<Vec<u64>, AuthError> {
@@ -223,10 +259,29 @@ mod tests {
     async fn expired_intent_does_not_suppress_the_next_login() {
         let home = tempfile::tempdir().unwrap();
         fs::create_dir(home.path().join("capabilities")).unwrap();
+        let root = home
+            .path()
+            .join("workbench/shared/plugins")
+            .join("a".repeat(64));
+        fs::create_dir_all(root.join(".codex-plugin")).unwrap();
+        let definition =
+            json!({"protocolVersion":1,"credentialType":"bearer","adapter":"auth.mjs"});
+        fs::write(root.join("auth.mjs"), "// not executed").unwrap();
+        fs::write(
+            root.join(".codex-plugin/plugin.json"),
+            json!({"connectors":[{
+                "slug":"mail","accountAuth":definition
+            }]})
+            .to_string(),
+        )
+        .unwrap();
+        let package = json!({"installed_plugin_id":42,"connector_slug":"mail",
+            "checksum":format!("sha256:{}", "a".repeat(64)),"auth_definition":definition});
         fs::write(
             home.path().join("capabilities/manifest-v2.json"),
             json!({"plugins": {
-                "mail": {"installed_plugin_id":42,"managed":true,"enabled":true}
+                "mail": {"installed_plugin_id":42,"managed":true,"enabled":true,
+                    "checksum":package["checksum"],"store_path":root}
             }})
             .to_string(),
         )
@@ -237,17 +292,28 @@ mod tests {
             }]})
         };
         let calls = Arc::new(Mutex::new(VecDeque::from([
+            (
+                "plugin.auth.automatic",
+                json!({"success":true,"packages":[package.clone()]}),
+            ),
             ("plugin.auth.automatic", intents("a")),
             (
                 "plugin.auth.prepare",
                 json!({"success": false, "error": "plugin_auth_migration_expired"}),
+            ),
+            (
+                "plugin.auth.automatic",
+                json!({"success":true,"packages":[package.clone()]}),
             ),
             ("plugin.auth.automatic", intents("b")),
             (
                 "plugin.auth.prepare",
                 json!({"success": false, "error": "plugin_auth_owner_unavailable"}),
             ),
-            ("plugin.auth.automatic", intents("b")),
+            (
+                "plugin.auth.automatic",
+                json!({"success":true,"packages":[package]}),
+            ),
         ])));
         let transport = Transport(calls.clone());
         let mut reconciler = Reconciler {
@@ -261,6 +327,40 @@ mod tests {
                 .unwrap();
         }
         assert!(calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn claimed_intent_must_match_the_package_whose_runtime_was_prepared() {
+        let home = tempfile::tempdir().unwrap();
+        let original = json!({"installed_plugin_id":42,"connector_slug":"native",
+            "checksum":format!("sha256:{}", "a".repeat(64)),
+            "auth_definition":{"adapter":"auth.mjs"}});
+        for field in ["checksum", "auth_definition"] {
+            let mut changed = original.clone();
+            changed[field] = if field == "checksum" {
+                json!(format!("sha256:{}", "b".repeat(64)))
+            } else {
+                json!({"adapter":"new-python-auth.py"})
+            };
+            let calls = Arc::new(Mutex::new(VecDeque::from([(
+                "plugin.auth.prepare",
+                json!({"success":true,"operation":"export","package":changed}),
+            )])));
+            let expected = serde_json::from_value(original.clone()).unwrap();
+            let result = migrate_prepared(
+                Transport(calls.clone()),
+                home.path(),
+                &"a".repeat(64),
+                &expected,
+            )
+            .await;
+            // Reject before loading a replacement adapter or starting another wait.
+            assert_eq!(
+                result.err(),
+                Some(AuthError("plugin_auth_definition_mismatch"))
+            );
+            assert!(calls.lock().unwrap().is_empty());
+        }
     }
 
     #[test]

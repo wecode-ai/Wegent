@@ -108,4 +108,4 @@ jobs:
           printf 'WEGENT_TEST_PYTHON=%s\n' "$python_path" >> "$GITHUB_ENV"
           "$python_path" --version
       - name: Test native transport, OAuth lifecycle, and process cleanup
-        run: uv run --no-project cargo test --manifest-path executor/Cargo.toml --test plugin_account_auth_contract -- --test-threads=1
+        run: uv run --no-project cargo test --manifest-path executor/Cargo.toml --test plugin_account_auth_contract --test plugin_account_runtime_isolation -- --test-threads=1

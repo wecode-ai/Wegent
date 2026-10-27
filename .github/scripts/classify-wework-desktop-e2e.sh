@@ -61,6 +61,7 @@ core_segments=(
   cloud-login-proxy
   core-dsh-plugin-management
   plugin-development
+  python-runtime
   project-ai-settings
   model-routing
   fork-provider-preservation
@@ -226,7 +227,7 @@ core_shards=(
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference
   conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome
   split-workbench
-  collaboration-shared-core,runtime-input-answer-persistence
+  collaboration-shared-core,runtime-input-answer-persistence,python-runtime
 )
 
 validate_core_shards() {
@@ -446,6 +447,16 @@ classify_wework_path() {
   esac
 
   case "$path" in
+    wework/e2e/desktop/scenarios/python-runtime.scenario.mjs | \
+      wework/e2e/desktop/modules/managed-python.mjs | \
+      wework/electron/src/runtime/python-runtime* | \
+      wework/src/desktop/executionEnvironments* | \
+      wework/src/components/settings/ExecutionEnvironmentsSettingsPage*)
+      select_target "core:python-runtime"
+      select_target "core:plugin-development"
+      select_target "cloud:plugin-account-auth-password"
+      return
+      ;;
     wework/src/features/workbench/runtimeConversationCache* | \
       wework/src/components/layout/useWorkbenchPaneSession* | \
       wework/src/features/workbench/WorkbenchProvider* | \
@@ -496,6 +507,8 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/modules/plugin-auth-coordination.mjs | \
+      wework/e2e/desktop/modules/native-account-runtime-isolation.mjs | \
+      wework/e2e/desktop/fixtures/native-account-auth/* | \
       wework/e2e/desktop/modules/plugin-account-auth-fixture.mjs | \
       wework/src/components/plugins/PluginAccountConnections* | \
       wework/src/api/cloud/pluginAccountConnections* | \
@@ -1607,6 +1620,7 @@ classify_path() {
   case "$path" in
     sdk/plugin-auth/* | sdk/plugin-auth-go/* | sdk/dws-auth/* | executor/src/plugin_account_auth/* | \
       executor/tests/plugin_account_auth_contract.rs | \
+      executor/tests/plugin_account_runtime_isolation.rs | \
       backend/app/services/plugin_account* | backend/app/services/plugin_auth* | \
       backend/app/services/plugin_oauth* | backend/app/services/plugin_credential* | \
       backend/app/schemas/plugin_account_auth.py | backend/app/api/ws/plugin_auth_broker.py | \

@@ -1318,6 +1318,7 @@ async function main() {
     }
 
     const needsPackagedHarnessRuntime =
+      desktopScenario?.requiresPackagedHarnessRuntime === true ||
       SELECTED_DESKTOP_SEGMENT?.startsWith('harness-app-') ||
       (RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition'))
     const usesReleasePackageRuntimeAssets =

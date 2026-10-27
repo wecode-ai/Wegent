@@ -258,6 +258,11 @@ class PluginOAuthFinish(BaseModel):
         return self
 
 
+class PluginRevocationQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    after_id: int = Field(default=0, ge=0, le=2**63 - 1)
+
+
 class PluginRevocationBegin(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     connection_id: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -273,9 +278,19 @@ class PluginAuthAutomationPolicy(BaseModel):
     enabled: bool
 
 
+class PluginNativeAutomationTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    installed_plugin_id: int = Field(gt=0)
+    connector_slug: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,99}$")
+
+
 class PluginNativeAutomation(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     installed_plugin_ids: list[int] = Field(max_length=256)
+    prepare_only: bool = False
+    targets: list[PluginNativeAutomationTarget] | None = Field(
+        default=None, max_length=256
+    )
 
     @field_validator("installed_plugin_ids")
     @classmethod

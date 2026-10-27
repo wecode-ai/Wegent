@@ -224,15 +224,16 @@ export class PythonRuntimeManager {
       return { ...ready }
     } catch (error) {
       const message = errorMessage(error)
-      if (installed) {
-        this.currentStatus = installed
+      const usable = installed ? await this.inspectInstalledPython() : null
+      if (usable) {
+        this.currentStatus = usable
         this.log({
           event: 'python-runtime-upgrade-failed',
-          currentVersion: installed.version,
+          currentVersion: usable.version,
           targetVersion: PYTHON_VERSION,
           error: message,
         })
-        return { ...installed }
+        return { ...usable }
       }
       this.currentStatus = this.statusValue('error', { error: message })
       this.log({ event: 'python-runtime-install-failed', error: message })
@@ -244,7 +245,7 @@ export class PythonRuntimeManager {
     const path = this.pythonPath()
     if (!(await isFile(path))) return null
     try {
-      const { stdout, stderr } = await this.runFile(path, ['-c', PYTHON_HEALTH_CHECK], {
+      const { stdout, stderr } = await this.runFile(path, ['-I', '-c', PYTHON_HEALTH_CHECK], {
         env: this.runtimeEnvironment,
         timeout: 5_000,
       })

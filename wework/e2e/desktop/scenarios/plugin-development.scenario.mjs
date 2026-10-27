@@ -6,6 +6,11 @@ import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import {
+  assertManagedPythonSettings,
+  inspectManagedPython,
+  managedPythonPath,
+} from '../modules/managed-python.mjs'
 
 const STATUS = '[data-testid="wework-plugin-development-sidebar-status"]'
 const execFileAsync = promisify(execFile)
@@ -105,10 +110,12 @@ export async function createDesktopScenario({
   const websiteUrl = `http://127.0.0.1:${websiteAddress.port}/`
 
   return {
+    requiresPackagedHarnessRuntime: true,
     async prepareApp() {
       await upgradeFixture.prepare()
     },
     appEnvironment: {
+      WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '0',
       WEWORK_E2E_OPEN_DIALOG_PATH: pluginRoot,
       WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
       WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: controlRegistry,
@@ -266,6 +273,24 @@ export async function createDesktopScenario({
       )
       const isolatedWindowLabel = isolatedReady.windowLabel
       const isolatedInstanceId = isolatedWindowLabel.slice('plugin-development-'.length)
+      const isolatedUserData = join(
+        electronUserDataDirectory,
+        'plugin-development',
+        isolatedInstanceId,
+        'user-data'
+      )
+      await assertManagedPythonSettings(control, isolatedUserData, isolatedWindowLabel)
+      const isolatedPython = await inspectManagedPython(isolatedUserData, pluginRoot)
+      assert.notEqual(
+        isolatedPython.executable,
+        managedPythonPath(electronUserDataDirectory),
+        'The development instance reused its parent Python launcher'
+      )
+      await writeFile(
+        join(resultDir, 'plugin-development-python.json'),
+        JSON.stringify(isolatedPython, null, 2)
+      )
+      await control.commandForWindow(isolatedWindowLabel, 'navigate', 'body', { value: '/' })
       assert.deepEqual(
         (await readdir(sharedAssets)).sort(),
         originalAssets,

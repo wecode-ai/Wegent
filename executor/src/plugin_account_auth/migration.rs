@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PreparedPackage {
     pub installed_plugin_id: u64,
@@ -38,6 +38,24 @@ pub async fn migrate<T: LocalBackendTransport>(
     executor_home: &Path,
     migration_id: &str,
 ) -> Result<ConnectionMetadata, AuthError> {
+    migrate_inner(transport, executor_home, migration_id, None).await
+}
+
+pub(super) async fn migrate_prepared<T: LocalBackendTransport>(
+    transport: T,
+    executor_home: &Path,
+    migration_id: &str,
+    expected: &PreparedPackage,
+) -> Result<ConnectionMetadata, AuthError> {
+    migrate_inner(transport, executor_home, migration_id, Some(expected)).await
+}
+
+async fn migrate_inner<T: LocalBackendTransport>(
+    transport: T,
+    executor_home: &Path,
+    migration_id: &str,
+    expected: Option<&PreparedPackage>,
+) -> Result<ConnectionMetadata, AuthError> {
     if migration_id.len() != 64
         || !migration_id
             .bytes()
@@ -48,11 +66,17 @@ pub async fn migrate<T: LocalBackendTransport>(
     let gateway = NativeAuthGateway::new(transport);
     let prepared = gateway.prepare(migration_id).await?;
     let package = prepared.package;
+    if expected.is_some_and(|expected| expected != &package) {
+        return Err(AuthError("plugin_auth_definition_mismatch"));
+    }
     let root = resolve_managed_package(executor_home, &package)?;
     let adapter = NativeAdapter::load(&root, &package.connector_slug, &package.auth_definition)?;
     let interpreter = interpreter_for(&package.auth_definition)?;
-    super::process::ensure_adapter_python(&adapter).await?;
-    if super::process::adapter_uses_python(&adapter)
+    if expected.is_none() {
+        super::process::ensure_adapter_python(&adapter).await?;
+    }
+    if expected.is_none()
+        && super::process::adapter_uses_python(&adapter)
         && crate::python_runtime::managed_python_bridge_configured()
     {
         // Provisioning must not consume an expired intent or a changed definition.
@@ -93,6 +117,28 @@ pub async fn migrate<T: LocalBackendTransport>(
         return finish_transfer(&gateway, &adapter, &interpreter, migration_id, &package).await;
     }
     gateway.enroll(migration_id, exported).await
+}
+
+pub(super) async fn prepare_package_python(
+    home: &Path,
+    package: &PreparedPackage,
+) -> Result<(), AuthError> {
+    if package_uses_python(home, package)? {
+        crate::python_runtime::ensure_managed_python()
+            .await
+            .map_err(|_| AuthError("python_runtime_unavailable"))?;
+    }
+    Ok(())
+}
+
+pub(super) fn package_uses_python(
+    home: &Path,
+    package: &PreparedPackage,
+) -> Result<bool, AuthError> {
+    let root = resolve_managed_package(home, package)?;
+    let adapter = NativeAdapter::load(&root, &package.connector_slug, &package.auth_definition)?;
+    interpreter_for(&package.auth_definition)?;
+    Ok(super::process::adapter_uses_python(&adapter))
 }
 
 async fn finish_transfer<T: LocalBackendTransport>(

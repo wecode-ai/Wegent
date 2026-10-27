@@ -99,6 +99,8 @@ assert_plugin_auth_case "unrelated Wework change" false \
   "wework/src/App.tsx"
 assert_plugin_auth_case "native auth source" true \
   "executor/src/plugin_account_auth/mod.rs"
+assert_plugin_auth_case "mixed runtime regression" true \
+  "executor/tests/plugin_account_runtime_isolation.rs"
 assert_plugin_auth_case "explicit full regression" true --all
 
 assert_checkpoint_runtime_failure_rejected() {
@@ -1189,7 +1191,7 @@ wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","co
 wework_desktop_macos_inspector_e2e=true'
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,resilience,project-member-overrides/\"segments\":\"project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides}"
 full_desktop_expected="${full_desktop_expected/collaboration-issue-comment-attachments,reply-predictions/collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions}"
-full_desktop_expected="${full_desktop_expected/\"segments\":\"collaboration-shared-core\"/\"segments\":\"collaboration-shared-core,runtime-input-answer-persistence\"}"
+full_desktop_expected="${full_desktop_expected/\"segments\":\"collaboration-shared-core\"/\"segments\":\"collaboration-shared-core,runtime-input-answer-persistence,python-runtime\"}"
 
 assert_desktop_case "latest conversation history runs its desktop regression" \
   'wework_desktop_e2e=true
@@ -1803,6 +1805,18 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/electron/src/runtime/plugin-development-manager.ts"
+
+assert_desktop_case "managed Python changes invoke real installation and adapter regressions" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"plugin-development"},{"id":"core-10","name":"Core / shard 10","segments":"python-runtime"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-6","name":"Cloud / shard 6","segments":"plugin-account-auth-password"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/electron/src/runtime/python-runtime.ts" \
+  "wework/e2e/desktop/modules/managed-python.mjs" \
+  "wework/e2e/desktop/scenarios/python-runtime.scenario.mjs"
 
 assert_desktop_case "DSH UI plugin files select composition coverage" \
   'wework_desktop_e2e=true

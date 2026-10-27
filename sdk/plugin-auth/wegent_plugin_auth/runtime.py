@@ -17,6 +17,8 @@ from typing import Iterator, Optional, Sequence
 from .transport import AuthError
 
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+# Cover desktop preparation (780s), native execution (180s), and transport overhead.
+BROKER_REQUEST_TIMEOUT_SECONDS = 18 * 60
 _NATIVE_EXECUTION: ContextVar[bool] = ContextVar(
     "wegent_native_execution", default=False
 )
@@ -43,6 +45,7 @@ PUBLIC_ERRORS = frozenset(
         "plugin_auth_broker_busy",
         "plugin_auth_invalid_command",
         "plugin_auth_exchange_rejected",
+        "python_runtime_unavailable",
     }
 )
 
@@ -136,7 +139,7 @@ def run_account_command(
             urllib.request.ProxyHandler({}), _NoRedirect()
         )
         try:
-            response = opener.open(request, timeout=200)
+            response = opener.open(request, timeout=BROKER_REQUEST_TIMEOUT_SECONDS)
         except urllib.error.HTTPError as error:
             response = error
         with response:

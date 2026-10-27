@@ -205,6 +205,7 @@ const developmentDockIdentity = resolveDevelopmentDockIdentity(process.env)
 const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
 const startupStartedAt = performance.now()
 const pluginDevelopmentInstance = process.env.WEWORK_INSTANCE_MODE === 'core-dsh-plugin-development'
+const pythonRuntimeEnabled = process.env.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP !== '1'
 const pluginDevelopmentCommand = commandLineValue(
   process.argv,
   '--wework-plugin-development-command'
@@ -1662,7 +1663,7 @@ function installIpc(): void {
   })
   ipcMain.handle('runtime:ensure-python', async () => {
     const pythonRuntime = await managedPythonRuntime()
-    if (process.env.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP === '1') {
+    if (!pythonRuntimeEnabled) {
       return pythonRuntime.status()
     }
     return pythonRuntime.ensure()
@@ -1855,10 +1856,9 @@ async function configureDesktopRuntime(): Promise<void> {
     registryDirectory: desktopControlRegistryDirectory(),
     window: () => mainWindow,
     smartApps: () => smartApps,
-    ensurePython:
-      !pluginDevelopmentInstance && process.env.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP !== '1'
-        ? async () => (await managedPythonRuntime()).ensure()
-        : undefined,
+    ensurePython: pythonRuntimeEnabled
+      ? async () => (await managedPythonRuntime()).ensure()
+      : undefined,
   })
   logStartupStep('desktop-control-bridge', 'started')
   await desktopControlBridge.start()
@@ -2489,7 +2489,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const nodeRuntime = await electronNodeRuntime()
   logStartupStep('node-runtime-prepare', 'completed')
   const pythonRuntime = await managedPythonRuntime()
-  if (!pluginDevelopmentInstance && process.env.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP !== '1') {
+  if (pythonRuntimeEnabled) {
     pythonRuntime.startBackgroundEnsure()
   }
   const cliBin = join(app.getPath('userData'), 'runtime', 'wework-cli-bin')
@@ -2529,10 +2529,9 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   nodeRuntime.environment.PATH = [cliBin, nodeRuntime.environment.PATH?.trim()]
     .filter(Boolean)
     .join(delimiter)
-  const runtimeEnvironment =
-    process.env.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP === '1'
-      ? { ...nodeRuntime.environment }
-      : pythonRuntime.environment()
+  const runtimeEnvironment = pythonRuntimeEnabled
+    ? pythonRuntime.environment()
+    : { ...nodeRuntime.environment }
   runtimeEnvironment.PATH = [cliBin, runtimeEnvironment.PATH?.trim()]
     .filter(Boolean)
     .join(delimiter)
