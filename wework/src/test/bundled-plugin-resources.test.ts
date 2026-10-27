@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, test } from 'vitest'
 
 const bundledMarketplaceManifests = [
@@ -287,7 +288,7 @@ describe('bundled plugin resources', () => {
     ['CRLF', '\r\n'],
   ])(
     'uses the Electron release builder and publishes both updater protocols (%s)',
-    (_name, lineEnding) => {
+    async (_name, lineEnding) => {
       const workflow = readFileSync(
         resolve(process.cwd(), '../.github/workflows/wework-app.yml'),
         'utf8'
@@ -352,7 +353,41 @@ describe('bundled plugin resources', () => {
         /Checkout release source[\s\S]*?uses: \.\/\.github\/actions\/setup-node-workspace[\s\S]*?collect-harness-runtime-release-assets\.mjs/
       )
       expect(workflow).toContain('Reusing immutable Harness Runtime asset')
-      expect(workflow).toContain('components-${channel}-linux-x64.json')
+      const publisher = workflow.match(
+        /node (wework\/scripts\/publish-desktop-update-channel\.mjs)\s+\\\r?\n\s+release-manifests "\$1" "\$RELEASE_VERSION" "\$RUNNER_TEMP"/
+      )?.[1]
+      expect(publisher).toBeDefined()
+      expect(workflow).toContain('publish_channel "$RELEASE_CHANNEL"')
+      expect(workflow).toMatch(
+        /if \[\[ "\$RELEASE_CHANNEL" == "stable" \]\]; then\r?\n\s+publish_channel beta/
+      )
+      const { planChannelUpdates } = await import(
+        pathToFileURL(resolve(process.cwd(), '..', publisher!)).href
+      )
+      const initial = planChannelUpdates({
+        channel: 'stable',
+        version: '1.2.3',
+        assetNames: [],
+      })
+      expect(initial.otherPlatforms).toContain('components-stable-linux-x64.json')
+      expect(initial.legacyWindows).toEqual(['components-stable-windows-x64.json', 'latest.yml'])
+      expect(initial.windowsV2).toEqual(['windows-stable-v2.json'])
+      const next = planChannelUpdates({
+        channel: 'stable',
+        version: '1.2.4',
+        assetNames: [...initial.otherPlatforms, ...initial.legacyWindows, ...initial.windowsV2],
+        macVersion: '1.2.3',
+        legacyVersion: '1.2.3',
+        legacyComponents: {
+          platform: 'windows',
+          appVersion: '1.2.3',
+          legacyMigration: { protocolVersion: 2, kind: 'self-contained-installer' },
+        },
+        windowsV2: { schemaVersion: 2, version: '1.2.3' },
+      })
+      expect(next.legacyWindows).toEqual([])
+      expect(next.windowsV2).toEqual(['windows-stable-v2.json'])
+      expect(next.otherPlatforms).toContain('components-stable-linux-x64.json')
       expect(
         readFileSync(
           resolve(process.cwd(), 'electron/src/runtime/component-update-manager.ts'),
