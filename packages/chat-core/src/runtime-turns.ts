@@ -68,6 +68,7 @@ export function hydrateRuntimeConversationTurns(
     ),
   ];
   const updatedTextIds = new Set<string>();
+  const recoveringTurnIds = new Set<string>();
   for (const action of actions) {
     if (!actionsAlreadyApplied)
       observed = reduceRuntimeConversationTurns(observed, action);
@@ -77,9 +78,26 @@ export function hydrateRuntimeConversationTurns(
     ) {
       updatedTextIds.add(action.itemId);
     }
+    if (
+      action.type === "block_created" &&
+      action.subtaskId &&
+      isRuntimeReconnectingBlock(action.block)
+    ) {
+      recoveringTurnIds.add(action.subtaskId);
+    }
   }
   const observedByTurn = new Map(observed.map((turn) => [turn.id, turn]));
-  return mergeRuntimeConversationTurns(observed, snapshot)
+  const reconciledSnapshot =
+    recoveringTurnIds.size === 0
+      ? snapshot
+      : snapshot.map((turn) =>
+          preserveLiveRecovery(
+            turn,
+            observedByTurn.get(turn.id),
+            recoveringTurnIds,
+          ),
+        );
+  return mergeRuntimeConversationTurns(observed, reconciledSnapshot)
     .filter((turn) => !turn.id || !superseded.has(turn.id))
     .map((turn) => {
       const latest = observedByTurn.get(turn.id);
@@ -107,6 +125,31 @@ export function hydrateRuntimeConversationTurns(
         }),
       };
     });
+}
+
+function preserveLiveRecovery(
+  snapshot: RuntimeConversationTurn,
+  latest: RuntimeConversationTurn | undefined,
+  recoveringTurnIds: ReadonlySet<string>,
+): RuntimeConversationTurn {
+  if (
+    snapshot.status !== "failed" ||
+    !snapshot.id ||
+    !recoveringTurnIds.has(snapshot.id) ||
+    !latest
+  )
+    return snapshot;
+  // Recovery observed during this read supersedes its older failure snapshot.
+  // A later live terminal event remains authoritative, including its real error.
+  return {
+    ...snapshot,
+    status: latest.status,
+    error: latest.error,
+    errorType: latest.errorType,
+    completedAt: latest.completedAt,
+    durationMs: latest.durationMs,
+    stoppedNotice: latest.stoppedNotice,
+  };
 }
 
 export function mergeRuntimeConversationTurns(
