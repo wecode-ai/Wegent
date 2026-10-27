@@ -93,7 +93,6 @@ def test_rust_owned_route_is_not_registered_in_python(method: str, path: str) ->
     ("module", "names"),
     [
         ("deliveries", ("list_issue_assignments", "list_loop_item_tasks")),
-        ("internal.callback", ("handle_callback",)),
         ("internal.robot_queue", ("emit_runtime_rpc",)),
         ("loop_item_executions", ("execution_statuses",)),
         ("wework_transcripts", ("release_lease_endpoint",)),
@@ -132,9 +131,26 @@ def test_url_metadata_cleanup_preserves_shared_ssrf_validation() -> None:
     assert callable(url_metadata._validate_url_for_ssrf)
 
 
+def test_execution_callback_retains_python_owner() -> None:
+    from app.api.endpoints.internal import callback
+
+    assert ("POST", "/internal/callback") in PYTHON_ROUTES
+    assert ("POST", "/api/internal/callback") not in _rust_owned_routes()
+    route = next(
+        route
+        for route in api_router.routes
+        if isinstance(route, APIRoute)
+        and route.path == "/internal/callback"
+        and "POST" in route.methods
+    )
+    assert route.endpoint is callback.handle_callback
+    assert route.response_model is callback.CallbackResponse
+
+
 @pytest.mark.parametrize(
     ("method", "path"),
     [
+        ("POST", "/internal/callback"),
         ("POST", "/teams"),
         ("PUT", "/teams/{team_id}"),
         ("POST", "/v1/wework-notifications"),

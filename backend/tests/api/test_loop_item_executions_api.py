@@ -348,9 +348,9 @@ def test_collaboration_batch_records_activity_and_persists_human_fact(
     assignments = assignment_activity.metadata_json["dispatch_assignments"]
     assert assignments[0]["agent_name"] == "Worker"
     assert assignments[1]["human_user_name"] == test_user.user_name
-    from app.services.collaboration_human_assignments import _round_human_task_binding
+    from app.services.collaboration_human_assignments import _round_human_task_bindings
 
-    round_binding = _round_human_task_binding(test_db, parent)
+    round_binding = _round_human_task_bindings(test_db, [parent]).get(parent.id)
     assert round_binding == {
         "humanAssignmentId": human_assignment_id,
         "dispatchId": "dispatch-1",

@@ -18,13 +18,14 @@ For terminal events (DONE, ERROR, CANCELLED), StatusUpdatingEmitter handles:
 """
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.db.session import SessionLocal
 from app.models.task import TaskResource
+from app.services.channels.callback import forward_event_to_channel_callbacks
 
 # Import channel callback modules to ensure they register with
 # ChannelCallbackRegistry in this worker process. Without these imports,
@@ -96,6 +97,100 @@ class CallbackResponse(BaseModel):
 
     status: str = "ok"
     message: Optional[str] = None
+
+
+@router.post("", response_model=CallbackResponse)
+async def handle_callback(
+    request: CallbackRequest,
+) -> CallbackResponse:
+    """Handle execution callback.
+
+    This endpoint receives execution events in OpenAI Responses API format
+    from executors and forwards them to the frontend via WebSocketResultEmitter.
+
+    For terminal events (DONE, ERROR, CANCELLED), StatusUpdatingEmitter handles:
+    - Database status updates
+    - Publishing TaskCompletedEvent for unified handling by SubscriptionTaskCompletionHandler
+
+    The event format is the same as SSE mode, ensuring consistency across
+    all execution modes (SSE, callback, device).
+
+    Args:
+        request: Callback request with event data in OpenAI Responses API format
+    Returns:
+        CallbackResponse indicating success
+    """
+    logger.debug(
+        f"[Callback] Received event: event_type={request.event_type}, "
+        f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+    )
+
+    try:
+        # Parse OpenAI Responses API event using shared parser
+        event = _event_parser.parse(
+            task_id=request.task_id,
+            subtask_id=request.subtask_id,
+            message_id=request.message_id,
+            event_type=request.event_type,
+            data=request.data,
+        )
+
+        if event is None:
+            # Lifecycle events are skipped
+            logger.debug(f"[Callback] Skipping lifecycle event: {request.event_type}")
+            return CallbackResponse(status="ok", message="Lifecycle event skipped")
+
+        # Keep database access outside the async emit path. Streaming events do
+        # not emit task-level status and therefore need no database connection.
+        user_id = _get_task_status_user_id(request.task_id, event.type)
+
+        # Emit event via WebSocketResultEmitter wrapped with StatusUpdatingEmitter
+        # StatusUpdatingEmitter intercepts terminal events (DONE, ERROR, CANCELLED)
+        # and handles:
+        # 1. Database status updates (including executor_name for container reuse)
+        # 2. Publishing TaskCompletedEvent for unified handling
+        ws_emitter = WebSocketResultEmitter(
+            task_id=request.task_id, subtask_id=request.subtask_id, user_id=user_id
+        )
+        emitter = StatusUpdatingEmitter(
+            wrapped=ws_emitter,
+            task_id=request.task_id,
+            subtask_id=request.subtask_id,
+            executor_name=request.executor_name,
+            executor_namespace=request.executor_namespace,
+        )
+        await emitter.emit(event)
+        await emitter.close()
+
+        # Publish to callback stream channel for any active SSE consumers
+        # (e.g., v1/responses with stream=True for ClaudeCode/Agno/Dify tasks)
+        await session_manager.publish_callback_event(request.subtask_id, event)
+
+        logger.debug(
+            f"[Callback] Event emitted: type={event.type}, "
+            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+        )
+
+        # Forward non-terminal events to registered channel callback services
+        # (e.g., DingTalk AI Card streaming). Terminal events (DONE, ERROR,
+        # CANCELLED) are handled by TaskCompletedEvent via send_task_result().
+        await forward_event_to_channel_callbacks(
+            task_id=request.task_id,
+            subtask_id=request.subtask_id,
+            event=event,
+            source="Callback",
+        )
+
+        # Note: TaskCompletedEvent is now published by StatusUpdatingEmitter
+        # for unified handling across all execution modes
+
+        return CallbackResponse(status="ok")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"[Callback] Error handling callback: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/batch", response_model=CallbackResponse)

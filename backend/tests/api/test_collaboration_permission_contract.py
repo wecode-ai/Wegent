@@ -12,7 +12,10 @@ from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.cloud_project import CloudProjectMemberResponse
-from app.services.cloud_project_visibility import project_participant_ids
+from app.services.cloud_project_visibility import (
+    project_membership_rows,
+    project_participant_ids,
+)
 from app.services.cloud_projects.responses import (
     list_project_responses,
     project_response,
@@ -309,6 +312,56 @@ def test_cp07_viewer_cannot_change_issue_status(test_client, scope, target_statu
         issue["status"],
         issue["version"],
     )
+
+
+@pytest.mark.parametrize("membership_mode", ["inherit", "restricted"])
+def test_cp05_cp08_batch_sources_keep_role_precedence_and_rejected_grants(
+    test_client, test_db, scope, membership_mode
+):
+    invite(test_client, scope, "Developer")
+    invite(test_client, scope, "Viewer", project=True)
+    project = test_db.get(CloudProject, scope["project"]["id"])
+    project.membership_mode = membership_mode
+    test_db.flush()
+    owner_id, member_id = scope["space"]["owner_user_id"], scope["user"].id
+    workspace, grants = project_membership_rows(test_db, project)
+
+    sources = collaboration_permission_service.project_sources_many(
+        project,
+        [test_db.get(User, owner_id), scope["user"]],
+        workspace=workspace,
+        grants=grants,
+    )
+
+    for user_id in (owner_id, member_id):
+        assert sources[user_id] == collaboration_permission_service.project_sources(
+            test_db, project, user_id
+        )
+    assert sources[owner_id][0]["role"] == "Maintainer"
+    assert sources[member_id][-1] == {"type": "direct", "role": "Viewer"}
+    rows = cloud_project_service.list_members(test_db, project.id, owner_id)
+    row = next(row for row in rows if row["user_id"] == member_id)
+    assert row["role"] == "Viewer"
+    assert row["inherited_role"] == (
+        "Developer" if membership_mode == "inherit" else None
+    )
+    grant = (
+        test_db.query(ResourceMember)
+        .filter_by(
+            resource_type="CloudProject",
+            resource_id=int(project.id),
+            entity_type="user",
+            entity_id=str(member_id),
+        )
+        .one()
+    )
+    grant.status = "rejected"
+    test_db.flush()
+    sources = collaboration_permission_service.project_sources_many(
+        project, [scope["user"]], workspace=workspace, grants=grants
+    )
+    assert all(source["type"] != "direct" for source in sources[member_id])
+    assert bool(sources[member_id]) == (membership_mode == "inherit")
 
 
 def test_cp08_lower_direct_role_never_masks_space_administration(

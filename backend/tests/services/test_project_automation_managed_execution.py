@@ -652,11 +652,12 @@ async def test_completion_handler_persists_comment_and_run_once(
 
 
 @pytest.mark.asyncio
-@pytest.mark.asyncio
+@pytest.mark.parametrize("batch", [False, True], ids=["single", "batch"])
 async def test_executor_callback_projects_managed_parent_comment(
     test_db,
     test_user,
     monkeypatch,
+    batch,
 ):
     task = TaskResource(
         user_id=test_user.id,
@@ -781,29 +782,35 @@ async def test_executor_callback_projects_managed_parent_comment(
         "publish_callback_event",
         AsyncMock(return_value=True),
     )
+    monkeypatch.setattr(
+        internal_callback,
+        "forward_event_to_channel_callbacks",
+        AsyncMock(),
+    )
 
-    response = await internal_callback.handle_batch_callback(
-        [
-            internal_callback.CallbackRequest(
-                event_type=ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
-                task_id=task.id,
-                subtask_id=73,
-                data={
-                    "response": {
-                        "output": [
+    request = internal_callback.CallbackRequest(
+        event_type=ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
+        task_id=task.id,
+        subtask_id=73,
+        data={
+            "response": {
+                "output": [
+                    {
+                        "content": [
                             {
-                                "content": [
-                                    {
-                                        "type": "output_text",
-                                        "text": "No suitable project assignee",
-                                    }
-                                ]
+                                "type": "output_text",
+                                "text": "No suitable project assignee",
                             }
                         ]
                     }
-                },
-            )
-        ]
+                ]
+            }
+        },
+    )
+    response = await (
+        internal_callback.handle_batch_callback([request])
+        if batch
+        else internal_callback.handle_callback(request)
     )
 
     test_db.refresh(run)
