@@ -19,6 +19,8 @@ const messages = {
   cancel: 'Cancel',
 }
 
+const originalDialogMethods = Object.getOwnPropertyDescriptors(HTMLDialogElement.prototype)
+
 function deferred() {
   let resolve!: () => void
   const promise = new Promise<void>(done => {
@@ -33,6 +35,20 @@ describe('WorkspaceCreateDialog', () => {
   const onClose = vi.fn()
 
   beforeEach(() => {
+    Object.defineProperties(HTMLDialogElement.prototype, {
+      showModal: {
+        configurable: true,
+        value(this: HTMLDialogElement) {
+          this.open = true
+        },
+      },
+      close: {
+        configurable: true,
+        value(this: HTMLDialogElement) {
+          this.open = false
+        },
+      },
+    })
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     container = document.createElement('div')
     document.body.append(container)
@@ -43,6 +59,11 @@ describe('WorkspaceCreateDialog', () => {
   afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()
+    for (const method of ['showModal', 'close']) {
+      const original = originalDialogMethods[method]
+      if (original) Object.defineProperty(HTMLDialogElement.prototype, method, original)
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, method)
+    }
   })
 
   function byTestId<T extends HTMLElement = HTMLButtonElement>(id: string): T {
@@ -100,6 +121,9 @@ describe('WorkspaceCreateDialog', () => {
     expect(byTestId<HTMLInputElement>('collaboration-workspace-name-input').disabled).toBe(true)
     await click('collaboration-workspace-create-confirm')
     await click('collaboration-workspace-create-cancel')
+    const cancel = new Event('cancel', { cancelable: true })
+    await act(async () => container.querySelector('dialog')!.dispatchEvent(cancel))
+    expect(cancel.defaultPrevented).toBe(true)
     expect(onCreate).toHaveBeenCalledExactlyOnceWith({
       name: 'New space',
       description: 'Description',
@@ -110,6 +134,41 @@ describe('WorkspaceCreateDialog', () => {
     await act(async () => pending.resolve())
     expect(container.querySelector('[role="status"]')).toBeNull()
     expect(byTestId('collaboration-workspace-create-confirm').disabled).toBe(false)
+  })
+
+  it('opens a native modal, focuses its name field and restores the opener on close', async () => {
+    const opener = document.createElement('button')
+    document.body.append(opener)
+    opener.focus()
+    try {
+      await render(vi.fn().mockResolvedValue(undefined))
+      const dialog = container.querySelector('dialog')!
+      expect(dialog.open).toBe(true)
+      expect(document.activeElement).toBe(byTestId('collaboration-workspace-name-input'))
+      await act(async () => dialog.dispatchEvent(new Event('cancel', { cancelable: true })))
+      expect(onClose).toHaveBeenCalledOnce()
+
+      await act(async () => root.render(null))
+      expect(dialog.open).toBe(false)
+      expect(document.activeElement).toBe(opener)
+    } finally {
+      opener.remove()
+    }
+  })
+
+  it.each([
+    ['collaboration-workspace-name-input', 'Corrected space'],
+    ['collaboration-workspace-description-input', 'Corrected description'],
+    ['collaboration-workspace-owner-select', 'engineering'],
+  ])('clears stale creation errors when editing %s', async (field, value) => {
+    await render(vi.fn().mockRejectedValue(new Error('Invalid workspace')))
+    await change('collaboration-workspace-name-input', 'New space')
+    await click('collaboration-workspace-create-confirm')
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Invalid workspace')
+
+    await change(field, value)
+
+    expect(container.querySelector('[role="alert"]')).toBeNull()
   })
 
   it.each([

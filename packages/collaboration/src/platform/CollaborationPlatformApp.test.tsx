@@ -884,7 +884,24 @@ function PlatformControllerHarness({
 }
 
 const originalGetAnimations = Element.prototype.getAnimations;
+const originalDialogMethods = Object.getOwnPropertyDescriptors(
+  HTMLDialogElement.prototype,
+);
 beforeEach(() => {
+  Object.defineProperties(HTMLDialogElement.prototype, {
+    showModal: {
+      configurable: true,
+      value(this: HTMLDialogElement) {
+        this.open = true;
+      },
+    },
+    close: {
+      configurable: true,
+      value(this: HTMLDialogElement) {
+        this.open = false;
+      },
+    },
+  });
   Object.defineProperty(Range.prototype, "getClientRects", {
     configurable: true,
     value: () => [],
@@ -919,6 +936,12 @@ afterEach(async () => {
   vi.useRealTimers();
   container.remove();
   vi.unstubAllGlobals();
+  for (const method of ["showModal", "close"]) {
+    const original = originalDialogMethods[method];
+    if (original)
+      Object.defineProperty(HTMLDialogElement.prototype, method, original);
+    else Reflect.deleteProperty(HTMLDialogElement.prototype, method);
+  }
   if (originalGetAnimations)
     Element.prototype.getAnimations = originalGetAnimations;
   else Reflect.deleteProperty(Element.prototype, "getAnimations");

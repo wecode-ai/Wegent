@@ -373,6 +373,26 @@ export function createDesktopScenario({
           { value: 'Created through the real native Wework Collaboration UI.' }
         )
         await control.command(
+          'nativePress',
+          scoped('[data-testid="collaboration-workspace-create-confirm"]'),
+          { key: 'Tab' }
+        )
+        assert.equal(
+          await control.command('getActiveElementTestId', 'body'),
+          'collaboration-workspace-name-input',
+          'Tab escaped the workspace creation modal'
+        )
+        await control.command(
+          'nativePress',
+          scoped('[data-testid="collaboration-workspace-name-input"]'),
+          { key: 'Shift+Tab' }
+        )
+        assert.equal(
+          await control.command('getActiveElementTestId', 'body'),
+          'collaboration-workspace-create-confirm',
+          'Shift+Tab escaped the workspace creation modal'
+        )
+        await control.command(
           'click',
           scoped('[data-testid="collaboration-workspace-create-confirm"]')
         )
@@ -393,6 +413,11 @@ export function createDesktopScenario({
           'fill',
           scoped('[data-testid="collaboration-workspace-name-input"]'),
           { value: workspaceName }
+        )
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-workspace-create-error"]'),
+          { visible: false, timeoutMs: uiTimeoutMs }
         )
         await control.command(
           'clickWhenEnabled',
