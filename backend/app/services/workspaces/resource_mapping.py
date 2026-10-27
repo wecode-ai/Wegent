@@ -3,6 +3,8 @@
 
 """Map Kind grants to Workspace API values."""
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -13,6 +15,9 @@ from app.schemas.base_role import BaseRole
 from app.services.device.runtime_route import runtime_device_route_id
 from app.services.team_access_policy import can_edit_team
 from app.services.workspaces.storage import workspace_from_kind
+
+if TYPE_CHECKING:
+    from app.services.execution.readiness_context import TeamReadinessContext
 
 
 def agent_values(
@@ -106,8 +111,9 @@ def personal_environment_values(
     *,
     connection_status: str,
     owner: User,
-    workspace_ids: list[str],
+    workspace_ids: list[str] | None,
 ) -> dict[str, object]:
+    """Expose selector device data, including bindings only when requested."""
     spec = _kind_spec(device)
     device_type = str(spec.get("deviceType") or "local")
     return {
@@ -124,7 +130,7 @@ def personal_environment_values(
         "owner_id": str(owner.id),
         "owner_name": owner.user_name,
         "status": connection_status,
-        "workspace_ids": workspace_ids,
+        **({"workspace_ids": workspace_ids} if workspace_ids is not None else {}),
         "updated_at": device.updated_at,
     }
 
@@ -172,12 +178,14 @@ def owner_values(
 def agent_display_name(team: Kind) -> str:
     """Use the user-facing Team name throughout collaboration catalogs."""
     payload = team.json if isinstance(team.json, dict) else {}
-    metadata = payload.get("metadata")
+    return agent_catalog_name(team.name, payload.get("metadata"))
+
+
+def agent_catalog_name(name: str, metadata: object) -> str:
+    """Resolve a display name without loading the Team's execution specification."""
     display_name = metadata.get("displayName") if isinstance(metadata, dict) else None
     return (
-        display_name
-        if isinstance(display_name, str) and display_name.strip()
-        else team.name
+        display_name if isinstance(display_name, str) and display_name.strip() else name
     )
 
 
@@ -186,6 +194,7 @@ def agent_status(
     team: Kind,
     *,
     execution_user_id: int,
+    readiness: "TeamReadinessContext | None" = None,
 ) -> str:
     """Return whether the Agent can execute for the requesting user."""
     if not team.is_active:
@@ -200,6 +209,7 @@ def agent_status(
             db,
             team=team,
             execution_user_id=execution_user_id,
+            context=readiness,
         )
     except ValueError:
         return "unavailable"
