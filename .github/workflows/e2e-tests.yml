@@ -490,6 +490,26 @@ jobs:
           --health-timeout=5s
           --health-retries=15
 
+      mysql-replica:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: test123
+          MYSQL_DATABASE: wegent_test
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=2s
+          --health-timeout=5s
+          --health-start-period=5s
+          --health-retries=30
+
+      attachment-redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=2s
+          --health-timeout=5s
+          --health-retries=15
+
       etcd:
         image: quay.io/coreos/etcd:v3.5.16
         env:
@@ -970,6 +990,37 @@ jobs:
         with:
           name: knowledge-python-gateway-api-e2e
           path: .ci-artifacts/knowledge-python-gateway/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Run attachment upload MySQL replication E2E
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          E2E_REPLICA_DATABASE_URL: mysql+pymysql://root:test123@mysql-replica:3306/wegent_test
+          E2E_REPLICATION_SOURCE_HOST: mysql
+          REDIS_URL: redis://attachment-redis:6379/0
+          EXECUTOR_MANAGER_URL: http://localhost:8001
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ENVIRONMENT: development
+          INTERNAL_SERVICE_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
+          WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-backend-rs
+          E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/attachment-upload-replica
+          E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PYTHONPATH: ..:.
+        run: |
+          set -o pipefail
+          mkdir -p "$E2E_REPORT_DIR"
+          uv run --no-sync python tests/e2e/attachment_upload_replica.py \
+            2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
+
+      - name: Upload attachment upload replication E2E report
+        if: always() && matrix.shardIndex == 1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: attachment-upload-replica-e2e
+          path: .ci-artifacts/attachment-upload-replica/
           if-no-files-found: error
           retention-days: 14
 
