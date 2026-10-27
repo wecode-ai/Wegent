@@ -7,9 +7,14 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use brz_mysql::MysqlService;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
 use crate::task_store::DefaultTaskStore;
+
+/// Both tests run concurrently in one process, so the timestamp alone is not a
+/// unique database name.
+static DATABASE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 async fn create_tasks_table(mysql: &MysqlService) {
     mysql
@@ -81,12 +86,17 @@ where
     let url = |database: &str| format!("mysql://root@{address}/{database}?ssl-mode=disabled");
     let admin = MysqlService::connect(&url("mysql")).await.unwrap();
     let name = format!(
-        "tasks_search_{}",
+        "tasks_search_{}_{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
+        DATABASE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     );
+    admin
+        .execute(format!("DROP DATABASE IF EXISTS {name}"), ())
+        .await
+        .unwrap();
     admin
         .execute(format!("CREATE DATABASE {name}"), ())
         .await
