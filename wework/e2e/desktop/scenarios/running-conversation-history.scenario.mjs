@@ -327,7 +327,7 @@ async function waitForLongHistoryHydration(control, timeoutMs) {
         timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
       })
     )
-    if (snapshot.activeRuntimeAssistant?.displayItemCount >= LONG_HISTORY_ITEM_COUNT) {
+    if (snapshot.runtimeAssistantDisplayItemCount >= LONG_HISTORY_ITEM_COUNT) {
       return snapshot
     }
     await new Promise(resolve => setTimeout(resolve, 100))
@@ -693,7 +693,7 @@ export function createDesktopScenario({
         'The long running transcript was not restored into the conversation cache'
       )
       assert.ok(
-        hydratedSnapshot.activeRuntimeAssistant?.displayItemCount >= LONG_HISTORY_ITEM_COUNT,
+        hydratedSnapshot.runtimeAssistantDisplayItemCount >= LONG_HISTORY_ITEM_COUNT,
         'The restored conversation did not include the complete long tool history'
       )
       await assertLargeHistoryTransfer(executorHome, taskId, moved.address.threadId)
