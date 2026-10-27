@@ -38,6 +38,11 @@ import {
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
 import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import {
+  getRuntimeStreamDiagnostics,
+  startRuntimeStreamDiagnostics,
+  stopRuntimeStreamDiagnostics,
+} from '@/stream/runtimeStreamDiagnostics'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   getDesktopControlDiagnostics,
@@ -3267,9 +3272,16 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       return String(finishedCount)
     }
+    case 'startRuntimeStreamDiagnostics':
+      startRuntimeStreamDiagnostics()
+      return 'started'
+    case 'stopRuntimeStreamDiagnostics':
+      stopRuntimeStreamDiagnostics()
+      return JSON.stringify(getRuntimeStreamDiagnostics())
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
+        runtimeStream: getRuntimeStreamDiagnostics(),
         desktopControlTransport: getDesktopControlDiagnostics(),
         nativeTerminalKeys: getNativeTerminalDiagnostics(),
         network: performance.getEntriesByType('resource').map(entry => {

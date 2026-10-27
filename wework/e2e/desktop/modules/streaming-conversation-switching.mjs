@@ -51,6 +51,10 @@ async function diagnoseSwitchingFailure(control, timeoutMs, stage) {
   console.info('[conversation-switching] verification failed', { stage })
   try {
     const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    console.info(
+      '[conversation-switching] renderer stream timing after failure',
+      debug.runtimeStream
+    )
     const address = debug.workbench?.currentRuntimeTask
     if (!address?.taskId) {
       console.info('[conversation-switching] owner snapshot unavailable', { reason: 'no-task' })
@@ -143,6 +147,7 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
       try {
         await openNewChatWithE2EModel(control, uiTimeoutMs)
         await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
+        await control.command('startRuntimeStreamDiagnostics', 'body')
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: PREFIX })
         stage = 'native-history'
@@ -228,6 +233,12 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
       } finally {
         releaseTail?.()
         releaseDone?.()
+        try {
+          const timing = await control.command('stopRuntimeStreamDiagnostics', 'body')
+          console.info('[conversation-switching] renderer stream timing', JSON.parse(timing))
+        } catch {
+          // A failed diagnostic command must never replace the original assertion.
+        }
       }
       await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
     },
