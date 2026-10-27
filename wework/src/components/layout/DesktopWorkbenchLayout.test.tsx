@@ -14427,7 +14427,10 @@ describe('DesktopWorkbenchLayout', () => {
       const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
       const { rerender } = render(<DesktopWorkbenchLayout {...propsWithFileMessage(taskA)} />)
 
-      await userEvent.click(activePane().getByRole('button', { name: /正在编辑 outside\.md/ }))
+      const fileTrigger = activePane().getByText('正在编辑 outside.md')
+      expect(fileTrigger.closest('button')).toHaveAccessibleName(/正在编辑 outside\.md/)
+      expect(fileTrigger).toBeVisible()
+      await userEvent.click(fileTrigger)
       expect(await activePane().findByTestId('workspace-markdown-preview')).toHaveTextContent(
         'outside workspace preview'
       )
