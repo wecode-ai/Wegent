@@ -1,38 +1,51 @@
 import type { UnifiedModel } from '@wegent/chat-core/models'
 import { localCodexModelSource } from '@wegent/chat-core/runtime-model-catalog'
-import { runnerModelKey, type RunnerModel } from './runnerRouting'
+import {
+  cloudRunnerModelIdentity,
+  runnerModelIdentity,
+  type RunnerModel,
+  type RunnerModelIdentity,
+} from './runnerRouting'
 
-/** Adapt execution identities to the shared picker without losing catalog metadata. */
-export function runnerModelToUnifiedModel(
-  model: RunnerModel,
-  cloudCatalog: UnifiedModel[]
-): UnifiedModel {
-  if (model.source === 'cloud') {
-    const ref = model.cloud_model
-    const catalogModel = cloudCatalog.find(
-      item =>
-        item.name === ref?.name &&
-        item.type === ref?.type &&
-        item.namespace === ref?.namespace &&
-        item.resourceUserId === ref?.resource_user_id
-    )
-    if (!catalogModel) throw new Error('Cloud model is missing from its catalog')
-    return { ...catalogModel, name: runnerModelKey(model) }
+export interface RunnerModelCatalogEntry {
+  model: UnifiedModel
+  identity: RunnerModelIdentity
+  isDefault: boolean
+}
+
+/** Native catalog DTOs enter the common display catalog once; cloud models stay unchanged. */
+export function runnerModelCatalog(
+  nativeModels: RunnerModel[],
+  cloudModels: UnifiedModel[],
+  runtime: RunnerModelIdentity['runtime']
+): RunnerModelCatalogEntry[] {
+  const entries: RunnerModelCatalogEntry[] = nativeModels
+    .filter(model => model.runtime === runtime)
+    .map(nativeModel => {
+      const source =
+        runtime === 'codex'
+          ? localCodexModelSource({
+              providerId: nativeModel.provider,
+              providerName: nativeModel.account_label,
+              providerType: nativeModel.provider === 'openai' ? 'official' : 'provider',
+            })
+          : { provider: 'local' }
+      return {
+        model: {
+          ...source,
+          name: nativeModel.model_id,
+          type: 'runtime',
+          displayName: nativeModel.label,
+          modelId: nativeModel.model_id,
+          runtime: { family: runtime, provider: nativeModel.provider },
+        },
+        identity: runnerModelIdentity(nativeModel),
+        isDefault: nativeModel.is_default,
+      }
+    })
+  for (const model of cloudModels) {
+    const identity = cloudRunnerModelIdentity(model, runtime)
+    if (identity) entries.push({ model, identity, isDefault: false })
   }
-  const source =
-    model.runtime === 'codex'
-      ? localCodexModelSource({
-          providerId: model.provider,
-          providerName: model.account_label,
-          providerType: model.provider === 'openai' ? 'official' : 'provider',
-        })
-      : { provider: 'local' }
-  return {
-    ...source,
-    name: runnerModelKey(model),
-    type: 'runtime',
-    displayName: model.label,
-    modelId: model.model_id,
-    runtime: { family: model.runtime },
-  }
+  return entries
 }

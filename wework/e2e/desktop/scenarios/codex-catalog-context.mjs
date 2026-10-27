@@ -21,7 +21,7 @@ const PROMPT = 'WEWORK_CATALOG_CONTEXT_500K'
 
 function catalogRestartCompleted(log) {
   const write =
-    /app IPC request finished .* method=runtime\.codex\.catalog\.overrides\.write[^\n]* ok=true/.exec(
+    /app IPC request finished .* method=runtime\.codex\.catalog\.overrides\.(?:write|delete)[^\n]* ok=true/.exec(
       log
     )
   if (!write) return false
@@ -48,7 +48,7 @@ function catalogRestartCompleted(log) {
   return false
 }
 
-async function waitForCatalogRestart(control, executorLogPath, fromOffset) {
+export async function waitForCatalogRestart(control, executorLogPath, fromOffset) {
   const startedAt = Date.now()
   let confirmed = false
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
@@ -150,6 +150,7 @@ export function createCatalogContextVerification({
       // A customized row confirms persistence before the optional restart confirmation.
       const restartLogOffset = (await readFile(executorLogPath, 'utf8')).length
       await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
+      await waitForCatalogRestart(control, executorLogPath, restartLogOffset)
       await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
         visible: false,
       })
@@ -158,7 +159,6 @@ export function createCatalogContextVerification({
         `[data-testid="codex-official-model-row-openai-${modelId}"]`,
         { text: '已自定义' }
       )
-      await waitForCatalogRestart(control, executorLogPath, restartLogOffset)
       await control.command('navigate', 'body', { value: '/' })
       await createSingleRootLocalProject(control, workspacePath, 'catalog-context-500k')
       await selectE2EModel(control, modelId, modelLabel, '', 'openai')
