@@ -658,7 +658,7 @@ pnpm --dir frontend test -- src/__tests__/utils/test_example.test.ts
 
 ## E2E resource reuse and shard allocation
 
-Platform E2E keeps its four existing shards. S3 uploads reuse shard 2's MySQL, Redis and MinIO; media hosting reuses the same services in shard 3. Test entry points, assertions and evidence artifacts are preserved. Redis uses a separate logical database, and media tools are installed in the shared image. Replication starts its dedicated replica and broker only in shard 3, saves logs and removes the containers on success or failure. Remote knowledge indexing moves to shard 4.
+Platform E2E keeps its four existing shards. S3 uploads reuse shard 2's MySQL, Redis and MinIO; media hosting reuses the same services in shard 3. Test entry points, assertions and evidence artifacts are preserved. Redis uses a separate logical database, and media tools are installed in the shared image. Replication starts its dedicated replica and broker only in shard 3, saves logs and removes the containers on success or failure. The replica health probe authenticates over TCP and executes `SELECT 1`, so the entrypoint's temporary socket-only server cannot satisfy readiness. Remote knowledge indexing moves to shard 4.
 
 The allocation uses successful runs [40548056927](https://github.com/wecode-ai/Wegent/actions/runs/40548056927) and [40547828678](https://github.com/wecode-ai/Wegent/actions/runs/40547828678): shard 1's remote indexing took 149–164 seconds, replication 20–26 seconds, media hosting 24–26 seconds, and S3 uploads about 6 seconds. Extra work moves off shard 1 onto lighter existing shards without adding machines. Reassess using actual test-step duration and cumulative runner time, excluding queue time.
 

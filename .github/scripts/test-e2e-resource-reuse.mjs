@@ -97,6 +97,7 @@ for (const [mode, expectedStatus, expectedTests] of [
   ["success", 0, 1],
   ["test-failure", 37, 1],
   ["startup-failure", 1, 0],
+  ["temporary-socket-server", 0, 1],
 ]) {
   test(`replica resources are released after ${mode}`, () => {
     const root = mkdtempSync(join(tmpdir(), "e2e-resource-reuse-"));
@@ -109,9 +110,23 @@ const command = path.basename(process.argv[1])
 const args = process.argv.slice(2)
 fs.appendFileSync(process.env.CALL_LOG, JSON.stringify({ command, args }) + '\\n')
 if (command === 'docker' && args[0] === 'inspect') {
-  console.log(process.env.TEST_MODE === 'startup-failure' ? 'exited unhealthy' : 'running healthy')
+  let health = process.env.TEST_MODE === 'startup-failure' ? 'exited unhealthy' : 'running healthy'
+  if (process.env.TEST_MODE === 'temporary-socket-server' && args.at(-1).startsWith('attachment-replica-')) {
+    const calls = fs.readFileSync(process.env.CALL_LOG, 'utf8').trim().split('\\n').map(JSON.parse)
+    const start = calls.find(call => call.command === 'docker' && call.args.includes('mysql:8.0'))
+    const probe = start.args.find(arg => arg.startsWith('--health-cmd='))
+    const checks = calls.filter(call => call.args[0] === 'inspect' && call.args.at(-1).startsWith('attachment-replica-')).length
+    // The entrypoint's temporary server accepts sockets but has no TCP listener.
+    if (checks === 1 && probe.includes('--protocol=TCP')) health = 'running starting'
+  }
+  console.log(health)
 }
 if (command === 'uv' && process.env.TEST_MODE === 'test-failure') process.exit(37)
+if (command === 'uv' && process.env.TEST_MODE === 'temporary-socket-server') {
+  const calls = fs.readFileSync(process.env.CALL_LOG, 'utf8').trim().split('\\n').map(JSON.parse)
+  const checks = calls.filter(call => call.args[0] === 'inspect' && call.args.at(-1).startsWith('attachment-replica-')).length
+  if (checks < 2) process.exit(42)
+}
 `;
       for (const name of ["docker", "uv"]) {
         writeFileSync(join(root, name), stub);

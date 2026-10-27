@@ -626,7 +626,7 @@ pnpm --filter wecode-ai-assistant test -- src/__tests__/utils/test_example.test.
 
 ## E2E 资源复用与分片分配
 
-平台 E2E 保持四个既有分片，S3 上传测试复用 shard 2 的 MySQL、Redis 和 MinIO，媒体托管测试复用 shard 3 的相同服务。测试入口、断言和证据制品保持不变；Redis 使用独立逻辑库，媒体校验工具预装在共享镜像中。复制测试在 shard 3 按需启动专用副本和 broker，结束或失败时保存日志并删除容器，不在其他分片常驻。知识远程索引测试移至 shard 4。
+平台 E2E 保持四个既有分片，S3 上传测试复用 shard 2 的 MySQL、Redis 和 MinIO，媒体托管测试复用 shard 3 的相同服务。测试入口、断言和证据制品保持不变；Redis 使用独立逻辑库，媒体校验工具预装在共享镜像中。复制测试在 shard 3 按需启动专用副本和 broker，结束或失败时保存日志并删除容器，不在其他分片常驻。副本的健康探针通过 TCP 认证执行 `SELECT 1`，避免把初始化期间仅监听 Unix socket 的临时实例误判为就绪。知识远程索引测试移至 shard 4。
 
 该分配参考成功运行 [40548056927](https://github.com/wecode-ai/Wegent/actions/runs/40548056927) 和 [40547828678](https://github.com/wecode-ai/Wegent/actions/runs/40547828678)：shard 1 的知识索引步骤耗时 149–164 秒，复制步骤耗时 20–26 秒，媒体测试耗时 24–26 秒，S3 测试约 6 秒。移走 shard 1 的额外步骤，并在现有较轻分片承载附件测试；不增加机器，不以增加并行 job 缩短墙钟时间。后续按实际测试步骤耗时与累计 runner 时间复核分配，不计排队时间。
 

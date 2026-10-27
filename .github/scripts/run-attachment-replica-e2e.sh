@@ -39,10 +39,12 @@ wait_for_container() {
 
 replica="attachment-replica-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 broker="attachment-redis-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+# The entrypoint's temporary socket-only server must not satisfy readiness.
 docker run -d --name "$replica" --network "$E2E_DOCKER_NETWORK" \
   --network-alias mysql-replica \
   -e MYSQL_ROOT_PASSWORD=test123 -e MYSQL_DATABASE=wegent_test \
-  --health-cmd='mysqladmin ping' --health-interval=2s \
+  --health-cmd='MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP --host=127.0.0.1 --user=root --execute="SELECT 1"' \
+  --health-interval=2s \
   --health-timeout=5s --health-start-period=5s --health-retries=30 \
   mysql:8.0 > /dev/null
 containers+=("$replica")
