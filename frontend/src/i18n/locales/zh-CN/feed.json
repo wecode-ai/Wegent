@@ -391,6 +391,8 @@
     "binding_success": "绑定成功",
     "group_binding_waiting_title": "正在等待群聊消息...",
     "group_binding_waiting_desc": "请在群聊中 @机器人 发送任意消息",
+    "binding_start_failed": "启动绑定失败，请检查网络后重试",
+    "binding_wait_timeout": "长时间未收到绑定消息，请确认机器人已加入群聊后重试",
     "group_bound_title": "已绑定群聊",
     "group_unbound_title": "尚未绑定群聊",
     "bind_group_button": "点击绑定群聊",

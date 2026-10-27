@@ -202,6 +202,38 @@ describe('NotificationSection private binding dialog', () => {
     expect(await screen.findByText('绑定成功')).toBeInTheDocument()
   })
 
+  test('stops waiting and allows retry when starting the binding fails', async () => {
+    const user = userEvent.setup()
+    const onStartBinding = jest.fn().mockRejectedValue(new Error('binding start failed'))
+    const onCancelBinding = jest.fn().mockResolvedValue(undefined)
+
+    jest.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    render(
+      <NotificationSectionHarness
+        availableChannels={[
+          {
+            id: 410,
+            name: '钉钉',
+            channel_type: 'dingtalk',
+            is_bound: false,
+          },
+        ]}
+        onStartBinding={onStartBinding}
+        onCancelBinding={onCancelBinding}
+      />
+    )
+
+    await user.click(screen.getByRole('switch', { name: '未启用私聊' }))
+    await user.click(screen.getByTestId('private-binding-start-button'))
+
+    await waitFor(() => {
+      expect(onStartBinding).toHaveBeenCalledWith(410, true, false)
+    })
+    expect(screen.queryByText('正在等待绑定...')).not.toBeInTheDocument()
+    expect(screen.getByTestId('private-binding-start-button')).toBeEnabled()
+  })
+
   test('reuses existing group binding without opening the group binding dialog', async () => {
     const user = userEvent.setup()
     const onStartBinding = jest.fn().mockResolvedValue(undefined)

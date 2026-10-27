@@ -391,6 +391,8 @@
     "binding_success": "Binding completed",
     "group_binding_waiting_title": "Waiting for group chat message...",
     "group_binding_waiting_desc": "Please @mention the bot in the group chat",
+    "binding_start_failed": "Failed to start binding. Please check your connection and retry.",
+    "binding_wait_timeout": "No binding message received. Make sure the bot has joined the group chat and retry.",
     "group_bound_title": "Group chat bound",
     "group_unbound_title": "No group chat bound",
     "bind_group_button": "Click to bind group chat",
