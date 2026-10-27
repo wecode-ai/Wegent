@@ -51,6 +51,8 @@ def _ensure_subscription_task_event_handlers_registered() -> None:
 
     _subscription_event_handlers_registered = True
     logger.info("[subscription_tasks] Subscription TaskCompletedEvent handler ready")
+
+
 # Prometheus metrics
 SUBSCRIPTION_EXECUTIONS_TOTAL = Counter(
     "subscription_executions_total",
@@ -1571,6 +1573,7 @@ def execute_subscription_task(
     """
     from app.db.session import get_db_session
 
+    _ensure_subscription_task_event_handlers_registered()
     start_time = time.time()
     trigger_type = "unknown"
 
@@ -1963,6 +1966,7 @@ def execute_subscription_task_sync(
     """
     from app.db.session import get_db_session
 
+    _ensure_subscription_task_event_handlers_registered()
     start_time = time.time()
     trigger_type = "unknown"
 
