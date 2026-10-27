@@ -286,6 +286,46 @@ export function createDesktopScenario({
         { value: 'src' }
       )
       await waitText('Result 0 ui-only-marker')
+      await frameAction('fill', '#draft', 'restart draft')
+      const runtimeBefore = JSON.parse(
+        await control.command('getDesktopRuntimeDiagnostics', 'body')
+      )
+      assert.ok(runtimeBefore.executorPid > 0)
+      process.kill(runtimeBefore.executorPid, 'SIGTERM')
+      const reconnectDeadline = Date.now() + 30000
+      let restarted = false
+      do {
+        const runtimeAfter = JSON.parse(
+          await control.command('getDesktopRuntimeDiagnostics', 'body')
+        )
+        if (
+          runtimeAfter.executorPid > 0 &&
+          runtimeAfter.executorPid !== runtimeBefore.executorPid
+        ) {
+          try {
+            await requestExecutor(control, 'executor.health', {}, 1000)
+            restarted = true
+            break
+          } catch (error) {
+            assert.match(
+              String(error),
+              /not ready|not connected|transport|unavailable|disconnected/i
+            )
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, 100))
+      } while (Date.now() < reconnectDeadline)
+      assert.ok(restarted, 'The isolated executor must restart')
+      assert.equal(
+        await control.command('getAttribute', original + ' [data-testid="mcp-app-frame"]', {
+          value: 'src',
+        }),
+        frameUrl
+      )
+      assert.equal(await frameAction('value', '#draft'), 'restart draft')
+      await frameAction('click', '#refresh')
+      await waitText('Counter 1')
+      assert.equal(await frameAction('attribute', 'body', 'data-integrity'), 'verified')
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', composer)
       await control.command('waitFor', '[data-testid="mcp-app-frame"]', { visible: false })
