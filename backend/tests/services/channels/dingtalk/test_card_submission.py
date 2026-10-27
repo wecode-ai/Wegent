@@ -105,16 +105,33 @@ def receiver(binding):
 async def test_recovered_submission_starts_once_without_holding_receipt(
     monkeypatch, submitted, receiver, receipt, state
 ):
+    """Keep the submission deadline and receipt lease outside model execution."""
     receipt.state = state
     await receiver.inbox.enqueue(receipt)
     receiver._run = AsyncMock(return_value=receiver._recover_submission(receipt))
     started = asyncio.Event()
     finished = asyncio.Event()
     executions = []
+    submission_active = False
+
+    async def wait_for_submission(awaitable, *, timeout):
+        """Track the real submission timeout scope independently of scheduler speed."""
+        nonlocal submission_active
+        assert timeout == card_follow_up.SUBMISSION_TIMEOUT_SECONDS
+        submission_active = True
+        try:
+            return await asyncio.wait_for(awaitable, timeout=timeout)
+        finally:
+            submission_active = False
+
+    submission_asyncio = Mock(wraps=asyncio)
+    submission_asyncio.wait_for = AsyncMock(side_effect=wait_for_submission)
+    monkeypatch.setattr(card_follow_up, "asyncio", submission_asyncio)
 
     async def run(execution, handler):
         executions.append(execution.subtask_id)
         assert not receiver.inbox.claimed
+        assert not submission_active
         assert execution.subtask_id == 203
         assert execution.user_subtask_id == 204
         assert execution.user_id == 10
@@ -125,15 +142,13 @@ async def test_recovered_submission_starts_once_without_holding_receipt(
         return True
 
     monkeypatch.setattr(CardTaskExecution, "run", run)
-    # Scale the submission deadline down; it must not apply to the model.
-    monkeypatch.setattr(card_follow_up, "SUBMISSION_TIMEOUT_SECONDS", 0.01)
+    # Assert the deadline's scope directly, without a CI-sensitive 10 ms budget.
     receiver._schedule("event-1")
     jobs = list(receiver._jobs)
     try:
         await asyncio.wait_for(started.wait(), timeout=1)
         assert receiver.inbox.records["event-1"].state == "completed"
-        done, _ = await asyncio.wait(jobs, timeout=0.03)
-        assert not done
+        assert not any(job.done() for job in jobs)
         # A different worker may recover the receipt during model execution.
         await receiver._run_record("event-1")
         assert executions == [203]

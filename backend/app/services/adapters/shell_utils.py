@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.schemas.kind import Shell
+from app.services.capability_lookup import ExecutionCapabilityLookup
 from app.services.capability_reference_service import get_referenced_capability
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,12 @@ def find_shell_json(
 
 
 def get_shell_by_name(
-    db: Session, shell_name: str, user_id: int, namespace: str = "default"
+    db: Session,
+    shell_name: str,
+    user_id: int,
+    namespace: str = "default",
+    *,
+    lookup: ExecutionCapabilityLookup | None = None,
 ) -> Optional[Kind]:
     """
     Get a Shell by name, checking user's shells, group shells, and public shells.
@@ -123,48 +129,23 @@ def get_shell_by_name(
         Kind object (for user/group shells) or public shell Kind object (for public shells),
         or None if not found.
     """
-    from app.services.group_permission import get_user_groups
-
-    # First, try to find in user's custom shells (namespace='default')
-    user_shell = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Shell",
-            Kind.name == shell_name,
-            Kind.namespace == namespace,
-            Kind.is_active == True,
-        )
-        .first()
-    )
+    lookup = lookup or ExecutionCapabilityLookup(db, user_id)
+    if lookup.db is not db or lookup.user_id != user_id:
+        raise ValueError("Shell lookup belongs to a different resource owner")
+    user_shell = lookup.personal("Shell", shell_name, namespace)
 
     if user_shell:
         logger.debug(f"Found user shell '{shell_name}' for user {user_id}")
         return user_shell
-    referenced_shell = get_referenced_capability(
-        db,
-        kind="Shell",
-        name=shell_name,
-        user_id=user_id,
-        namespace=namespace,
-    )
+    referenced_shell = lookup.referenced("Shell", shell_name, namespace)
     if referenced_shell:
         return referenced_shell
 
     # Then, try to find in user's accessible groups (if namespace != 'default')
     if namespace != "default":
-        user_groups = get_user_groups(db, user_id)
+        user_groups = lookup.groups
         if namespace in user_groups:
-            group_shell = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Shell",
-                    Kind.name == shell_name,
-                    Kind.namespace == namespace,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
+            group_shell = lookup.group("Shell", shell_name, [namespace])
             if group_shell:
                 logger.debug(
                     f"Found group shell '{shell_name}' in namespace '{namespace}'"
@@ -172,17 +153,7 @@ def get_shell_by_name(
                 return group_shell
 
     # Finally, try to find in public shells (user_id=0, namespace='default')
-    public_shell = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == 0,
-            Kind.kind == "Shell",
-            Kind.name == shell_name,
-            Kind.namespace == "default",
-            Kind.is_active == True,
-        )
-        .first()
-    )
+    public_shell = lookup.public("Shell", shell_name)
 
     if public_shell:
         logger.debug(f"Found public shell '{shell_name}'")

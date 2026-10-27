@@ -65,6 +65,7 @@ from app.schemas.installed_plugin import (
 from app.services.marketplace_submission_upload import (
     build_marketplace_submission_upload_url,
 )
+from app.services.plugin_catalog_identity import ensure_catalog_plugin
 from app.services.plugin_device_identity import (
     coalesce_plugin_device_rows,
     plugin_device_id,
@@ -688,16 +689,25 @@ class PluginMarketplaceService:
                 status_code=422,
                 detail="Official plugin slug must match the manifest name",
             )
-        plugin = (
-            db.query(Plugin)
-            .filter(
-                Plugin.catalog_namespace == catalog_namespace,
-                Plugin.slug == slug,
-            )
-            .with_for_update()
-            .first()
+        plugin = ensure_catalog_plugin(
+            db,
+            {
+                "catalog_namespace": catalog_namespace,
+                "slug": slug,
+                "name": parsed.name,
+                "display_name": parsed.displayName,
+                "listing_type": listing_type,
+                "source_type": "native",
+                "source_provider": "wework",
+                "owner_user_id": 0,
+                "origin_plugin_id": origin_plugin_id,
+                "keywords_json": [],
+                "interface_json": {},
+                "visibility": visibility,
+                "status": "draft",
+            },
         )
-        if plugin and (
+        if (
             plugin.source_type != "native"
             or plugin.source_provider != "wework"
             or plugin.owner_user_id != 0
@@ -706,32 +716,14 @@ class PluginMarketplaceService:
                 status_code=409,
                 detail="Plugin slug is owned by a different publisher",
             )
-        if plugin and plugin.listing_type != listing_type:
+        if plugin.listing_type != listing_type:
             raise HTTPException(
                 status_code=409, detail="Plugin listing type cannot be changed"
             )
-        if plugin and catalog_namespace == ENTERPRISE_CATALOG_NAMESPACE:
+        if catalog_namespace == ENTERPRISE_CATALOG_NAMESPACE:
             self._validate_enterprise_origin(
                 plugin, requested_origin_plugin_id=origin_plugin_id
             )
-        if not plugin:
-            plugin = Plugin(
-                catalog_namespace=catalog_namespace,
-                slug=slug,
-                name=parsed.name,
-                display_name=parsed.displayName,
-                listing_type=listing_type,
-                source_type="native",
-                source_provider="wework",
-                owner_user_id=0,
-                origin_plugin_id=origin_plugin_id,
-                keywords_json=[],
-                interface_json={},
-                visibility=visibility,
-                status="draft",
-            )
-            db.add(plugin)
-            db.flush()
         current_release = (
             db.get(PluginRelease, plugin.latest_release_id)
             if plugin.latest_release_id

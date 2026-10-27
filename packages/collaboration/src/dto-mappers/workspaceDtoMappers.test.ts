@@ -16,6 +16,23 @@ import {
 } from "./workspaceDtoMappers";
 
 describe("workspace DTO mappers", () => {
+  it.each(["available", "unavailable", "unchecked"])(
+    "preserves the explicit %s readiness state",
+    (status) => {
+      expect(mapCollaborationOwnedAgentDto({ id: 12, status }).status).toBe(
+        status,
+      );
+    },
+  );
+
+  it("does not treat an absent or unknown readiness state as selectable", () => {
+    for (const status of [undefined, null, "other"]) {
+      expect(mapCollaborationOwnedAgentDto({ id: 12, status }).status).toBe(
+        "unavailable",
+      );
+    }
+  });
+
   it("maps v1 read-only roles without manufacturing ownership capabilities", () => {
     const workspace = mapCollaborationWorkspaceDto({
       id: "old-space",
