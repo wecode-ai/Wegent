@@ -147,7 +147,7 @@ describe('AskUserForm', () => {
     )
   })
 
-  it('calls onSubmit with formatted labels for multiple choice', async () => {
+  it('calls onSubmit with formatted labels for multiple choice', () => {
     const mockOnSubmit = jest.fn()
     const data = createMockData({
       questions: [
@@ -168,17 +168,11 @@ describe('AskUserForm', () => {
     const pythonCheckbox = screen.getByRole('checkbox', { name: /Python/i })
     const goCheckbox = screen.getByRole('checkbox', { name: /Go/i })
 
-    await act(async () => {
-      fireEvent.click(pythonCheckbox)
-    })
-    await act(async () => {
-      fireEvent.click(goCheckbox)
-    })
+    fireEvent.click(pythonCheckbox)
+    fireEvent.click(goCheckbox)
 
     const submitButton = screen.getByTestId('ask-user-submit')
-    await act(async () => {
-      fireEvent.click(submitButton)
-    })
+    fireEvent.click(submitButton)
 
     // onSubmit receives structured markdown with multiple values as a list
     expect(mockOnSubmit).toHaveBeenCalledWith(
