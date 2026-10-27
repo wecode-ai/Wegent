@@ -74,4 +74,4 @@ Electron 通过系统网络栈下载、解压和校验，退出前再次校验�
 - 发布与构建：24 个测试文件、160 项通过。主进程类型检查、变更文件 lint/格式、workflow YAML 与 Bash 语法检查通过。
 - 大范围渲染测试发现两项仍依赖旧内联发布脚本的契约断言；已改为执行真实发布 planner，包含这两项的完整文件 10 项复验通过。
 - 隔离真实 Electron 验证完成启动阶段、运行时和页面就绪、启动屏关闭及关于页版本。进度条、慢启动、失败页面和诊断复制也已通过真实 Electron 验证。
-- Windows runner、真实 NSIS 重装和历史签名迁移尚未执行。首次推送被本地 pre-push 拒绝；不能将已配置的 CI 当作通过结果。
+- Windows runner、真实 NSIS 重装和历史签名迁移尚未执行。首次推送被本地 pre-push 拒绝，经用户授权单次例外后已推送至 `fix/wework-transactional-updates`。GitHub Actions 页面提示 fork 因用量规模暂停；普通仓库与工作流启用操作成功后，dispatch 仍返回 HTTP 422，未创建运行。需要维护者在已登录页面重新启用后继续，不能将已配置的 CI 当作通过结果。
