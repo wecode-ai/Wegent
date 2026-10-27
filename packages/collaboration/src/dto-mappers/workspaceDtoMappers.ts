@@ -410,9 +410,11 @@ export function mapCollaborationOwnedAgentDto(
     owner_id: String(row.owner_id ?? row.ownerId ?? ""),
     owner_name: String(row.owner_name ?? row.ownerName ?? ""),
     status:
-      (row.status ?? "unavailable") === "available"
-        ? "available"
-        : "unavailable",
+      row.status === "unchecked"
+        ? "unchecked"
+        : row.status === "available"
+          ? "available"
+          : "unavailable",
     execution_environment_ids: Array.isArray(
       row.execution_environment_ids ?? row.executionEnvironmentIds,
     )

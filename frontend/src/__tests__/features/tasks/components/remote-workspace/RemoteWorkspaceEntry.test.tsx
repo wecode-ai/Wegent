@@ -510,6 +510,7 @@ describe('RemoteWorkspaceEntry', () => {
   })
 
   test('retries unavailable status with bounded backoff and becomes enabled automatically', async () => {
+    jest.useFakeTimers()
     ;(remoteWorkspaceApis.getStatus as jest.Mock)
       .mockResolvedValueOnce({
         connected: true,
@@ -524,28 +525,29 @@ describe('RemoteWorkspaceEntry', () => {
         reason: null,
       })
 
-    render(<RemoteWorkspaceEntry taskId={1} taskStatus="RUNNING" />)
-
-    await waitFor(() => {
-      expect(remoteWorkspaceApis.getStatus).toHaveBeenCalledTimes(1)
-    })
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Remote Workspace' })).toBeDisabled()
-    })
-
-    await waitFor(
-      () => {
-        expect(remoteWorkspaceApis.getStatus).toHaveBeenCalledTimes(2)
-      },
-      { timeout: 3000 }
+    const { unmount } = await act(async () =>
+      render(<RemoteWorkspaceEntry taskId={1} taskStatus="RUNNING" />)
     )
-    await waitFor(() => {
+    try {
+      expect(remoteWorkspaceApis.getStatus).toHaveBeenCalledTimes(1)
+      expect(screen.getByRole('button', { name: 'Remote Workspace' })).toBeDisabled()
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(999)
+      })
+      expect(remoteWorkspaceApis.getStatus).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1)
+      })
+      expect(remoteWorkspaceApis.getStatus).toHaveBeenCalledTimes(2)
       expect(screen.getByRole('button', { name: 'Remote Workspace' })).toBeEnabled()
-    })
 
-    await new Promise(resolve => setTimeout(resolve, 1200))
-
-    expect(remoteWorkspaceApis.getStatus).toHaveBeenCalledTimes(2)
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(15000)
+      })
+      expect(remoteWorkspaceApis.getStatus).toHaveBeenCalledTimes(2)
+    } finally {
+      unmount()
+    }
   })
 
   test('shows fallback reason when status check fails', async () => {
