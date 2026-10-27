@@ -69,6 +69,7 @@ test.each([
     'TEMPORARY_CHAT_SOURCE_CONVERSATION',
     'TEMPORARY_CHAT_INITIAL_MESSAGE',
     'TEMPORARY_CHAT_DIRECT_FOLLOW_UP',
+    'TEMPORARY_CHAT_AFTER_CAPABILITY_RESTART',
     REPLY_PREDICTION_PROMPT,
   ].map(content => ({ role: 'user', content }))
   const body = kind
@@ -107,6 +108,32 @@ test('preserves foreground temporary-chat responses after a prediction in histor
   const message = response.events().find(event => event.item?.type === 'message')
   assert.equal(message.item.content[0].text, 'TEMPORARY_CHAT_INITIAL_COMPLETE')
 })
+
+test.each(['input', 'messages'])(
+  'routes recovered side-chat %s by its latest message instead of old markers',
+  async field => {
+    const scenario = await activeTemporaryChatScenario()
+    const request = Readable.from([
+      JSON.stringify({
+        [field]: [
+          { role: 'user', content: 'TEMPORARY_CHAT_SOURCE_CONVERSATION' },
+          { role: 'user', content: 'TEMPORARY_CHAT_INITIAL_MESSAGE' },
+          { role: 'user', content: 'TEMPORARY_CHAT_DIRECT_FOLLOW_UP' },
+          { role: 'user', content: 'TEMPORARY_CHAT_AFTER_CAPABILITY_RESTART' },
+        ],
+      }),
+    ])
+    request.method = 'POST'
+    const response = memoryResponse()
+
+    assert.equal(
+      await scenario.handleHttp(request, response, new URL('http://fixture/v1/responses')),
+      true
+    )
+    const message = response.events().find(event => event.item?.type === 'message')
+    assert.equal(message.item.content[0].text, 'TEMPORARY_CHAT_CAPABILITY_RESTART_COMPLETE')
+  }
+)
 
 function visionBody(context) {
   return {
