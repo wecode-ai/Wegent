@@ -13,7 +13,7 @@ const receipt: IssueAssignmentReceipt = {
   human_read_at: null,
   stand_in_received_at: null,
 }
-function setup(user = 8, rows = [receipt]) {
+function setup(user = 8, rows = [receipt], assignee: number | null = 7) {
   const api = {
     getLoopItem: vi.fn().mockResolvedValue({ id: 'issue' }),
     getIssueAssignmentReceipts: vi.fn().mockResolvedValue(rows),
@@ -25,7 +25,7 @@ function setup(user = 8, rows = [receipt]) {
       issueId="issue"
       version={1}
       currentUserId={user}
-      assigneeUserId={7}
+      assigneeUserId={assignee}
     />
   )
   return { api, ...view }
@@ -33,6 +33,47 @@ function setup(user = 8, rows = [receipt]) {
 afterEach(() => vi.useRealTimers())
 
 describe('Issue reception receipts', () => {
+  it('shows only receipts belonging to the displayed assignee', async () => {
+    setup(9, [
+      receipt,
+      { ...receipt, id: 'other', target_id: '8', human_read_at: '2026-10-27T02:00:00Z' },
+    ])
+    expect(await screen.findByText('未读')).toBeInTheDocument()
+    expect(screen.queryByTestId('issue-assignment-receipt-other')).not.toBeInTheDocument()
+    expect(screen.queryByText(/本人已读/)).not.toBeInTheDocument()
+  })
+
+  it('does not attach another recipient receipt to an unassigned control', async () => {
+    const { api } = setup(9, [receipt], null)
+    await act(async () => {})
+    expect(api.getIssueAssignmentReceipts).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('issue-assignment-receipt-assignment-1')).not.toBeInTheDocument()
+  })
+
+  it('does not show receipt synchronization errors on an unassigned control', async () => {
+    vi.useFakeTimers()
+    const { api, rerender } = setup(9)
+    await act(async () => {})
+    api.getIssueAssignmentReceipts.mockRejectedValue(new Error('offline'))
+    await act(async () => vi.advanceTimersByTimeAsync(5000))
+    expect(screen.getByText('回执同步失败')).toBeInTheDocument()
+    rerender(
+      <IssueAssignmentReceipts
+        api={api as never}
+        issueId="issue"
+        version={2}
+        currentUserId={9}
+        assigneeUserId={null}
+      />
+    )
+    expect(screen.queryByText('回执同步失败')).not.toBeInTheDocument()
+  })
+
+  it('preserves local user zero when matching the current assignee', async () => {
+    setup(9, [{ ...receipt, target_id: '0' }], 0)
+    expect(await screen.findByText('未读')).toBeInTheDocument()
+  })
+
   it('shows unread to the assigner without acknowledging on behalf of the recipient', async () => {
     const { api } = setup()
     expect(await screen.findByText('未读')).toBeInTheDocument()
@@ -75,7 +116,13 @@ describe('Issue reception receipts', () => {
     }
     const view = (hidden: boolean) => (
       <div aria-hidden={hidden}>
-        <IssueAssignmentReceipts api={api as never} issueId="issue" version={1} currentUserId={7} />
+        <IssueAssignmentReceipts
+          api={api as never}
+          issueId="issue"
+          version={1}
+          currentUserId={7}
+          assigneeUserId={7}
+        />
       </div>
     )
     const { rerender } = render(view(true))

@@ -30,6 +30,7 @@ export function IssueAssignmentReceipts({
   const [error, setError] = useState(false)
 
   useEffect(() => {
+    if (assigneeUserId == null) return
     let active = true
     let timer: ReturnType<typeof setTimeout>
     const visible = () =>
@@ -75,44 +76,49 @@ export function IssueAssignmentReceipts({
       data-testid="issue-assignment-receipts"
       aria-live="polite"
     >
-      {error ? (
-        <ReceiptIcon label={t('todo.assignment_receipt_sync_failed')} icon={CircleAlert} />
-      ) : (
-        rows.map(row => (
-          <span
-            key={row.id}
-            data-testid={`issue-assignment-receipt-${row.id}`}
-            className="inline-flex items-center gap-1"
-          >
-            {row.human_read_at ? (
-              <ReceiptIcon
-                label={t('todo.assignment_human_read')}
-                value={row.human_read_at}
-                figure="human"
-                checked
-              />
-            ) : null}
-            {row.stand_in_received_at ? (
-              <ReceiptIcon
-                label={t('todo.assignment_stand_in_received')}
-                value={row.stand_in_received_at}
-                figure="stand-in"
-                checked
-              />
-            ) : null}
-            {!row.human_read_at && !row.stand_in_received_at ? (
-              <ReceiptIcon
-                label={t(
-                  row.receipt_tracking
-                    ? 'todo.assignment_unread'
-                    : 'todo.assignment_receipt_unknown'
-                )}
-                icon={row.receipt_tracking ? CircleDashed : CircleHelp}
-              />
-            ) : null}
-          </span>
-        ))
-      )}
+      {assigneeUserId != null &&
+        (error ? (
+          <ReceiptIcon label={t('todo.assignment_receipt_sync_failed')} icon={CircleAlert} />
+        ) : (
+          rows
+            .filter(
+              row => assigneeUserId != null && String(row.target_id) === String(assigneeUserId)
+            )
+            .map(row => (
+              <span
+                key={row.id}
+                data-testid={`issue-assignment-receipt-${row.id}`}
+                className="inline-flex items-center gap-1"
+              >
+                {row.human_read_at ? (
+                  <ReceiptIcon
+                    label={t('todo.assignment_human_read')}
+                    value={row.human_read_at}
+                    figure="human"
+                    checked
+                  />
+                ) : null}
+                {row.stand_in_received_at ? (
+                  <ReceiptIcon
+                    label={t('todo.assignment_stand_in_received')}
+                    value={row.stand_in_received_at}
+                    figure="stand-in"
+                    checked
+                  />
+                ) : null}
+                {!row.human_read_at && !row.stand_in_received_at ? (
+                  <ReceiptIcon
+                    label={t(
+                      row.receipt_tracking
+                        ? 'todo.assignment_unread'
+                        : 'todo.assignment_receipt_unknown'
+                    )}
+                    icon={row.receipt_tracking ? CircleDashed : CircleHelp}
+                  />
+                ) : null}
+              </span>
+            ))
+        ))}
     </span>
   )
 }
