@@ -245,14 +245,20 @@ for action_file in "$action_dir"/*/action.yml; do
 done
 
 platform_e2e_workflow="$workflow_dir/e2e-tests.yml"
-if ! ruby -ryaml - "$platform_e2e_workflow" <<'RUBY'
+if ! ruby -ryaml -ropen3 - "$platform_e2e_workflow" "$script_dir/../../docker/wework-e2e/browser.Dockerfile" <<'RUBY'
 workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
 job = workflow.fetch("jobs").fetch("e2e-tests")
 raise "Platform shards must retain their browser container" unless job["container"]
 
 environment = job.fetch("env")
 raise "Container Python must be selected explicitly" unless environment["UV_PYTHON"] == "3.11"
-raise "Container Python must not use the host tool cache" unless environment["UV_MANAGED_PYTHON"] == "true"
+selection_keys = %w[UV_PYTHON UV_MANAGED_PYTHON UV_PYTHON_PREFERENCE]
+image_selection = File.read(ARGV.fetch(1)).scan(/\b(UV_(?:PYTHON|MANAGED_PYTHON|PYTHON_PREFERENCE))=([^\s\\]+)/).to_h
+selection = selection_keys.to_h { |key| [key, nil] }.merge(image_selection).merge(environment.slice(*selection_keys))
+output, status = Open3.capture2e(selection, "uv", "python", "dir", "--bin")
+raise "Container Python selection is incompatible: #{output}" unless status.success?
+raise "Container Python must not use the host tool cache" unless environment["UV_PYTHON_PREFERENCE"] == "only-managed"
+raise "Container Python must use one selection parameter" if environment.key?("UV_MANAGED_PYTHON")
 
 steps = job.fetch("steps")
 setup = steps.find { |step| step["uses"] == "./.github/actions/setup-python-uv-cache" }

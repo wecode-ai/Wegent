@@ -564,7 +564,7 @@ jobs:
     env:
       HOME: /root
       UV_PYTHON: "3.11"
-      UV_MANAGED_PYTHON: "true"
+      UV_PYTHON_PREFERENCE: only-managed
     container:
       image: ${{ needs.prepare-platform-e2e-image.outputs.image }}
       credentials:

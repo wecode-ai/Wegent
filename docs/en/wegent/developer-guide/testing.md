@@ -397,7 +397,10 @@ runs may restore the default-branch cache, but they do not save another copy:
 - The platform E2E browser image installs Python 3.11 through uv and imports
   `ssl` during the build to verify TLS support. Container shards restore the uv
   download cache and use the image-owned interpreter, avoiding incompatible host
-  Python tool caches after runner OS upgrades.
+  Python tool caches after runner OS upgrades. The image and workflow both use
+  `UV_PYTHON_PREFERENCE=only-managed`, without the mutually exclusive
+  `UV_MANAGED_PYTHON`. Cache policy regression merges both selection environments
+  and invokes uv to verify their compatibility.
 - Linux workspace `node_modules` has one shared cache keyed by the Node version
   and `pnpm-lock.yaml`. Tests, Lint, and platform E2E reuse it.
 - Wework browser and desktop E2E use dependency images published to GHCR. Image
