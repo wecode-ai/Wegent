@@ -251,7 +251,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
         execution_target = {"type": "managed", "device_id": None}
         if self.shell_type != "Chat":
             execution_target = {
-                "type": "local",
+                "type": "app",
                 "device_id": os.environ.get("E2E_DEVICE_ID", "e2e-platform-device-1"),
             }
         self._api(
@@ -305,14 +305,6 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
                         "group_name": "E2E group",
                     }
                 ],
-            },
-        )
-        self._api(
-            "POST",
-            f"/api/subscriptions/{subscription_id}/follow",
-            json={
-                "notification_level": "notify",
-                "notification_channel_ids": [channel_id],
             },
         )
         with SessionLocal() as db:
