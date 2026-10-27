@@ -41,6 +41,24 @@ const taskRecord = {
   metadata: { tags: ['local'] },
 }
 
+test.each(['renamed', null])(
+  'forwards atomic tag change target %s to local storage',
+  async target => {
+    const request = vi.fn().mockResolvedValue({ ...projectRecord, version: 2 })
+    const api = createLocalDeliveryApi(request)
+
+    await api.updateCloudProject(projectRecord.id, {
+      version: 1,
+      tag_change: { source: 'old', target },
+    })
+
+    expect(request).toHaveBeenCalledExactlyOnceWith('projects.update', {
+      project_id: projectRecord.id,
+      project: { version: 1, tag_change: { source: 'old', target } },
+    })
+  }
+)
+
 test('loads task context from its known binding without rediscovering the project', async () => {
   const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
     if (method === 'runtime_tasks.context') {
@@ -66,6 +84,33 @@ test('loads task context from its known binding without rediscovering the projec
 })
 
 describe('local delivery API', () => {
+  test('round-trips saved board views through existing project metadata', async () => {
+    const boardViews = { schema_version: 1, futureExtension: { keepCase: true }, views: [] }
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'projects.list')
+        return [
+          { ...projectRecord, metadata: { ...projectRecord.metadata, board_views: boardViews } },
+        ]
+      if (method === 'projects.update') {
+        expect(params).toEqual({
+          project_id: projectRecord.id,
+          project: { version: 1, board_views: boardViews },
+        })
+        return {
+          ...projectRecord,
+          version: 2,
+          metadata: { ...projectRecord.metadata, board_views: boardViews },
+        }
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+    expect((await api.listCloudProjects()).items[0].board_views).toEqual(boardViews)
+    expect(
+      (await api.updateCloudProject(projectRecord.id, { version: 1, board_views: boardViews }))
+        .board_views
+    ).toEqual(boardViews)
+  })
   test('preserves persisted assignment history in board, detail, and assignment responses', async () => {
     const assignmentHistory = [
       {

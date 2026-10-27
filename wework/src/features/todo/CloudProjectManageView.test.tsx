@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
+import '@/i18n'
 import type { CloudProject } from '@/api/deliveries'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import { CloudProjectManageView } from './CloudProjectManageView'

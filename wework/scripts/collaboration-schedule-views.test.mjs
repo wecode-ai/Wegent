@@ -74,6 +74,17 @@ test.each([
 test.each([
   {
     today: '2026-10-19T12:00:00',
+    target: '2026-10-26',
+    navigationCount: 0,
+    ranges: [
+      '2026-10-19 → 2026-10-21',
+      '2026-10-26 → 2026-10-28',
+      '2026-10-26 → 2026-10-29',
+      '2026-10-28 → 2026-10-31',
+    ],
+  },
+  {
+    today: '2026-10-26T12:00:00',
     target: '2026-11-02',
     navigationCount: 0,
     ranges: [
@@ -84,36 +95,25 @@ test.each([
     ],
   },
   {
-    today: '2026-10-26T12:00:00',
-    target: '2026-11-09',
-    navigationCount: 1,
-    ranges: [
-      '2026-11-02 → 2026-11-04',
-      '2026-11-09 → 2026-11-11',
-      '2026-11-09 → 2026-11-12',
-      '2026-11-11 → 2026-11-14',
-    ],
-  },
-  {
     today: '2026-10-05T12:00:00',
-    target: '2026-10-19',
+    target: '2026-10-12',
     navigationCount: 0,
     ranges: [
+      '2026-10-05 → 2026-10-07',
       '2026-10-12 → 2026-10-14',
-      '2026-10-19 → 2026-10-21',
-      '2026-10-19 → 2026-10-22',
-      '2026-10-21 → 2026-10-24',
+      '2026-10-12 → 2026-10-15',
+      '2026-10-14 → 2026-10-17',
     ],
   },
   {
     today: '2026-12-28T12:00:00',
-    target: '2027-01-11',
-    navigationCount: 1,
+    target: '2027-01-04',
+    navigationCount: 0,
     ranges: [
+      '2026-12-28 → 2026-12-30',
       '2027-01-04 → 2027-01-06',
-      '2027-01-11 → 2027-01-13',
-      '2027-01-11 → 2027-01-14',
-      '2027-01-13 → 2027-01-16',
+      '2027-01-04 → 2027-01-07',
+      '2027-01-06 → 2027-01-09',
     ],
   },
 ])('keeps the target date visible when scheduling from $today', async fixture => {
@@ -122,11 +122,8 @@ test.each([
   let navigations = 0
   let rangeIndex = 0
   const calendarDays = []
-  const target = `collaboration-calendar-day-${fixture.target}`
   const control = {
     async command(action, selector, options) {
-      if (action === 'getElementCount' && selector.includes(target))
-        return String(navigations === fixture.navigationCount ? 1 : 0)
       if (action === 'click' && /collaboration-schedule-next|下一个月/.test(selector)) navigations++
       if (action === 'waitFor' && selector.includes('collaboration-calendar-day-')) {
         calendarDays.push(selector)

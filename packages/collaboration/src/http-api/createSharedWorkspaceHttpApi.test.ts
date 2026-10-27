@@ -31,6 +31,13 @@ function createTransport(): {
 }
 
 describe("createSharedWorkspaceHttpApi", () => {
+  it.each(['renamed', null])('serializes atomic tag change target %s without losing null', target => {
+    expect(workspaceHttpRequestBody({
+      version: 2,
+      tagChange: { source: 'old', target },
+    })).toEqual({ version: 2, tag_change: { source: 'old', target } })
+  })
+
   it("loads devices without fetching the agent resource catalog", async () => {
     const { transport, get } = createTransport();
     get.mockResolvedValue({
@@ -370,6 +377,19 @@ describe("createSharedWorkspaceHttpApi", () => {
         weworkCloudModelNamespace: "default",
         weworkCloudModelResourceUserId: "0",
       },
+    });
+  });
+
+  it("keeps board view documents opaque while converting their request field", () => {
+    const boardViews = {
+      schema_version: 1,
+      views: [],
+      futureField: { keepCase: true },
+      sorts: { "Lane-ABC": ["created-asc"] },
+    };
+    expect(workspaceHttpRequestBody({ boardViews, version: 2 })).toEqual({
+      board_views: boardViews,
+      version: 2,
     });
   });
 

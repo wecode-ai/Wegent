@@ -130,6 +130,31 @@ describe('mergeInstalledPlugins', () => {
       }
     }
   )
+  test.each([false, true])('requires local evidence in cached account rows: %s', localPresent => {
+    const cloud = cloudPlugin({ installState: 'not_installed', version: '1.0.0' })
+    cloud.status.devices = [
+      {
+        deviceId: 'current-device',
+        desiredReleaseId: 6,
+        actualReleaseId: null,
+        state: 'pending',
+        attemptCount: 0,
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ]
+
+    const cached = {
+      ...cloud,
+      spec: {
+        ...cloud.spec,
+        sourcePayload: localPresent ? { localPresent: true, localVersion: '1.0.0' } : null,
+      },
+    }
+    const merged = mergeInstalledPlugins([cloud], [cached], 'current-device', true)
+
+    expect(merged).toHaveLength(localPresent ? 1 : 0)
+    if (localPresent) expect(hasLocalCodexMaterialization(merged[0]!)).toBe(true)
+  })
 
   test('keeps local Codex installs when cloud installs are present', () => {
     const merged = mergeInstalledPlugins([cloudPlugin()], [localCodexPlugin()], 'current-device')

@@ -4947,6 +4947,7 @@ describe('PluginsWorkspace', () => {
       })
 
       await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
+      expect(marketplaceMock.getReportDeviceCalls()).toBe(0)
       expect(hasInFlightPluginDeviceSync('current-device')).toBe(true)
       expect(readCurrentCatalog).not.toHaveBeenCalled()
       expect(marketplaceMock.getReportDeviceCalls()).toBe(0)
