@@ -223,7 +223,7 @@ collect_wework_renderer_tests() {
 
 run_wework_unit_tests() {
     local test_exit=0
-    local test_workers
+    local test_workers="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
 
     : > "$TEMP_DIR/wework_test.log"
 
@@ -238,7 +238,6 @@ run_wework_unit_tests() {
         else
             collect_wework_renderer_tests
             if [ "${#WEWORK_FOCUSED_TEST_FILES[@]}" -gt 0 ]; then
-                test_workers="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
                 echo -e "   Running focused renderer unit tests with $(format_worker_count "$test_workers")..."
                 if ! pnpm --filter wework exec vitest run --pool=threads \
                     --maxWorkers "$test_workers" \
@@ -254,7 +253,7 @@ run_wework_unit_tests() {
 
     if [ "$WEWORK_ELECTRON_CHANGED" -eq 1 ] && [ "$ELECTRON_INSTALL_EXIT" -eq 0 ]; then
         echo -e "   Running Electron unit tests..."
-        if ! pnpm --dir wework/electron test >> "$TEMP_DIR/wework_test.log" 2>&1; then
+        if ! pnpm --dir wework/electron test --maxWorkers "$test_workers" >> "$TEMP_DIR/wework_test.log" 2>&1; then
             test_exit=1
         fi
     fi

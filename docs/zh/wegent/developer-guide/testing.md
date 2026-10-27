@@ -8,6 +8,8 @@ sidebar_position: 4
 
 推送前检查默认使用 2 个 Jest worker 运行前端完整单元测试，避免并行 JSDOM 实例争抢资源导致超时。可通过 `FRONTEND_PRE_PUSH_TEST_WORKERS` 调整并发数；该设置不改变测试范围或超时限制。
 
+同一仓库的多个 worktree 通过 Git common directory 中的进程锁依次执行推送前检查，独立仓库仍可并行执行。检查范围和失败退出码保持不变。Electron 单元测试继承当前 Wework 检查的 worker 预算（`WEWORK_PRE_PUSH_TEST_WORKERS`），避免无上限并发；该限制不增加测试超时，也不重试失败测试。
+
 ## 概述
 
 该项目为所有模块提供了全面的单元测试支持：

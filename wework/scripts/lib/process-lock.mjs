@@ -53,6 +53,7 @@ export async function acquireProcessLock(lockPath, options = {}) {
     pid: process.pid,
     token: randomUUID(),
   }
+  let reportedWait = false
 
   while (true) {
     let handle
@@ -65,6 +66,8 @@ export async function acquireProcessLock(lockPath, options = {}) {
       await handle?.close()
       if (error?.code !== 'EEXIST') throw error
       if (!(await removeStaleLock(lockPath))) {
+        if (!reportedWait) options.onWait?.()
+        reportedWait = true
         await delay(pollIntervalMs)
       }
     }

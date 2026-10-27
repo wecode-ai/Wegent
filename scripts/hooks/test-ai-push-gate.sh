@@ -53,7 +53,7 @@ if [ "$(basename "$0")" = "pnpm" ]; then
             sleep 0.2
             touch "$CALL_LOG.electron-typecheck-complete"
             ;;
-        '--dir wework/electron test')
+        '--dir wework/electron test'*)
             if [ ! -f "$CALL_LOG.electron-typecheck-complete" ]; then
                 echo 'Electron tests started before typechecking finished staging process-explorer' >&2
                 exit 1
@@ -318,7 +318,7 @@ if ! grep -qE '^pnpm --filter wework run prepare:electron$' "$CALL_LOG"; then
 fi
 
 if ! grep -qE '^pnpm --dir wework/electron typecheck$' "$CALL_LOG" ||
-    ! grep -qE '^pnpm --dir wework/electron test$' "$CALL_LOG"; then
+    ! grep -qE '^pnpm --dir wework/electron test --maxWorkers 2$' "$CALL_LOG"; then
     echo "Expected Electron changes to run Electron-owned checks."
     echo "Calls:"
     cat "$CALL_LOG"
@@ -384,7 +384,7 @@ if grep -qE '^pnpm --filter wework test$' "$CALL_LOG"; then
     exit 1
 fi
 
-if ! grep -qE '^pnpm --dir wework/electron test$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --dir wework/electron test --maxWorkers 2$' "$CALL_LOG"; then
     echo "Expected merge-like Wework changes to retain Electron-owned tests."
     echo "Calls:"
     cat "$CALL_LOG"
@@ -485,5 +485,7 @@ if ! grep -qE '^caffeinate -is -w [0-9]+$' "$CALL_LOG"; then
     cat "$CALL_LOG"
     exit 1
 fi
+
+node --test "$SCRIPT_DIR/serialized-push-gate.test.mjs"
 
 echo "ai-push-gate regression tests passed"

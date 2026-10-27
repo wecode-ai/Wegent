@@ -8,6 +8,8 @@ This document describes the unit testing framework setup for the Wegent project.
 
 Pre-push checks run the complete frontend unit suite with two Jest workers by default to prevent concurrent JSDOM instances from causing resource-contention timeouts. Set `FRONTEND_PRE_PUSH_TEST_WORKERS` to adjust concurrency; this does not change test scope or timeout limits.
 
+Worktrees of the same repository serialize pre-push checks through a process lock in their Git common directory; independent repositories can still run concurrently. Check coverage and failure exit codes are preserved. Electron unit tests inherit the current Wework check's worker budget (`WEWORK_PRE_PUSH_TEST_WORKERS`) to prevent unbounded concurrency, without extending test timeouts or retrying failures.
+
 ## Overview
 
 The project includes comprehensive unit testing support across all modules:
