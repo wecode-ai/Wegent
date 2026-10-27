@@ -708,6 +708,11 @@ class DeliveryResponse(BaseModel):
     assets: list[DeliveryAssetResponse] = Field(default_factory=list)
     fulfillments: list[DeliveryFulfillment] = Field(default_factory=list)
 
+    @field_validator("title", mode="before")
+    @classmethod
+    def normalize_unset_title(cls, value: object) -> object:
+        return "" if value is None else value
+
     @field_validator("source_task_binding_id", mode="before")
     @classmethod
     def normalize_empty_binding_id(cls, value: object) -> object:

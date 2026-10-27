@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import event
 
 from app.models.delivery import (
+    Delivery,
     LoopNode,
     _adapt_mysql_non_null_defaults,
     adapt_loop_node_values_for_dialect,
@@ -18,6 +19,7 @@ from app.models.delivery import (
 from app.schemas.delivery import (
     CollaborationMessageImportResponse,
     DeliveryCreate,
+    DeliveryResponse,
     LoopItemCreate,
     LoopItemResponse,
 )
@@ -28,6 +30,29 @@ def test_delivery_title_is_optional_for_old_clients_and_bounded() -> None:
     assert DeliveryCreate(title="Result", markdown="Notes").title == "Result"
     with pytest.raises(ValueError):
         DeliveryCreate(title="x" * 256)
+
+
+@pytest.mark.parametrize("title", [None, "", "Existing title"])
+def test_delivery_response_reads_legacy_nullable_titles(title: str | None) -> None:
+    now = datetime(2026, 7, 24, 21, 30)
+    delivery = Delivery(
+        id="delivery-legacy",
+        title=title,
+        version=1,
+        loop_item_id="PRJ-1",
+        created_by_user_id=52,
+        source_task_binding_id=None,
+        source_task_snapshot=None,
+        status="delivered",
+        created_at=now,
+        delivered_at=now,
+    )
+
+    response = DeliveryResponse.model_validate(delivery)
+
+    assert response.title == (title or "")
+    assert response.id == delivery.id
+    assert response.delivered_at == now
 
 
 def test_collaboration_message_import_response_requires_typed_issue() -> None:
