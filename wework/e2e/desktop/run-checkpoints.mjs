@@ -120,6 +120,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'cloud-login-proxy': './scenarios/cloud-login-proxy.scenario.mjs',
   'collaboration-deliveries': './scenarios/collaboration-deliveries.scenario.mjs',
+  'collaboration-delivery-editing': './scenarios/collaboration-delivery-editing.scenario.mjs',
   'collaboration-shared-core': './scenarios/collaboration-shared-core.scenario.mjs',
   'collaboration-issue-task-discovery':
     './scenarios/collaboration-issue-task-discovery.scenario.mjs',
@@ -250,6 +251,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-login-proxy',
   'collaboration-shared-core',
   'collaboration-deliveries',
+  'collaboration-delivery-editing',
   'collaboration-issue-task-discovery',
   'collaboration-app-queue-identity',
   'collaboration-runtime-reconciliation',

@@ -284,6 +284,9 @@ export interface WorkspaceDeliveryAsset {
 }
 
 export interface WorkspaceDelivery {
+  title?: string;
+  version?: number;
+  sourceTaskSnapshot?: Record<string, unknown> | null;
   createdByUserId?: number | null;
   id: string;
   issueId: string;
@@ -752,6 +755,7 @@ export interface SharedWorkspaceDeliveriesApi {
   create(
     issueId: string,
     input: {
+      title?: string;
       markdown: string;
       chat?: Record<string, unknown>;
       sourceTask?: WorkspaceRuntimeTaskAddress;
@@ -767,6 +771,19 @@ export interface SharedWorkspaceDeliveriesApi {
     input: { fulfillments: Array<Record<string, unknown>> },
   ): Promise<WorkspaceDelivery>;
   discardDraft(deliveryId: string): Promise<void>;
+  update?(
+    deliveryId: string,
+    input: WorkspaceDeliveryUpdate,
+  ): Promise<WorkspaceDelivery>;
+}
+
+export interface WorkspaceDeliveryUpdate {
+  title: string;
+  version: number;
+  markdown: string;
+  chat: Record<string, unknown> | null;
+  retained_asset_ids: string[];
+  files: Array<{ relative_path: string; file: File }>;
 }
 
 export interface SharedWorkspaceExecutionsApi {

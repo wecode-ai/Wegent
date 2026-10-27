@@ -46,6 +46,13 @@ ruby -ryaml -e '
     raise "Backend Rust artifact omits #{name}" unless upload.lines.map(&:strip).include?(".ci-artifacts/#{name}")
   end
   publish = publish.fetch("if")
+  [consumer_workflow, warmup].each do |config|
+    consumer_digests = config.fetch("jobs").values.flat_map { |job| job.fetch("steps", []) }
+      .map { |s| s["env"]&.fetch("BACKEND_RS_SOURCE_DIGEST", nil) }.compact
+      .select { |digest| digest.include?("backend-rs/src/**" + 39.chr) }
+    raise "Missing shared Backend runtime digest" if consumer_digests.empty?
+    raise "Backend runtime image producer and consumer digests differ" unless consumer_digests.all? { |digest| digest == digests.first }
+  end
   producer_seconds = Integer(producer.fetch("timeout-minutes")) * 60
   consumer_seconds = Integer(consumer.fetch("timeout-minutes")) * 60
   oci_seconds = Integer(step.fetch("env").fetch("OCI_RUNTIME_WAIT_SECONDS"))

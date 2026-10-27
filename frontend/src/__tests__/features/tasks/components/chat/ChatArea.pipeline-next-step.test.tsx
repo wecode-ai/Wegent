@@ -920,6 +920,35 @@ describe('ChatArea selection while the catalog loads', () => {
     expect(mockHandleTeamChange.mock.calls.every(([team]) => team?.id === 65)).toBe(true)
   })
 
+  it('waits for the requested agent before auto-sending instead of using the catalog default', async () => {
+    jest.useFakeTimers()
+    mockUseStatefulSelection = true
+    const requested = { ...mockSelectedTeam, bind_mode: ['chat'] } as Team
+    mockNewChatParams = new URLSearchParams(`teamId=${requested.id}&q=hello&autoSend=true`)
+    mockAutoSentTeamIds = []
+    try {
+      const view = render(<ChatArea teams={[defaultTeam]} isTeamsLoading={false} taskType="chat" />)
+      await act(async () => {
+        jest.advanceTimersByTime(400)
+      })
+      expect(mockHandleSendMessage).not.toHaveBeenCalled()
+      mockUrlTeam = requested
+      view.rerender(<ChatArea teams={[defaultTeam]} isTeamsLoading={false} taskType="chat" />)
+      await act(async () => {
+        jest.advanceTimersByTime(400)
+      })
+      expect(mockAutoSentTeamIds).toEqual([requested.id])
+      expect(mockHandleSendMessage).toHaveBeenCalledWith('hello')
+      await act(async () => {
+        jest.advanceTimersByTime(1000)
+      })
+      expect(mockHandleSendMessage).toHaveBeenCalledTimes(1)
+      view.unmount()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   it('keeps an explicitly supplied new-task agent', () => {
     mockRecentTeamIds = [defaultTeam.id]
     render(
