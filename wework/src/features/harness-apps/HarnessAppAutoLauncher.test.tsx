@@ -1,6 +1,7 @@
 import { render, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { HarnessAppAutoLauncher } from './HarnessAppAutoLauncher'
+import { captureHarnessAppLaunchDiagnostics } from '@/e2e/harness-app-launch-diagnostics'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -108,6 +109,8 @@ const running = {
 }
 
 describe('HarnessAppAutoLauncher', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
   beforeEach(() => {
     Object.values(mocks).forEach(mock => mock.mockReset())
     workbenchState.models = []
@@ -173,6 +176,7 @@ describe('HarnessAppAutoLauncher', () => {
   })
 
   test('keeps an in-flight launch when the model catalog refreshes', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
     let resolveStart: (value: typeof running) => void = () => {}
     mocks.list.mockResolvedValue([installation])
     mocks.start.mockReturnValue(
@@ -185,8 +189,16 @@ describe('HarnessAppAutoLauncher', () => {
     await waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(1))
 
     workbenchState.models = [{ name: 'model-1' }, { name: 'model-2' }]
+    mocks.listModelOptions.mockReturnValue([
+      { key: 'model-1', label: 'Refreshed default model' },
+      { key: 'model-2', label: 'New model' },
+    ])
     view.rerender(<HarnessAppAutoLauncher installationId="app-1" />)
     await Promise.resolve()
+    expect(captureHarnessAppLaunchDiagnostics('app-1')?.modelLabels).toEqual([
+      'Refreshed default model',
+      'New model',
+    ])
 
     resolveStart(running)
     await waitFor(() => expect(mocks.register).toHaveBeenCalledWith(running))
@@ -197,6 +209,126 @@ describe('HarnessAppAutoLauncher', () => {
       installation: running,
     })
   })
+
+  test.each(['default', 'additional', 'context', 'decision'] as const)(
+    'releases every route when the tab closes during %s token storage',
+    async stage => {
+      mocks.listModelOptions.mockReturnValue([
+        { key: 'model-1', label: 'Default model' },
+        { key: 'model-2', label: 'Second model' },
+      ])
+      mocks.resolveLaunch
+        .mockResolvedValueOnce({
+          baseUrl: 'http://127.0.0.1:9000/v1/harness-router/default-token',
+          proxyToken: 'default-token',
+          context: { baseUrl: 'http://127.0.0.1:9001', token: 'context-token' },
+        })
+        .mockResolvedValueOnce({
+          baseUrl: 'http://127.0.0.1:9000/v1/harness-router/second-token',
+          proxyToken: 'second-token',
+        })
+      mocks.list.mockResolvedValue([grantedInstallation])
+      mocks.start.mockResolvedValue(running)
+      const stores = {
+        default: mocks.storeProxy,
+        additional: mocks.storeAdditionalProxies,
+        context: mocks.storeContext,
+        decision: mocks.storeDecision,
+      }
+      let releaseStore: () => void = () => {}
+      stores[stage].mockReturnValue(
+        new Promise<void>(resolve => {
+          releaseStore = resolve
+        })
+      )
+      const view = render(<HarnessAppAutoLauncher installationId="app-1" />)
+      await waitFor(() => expect(stores[stage]).toHaveBeenCalled())
+
+      view.unmount()
+      releaseStore()
+      await waitFor(() =>
+        expect(
+          mocks.register.mock.calls.length + mocks.unregisterProxy.mock.calls.length
+        ).toBeGreaterThan(0)
+      )
+
+      expect(mocks.register).not.toHaveBeenCalled()
+      expect(mocks.stop).toHaveBeenCalledWith('app-1')
+      expect(mocks.unregisterProxy).toHaveBeenCalledWith('default-token')
+      expect(mocks.unregisterProxy).toHaveBeenCalledWith('second-token')
+      expect(mocks.unregisterContext).toHaveBeenCalledWith('context-token')
+      expect(mocks.unregisterDecision).toHaveBeenCalledWith('decision-token')
+    }
+  )
+
+  test('starts the reopened tab after a closed in-flight launch releases its routes', async () => {
+    let releaseStart: (value: typeof running) => void = () => {}
+    mocks.list.mockResolvedValue([installation])
+    mocks.start
+      .mockReturnValueOnce(
+        new Promise(resolve => {
+          releaseStart = resolve
+        })
+      )
+      .mockResolvedValue(running)
+    mocks.resolveLaunch
+      .mockResolvedValueOnce({
+        baseUrl: 'http://127.0.0.1:9000/v1/harness-router/old-token',
+        proxyToken: 'old-token',
+      })
+      .mockResolvedValueOnce({
+        baseUrl: 'http://127.0.0.1:9000/v1/harness-router/new-token',
+        proxyToken: 'new-token',
+      })
+    const original = render(<HarnessAppAutoLauncher installationId="app-1" />)
+    await waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(1))
+    original.unmount()
+    const settled = vi.fn()
+    render(<HarnessAppAutoLauncher installationId="app-1" onStartupSettled={settled} />)
+
+    releaseStart(running)
+    await waitFor(() => expect(settled).toHaveBeenCalledWith('app-1'))
+
+    expect(mocks.start).toHaveBeenCalledTimes(2)
+    expect(mocks.register).toHaveBeenCalledTimes(1)
+    expect(mocks.register).toHaveBeenCalledWith(running)
+    expect(mocks.unregisterProxy).toHaveBeenCalledWith('old-token')
+    expect(mocks.unregisterProxy).not.toHaveBeenCalledWith('new-token')
+    expect(mocks.unregisterProxy.mock.invocationCallOrder[0]!).toBeLessThan(
+      mocks.start.mock.invocationCallOrder[1]!
+    )
+  })
+
+  test.each(['takeProxy', 'takeAdditionalProxies', 'takeContext', 'takeDecision'] as const)(
+    'releases locally owned routes even when %s rejects during rollback',
+    async take => {
+      mocks.listModelOptions.mockReturnValue([
+        { key: 'model-1', label: 'Default model' },
+        { key: 'model-2', label: 'Second model' },
+      ])
+      mocks.resolveLaunch
+        .mockResolvedValueOnce({
+          baseUrl: 'http://127.0.0.1:9000/v1/harness-router/default-token',
+          proxyToken: 'default-token',
+          context: { baseUrl: 'http://127.0.0.1:9001', token: 'context-token' },
+        })
+        .mockResolvedValueOnce({
+          baseUrl: 'http://127.0.0.1:9000/v1/harness-router/second-token',
+          proxyToken: 'second-token',
+        })
+      mocks.list.mockResolvedValue([grantedInstallation])
+      mocks.start.mockResolvedValue({ ...running, webUrl: null })
+      mocks[take].mockRejectedValueOnce(new Error('Host token read failed'))
+      const settled = vi.fn()
+      render(<HarnessAppAutoLauncher installationId="app-1" onStartupSettled={settled} />)
+      await waitFor(() => expect(settled).toHaveBeenCalledWith('app-1'))
+
+      expect(mocks.unregisterProxy).toHaveBeenCalledWith('default-token')
+      expect(mocks.unregisterProxy).toHaveBeenCalledWith('second-token')
+      expect(mocks.unregisterContext).toHaveBeenCalledWith('context-token')
+      expect(mocks.unregisterDecision).toHaveBeenCalledWith('decision-token')
+    }
+  )
 
   test('keeps the default and registered models when another model is unavailable', async () => {
     mocks.listModelOptions.mockReturnValue([
@@ -340,8 +472,11 @@ describe('HarnessAppAutoLauncher', () => {
       </>
     )
 
-    expect(mocks.list).toHaveBeenCalledTimes(1)
-    resolveInstallations?.([installation])
+    try {
+      await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(1))
+    } finally {
+      resolveInstallations?.([installation])
+    }
     await waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(1))
     await waitFor(() => {
       expect(firstSettled).toHaveBeenCalledWith('app-1')

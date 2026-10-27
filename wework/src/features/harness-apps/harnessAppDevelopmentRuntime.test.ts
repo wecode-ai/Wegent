@@ -7,6 +7,7 @@ import {
 } from './harnessAppDevelopmentRuntime'
 
 const mocks = vi.hoisted(() => ({
+  list: vi.fn(),
   start: vi.fn(),
   stop: vi.fn(),
   resolveDecisionLaunch: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock('@/api/local/harnessApps', async importOriginal => {
     ...actual,
     harnessAppsApi: {
       ...actual.harnessAppsApi,
+      list: mocks.list,
       start: mocks.start,
       stop: mocks.stop,
     },
@@ -94,6 +96,7 @@ const modelOption = {
 describe('harnessAppDevelopmentRuntime', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.list.mockResolvedValue([installation])
     mocks.start.mockResolvedValue({
       ...installation,
       state: 'running',
@@ -195,6 +198,75 @@ describe('harnessAppDevelopmentRuntime', () => {
     })
   })
 
+  test('releases stored routes using their local handles when host token reads fail', async () => {
+    const secondModel = { ...modelOption, key: 'second-model', label: 'Second model' }
+    const unregisterProxy = vi.fn().mockResolvedValue(undefined)
+    const unregisterContext = vi.fn().mockResolvedValue(undefined)
+    const resolveLaunch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        proxyToken: 'default-token',
+        baseUrl: 'http://127.0.0.1:41000',
+        context: { token: 'context-token', baseUrl: 'http://127.0.0.1:41002' },
+      })
+      .mockResolvedValueOnce({
+        proxyToken: 'second-token',
+        baseUrl: 'http://127.0.0.1:41001',
+      })
+    mocks.storeContextToken.mockRejectedValueOnce(new Error('Context token store failed'))
+    mocks.takeProxyToken.mockRejectedValueOnce(new Error('Default token read failed'))
+    mocks.takeAdditionalProxyTokens.mockRejectedValueOnce(new Error('Extra token read failed'))
+
+    await expect(
+      startHarnessAppDevelopmentRuntime({
+        installation,
+        modelOptions: [modelOption, secondModel],
+        localHarnessModelApi: { resolveLaunch, unregisterProxy, unregisterContext },
+        missingWebUrlMessage: 'missing URL',
+      })
+    ).rejects.toThrow('Context token store failed')
+
+    expect(mocks.storeProxyToken).toHaveBeenCalledWith(installation.id, 'default-token')
+    expect(mocks.storeAdditionalProxyTokens).toHaveBeenCalledWith(installation.id, ['second-token'])
+    expect(unregisterProxy).toHaveBeenCalledWith('default-token')
+    expect(unregisterProxy).toHaveBeenCalledWith('second-token')
+    expect(unregisterContext).toHaveBeenCalledWith('context-token')
+  })
+
+  test('serializes stop behind in-flight startup token storage', async () => {
+    let releaseStore: () => void = () => {}
+    mocks.storeProxyToken.mockReturnValueOnce(
+      new Promise<void>(resolve => {
+        releaseStore = resolve
+      })
+    )
+    const modelApi = {
+      resolveLaunch: vi.fn().mockResolvedValue({
+        proxyToken: 'proxy-token',
+        baseUrl: 'http://127.0.0.1:41000',
+      }),
+      unregisterProxy: vi.fn().mockResolvedValue(undefined),
+      unregisterContext: vi.fn().mockResolvedValue(undefined),
+    }
+    const starting = startHarnessAppDevelopmentRuntime({
+      installation,
+      modelOptions: [modelOption],
+      localHarnessModelApi: modelApi,
+      missingWebUrlMessage: 'missing URL',
+    })
+    await vi.waitFor(() => expect(mocks.storeProxyToken).toHaveBeenCalled())
+    const stopping = stopHarnessAppDevelopmentRuntime(installation.id, modelApi)
+    try {
+      await Promise.resolve()
+      expect(mocks.stop).not.toHaveBeenCalled()
+    } finally {
+      releaseStore()
+      await starting
+      await stopping
+    }
+    expect(mocks.stop).toHaveBeenCalledWith(installation.id)
+  })
+
   test('releases Wework model registrations when stopping', async () => {
     const unregisterProxy = vi.fn().mockResolvedValue(undefined)
     const unregisterContext = vi.fn().mockResolvedValue(undefined)
@@ -220,6 +292,58 @@ describe('harnessAppDevelopmentRuntime', () => {
     expect(unregisterProxy).toHaveBeenCalledWith('second-token')
     expect(unregisterContext).toHaveBeenCalledWith('context-token')
     expect(mocks.unregisterDecision).toHaveBeenCalledWith('decision-token')
+  })
+
+  test('does not reuse a running snapshot invalidated by a queued stop', async () => {
+    const staleRunning: HarnessAppInstallation = {
+      ...installation,
+      state: 'running',
+      webUrl: 'http://127.0.0.1:40000/',
+    }
+    const modelApi = {
+      resolveLaunch: vi.fn().mockResolvedValue({
+        proxyToken: 'fresh-token',
+        baseUrl: 'http://127.0.0.1:41000',
+      }),
+      unregisterProxy: vi.fn(),
+      unregisterContext: vi.fn(),
+    }
+    const stopping = stopHarnessAppDevelopmentRuntime(installation.id, modelApi)
+    const starting = startHarnessAppDevelopmentRuntime({
+      installation: staleRunning,
+      modelOptions: [modelOption],
+      localHarnessModelApi: modelApi,
+      missingWebUrlMessage: 'missing URL',
+    })
+    await stopping
+    const restarted = await starting
+    expect(mocks.start).toHaveBeenCalledOnce()
+    expect(restarted.webUrl).not.toBe(staleRunning.webUrl)
+    expect(mocks.registerTab).not.toHaveBeenCalledWith(staleRunning)
+  })
+
+  test('reuses the current running installation without allocating unused routes', async () => {
+    const current: HarnessAppInstallation = {
+      ...installation,
+      state: 'running',
+      webUrl: 'http://127.0.0.1:44000/',
+    }
+    mocks.list.mockResolvedValue([current])
+    const modelApi = {
+      resolveLaunch: vi.fn(),
+      unregisterProxy: vi.fn(),
+      unregisterContext: vi.fn(),
+    }
+    const result = await startHarnessAppDevelopmentRuntime({
+      installation: { ...current, webUrl: 'http://127.0.0.1:40000/' },
+      modelOptions: [modelOption],
+      localHarnessModelApi: modelApi,
+      missingWebUrlMessage: 'missing URL',
+    })
+    expect(result).toBe(current)
+    expect(mocks.start).not.toHaveBeenCalled()
+    expect(modelApi.resolveLaunch).not.toHaveBeenCalled()
+    expect(mocks.registerTab).toHaveBeenCalledWith(current)
   })
 
   test('registers a decision route for a granted linked project', async () => {

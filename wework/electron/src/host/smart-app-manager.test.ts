@@ -655,6 +655,54 @@ describe('SmartAppManager', () => {
     ).rejects.toThrow('Wework model router requires a default model route')
   })
 
+  test('normalizes control characters out of an accepted additional model URL', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-normalized-model-route-'))
+    roots.push(root)
+    const runtimeHost: SmartAppRuntimeHost = {
+      open: vi.fn().mockResolvedValue({ url: 'http://127.0.0.1:4173/' }),
+      close: vi.fn().mockResolvedValue(undefined),
+      runningTabIds: () => new Set(),
+    }
+    const manager = createManager(root, undefined, {}, runtimeHost)
+    const archivePath = await createSmartAppArchive(root, validManifest())
+    const preview = await manager.preview(archivePath)
+    const installation = await manager.install({ archivePath, expectedSha256: preview.sha256 })
+    const prepare = vi.spyOn(workbenchDshRuntime, 'prepareWorkbenchDshLaunch').mockResolvedValue({
+      command: process.execPath,
+      entry: 'fixture',
+      args: [],
+      cwd: root,
+      dshHome: root,
+      environment: {},
+      profile: 'web',
+      url: 'http://127.0.0.1:4173/',
+      version: '0.1.0-rc.8',
+      sourceFingerprint: 'fixture',
+    })
+    const rawUrl = 'http://127.0.0.1:9000/v1/harness-router/abcdefgh\nij'
+    try {
+      await manager.start({
+        installationId: installation.id,
+        modelBaseUrl: 'http://127.0.0.1:9000/v1/harness-router/default-token',
+        additionalModels: [{ modelKey: 'extra-model', displayName: 'Extra', baseUrl: rawUrl }],
+      })
+
+      expect(prepare).toHaveBeenCalledWith(
+        expect.objectContaining({
+          additionalModels: [
+            {
+              modelKey: 'extra-model',
+              displayName: 'Extra',
+              baseUrl: new URL(rawUrl).href,
+            },
+          ],
+        })
+      )
+    } finally {
+      prepare.mockRestore()
+    }
+  })
+
   test('rejects an unsupported decision router protocol version', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-decision-version-'))
     roots.push(root)

@@ -1,4 +1,5 @@
 import { rendererCrashStore } from './rendererCrashStore'
+import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { removeToken, setToken } from '@/api/auth'
@@ -2120,6 +2121,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'getHarnessAppLaunchDiagnostics':
+      return JSON.stringify(captureHarnessAppLaunchDiagnostics(command.value ?? ''))
     case 'dispatchLocalModelSettingsChangedThenMacrotask':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       await waitForDesktopControlTick()

@@ -13,6 +13,7 @@ import {
 } from './harnessAppTabs'
 import { beginHarnessAppLaunch, clearHarnessAppLaunch } from './harnessAppLaunchState'
 import { releaseHarnessAppRoutes } from './harnessAppRoutes'
+import { runHarnessAppRuntimeOperation } from './harnessAppRuntimeOperations'
 
 interface HarnessAppManagementOptions {
   installations: HarnessAppInstallation[]
@@ -110,15 +111,17 @@ export function useHarnessAppManagement({
       onBusyChange(installation.id)
       onError(null)
       try {
-        await harnessAppsApi.stop(installation.id)
-        unregisterHarnessAppTab(installation.id)
-        clearHarnessAppLaunch(installation.id)
-        closeAppTabs(installation.id)
-        await releaseHarnessAppRoutes(
-          installation.id,
-          services.localHarnessModelApi,
-          services.localDecisionRouterApi
-        )
+        await runHarnessAppRuntimeOperation(installation.id, async () => {
+          await harnessAppsApi.stop(installation.id)
+          unregisterHarnessAppTab(installation.id)
+          clearHarnessAppLaunch(installation.id)
+          closeAppTabs(installation.id)
+          await releaseHarnessAppRoutes(
+            installation.id,
+            services.localHarnessModelApi,
+            services.localDecisionRouterApi
+          )
+        })
         if (refresh) await onRefresh()
         return true
       } catch (error) {

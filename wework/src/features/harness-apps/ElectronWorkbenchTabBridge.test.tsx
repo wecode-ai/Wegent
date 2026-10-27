@@ -1,6 +1,7 @@
 import { render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ElectronWorkbenchTabBridge } from './ElectronWorkbenchTabBridge'
+import { runHarnessAppRuntimeOperation } from './harnessAppRuntimeOperations'
 
 const mocks = vi.hoisted(() => ({
   createLocalAppServices: vi.fn(),
@@ -94,5 +95,43 @@ describe('ElectronWorkbenchTabBridge', () => {
     } finally {
       warn.mockRestore()
     }
+  })
+
+  test('finishes a closing tab release before a reopened launch stores new routes', async () => {
+    let releaseStart: () => void = () => {}
+    let releaseRoutes: () => void = () => {}
+    const starting = runHarnessAppRuntimeOperation(
+      'smart-app-1',
+      () =>
+        new Promise<void>(resolve => {
+          releaseStart = resolve
+        })
+    )
+    mocks.releaseRoutes.mockImplementationOnce(
+      () =>
+        new Promise<void>(resolve => {
+          releaseRoutes = resolve
+        })
+    )
+    const view = render(<ElectronWorkbenchTabBridge />)
+    workspaceTabs.tabs = [{ id: 'task-tab', contentRoute: '/' }]
+    view.rerender(<ElectronWorkbenchTabBridge />)
+    const reopened = vi.fn().mockResolvedValue(undefined)
+    const reopening = runHarnessAppRuntimeOperation('smart-app-1', reopened)
+    await Promise.resolve()
+    try {
+      expect(mocks.stop).not.toHaveBeenCalled()
+      releaseStart()
+      await waitFor(() => expect(mocks.releaseRoutes).toHaveBeenCalled())
+      expect(reopened).not.toHaveBeenCalled()
+    } finally {
+      releaseStart()
+      releaseRoutes()
+      await starting
+      await reopening
+    }
+    expect(mocks.notifyInstallationsChanged.mock.invocationCallOrder[0]).toBeLessThan(
+      reopened.mock.invocationCallOrder[0]!
+    )
   })
 })

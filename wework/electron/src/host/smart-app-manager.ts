@@ -130,7 +130,7 @@ function validateAdditionalModelRoute(route: {
   return {
     modelKey: route.modelKey.trim(),
     displayName: route.displayName.trim(),
-    baseUrl: route.baseUrl,
+    baseUrl: url.href,
   }
 }
 

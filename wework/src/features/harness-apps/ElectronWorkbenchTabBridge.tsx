@@ -7,6 +7,7 @@ import { notifyHarnessAppInstallationsChanged } from './harnessAppInstallationsC
 import { harnessAppInstallationIdFromPath } from './harnessAppLaunchState'
 import { unregisterHarnessAppTab } from './harnessAppTabs'
 import { releaseHarnessAppRoutes } from './harnessAppRoutes'
+import { runHarnessAppRuntimeOperation } from './harnessAppRuntimeOperations'
 
 export function ElectronWorkbenchTabBridge() {
   const workspaceTabs = useWorkspaceTabs()
@@ -26,7 +27,7 @@ export function ElectronWorkbenchTabBridge() {
       if (current.has(installationId)) continue
       unregisterHarnessAppTab(installationId)
       const services = createLocalAppServices()
-      void (async () => {
+      void runHarnessAppRuntimeOperation(installationId, async () => {
         let stopped = false
         try {
           await harnessAppsApi.stop(installationId)
@@ -42,7 +43,7 @@ export function ElectronWorkbenchTabBridge() {
         if (stopped) {
           notifyHarnessAppInstallationsChanged({ type: 'stopped', installationId })
         }
-      })()
+      })
     }
     previousInstallationIds.current = current
   }, [workspaceTabs.tabs])
