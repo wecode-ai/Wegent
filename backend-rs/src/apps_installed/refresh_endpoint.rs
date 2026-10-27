@@ -85,8 +85,7 @@ where
     match probe_upstream(mysql, &app, user).await {
         Ok(()) => {
             let discovered_at = Utc::now().to_rfc3339();
-            let _ =
-                refresh::write_discovery_state(mysql, &row, Some(&discovered_at), None).await;
+            let _ = refresh::write_discovery_state(mysql, &row, Some(&discovered_at), None).await;
         }
         Err(message) => {
             let _ = refresh::write_discovery_state(mysql, &row, None, Some(&message)).await;
@@ -123,7 +122,9 @@ fn map_refresh_error(error: RefreshError) -> FastApiError {
             StatusCode::BAD_REQUEST,
             "Connector authorization was rejected",
         ),
-        RefreshError::Unavailable => FastApiError::detail(StatusCode::NOT_FOUND, CONNECTION_NOT_FOUND),
+        RefreshError::Unavailable => {
+            FastApiError::detail(StatusCode::NOT_FOUND, CONNECTION_NOT_FOUND)
+        }
         other => {
             tracing::warn!(%other, "connector grant refresh failed");
             FastApiError::internal()

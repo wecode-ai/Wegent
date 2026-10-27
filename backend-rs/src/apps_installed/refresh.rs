@@ -413,7 +413,10 @@ mod tests {
 
         assert_eq!(document["spec"]["refreshTokenEncrypted"], json!(null));
         assert_eq!(document["spec"]["status"], json!("expired"));
-        assert_eq!(document["spec"]["accessTokenEncrypted"], json!("ciphertext"));
+        assert_eq!(
+            document["spec"]["accessTokenEncrypted"],
+            json!("ciphertext")
+        );
     }
 
     fn client() -> StoredClient {
