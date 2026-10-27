@@ -50,7 +50,7 @@ export async function createDesktopScenario({
     : null
   let packageProxy
   try {
-    if (objectStorage) {
+    if (checkpoint === 'plugin-write-coordination') {
       // Preserve the signed Host while forwarding real S3 traffic to MinIO.
       packageProxy = await new TransportFaultProxy(
         objectStorage.backendEnv.ATTACHMENT_S3_ENDPOINT,
@@ -350,7 +350,7 @@ export async function createDesktopScenario({
       ? {
           backendEnv: {
             ...objectStorage.backendEnv,
-            ATTACHMENT_S3_ENDPOINT: packageProxy.url,
+            ...(packageProxy ? { ATTACHMENT_S3_ENDPOINT: packageProxy.url } : {}),
           },
         }
       : {}),
@@ -374,7 +374,10 @@ export async function createDesktopScenario({
     async verify(control) {
       controlRef = control
       if (objectStorage) {
-        assert.equal(cloud.backendEnv.ATTACHMENT_S3_ENDPOINT, packageProxy.url)
+        assert.equal(
+          cloud.backendEnv.ATTACHMENT_S3_ENDPOINT,
+          packageProxy?.url ?? objectStorage.backendEnv.ATTACHMENT_S3_ENDPOINT
+        )
       }
       local = await cloud.waitForConnectedAppDevice()
       cloud.remoteExecutorEnv.WEGENT_SOCKET_URL = deviceProxy.url

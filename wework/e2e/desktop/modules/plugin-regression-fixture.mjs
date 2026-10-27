@@ -84,6 +84,34 @@ export async function inventory(control) {
   return JSON.parse(await control.command('getComposerPluginInventoryDiagnostics', 'body'))
 }
 
+export async function completedApiResourceTimings(control, path) {
+  assert.ok(path.startsWith('/api/') && !/[?#]/.test(path), 'Expected an API pathname')
+  const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  assert.ok(Number.isFinite(snapshot.timeOrigin), 'Missing renderer performance time origin')
+  return snapshot.network
+    .filter(
+      resource =>
+        ['fetch', 'xmlhttprequest'].includes(resource.initiatorType) && resource.path === path
+    )
+    .map(resource => ({
+      path,
+      startedAt: snapshot.timeOrigin + resource.startTime,
+      completedAt: snapshot.timeOrigin + resource.startTime + resource.duration,
+      durationMs: resource.duration,
+    }))
+}
+
+export async function requestPluginExecutor(control, method, params = {}) {
+  const origin = await control.command('getLocationOrigin', 'body')
+  const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'plugin-regression', method, params }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  return { status: response.status, payload: await response.json() }
+}
+
 export async function openComposerPluginPicker(control) {
   const button = testId('composer-plugin-picker-button')
   await control.command('waitFor', button, { visible: true, enabled: true, stableMs: 250 })

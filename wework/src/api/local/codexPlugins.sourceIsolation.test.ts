@@ -205,6 +205,8 @@ describe('local plugin source isolation', () => {
     const durable = window.localStorage.getItem('wework.plugins.codexCatalog.v1')
     expect(durable).toBeTruthy()
     expect(durable).not.toContain('installedSources')
+    expect(durable).not.toContain('installedPartial')
+    expect(durable).not.toContain('installedReadGeneration')
   })
 
   test('publishes a fresh personal disk install over an older Codex personal cache', async () => {
@@ -314,5 +316,276 @@ describe('local plugin source isolation', () => {
       'codex-tool',
       'managed-tool',
     ])
+  })
+
+  test.each(['installed', 'catalog'])(
+    'keeps fresh disk personal rows after a failed Codex %s refresh',
+    async read => {
+      const api = createLocalCodexPluginApi()
+      await api.readState({ mergeAllMarketplaces: true, refresh: true })
+      await listLocalInstalledPluginsFromDisk()
+      failures.add('plugin/installed')
+
+      const plugins =
+        read === 'installed'
+          ? (await api.listInstalledPlugins({ refresh: true })).items
+          : (await api.readState({ mergeAllMarketplaces: true, refresh: true })).installedPlugins
+      expect(plugins.map(item => item.spec.source.pluginKey).sort()).toEqual([
+        'managed-tool',
+        'personal-tool',
+      ])
+    }
+  )
+
+  test.each(['executor.plugins.personal.list', 'executor.codex_home.config.read'])(
+    'does not revive removed personal rows after a successful empty %s and a Codex failure',
+    async source => {
+      const api = createLocalCodexPluginApi()
+      await api.readState({ mergeAllMarketplaces: true, refresh: true })
+      await listLocalInstalledPluginsFromDisk()
+      empty.add(source)
+      await listLocalInstalledPluginsFromDisk()
+      failures.add('plugin/installed')
+
+      const result = await api.listInstalledPlugins({ refresh: true })
+      expect(result.partial).toBe(true)
+      expect(result.items.map(item => item.spec.source.pluginKey)).toEqual(['managed-tool'])
+    }
+  )
+
+  test('retains other Codex markets beside fresh personal rows and clears them on empty recovery', async () => {
+    const original = mocks.request.getMockImplementation()!
+    mocks.request.mockImplementation(async (method, params) => {
+      const source = method === 'codex.app_server_request' ? params.method : method
+      if (source === 'plugin/installed' && !failures.has(source) && !empty.has(source)) {
+        return {
+          marketplaces: [
+            marketplace,
+            { name: 'openai-curated-remote', plugins: [{ name: 'native-tool', enabled: true }] },
+          ],
+        }
+      }
+      return original(method, params)
+    })
+    const api = createLocalCodexPluginApi()
+    await api.listInstalledPlugins({ refresh: true })
+    await listLocalInstalledPluginsFromDisk()
+    failures.add('plugin/installed')
+    expect(
+      (await api.listInstalledPlugins({ refresh: true })).items
+        .map(item => item.spec.source.pluginKey)
+        .sort()
+    ).toEqual(['managed-tool', 'native-tool', 'personal-tool'])
+
+    failures.clear()
+    empty.add('plugin/installed')
+    expect(
+      (await api.listInstalledPlugins({ refresh: true })).items.map(
+        item => item.spec.source.pluginKey
+      )
+    ).toEqual(['managed-tool'])
+  })
+
+  test.each(['disk', 'installed'])(
+    'publishes a successful catalog after a newer %s inventory read without rolling back membership',
+    async source => {
+      const api = createLocalCodexPluginApi()
+      await api.readState({ mergeAllMarketplaces: true, refresh: true })
+      const original = mocks.request.getMockImplementation()!
+      let finish!: (value: unknown) => void
+      mocks.request.mockImplementation(async (method, params) => {
+        if (method === 'codex.app_server_request' && params.method === 'plugin/list')
+          return new Promise(resolve => {
+            finish = resolve
+          })
+        return original(method, params)
+      })
+      const pending = api.readState({ mergeAllMarketplaces: true, refresh: true })
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+      if (source === 'disk') await listLocalInstalledPluginsFromDisk()
+      else {
+        empty.add('plugin/installed')
+        empty.add('executor.plugins.store.list')
+        await api.listInstalledPlugins({ refresh: true })
+      }
+      finish({
+        marketplaces: [
+          {
+            ...marketplace,
+            plugins: [
+              ...marketplace.plugins,
+              { name: 'new-catalog-plugin', installed: false, enabled: false },
+            ],
+          },
+        ],
+      })
+
+      const result = await pending
+      expect(result.marketplaceItems.map(item => item.name)).toContain('new-catalog-plugin')
+      expect(result.installedPlugins.map(item => item.spec.source.pluginKey).sort()).toEqual(
+        source === 'disk' ? ['managed-tool', 'personal-tool'] : []
+      )
+      expect(result.marketplaceItems.find(item => item.name === 'codex-tool')?.installed).toBe(
+        false
+      )
+      expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toEqual(result)
+    }
+  )
+
+  test('a delayed disk scan preserves a catalog that completed while the disk scan was in flight', async () => {
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true, refresh: true })
+    const original = mocks.request.getMockImplementation()!
+    let finishCatalog!: (value: unknown) => void
+    let finishPersonal!: (value: unknown) => void
+    mocks.request.mockImplementation(async (method, params) => {
+      if (method === 'codex.app_server_request' && params.method === 'plugin/list')
+        return new Promise(resolve => {
+          finishCatalog = resolve
+        })
+      if (method === 'executor.plugins.personal.list')
+        return new Promise(resolve => {
+          finishPersonal = resolve
+        })
+      return original(method, params)
+    })
+    const catalog = api.readState({ mergeAllMarketplaces: true, refresh: true })
+    await vi.waitFor(() => expect(finishCatalog).toBeTypeOf('function'))
+    const disk = listLocalInstalledPluginsFromDisk()
+    await vi.waitFor(() => expect(finishPersonal).toBeTypeOf('function'))
+    finishCatalog({
+      marketplaces: [{ ...marketplace, plugins: [{ name: 'new-catalog-plugin', enabled: false }] }],
+    })
+    expect((await catalog).marketplaceItems.map(item => item.name)).toEqual(['new-catalog-plugin'])
+    finishPersonal(personal)
+    await disk
+
+    const current = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })!
+    expect(current.marketplaceItems.map(item => item.name)).toEqual(['new-catalog-plugin'])
+    expect(current.installedPlugins.map(item => item.spec.source.pluginKey).sort()).toEqual([
+      'managed-tool',
+      'personal-tool',
+    ])
+  })
+
+  test.each(['catalog', 'inventory'])(
+    'keeps %s failure ownership independent while rebasing a successful catalog refresh',
+    async source => {
+      const api = createLocalCodexPluginApi()
+      await api.readState({ mergeAllMarketplaces: true, refresh: true })
+      if (source === 'catalog') {
+        failures.add('plugin/list')
+        expect((await api.readState({ mergeAllMarketplaces: true, refresh: true })).partial).toBe(
+          true
+        )
+        failures.clear()
+      }
+      const original = mocks.request.getMockImplementation()!
+      let finish!: (value: unknown) => void
+      mocks.request.mockImplementation(async (method, params) => {
+        if (method === 'codex.app_server_request' && params.method === 'plugin/list')
+          return new Promise(resolve => {
+            finish = resolve
+          })
+        return original(method, params)
+      })
+      const catalog = api.readState({ mergeAllMarketplaces: true, refresh: true })
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+      if (source === 'inventory') failures.add('executor.plugins.store.list')
+      await listLocalInstalledPluginsFromDisk()
+      finish({ marketplaces: [marketplace] })
+
+      expect(Boolean((await catalog).partial)).toBe(source === 'inventory')
+      failures.clear()
+      await api.listInstalledPlugins({ requireComplete: true })
+      expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.partial).not.toBe(true)
+    }
+  )
+
+  test.each(['disk', 'installed'])(
+    'only a newer complete installed read can clear a failed Codex source after a %s read',
+    async newerRead => {
+      const original = mocks.request.getMockImplementation()!
+      let finish!: (value: unknown) => void
+      let holdCatalog = false
+      mocks.request.mockImplementation(async (method, params) => {
+        if (method === 'executor.plugins.store.list')
+          return {
+            ...store,
+            plugins: [{ ...store.plugins[0], marketplace: 'personal' }],
+          }
+        if (method === 'executor.plugins.personal.ensure')
+          return { migrated: false, marketplacePath: '/personal', pluginName: 'managed-tool' }
+        if (holdCatalog && method === 'codex.app_server_request' && params.method === 'plugin/list')
+          return new Promise(resolve => {
+            finish = resolve
+          })
+        return original(method, params)
+      })
+      const api = createLocalCodexPluginApi()
+      await api.readState({ mergeAllMarketplaces: true, refresh: true })
+      const migrationRequests = () =>
+        mocks.request.mock.calls.filter(([method]) => method === 'executor.plugins.personal.ensure')
+          .length
+      const before = migrationRequests()
+      expect(before).toBeGreaterThan(0)
+      holdCatalog = true
+      failures.add('plugin/installed')
+      const catalog = api.readState({ mergeAllMarketplaces: true, refresh: true })
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+      await listLocalInstalledPluginsFromDisk()
+      if (newerRead === 'installed') {
+        failures.clear()
+        await api.listInstalledPlugins({ requireComplete: true })
+      }
+      finish({
+        marketplaces: [
+          { ...marketplace, plugins: [{ name: 'new-catalog-plugin', enabled: false }] },
+        ],
+      })
+
+      const result = await catalog
+      expect(result.marketplaceItems.map(item => item.name)).toEqual(['new-catalog-plugin'])
+      expect(Boolean(result.partial)).toBe(newerRead === 'disk')
+      if (newerRead === 'disk') {
+        expect(result.installedPlugins.map(item => item.spec.source.pluginKey).sort()).toEqual([
+          'managed-tool',
+          'personal-tool',
+        ])
+        expect(migrationRequests()).toBe(before)
+      }
+      failures.clear()
+      await api.listInstalledPlugins({ requireComplete: true })
+      expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.partial).not.toBe(true)
+    }
+  )
+
+  test('retains a failed cloud link read when rebasing a fresh catalog on newer disk membership', async () => {
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true, refresh: true })
+    const original = mocks.request.getMockImplementation()!
+    let finish!: (value: unknown) => void
+    mocks.request.mockImplementation(async (method, params) => {
+      if (method === 'codex.app_server_request' && params.method === 'plugin/list')
+        return new Promise(resolve => {
+          finish = resolve
+        })
+      return original(method, params)
+    })
+    const catalog = api.readState({ mergeAllMarketplaces: true, refresh: true })
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+    await listLocalInstalledPluginsFromDisk()
+    failures.add('executor.plugins.links.list')
+    finish({ marketplaces: [marketplace] })
+
+    const result = await catalog
+    expect(result.partial).toBe(true)
+    expect(result.installedPlugins.map(item => item.spec.source.pluginKey).sort()).toEqual([
+      'managed-tool',
+      'personal-tool',
+    ])
+    failures.clear()
+    await api.listInstalledPlugins({ requireComplete: true })
+    expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.partial).not.toBe(true)
   })
 })

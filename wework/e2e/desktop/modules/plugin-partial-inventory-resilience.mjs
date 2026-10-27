@@ -8,6 +8,7 @@ import {
   materializedPlugin,
   openPlugin,
   pluginApi,
+  requestPluginExecutor,
   testId,
   until,
 } from './plugin-regression-fixture.mjs'
@@ -108,15 +109,9 @@ export async function verifyPluginPartialInventoryResilience({
   }
 
   async function executor(method, expectedStatus = 200) {
-    const origin = await control.command('getLocationOrigin', 'body')
-    const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
-      method: 'POST',
-      headers: { accept: 'application/json', 'content-type': 'application/json' },
-      body: JSON.stringify({ id: 'partial-inventory-resilience', method, params: {} }),
-      signal: AbortSignal.timeout(10_000),
-    })
-    assert.equal(response.status, expectedStatus, `Unexpected real Executor ${method} status`)
-    return response.json()
+    const { status, payload } = await requestPluginExecutor(control, method)
+    assert.equal(status, expectedStatus, `Unexpected real Executor ${method} status`)
+    return payload
   }
 
   async function checkFault(label) {

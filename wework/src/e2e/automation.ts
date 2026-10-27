@@ -3256,8 +3256,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(finishedCount)
     }
     case 'getWorkbenchDebugSnapshot':
+      performance.setResourceTimingBufferSize(10_000)
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
+        timeOrigin: performance.timeOrigin,
         network: performance.getEntriesByType('resource').map(entry => {
           const timing = entry as PerformanceResourceTiming
           return {
@@ -3338,28 +3340,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
                 .responseStatus ?? null,
             startedAt: performance.timeOrigin + resource.startTime,
             completedAt: performance.timeOrigin + resource.startTime + resource.duration,
-          }))
-      )
-    }
-    case 'getCompletedResourceTimings': {
-      const path = command.value
-      if (!path?.startsWith('/api/') || path.includes('?') || path.includes('#')) {
-        throw new Error('Resource timing diagnostics require an API pathname without a query')
-      }
-      performance.setResourceTimingBufferSize(10_000)
-      const completed = performance.getEntriesByType('resource') as PerformanceResourceTiming[]
-      return JSON.stringify(
-        completed
-          .filter(
-            resource =>
-              ['fetch', 'xmlhttprequest'].includes(resource.initiatorType) &&
-              new URL(resource.name, window.location.href).pathname === path
-          )
-          .map(resource => ({
-            path,
-            startedAt: performance.timeOrigin + resource.startTime,
-            completedAt: performance.timeOrigin + resource.startTime + resource.duration,
-            durationMs: resource.duration,
           }))
       )
     }

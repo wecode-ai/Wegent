@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
-import { testId, until } from './plugin-regression-fixture.mjs'
+import { requestPluginExecutor, testId, until } from './plugin-regression-fixture.mjs'
 import {
   configureFirstProjectExecutionEnvironment,
   createLocalCollaborationProject,
@@ -126,15 +126,8 @@ export async function verifyPluginDetailResilience({
   let imageEvidenceLogStart = 0
 
   async function requestExecutor(method, params = {}) {
-    const origin = await control.command('getLocationOrigin', 'body')
-    const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
-      method: 'POST',
-      headers: { accept: 'application/json', 'content-type': 'application/json' },
-      body: JSON.stringify({ id: 'plugin-detail-resilience', method, params }),
-      signal: AbortSignal.timeout(10_000),
-    })
-    const value = await response.json()
-    return { status: response.status, ...value }
+    const { status, payload } = await requestPluginExecutor(control, method, params)
+    return { status, ...payload }
   }
 
   async function detail(item, successful = true) {

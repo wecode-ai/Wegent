@@ -3,20 +3,32 @@ import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { copyFile, lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { isAbsolute, join, relative, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { writeCodexConfig } from './desktop-build-flows.mjs'
 import { declineInitialTelemetryConsent } from './preferences-automation-flows.mjs'
 import {
+  completedApiResourceTimings,
   inventory,
   materializedPlugin,
   openComposerPluginPicker,
+  requestPluginExecutor,
   testId,
   until,
 } from './plugin-regression-fixture.mjs'
-import { commandOutputAsync, MODEL_API_KEY } from './shared.mjs'
+import {
+  commandOutputAsync,
+  createPluginMarketplaceFixture,
+  MODEL_API_KEY,
+  PLUGIN_DISPLAY_NAME,
+  PLUGIN_MARKETPLACE_NAME,
+} from './shared.mjs'
+import { waitForTestIdByText } from './workspace-flows.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
 
-const { decompressFromUTF16 } = createRequire(import.meta.url)('lz-string')
+const clientBundle = process.env.WEWORK_E2E_SOCKET_IO_CLIENT
+const { decompressFromUTF16 } = createRequire(import.meta.url)(
+  clientBundle ? resolve(dirname(clientBundle), 'lz-string.cjs') : 'lz-string'
+)
 const storageKey = 'wework.plugins.inventory.v2'
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
 
@@ -25,7 +37,7 @@ function assertWithin(root, path) {
   assert.ok(child && child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child))
 }
 
-function decodeInventory(raw) {
+export function decodeInventory(raw) {
   assert.ok(raw, 'The real renderer did not persist plugin inventory')
   const json = raw.startsWith('lz:') ? decompressFromUTF16(raw.slice(3)) : raw
   const parsed = JSON.parse(json)
@@ -524,6 +536,58 @@ export async function verifyPluginScopeBoundaries({
       )
       const recoveredB = await assertViews(slug, false, bId)
       result.recoveredB = recoveredB
+
+      // A healthy cold load must publish later local catalog data after replacing
+      // the original A cache. A manual refresh or opening management first would
+      // repair the baseline and mask the cross-device response rejection.
+      const bLocalMarket = join(deviceRoot, 'local-marketplace')
+      await createPluginMarketplaceFixture(bLocalMarket)
+      const registered = await requestPluginExecutor(control, 'codex.app_server_request', {
+        method: 'marketplace/add',
+        params: { source: bLocalMarket, refName: null, sparsePaths: null },
+      })
+      assert.equal(registered.status, 200)
+      assert.equal(registered.payload.ok, true)
+      assert.equal(registered.payload.result.marketplaceName, PLUGIN_MARKETPLACE_NAME)
+      const cloudMarker = await cloud.publishPluginRelease({
+        slug: `scope-healthy-device-b-${process.pid}`,
+        version: '1.0.0',
+        skills: { 'healthy-device-check': 'Healthy cloud catalog beside the local catalog' },
+      })
+      await restartDesktopApp({
+        afterStop: async () => {
+          for (const copied of copiedStorage) {
+            const source = join(electronUserDataDirectory, copied.name)
+            const target = join(bUserData, copied.name)
+            for (const path of [source, target]) {
+              const metadata = await lstat(path)
+              assert.ok(metadata.isFile() && !metadata.isSymbolicLink())
+              assertWithin(root, await realpath(path))
+            }
+            assert.equal(sha256(await readFile(source)), copied.sha256)
+            await copyFile(source, target)
+            assert.deepEqual(await readFile(target), await readFile(source))
+          }
+        },
+      })
+      await backToCatalog()
+      await control.command('waitFor', testId(`plugin-marketplace-row-${cloudMarker.pluginId}`), {
+        timeoutMs,
+      })
+      const localCatalogRow = await waitForTestIdByText(
+        control,
+        'body',
+        'plugin-marketplace-row-',
+        PLUGIN_DISPLAY_NAME,
+        timeoutMs
+      )
+      result.healthyColdLoad = {
+        deviceId: bId,
+        localCatalogRow,
+        cloudPluginId: cloudMarker.pluginId,
+      }
+      await assertViews(slug, false, bId)
+      await captureScreenshot(control, 'plugin-scope-device-b-healthy-cold-catalog.png')
       await restoreDeviceA()
       const restoredA = await assertViews(slug, true, deviceId)
       assert.equal(sha256(await readFile(personal.skillPath)), personal.skillSha256)
@@ -536,6 +600,7 @@ export async function verifyPluginScopeBoundaries({
         before,
         duringFault,
         recoveredB,
+        healthyColdLoad: result.healthyColdLoad,
         restoredA,
       }
     })
@@ -593,31 +658,29 @@ export async function verifyPluginScopeBoundaries({
         'The account A marker never materialized in the real executor',
         timeoutMs
       )
-      await control.command('getCompletedResourceTimings', 'body', {
-        value: '/api/plugins/installed',
-      })
+      await completedApiResourceTimings(control, '/api/plugins/installed')
       const requestStart = apiProxy.requests.length
       let claimed = false
       apiProxy.rule = entry => {
         if (!claimed && entry.method === 'GET' && entry.path === '/api/plugins/installed') {
           claimed = true
-          return 'delay-response'
+          return 'hold-response'
         }
         return originalRule(entry)
       }
       const heldStartedAt = Date.now()
       await refreshCatalog()
       const pending = await until(
-        () => apiProxy.requests.slice(requestStart).find(entry => entry.delayedResponseReady),
+        () => apiProxy.requests.slice(requestStart).find(entry => entry.committedResponseHeld),
         Boolean,
         'The real account A inventory response was not fully received and held'
       )
       const heldReadyAt = Date.now()
       assert.equal(pending.status, 200)
       result.heldResponse = {
-        id: pending.delayedResponseId,
+        requestIndex: apiProxy.requests.indexOf(pending),
         status: pending.status,
-        fullyReceived: pending.delayedResponseReady,
+        fullyReceived: pending.committedResponseHeld,
       }
       accountMayHaveChanged = true
       await authorizeAccount(accountB, login.access_token)
@@ -626,22 +689,17 @@ export async function verifyPluginScopeBoundaries({
       result.beforeRelease = beforeRelease
       await assertViews(slugA, false, deviceId)
       const releasedAt = Date.now()
-      const releaseCount = apiProxy.releaseDelayedResponses(
-        entry => entry.delayedResponseId === pending.delayedResponseId
-      )
       assert.equal(
-        releaseCount,
-        1,
+        await pending.release(),
+        true,
         'The actual old-account response was canceled rather than released'
       )
-      assert.equal(pending.delayedResponseReleased, true)
+      assert.equal(pending.released, true)
       result.heldResponse.released = true
       const consumed = await until(
         async () => {
-          const matching = JSON.parse(
-            await control.command('getCompletedResourceTimings', 'body', {
-              value: '/api/plugins/installed',
-            })
+          const matching = (
+            await completedApiResourceTimings(control, '/api/plugins/installed')
           ).filter(
             entry =>
               entry.startedAt >= heldStartedAt &&
@@ -693,10 +751,10 @@ export async function verifyPluginScopeBoundaries({
         accountB: { id: accountB.id, userName: accountB.user_name },
         markers,
         heldResponse: {
-          id: pending.delayedResponseId,
+          requestIndex: apiProxy.requests.indexOf(pending),
           status: pending.status,
-          fullyReceived: pending.delayedResponseReady,
-          released: pending.delayedResponseReleased,
+          fullyReceived: pending.committedResponseHeld,
+          released: pending.released,
           rendererCompleted: consumed,
           stableInventorySamples: stability,
         },
@@ -708,7 +766,11 @@ export async function verifyPluginScopeBoundaries({
     })
   } finally {
     apiProxy.rule = originalRule
-    apiProxy.releaseDelayedResponses()
+    await Promise.all(
+      apiProxy.requests
+        .filter(entry => entry.committedResponseHeld && !entry.released)
+        .map(entry => entry.release())
+    )
     try {
       await closeComposerPicker()
       if (inDeviceB) await restoreDeviceA()

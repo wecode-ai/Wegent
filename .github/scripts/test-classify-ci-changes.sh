@@ -1734,7 +1734,7 @@ assert_desktop_case "shared real object storage selects both plugin recovery and
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"collaboration-issue-mcp-comments"}]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-lost-response"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-write-coordination,plugin-account-auth-coordination"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"plugin-uninstall-unknown-result,plugin-registration-coordination"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"plugin-uninstall-reinstall-race"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"plugin-catalog-boundaries"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"plugin-operation-boundaries"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-write-coordination"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"plugin-runtime-route-refresh,plugin-background-sync-isolation,plugin-periodic-reconcile"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"plugin-operation-boundaries"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/modules/real-object-storage.mjs"

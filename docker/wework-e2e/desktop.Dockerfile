@@ -1,9 +1,4 @@
-# Same MinIO version as docker-compose.e2e.yml, pinned for clean amd64/arm64 builds.
-FROM bitnamilegacy/minio@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7 AS minio
-
 FROM ubuntu:24.04
-
-COPY --from=minio /opt/bitnami/minio/bin/minio /usr/local/bin/minio
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG NODE_MAJOR=24
@@ -68,7 +63,6 @@ RUN node --version \
   && python3 --version \
   && uv --version \
   && mysqld --version \
-  && minio --version \
   && skopeo --version \
   && umoci --version \
   && rustc --version \

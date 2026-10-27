@@ -3008,8 +3008,17 @@ export function PluginsWorkspace({
       knownExecutorDeviceId && inventoryAtStart?.deviceId !== knownExecutorDeviceId
         ? null
         : inventoryAtStart
+    // A new device owns this read; keep the original mutation revision while
+    // allowing its first publication to replace the untouched old-device cache.
+    const inventoryReadBaseline =
+      inventoryAtStart && knownExecutorDeviceId
+        ? { ...inventoryAtStart, deviceId: knownExecutorDeviceId }
+        : inventoryAtStart
     const inventoryReadIsCurrent = () =>
-      isCurrent && pluginInventoryReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart)
+      isCurrent &&
+      (!knownExecutorDeviceId || getKnownLocalExecutorDeviceId() === knownExecutorDeviceId) &&
+      (getPluginMarketplaceCache(marketplaceCacheKeyValue) === inventoryAtStart ||
+        pluginInventoryReadIsCurrent(marketplaceCacheKeyValue, inventoryReadBaseline))
     inventoryCompleteRef.current = false
     setLocalInstalledStateReadyKey(null)
     const reportReadFailure = () => {

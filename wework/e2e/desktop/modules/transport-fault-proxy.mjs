@@ -109,8 +109,6 @@ export class TransportFaultProxy {
     this.upstreams = new Set()
     this.websockets = new Set()
     this.deviceSockets = new Set()
-    this.delayedResponses = new Map()
-    this.nextDelayedResponseId = 1
     this.rule = () => null
     this.paused = false
     this.acknowledgementsPaused = false
@@ -167,40 +165,33 @@ export class TransportFaultProxy {
     }
     const upstream = httpRequest(this.options(request), incoming => {
       entry.status = incoming.statusCode
-      if (fault === 'delay-response') {
-        const chunks = []
-        incoming.on('data', chunk => chunks.push(chunk))
-        incoming.once('end', () => {
-          if (response.destroyed) return
-          entry.delayedResponseId = this.nextDelayedResponseId++
-          entry.delayedResponseReady = true
-          this.delayedResponses.set(entry.delayedResponseId, {
-            entry,
-            response,
-            status: incoming.statusCode,
-            headers: incoming.headers,
-            body: Buffer.concat(chunks),
-          })
-        })
-        response.once('close', () => {
-          if (entry.delayedResponseId) this.delayedResponses.delete(entry.delayedResponseId)
-        })
-        return
-      }
       if (fault === 'hold-response') {
         const chunks = []
         incoming.on('data', chunk => chunks.push(chunk))
         incoming.once('end', () => {
+          if (response.destroyed) return
+          let held = {
+            status: incoming.statusCode,
+            headers: incoming.headers,
+            body: Buffer.concat(chunks),
+          }
+          // Functions keep the real reply inspectable without serializing its bytes or headers.
+          entry.readHeldResponse = () => held
+          response.once('close', () => {
+            held = null
+          })
           entry.release = () =>
             new Promise(resolve => {
-              if (response.destroyed || response.writableEnded) {
-                resolve()
+              const reply = held
+              held = null
+              if (!reply || response.destroyed || response.writableEnded) {
+                resolve(false)
                 return
               }
-              response.once('finish', resolve)
-              response.once('close', resolve)
-              response.writeHead(incoming.statusCode, incoming.headers)
-              response.end(Buffer.concat(chunks))
+              response.once('finish', () => resolve(true))
+              response.once('close', () => resolve(entry.responseCompleted === true))
+              response.writeHead(reply.status, reply.headers)
+              response.end(reply.body)
               entry.released = true
             })
           entry.committedResponseHeld = true
@@ -364,21 +355,6 @@ export class TransportFaultProxy {
     return gate
   }
 
-  /** Release exact completed upstream replies; never reissue their requests. */
-  releaseDelayedResponses(predicate = () => true) {
-    let released = 0
-    for (const [id, delayed] of this.delayedResponses) {
-      if (!predicate(delayed.entry)) continue
-      this.delayedResponses.delete(id)
-      if (delayed.response.destroyed) continue
-      delayed.entry.delayedResponseReleased = true
-      delayed.response.writeHead(delayed.status, delayed.headers)
-      delayed.response.end(delayed.body)
-      released += 1
-    }
-    return released
-  }
-
   async start() {
     await new Promise((resolve, reject) => {
       this.server.once('error', reject)
@@ -390,8 +366,6 @@ export class TransportFaultProxy {
 
   async stop() {
     this.capabilitySyncGate?.release()
-    for (const { response } of this.delayedResponses.values()) response.destroy()
-    this.delayedResponses.clear()
     for (const request of this.upstreams) request.destroy()
     for (const socket of this.sockets) socket.destroy()
     await new Promise((resolve, reject) =>

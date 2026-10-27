@@ -4,7 +4,7 @@ import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from '
 import { isAbsolute, join, relative, sep } from 'node:path'
 
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
-import { testId } from './plugin-regression-fixture.mjs'
+import { requestPluginExecutor, testId } from './plugin-regression-fixture.mjs'
 import {
   configureFirstProjectExecutionEnvironment,
   createLocalCollaborationProject,
@@ -70,19 +70,13 @@ export async function verifyPluginSourceContinuation({
   }
 
   async function requestExecutor(method, params = {}, expectedStatus = 200) {
-    const origin = await control.command('getLocationOrigin', 'body')
-    const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
-      method: 'POST',
-      headers: { accept: 'application/json', 'content-type': 'application/json' },
-      body: JSON.stringify({ id: 'plugin-source-continuation', method, params }),
-      signal: AbortSignal.timeout(10_000),
-    })
+    const { status, payload } = await requestPluginExecutor(control, method, params)
     assert.equal(
-      response.status,
+      status,
       expectedStatus,
       `Real Executor RPC ${method} returned an unexpected HTTP status`
     )
-    return response.json()
+    return payload
   }
 
   async function checkFault(label) {

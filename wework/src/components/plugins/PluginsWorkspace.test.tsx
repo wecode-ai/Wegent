@@ -1631,6 +1631,69 @@ function officialCodexPluginSummary(plugin: {
   }
 }
 
+function mockCrossDeviceCatalogLoad() {
+  window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+  mockSystemSkillsFetch()
+  mockCodexAppServerInvoke({
+    deviceId: 'current-device',
+    marketplaces: [
+      {
+        name: 'custom-local',
+        path: '/tmp/custom-local',
+        plugins: [
+          { ...defaultCodexPlugin, id: 'local-1', name: 'local-docs', displayName: 'Local Docs' },
+        ],
+      },
+    ],
+    installedPluginNames: ['local-docs'],
+  })
+  const gate = () => {
+    let release!: () => void
+    const promise = new Promise<void>(resolve => {
+      release = resolve
+    })
+    return { promise, release }
+  }
+  const cloud = gate()
+  const membership = gate()
+  const membershipReturned = vi.fn()
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    if (path === '/api/plugins/marketplace' || path === '/api/plugins/installed') {
+      await cloud.promise
+    }
+    return originalFetch(input, init)
+  })
+  const originalInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()!
+  vi.mocked(requestLocalExecutor).mockImplementation(async (method, args) => {
+    if (
+      method === 'codex.app_server_request' &&
+      (args as { method?: string })?.method === 'plugin/installed'
+    ) {
+      await membership.promise
+      const result = await originalInvoke(method, args)
+      membershipReturned()
+      return result
+    }
+    return originalInvoke(method, args)
+  })
+  const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
+  setPluginMarketplaceCache(
+    {
+      cacheKey,
+      marketplaceItems: [],
+      installedPlugins: [],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'old-device',
+      fetchedAt: Date.now(),
+    },
+    { mutation: true }
+  )
+  return { cacheKey, cloud, membership, membershipReturned }
+}
+
 describe('PluginsWorkspace', () => {
   beforeEach(() => {
     delete window.__WEWORK_RUNTIME_CONFIG__
@@ -9054,5 +9117,65 @@ describe('PluginsWorkspace', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByTestId('plugins-create-menu')).not.toBeInTheDocument()
+  })
+
+  test.each(['cloud', 'membership'] as const)(
+    'finishes a cross-device catalog refresh when %s arrives first',
+    async firstSource => {
+      const reads = mockCrossDeviceCatalogLoad()
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      try {
+        reads[firstSource].release()
+        await waitFor(() =>
+          expect(getPluginMarketplaceCache(reads.cacheKey)?.deviceId).toBe('current-device')
+        )
+        reads[firstSource === 'cloud' ? 'membership' : 'cloud'].release()
+
+        expect(await screen.findByText('Local Docs')).toBeInTheDocument()
+        expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+        await waitFor(() =>
+          expect(
+            getPluginMarketplaceCache(reads.cacheKey)?.marketplaceItems.some(
+              item => item.name === 'local-docs'
+            )
+          ).toBe(true)
+        )
+      } finally {
+        reads.cloud.release()
+        reads.membership.release()
+      }
+    }
+  )
+
+  test('does not overwrite a confirmed mutation during a cross-device catalog refresh', async () => {
+    const reads = mockCrossDeviceCatalogLoad()
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    try {
+      reads.cloud.release()
+      await waitFor(() =>
+        expect(getPluginMarketplaceCache(reads.cacheKey)?.deviceId).toBe('current-device')
+      )
+      const current = getPluginMarketplaceCache(reads.cacheKey)!
+      act(() => {
+        setPluginMarketplaceCache(
+          { ...current, marketplaceItems: [], installedPlugins: [] },
+          { mutation: true }
+        )
+      })
+      const mutationRevision = getPluginMarketplaceCache(reads.cacheKey)?.mutationRevision
+      await act(async () => {
+        reads.membership.release()
+        await reads.membership.promise
+      })
+      await waitFor(() => expect(reads.membershipReturned).toHaveBeenCalled())
+      const final = getPluginMarketplaceCache(reads.cacheKey)
+      expect(final?.mutationRevision).toBe(mutationRevision)
+      expect(final?.installedPlugins).toEqual([])
+      expect(final?.marketplaceItems).toEqual([])
+      expect(screen.queryByText('Local Docs')).not.toBeInTheDocument()
+    } finally {
+      reads.cloud.release()
+      reads.membership.release()
+    }
   })
 })

@@ -1024,8 +1024,12 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/modules/real-object-storage.mjs)
-      select_uninstall_checkpoints
       select_target "core:collaboration-issue-mcp-comments"
+      select_target "cloud:plugin-write-coordination"
+      select_target "cloud:plugin-operation-boundaries"
+      select_target "cloud:plugin-runtime-route-refresh"
+      select_target "cloud:plugin-background-sync-isolation"
+      select_target "cloud:plugin-periodic-reconcile"
       return
       ;;
     wework/e2e/desktop/modules/personal-issue-access.mjs | \

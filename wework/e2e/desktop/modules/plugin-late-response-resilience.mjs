@@ -5,6 +5,7 @@ import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib'
 import {
   accountPlugin,
   assertInventory,
+  completedApiResourceTimings,
   inventory,
   materializedPlugin,
   openPlugin,
@@ -59,24 +60,22 @@ export async function verifyPluginLateResponseResilience({
     assert.equal(await accountPlugin(cloud, slug), undefined)
     report.preconditions.completed = true
     // Expand the browser observation buffer before starting the delayed request.
-    await control.command('getCompletedResourceTimings', 'body', {
-      value: '/api/plugins/installed',
-    })
+    await completedApiResourceTimings(control, '/api/plugins/installed')
     apiProxy.rule = entry => {
       if (!delayedEntry && entry.method === 'GET' && entry.path === '/api/plugins/installed') {
         delayedEntry = entry
-        return 'delay-response'
+        return 'hold-response'
       }
       return null
     }
     const olderReadStartedAt = Date.now()
     await control.command('click', testId('plugins-refresh-button'))
     await until(
-      () => delayedEntry?.delayedResponseReady,
+      () => delayedEntry?.committedResponseHeld,
       Boolean,
       'The app did not receive and delay a real completed installed-list response'
     )
-    const held = apiProxy.delayedResponses.get(delayedEntry.delayedResponseId)
+    const held = delayedEntry.readHeldResponse()
     assert.ok(held, 'The completed response was not held before installing')
     const older = jsonResponse(held)
     assert.ok(Array.isArray(older.items))
@@ -84,7 +83,7 @@ export async function verifyPluginLateResponseResilience({
     report.olderResponse = {
       status: delayedEntry.status,
       fixtureAbsent: true,
-      delayedResponseId: delayedEntry.delayedResponseId,
+      requestIndex: apiProxy.requests.indexOf(delayedEntry),
     }
     const heldReadyAt = Date.now()
 
@@ -122,18 +121,11 @@ export async function verifyPluginLateResponseResilience({
     report.confirmedInstallation = { installedId, deviceId }
     await captureScreenshot(control, 'plugin-late-response-before-release.png', 'body')
     const releasedAt = Date.now()
-    assert.equal(
-      apiProxy.releaseDelayedResponses(entry => entry === delayedEntry),
-      1
-    )
-    assert.equal(delayedEntry.delayedResponseReleased, true)
+    assert.equal(await delayedEntry.release(), true)
+    assert.equal(delayedEntry.released, true)
     report.rendererCompletedOlderRead = await until(
       async () => {
-        const timings = JSON.parse(
-          await control.command('getCompletedResourceTimings', 'body', {
-            value: '/api/plugins/installed',
-          })
-        )
+        const timings = await completedApiResourceTimings(control, '/api/plugins/installed')
         const matches = timings.filter(
           timing =>
             timing.startedAt >= olderReadStartedAt - 100 &&
@@ -172,7 +164,7 @@ export async function verifyPluginLateResponseResilience({
     throw error
   } finally {
     apiProxy.rule = () => null
-    apiProxy.releaseDelayedResponses(entry => entry === delayedEntry)
+    await delayedEntry?.release?.()
     report.elapsedMs = Date.now() - started
     report.requests = apiProxy.requests.slice(requestStart)
     await writeFile(

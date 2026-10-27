@@ -143,31 +143,6 @@ test(
   }
 )
 
-test(
-  'releases the first real response after a later response without changing either body',
-  { timeout: 5000 },
-  async t => {
-    const { proxy, received } = await fixture(t)
-    proxy.rule = entry => (entry.path === '/first' ? 'hold-response' : null)
-    let completed = false
-    const first = fetch(`${proxy.url}/first`).then(async response => {
-      completed = true
-      return response.text()
-    })
-    await until(
-      () => proxy.requests[0]?.committedResponseHeld,
-      Boolean,
-      'First response was not held',
-      2000
-    )
-    assert.equal(await (await fetch(`${proxy.url}/second`)).text(), 'real-upstream-body')
-    assert.equal(completed, false)
-    await proxy.requests[0].release()
-    assert.equal(await first, 'real-upstream-body')
-    assert.equal(received.length, 2)
-  }
-)
-
 test('drops a real response after upstream completion', { timeout: 5000 }, async t => {
   const { proxy, received } = await fixture(t)
   proxy.rule = () => 'drop-response'
@@ -181,7 +156,7 @@ test('drops a real response after upstream completion', { timeout: 5000 }, async
 })
 
 test(
-  'delays a completed real reply, allows a newer read, then releases the original bytes',
+  'releases the first real response after a later response without changing either body',
   { timeout: 5000 },
   async t => {
     const { proxy, received, server } = await fixture(t)
@@ -192,14 +167,14 @@ test(
       response.writeHead(200, { 'Content-Type': 'application/octet-stream' })
       response.end(version)
     })
-    proxy.rule = () => 'delay-response'
+    proxy.rule = () => 'hold-response'
     let settled = false
     const older = fetch(`${proxy.url}/api/plugins/installed`).then(async response => {
       settled = true
       return { contentType: response.headers.get('content-type'), body: await response.text() }
     })
     await until(
-      () => proxy.requests[0]?.delayedResponseReady,
+      () => proxy.requests[0]?.committedResponseHeld,
       Boolean,
       'Real response was not retained before release',
       2000
@@ -207,21 +182,22 @@ test(
     assert.equal(settled, false)
     assert.equal(proxy.requests[0].status, 200)
     assert.notEqual(proxy.requests[0].responseCompleted, true)
+    const held = proxy.requests[0].readHeldResponse()
+    assert.equal(held.body.toString(), 'older-real-body')
+    assert.equal(held.headers['content-type'], 'application/octet-stream')
     version = 'newer-real-body'
     proxy.rule = () => null
     assert.equal(await (await fetch(`${proxy.url}/api/plugins/installed`)).text(), version)
-    assert.equal(
-      proxy.releaseDelayedResponses(entry => entry === proxy.requests[0]),
-      1
-    )
+    assert.equal(await proxy.requests[0].release(), true)
     assert.deepEqual(await older, {
       contentType: 'application/octet-stream',
       body: 'older-real-body',
     })
-    assert.equal(proxy.requests[0].delayedResponseReleased, true)
+    assert.equal(proxy.requests[0].released, true)
     assert.equal(proxy.requests[0].responseCompleted, true)
     assert.equal(received.length, 2, 'Releasing a reply must not replay an upstream request')
-    assert.equal(proxy.releaseDelayedResponses(), 0)
+    assert.equal(proxy.requests[0].readHeldResponse(), null)
+    assert.equal(await proxy.requests[0].release(), false)
     assert.ok(!JSON.stringify(proxy.requests).includes('real-body'))
   }
 )
@@ -231,13 +207,13 @@ test(
   { timeout: 5000 },
   async t => {
     const { proxy, received } = await fixture(t)
-    proxy.rule = () => 'delay-response'
+    proxy.rule = () => 'hold-response'
     const controller = new AbortController()
     const rejected = assert.rejects(
       fetch(`${proxy.url}/api/plugins/installed`, { signal: controller.signal })
     )
     await until(
-      () => proxy.requests[0]?.delayedResponseReady,
+      () => proxy.requests[0]?.committedResponseHeld,
       Boolean,
       'Real response was not retained',
       2000
@@ -245,12 +221,12 @@ test(
     controller.abort()
     await rejected
     await until(
-      () => proxy.delayedResponses.size,
-      count => count === 0,
+      () => proxy.requests[0].readHeldResponse(),
+      value => value === null,
       'Canceled response was retained',
       2000
     )
-    assert.equal(proxy.releaseDelayedResponses(), 0)
+    assert.equal(await proxy.requests[0].release(), false)
     assert.equal(received.length, 1)
   }
 )
