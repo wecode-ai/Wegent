@@ -1,8 +1,11 @@
-import type { ReactNode } from "react";
-import { ArrowUpRight, Monitor } from "lucide-react";
+import { useContext, type ReactNode } from "react";
+import { ArrowUpRight, Maximize2, Minimize2, Monitor } from "lucide-react";
 import type { CollaborationTranslate } from "../i18n";
+import { Button } from "../markdown/Button";
 import { IssueDrawerHeader } from "./IssueDrawerHeader";
 import { activityClassNames as cn } from "./activityClassNames";
+import { IssueConversationDrawerContext } from "./issueConversationDrawerContext";
+import { Tooltip } from "./Tooltip";
 
 /** PC sidebar surface, shared by existing conversations and new task composers. */
 export function IssueTaskConversationPanel({
@@ -28,6 +31,10 @@ export function IssueTaskConversationPanel({
   translate: CollaborationTranslate;
   children: ReactNode;
 }) {
+  const drawer = useContext(IssueConversationDrawerContext);
+  const expandLabel = drawer?.expanded
+    ? t("todo.restore_task_conversation", "还原对话")
+    : t("todo.expand_task_conversation", "放大对话");
   return (
     <aside
       data-testid="ai-chat-modal-backdrop"
@@ -98,6 +105,26 @@ export function IssueTaskConversationPanel({
                   {t("workbench.open_full_task", "查看执行")}
                   <ArrowUpRight className="h-3.5 w-3.5" />
                 </button>
+              ) : null}
+              {drawer ? (
+                <Tooltip label={expandLabel} side="bottom">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    data-testid="ai-chat-modal-toggle-expanded"
+                    aria-label={expandLabel}
+                    aria-pressed={drawer.expanded}
+                    onClick={drawer.toggleExpanded}
+                    className="h-7 w-7 rounded-lg text-text-secondary hover:text-text-primary max-md:min-h-11 max-md:min-w-11"
+                  >
+                    {drawer.expanded ? (
+                      <Minimize2 aria-hidden="true" />
+                    ) : (
+                      <Maximize2 aria-hidden="true" />
+                    )}
+                  </Button>
+                </Tooltip>
               ) : null}
             </>
           }

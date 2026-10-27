@@ -4292,6 +4292,8 @@
     "issue_continue_creating": "创建后继续",
     "expand_issue_editor": "全屏编辑",
     "collapse_issue_editor": "收起编辑器",
+    "expand_task_conversation": "放大对话",
+    "restore_task_conversation": "还原对话",
     "issue_drop_files_hint": "支持拖拽、粘贴图片或文件",
     "issue_draft_saved": "草稿已自动保存",
     "clear_issue_draft": "清除草稿",

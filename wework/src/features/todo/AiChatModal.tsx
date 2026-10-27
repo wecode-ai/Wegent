@@ -387,7 +387,7 @@ export function AiChatModal({
           ),
           placeholder: t('todo.issue_task_composer_placeholder', '描述要执行的任务'),
           expanded: options.expanded,
-          wideComposer: options.expanded,
+          wideComposer: options.expanded && !embedded,
           showProjectWorkBar: Boolean(projectWork),
           projectWorkBarMiddleContext: (
             <WorkItemComposerGuide integrated toolbar project={project} />
