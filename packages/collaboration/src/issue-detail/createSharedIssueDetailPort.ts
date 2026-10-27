@@ -312,6 +312,7 @@ function toDeliveryDetail(
 export function createSharedIssueDetailPort(
   api: SharedIssueDetailWorkspaceApi,
   saveFile: (blob: Blob, filename: string) => Promise<void>,
+  getTranscript = api.runtime?.getTranscript,
 ): SharedIssueDetailPort {
   const projects = (
     api as SharedIssueDetailWorkspaceApi & {
@@ -444,7 +445,7 @@ export function createSharedIssueDetailPort(
               api.deliveries.update!(id, input).then(toDeliveryDetail),
           }
         : {}),
-      ...(api.runtime
+      ...(getTranscript
         ? {
             loadSourceMessages: async (
               delivery: SharedIssueDetailDeliveryDetail,
@@ -457,7 +458,7 @@ export function createSharedIssueDetailPort(
               const messages: unknown[] = [];
               let beforeCursor: string | null = null;
               do {
-                const result = await api.runtime!.getTranscript({
+                const result = await getTranscript({
                   deviceId,
                   taskId,
                   beforeCursor,
