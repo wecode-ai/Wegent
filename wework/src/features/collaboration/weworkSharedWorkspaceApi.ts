@@ -120,7 +120,7 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
     'accessDeliveryFile',
     'readDeliveryFile',
   ],
-  deliveries: ['list', 'get', 'create', 'addAsset', 'finalize', 'discardDraft'],
+  deliveries: ['list', 'get', 'create', 'addAsset', 'finalize', 'discardDraft', 'update'],
   executions: ['list', 'stop'],
 } as const satisfies {
   [Domain in keyof WeworkDeliverySharedWorkspaceApi]: readonly (keyof WeworkDeliverySharedWorkspaceApi[Domain])[]
@@ -701,6 +701,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
       async create(issueId, input) {
         return mapWorkspaceDeliveryDto(
           await deliveryApi.createDelivery(issueId, {
+            title: input.title,
             markdown: input.markdown,
             chat: input.chat,
             source_task: input.sourceTask
@@ -727,6 +728,9 @@ export function createWeworkDeliverySharedWorkspaceApi(
       },
       discardDraft(deliveryId) {
         return deliveryApi.discardDraft(deliveryId)
+      },
+      async update(deliveryId, input) {
+        return mapWorkspaceDeliveryDto(await deliveryApi.updateDelivery(deliveryId, input))
       },
     },
     executions: {

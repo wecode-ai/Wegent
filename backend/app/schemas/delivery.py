@@ -555,6 +555,7 @@ class DeliveryChatSelection(BaseModel):
 
 
 class DeliveryCreate(BaseModel):
+    title: str = Field(default="", max_length=255)
     markdown: str = ""
     chat: dict[str, Any] | None = None
     chat_selection: DeliveryChatSelection | None = None
@@ -695,6 +696,8 @@ class DeliveryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    title: str = ""
+    version: int = 1
     loop_item_id: str
     created_by_user_id: int
     source_task_binding_id: int | None
@@ -704,6 +707,11 @@ class DeliveryResponse(BaseModel):
     delivered_at: datetime | None
     assets: list[DeliveryAssetResponse] = Field(default_factory=list)
     fulfillments: list[DeliveryFulfillment] = Field(default_factory=list)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def normalize_unset_title(cls, value: object) -> object:
+        return "" if value is None else value
 
     @field_validator("source_task_binding_id", mode="before")
     @classmethod

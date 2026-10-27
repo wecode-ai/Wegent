@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use super::{
     store::{now, numeric_id, refresh_runtime_projection_additional_context},
     BinaryInput, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, DeliveryFinalize,
-    LocalTaskStore, ProjectFile, TaskAttachment, TaskRuntimeError,
+    DeliveryUpdate, LocalTaskStore, ProjectFile, TaskAttachment, TaskRuntimeError,
 };
 
 mod delivery;
