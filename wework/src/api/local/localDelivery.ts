@@ -1615,7 +1615,13 @@ export function createLocalDeliveryApi(
       })
       return { items: records.map(localProjectFile) }
     },
-    listProjectDeliveryFiles: async () => ({ items: [] }),
+    async listProjectDeliveryFiles(projectId: CloudProjectId) {
+      const items = await request<import('@/api/deliveries').ProjectDeliveryFile[]>(
+        'deliveries.list_files',
+        { project_id: projectId }
+      )
+      return { items }
+    },
     async createCloudFolder(projectId: CloudProjectId, path: string) {
       const record = await request<LocalProjectFileRecord>('files.create_folder', {
         project_id: projectId,
@@ -1668,6 +1674,23 @@ export function createLocalDeliveryApi(
         project_id: projectId,
         item_id: itemId,
         delivery: data,
+      })
+    },
+    async updateDelivery(
+      deliveryId: string,
+      input: import('@wegent/collaboration').WorkspaceDeliveryUpdate
+    ) {
+      return request<DeliveryDetail>('deliveries.update', {
+        delivery_id: deliveryId,
+        delivery: {
+          ...input,
+          files: await Promise.all(
+            input.files.map(async entry => ({
+              relative_path: entry.relative_path,
+              file: await fileInput(entry.file),
+            }))
+          ),
+        },
       })
     },
     async addAsset(deliveryId: string, file: File, relativePath: string) {
