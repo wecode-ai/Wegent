@@ -61,6 +61,7 @@ import {
   telemetryEvents,
 } from './response-protocol.mjs'
 import { tmpdir } from 'node:os'
+import { posix } from 'node:path'
 
 import {
   ANTHROPIC_EMPTY_COMPLETION_TEXT,
@@ -332,31 +333,42 @@ function findNestedString(value, predicate) {
   return null
 }
 
-function requestContainsSkillLocator(body, skillPath, skillName) {
-  const requestText = JSON.stringify(body)
-  if (requestText.includes(skillPath)) return true
-
-  const normalizedSkillPath = skillPath.replaceAll('\\', '/')
-  const relativeSkillPath = `${skillName}/SKILL.md`
-  const skillRoot = normalizedSkillPath.slice(0, -relativeSkillPath.length).replace(/\/$/u, '')
-  const catalog = findNestedString(
-    body,
-    value => value.includes('### Skill roots') && value.includes(relativeSkillPath)
-  )
-  if (!catalog) return false
-
-  for (const line of catalog.split(/\r?\n/u)) {
-    const rootMatch = line.match(/^- `([^`]+)` = `([^`]+)`$/u)
-    if (!rootMatch) continue
-    const [, alias, root] = rootMatch
-    if (
-      root.replaceAll('\\', '/') === skillRoot &&
-      catalog.includes(`(file: ${alias}/${relativeSkillPath})`)
-    ) {
-      return true
-    }
+function requestContainsSkillLocator(body, skillPath) {
+  const normalize = value => {
+    const path = value.replaceAll('\\', '/')
+    return `${path.startsWith('//') ? '/' : ''}${posix.normalize(path)}`
   }
-  return false
+  const expectedPath = normalize(skillPath)
+  return Boolean(
+    findNestedString(body, catalog => {
+      const roots = new Map()
+      let section = null
+      for (const rawLine of catalog.split(/\r?\n/u)) {
+        const line = rawLine.trim()
+        if (/^#{1,6} /u.test(line) || /^<\/?skills_instructions>/u.test(line)) {
+          section =
+            line === '### Skill roots' ? 'roots' : line === '### Available skills' ? 'skills' : null
+          if (section === 'roots' || /^#{1,2} |^<\/?skills_instructions>/u.test(line)) {
+            roots.clear()
+          }
+          continue
+        }
+        if (section === 'roots') {
+          const root = line.match(/^- `([^`]+)` = `([^`]+)`$/u)
+          if (root) roots.set(root[1], root[2])
+        }
+        if (section !== 'skills') continue
+        const entry = line.match(/^- .+ \(file: (.+)\)$/u)
+        if (!entry) continue
+        const locator = entry[1].replaceAll('\\', '/')
+        const separator = locator.indexOf('/')
+        const root = roots.get(locator.slice(0, separator))
+        const expandedPath = root ? `${root}/${locator.slice(separator + 1)}` : locator
+        if (normalize(expandedPath) === expectedPath) return true
+      }
+      return false
+    })
+  )
 }
 
 /** Text of the user-authored turns codex forwarded to the model, in order. */

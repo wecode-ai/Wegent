@@ -24,7 +24,11 @@ import {
   setPluginMarketplaceCache,
 } from '@/features/plugins/pluginMarketplaceCache'
 import { resetLocalExecutorStateForTests } from '@/desktop/localExecutor'
-import type { PluginMarketplaceItem, PluginPublicationRequestItem } from '@/types/api'
+import type {
+  InstalledPluginListResponse,
+  PluginMarketplaceItem,
+  PluginPublicationRequestItem,
+} from '@/types/api'
 import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
 import * as refreshReconciliation from '@/features/plugins/pluginRefreshReconciliation'
@@ -5767,6 +5771,66 @@ describe('PluginsWorkspace', () => {
     )
   })
 
+  test('keeps a plugin component disabled and enabled after saving in the same detail page', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceHasSkill: true,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!
+    const inventory = await originalFetch('/api/plugins/installed')
+    const { items } = (await inventory.json()) as InstalledPluginListResponse
+    const installed = items[0]!
+    let finishUpdate: (() => void) | undefined
+    vi.mocked(fetch).mockImplementation(async (...args) => {
+      if (String(args[0]).startsWith('/api/plugins/installed/101?') && args[1]?.method === 'PUT') {
+        const body = JSON.parse(String(args[1].body)) as {
+          componentStates: Record<string, boolean>
+        }
+        await new Promise<void>(resolve => {
+          finishUpdate = resolve
+        })
+        return new Response(
+          JSON.stringify({
+            ...installed,
+            spec: { ...installed.spec, componentStates: body.componentStates },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      }
+      return originalFetch(...args)
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugins-installed-strip-item-101'))
+    const toggle = await screen.findByTestId('plugin-component-toggle-skill:documents')
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    for (const enabled of [false, true]) {
+      finishUpdate = undefined
+      await userEvent.click(toggle)
+
+      expect(toggle).toHaveAttribute('aria-checked', String(enabled))
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/plugins/installed/101?device_id=current-device',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ componentStates: { 'skill:documents': enabled } }),
+        })
+      )
+      await act(async () => finishUpdate!())
+      await waitFor(() =>
+        expect(telemetryMocks.track).toHaveBeenCalledWith(
+          'plugin_enabled_changed',
+          expect.objectContaining({ enabled, scope: 'component' })
+        )
+      )
+      expect(toggle).toHaveAttribute('aria-checked', String(enabled))
+    }
+  })
+
   test('does not reload the marketplace when a plugin component is toggled', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     mockSystemSkillsFetch({
@@ -5779,6 +5843,7 @@ describe('PluginsWorkspace', () => {
 
     await userEvent.click(await screen.findByTestId('plugins-installed-strip-item-101'))
     const toggle = await screen.findByTestId('plugin-component-toggle-skill:documents')
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
     const marketplaceRequestsBefore = vi
       .mocked(fetch)
       .mock.calls.filter(([input]) => String(input).includes('/api/plugins/marketplace')).length
@@ -5789,6 +5854,14 @@ describe('PluginsWorkspace', () => {
         operation: 'plugin_toggle',
       })
     )
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/installed/101?device_id=current-device',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ componentStates: { 'skill:documents': false } }),
+      })
+    )
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
 
     expect(
       vi

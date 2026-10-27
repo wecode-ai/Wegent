@@ -169,6 +169,8 @@ use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX
 use plugin_skills::PluginSkillResolver;
 mod github_cli;
 mod local_connector_auth;
+mod skill_config;
+pub(crate) use skill_config::reload_skill_configuration;
 
 mod notification;
 pub use notification::CodexNotification;

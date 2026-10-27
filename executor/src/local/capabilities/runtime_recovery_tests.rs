@@ -645,7 +645,13 @@ async fn pending_journal_recovers_after_real_metadata_writes_without_a_receipt()
                 .unwrap();
         }
         store
-            .install_codex_marketplace_metadata(&spec, &store.plugin_codex_link(&spec))
+            .install_codex_marketplace_metadata(
+                &spec,
+                &store.plugin_codex_link(&spec),
+                manifest["plugins"][&spec.key]
+                    .get("component_states")
+                    .unwrap_or(&json!({})),
+            )
             .unwrap();
         assert_ne!(fs::read(&config).unwrap(), before);
         store
@@ -810,7 +816,14 @@ async fn publication_does_not_overwrite_configuration_changed_or_removed_after_p
 #[tokio::test]
 async fn planned_publication_preserves_current_skill_selector_over_older_selector() {
     let temp = tempfile::tempdir().unwrap();
-    let store = installed(&temp.path().join("home"), true).await;
+    let store = store(&temp.path().join("home"), true);
+    let handler =
+        CapabilitySyncHandler::with_package_provider("", store.clone(), Packages(archive("demo")));
+    let mut requested = payload("demo");
+    // This migration case owns native selectors independently of cloud settings.
+    requested["plugins"][0]["component_states"] = json!({});
+    let result = handler.apply_sync(requested).await.unwrap();
+    assert_eq!(result["success"], true, "{result}");
     let mut manifest = store.manifest.load().unwrap();
     let spec = checked_spec("demo@wegent", &manifest["plugins"]["demo@wegent"]).unwrap();
     let current = store.plugin_codex_link(&spec).join("skills/demo/SKILL.md");
