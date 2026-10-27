@@ -382,7 +382,8 @@ async function dragBefore(
   const target = beforeId
     ? page.getByTestId(`cloud-todo-column-${lane}`).getByTestId(`collaboration-issue-${beforeId}`)
     : page.getByTestId(`cloud-todo-column-dropzone-${lane}-content`)
-  await source.scrollIntoViewIfNeeded()
+  // Resolve the actionable card after any saved-order refresh or layout change.
+  await source.hover({ position: { x: 20, y: 20 } })
   const from = (await source.boundingBox())!
   await page.mouse.move(from.x + 20, from.y + 20)
   await page.mouse.down()
@@ -490,6 +491,16 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
         for (const [index, id] of ids.entries())
           await expect(cards.nth(index)).toHaveAttribute('data-testid', `collaboration-issue-${id}`)
       }
+      const assertSavedMove = async (column: string, id: string) => {
+        // A committed backend order can precede the board refresh and card remount.
+        await expect(page.getByTestId('board-drop-feedback')).toBeVisible()
+        await expect(
+          page
+            .getByTestId(`cloud-todo-column-${column}`)
+            .getByTestId('board-drop-highlight')
+            .getByTestId(`cloud-todo-card-${id}`)
+        ).toBeVisible()
+      }
       await expect(sort).toHaveAttribute('data-sort-rules', 'priority-desc')
       const before = await snapshot()
       await dragBefore(page, lane, second.id, lane, first.id)
@@ -507,6 +518,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       )
       await dragBefore(page, lane, second.id, lane, first.id)
       expect((await reorder).ok()).toBe(true)
+      await assertSavedMove(lane, second.id)
       await assertOrder([second.id, first.id])
       await page.reload()
       await expect(sort).toHaveAttribute('data-sort-rules', 'manual')
@@ -518,6 +530,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       )
       await dragBefore(page, sourceLane, outside.id, lane, first.id)
       expect((await crossReorder).ok()).toBe(true)
+      await assertSavedMove(lane, outside.id)
       await assertOrder([second.id, outside.id, first.id])
       await page.reload()
       await assertOrder([second.id, outside.id, first.id])
@@ -537,6 +550,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       await page.getByTestId('cloud-board-sort-by-pending-manual').click()
       await pendingSort.click()
       await dragBefore(page, 'pending', first.id, 'pending', outside.id)
+      await assertSavedMove('pending', first.id)
       await expect
         .poll(async () => {
           const items = (await snapshot()).items
@@ -547,6 +561,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
         })
         .toBe(true)
       await dragBefore(page, 'pending', first.id, 'pending', null)
+      await assertSavedMove('pending', first.id)
       await expect
         .poll(async () => {
           const pending = (await snapshot()).items
