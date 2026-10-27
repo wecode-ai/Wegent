@@ -317,6 +317,8 @@ pnpm --filter wework e2e:desktop:plugins -- --from-segment skill-mention-renderi
 独立上限；启动、工作台恢复和模型协议矩阵等场景使用各自的专用超时。临时排查慢速
 环境时，可通过 `WEWORK_E2E_STEP_TIMEOUT_MS` 调整普通步骤的全局默认值。
 
+分身角色设置异步加载时，来源管理入口使用 `clickWhenEnabled` 等待控件就绪后再点击。Catalog 保存或恢复先通过共享 `waitForCatalogRestart` 处理真实重启确认，并验证写入之后的新 Codex 进程已提供模型目录，再断言编辑器关闭；IPC 请求返回成功不能代替重启完成。相关回归保留原来的 10 秒预算，不靠重跑或扩大超时绕过失败。
+
 首次模型路由任务与真实 Harness CLI 启动使用工作台启动预算；流式滚动先等待模型请求，再使用原有 10 秒预算校验界面。切换项目后等待执行模式按钮可用；看板卡片移列后先滚动到结果再校验可见性。云端分身复用自适应视图选择 helper，兼容紧凑下拉框。
 
 进程浏览器的纯数字筛选精确匹配 PID，避免匹配其他进程的启动参数或 PID 子串；文字筛选仍搜索进程名和启动信息。应用菜单检查点保留按主进程 PID 排除无关 helper 的断言。
@@ -640,6 +642,8 @@ const route = await app.route();
 新增 E2E 用例应优先使用该 helper 和 `data-testid` 定位，不要依赖易变的 CSS 选择器或可见文案。
 
 ## CI 建议
+
+Backend Rust E2E 镜像同时包含 `wegent-backend-rs` 和 `attachment-s3-e2e`。生产者、桌面消费者及预热任务共享 `resolve-backend-rs-e2e-runtime.sh` 的 `v2` 镜像命名规则，哈希输入必须一致，并包含 Rust manifest、锁文件、源码、examples 和 `.github/runtime-images/backend-rs-e2e.Dockerfile`。镜像配方变化会生成新标签，不能复用只包含主程序的旧 `v1` 镜像。缓存命中仍必须恢复完整产物；构建、发布、恢复和上传的路径一致性由 CI 调用的 runtime handoff 单测验证，不以跳过缺失文件或临时回退掩盖缓存错误。
 
 平台 E2E 基础镜像 `docker/wework-e2e/browser.Dockerfile` 通过 `docker.io` 预装 Docker CLI，并在构建时执行 `docker --version`。各分片准备远程工作区 Executor 时直接使用镜像内的 CLI，不再运行 apt 更新和安装。Dockerfile 的内容哈希决定镜像标签，修改后 CI 会构建新镜像并在后续运行中复用。
 

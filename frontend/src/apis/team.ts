@@ -126,8 +126,8 @@ export interface CopyPreflightResponse {
 const pendingTeamCatalogs = new Map<string, Promise<TeamListResponse>>()
 
 export const teamApis = {
-  async getTeam(id: number): Promise<Team> {
-    return apiClient.get(`/teams/${id}`)
+  async getTeam(id: number, signal?: AbortSignal): Promise<Team> {
+    return apiClient.get(`/teams/${id}`, { signal })
   },
   getDefaultTeam(
     mode: 'chat' | 'code' | 'knowledge' | 'task',
