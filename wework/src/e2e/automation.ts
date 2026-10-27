@@ -3360,16 +3360,30 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return document.activeElement?.getAttribute('data-testid') ?? ''
     case 'getLocalExecutorStatus':
       return JSON.stringify(await getLocalExecutorStatus())
-    case 'getLocalExecutorIdentityDiagnostics': {
+    case 'getPluginRuntimeIdentityDiagnostics': {
+      const apiBaseUrl = command.value?.trim()
+      if (!apiBaseUrl) {
+        throw new Error('getPluginRuntimeIdentityDiagnostics requires an API base URL')
+      }
       const { ensureLocalExecutorAvailable, getKnownLocalExecutorDeviceId } =
         await import('@/desktop/localExecutor')
       const { describeDshExecutor } = await import('@/api/dsh/executorTransport')
+      const { resolveLocalPluginDeviceRouteId } = await import('@/features/plugins/pluginDeviceApi')
       const status = await ensureLocalExecutorAvailable()
+      const deviceId = getKnownLocalExecutorDeviceId()
+      if (!deviceId) throw new Error('Plugin Runtime identity is unavailable')
+      const pluginDeviceRouteId = await resolveLocalPluginDeviceRouteId(deviceId, {
+        apiBaseUrl,
+        token:
+          getDesktopE2ERuntimeConfig().cloudToken ??
+          import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim() ??
+          null,
+      })
       return JSON.stringify({
         status,
         description: await describeDshExecutor(),
-        deviceId: getKnownLocalExecutorDeviceId(),
-        deviceRouteId: status.deviceRouteId ?? null,
+        deviceId,
+        pluginDeviceRouteId,
       })
     }
     case 'getBundledPluginUpdates': {

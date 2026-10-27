@@ -177,7 +177,7 @@ describe('local plugin device API boundary', () => {
     })
   })
 
-  test('resolves the fresh description route without changing stable identity', async () => {
+  test('resolves the current plugin route without changing stable identity', async () => {
     vi.mocked(requestLocalExecutor).mockResolvedValue({
       device_id: deviceId,
       device_route_id: ' app-record-71 ',
@@ -532,5 +532,26 @@ describe('plugin route connection profile', () => {
       auth_token: backendA.token,
       device_id: deviceId,
     })
+  })
+
+  test('targets the fresh plugin route while the cached general identity retains its old route', async () => {
+    const cachedIdentity = await ensureLocalExecutorAvailable()
+    expect(cachedIdentity.deviceRouteId).toBe(requestId)
+    registered.device_route_id = 'app-record-95'
+
+    await scopedApi(backendA).installMarketplacePlugin(101, deviceId)
+
+    expect(cachedIdentity.deviceRouteId).toBe(requestId)
+    expect(cachedIdentity.deviceId).toBe(deviceId)
+    expect(ensureLocalExecutorAvailable).toHaveBeenCalledTimes(1)
+    expect(requestLocalExecutor).toHaveBeenCalledExactlyOnceWith('executor.plugins.device_route', {
+      backend_url: 'https://backend-a.example/wework',
+      auth_token: backendA.token,
+      device_id: deviceId,
+    })
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(
+      backendA.apiBaseUrl + '/plugins/marketplace/101/install?device_id=app-record-95',
+      expect.objectContaining({ method: 'POST' })
+    )
   })
 })

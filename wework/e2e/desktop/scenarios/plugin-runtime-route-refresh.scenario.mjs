@@ -22,7 +22,7 @@ import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import { createSingleRootLocalProject } from '../modules/shared.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 
-// Device rows are isolated fixture data. All registrations, IPC descriptions,
+// Device rows are isolated fixture data. All registrations, plugin route queries,
 // renderer installs, package downloads and capability ACKs use real services.
 export async function createDesktopScenario({
   captureScreenshot,
@@ -56,8 +56,10 @@ export async function createDesktopScenario({
     }
   }
 
-  const identity = async control =>
-    JSON.parse(await control.command('getLocalExecutorIdentityDiagnostics', 'body'))
+  const identity = async (control, apiBaseUrl = `${appProxy.url}/api`) =>
+    JSON.parse(
+      await control.command('getPluginRuntimeIdentityDiagnostics', 'body', { value: apiBaseUrl })
+    )
   const appRecord = (devices, status) =>
     devices.find(
       device =>
@@ -71,7 +73,7 @@ export async function createDesktopScenario({
     const before = await identity(control)
     const original = appRecord(await cloud.devices(), before.status)
     assert.ok(original, 'The initial real IPC identity has no online App registration')
-    assert.equal(before.description.device_route_id, original.execution_target_id)
+    assert.equal(before.pluginDeviceRouteId, original.execution_target_id)
     assert.equal(before.deviceId, before.status.deviceId)
     assert.notEqual(before.status.deviceId, original.device_id)
 
@@ -121,17 +123,18 @@ export async function createDesktopScenario({
     assert.notEqual(current.id, original.id)
     assert.notEqual(current.execution_target_id, original.execution_target_id)
     assert.notEqual(current.execution_target_id, duplicate.execution_target_id)
-    // Observe the ACK through raw IPC without changing the renderer cache.
-    // Normal device-event refreshes may already have updated the cached route.
+    // Observe the ACK through the plugin route adapter without changing the
+    // renderer's cached general Runtime identity.
     const refreshed = await until(
       () => identity(control),
-      value => value.description.device_route_id === current.execution_target_id,
-      'The new registration route did not reach the real Executor IPC description',
+      value => value.pluginDeviceRouteId === current.execution_target_id,
+      'The new registration route did not reach the plugin route adapter',
       workbenchReadyTimeoutMs
     )
     assert.equal(refreshed.status.runtimeInstanceId, before.status.runtimeInstanceId)
     assert.equal(refreshed.status.deviceId, before.status.deviceId)
     assert.equal(refreshed.description.device_id, before.status.deviceId)
+    assert.equal(refreshed.description.runtime_instance_id, before.status.runtimeInstanceId)
     assert.equal(refreshed.deviceId, before.status.deviceId)
     const devices = await cloud.devices()
     assert.equal(
@@ -227,7 +230,7 @@ export async function createDesktopScenario({
     assert.deepEqual(sync[0].pluginIds, [String(fixture.installedId)])
     const acknowledgement = await successfulAcknowledgement(sync[0])
     const installedIdentity = await identity(control)
-    assert.equal(installedIdentity.description.device_route_id, current.execution_target_id)
+    assert.equal(installedIdentity.pluginDeviceRouteId, current.execution_target_id)
     assert.equal(installedIdentity.deviceId, stableDeviceId)
     await control.command('waitFor', testId(`plugin-marketplace-actions-${pluginId}`), {
       timeoutMs: workbenchReadyTimeoutMs,
@@ -368,8 +371,8 @@ export async function createDesktopScenario({
     ).then(requests => requests.find(request => request.committedResponseHeld))
     assert.equal(held.path, '/api/users/me/wegent-runtime-token')
     assert.equal(held.status, 200)
-    const before = await identity(control)
-    assert.equal(before.description.device_route_id, current.execution_target_id)
+    const before = await identity(control, `${appProxy.url}/api`)
+    assert.equal(before.pluginDeviceRouteId, current.execution_target_id)
     assert.equal(before.deviceId, stableDeviceId)
     assert.ok(appProxy.websockets.size > 0, 'The previous real profile is no longer connected')
     assert.equal(restoredTransport.registrations.length, 0)
@@ -442,7 +445,7 @@ export async function createDesktopScenario({
       'The restored profile registration did not become ready',
       workbenchReadyTimeoutMs
     )
-    const recovered = await identity(control)
+    const recovered = await identity(control, `${restoredProxy.url}/api`)
     assert.equal(recovered.deviceId, stableDeviceId)
     const offset = restoredTransport.writes.length
     await openPlugin(control, fixture)
@@ -459,7 +462,7 @@ export async function createDesktopScenario({
       .slice(offset)
       .filter(request => request.method === 'PUT')
     assert.equal(updates.length, 1)
-    assert.equal(updates[0].deviceId, recovered.description.device_route_id)
+    assert.equal(updates[0].deviceId, recovered.pluginDeviceRouteId)
     await openPlugin(control, pending)
     await control.command(
       'clickWhenEnabled',
@@ -474,7 +477,7 @@ export async function createDesktopScenario({
       .slice(offset)
       .filter(request => request.method === 'POST' && request.path.endsWith('/install'))
     assert.equal(install.length, 1)
-    assert.equal(install[0].deviceId, recovered.description.device_route_id)
+    assert.equal(install[0].deviceId, recovered.pluginDeviceRouteId)
     assert.ok(await accountPlugin(cloud, pending.slug))
     evidence.push({ case: 'restored-profile-token-released', recovered, updates, install })
   }
