@@ -46,6 +46,7 @@ import {
 } from './WeworkCollaborationPlatform'
 import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
 import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
+import type { TodoEditor } from './TodoEditor'
 import {
   loadProjectSpaceCodeWorkspacePreference,
   saveProjectSpaceCodeWorkspacePreference,
@@ -1566,6 +1567,94 @@ describe('Wework collaboration workspace API', () => {
       issueExecution,
     })
   })
+
+  it.each(['active', 'archived', 'foreign', 'unlinked'] as const)(
+    'checks %s linked task availability through the shared project drawer',
+    async status => {
+      const project = {
+        id: `availability-${status}`,
+        name: 'Availability',
+        project_store: 'backend',
+      }
+      const issue = { id: 'ISSUE-AVAILABILITY', title: 'Availability', sequence_number: 1 }
+      const binding = {
+        id: 'binding',
+        projectId: project.id,
+        issueId: issue.id,
+        taskUserId: status === 'foreign' ? 2 : 1,
+        deviceId: 'device',
+        taskId: 'task',
+        taskTitle: 'Personal task',
+        backendTaskId: null,
+        linkedAt: '2026-10-20T00:00:00Z',
+      }
+      const readTask = vi
+        .fn()
+        .mockResolvedValue(
+          status === 'archived' ? { success: false, code: 'task_archived' } : { success: true }
+        )
+      render(
+        createElement(WeworkSharedProject, {
+          api: {
+            projects: { list: vi.fn().mockResolvedValue([project]) },
+            issues: {},
+            taskBindings: {
+              list: vi.fn().mockResolvedValue(status === 'unlinked' ? [] : [binding]),
+            },
+          } as unknown as SharedWorkspaceApi,
+          localProjects: [],
+          locale: 'zh-CN',
+          location: {
+            platformView: 'project',
+            workspaceId: 'workspace',
+            workspaceView: 'projects',
+            projectId: project.id,
+            projectView: 'board',
+            issueId: issue.id,
+          },
+          project: project as never,
+          runtimePort: { bindTask: vi.fn(), unbindTask: vi.fn() },
+          services: { standInApi: { readTask } } as never,
+          setLocation: vi.fn(),
+          userId: 1,
+          workspace: { id: 'workspace', name: 'Workspace' } as never,
+        })
+      )
+      const detail = () =>
+        renderedProjectControls.get(project.id)!.renderIssueDetail!({
+          api: { issues: {} },
+          issue,
+          allIssues: [issue],
+          assignments: [],
+          taskBindings: [],
+          onChange: vi.fn(),
+          onClose: vi.fn(),
+          onCreateTask: vi.fn(),
+          onDelete: vi.fn(),
+        }) as {
+          props: {
+            conversation: ReactNode
+            children(close: () => void): { props: ComponentProps<typeof TodoEditor> }
+          }
+        }
+      const editor = detail().props.children(vi.fn())
+      await act(async () => {
+        editor.props.onOpenTaskConversation?.(toWeworkIssueTaskBinding(binding))
+      })
+      if (status === 'active') {
+        await waitFor(() => expect(detail().props.conversation).not.toBeNull())
+        expect(readTask).toHaveBeenCalledWith('device', 'task')
+      } else {
+        expect(await screen.findByTestId('transient-notice')).toHaveTextContent(
+          status === 'archived'
+            ? '该任务已归档，请先在归档任务中恢复后再查看。'
+            : '无法打开该任务，任务可能已被删除，请刷新后重试。'
+        )
+        expect(detail().props.conversation).toBeNull()
+        if (status !== 'archived') expect(readTask).not.toHaveBeenCalled()
+      }
+    }
+  )
 
   it('opens the personal task an assignment notification asks for wherever the reader was', async () => {
     const project = {

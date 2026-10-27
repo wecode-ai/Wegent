@@ -85,6 +85,7 @@ export async function verifyIssuePersonalTaskPrivacy({
   )
 
   const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
+  const openTask = `${CONTENT} [data-testid="cloud-todo-open-task-conversation-${binding.id}"]`
   assert.equal((await rpc('runtime.tasks.archive', address)).accepted, true)
   try {
     assert.equal((await rpc('runtime.tasks.get', address)).code, 'task_archived')
@@ -92,7 +93,6 @@ export async function verifyIssuePersonalTaskPrivacy({
     if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) !== 'true') {
       await control.command('click', toggle)
     }
-    const openTask = `${CONTENT} [data-testid="cloud-todo-open-task-conversation-${binding.id}"]`
     await control.command('scrollIntoView', openTask)
     await control.command('click', openTask)
     await control.command('waitFor', '[data-testid="transient-notice"]', {
@@ -106,4 +106,6 @@ export async function verifyIssuePersonalTaskPrivacy({
     assert.equal((await rpc('runtime.archived_conversations.unarchive', address)).accepted, true)
   }
   assert.equal((await rpc('runtime.tasks.get', address)).success, true)
+  await control.command('click', openTask)
+  await control.command('waitFor', `${CONTENT} [data-testid="ai-chat-modal"]`)
 }

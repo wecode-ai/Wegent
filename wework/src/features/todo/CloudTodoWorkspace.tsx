@@ -1,4 +1,5 @@
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
+import { requireIssueTaskAvailable } from './issueTaskAvailability'
 import { issueDraftFromText, RuntimeConfigurationProvider } from '@wegent/collaboration'
 import {
   BoardViewNavigation,
@@ -1060,21 +1061,16 @@ export function CloudTodoWorkspace({
     ) ?? null
   const taskOwnerUserId = selectedProject?.current_user_id ?? user.id
   const openTaskBinding = async (binding: SelectedTaskBinding) => {
-    if (String(binding.task_user_id) !== String(taskOwnerUserId)) return
     advanceTaskPanelSession()
     const session = taskPanelSessionIdRef.current
     try {
-      const reader = services.standInApi
-      if (!reader) throw new Error(t('todo.linked_task_unavailable'))
-      const result = await reader.readTask(binding.device_id, binding.task_id)
+      await requireIssueTaskAvailable(
+        { taskUserId: binding.task_user_id, deviceId: binding.device_id, taskId: binding.task_id },
+        taskOwnerUserId,
+        services.standInApi,
+        key => t(key)
+      )
       if (taskPanelSessionIdRef.current !== session) return
-      if (!result.success) {
-        throw new Error(
-          result.code === 'task_archived'
-            ? t('todo.linked_task_archived')
-            : result.error || t('todo.linked_task_unavailable')
-        )
-      }
     } catch (cause) {
       if (taskPanelSessionIdRef.current === session) {
         setTaskDispatchError(

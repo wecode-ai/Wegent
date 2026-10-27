@@ -2960,6 +2960,7 @@ class LoopItemService:
             db.query(LoopItemTaskBinding)
             .filter(
                 LoopItemTaskBinding.loop_item_id == item_id,
+                LoopItemTaskBinding.task_user_id == user_id,
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
                 loop_datetime_is_unset(LoopItemTaskBinding.deleted_at),
             )

@@ -1,4 +1,5 @@
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
+import { requireIssueTaskAvailable } from './issueTaskAvailability'
 import { useStandInProjects } from './useStandInProjects'
 import { StandInIcon } from '@wegent/collaboration'
 import { bindProjectStandInApi } from '@/api/standIn'
@@ -847,28 +848,45 @@ export function WeworkSharedProject({
   )
   const openBoundTaskConversation = useCallback(
     async (issue: CollaborationIssue, address: RuntimeTaskAddress) => {
-      const latestBinding = scopedApi.taskBindings
-        ? (await scopedApi.taskBindings.list(issue.id, String(project.id))).find(
-            binding => binding.deviceId === address.deviceId && binding.taskId === address.taskId
-          )
-        : undefined
-      const resolvedAddress = latestBinding
-        ? workspaceExecutionAddress(latestBinding, runtimeWork, issue.id, project.project_store)
-        : {
-            ...address,
-            issueExecution: { projectId: String(project.id), issueId: issue.id },
-            ...(project.project_store === 'backend'
-              ? { projectSession: { projectId: String(project.id), issueId: issue.id } }
-              : {}),
-          }
-      setTaskComposer({
-        issue,
-        address: resolvedAddress,
-        conversationKey: `${issue.id}:${resolvedAddress.deviceId}:${resolvedAddress.taskId}`,
-      })
-      projectHost.navigate({ ...projectHost.location, issueId: issue.id })
+      try {
+        const latestBinding = (
+          await scopedApi.taskBindings?.list(issue.id, String(project.id))
+        )?.find(
+          binding => binding.deviceId === address.deviceId && binding.taskId === address.taskId
+        )
+        const availableBinding = await requireIssueTaskAvailable(
+          latestBinding,
+          userId,
+          services.standInApi,
+          key => t(key)
+        )
+        const resolvedAddress = workspaceExecutionAddress(
+          availableBinding,
+          runtimeWork,
+          issue.id,
+          project.project_store
+        )
+        setTaskComposer({
+          issue,
+          address: resolvedAddress,
+          conversationKey: `${issue.id}:${resolvedAddress.deviceId}:${resolvedAddress.taskId}`,
+        })
+        projectHost.navigate({ ...projectHost.location, issueId: issue.id })
+      } catch (error) {
+        notify(error instanceof Error ? error.message : t('todo.linked_task_unavailable'), 'error')
+      }
     },
-    [project.id, project.project_store, projectHost, runtimeWork, scopedApi.taskBindings]
+    [
+      notify,
+      project.id,
+      project.project_store,
+      projectHost,
+      runtimeWork,
+      scopedApi.taskBindings,
+      services.standInApi,
+      t,
+      userId,
+    ]
   )
 
   /** Open the personal task an assignment notification hands to this reader. */

@@ -269,7 +269,10 @@ def test_board_and_page_bindings_only_expose_the_readers_own_tasks(
         page_bindings = loop_item_service.list_project_task_bindings(
             test_db, project_id, reader_id, item_ids=item_ids
         )
-        for bindings in [snapshot.task_bindings, page_bindings]:
+        issue_bindings = loop_item_service.list_task_bindings(
+            test_db, item_ids[0], reader_id
+        )
+        for bindings in [snapshot.task_bindings, page_bindings, issue_bindings]:
             assert [binding.task_user_id for binding in bindings] == [reader_id]
             assert [binding.task_id for binding in bindings] == [
                 f"private-task-{reader_id}"
