@@ -2,7 +2,11 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { waitForCatalogRestart } from '../e2e/desktop/scenarios/codex-catalog-context.mjs'
 
-vi.mock('node:fs/promises', () => ({ readFile: vi.fn() }))
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal()
+  const readFile = vi.fn()
+  return { ...actual, default: { ...actual.default, readFile }, readFile }
+})
 afterEach(() => {
   vi.useRealTimers()
   vi.clearAllMocks()
