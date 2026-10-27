@@ -40,7 +40,7 @@ export class RuntimeTaskMachine {
     }
     const previous = this.state
     this.state = reduceRuntimeTaskLifecycle(previous, event)
-    if (this.state.latestTurnId) this.observedTurnIds.add(this.state.latestTurnId)
+    if (this.state.latestTurnId) this.observeTurn(this.state.latestTurnId)
     const changed = this.state !== previous
     if (changed) this.revision += 1
     return changed
@@ -53,6 +53,10 @@ export class RuntimeTaskMachine {
         this.state.turnPhase === 'submitting' ||
         this.state.turnPhase === 'awaiting')
     )
+  }
+
+  observeTurn(turnId: string): void {
+    this.observedTurnIds.add(turnId)
   }
 
   mergeTurnHistory(previous: RuntimeTaskMachine): void {
