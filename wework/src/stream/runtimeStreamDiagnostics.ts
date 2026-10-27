@@ -38,7 +38,11 @@ export function getRuntimeStreamDiagnostics(): StreamCapture | null {
   return capture ? structuredClone(capture) : null
 }
 
-export function measureRuntimeStreamEvent(eventName: string, apply: () => void): void {
+export function measureRuntimeStreamEvent(
+  eventName: string,
+  apply: () => void,
+  phase: 'native' | 'dispatch' = 'dispatch'
+): void {
   const active = capture
   if (!active || active.finishedAt !== null || !eventNames.has(eventName)) {
     apply()
@@ -46,11 +50,12 @@ export function measureRuntimeStreamEvent(eventName: string, apply: () => void):
   }
   const at = Date.now()
   const startedAt = performance.now()
+  const label = phase === 'native' ? `native:${eventName}` : eventName
   try {
     apply()
   } finally {
     const elapsedMs = performance.now() - startedAt
-    const timing = (active.events[eventName] ??= {
+    const timing = (active.events[label] ??= {
       count: 0,
       firstAt: at,
       lastAt: at,

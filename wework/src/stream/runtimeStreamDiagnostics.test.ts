@@ -1,5 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { createChatStream } from './chatStream'
+import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
+import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 import {
   getRuntimeStreamDiagnostics,
   measureRuntimeStreamEvent,
@@ -8,6 +10,38 @@ import {
 } from './runtimeStreamDiagnostics'
 
 afterEach(stopRuntimeStreamDiagnostics)
+
+test('captures the local IPC stream used by standalone conversations', async () => {
+  let listener!: (event: LocalExecutorEvent) => void
+  const stream = createRuntimeChatStream({
+    subscribe: async handler => {
+      listener = handler
+      return vi.fn()
+    },
+    request: vi.fn(),
+  })
+  const onChatChunk = vi.fn()
+  const unsubscribe = stream.subscribe({ onChatChunk })
+  await Promise.resolve()
+  startRuntimeStreamDiagnostics()
+  listener({
+    event: 'response.output_text.delta',
+    payload: {
+      taskId: 'private-task',
+      subtaskId: 'private-turn',
+      data: { delta: 'private-local-content', offset: 0 },
+    },
+  })
+  expect(onChatChunk).toHaveBeenCalledWith(
+    expect.objectContaining({ content: 'private-local-content' })
+  )
+  const capture = getRuntimeStreamDiagnostics()!
+  expect(capture.eventCount).toBe(2)
+  expect(capture.events['native:response.output_text.delta'].count).toBe(1)
+  expect(capture.events['response.output_text.delta'].count).toBe(1)
+  expect(JSON.stringify(getRuntimeStreamDiagnostics())).not.toContain('private')
+  unsubscribe()
+})
 
 test('captures actual stream dispatch timing without payloads or identities', () => {
   const listeners = new Map<string, (payload: unknown) => void>()
