@@ -1,3 +1,4 @@
+import { verifyCloudAssignmentReceipts } from '../modules/issue-assignment-receipts.mjs'
 import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
 import { verifyRemoteStandInProjectScope } from '../modules/stand-in-project-connections.mjs'
 import assert from 'node:assert/strict'
@@ -42,6 +43,7 @@ export function createDesktopScenario({
   captureScreenshot,
 }) {
   let backendUrl
+  let cloudEnvironment
   let authToken
   let socket
   let requests = 0
@@ -89,6 +91,7 @@ export function createDesktopScenario({
   return {
     requiresCloudEnvironment: true,
     async prepareCloud(cloud) {
+      cloudEnvironment = cloud
       backendUrl = cloud.backendUrl
       authToken = cloud.authToken
       await request('/admin/setup-complete', {})
@@ -383,6 +386,12 @@ export function createDesktopScenario({
           await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-detail-title"]`),
           issue.title
         )
+        await verifyCloudAssignmentReceipts(control, issue.id, request, captureScreenshot, {
+          backendUrl,
+          authToken,
+          workspaceId: workspace.id,
+          database: cloudEnvironment,
+        })
         await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
 
         // Another device must respect an existing ordinary task binding.
