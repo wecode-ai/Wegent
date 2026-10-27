@@ -166,6 +166,9 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         await frameAction('click', '#refresh')
         await waitText('Counter ' + (tool === 'show_legacy' ? 2 : tool === 'show_dynamic' ? 3 : 4))
         await control.command('click', scope + ' [data-testid="mcp-app-close"]')
+        await control.command('waitFor', scope + ' [data-testid="mcp-app-frame"]', {
+          visible: false,
+        })
         await assert.rejects(fetch(frameUrl))
       }
       assert.ok(calls >= 8)
