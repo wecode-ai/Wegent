@@ -61,11 +61,30 @@ struct Asset {
     kind: String,
     display_name: String,
     relative_path: String,
+    #[serde(serialize_with = "serialize_content_type")]
     content_type: Option<String>,
     size_bytes: i64,
     sha256: String,
     #[serde(skip)]
     object_key: String,
+}
+
+fn serialize_content_type<S: serde::Serializer>(
+    value: &Option<String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    value
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .serialize(serializer)
+}
+
+fn response_snapshot(delivery: &DeliveryRow) -> Option<&Value> {
+    delivery
+        .source_task_snapshot
+        .as_ref()
+        .map(|value| &value.0)
+        .filter(|value| !value.as_object().is_some_and(|object| object.is_empty()))
 }
 
 fn invalid(message: &str) -> HttpError {
@@ -332,7 +351,7 @@ async fn update_delivery(
         json!({"id": delivery.id, "title": input.title.trim(), "version": input.version + 1,
         "loop_item_id": delivery.loop_item_id, "created_by_user_id": delivery.created_by_user_id,
         "source_task_binding_id": delivery.source_task_binding_id.as_deref().and_then(|id| id.parse::<i64>().ok()),
-        "source_task_snapshot": delivery.source_task_snapshot.as_ref().map(|v| &v.0),
+        "source_task_snapshot": response_snapshot(&delivery),
         "status": "delivered", "created_at": delivery.created_at, "delivered_at": delivery.delivered_at,
         "assets": assets, "fulfillments": fulfillment_values(&delivery), "markdown": input.markdown, "chat": input.chat}),
     )

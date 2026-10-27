@@ -71,6 +71,10 @@ export async function createDesktopScenario({ resultDir, uiTimeoutMs, workbenchR
       await click('delivery-edit-message-0')
       await click(`delivery-edit-asset-${asset.id}`)
       await click('delivery-edit-save')
+      await control.command('waitFor', scoped('[data-testid="delivery-edit-form"]'), {
+        timeoutMs: uiTimeoutMs,
+        visible: false,
+      })
       await control.command('waitFor', panel, { text: '修订备注与关键结论' })
       assert.doesNotMatch(await control.command('getText', panel), /原问题|report\.txt/)
       let saved = await rpc('deliveries.get', { delivery_id: delivery.id })

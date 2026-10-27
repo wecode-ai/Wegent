@@ -43,6 +43,26 @@ fn asset() -> Asset {
 }
 
 #[test]
+fn response_normalizes_empty_values_like_python_readers() {
+    let mut file = asset();
+    for content_type in [None, Some(String::new())] {
+        file.content_type = content_type;
+        assert!(serde_json::to_value(&file).unwrap()["content_type"].is_null());
+    }
+    file.content_type = Some("text/plain".into());
+    assert_eq!(
+        serde_json::to_value(&file).unwrap()["content_type"],
+        "text/plain"
+    );
+    let mut row = delivery();
+    assert!(response_snapshot(&row).is_none());
+    row.source_task_snapshot = Some(Json(json!({})));
+    assert!(response_snapshot(&row).is_none());
+    row.source_task_snapshot = Some(Json(json!({"task_id": "task-1"})));
+    assert_eq!(response_snapshot(&row), Some(&json!({"task_id": "task-1"})));
+}
+
+#[test]
 fn validates_version_title_and_delivery_status() {
     assert!(validate(&input(), &delivery(), &[]).is_ok());
     let mut update = input();

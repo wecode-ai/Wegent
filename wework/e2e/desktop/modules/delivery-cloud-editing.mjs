@@ -192,6 +192,10 @@ export function createCloudDeliveryEditingRegression({ uiTimeoutMs }) {
         value: '桌面保存到云端的备注',
       })
       await control.command('click', scoped('delivery-edit-save'))
+      await control.command('waitFor', scoped('delivery-edit-form'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', scoped('todo-detail-delivery-panel'), {
         text: '桌面保存到云端的备注',
       })

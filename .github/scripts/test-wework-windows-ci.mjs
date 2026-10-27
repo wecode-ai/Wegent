@@ -95,9 +95,27 @@ for (const job of [
   const block = workflow.split(`  ${job}:\n`)[1].split(/\n  [\w-]+:\n/)[0];
   assert.match(
     block,
-    /if: contains\(matrix.segments, 'collaboration-issue-mcp-comments'\)\n\s+uses: \.\/\.github\/actions\/setup-minio-e2e/,
-    `${job} must prepare real object storage for Issue MCP attachment coverage`,
+    /if: .*contains\(matrix.segments, 'collaboration-issue-mcp-comments'\).*contains\(matrix.segments, 'collaboration-delivery-editing'\)/,
+    `${job} must prepare real object storage for both collaboration segments`,
   );
+  if (job === "wework-desktop-windows-core-e2e") {
+    assert.match(
+      block,
+      /Copy-Item -LiteralPath \$source -Destination \$target -Force/,
+    );
+    assert.match(
+      block,
+      /Join-Path \$env:GITHUB_WORKSPACE "wework\\test-results\\windows-e2e-tools\\minio"/,
+    );
+    assert.match(block, /WEWORK_E2E_MINIO_BIN=\$target/);
+    assert.doesNotMatch(
+      block,
+      /uses: \.\/\.github\/actions\/setup-minio-e2e/,
+      "A later composite setup must not overwrite the standard user's workspace path",
+    );
+  } else {
+    assert.match(block, /uses: \.\/\.github\/actions\/setup-minio-e2e/);
+  }
 }
 for (const job of [
   "build-wework-desktop-windows-core-e2e",
