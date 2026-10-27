@@ -46,6 +46,8 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-issue-assignment-activity',
   'collaboration-issue-comment-attachments',
   'collaboration-issue-comment-notification',
+  'collaboration-issue-comment-notification-navigation',
+  'issue-notification-read',
   'collaboration-issue-mcp-comments',
   'collaboration-issue-attachment-preview',
   'collaboration-issue-archive',
@@ -188,6 +190,10 @@ export const PLUGIN_SEGMENTS = [
 ]
 
 export const DESKTOP_CHECKPOINT_GROUPS = new Map([
+  [
+    'collaboration-issue-comment-notification',
+    ['collaboration-issue-comment-notification-navigation', 'issue-notification-read'],
+  ],
   ['stand-in-profile', ['stand-in-profile-settings', 'stand-in-model-catalog']],
   [
     'plugin-account-auth',

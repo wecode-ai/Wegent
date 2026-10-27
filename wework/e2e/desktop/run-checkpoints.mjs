@@ -162,8 +162,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-issue-assignment-activity.scenario.mjs',
   'collaboration-issue-comment-attachments':
     './scenarios/collaboration-issue-comment-attachments.scenario.mjs',
-  'collaboration-issue-comment-notification':
+  'collaboration-issue-comment-notification-navigation':
     './scenarios/collaboration-issue-comment-notification.scenario.mjs',
+  'issue-notification-read': './scenarios/issue-notification-read.scenario.mjs',
   'collaboration-issue-mcp-comments': './scenarios/collaboration-issue-mcp-comments.scenario.mjs',
   'collaboration-issue-attachment-preview':
     './scenarios/collaboration-issue-attachment-preview.scenario.mjs',
@@ -276,7 +277,8 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-issue-comment-mention',
   'collaboration-issue-assignment-activity',
   'collaboration-issue-comment-attachments',
-  'collaboration-issue-comment-notification',
+  'collaboration-issue-comment-notification-navigation',
+  'issue-notification-read',
   'collaboration-issue-mcp-comments',
   'collaboration-issue-attachment-preview',
   'collaboration-issue-archive',

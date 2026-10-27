@@ -975,7 +975,8 @@ classify_wework_path() {
       select_target "core:collaboration-issue-attachment-preview"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-issue-comment-notification.scenario.mjs)
+    wework/e2e/desktop/scenarios/collaboration-issue-comment-notification.scenario.mjs | \
+      wework/e2e/desktop/scenarios/issue-notification-read.scenario.mjs)
       select_target "core:collaboration-issue-comment-notification"
       return
       ;;
