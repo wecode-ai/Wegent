@@ -2008,6 +2008,9 @@ class LoopItemService:
             user_id=user_id,
             activity_sequence=activity_sequence,
         )
+        from app.services.wework_notifications import mark_issue_notifications_read
+
+        mark_issue_notifications_read(db, item_id=item.id, user_id=user_id)
         db.commit()
         db.expire(item)
         db.refresh(item)

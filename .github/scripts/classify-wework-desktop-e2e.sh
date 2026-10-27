@@ -195,12 +195,15 @@ cloud_segments=(
   plugin-composer-long-list
   plugin-collaboration-composer-isolation
   plugin-runtime-path-recovery
+  plugin-runtime-route-refresh
+  plugin-background-sync-isolation
+  plugin-periodic-reconcile
   plugin-workspace-publication
   plugin-toggle-persistence
 )
 # Balance measured checkpoint durations across four workers, longest first.
 # Run 39930854745: five ordinary Cloud shards predict 291-339 seconds.
-# Keep account auth and the 24-plugin composer fixture on separate runners.
+# Keep account auth separate from the plugin sync and 24-plugin composer fixtures.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
   plugin-uninstall-restart-recovery,plugin-runtime-path-recovery,plugin-uninstall-lost-response,embedded-browser,cloud-project-creation,automation-lifecycle,browser-multi-tabs
@@ -209,7 +212,7 @@ cloud_shards=(
   model-routing,conversation-state,plugin-uninstall-unknown-result,cloud-model-recovery,rendering-extensions,telemetry-consent,plugin-registration-coordination
   window-lifecycle,plugin-uninstall-reinstall-race,project-automation,cloud-worktree-archive-restore,cloud-worktree-capability,cloud-worktree-queued-cancel,task-model-deletion
   plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth
-  plugin-composer-long-list,plugin-collaboration-composer-isolation
+  plugin-composer-long-list,plugin-collaboration-composer-isolation,plugin-runtime-route-refresh,plugin-background-sync-isolation,plugin-periodic-reconcile
   plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github
 )
 # Run 39930854745: eight ordinary Core shards predict 323-332 seconds.
@@ -374,6 +377,12 @@ select_uninstall_checkpoints() {
   select_target "cloud:plugin-write-coordination"
   select_target "cloud:plugin-registration-coordination"
   select_target "cloud:plugin-account-auth-coordination"
+}
+
+select_plugin_sync_checkpoints() {
+  select_target "cloud:plugin-runtime-route-refresh"
+  select_target "cloud:plugin-background-sync-isolation"
+  select_target "cloud:plugin-periodic-reconcile"
 }
 
 select_rendering_checkpoints() {
@@ -782,6 +791,10 @@ classify_wework_path() {
       select_target "core:stand-in-cloud"
       select_target "core:project-assignment-notification"
       select_target "core:notification-tab-navigation"
+      if [[ "$path" == wework/src/features/notifications/WeworkSchemeBridge* || \
+        "$path" == wework/src/features/notifications/scheme* ]]; then
+        select_target "core:collaboration-issue-comment-notification"
+      fi
       return
       ;;
 
@@ -982,7 +995,8 @@ classify_wework_path() {
       select_target "core:collaboration-issue-attachment-preview"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-issue-comment-notification.scenario.mjs)
+    wework/e2e/desktop/scenarios/collaboration-issue-comment-notification.scenario.mjs | \
+      wework/e2e/desktop/scenarios/issue-notification-read.scenario.mjs)
       select_target "core:collaboration-issue-comment-notification"
       return
       ;;
@@ -1028,6 +1042,9 @@ classify_wework_path() {
       wework/src/features/todo/WorkItemComposerGuide*)
       select_target "core:task-status-sync"
       select_target "core:task-board-association"
+      if [[ "$path" == wework/src/api/deliveries* ]]; then
+        select_target "core:collaboration-issue-comment-notification"
+      fi
       if [[ "$path" == wework/src/api/local/localDelivery* ]]; then
         select_target "core:collaboration-issue-assignment-activity"
         select_target "core:collaboration-human-round-resume"
@@ -1401,6 +1418,41 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    wework/e2e/desktop/scenarios/plugin-runtime-route-refresh.scenario.mjs | \
+      wework/e2e/desktop/modules/plugin-composer-route-messaging.mjs)
+      select_target "cloud:plugin-runtime-route-refresh"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/plugin-background-sync-isolation.scenario.mjs)
+      select_target "cloud:plugin-background-sync-isolation"
+      return
+      ;;
+    wework/e2e/desktop/modules/plugin-sync-observer.mjs | \
+      backend/app/services/plugin_device_identity.py)
+      select_plugin_sync_checkpoints
+      return
+      ;;
+    wework/e2e/desktop/scenarios/plugin-periodic-reconcile.scenario.mjs | \
+      wework/e2e/desktop/modules/plugin-periodic-reconcile*.mjs)
+      select_target "cloud:plugin-periodic-reconcile"
+      return
+      ;;
+  esac
+
+  case "$path" in
+    backend/app/services/plugin_device_sync.py | \
+      backend/app/api/endpoints/installed_plugins.py)
+      select_plugin_sync_checkpoints
+      ;;
+    wework/src/features/plugins/pluginDeviceApi* | \
+      wework/src/desktop/localExecutor* | \
+      wework/src/components/plugins/PluginsWorkspace*)
+      select_target "cloud:plugin-runtime-route-refresh"
+      select_target "cloud:plugin-background-sync-isolation"
+      ;;
+  esac
+
+  case "$path" in
     packages/chat-core/test-fixtures/conversation-search-contract.json)
       select_target "core:running-conversation-history"
       select_target "cloud:conversation-state"
@@ -1529,6 +1581,7 @@ classify_path() {
       select_uninstall_checkpoints
       select_target "cloud:conversation-state"
       if [[ "$path" == wework/e2e/desktop/modules/transport-fault-proxy* ]]; then
+        select_plugin_sync_checkpoints
         select_target "core:collaboration-board-move-recovery"
       fi
       return
@@ -1555,6 +1608,7 @@ classify_path() {
       return
       ;;
     wework/e2e/desktop/modules/plugin-regression-fixture.mjs)
+      select_plugin_sync_checkpoints
       select_target "cloud:plugin-toggle-persistence"
       select_uninstall_checkpoints
       select_target "cloud:plugin-composer-long-list"

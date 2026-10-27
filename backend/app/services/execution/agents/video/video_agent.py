@@ -126,7 +126,8 @@ class VideoAgent(PollingAgent):
                 {"url": image} for image in prompt_images
             )
             uploaded_images, reference_videos, reference_audios = (
-                resolve_uploaded_media(
+                await asyncio.to_thread(
+                    resolve_uploaded_media,
                     request.user_subtask_id,
                     user_id,
                     attachment_ids=[

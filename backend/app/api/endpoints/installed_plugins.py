@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.api.marketplace_upload import read_marketplace_package
 from app.core import security
+from app.core.auth_utils import is_api_key, verify_api_key
 from app.core.config import settings
 from app.models.plugin_marketplace import PluginDeviceInstallation
 from app.models.subtask import SubtaskStatus
@@ -63,12 +64,14 @@ from app.services.marketplace_submission_upload import (
     InvalidMarketplaceSubmissionUploadToken,
     verify_marketplace_submission_upload_token,
 )
+from app.services.plugin_device_identity import resolve_plugin_runtime_device_id
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
 from app.services.plugin_device_sync import (
     sync_global_capabilities,
     sync_plugin_after_change,
+    sync_plugin_to_other_devices_after_change,
 )
 from app.services.plugin_installation_operations import (
     install_builtin_account_plugin,
@@ -174,12 +177,30 @@ def _ensure_submission_matches_task_token(
     )
 
 
+def _get_plugin_sync_user(
+    reconcile: bool = False,
+    token: str = Depends(security.oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    """Allow personal device credentials only for plugin-only reconciliation."""
+    if reconcile and is_api_key(token):
+        user = verify_api_key(db, token, update_last_used_at=False)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired API key",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return user
+    return security.get_current_user(token=token, db=db)
+
+
 @router.post("/installed/sync-device", response_model=PluginDeviceSyncResponse)
 async def sync_installed_plugins_to_device(
     device_id: str,
     reconcile: bool = False,
     db: Session = Depends(get_plugin_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(_get_plugin_sync_user),
 ) -> PluginDeviceSyncResponse:
     """Push account desired plugins to one device and refresh device rows."""
     normalized_device_id = device_id.strip()
@@ -188,8 +209,13 @@ async def sync_installed_plugins_to_device(
     user_id = current_user.id
 
     if reconcile:
+        reconciliation_device_id = resolve_plugin_runtime_device_id(
+            db, user_id=user_id, device_id=normalized_device_id
+        )
+        if reconciliation_device_id is None:
+            raise HTTPException(status_code=404, detail="Device not found")
         db.close()
-        return await reconcile_device_plugins(user_id, normalized_device_id)
+        return await reconcile_device_plugins(user_id, reconciliation_device_id)
 
     db.close()
     pending_count = await run_plugin_operation(
@@ -548,12 +574,13 @@ def copy_marketplace_plugin(
 )
 async def install_marketplace_plugin(
     marketplace_id: int,
+    background_tasks: BackgroundTasks,
     release_id: int | None = None,
     device_id: str | None = None,
     db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceInstallResponse:
-    """Save the authoritative install and synchronize the affected plugin."""
+    """Save the account install and synchronize only the requesting device."""
     user_id = current_user.id
     db.close()
     plugin = await run_plugin_operation(
@@ -563,7 +590,17 @@ async def install_marketplace_plugin(
         release_id=release_id,
     )
     sync = await sync_plugin_after_change(
-        db, user_id=user_id, installed=plugin, device_id=device_id
+        db,
+        user_id=user_id,
+        installed=plugin,
+        device_id=device_id,
+        sync_current_device_only=True,
+    )
+    background_tasks.add_task(
+        sync_plugin_to_other_devices_after_change,
+        user_id,
+        int(plugin.metadata["labels"]["id"]),
+        device_id,
     )
     enriched = await run_plugin_operation(
         plugin_marketplace_service.enrich_installed_list,
@@ -580,6 +617,7 @@ async def install_marketplace_plugin(
 async def ensure_builtin_plugin_installed(
     plugin_key: str,
     request: BuiltinPluginInstallRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceInstallResponse:
@@ -594,7 +632,14 @@ async def ensure_builtin_plugin_installed(
         user_id=user_id,
         installed=plugin,
         device_id=request.device_id,
-        sync_current_device_only=plugin.spec.source.providerKey == "wegent-marketplace",
+        sync_current_device_only=True,
+        require_device_success=plugin.spec.source.providerKey == "wegent-marketplace",
+    )
+    background_tasks.add_task(
+        sync_plugin_to_other_devices_after_change,
+        user_id,
+        int(plugin.metadata["labels"]["id"]),
+        request.device_id,
     )
     enriched = await run_plugin_operation(
         plugin_marketplace_service.enrich_installed_list,
@@ -657,6 +702,7 @@ def download_installed_plugin(
 async def update_installed_plugin(
     installed_id: int,
     request: InstalledPluginUpdateRequest,
+    background_tasks: BackgroundTasks,
     device_id: str | None = None,
     db: Session = Depends(get_plugin_db),
     current_user: User = Depends(security.get_current_user),
@@ -676,6 +722,13 @@ async def update_installed_plugin(
         installed=installed,
         device_id=device_id,
         reset_failures=request.releaseId is not None,
+        sync_current_device_only=True,
+        runtime_state_changed=(
+            request.enabled is not None or request.componentStates is not None
+        ),
+    )
+    background_tasks.add_task(
+        sync_plugin_to_other_devices_after_change, user_id, installed_id, device_id
     )
     enriched = await run_plugin_operation(
         plugin_marketplace_service.enrich_installed_list,

@@ -85,7 +85,7 @@ const cloudBlock = workflow
   .split(/\n  [\w-]+:\n/)[0];
 assert.match(
   cloudBlock,
-  /if: contains\(matrix.segments, 'plugin-write-coordination'\)\n\s+uses: \.\/\.github\/actions\/setup-minio-e2e/,
+  /if: contains\(matrix.segments, 'plugin-write-coordination'\)[^\n]*\n\s+uses: \.\/\.github\/actions\/setup-minio-e2e/,
   "Cloud plugin write coordination must use real object storage for sync recovery",
 );
 for (const job of [
