@@ -23,6 +23,7 @@ from app.schemas.connector import ConnectorAppWrite
 from app.services.connector_apps import (
     CONNECTOR_APP_KIND,
     CONNECTOR_APP_NAMESPACE,
+    CONNECTOR_APP_USER_ID,
     ConnectorAppService,
 )
 
@@ -123,12 +124,14 @@ def _endpoint_taken(db: Session, mcp_url: str) -> bool:
 
 
 def _active_builtin_row(db: Session, slug: str) -> Kind | None:
+    """Return the system-owned built-in app, never another owner's namesake."""
     return (
         db.query(Kind)
         .filter(
             Kind.kind == CONNECTOR_APP_KIND,
             Kind.namespace == CONNECTOR_APP_NAMESPACE,
             Kind.name == slug,
+            Kind.user_id == CONNECTOR_APP_USER_ID,
             Kind.is_active,
         )
         .first()

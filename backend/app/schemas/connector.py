@@ -309,6 +309,7 @@ class ConnectorAppResponse(BaseModel):
     icon_url: str | None
     auth_type: AuthType
     tool_loading_mode: ToolLoadingMode
+    keywords: list[str] = Field(default_factory=list)
     connection: ConnectorConnectionResponse
 
 

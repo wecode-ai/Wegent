@@ -274,6 +274,31 @@ class ConnectorRuntimeService:
         return tools
 
     @staticmethod
+    async def probe_app(db: Session, app: ConnectorApp, user: User) -> None:
+        """Probe one app's upstream and persist freshness or the failure.
+
+        The settings retry action must report what the upstream actually
+        answers: a still-broken upstream keeps its error so the UI cannot claim
+        the connection recovered.
+        """
+        try:
+            await ConnectorRuntimeService.refresh_tool_summary_cache(db, app, user)
+        except Exception as error:  # noqa: BLE001 - upstream failures vary
+            if ConnectorRuntimeService._is_auth_failure(error) or (
+                ConnectorRuntimeService._mark_expired_on_auth_error(
+                    db, app, user, error
+                )
+            ):
+                return
+            connection = connector_connection_service.get(
+                db, slug=app.slug, user_id=user.id
+            )
+            if connection is not None:
+                connector_connection_service.record_tool_error(
+                    db, connection, " ".join(_exception_texts(error))[:500]
+                )
+
+    @staticmethod
     async def refresh_tool_summary_cache(
         db: Session,
         app: ConnectorApp,
@@ -319,8 +344,10 @@ class ConnectorRuntimeService:
             }
             for tool in tools
         ]
-        if connection.tool_summaries != summaries:
-            connector_connection_service.save_tool_summaries(db, connection, summaries)
+        # Refresh the discovery timestamp and clear a previous failure even when
+        # the upstream returns the same tool set, otherwise the cache keeps
+        # expiring and a stale error stays visible after the upstream recovers.
+        connector_connection_service.save_tool_summaries(db, connection, summaries)
 
     @staticmethod
     @trace_async(

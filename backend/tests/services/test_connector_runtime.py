@@ -659,6 +659,65 @@ async def test_successful_discovery_clears_the_previous_error(
 
 
 @pytest.mark.asyncio
+async def test_same_tool_set_refreshes_the_cache_and_clears_the_error(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A successful re-discovery refreshes freshness even without tool changes."""
+    _create_app(
+        test_db, test_admin_user, slug="stable", name="Stable", auth_type="oauth2"
+    )
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="stable",
+        user_id=test_user.id,
+        access_token="token",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=None,
+    )
+
+    class Tool:
+        name = "search"
+        title = "Search"
+        description = ""
+        inputSchema = {"type": "object", "properties": {}}
+        annotations = None
+
+    upstream = AsyncMock(return_value=[Tool()])
+    monkeypatch.setattr(ConnectorRuntimeService, "_upstream_tools", upstream)
+    await ConnectorRuntimeService.list_tools(test_db, test_user)
+
+    cached = connector_connection_service.get(
+        test_db, slug="stable", user_id=test_user.id
+    )
+    assert cached is not None
+    payload = dict(cached.row.json or {})
+    spec = dict(payload.get("spec") or {})
+    spec["toolsDiscoveredAt"] = "2020-01-01T00:00:00+00:00"
+    payload["spec"] = spec
+    cached.row.json = payload
+    test_db.commit()
+    connector_connection_service.record_tool_error(test_db, cached, "boom")
+
+    await ConnectorRuntimeService.list_tools(test_db, test_user)
+
+    refreshed = connector_connection_service.get(
+        test_db, slug="stable", user_id=test_user.id
+    )
+    assert refreshed is not None
+    assert refreshed.last_error is None
+    refreshed_spec = dict((refreshed.row.json or {}).get("spec") or {})
+    assert refreshed_spec["toolsDiscoveredAt"] != "2020-01-01T00:00:00+00:00"
+    assert refreshed.tool_summaries == cached.tool_summaries
+    assert upstream.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_tool_discovery_isolates_an_unavailable_app(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1210,3 +1269,40 @@ async def test_http_connector_validates_arguments_before_request(
 
     assert exc_info.value.status_code == 422
     send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_probe_app_records_a_failed_upstream_probe(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retry against a still-broken upstream must keep the error visible."""
+    app = _create_app(
+        test_db, test_admin_user, slug="probe-down", name="Probe", auth_type="oauth2"
+    )
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="probe-down",
+        user_id=test_user.id,
+        access_token="token",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=[],
+        external_account_name=None,
+        expires_at=None,
+    )
+    monkeypatch.setattr(
+        ConnectorRuntimeService,
+        "refresh_tool_summary_cache",
+        AsyncMock(side_effect=HTTPException(502, "upstream unavailable")),
+    )
+
+    await ConnectorRuntimeService.probe_app(test_db, app, test_user)
+
+    connection = connector_connection_service.get(
+        test_db, slug="probe-down", user_id=test_user.id
+    )
+    assert connection is not None
+    assert connection.last_error and "502" in connection.last_error

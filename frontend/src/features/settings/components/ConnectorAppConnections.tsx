@@ -113,12 +113,16 @@ export default function ConnectorAppConnections() {
     setRetryingSlug(app.slug)
     try {
       const connection = await adminApis.refreshConnectorApp(app.slug)
+      // The backend probes the upstream, so only a clean result is a recovery.
+      const recovered = connection.status === 'connected' && !connection.last_error
       toast({
+        variant: recovered ? undefined : 'destructive',
         title: t(
-          connection.status === 'connected'
+          recovered
             ? 'common:integrations.connector_apps.retry_succeeded'
             : 'common:integrations.connector_apps.retry_failed'
         ),
+        description: recovered ? undefined : (connection.last_error ?? undefined),
       })
       window.dispatchEvent(new CustomEvent(CONNECTOR_AUTHORIZATION_CHANGED_EVENT))
     } catch (error) {

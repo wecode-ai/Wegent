@@ -316,6 +316,7 @@ class ConnectorAppService:
             .filter(
                 Kind.kind == CONNECTOR_APP_KIND,
                 Kind.namespace == CONNECTOR_APP_NAMESPACE,
+                Kind.user_id == CONNECTOR_APP_USER_ID,
                 Kind.is_active,
             )
             .order_by(Kind.name, Kind.id)
@@ -394,6 +395,7 @@ class ConnectorAppService:
             icon_url=app.icon_url,
             auth_type=app.auth_type,
             tool_loading_mode=app.tool_loading_mode,
+            keywords=list(app.keywords or []),
             connection=connection,
         )
 
@@ -424,6 +426,7 @@ class ConnectorAppService:
                 Kind.kind == CONNECTOR_APP_KIND,
                 Kind.namespace == CONNECTOR_APP_NAMESPACE,
                 Kind.name == slug,
+                Kind.user_id == CONNECTOR_APP_USER_ID,
                 Kind.is_active,
             )
             .first()

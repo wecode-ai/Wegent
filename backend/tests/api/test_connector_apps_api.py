@@ -379,7 +379,14 @@ def test_role_visibility_is_enforced_for_user_catalog(
     test_user: User,
     test_token: str,
 ):
-    _create_app(test_db, test_admin_user, slug="public-app", name="Public")
+    _create_app(
+        test_db,
+        test_admin_user,
+        slug="public-app",
+        name="Public",
+        tool_loading_mode="lazy",
+        keywords=["tickets", "工单"],
+    )
     _create_app(
         test_db,
         test_admin_user,
@@ -397,6 +404,8 @@ def test_role_visibility_is_enforced_for_user_catalog(
     assert response.status_code == 200
     assert [item["slug"] for item in response.json()] == ["public-app"]
     assert response.json()[0]["connection"]["status"] == "connected"
+    # The settings search relies on real keywords from the user projection.
+    assert response.json()[0]["keywords"] == ["tickets", "工单"]
     assert test_user.role != "admin"
 
 

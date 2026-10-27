@@ -20,6 +20,7 @@ from app.schemas.connector import (
 from app.services.connector_apps import connector_app_service
 from app.services.connector_connections import connector_connection_service
 from app.services.connector_oauth import connector_oauth_service
+from app.services.connector_runtime import connector_runtime_service
 
 router = APIRouter()
 
@@ -127,11 +128,11 @@ async def refresh_connector_connection(
     connection = connector_connection_service.get(db, slug=app.slug, user_id=user.id)
     if not connection:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector connection not found")
-    current = connector_connection_service.response(connection)
-    if current.status != "expired":
-        return current
-    refreshed = await connector_oauth_service.refresh_connection(db, connection)
+    if connector_connection_service.response(connection).status == "expired":
+        await connector_oauth_service.refresh_connection(db, connection)
+    # Refresh the upstream probe too: a still-broken upstream must keep its
+    # error instead of looking recovered just because tokens are valid.
+    await connector_runtime_service.probe_app(db, app, user)
     return connector_connection_service.response(
-        refreshed
-        or connector_connection_service.get(db, slug=app.slug, user_id=user.id)
+        connector_connection_service.get(db, slug=app.slug, user_id=user.id)
     )

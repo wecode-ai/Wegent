@@ -237,7 +237,10 @@ describe('ConnectorAppConnections', () => {
         connection: { status: 'connected', last_error: 'upstream 502' },
       },
     ])
-    mockedAdminApis.refreshConnectorApp.mockResolvedValue({ status: 'connected' })
+    mockedAdminApis.refreshConnectorApp.mockResolvedValue({
+      status: 'connected',
+      last_error: 'upstream 502',
+    })
 
     render(<ConnectorAppConnections />)
 
@@ -248,6 +251,38 @@ describe('ConnectorAppConnections', () => {
 
     await waitFor(() =>
       expect(mockedAdminApis.refreshConnectorApp).toHaveBeenCalledWith('dingtalk-mcp-generic')
+    )
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith({
+        variant: 'destructive',
+        title: 'common:integrations.connector_apps.retry_failed',
+        description: 'upstream 502',
+      })
+    )
+  })
+
+  it('reports recovery only when the upstream probe succeeds', async () => {
+    mockedAdminApis.getUserConnectorApps.mockResolvedValue([
+      {
+        ...baseApp,
+        connection: { status: 'connected', last_error: 'upstream 502' },
+      },
+    ])
+    mockedAdminApis.refreshConnectorApp.mockResolvedValue({
+      status: 'connected',
+      last_error: null,
+    })
+
+    render(<ConnectorAppConnections />)
+
+    fireEvent.click(await screen.findByTestId('retry-connector-app-dingtalk-mcp-generic'))
+
+    await waitFor(() =>
+      expect(mockToast).toHaveBeenCalledWith({
+        variant: undefined,
+        title: 'common:integrations.connector_apps.retry_succeeded',
+        description: undefined,
+      })
     )
   })
 

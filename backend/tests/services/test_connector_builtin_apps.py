@@ -35,6 +35,47 @@ def test_is_idempotent(test_db: Session) -> None:
     assert ensure_builtin_connector_apps(test_db) == []
 
 
+def test_same_name_owned_by_another_user_is_left_untouched(
+    test_db: Session, test_user: User
+) -> None:
+    """Kind identity is (namespace, name, user), so backfill must match owner 0."""
+    from app.models.kind import Kind
+    from app.services.connector_apps import (
+        CONNECTOR_APP_KIND,
+        CONNECTOR_APP_NAMESPACE,
+    )
+
+    definition = BUILTIN_CONNECTOR_APPS[0]
+    foreign = Kind(
+        kind=CONNECTOR_APP_KIND,
+        namespace=CONNECTOR_APP_NAMESPACE,
+        name=definition.slug,
+        user_id=test_user.id,
+        is_active=True,
+        json={"spec": {"mcpUrl": "https://other.example.test/mcp", "keywords": []}},
+    )
+    test_db.add(foreign)
+    test_db.commit()
+
+    ensure_builtin_connector_apps(test_db)
+
+    test_db.refresh(foreign)
+    assert foreign.json["spec"]["mcpUrl"] == "https://other.example.test/mcp"
+    assert "toolLoadingMode" not in foreign.json["spec"]
+    system_row = (
+        test_db.query(Kind)
+        .filter(
+            Kind.kind == CONNECTOR_APP_KIND,
+            Kind.namespace == CONNECTOR_APP_NAMESPACE,
+            Kind.name == definition.slug,
+            Kind.user_id == 0,
+            Kind.is_active,
+        )
+        .one()
+    )
+    assert system_row.id != foreign.id
+
+
 def test_deleted_app_is_recreated_on_next_bootstrap(test_db: Session) -> None:
     ensure_builtin_connector_apps(test_db)
     app = connector_app_service.get_app_by_slug(test_db, "dingtalk_docs")
