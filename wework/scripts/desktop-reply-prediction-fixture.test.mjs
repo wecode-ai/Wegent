@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
 import { test } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
+import { createDesktopScenario as createTemporaryChatScenario } from '../e2e/desktop/scenarios/temporary-chat.scenario.mjs'
 import {
   CLOUD_VISION_SIDECAR_CASE,
   LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES,
@@ -21,6 +22,118 @@ function predictionMetadata(requestKind = 'turn') {
     }),
   }
 }
+
+async function activeTemporaryChatScenario() {
+  const scenario = createTemporaryChatScenario({ uiTimeoutMs: 100 })
+  const stopBeforeUi = new Error('Stop before desktop UI setup')
+  await assert.rejects(
+    scenario.verify({
+      async command() {
+        throw stopBeforeUi
+      },
+    }),
+    error => error === stopBeforeUi
+  )
+  return scenario
+}
+
+function memoryResponse() {
+  return {
+    status: null,
+    output: '',
+    writeHead(status) {
+      this.status = status
+    },
+    flushHeaders() {
+      assert.fail('A prediction entered the held conversation response')
+    },
+    end(output) {
+      this.output = output
+    },
+    events() {
+      return this.output
+        .split('\n')
+        .filter(line => line.startsWith('data: '))
+        .map(line => JSON.parse(line.slice(6)))
+    },
+  }
+}
+
+test.each([
+  ['native turn', '/v1/responses', 'turn'],
+  ['native compaction', '/responses', 'compaction'],
+  ['converted messages', '/responses', null],
+])('routes %s predictions before temporary-chat history markers', async (_label, path, kind) => {
+  const scenario = await activeTemporaryChatScenario()
+  const history = [
+    'TEMPORARY_CHAT_SOURCE_CONVERSATION',
+    'TEMPORARY_CHAT_INITIAL_MESSAGE',
+    'TEMPORARY_CHAT_DIRECT_FOLLOW_UP',
+    'TEMPORARY_CHAT_AFTER_CAPABILITY_RESTART',
+    REPLY_PREDICTION_PROMPT,
+  ].map(content => ({ role: 'user', content }))
+  const body = kind
+    ? { client_metadata: predictionMetadata(kind), input: history }
+    : { messages: history }
+  const request = Readable.from([JSON.stringify(body)])
+  request.method = 'POST'
+  const response = memoryResponse()
+
+  assert.equal(await scenario.handleHttp(request, response, new URL(path, 'http://fixture')), true)
+  assert.equal(response.status, 200)
+  const events = response.events()
+  assert.equal(events.at(-1).type, 'response.completed')
+  const message = events.find(event => event.item?.type === 'message')
+  assert.deepEqual(JSON.parse(message.item.content[0].text), { suggestion: null })
+})
+
+test('preserves foreground temporary-chat responses after a prediction in history', async () => {
+  const scenario = await activeTemporaryChatScenario()
+  const request = Readable.from([
+    JSON.stringify({
+      messages: [
+        { role: 'user', content: REPLY_PREDICTION_PROMPT },
+        { role: 'assistant', content: '{"suggestion":null}' },
+        { role: 'user', content: 'TEMPORARY_CHAT_INITIAL_MESSAGE' },
+      ],
+    }),
+  ])
+  request.method = 'POST'
+  const response = memoryResponse()
+
+  assert.equal(
+    await scenario.handleHttp(request, response, new URL('http://fixture/v1/responses')),
+    true
+  )
+  const message = response.events().find(event => event.item?.type === 'message')
+  assert.equal(message.item.content[0].text, 'TEMPORARY_CHAT_INITIAL_COMPLETE')
+})
+
+test.each(['input', 'messages'])(
+  'routes recovered side-chat %s by its latest message instead of old markers',
+  async field => {
+    const scenario = await activeTemporaryChatScenario()
+    const request = Readable.from([
+      JSON.stringify({
+        [field]: [
+          { role: 'user', content: 'TEMPORARY_CHAT_SOURCE_CONVERSATION' },
+          { role: 'user', content: 'TEMPORARY_CHAT_INITIAL_MESSAGE' },
+          { role: 'user', content: 'TEMPORARY_CHAT_DIRECT_FOLLOW_UP' },
+          { role: 'user', content: 'TEMPORARY_CHAT_AFTER_CAPABILITY_RESTART' },
+        ],
+      }),
+    ])
+    request.method = 'POST'
+    const response = memoryResponse()
+
+    assert.equal(
+      await scenario.handleHttp(request, response, new URL('http://fixture/v1/responses')),
+      true
+    )
+    const message = response.events().find(event => event.item?.type === 'message')
+    assert.equal(message.item.content[0].text, 'TEMPORARY_CHAT_CAPABILITY_RESTART_COMPLETE')
+  }
+)
 
 function visionBody(context) {
   return {

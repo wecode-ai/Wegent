@@ -5,6 +5,7 @@
 import type { CollaborationPriority } from '../types'
 
 export interface CollaborationIssueCardItem {
+  status?: string
   id: string
   title: string
   priority: CollaborationPriority
@@ -39,6 +40,7 @@ export interface CollaborationIssueCardDisplay {
 }
 
 export interface CollaborationIssueCardLabels {
+  statuses?: Readonly<Record<string, string>>
   assignee: string
   createdAt: string
   priority: Record<CollaborationPriority, string>
@@ -56,6 +58,7 @@ export interface CollaborationIssueCardModel {
   priorityLabel: string
   reference: string
   shortReference: string
+  statusLabel?: string
   tags: readonly string[]
   title: string
   unread: boolean
@@ -114,6 +117,7 @@ export function createCollaborationIssueCardModel({
     priorityLabel: labels.priority[item.priority],
     reference,
     shortReference: shortReference ? `#${shortReference}` : reference,
+    statusLabel: item.status ? (labels.statuses?.[item.status] ?? item.status) : undefined,
     tags: item.tags ?? [],
     title: item.title,
     unread: Boolean(item.is_unread),

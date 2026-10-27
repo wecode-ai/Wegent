@@ -224,6 +224,8 @@ The Project actions menu can create a permanent worktree from the current Git wo
 
 In packaged Wework App `local-first` mode, selecting, dropping, or pasting an existing local file sets the attachment's `local_path` to its source path without creating a copy. Later reads use the file at that path; moving or deleting the source can make it unavailable. Removing an attachment does not delete its source file. Screenshots and pasted content without a source path are still saved under `$WEGENT_EXECUTOR_HOME/workspace/attachments/draft`. Local execution receives local `attachments` through executor IPC. Cloud and remote execution still upload attachments before sending, use Backend `attachmentIds`, and remove local paths from the request.
 
+Local references and temporary attachments have no fixed total file size limit. Content without a source path is written locally in bounded chunks, retaining size, offset, and file integrity validation; disk write failures are reported directly. The cloud attachment API owns cloud upload limits. Attachment errors are isolated by composer scope and can be dismissed individually without clearing drafts or valid attachments. Reselecting the same filename clears its previous error, and delayed failures from earlier attempts cannot overwrite the new attempt's state.
+
 ```mermaid
 flowchart LR
   Source[Existing local file] --> Path[Reference source path]

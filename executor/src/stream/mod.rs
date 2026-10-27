@@ -2,12 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{borrow::Cow, collections::HashSet};
+use std::borrow::Cow;
 
 use serde_json::Value;
 
 mod partial_messages;
 pub(crate) use partial_messages::ClaudePartialMessages;
+mod async_tasks;
+pub use async_tasks::{extract_claude_subagent_update, ClaudeAsyncTaskTracker};
 
 use crate::{
     agents::interactive_mcp::{
@@ -81,26 +83,6 @@ pub struct ClaudeSubagentUpdate {
     pub tool_use_id: String,
     pub status: String,
     pub summary: Option<String>,
-}
-
-#[derive(Debug, Default)]
-pub struct ClaudeAsyncTaskTracker {
-    active_tool_use_ids: HashSet<String>,
-}
-
-impl ClaudeAsyncTaskTracker {
-    pub fn observe(&mut self, value: &Value) {
-        if let Some(tool_use_id) = claude_task_started_tool_use_id(value) {
-            self.active_tool_use_ids.insert(tool_use_id);
-        }
-        if let Some(tool_use_id) = claude_task_notification_tool_use_id(value) {
-            self.active_tool_use_ids.remove(&tool_use_id);
-        }
-    }
-
-    pub fn has_active_task(&self) -> bool {
-        !self.active_tool_use_ids.is_empty()
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -459,6 +441,11 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
 
     let outcome = terminal_outcome
         .or_else(|| pending_error.map(|message| ExecutionOutcome::Failed { message }))
+        .or_else(|| {
+            async_tasks
+                .completion_error()
+                .map(|message| ExecutionOutcome::Failed { message })
+        })
         .unwrap_or_else(|| {
             if saw_claude_message && !saw_result_message {
                 ExecutionOutcome::Failed {
@@ -568,25 +555,6 @@ fn extract_result_error_message(value: &Value) -> Option<&str> {
             })
         })
     })
-}
-
-fn claude_task_started_tool_use_id(value: &Value) -> Option<String> {
-    if value.get("type").and_then(Value::as_str) != Some("system")
-        || value.get("subtype").and_then(Value::as_str) != Some("task_started")
-        || value.get("task_type").and_then(Value::as_str) != Some("local_agent")
-    {
-        return None;
-    }
-    non_empty_string_field(value, "tool_use_id")
-}
-
-fn claude_task_notification_tool_use_id(value: &Value) -> Option<String> {
-    if value.get("type").and_then(Value::as_str) != Some("system")
-        || value.get("subtype").and_then(Value::as_str) != Some("task_notification")
-    {
-        return None;
-    }
-    non_empty_string_field(value, "tool_use_id")
 }
 
 fn non_empty_string_field(value: &Value, field: &str) -> Option<String> {
@@ -873,36 +841,6 @@ fn non_empty_content_field(value: &Value, field: &str) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-}
-
-pub fn extract_claude_subagent_update(value: &Value) -> Option<ClaudeSubagentUpdate> {
-    if value.get("type").and_then(Value::as_str) != Some("system") {
-        return None;
-    }
-    let subtype = value.get("subtype").and_then(Value::as_str)?;
-    let tool_use_id = non_empty_string_field(value, "tool_use_id")?;
-    match subtype {
-        "task_started" if value.get("task_type").and_then(Value::as_str) == Some("local_agent") => {
-            Some(ClaudeSubagentUpdate {
-                tool_use_id,
-                status: "invoking".to_owned(),
-                summary: None,
-            })
-        }
-        "task_notification" => {
-            let status = match value.get("status").and_then(Value::as_str)? {
-                "completed" | "succeeded" | "success" => "done",
-                "failed" | "error" | "cancelled" | "canceled" | "stopped" => "error",
-                _ => return None,
-            };
-            Some(ClaudeSubagentUpdate {
-                tool_use_id,
-                status: status.to_owned(),
-                summary: non_empty_string_field(value, "summary"),
-            })
-        }
-        _ => None,
-    }
 }
 
 fn extract_claude_assistant_text(value: &Value) -> Option<String> {

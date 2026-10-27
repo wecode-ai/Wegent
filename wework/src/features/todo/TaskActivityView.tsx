@@ -251,7 +251,7 @@ export function TaskActivityView({
   // Local project spaces keep their board, comments and runs in the local
   // executor; every delivery/approval call must route to the project's space
   // API instead of always hitting the cloud backend.
-  const projectLocation = (project as { location?: 'local' | 'cloud' }).location
+  const projectLocation = project.project_store === 'local' ? 'local' : 'cloud'
   const projectDeliveryApi =
     projectLocation === 'local'
       ? (services.projectSpaceApis?.local ?? services.deliveryApi)
@@ -393,6 +393,7 @@ export function TaskActivityView({
       handleFileSelect: attachmentSelection.handleFileSelect,
       addExistingAttachment: attachmentSelection.addExistingAttachment,
       removeAttachment: attachmentSelection.removeAttachment,
+      dismissAttachmentError: attachmentSelection.dismissAttachmentError,
       resetAttachments: attachmentSelection.resetAttachments,
       listLocalSkills: async () => [],
       listLocalApps: async () => [],
@@ -428,7 +429,7 @@ export function TaskActivityView({
   // that work item's task composer.
   // Local spaces expose both the signed-in identity and the device identity.
   const humanUserIds =
-    projectLocation === 'local' || project.project_store === 'local'
+    projectLocation === 'local'
       ? [currentUserId, chatCurrentUserId].filter((id): id is string | number => id != null)
       : (chatCurrentUserId ?? currentUserId)
   const currentHumanDispatch = humanDispatchAssignment(threadMessages, humanUserIds)
@@ -524,7 +525,10 @@ export function TaskActivityView({
       issueId: issueTimeline ? task.id : undefined,
       readSequence: task.activity_read_sequence ?? 0,
       unread: Boolean(task.is_unread),
-      unreadRevision: task.is_unread ? (task.content_revision ?? task.version) : undefined,
+      // Inbox notifications can arrive after the Issue content was already read.
+      // A visible visit must still acknowledge them through the shared read API.
+      unreadRevision: task.content_revision ?? task.version,
+      readRequestKey: focusedCommentRequestKey,
       onReadSequence: issueTimeline && projectDeliveryApi ? markActivityRead : undefined,
       linear,
       compact,
@@ -692,7 +696,7 @@ export function TaskActivityView({
   }
   const replyQueue = useTaskReplyQueue({
     store: taskReplyQueueStore,
-    scope: `task-activity:${projectLocation ?? 'cloud'}:${project.id}:${task.id}`,
+    scope: `task-activity:${projectLocation}:${project.id}:${task.id}`,
     cards: commentCards,
     enabled: Boolean(client) && !sending,
     busy: cardSessionActive,
@@ -1434,7 +1438,7 @@ export function TaskActivityView({
             executionDetail.messageId,
           ])}
           address={
-            projectLocation === 'local' || project.project_store === 'local'
+            projectLocation === 'local'
               ? executionDetail.address
               : {
                   ...executionDetail.address,

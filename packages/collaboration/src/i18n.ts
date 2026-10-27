@@ -8,6 +8,7 @@ import { projectWorkMessages } from "./controls/projectWorkMessages";
 import { conversationMessages } from "./conversation/messages";
 import { boardCardMessages } from "./issue-card/messages";
 import { boardSortMessages } from "./project-board/messages";
+import { boardViewMessages } from "./project-board/viewMessages";
 import { composerMessages } from "./controls/messages";
 import { modelMessages } from "./controls/modelMessages";
 import { markdownMessages } from "./markdown/MarkdownServices";
@@ -453,10 +454,13 @@ const sharedMessages: Record<
     "todo.issue_security": "任务可见范围",
     "todo.issue_security_open": "项目可访问者可见",
     "todo.issue_security_related": "仅相关人员可见",
+    "todo.batch_status_failed": "部分任务更新失败，请查看以下原因并重试。",
     "todo.project_tags": "标签",
     "todo.project_tags_description": "用于区分任务类型并筛选看板。",
     "todo.create_tag": "新建标签",
     "todo.tag_name_placeholder": "输入标签名称",
+    "todo.tag_name_too_long": "标签名称不能超过 32 个字符",
+    "todo.tag_limit_exceeded": "最多添加 20 个不同标签",
     "todo.confirm_rename": "确认重命名",
     "todo.cancel_rename": "取消重命名",
     "todo.tag_menu": "{{tag}} 标签菜单",
@@ -540,6 +544,17 @@ const sharedMessages: Record<
     "todo.back": "返回",
     "todo.delivered": "已交付",
     "todo.no_delivery_description": "无交付说明",
+    "todo.delivery_notes": "交付说明",
+    "todo.delivery_message_count": "{{count}} 条消息",
+    "todo.delivery_summary_failed": "内容加载失败，点击查看",
+    "todo.delivery_summary_loading": "正在加载内容…",
+    "todo.delivery_empty": "无交付内容",
+    "todo.delivery_unknown_author": "交付人未知",
+    "todo.delivery_author_id": "用户 #{{id}}",
+    "todo.delivery_by": "{{name}} 交付",
+    "todo.delivery_conversation": "交付会话",
+    "todo.delivery_user": "用户",
+    "todo.delivery_assistant": "助手",
     "todo.priority_none": "无",
     "todo.issue_status": "状态",
     "todo.issue_priority": "优先级",
@@ -966,10 +981,14 @@ const sharedMessages: Record<
     "todo.issue_security": "Issue visibility",
     "todo.issue_security_open": "Visible to project users",
     "todo.issue_security_related": "Related people only",
+    "todo.batch_status_failed":
+      "Some issues could not be updated. Review the errors and retry.",
     "todo.project_tags": "Tags",
     "todo.project_tags_description": "Classify issues and filter the board.",
     "todo.create_tag": "New tag",
     "todo.tag_name_placeholder": "Tag name",
+    "todo.tag_name_too_long": "Tag names cannot exceed 32 characters",
+    "todo.tag_limit_exceeded": "Cannot have more than 20 distinct tags",
     "todo.confirm_rename": "Confirm rename",
     "todo.cancel_rename": "Cancel rename",
     "todo.tag_menu": "{{tag}} tag menu",
@@ -1057,6 +1076,17 @@ const sharedMessages: Record<
     "todo.back": "Back",
     "todo.delivered": "Delivered",
     "todo.no_delivery_description": "No delivery description",
+    "todo.delivery_notes": "Delivery notes",
+    "todo.delivery_message_count": "{{count}} messages",
+    "todo.delivery_summary_failed": "Content unavailable, click to view",
+    "todo.delivery_summary_loading": "Loading contents…",
+    "todo.delivery_empty": "No delivery content",
+    "todo.delivery_unknown_author": "Unknown author",
+    "todo.delivery_author_id": "User #{{id}}",
+    "todo.delivery_by": "Delivered by {{name}}",
+    "todo.delivery_conversation": "Delivered conversation",
+    "todo.delivery_user": "User",
+    "todo.delivery_assistant": "Assistant",
     "todo.priority_none": "None",
     "todo.issue_status": "Status",
     "todo.issue_priority": "Priority",
@@ -1316,6 +1346,7 @@ export function createCollaborationTranslator(
       modelMessages[locale][key] ??
       boardCardMessages[locale][key] ??
       boardSortMessages[locale][key] ??
+      boardViewMessages[locale][key as keyof typeof boardViewMessages.en] ??
       markdownMessages[locale][key as keyof typeof markdownMessages.en] ??
       runtimeProfileMessages[locale][key] ??
       executionEnvironmentMessages[locale][key] ??

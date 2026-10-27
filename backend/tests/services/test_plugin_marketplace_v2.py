@@ -16,6 +16,7 @@ from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.api.endpoints import installed_plugins as installed_plugins_endpoint
 from app.api.endpoints.installed_plugins import (
     install_marketplace_plugin,
     report_installed_plugins_on_device,
@@ -49,7 +50,7 @@ from app.schemas.installed_plugin import (
     PluginSubmissionInitRequest,
     PluginUpstreamCreateRequest,
 )
-from app.services import plugin_write_operations
+from app.services import plugin_device_sync, plugin_write_operations
 from app.services.device.capability_sync_service import (
     DeviceCapabilitySyncError,
     DeviceCapabilitySyncService,
@@ -985,6 +986,8 @@ def test_marketplace_release_update_and_reinstall_advance_revision(test_db, test
     assert int(reinstalled.metadata["labels"]["id"]) == installed.id
     assert installed.json["spec"]["revision"] == 4
     assert installed.is_active is True
+    assert reinstalled.spec.enabled is True
+    assert reinstalled.spec.componentStates == {}
 
 
 def test_manual_release_update_preserves_manual_policy(test_db, test_user):
@@ -3023,7 +3026,7 @@ async def test_recipient_installs_shared_personal_plugin_through_endpoint(
     mock_plugin_change_sync(monkeypatch, sync_global)
     monkeypatch.setattr(
         device_capability_sync_service,
-        "sync_installed_plugin_to_device",
+        "sync_installed_plugin_to_device_result",
         sync_plugin,
     )
 
@@ -3031,6 +3034,7 @@ async def test_recipient_installs_shared_personal_plugin_through_endpoint(
         marketplace_id=plugin.id,
         release_id=None,
         device_id="current-device",
+        background_tasks=BackgroundTasks(),
         db=test_db,
         current_user=test_user,
     )
@@ -3043,6 +3047,10 @@ async def test_recipient_installs_shared_personal_plugin_through_endpoint(
     assert installed.json["spec"]["pluginId"] == plugin.id
     assert installed.json["spec"]["releaseId"] == release.id
     assert response.plugin.spec.installState == "installed"
+    # The response carries the requesting device's merge result; other devices
+    # converge through the queued background sync instead of blocking install.
+    assert response.sync is not None
+    assert response.sync.mode == "merge"
     device_row = test_db.query(PluginDeviceInstallation).one()
     assert device_row.installed_kind_id == installed_id
     assert device_row.user_id == test_user.id
@@ -3105,7 +3113,7 @@ async def test_install_returns_plugin_when_device_sync_fails(
     mock_plugin_change_sync(monkeypatch, sync)
     monkeypatch.setattr(
         device_capability_sync_service,
-        "sync_installed_plugin_to_device",
+        "sync_installed_plugin_to_device_result",
         merge_sync,
     )
     monkeypatch.setattr(
@@ -3114,17 +3122,21 @@ async def test_install_returns_plugin_when_device_sync_fails(
         ensure_pending,
     )
 
+    background = BackgroundTasks()
     response = await install_marketplace_plugin(
         marketplace_id=plugin.id,
         release_id=None,
         device_id="current-device",
+        background_tasks=background,
         db=test_db,
         current_user=test_user,
     )
     assert response.plugin is not None
     assert response.plugin.spec.pluginId == plugin.id
-    assert response.sync is not None
-    assert response.sync.failed == 1
+    # Device failure no longer surfaces a sync result: the account record stays
+    # authoritative and other devices converge through the background task.
+    assert response.sync is None
+    assert len(background.tasks) == 1
     assert (
         test_db.query(Kind)
         .filter(
@@ -3134,6 +3146,103 @@ async def test_install_returns_plugin_when_device_sync_fails(
         )
         .count()
         == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_release_update_syncs_current_device_before_background_convergence(
+    test_db, test_user, monkeypatch
+):
+    test_db.add_all(
+        Kind(
+            user_id=test_user.id,
+            kind="Device",
+            namespace="default",
+            name=name,
+            is_active=True,
+            json={"spec": {"deviceType": "local"}},
+        )
+        for name in ("current-device", "other-device")
+    )
+    test_db.commit()
+    installed, _, _, latest = _create_marketplace_update_install(
+        test_db, user_id=test_user.id, index=1
+    )
+    test_db.commit()
+    installed_id = installed.id
+    release_id = latest.id
+    user_id = test_user.id
+    prepare = AsyncMock()
+    sync_current = AsyncMock(
+        return_value=DeviceCapabilitySyncResponse(
+            mode="merge",
+            synced=1,
+            results=[
+                DeviceCapabilitySyncResult(
+                    device_id="current-device",
+                    success=True,
+                    plugins=[{"id": installed_id, "status": "synced"}],
+                )
+            ],
+        )
+    )
+    sync_others = Mock()
+    monkeypatch.setattr(
+        plugin_device_installation_service, "ensure_pending_for_all_devices", prepare
+    )
+    monkeypatch.setattr(
+        device_capability_sync_service,
+        "sync_installed_plugin_to_device_result",
+        sync_current,
+    )
+    monkeypatch.setattr(plugin_device_sync, "schedule_other_devices", sync_others)
+    monkeypatch.setattr(
+        "app.services.device_service.device_service.get_online_devices",
+        AsyncMock(
+            return_value=[
+                {"device_id": "current-device"},
+                {"device_id": "other-device"},
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        plugin_device_sync, "get_db_session", plugin_write_operations.get_db_session
+    )
+    background = BackgroundTasks()
+
+    response = await installed_plugins_endpoint.update_installed_plugin(
+        installed_id,
+        InstalledPluginUpdateRequest(releaseId=release_id),
+        background_tasks=background,
+        device_id="current-device",
+        db=test_db,
+        current_user=test_user,
+    )
+
+    assert response.spec.releaseId == release_id
+    prepare.assert_awaited_once_with(
+        test_db,
+        user_id=user_id,
+        installed_kind_id=installed_id,
+        desired_release_id=release_id,
+        reset_failures=True,
+    )
+    sync_current.assert_awaited_once_with(
+        test_db,
+        user_id=user_id,
+        device_id="current-device",
+        installed_plugin_id=installed_id,
+    )
+    sync_others.assert_not_called()
+    assert len(background.tasks) == 1
+
+    await background()
+
+    sync_others.assert_called_once_with(
+        device_capability_sync_service,
+        user_id=user_id,
+        device_ids=["other-device"],
+        installed_plugin_ids=[installed_id],
     )
 
 

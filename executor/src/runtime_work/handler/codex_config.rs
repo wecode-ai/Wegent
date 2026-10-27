@@ -87,6 +87,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn list_codex_models(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let _restart_guard = codex_app_server_restart_gate().lock().await;
         let query_id = uuid::Uuid::new_v4().to_string();
         let include_hidden = bool_field(&payload, "includeHidden")
             .or_else(|| bool_field(&payload, "include_hidden"));

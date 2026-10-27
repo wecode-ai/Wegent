@@ -6,6 +6,7 @@ import {
   TOGGLE_SIDE_PANEL_COMMAND,
   TOGGLE_MODEL_SELECTOR_COMMAND,
   TOGGLE_PRIORITY_FILTER_COMMAND,
+  COLLAPSE_READ_CONVERSATIONS_COMMAND,
   isEditableShortcutTarget,
   shouldIgnoreWorkbenchShortcut,
   dispatchOpenSettingsShortcut,
@@ -43,6 +44,10 @@ describe('keybindings', () => {
     expect(mergeKeybindings([])[TOGGLE_MODEL_SELECTOR_COMMAND]).toBe('Control+Shift+M')
     expect(mergeKeybindings([])[TOGGLE_PRIORITY_FILTER_COMMAND]).toBe('Alt+Command+U')
     expect(mergeKeybindings([], 'win')[TOGGLE_PRIORITY_FILTER_COMMAND]).toBe('Control+Alt+U')
+    expect(mergeKeybindings([])[COLLAPSE_READ_CONVERSATIONS_COMMAND]).toBe('Alt+Shift+Command+R')
+    expect(mergeKeybindings([], 'win')[COLLAPSE_READ_CONVERSATIONS_COMMAND]).toBe(
+      'Control+Alt+Shift+R'
+    )
     expect(mergeKeybindings([])[INCREASE_FONT_SIZE_COMMAND]).toBe('Command+Plus')
     expect(mergeKeybindings([])[DECREASE_FONT_SIZE_COMMAND]).toBe('Command+Minus')
     expect(mergeKeybindings([])[RESET_FONT_SIZE_COMMAND]).toBe('Command+0')

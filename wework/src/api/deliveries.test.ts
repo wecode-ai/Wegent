@@ -11,6 +11,47 @@ import {
 } from './deliveries'
 
 describe('createDeliveryApi queue and assignment routes', () => {
+  it('refreshes notification counts after an Issue read is persisted', async () => {
+    const updated = { id: 'issue-1', is_unread: false }
+    let resolveRead!: (value: typeof updated) => void
+    const post = vi.fn(
+      () =>
+        new Promise<typeof updated>(resolve => {
+          resolveRead = resolve
+        })
+    )
+    const refresh = vi.fn()
+    window.addEventListener('wework-notifications-changed', refresh)
+    try {
+      const pending = createDeliveryApi({ post } as unknown as HttpClient).markLoopItemRead(
+        'issue-1',
+        3
+      )
+      expect(refresh).not.toHaveBeenCalled()
+      resolveRead(updated)
+      await expect(pending).resolves.toEqual(updated)
+      expect(refresh).toHaveBeenCalledOnce()
+      expect(post).toHaveBeenCalledWith('/v1/loop-items/issue-1/read', { activity_sequence: 3 })
+    } finally {
+      window.removeEventListener('wework-notifications-changed', refresh)
+    }
+  })
+
+  it('preserves notification counts when persisting Issue read state fails', async () => {
+    const failure = new Error('Read failed')
+    const post = vi.fn().mockRejectedValue(failure)
+    const refresh = vi.fn()
+    window.addEventListener('wework-notifications-changed', refresh)
+    try {
+      await expect(
+        createDeliveryApi({ post } as unknown as HttpClient).markLoopItemRead('issue-1')
+      ).rejects.toThrow(failure)
+      expect(refresh).not.toHaveBeenCalled()
+    } finally {
+      window.removeEventListener('wework-notifications-changed', refresh)
+    }
+  })
+
   it('recognizes only the canonical default work-item project', () => {
     const canonical = {
       id: DEFAULT_WORK_ITEM_PROJECT_ID,

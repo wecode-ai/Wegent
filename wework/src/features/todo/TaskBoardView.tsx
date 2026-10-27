@@ -303,6 +303,7 @@ export function TaskBoardView({
     [boardStatuses, items, t]
   )
   const board = useStandardCloudBoardController({
+    tagLimitError: t('todo.tag_limit_exceeded', '最多添加 20 个不同标签'),
     defaultSort: [],
     createColumns,
     defaultGroupBy: 'status',

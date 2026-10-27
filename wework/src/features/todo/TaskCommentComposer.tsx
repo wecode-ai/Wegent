@@ -84,6 +84,7 @@ export function TaskCommentComposer({
             attachments={controls.attachments}
             uploadingFiles={controls.uploadingFiles}
             errors={controls.errors}
+            onDismissAttachmentError={controls.dismissAttachmentError}
             onRemoveAttachment={controls.removeAttachment}
           />
         }

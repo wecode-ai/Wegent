@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import {
   CollaborationApp,
@@ -178,6 +178,166 @@ async function dragCardTo(card: HTMLElement, target: HTMLElement) {
 describe('CollaborationApp shared project board', () => {
   beforeEach(() => {
     localStorage.clear()
+    Object.defineProperties(HTMLDialogElement.prototype, {
+      showModal: {
+        configurable: true,
+        value() {
+          this.open = true
+        },
+      },
+      close: {
+        configurable: true,
+        value() {
+          this.open = false
+        },
+      },
+    })
+  })
+  afterEach(() => {
+    cleanup()
+    Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal')
+    Reflect.deleteProperty(HTMLDialogElement.prototype, 'close')
+  })
+
+  it('edits the selected mixed view from board settings without changing the default workflow', async () => {
+    const currentProject: CollaborationProject = {
+      ...project(),
+      tags: ['bug'],
+      board_views: {
+        schema_version: 1,
+        views: [
+          {
+            id: 'mixed',
+            name: '测试视图',
+            columns: [
+              { id: 'inbox', type: 'status', value: 'inbox' },
+              { id: 'test', type: 'tag', value: '测试' },
+              { id: 'bug', type: 'tag', value: 'bug' },
+            ],
+            filter: { tags: ['需求'] },
+          },
+        ],
+      },
+    }
+    const update = jest.fn().mockImplementation(async (_id, values) => ({
+      ...currentProject,
+      board_views: values.boardViews,
+      version: 2,
+    }))
+    const api = {
+      projects: {
+        get: jest.fn().mockResolvedValue(currentProject),
+        update,
+        listExecutionEnvironments: jest.fn().mockResolvedValue([]),
+      },
+      issues: {
+        getBoardSnapshot: jest
+          .fn()
+          .mockResolvedValue({ items: [issue()], members: [], taskBindings: [] }),
+      },
+      members: { list: jest.fn().mockResolvedValue([]) },
+      agents: { list: jest.fn().mockResolvedValue([]) },
+    } as unknown as SharedWorkspaceApi
+    const host: CollaborationHostAdapter = {
+      capabilities: { automation: true, dingtalkAitable: false },
+      location: { projectId: currentProject.id, issueId: null, view: 'board' },
+      navigate: jest.fn(),
+    }
+    const { rerender } = render(
+      <CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />
+    )
+    fireEvent.click(await screen.findByTestId('board-view-picker'))
+    fireEvent.click(screen.getByTestId('board-view-mixed'))
+    fireEvent.click(screen.getByTestId('board-view-picker'))
+    fireEvent.click(screen.getByTestId('board-view-edit'))
+    expect(screen.getByTestId('board-view-name')).toHaveValue('测试视图')
+    expect(screen.getByTestId('board-view-lane-value-1')).toHaveTextContent('测试')
+    expect(screen.queryByTestId('project-board-settings-dialog')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('board-view-name'), { target: { value: '已修改视图' } })
+    fireEvent.click(screen.getByTestId('board-view-save'))
+    await waitFor(() => expect(screen.queryByTestId('board-view-editor')).not.toBeInTheDocument())
+    expect(update).toHaveBeenCalledWith(currentProject.id, {
+      version: 1,
+      cardDisplay: currentProject.card_display,
+      boardViews: {
+        ...currentProject.board_views,
+        views: [
+          {
+            ...currentProject.board_views!.views[0],
+            name: '已修改视图',
+            filter: { tags: ['需求'], match: 'all' },
+          },
+        ],
+      },
+    })
+    fireEvent.click(screen.getByTestId('board-view-picker'))
+    fireEvent.click(screen.getByTestId('board-view-default'))
+    fireEvent.click(screen.getByTestId('board-view-picker'))
+    fireEvent.click(screen.getByTestId('board-view-edit'))
+    expect(await screen.findByTestId('board-view-editor')).toBeVisible()
+    expect(screen.getByTestId('cloud-board-status-in_progress')).toHaveTextContent('进行中')
+    fireEvent.click(screen.getByTestId('board-view-close'))
+    rerender(
+      <CollaborationApp
+        api={api}
+        host={{ ...host, location: { ...host.location, view: 'manage' } }}
+        locale="zh-CN"
+        pollIntervalMs={0}
+      />
+    )
+    fireEvent.click(await screen.findByTestId('cloud-project-manage-tags-toggle'))
+    for (const tag of ['bug', '测试', '需求', '共享']) {
+      expect(await screen.findByTestId(`cloud-project-tag-${tag}`)).toBeVisible()
+    }
+  })
+
+  it('shows an actionable runner denial and leaves the card in its persisted lane', async () => {
+    const current = {
+      ...issue(),
+      status: 'inbox',
+      assignee_user_id: null,
+      assignee_agent_id: 'agent-1',
+    }
+    const update = jest.fn().mockRejectedValue(
+      Object.assign(new Error('No execution environment is authorized for this selection'), {
+        errorCode: 'RUNNER_ENVIRONMENT_UNAVAILABLE',
+      })
+    )
+    const api = {
+      projects: {
+        get: jest.fn().mockResolvedValue(project()),
+        listExecutionEnvironments: jest.fn().mockResolvedValue([]),
+      },
+      issues: {
+        getBoardSnapshot: jest
+          .fn()
+          .mockResolvedValue({ items: [current], members: [], taskBindings: [] }),
+        update,
+      },
+      members: { list: jest.fn().mockResolvedValue([]) },
+      agents: { list: jest.fn().mockResolvedValue([]) },
+    } as unknown as SharedWorkspaceApi
+    const host: CollaborationHostAdapter = {
+      capabilities: { automation: true, dingtalkAitable: false },
+      location: { projectId: 'project-1', issueId: null, view: 'board' },
+      navigate: jest.fn(),
+    }
+    render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
+    const card = await screen.findByTestId('collaboration-issue-issue-1')
+    await dragCardTo(card, screen.getByTestId('cloud-todo-column-dropzone-in_progress'))
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        '机器人没有符合配置且获项目授权的执行环境'
+      )
+    )
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(update).toHaveBeenCalledWith(current.id, {
+      version: 1,
+      status: 'in_progress',
+      position: { beforeItemId: null },
+    })
+    expect(card.closest('[data-testid="cloud-todo-column-inbox"]')).not.toBeNull()
+    expect(screen.queryByTestId('board-drop-feedback')).not.toBeInTheDocument()
   })
 
   it.each(['Developer', 'Viewer'] as const)(
@@ -256,19 +416,23 @@ describe('CollaborationApp shared project board', () => {
     api.agents = {
       list: jest.fn().mockResolvedValue([]),
     } as unknown as SharedWorkspaceApi['agents']
-    updateProject.mockResolvedValue({
+    updateProject.mockImplementation(async (_id, values) => ({
       ...project('priority'),
+      board_views: values.boardViews,
       card_display: { ...project().card_display!, show_priority: false },
       version: 2,
-    })
+    }))
     render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
     await screen.findByTestId('collaboration-issue-issue-1')
     selectBoardGroup('assignee')
     expect(updateProject).not.toHaveBeenCalled()
 
-    fireEvent.click(screen.getByTestId('collaboration-board-settings'))
+    fireEvent.click(screen.getByTestId('board-view-picker'))
+    fireEvent.click(screen.getByTestId('board-view-edit'))
     fireEvent.click(await screen.findByTestId('cloud-board-display-menu'))
     fireEvent.click(screen.getByTestId('cloud-board-display-priority'))
+    expect(updateProject).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('board-view-save'))
 
     await waitFor(() =>
       expect(updateProject).toHaveBeenCalledWith(
@@ -279,7 +443,7 @@ describe('CollaborationApp shared project board', () => {
         })
       )
     )
-    fireEvent.click(screen.getByTestId('project-board-settings-close'))
+    await waitFor(() => expect(screen.queryByTestId('board-view-editor')).not.toBeInTheDocument())
     expect(screen.getByTestId('cloud-todo-column-assignee-1')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-column-priority-high')).not.toBeInTheDocument()
     expect(updateProject).toHaveBeenCalledTimes(1)
@@ -353,6 +517,53 @@ describe('CollaborationApp shared project board', () => {
       'collaboration-board-column-sort:v2:2:project-1:["status","pending"]',
       legacyKey,
     ])
+  })
+
+  it('keeps saved views available on empty projects and shows their configured columns', async () => {
+    const currentProject = {
+      ...project('priority'),
+      board_views: {
+        schema_version: 1,
+        views: [
+          {
+            id: 'mixed',
+            name: 'Empty mixed view',
+            columns: [
+              { id: 'done', type: 'status' as const, value: 'completed' },
+              { id: 'tag', type: 'tag' as const, value: '后端' },
+            ],
+          },
+        ],
+      },
+    }
+    const update = jest.fn()
+    const api = {
+      projects: {
+        get: jest.fn().mockResolvedValue(currentProject),
+        update,
+        listExecutionEnvironments: jest.fn().mockResolvedValue([]),
+      },
+      issues: {
+        getBoardSnapshot: jest.fn().mockResolvedValue({ items: [], members: [], taskBindings: [] }),
+      },
+      members: { list: jest.fn().mockResolvedValue([]) },
+      agents: { list: jest.fn().mockResolvedValue([]) },
+    } as unknown as SharedWorkspaceApi
+    const host: CollaborationHostAdapter = {
+      capabilities: { automation: true, dingtalkAitable: false },
+      location: { projectId: currentProject.id, issueId: null, view: 'board' },
+      navigate: jest.fn(),
+    }
+    render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
+    expect(await screen.findByTestId('collaboration-empty-project')).toBeVisible()
+    fireEvent.click(screen.getByTestId('board-view-picker'))
+    expect(screen.getByTestId('board-view-new')).toBeVisible()
+    fireEvent.click(screen.getByTestId('board-view-mixed'))
+    expect(screen.queryByTestId('collaboration-empty-project')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-column-done')).toHaveTextContent('已完成')
+    expect(screen.getByTestId('cloud-todo-column-tag')).toHaveTextContent('后端')
+    expect(screen.queryByTestId('cloud-todo-column-priority-high')).not.toBeInTheDocument()
+    expect(update).not.toHaveBeenCalled()
   })
 
   it.each([false, true])(
@@ -463,7 +674,13 @@ describe('CollaborationApp shared project board', () => {
       fireEvent.click(sort)
       expect(updateProject).not.toHaveBeenCalled()
       expect(updateIssue).not.toHaveBeenCalled()
-      expect(screen.getByTestId('collaboration-board-settings')).toHaveTextContent('看板设置')
+      expect(screen.queryByTestId('collaboration-board-settings')).not.toBeInTheDocument()
+      expect(screen.getByTestId('cloud-board-view-actions')).toContainElement(
+        screen.getByTestId('board-view-picker')
+      )
+      expect(screen.getByTestId('cloud-board-view-actions')).toContainElement(
+        screen.getByTestId('cloud-board-focus-running')
+      )
       for (const status of statuses) {
         expect(screen.getByTestId(`cloud-todo-column-${status.id}`)).toBeInTheDocument()
       }
@@ -485,14 +702,11 @@ describe('CollaborationApp shared project board', () => {
       expect(reorderIssue).not.toHaveBeenCalled()
       expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(2)
 
-      fireEvent.click(screen.getByTestId('collaboration-board-settings'))
-      expect(await screen.findByTestId('project-board-settings-dialog')).toHaveAccessibleName(
-        '看板设置'
-      )
-      fireEvent.click(screen.getByTestId('project-board-settings-close'))
-      await waitFor(() =>
-        expect(screen.queryByTestId('project-board-settings-dialog')).not.toBeInTheDocument()
-      )
+      fireEvent.click(screen.getByTestId('board-view-picker'))
+      fireEvent.click(screen.getByTestId('board-view-edit'))
+      expect(await screen.findByTestId('board-view-editor')).toHaveAccessibleName('看板设置')
+      fireEvent.click(screen.getByTestId('board-view-close'))
+      await waitFor(() => expect(screen.queryByTestId('board-view-editor')).not.toBeInTheDocument())
 
       fireEvent.change(screen.getByTestId('cloud-board-search'), {
         target: { value: '不存在的任务' },

@@ -10,6 +10,7 @@ from app.models.kind import Kind
 from app.schemas.kind import Bot, Ghost, Shell, Team, TeamMember
 from app.services.adapters.shell_utils import get_shell_by_name
 from app.services.chat.config.model_resolver import get_model_config_for_bot
+from app.services.execution.readiness_context import TeamReadinessContext
 from app.services.readers import KindType, kindReader
 
 
@@ -18,6 +19,7 @@ def validate_team_execution_readiness(
     *,
     team: Kind,
     execution_user_id: int,
+    context: TeamReadinessContext | None = None,
 ) -> None:
     """Validate every Team member dependency used by ``TaskRequestBuilder``.
 
@@ -26,6 +28,10 @@ def validate_team_execution_readiness(
     Tasks run with that user's model capabilities.
     """
 
+    if context is not None and (
+        context.db is not db or context.execution_user_id != execution_user_id
+    ):
+        raise ValueError("Readiness context belongs to a different execution identity")
     try:
         team_crd = Team.model_validate(team.json)
     except ValidationError as exc:
@@ -45,6 +51,7 @@ def validate_team_execution_readiness(
             team=team,
             member=member,
             execution_user_id=execution_user_id,
+            context=context,
         )
 
 
@@ -54,10 +61,13 @@ def _validate_team_member(
     team: Kind,
     member: TeamMember,
     execution_user_id: int,
+    context: TeamReadinessContext | None,
 ) -> None:
+    """Validate the member Bot and its required execution dependencies."""
     bot_ref = member.botRef
     bot_label = f"{bot_ref.namespace}/{bot_ref.name}"
-    bot = kindReader.get_by_name_and_namespace(
+    reader = context.reader if context is not None else kindReader
+    bot = reader.get_by_name_and_namespace(
         db,
         team.user_id,
         KindType.BOT,
@@ -72,14 +82,19 @@ def _validate_team_member(
     except ValidationError as exc:
         raise ValueError(f"Bot '{bot_label}' configuration is invalid") from exc
 
-    _validate_ghost(db, team=team, bot_label=bot_label, bot_crd=bot_crd)
-    _validate_shell(db, team=team, bot_label=bot_label, bot_crd=bot_crd)
+    _validate_ghost(
+        db, team=team, bot_label=bot_label, bot_crd=bot_crd, context=context
+    )
+    _validate_shell(
+        db, team=team, bot_label=bot_label, bot_crd=bot_crd, context=context
+    )
     if bot_crd.spec.execution_policy is None:
         _validate_model(
             db,
             bot=bot,
             bot_label=bot_label,
             execution_user_id=execution_user_id,
+            context=context,
         )
 
 
@@ -89,9 +104,12 @@ def _validate_ghost(
     team: Kind,
     bot_label: str,
     bot_crd: Bot,
+    context: TeamReadinessContext | None,
 ) -> None:
+    """Validate the referenced Ghost under the Team owner identity."""
     ghost_ref = bot_crd.spec.ghostRef
-    ghost = kindReader.get_by_name_and_namespace(
+    reader = context.reader if context is not None else kindReader
+    ghost = reader.get_by_name_and_namespace(
         db,
         team.user_id,
         KindType.GHOST,
@@ -115,13 +133,20 @@ def _validate_shell(
     team: Kind,
     bot_label: str,
     bot_crd: Bot,
+    context: TeamReadinessContext | None,
 ) -> None:
+    """Validate the referenced Shell under the Team owner identity."""
     shell_ref = bot_crd.spec.shellRef
     shell = get_shell_by_name(
         db,
         shell_ref.name,
         team.user_id,
         shell_ref.namespace,
+        **(
+            {"lookup": context.capabilities(team.user_id)}
+            if context is not None
+            else {}
+        ),
     )
     shell_label = f"{shell_ref.namespace}/{shell_ref.name}"
     if shell is None:
@@ -140,8 +165,19 @@ def _validate_model(
     bot: Kind,
     bot_label: str,
     execution_user_id: int,
+    context: TeamReadinessContext | None,
 ) -> None:
+    """Resolve model configuration and permissions as the execution user."""
     try:
-        get_model_config_for_bot(db, bot, execution_user_id)
+        get_model_config_for_bot(
+            db,
+            bot,
+            execution_user_id,
+            **(
+                {"lookup": context.capabilities(execution_user_id)}
+                if context is not None
+                else {}
+            ),
+        )
     except ValueError as exc:
         raise ValueError(f"Bot '{bot_label}' model is unavailable: {exc}") from exc

@@ -1441,13 +1441,27 @@ class SqlAlchemyTaskStore:
         user_id: int,
         client_origin: Optional[str] = None,
     ) -> int:
+        """Detach matching tasks without range-locking unrelated task creation."""
         query = db.query(TaskResource).filter(
             TaskResource.project_id == project_id,
             TaskResource.user_id == user_id,
         )
         if client_origin:
             query = query.filter(TaskResource.client_origin == client_origin)
-        return query.update({TaskResource.project_id: 0}, synchronize_session=False)
+        task_ids = [
+            row.id
+            for row in query.with_entities(TaskResource.id)
+            .order_by(TaskResource.id)
+            .all()
+        ]
+        # A bulk UPDATE takes next-key locks on the project index in MySQL.
+        # Read without locks, then update existing primary keys in a stable order.
+        return sum(
+            query.filter(TaskResource.id == task_id).update(
+                {TaskResource.project_id: 0}, synchronize_session=False
+            )
+            for task_id in task_ids
+        )
 
     def restore_stale_project_links_from_label(
         self,

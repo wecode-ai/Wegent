@@ -69,6 +69,7 @@ from app.services.delivery.storage import (
 from app.services.issue_badges import issue_badges
 from app.services.loop_item_executions.service import (
     execution_ai_state,
+    execution_ai_state_from_resources,
     execution_display_state,
     loop_item_execution_service,
 )
@@ -99,6 +100,7 @@ from app.services.loop_items.ordering import (
     position_siblings,
     sibling_items,
 )
+from app.services.loop_items.read_context import LoopItemReadContext
 from app.services.loop_items.task_bindings import active_task_binding_query
 from app.services.project_automation_domain import runnable_wegent_team
 from app.services.project_chat.service import ProjectChatService, bot_config
@@ -194,7 +196,11 @@ class LoopItemService:
         )
         if not has_permission(access.role, required_role):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
-        project = access.project
+        self._require_local_task_provider(access.project)
+        return access
+
+    @staticmethod
+    def _require_local_task_provider(project: CloudProject) -> None:
         if project.task_provider != "local":
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -203,7 +209,6 @@ class LoopItemService:
                     "use the local Issue provider"
                 ),
             )
-        return access
 
     def _item_permissions(
         self,
@@ -226,11 +231,14 @@ class LoopItemService:
         item: LoopItem,
         user_id: int,
         access: CloudProjectAccess | None = None,
+        *,
+        read_context: LoopItemReadContext | None = None,
     ) -> dict[str, object]:
         access = access or require_cloud_project_role(
             db, item.cloud_project_id, user_id, BaseRole.Viewer
         )
-        can_view_detail, can_edit = self._item_permissions(db, access, item, user_id)
+        context = read_context or LoopItemReadContext.load(db, [item], user_id, access)
+        can_view_detail = item.id in context.visible_ids
         permissions = issue_permissions(
             access,
             issue_creator_user_id=item.created_by_user_id,
@@ -241,7 +249,7 @@ class LoopItemService:
             "created_at": database_datetime_as_utc(db, item.created_at),
             "updated_at": database_datetime_as_utc(db, item.updated_at),
             "can_view_detail": can_view_detail,
-            "can_edit": can_edit,
+            "can_edit": permissions.edit_content,
             "security_level": item_security(item, access.project),
             "permissions": {
                 "edit_content": permissions.edit_content,
@@ -251,13 +259,13 @@ class LoopItemService:
             },
         }
         if item.assignee_user_id:
-            assignee = db.get(User, item.assignee_user_id)
+            assignee = context.users.get(item.assignee_user_id)
             values["assignee_name"] = assignee.user_name if assignee else None
         if item.assignee_agent_id:
-            agent = db.get(ProjectChatAgent, item.assignee_agent_id)
+            agent = context.agents.get(item.assignee_agent_id)
             values["assignee_agent_name"] = agent.name if agent else None
         if item.assignee_team_id:
-            team = db.get(Kind, item.assignee_team_id)
+            team = context.teams.get(item.assignee_team_id)
             values["assignee_team_name"] = team.name if team else None
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
         values["badges"] = issue_badges(metadata) if can_view_detail else []
@@ -276,7 +284,9 @@ class LoopItemService:
         automation = metadata.get("automation")
         values["automation"] = automation if isinstance(automation, dict) else None
         ai_state = metadata.get(TASK_AI_STATE_KEY)
-        values["ai_state"] = self._present_cached_ai_state(db, item, ai_state)
+        values["ai_state"] = self._present_cached_ai_state(
+            db, item, ai_state, messages=context.messages
+        )
         assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
         values["assignment_history"] = (
             assignment_history if isinstance(assignment_history, list) else []
@@ -287,7 +297,7 @@ class LoopItemService:
         )
         # Surface the newest run even after it ends, so a terminal failure is
         # visible to the UI instead of silently disappearing from the task.
-        execution = loop_item_execution_service.latest_for_item(db, item_id=item.id)
+        execution = context.executions.get(item.id)
         values["execution_id"] = execution.id if execution else None
         values["execution_state"] = (
             execution_display_state(execution) if execution else None
@@ -309,17 +319,16 @@ class LoopItemService:
             execution.error_message or None if execution else None
         )
         values["can_approve"] = self._can_approve_run(
-            db, item=item, execution=execution, user_id=user_id
+            db, item=item, execution=execution, user_id=user_id, agents=context.agents
         )
         values["approval"] = self._approval_view(execution)
-        from app.services.collaboration_human_assignments import human_task_binding
-
-        values["human_task_binding"] = human_task_binding(db, item, user_id)
+        values["human_task_binding"] = context.human_bindings.get(item.id)
         if execution is not None:
-            values["ai_state"] = execution_ai_state(
-                db,
+            values["ai_state"] = execution_ai_state_from_resources(
                 execution,
                 existing=values["ai_state"],
+                agent=context.agents.get(execution.agent_id),
+                team=context.teams.get(execution.team_id),
             )
         projected_ai_state = values["ai_state"]
         if isinstance(projected_ai_state, dict):
@@ -341,11 +350,27 @@ class LoopItemService:
             values["description"] = ""
         return values
 
+    def response_values_many(
+        self,
+        db: Session,
+        items: list[LoopItem],
+        user_id: int,
+        *,
+        access: CloudProjectAccess,
+    ) -> list[dict[str, object]]:
+        context = LoopItemReadContext.load(db, items, user_id, access)
+        return [
+            self.response_values(db, item, user_id, access, read_context=context)
+            for item in items
+        ]
+
     def _present_cached_ai_state(
         self,
         db: Session,
         item: LoopItem,
         ai_state: object,
+        *,
+        messages: dict[tuple[str, str], ProjectChatMessage] | None = None,
     ) -> dict[str, object] | None:
         """Return a read-only presentation for legacy task AI metadata."""
 
@@ -372,13 +397,17 @@ class LoopItemService:
         message = None
         if isinstance(message_id, str) and message_id:
             message = (
-                db.query(ProjectChatMessage)
-                .filter(
-                    ProjectChatMessage.message_id == message_id,
-                    ProjectChatMessage.task_id == item.id,
-                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+                messages.get((item.id, message_id))
+                if messages is not None
+                else (
+                    db.query(ProjectChatMessage)
+                    .filter(
+                        ProjectChatMessage.message_id == message_id,
+                        ProjectChatMessage.task_id == item.id,
+                        loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+                    )
+                    .first()
                 )
-                .first()
             )
         if message is not None and message.status in {"completed", "failed"}:
             state["status"] = "succeeded" if message.status == "completed" else "failed"
@@ -892,9 +921,29 @@ class LoopItemService:
         assignee_id: str | None = None,
         execution_state: str | None = None,
     ) -> list[LoopItem]:
-        access = self._require_internal_task_project(db, cloud_project_id, user_id)
+        access = require_cloud_project_role(db, cloud_project_id, user_id)
+        return self.list_for_access(
+            db,
+            access,
+            user_id,
+            assignee_type=assignee_type,
+            assignee_id=assignee_id,
+            execution_state=execution_state,
+        )
+
+    def list_for_access(
+        self,
+        db: Session,
+        access: CloudProjectAccess,
+        user_id: int,
+        *,
+        assignee_type: str | None = None,
+        assignee_id: str | None = None,
+        execution_state: str | None = None,
+    ) -> list[LoopItem]:
+        self._require_local_task_provider(access.project)
         query = db.query(LoopItem).filter(
-            LoopItem.cloud_project_id == cloud_project_id,
+            LoopItem.cloud_project_id == access.project.id,
             loop_datetime_is_unset(LoopItem.deleted_at),
         )
         if not has_permission(access.role, BaseRole.Maintainer):
@@ -1959,6 +2008,9 @@ class LoopItemService:
             user_id=user_id,
             activity_sequence=activity_sequence,
         )
+        from app.services.wework_notifications import mark_issue_notifications_read
+
+        mark_issue_notifications_read(db, item_id=item.id, user_id=user_id)
         db.commit()
         db.expire(item)
         db.refresh(item)
@@ -2926,13 +2978,22 @@ class LoopItemService:
         *,
         item_ids: list[str],
     ) -> list[LoopItemTaskBinding]:
-        require_cloud_project_role(db, project_id, user_id)
+        access = require_cloud_project_role(db, project_id, user_id)
+        return self.list_project_task_bindings_for_access(db, access, item_ids=item_ids)
+
+    def list_project_task_bindings_for_access(
+        self,
+        db: Session,
+        access: CloudProjectAccess,
+        *,
+        item_ids: list[str],
+    ) -> list[LoopItemTaskBinding]:
         if not item_ids:
             return []
         return (
             db.query(LoopItemTaskBinding)
             .filter(
-                LoopItemTaskBinding.cloud_project_id == project_id,
+                LoopItemTaskBinding.cloud_project_id == access.project.id,
                 LoopItemTaskBinding.loop_item_id.in_(item_ids),
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
                 loop_datetime_is_unset(LoopItemTaskBinding.deleted_at),
@@ -3168,7 +3229,12 @@ class LoopItemService:
 
     @staticmethod
     def _can_approve_run(
-        db: Session, *, item: LoopItem, execution: Any, user_id: int
+        db: Session,
+        *,
+        item: LoopItem,
+        execution: Any,
+        user_id: int,
+        agents: dict[str, ProjectChatAgent] | None = None,
     ) -> bool:
         """Whether the current user is the assigned robot's creator and this
         run is waiting for their manual approval."""
@@ -3180,7 +3246,11 @@ class LoopItemService:
             return False
         if not item.assignee_agent_id:
             return False
-        agent = db.get(ProjectChatAgent, item.assignee_agent_id)
+        agent = (
+            agents.get(item.assignee_agent_id)
+            if agents is not None
+            else db.get(ProjectChatAgent, item.assignee_agent_id)
+        )
         return agent is not None and agent.created_by_user_id == user_id
 
     def _require_bot_creator_scope(
@@ -3353,6 +3423,7 @@ class LoopItemService:
         *,
         item: LoopItem,
         user_id: int,
+        commit: bool = True,
     ) -> LoopItem:
         if not item.assignee_agent_id:
             return item
@@ -3386,7 +3457,10 @@ class LoopItemService:
                 runtime_subject_user_id=int(agent.created_by_user_id or user_id),
             ),
         )
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(item)
         return item
 
