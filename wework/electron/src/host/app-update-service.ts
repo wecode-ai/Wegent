@@ -184,6 +184,9 @@ export class AppUpdateService {
     this.progress = { downloadedBytes: 0, totalBytes: pending.bytes, phase: 'host' }
     const store = this.options.store
     await this.registerInstalledRelease()
+    // Download preparation owns cleanup. Startup cleanup could race creation
+    // of the next slot when automatic downloads start immediately after readiness.
+    await store.prune()
     await this.preserveInstalledHost()
     const id = `${pending.version}-${randomUUID()}`
     const slot = store.slot(id)
@@ -456,6 +459,13 @@ export class AppUpdateService {
         )
           throw new Error('Plugins changed while preparing rollback; prepare again')
         const activation = await store.requestRollback()
+        if (
+          process.env.WEWORK_E2E_CONTROL_URL &&
+          process.env.WEWORK_E2E_ROLLBACK_FAILURE === 'after-journal'
+        ) {
+          await atomicReleaseWrite(join(store.root, 'rollback-interrupted'), activation.token)
+          process.exit(3)
+        }
         if (activation.restoreRequired)
           await restoreReleaseData(
             this.options.dataDirectory,
@@ -464,7 +474,6 @@ export class AppUpdateService {
             process.env.WEGENT_EXECUTOR_HOME?.trim() || this.options.dataDirectory
           )
         await store.rollback()
-        await rm(join(store.root, 'previousHealthy'), { force: true })
         this.options.restart()
       })()
         .catch(error => {

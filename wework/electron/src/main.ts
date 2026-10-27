@@ -360,7 +360,6 @@ const startupTelemetry = new StartupTelemetryLifecycle({
       const releases = new ReleaseStore(join(app.getPath('userData'), 'releases'))
       void releases
         .confirm(process.env.WEWORK_ACTIVE_RELEASE_ID)
-        .then(() => releases.prune())
         .catch(error => console.error('[release] failed to confirm startup', error))
     }
   },

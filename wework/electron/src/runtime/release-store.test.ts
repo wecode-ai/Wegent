@@ -58,6 +58,16 @@ test('concurrent activation cannot overwrite the recovery journal', async () => 
   await expect(store.activate(after, 'other')).rejects.toThrow('already in progress')
   expect((await store.activation())?.snapshot).toBe('snapshot')
 })
+test('separate controllers cannot concurrently replace the same activation journal', async () => {
+  const { store, after, root } = await fixture()
+  const other = new ReleaseStore(root)
+  const results = await Promise.allSettled([
+    store.activate(after, 'first'),
+    other.activate(after, 'second'),
+  ])
+  expect(results.map(result => result.status)).toEqual(['fulfilled', 'rejected'])
+  expect((await store.activation())?.snapshot).toBe('first')
+})
 test('an interrupted manual rollback retains its intent despite an earlier healthy marker', async () => {
   const { store, after, root } = await fixture()
   await store.activate(after, 'snapshot')
@@ -74,6 +84,7 @@ test('an interrupted manual rollback retains its intent despite an earlier healt
     to: 'after',
   })
   expect((await reopened.rollback()).id).toBe('before')
+  await expect(readFile(join(root, 'previousHealthy'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
 test('an interrupted pointer switch still has a usable source descriptor', async () => {
   const { store, after, root } = await fixture()
@@ -87,4 +98,17 @@ test('rejects path traversal and corrupt release metadata', async () => {
   expect(() => store.slot('../outside')).toThrow('identifier')
   await writeFile(join(root, 'slots/before/release.json'), '{}')
   await expect(store.read('before')).rejects.toThrow('descriptor')
+})
+test('cleanup retains the active and previous healthy release', async () => {
+  const { store, before, after, root } = await fixture()
+  const unused = { ...before, id: 'abandoned' }
+  await store.save(unused)
+  await store.activate(after, 'snapshot')
+  await store.confirm(after.id)
+  await store.prune()
+  expect((await store.read(before.id)).id).toBe(before.id)
+  expect((await store.read(after.id)).id).toBe(after.id)
+  await expect(readFile(join(root, 'slots/abandoned/release.json'))).rejects.toMatchObject({
+    code: 'ENOENT',
+  })
 })

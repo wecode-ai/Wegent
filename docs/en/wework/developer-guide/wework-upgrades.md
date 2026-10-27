@@ -34,9 +34,11 @@ Confirmed manual rollback records its transaction direction independently. After
 | Mechanism E2E | Independently built and signed A/B regression packages | Real transport, extraction, Electron/Executor, switching, restoration, task continuation | No |
 | Release-pair E2E | Immutable delivered source and target archives | A specific real upgrade and rollback | Only for the tested platform, architecture, and hashes |
 
-Maintain shared behavior in `app-upgrade.scenario.mjs` and the acceptance version/checkpoint list in `upgrade-suite.mjs`. Normal upgrade, manual rollback, and failed-activation recovery each establish their own fixtures. The shared runner prepares packages once. Versions are test data, not branches selecting assertions.
+Maintain shared behavior in `app-upgrade.scenario.mjs` and the acceptance version/checkpoint list in `upgrade-suite.mjs`. Normal upgrade, manual rollback, interrupted-rollback recovery, and failed-activation recovery each establish their own fixtures. The shared runner prepares packages once. Versions are test data, not branches selecting assertions.
 
 Only model services may be replaced. Serve actual package files over real HTTP; use real signature checks, storage, native launcher, and Executor. Fault injection terminates the actual target process. Regression fixtures deliberately exercise incompatible data declarations and snapshot restoration. Build them from source; never rename an archive or rewrite a signed package. Mark results as `regression`; promotion rejects them as release proof.
+
+Each checkpoint first invokes the source package's preparation entry to establish an installed client's runtime before UI actions. The target must still extract and prepare its independent slot. Fixture output is separate from formal packages and other checkpoints' applications.
 
 ```bash
 node --test wework/scripts/upgrade-policy.test.mjs wework/scripts/upgrade-evidence.test.mjs
@@ -46,7 +48,7 @@ pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback
 
 For existing pairs, provide `WEWORK_E2E_UPGRADE_PAIR`, `WEWORK_E2E_APP_BIN`, and `WEWORK_E2E_EXECUTOR_BIN`. Set `WEWORK_E2E_REQUIRE_RELEASE_PACKAGE=1` to preserve original identity/signatures. Change the shared scenario for behavior changes; change pair data for releases. Increment the suite version when acceptance changes materially. Preserve failure logs and fix causes before rerunning. Do not retry, skip, or weaken assertions. Run macOS arm64, macOS x64, and Windows x64 independently. Never commit screenshots, packages, snapshots, sessions, or temporary recovery files.
 
-The existing `app-update-full` checkpoint shares the real-package scenario and retains delayed full-transfer, nonblocking acceptance, no Range/blockmap, and repeated-preparation reuse assertions. CI runs it alongside the three upgrade/rollback checkpoints on each platform. It no longer copies and renames a ZIP or appends bytes to impersonate a new version.
+The existing `app-update-full` checkpoint shares the real-package scenario and retains delayed full-transfer, nonblocking acceptance, no Range/blockmap, and repeated-preparation reuse assertions. CI runs it alongside the four upgrade/rollback checkpoints on each platform. It no longer copies and renames a ZIP or appends bytes to impersonate a new version.
 
 ## Release promotion
 
@@ -55,3 +57,5 @@ The existing `app-update-full` checkpoint shares the real-package scenario and r
 Release jobs create complete portable packages, download declared immutable sources, and invoke the shared checkpoint runner for upgrade and rollback. Evidence binds both versions and package hashes, platform, architecture, suite version, and CI run. Merge only successful edges into the component manifest. Preserve historical edges and their intermediate artifacts. Changed artifacts require a new version and new verification.
 
 Upload immutable target assets and evidence before promoting rolling manifests. Any required pair failure blocks promotion. Compatibility declarations, minimum versions, and unit tests cannot replace real release-pair evidence.
+
+A source may come from another channel, such as Beta to Stable. Verify a new edge under the target channel; import the source node without copying the other channel's edges. Bind evidence to the channel and require an immutable package hash across channels.

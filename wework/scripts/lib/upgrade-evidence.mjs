@@ -14,6 +14,7 @@ export function verifiedUpgradeEdge({
   suiteVersion,
   platform,
   arch,
+  channel,
 }) {
   if (
     from.fixture ||
@@ -29,6 +30,7 @@ export function verifiedUpgradeEdge({
     evidence.toVersion !== to.version ||
     evidence.platform !== platform ||
     evidence.arch !== arch ||
+    evidence.channel !== channel ||
     evidence.upgrade !== 'passed' ||
     evidence.rollback !== 'passed' ||
     compareVersions(from.version, to.version) >= 0 ||
@@ -49,7 +51,19 @@ export function verifiedUpgradeEdge({
   }
 }
 
-export function mergeUpgradePolicy(base, release, edges, target) {
+export function upgradeSource(catalogs, version) {
+  const candidates = catalogs
+    .filter(Boolean)
+    .map(validateUpgradeCatalog)
+    .flatMap(catalog => catalog.releases.filter(release => release.version === version))
+  if (!candidates.length)
+    throw new Error(`The authored source ${version} is not in the verified release policy`)
+  if (candidates.some(release => release.sha256 !== candidates[0].sha256))
+    throw new Error('A published release package is immutable across channels')
+  return candidates[0]
+}
+
+export function mergeUpgradePolicy(base, release, edges, target, sources = []) {
   const previous = base ? validateUpgradeCatalog(base) : { releases: [], edges: [] }
   if (
     base &&
@@ -58,15 +72,23 @@ export function mergeUpgradePolicy(base, release, edges, target) {
       base.arch !== target.arch)
   )
     throw new Error('Upgrade policy target mismatch')
-  const existing = previous.releases.find(item => item.version === release.version)
+  const nodes = new Map(previous.releases.map(item => [item.version, item]))
+  for (const source of sources) {
+    const existingSource = nodes.get(source.version)
+    if (existingSource && existingSource.sha256 !== source.sha256)
+      throw new Error('A published release package is immutable across channels')
+    if (!existingSource) nodes.set(source.version, source)
+  }
+  const existing = nodes.get(release.version)
   if (existing && existing.sha256 !== release.sha256)
     throw new Error('A published release package is immutable')
   const edgeMap = new Map(previous.edges.map(edge => [`${edge.from}:${edge.to}`, edge]))
   for (const edge of edges) edgeMap.set(`${edge.from}:${edge.to}`, edge)
+  nodes.set(release.version, release)
   return validateUpgradeCatalog({
     schemaVersion: 1,
     ...target,
-    releases: [...previous.releases.filter(r => r.version !== release.version), release],
+    releases: [...nodes.values()],
     edges: [...edgeMap.values()],
   })
 }

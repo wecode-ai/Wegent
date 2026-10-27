@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
-import { isAbsolute, join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { removePhysicalRelease } from './physical-release-files.js'
+
+const releaseOperations = new Map<string, Promise<void>>()
 
 export interface DesktopRelease {
   schemaVersion: 1
@@ -104,6 +106,10 @@ export class ReleaseStore {
   }
 
   async activate(next: DesktopRelease, snapshot: string): Promise<void> {
+    return this.serial(() => this.activateRelease(next, snapshot))
+  }
+
+  private async activateRelease(next: DesktopRelease, snapshot: string): Promise<void> {
     const previous = await this.active()
     if (!previous) throw new Error('No healthy desktop release is registered')
     if (await this.activation()) throw new Error('A release activation is already in progress')
@@ -121,6 +127,10 @@ export class ReleaseStore {
   }
 
   async confirm(id: string): Promise<void> {
+    return this.serial(() => this.confirmRelease(id))
+  }
+
+  private async confirmRelease(id: string): Promise<void> {
     const activation = await this.activation()
     if (!activation || activation.to !== id) return
     if ((await this.active())?.id !== id)
@@ -132,6 +142,10 @@ export class ReleaseStore {
   }
 
   async rollback(): Promise<DesktopRelease> {
+    return this.serial(() => this.rollbackRelease())
+  }
+
+  private async rollbackRelease(): Promise<DesktopRelease> {
     const activation = await this.activation()
     if (!activation) throw new Error('No release activation to roll back')
     const previous = await this.read(activation.from)
@@ -145,11 +159,16 @@ export class ReleaseStore {
       JSON.stringify([...new Set([...versions, rejected.version])])
     )
     await atomicReleaseWrite(join(this.root, 'active'), previous.id)
+    if (activation.rollbackRequested) await rm(join(this.root, 'previousHealthy'), { force: true })
     await this.finishActivation()
     return previous
   }
 
   async requestRollback(): Promise<ReleaseActivation> {
+    return this.serial(() => this.beginRollback())
+  }
+
+  private async beginRollback(): Promise<ReleaseActivation> {
     if (await this.activation()) throw new Error('A release activation is already in progress')
     const last = await optionalText(join(this.root, 'last-activation.json'))
     if (!last) throw new Error('No previous healthy release is available')
@@ -166,6 +185,10 @@ export class ReleaseStore {
   }
 
   async prune(): Promise<void> {
+    return this.serial(() => this.pruneReleases())
+  }
+
+  private async pruneReleases(): Promise<void> {
     const active = await this.active()
     if (!active) return
     const previous = await optionalText(join(this.root, 'previousHealthy'))
@@ -189,6 +212,20 @@ export class ReleaseStore {
       if (entry.isDirectory() && entry.name !== lastSnapshot && entry.name !== activation?.snapshot)
         await rm(join(snapshotRoot, entry.name), { recursive: true, force: true })
     }
+  }
+
+  private serial<Result>(operation: () => Promise<Result>): Promise<Result> {
+    const key = resolve(this.root)
+    const result = (releaseOperations.get(key) ?? Promise.resolve()).then(operation)
+    const drained = result.then(
+      () => undefined,
+      () => undefined
+    )
+    releaseOperations.set(key, drained)
+    void drained.then(() => {
+      if (releaseOperations.get(key) === drained) releaseOperations.delete(key)
+    })
+    return result
   }
 
   private async finishActivation(): Promise<void> {

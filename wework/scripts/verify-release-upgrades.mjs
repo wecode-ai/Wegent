@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { extract } from 'tar'
 import { hashReleaseAsset } from './lib/portable-desktop-release.mjs'
-import { mergeUpgradePolicy, verifiedUpgradeEdge } from './lib/upgrade-evidence.mjs'
+import { mergeUpgradePolicy, upgradeSource, verifiedUpgradeEdge } from './lib/upgrade-evidence.mjs'
+import { validateUpgradeCatalog } from '../electron/src/runtime/upgrade-policy.mjs'
 import { UPGRADE_SUITE_VERSION } from '../e2e/desktop/upgrade-suite.mjs'
 
 const execute = promisify(execFile)
@@ -33,25 +34,25 @@ const node = {
 const temporary = await mkdtemp(join(tmpdir(), 'wework-release-upgrades-'))
 try {
   const channels = channel === 'stable' ? ['stable', 'beta'] : ['beta']
-  for (const targetChannel of channels) {
-    const previousFile = join(temporary, `components-${targetChannel}.json`)
+  const catalogs = {}
+  const shared = JSON.parse(
+    (
+      await execute('gh', [
+        'release',
+        'view',
+        'wework-updater',
+        '--repo',
+        repository,
+        '--json',
+        'assets',
+      ])
+    ).stdout
+  )
+  for (const existingChannel of ['stable', 'beta']) {
+    const previousFile = join(temporary, `components-${existingChannel}.json`)
     // A missing initial channel is allowed only for a baseline with no incoming edges.
     // Network, permission and malformed-manifest errors remain release failures.
-    const shared = JSON.parse(
-      (
-        await execute('gh', [
-          'release',
-          'view',
-          'wework-updater',
-          '--repo',
-          repository,
-          '--json',
-          'assets',
-        ])
-      ).stdout
-    )
-    const assetName = `components-${targetChannel}-${platform}-${arch}.json`
-    let base = null
+    const assetName = `components-${existingChannel}-${platform}-${arch}.json`
     if (shared.assets.some(asset => asset.name === assetName)) {
       await execute('gh', [
         'release',
@@ -64,22 +65,39 @@ try {
         '--output',
         previousFile,
       ])
-      base = JSON.parse(await readFile(previousFile, 'utf8')).upgradePolicy ?? null
+      const existing = JSON.parse(await readFile(previousFile, 'utf8')).upgradePolicy
+      if (existing) {
+        const catalog = validateUpgradeCatalog(existing)
+        if (
+          catalog.channel !== existingChannel ||
+          catalog.platform !== platform ||
+          catalog.arch !== arch
+        )
+          throw new Error('Published upgrade policy target mismatch')
+        catalogs[existingChannel] = catalog
+      }
     }
+  }
+  const published = Object.values(catalogs)
+  if (
+    published.some(catalog => catalog.releases.some(item => item.version === release.version)) &&
+    upgradeSource(published, release.version).sha256 !== release.sha256
+  )
+    throw new Error('A published release package is immutable across channels')
+  for (const targetChannel of channels) {
+    const base = catalogs[targetChannel] ?? null
     const edges = []
+    const sources = []
     if (
-      base?.releases.some(item => item.version !== release.version) &&
+      published.some(catalog => catalog.releases.some(item => item.version !== release.version)) &&
       policy.sourceVersions.length === 0
     )
       throw new Error(
         'A subsequent release must declare and verify at least one incoming upgrade edge'
       )
     for (const sourceVersion of policy.sourceVersions) {
-      const source = base?.releases.find(item => item.version === sourceVersion && !item.revoked)
-      if (!source)
-        throw new Error(
-          `The authored source ${sourceVersion} is not in the verified release policy`
-        )
+      const source = upgradeSource([base, ...published], sourceVersion)
+      sources.push(source)
       const directory = join(temporary, `${targetChannel}-${sourceVersion}`)
       await mkdir(directory, { recursive: true })
       const name = `WeWorkRelease_${sourceVersion}_${platform}_${arch}.tar.gz`
@@ -146,6 +164,7 @@ try {
           suiteVersion: UPGRADE_SUITE_VERSION,
           platform,
           arch,
+          channel: targetChannel,
         })
       )
       await writeFile(
@@ -156,11 +175,17 @@ try {
         evidenceBytes
       )
     }
-    const verified = mergeUpgradePolicy(base, node, edges, {
-      channel: targetChannel,
-      platform,
-      arch,
-    })
+    const verified = mergeUpgradePolicy(
+      base,
+      node,
+      edges,
+      {
+        channel: targetChannel,
+        platform,
+        arch,
+      },
+      sources
+    )
     await writeFile(
       join(assets, `upgrade-policy-${targetChannel}-${platform}-${arch}.json`),
       JSON.stringify(verified, null, 2) + '\n'

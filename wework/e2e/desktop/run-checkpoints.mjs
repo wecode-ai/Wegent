@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { extract } from 'tar'
 
 import {
   DESKTOP_CHECKPOINTS,
@@ -444,6 +445,12 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
+  if (UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint)) {
+    nextEnv.WEWORK_E2E_APP_BIN = env.WEWORK_E2E_UPGRADE_SOURCE_APP_BIN || env.WEWORK_E2E_APP_BIN
+    nextEnv.WEWORK_E2E_EXECUTOR_BIN =
+      env.WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN || env.WEWORK_E2E_EXECUTOR_BIN
+    nextEnv.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE = '1'
+  }
   if (checkpoint === 'collaboration-shared-core') {
     // Exercise timezone-less UTC API timestamps outside the UTC timezone.
     nextEnv.TZ = 'Asia/Shanghai'
@@ -513,7 +520,7 @@ async function runDesktopBuild() {
   )
 }
 
-async function sharedBuildEnvironment(environment = process.env) {
+async function sharedBuildEnvironment(environment = process.env, selectedCheckpoints) {
   const [build, codexBinary] = await Promise.all([
     prepareDesktopE2EBuild({
       environment,
@@ -526,7 +533,10 @@ async function sharedBuildEnvironment(environment = process.env) {
     `[desktop-e2e] shared build ready: app=${build.appBinary}, executor=${build.executorBinary}, codex=${codexBinary}`
   )
   const selected =
-    requestedParallelCheckpoints(requestedArgs) ?? requestedCheckpointRange(requestedArgs) ?? []
+    selectedCheckpoints ??
+    requestedParallelCheckpoints(requestedArgs) ??
+    requestedCheckpointRange(requestedArgs) ??
+    []
   const upgradeRequested = selected.some(value => UPGRADE_PACKAGE_CHECKPOINTS.includes(value))
   if (upgradeRequested && !environment.WEWORK_E2E_UPGRADE_PAIR) {
     const result = await runCommandToLog({
@@ -546,15 +556,15 @@ async function sharedBuildEnvironment(environment = process.env) {
     return {
       ...environment,
       WEWORK_E2E_CODEX_BIN: codexBinary,
-      WEWORK_E2E_APP_BIN: pair.from.executable,
-      WEWORK_E2E_EXECUTOR_BIN: pair.from.executor,
+      WEWORK_E2E_APP_BIN: build.appBinary,
+      WEWORK_E2E_EXECUTOR_BIN: build.executorBinary,
+      WEWORK_E2E_UPGRADE_SOURCE_APP_BIN: pair.from.executable,
+      WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN: pair.from.executor,
       WEWORK_E2E_UPGRADE_PAIR: pairPath,
-      WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: '1',
     }
   }
   return {
     ...environment,
-    ...(upgradeRequested ? { WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: '1' } : {}),
     WEWORK_E2E_APP_BIN: build.appBinary,
     WEWORK_E2E_CODEX_BIN: codexBinary,
     WEWORK_E2E_EXECUTOR_BIN: build.executorBinary,
@@ -573,23 +583,9 @@ async function fileSha256(path) {
 }
 
 async function extractArchive(archivePath, destination) {
-  await new Promise((resolvePromise, reject) => {
-    const child = spawn('tar', ['-xzf', archivePath, '-C', destination], {
-      stdio: ['ignore', 'inherit', 'inherit'],
-    })
-    child.once('error', reject)
-    child.once('exit', (code, signal) => {
-      if (code === 0) {
-        resolvePromise()
-        return
-      }
-      reject(
-        new Error(
-          `Core DSH runtime extraction failed: ${signal ? `signal=${signal}` : `exit=${code}`}`
-        )
-      )
-    })
-  })
+  // Use the production archive library: Git Bash tar interprets Windows drive
+  // letters in absolute archive paths as remote hosts.
+  await extract({ file: archivePath, cwd: destination, strict: true })
 }
 
 async function prepareSharedHarnessRuntime(appBinary, parentDirectory) {
@@ -734,16 +730,19 @@ async function runRequestedArgs() {
 async function runParallelCheckpoints(checkpoints) {
   const sharedRuntimeDirectory = await mkdtemp(join(tmpdir(), 'wework-e2e-shared-'))
   try {
-    const baseEnvironment = await sharedBuildEnvironment()
-    const sharedHarnessRuntime =
-      baseEnvironment.WEWORK_E2E_HARNESS_RUNTIME_ROOT?.trim() ||
-      (await prepareSharedHarnessRuntime(
-        baseEnvironment.WEWORK_E2E_APP_BIN,
-        sharedRuntimeDirectory
-      ))
+    const baseEnvironment = await sharedBuildEnvironment(process.env, checkpoints)
+    const sharedHarnessRuntime = checkpoints.every(checkpoint =>
+      UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint)
+    )
+      ? null
+      : baseEnvironment.WEWORK_E2E_HARNESS_RUNTIME_ROOT?.trim() ||
+        (await prepareSharedHarnessRuntime(
+          baseEnvironment.WEWORK_E2E_APP_BIN,
+          sharedRuntimeDirectory
+        ))
     const sharedEnv = {
       ...baseEnvironment,
-      WEWORK_E2E_HARNESS_RUNTIME_ROOT: sharedHarnessRuntime,
+      ...(sharedHarnessRuntime ? { WEWORK_E2E_HARNESS_RUNTIME_ROOT: sharedHarnessRuntime } : {}),
       WEWORK_E2E_PORT_REGISTRY_DIR: sharedRuntimeDirectory,
     }
     const failures = []
@@ -816,7 +815,7 @@ async function runParallelCheckpoints(checkpoints) {
 }
 
 async function runCheckpoints(checkpoints) {
-  const sharedEnv = await sharedBuildEnvironment()
+  const sharedEnv = await sharedBuildEnvironment(process.env, checkpoints)
   const failures = []
 
   for (const checkpoint of checkpoints) {

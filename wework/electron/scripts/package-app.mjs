@@ -18,13 +18,21 @@ process.noAsar = true
 
 const { resolveBuildIdentity } = identityModule
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const output = join(electronRoot, 'release')
 const staging = join(electronRoot, '.package-staging')
 const sharedResourcesRoot = join(electronRoot, '..', 'resources')
 const repositoryRoot = resolve(electronRoot, '..', '..')
 const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
 // Regression fixtures are independently packaged and signed. Never rewrite a built archive.
 const fixtureVersion = process.env.WEWORK_UPGRADE_FIXTURE_VERSION?.trim()
+const output = fixtureVersion
+  ? join(
+      resolve(
+        process.env.WEWORK_UPGRADE_FIXTURE_OUTPUT ||
+          join(electronRoot, '..', 'test-results', 'upgrade-fixtures')
+      ),
+      'packaged'
+    )
+  : join(electronRoot, 'release')
 const fixtureDataSchema = Number(process.env.WEWORK_UPGRADE_FIXTURE_DATA_SCHEMA || 1)
 if (fixtureVersion && !/^\d+\.\d+\.\d+(?:-beta\.[1-9]\d*)?$/.test(fixtureVersion))
   throw new Error('Invalid upgrade fixture version')

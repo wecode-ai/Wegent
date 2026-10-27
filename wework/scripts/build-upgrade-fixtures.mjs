@@ -17,12 +17,7 @@ const targetVersion = sourceVersion.includes('-beta.')
   : sourceVersion.replace(/\.(\d+)$/, (_, n) => `.${Number(n) + 1}`)
 const platform =
   process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux'
-const packageDirectory = join(
-  root,
-  'electron',
-  'release',
-  `WeWork-${process.platform}-${process.arch}`
-)
+const packageDirectory = join(output, 'packaged', `WeWork-${process.platform}-${process.arch}`)
 const buildApplication =
   platform === 'macos' ? join(packageDirectory, 'WeWork.app') : packageDirectory
 await mkdir(output, { recursive: true })
@@ -38,6 +33,7 @@ for (const [version, dataSchema] of [
   await run(process.execPath, ['scripts/package-app.mjs'], join(root, 'electron'), {
     WEWORK_UPGRADE_FIXTURE_VERSION: version,
     WEWORK_UPGRADE_FIXTURE_DATA_SCHEMA: String(dataSchema),
+    WEWORK_UPGRADE_FIXTURE_OUTPUT: output,
   })
   const destination = join(output, version, platform === 'macos' ? 'WeWork.app' : 'application')
   await rm(destination, { recursive: true, force: true })
