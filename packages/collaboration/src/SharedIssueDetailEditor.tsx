@@ -2106,7 +2106,9 @@ export function TodoEditor(props: TodoEditorProps) {
           ) : (
             <CircleUserRound aria-hidden="true" size={15} />
           )}
-          <span>{assigneeName ?? t("todo.unassigned", "未指派")}</span>
+          <strong className={workspacePanel ? undefined : "font-normal"}>
+            {assigneeName ?? t("todo.unassigned", "未指派")}
+          </strong>
           {item && !assigneeChanged
             ? extensions?.renderAssignmentReceipts?.(item)
             : null}
