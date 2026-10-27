@@ -190,6 +190,7 @@ cloud_segments=(
   plugin-registration-coordination
   plugin-account-auth-coordination
   plugin-composer-long-list
+  plugin-collaboration-composer-isolation
   plugin-runtime-path-recovery
   plugin-workspace-publication
   plugin-toggle-persistence
@@ -205,7 +206,7 @@ cloud_shards=(
   model-routing,conversation-state,plugin-uninstall-unknown-result,cloud-model-recovery,rendering-extensions,telemetry-consent,plugin-registration-coordination
   window-lifecycle,plugin-uninstall-reinstall-race,project-automation,cloud-worktree-archive-restore,cloud-worktree-capability,cloud-worktree-queued-cancel,task-model-deletion
   plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth
-  plugin-composer-long-list
+  plugin-composer-long-list,plugin-collaboration-composer-isolation
   plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github
 )
 # Run 39930854745: eight ordinary Core shards predict 323-332 seconds.
@@ -1488,6 +1489,13 @@ classify_path() {
       select_target "cloud:plugin-composer-long-list"
       return
       ;;
+    wework/e2e/desktop/scenarios/plugin-collaboration-composer-isolation.scenario.mjs | \
+      packages/chat-core/src/runtime-composer-api* | \
+      packages/chat-core/src/runtime-composer-snapshot* | \
+      executor/src/runtime_work/handler/composer_catalog*)
+      select_target "cloud:plugin-collaboration-composer-isolation"
+      return
+      ;;
     wework/e2e/desktop/scenarios/plugin-toggle-persistence.scenario.mjs)
       select_target "cloud:plugin-toggle-persistence"
       return
@@ -1502,6 +1510,7 @@ classify_path() {
       select_target "cloud:plugin-toggle-persistence"
       select_uninstall_checkpoints
       select_target "cloud:plugin-composer-long-list"
+      select_target "cloud:plugin-collaboration-composer-isolation"
       return
       ;;
   esac

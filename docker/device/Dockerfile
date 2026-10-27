@@ -56,6 +56,7 @@ ENV PATH=/root/.cargo/bin:${PATH}
 
 WORKDIR /build/executor
 COPY executor/Cargo.toml executor/Cargo.lock ./
+COPY executor/vendor ./vendor
 COPY executor/src ./src
 COPY sdk/plugin-auth /build/sdk/plugin-auth
 COPY sdk/plugin-creator /build/sdk/plugin-creator
