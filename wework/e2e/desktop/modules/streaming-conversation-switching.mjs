@@ -21,6 +21,58 @@ const OTHER = 'WEWORK_NATIVE_ORDER_OTHER_TASK'
 const PREFIX = 'TASK_SWITCH_RUNNING'
 const SUFFIX = '\n\nTASK_SWITCH_BACKGROUND_UPDATE'
 
+export function summarizeSwitchingTranscript(transcript) {
+  const turns = transcript.turns ?? []
+  const items = turns.flatMap(turn => turn.items)
+  const text = items
+    .map(item => item.content ?? item.block?.content ?? item.message?.content ?? '')
+    .filter(value => typeof value === 'string')
+    .join('\n')
+  const progress = [...text.matchAll(/TASK_SWITCH_PROGRESS_(\d{3})/g)].map(match =>
+    Number(match[1])
+  )
+  return {
+    running: transcript.running,
+    turnCount: turns.length,
+    turnStatuses: turns.map(turn => turn.status),
+    itemCount: items.length,
+    positionedItemCount: items.filter(item => Number.isSafeInteger(item.position)).length,
+    hasMoreBefore: transcript.hasMoreBefore,
+    hasBeforeCursor: Boolean(transcript.beforeCursor),
+    progressCount: progress.length,
+    firstProgress: progress.length ? Math.min(...progress) : null,
+    lastProgress: progress.length ? Math.max(...progress) : null,
+    hasPrefix: text.includes(PREFIX),
+    hasSuffix: text.includes(SUFFIX.trim()),
+  }
+}
+
+async function diagnoseSwitchingFailure(control, timeoutMs, stage) {
+  console.info('[conversation-switching] verification failed', { stage })
+  try {
+    const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const address = debug.workbench?.currentRuntimeTask
+    if (!address?.taskId) {
+      console.info('[conversation-switching] owner snapshot unavailable', { reason: 'no-task' })
+      return
+    }
+    const startedAt = Date.now()
+    const native = await requestExecutor(
+      control,
+      'runtime.tasks.transcript',
+      { address, limit: 5, refresh: true },
+      timeoutMs
+    )
+    console.info('[conversation-switching] owner snapshot after failure', {
+      elapsedMs: Date.now() - startedAt,
+      ...summarizeSwitchingTranscript(native),
+    })
+  } catch {
+    // Diagnostics must retain the original assertion and never print RPC payloads.
+    console.info('[conversation-switching] owner snapshot unavailable', { reason: 'read-failed' })
+  }
+}
+
 export function createConversationSwitchingChecks({ uiTimeoutMs }) {
   let releaseTail
   let releaseDone
@@ -60,8 +112,20 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
       )
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.flushHeaders()
-      response.write(sse(events))
+      const startedAt = Date.now()
+      const initialEvents = sse(events)
+      const writable = response.write(initialEvents)
+      console.info('[conversation-switching] initial model events written', {
+        progressItems: 520,
+        eventCount: events.length,
+        bytes: Buffer.byteLength(initialEvents),
+        writeElapsedMs: Date.now() - startedAt,
+        backpressured: !writable,
+      })
       await tail
+      console.info('[conversation-switching] background tail released', {
+        elapsedMs: Date.now() - startedAt,
+      })
       response.write(sse(textDeltaEvents(final.itemId, SUFFIX, PREFIX.length, 520)))
       await done
       output.push(final.finish.find(event => event.type === 'response.output_item.done').item)
@@ -75,11 +139,13 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
     },
 
     async verify(control) {
+      let stage = 'initial-prefix'
       try {
         await openNewChatWithE2EModel(control, uiTimeoutMs)
         await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: PREFIX })
+        stage = 'native-history'
         const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         const address = debug.workbench?.currentRuntimeTask
         assert.ok(address?.taskId, 'The long running task has no address')
@@ -109,12 +175,14 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
           'Native history repeated an identity'
         )
 
+        stage = 'other-task'
         await openNewChatWithE2EModel(control, uiTimeoutMs)
         await control.command('fill', COMPOSER_SELECTOR, { value: OTHER })
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
         await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: 'OTHER_TASK_READY' })
         await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
         releaseTail()
+        stage = 'restore-task'
         await control.command(
           'clickWhenEnabled',
           `[data-testid="runtime-local-task-row-${address.taskId}"]`
@@ -154,6 +222,9 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
           1,
           'Restoration duplicated a background update'
         )
+      } catch (error) {
+        await diagnoseSwitchingFailure(control, uiTimeoutMs, stage)
+        throw error
       } finally {
         releaseTail?.()
         releaseDone?.()
