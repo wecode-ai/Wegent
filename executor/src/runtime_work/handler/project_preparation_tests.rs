@@ -192,7 +192,10 @@ fn deferred_worktree_rebases_project_roots_using_path_identity() {
         handler.prepare_deferred_worktree(&mut turn).await.unwrap();
         assert_eq!(
             turn.request.runtime_workspace_roots,
-            vec![turn.request.cwd().unwrap().to_owned(), dependency.display().to_string()]
+            vec![
+                turn.request.cwd().unwrap().to_owned(),
+                dependency.display().to_string()
+            ]
         );
         fs::remove_dir_all(root).unwrap();
     });
