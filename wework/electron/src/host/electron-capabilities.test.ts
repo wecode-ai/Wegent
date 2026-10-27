@@ -53,6 +53,7 @@ const electronMocks = vi.hoisted(() => ({
 
 vi.mock('electron', () => ({
   app: {
+    once: vi.fn(),
     getPath: electronMocks.appGetPath,
     getVersion: electronMocks.appGetVersion,
   },
