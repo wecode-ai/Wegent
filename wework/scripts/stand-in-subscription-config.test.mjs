@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { PassThrough } from 'node:stream'
-import test from 'node:test'
+import { test } from 'vitest'
 import { createSubscriptionConfigRegression } from '../e2e/desktop/modules/stand-in-subscription-config.mjs'
 
 function refusedUpgrade() {
