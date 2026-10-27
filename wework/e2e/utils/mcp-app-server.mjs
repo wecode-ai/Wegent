@@ -52,7 +52,7 @@ document.querySelector('#refresh').onclick=async()=>{ const result=await window.
 </script></body></html>`
 
 const html = `<!doctype html><html><head><meta charset="utf-8"><title>Counter App</title></head>
-<body><h1>Counter App</h1><output id="status">Loading</output><input id="draft" aria-label="App draft"><button id="refresh">Read counter</button><button id="expand">Expand</button><button id="context">Update context</button>
+<body><h1>Counter App</h1><output id="status">Loading</output><input id="draft" aria-label="App draft"><button id="refresh">Read counter</button><button id="expand">Expand</button><button id="pip">Picture in picture</button><button id="context">Update context</button>
 <script>
 let sequence=0; const pending=new Map();
 const request=(method,params)=>new Promise((resolve,reject)=>{const id=++sequence;pending.set(id,{resolve,reject});parent.postMessage({jsonrpc:'2.0',id,method,params},'*')});
@@ -61,6 +61,7 @@ if(m.method==='ui/notifications/tool-result'){document.querySelector('#status').
 if(m.method==='ui/resource-teardown')parent.postMessage({jsonrpc:'2.0',id:m.id,result:{}},'*')});
 document.querySelector('#refresh').onclick=async()=>{try{const r=await request('tools/call',{name:'read_count',arguments:{}});document.querySelector('#status').textContent='Counter '+r.structuredContent.count}catch(e){document.querySelector('#status').textContent=e.message}};
 document.querySelector('#expand').onclick=()=>request('ui/request-display-mode',{mode:'fullscreen'});
+document.querySelector('#pip').onclick=()=>request('ui/request-display-mode',{mode:'pip'});
 document.querySelector('#context').onclick=async()=>{await request('ui/update-model-context',{structuredContent:{selection:'counter-selection'}});document.querySelector('#status').textContent='Context saved'};
 request('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'counter',version:'1.0.0'},appCapabilities:{}}).then(()=>parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}},'*')).catch(e=>{document.querySelector('#status').textContent=e.message});
 fetch('https://blocked.example.invalid/leak').then(()=>{document.body.dataset.csp='failed'}).catch(()=>{document.body.dataset.csp='blocked'});

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react'
 import { AppBridge, type McpUiDisplayMode } from '@modelcontextprotocol/ext-apps/app-bridge'
 import { Maximize2, Minimize2, RefreshCw, X } from 'lucide-react'
 import type {
@@ -30,12 +30,14 @@ export function McpAppHost({
   api,
   onMessage,
   onContext,
+  onDisplayModeChange,
 }: {
   block: ToolBlock
   address: RuntimeTaskAddress
   api: RuntimeMcpAppsApi
   onMessage?: (text: string) => Promise<void>
   onContext?: (context: Record<string, unknown>) => Promise<void>
+  onDisplayModeChange?: (mode: McpUiDisplayMode) => void
 }) {
   const { t } = useTranslation('common')
   const [descriptor, setDescriptor] = useState<McpAppDescriptor | null>()
@@ -58,6 +60,9 @@ export function McpAppHost({
   )
   const hasMessage = onMessage !== undefined
   const hasContext = onContext !== undefined
+  useLayoutEffect(() => {
+    onDisplayModeChange?.(closed ? 'inline' : mode)
+  }, [closed, mode, onDisplayModeChange])
   const closeApp = useCallback(async () => {
     const app = bridge.current
     if (app && !teardownSent.current) {
@@ -356,9 +361,9 @@ export function McpAppHost({
       data-display-mode={mode}
       className={
         mode === 'fullscreen' && !closed
-          ? 'fixed inset-0 z-50 flex flex-col bg-background text-text-primary'
+          ? 'fixed inset-0 z-critical flex flex-col bg-background text-text-primary'
           : mode === 'pip' && !closed
-            ? 'fixed bottom-4 right-4 z-50 w-96 overflow-hidden rounded-xl border border-border bg-background text-text-primary shadow-lg'
+            ? 'fixed bottom-4 right-4 z-critical w-96 overflow-hidden rounded-xl border border-border bg-background text-text-primary shadow-lg'
             : 'my-2 overflow-hidden rounded-xl border border-border bg-background text-text-primary'
       }
     >

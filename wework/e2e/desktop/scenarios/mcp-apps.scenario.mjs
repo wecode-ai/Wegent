@@ -108,7 +108,21 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       await frameAction('click', '#context')
       await waitText('Context saved')
       await frameAction('click', '#expand')
-      await control.command('waitFor', '[data-testid="mcp-app"][data-display-mode="fullscreen"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="mcp-app-overlays"] [data-testid="mcp-app"][data-display-mode="fullscreen"]'
+      )
+      const [viewport] = JSON.parse(await control.command('getElementMetrics', 'body'))
+      const [fullscreen] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          '[data-testid="mcp-app"][data-display-mode="fullscreen"]'
+        )
+      )
+      assert.equal(fullscreen.left, 0)
+      assert.equal(fullscreen.top, 0)
+      assert.equal(fullscreen.width, viewport.clientWidth)
+      assert.equal(fullscreen.height, viewport.clientHeight)
       assert.equal(
         await control.command('getAttribute', '[data-testid="mcp-app-frame"]', { value: 'src' }),
         frameUrl
@@ -116,6 +130,23 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       await control.command('click', '[data-testid="mcp-app-expand"]')
       await control.command('waitFor', '[data-testid="mcp-app"][data-display-mode="inline"]')
       assert.equal(await frameAction('value', '#draft'), 'preserved draft')
+      await frameAction('click', '#pip')
+      await control.command(
+        'waitFor',
+        '[data-testid="mcp-app-overlays"] [data-testid="mcp-app"][data-display-mode="pip"]'
+      )
+      const [pip] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          '[data-testid="mcp-app"][data-display-mode="pip"]'
+        )
+      )
+      assert.equal(pip.right, viewport.clientWidth - 16)
+      assert.equal(pip.bottom, viewport.clientHeight - 16)
+      assert.equal(await frameAction('value', '#draft'), 'preserved draft')
+      await control.command('click', '[data-testid="mcp-app-expand"]')
+      await control.command('click', '[data-testid="mcp-app-expand"]')
+      await control.command('waitFor', '[data-testid="mcp-app"][data-display-mode="inline"]')
       const list = await requestExecutor(
         control,
         'runtime.mcp_apps.request',

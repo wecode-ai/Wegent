@@ -143,7 +143,7 @@ node e2e/utils/mock-connector-upstream-server.mjs
 `native-window-chrome`、`renderer-storage`、`tray-lifecycle`、
 `window-lifecycle`、`goal-lifecycle`、`supervisor-lifecycle`、`resilience`、
 `conversation-state`、`temporary-chat`、`workspace-attachments`、
-`rendering-extensions`、`change-request-status`、`claude-runtime`、
+`mcp-apps`、`rendering-extensions`、`change-request-status`、`claude-runtime`、
 `local-file-preview`、`local-harness`、`harness-apps`、`browser-multi-tabs`、
 `embedded-browser` 和 `browser-toolbar-actions`。
 `--segment <checkpoint>` 在公共启动和项目初始化后只运行指定 checkpoint；

@@ -149,7 +149,7 @@ The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
 `codex-notification-isolation`, `split-workbench`, `native-window-startup`,
 `native-window-chrome`, `renderer-storage`, `tray-lifecycle`, `window-lifecycle`,
 `goal-lifecycle`, `supervisor-lifecycle`, `resilience`, `conversation-state`,
-`temporary-chat`, `workspace-attachments`, `rendering-extensions`,
+`temporary-chat`, `workspace-attachments`, `mcp-apps`, `rendering-extensions`,
 `change-request-status`, `claude-runtime`, `local-file-preview`, `local-harness`,
 `harness-apps`, `browser-multi-tabs`, `embedded-browser`, and
 `browser-toolbar-actions`.
