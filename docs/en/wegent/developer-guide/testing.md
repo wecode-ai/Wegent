@@ -300,6 +300,11 @@ unrelated modules do not make the summary fail.
 
 CI reliability depends on these invariants:
 
+- Cloud shard 7 runs both `plugin-composer-long-list` and
+  `plugin-collaboration-composer-isolation` to verify plugin catalog isolation
+  between collaboration composers and ordinary tasks. Preserve both checkpoints
+  when merging CI classification or catalog context changes.
+
 - Refreshing Smart app cards keeps their existing model controls mounted. Show
   the full-page loading placeholder only when there are no cards to display. A
   successful or failed refresh after stopping one app must not unmount another
