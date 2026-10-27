@@ -4,7 +4,6 @@ fn delivery() -> DeliveryRow {
     DeliveryRow {
         id: "delivery-1".into(),
         loop_item_id: "issue-1".into(),
-        cloud_project_id: "10".into(),
         created_by_user_id: 7,
         source_task_binding_id: None,
         source_task_snapshot: None,
@@ -207,6 +206,7 @@ async fn optimistic_lock_failure_stops_before_any_asset_writes() {
     let result = commit_update(
         &mut tx,
         &delivery(),
+        "10",
         &input(),
         &[],
         "new/md",
@@ -226,6 +226,7 @@ async fn editing_only_updates_delivery_and_assets_without_republishing() {
     commit_update(
         &mut tx,
         &delivery(),
+        "10",
         &input(),
         &[asset()],
         "new/md",

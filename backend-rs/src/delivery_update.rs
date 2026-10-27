@@ -42,7 +42,6 @@ struct NewFile {
 struct DeliveryRow {
     id: String,
     loop_item_id: String,
-    cloud_project_id: String,
     created_by_user_id: i32,
     source_task_binding_id: Option<String>,
     source_task_snapshot: Option<Json<Value>>,
@@ -194,7 +193,7 @@ async fn update_delivery(
     let input: Update =
         serde_json::from_slice(&metadata.bytes).map_err(|_| invalid("Invalid metadata"))?;
     let delivery: DeliveryRow = state.mysql.fetch_optional(
-        "SELECT id, loop_item_id, cloud_project_id, created_by_user_id, source_task_binding_id,
+        "SELECT id, loop_item_id, created_by_user_id, source_task_binding_id,
          source_task_snapshot, status, version, created_at, delivered_at, markdown_object_key,
          chat_object_key, manifest_object_key, metadata FROM loop_items
          WHERE id = ? AND resource_type = 'delivery' AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01'))",
@@ -278,7 +277,7 @@ async fn update_delivery(
     assets.extend(new_assets.iter());
     assets.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
     let manifest = json!({"version": 2, "deliveryId": delivery_id, "loopItemId": delivery.loop_item_id,
-        "cloudProjectId": delivery.cloud_project_id, "sourceTask": delivery.source_task_snapshot.as_ref().map(|v| &v.0),
+        "cloudProjectId": item.cloud_project_id, "sourceTask": delivery.source_task_snapshot.as_ref().map(|v| &v.0),
         "title": input.title.trim(), "markdown": "markdown.md", "chat": chat_key.as_ref().map(|_| "chat.json"),
         "files": assets.iter().map(|asset| json!({"path": asset.relative_path, "name": asset.display_name,
             "size": asset.size_bytes, "sha256": asset.sha256, "contentType": asset.content_type, "objectKey": asset.object_key})).collect::<Vec<_>>(),
@@ -302,6 +301,7 @@ async fn update_delivery(
             commit_update(
                 tx,
                 &delivery,
+                &item.cloud_project_id,
                 &input,
                 &new_assets,
                 &markdown_key,
@@ -341,6 +341,7 @@ async fn update_delivery(
 async fn commit_update<T: MysqlTransaction>(
     tx: &mut T,
     delivery: &DeliveryRow,
+    project_id: &str,
     input: &Update,
     assets: &[Asset],
     markdown_key: &str,
@@ -382,7 +383,7 @@ async fn commit_update<T: MysqlTransaction>(
              '', 0, '', 0, 0, '', 0, '', '', 0, 0, '1970-01-01 00:00:01', '1970-01-01 00:00:01',
              '', 'file', ?, ?, ?, ?, ?, ?, '', '{}', '', '', '', '{}', 1, UTC_TIMESTAMP(), UTC_TIMESTAMP(),
              '1970-01-01 00:00:01', '1970-01-01 00:00:01', '1970-01-01 00:00:01')",
-            (asset.id.as_str(), delivery.cloud_project_id.as_str(), delivery.loop_item_id.as_str(), delivery.id.as_str(),
+            (asset.id.as_str(), project_id, delivery.loop_item_id.as_str(), delivery.id.as_str(),
                 asset.display_name.as_str(), asset.relative_path.as_str(), asset.object_key.as_str(), asset.content_type.as_deref().unwrap_or(""), asset.size_bytes, asset.sha256.as_str()),
         ).await?;
     }

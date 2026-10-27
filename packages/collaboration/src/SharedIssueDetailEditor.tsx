@@ -808,7 +808,9 @@ export function TodoEditor(props: TodoEditorProps) {
   );
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
-  const [editingDelivery, setEditingDelivery] = useState(false);
+  const [editingDelivery, setEditingDelivery] = useState<{ id: string } | null>(
+    null,
+  );
   const [selectedDelivery, setSelectedDelivery] =
     useState<DeliveryDetail | null>(null);
   const [tasks, setTasks] = useState<LoopItemTaskBinding[]>(
@@ -1121,7 +1123,7 @@ export function TodoEditor(props: TodoEditorProps) {
     selectedDeliveryRequestIdRef.current += 1;
     attachmentsRequestIdRef.current += 1;
     setDeliveries([]);
-    setEditingDelivery(false);
+    setEditingDelivery(null);
     setSelectedDelivery(null);
     setTasks(initialTaskBindingsRef.current ?? []);
     setAttachments([]);
@@ -1988,7 +1990,7 @@ export function TodoEditor(props: TodoEditorProps) {
             data-testid="todo-detail-delivery-back"
             onClick={() => {
               setSelectedDelivery(null);
-              setEditingDelivery(false);
+              setEditingDelivery(null);
             }}
             className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary hover:bg-hover"
           >
@@ -2013,25 +2015,29 @@ export function TodoEditor(props: TodoEditorProps) {
             <h2 className="min-w-0 flex-1 text-heading-md font-semibold">
               {selectedDelivery.title || item.title}
             </h2>
-            {editable && editorPort.deliveries.update && !editingDelivery && (
-              <button
-                type="button"
-                data-testid="delivery-edit"
-                onClick={() => setEditingDelivery(true)}
-                className="h-7 rounded-md px-2 text-sm hover:bg-hover"
-              >
-                {t("delivery.edit")}
-              </button>
-            )}
+            {editable &&
+              editorPort.deliveries.update &&
+              editingDelivery?.id !== selectedDelivery.id && (
+                <button
+                  type="button"
+                  data-testid="delivery-edit"
+                  onClick={() =>
+                    setEditingDelivery({ id: selectedDelivery.id })
+                  }
+                  className="h-7 rounded-md px-2 text-sm hover:bg-hover"
+                >
+                  {t("delivery.edit")}
+                </button>
+              )}
           </div>
-          {editingDelivery ? (
+          {editingDelivery?.id === selectedDelivery.id ? (
             <IssueDeliveryEditor
               key={selectedDelivery.id}
               delivery={selectedDelivery}
               issueTitle={item.title}
               api={editorPort.deliveries}
               translate={t}
-              onCancel={() => setEditingDelivery(false)}
+              onCancel={() => setEditingDelivery(null)}
               onSaved={(updated) => {
                 if (loadedEditItemIdRef.current !== updated.loop_item_id)
                   return;
@@ -2043,7 +2049,9 @@ export function TodoEditor(props: TodoEditorProps) {
                     delivery.id === updated.id ? updated : delivery,
                   ),
                 );
-                setEditingDelivery(false);
+                setEditingDelivery((current) =>
+                  current === editingDelivery ? null : current,
+                );
               }}
             />
           ) : (

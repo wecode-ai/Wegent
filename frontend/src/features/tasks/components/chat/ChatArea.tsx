@@ -56,6 +56,7 @@ import { QueryParamAutoSend } from '../params'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
 import { useModelSelection } from '../../hooks/useModelSelection'
 import { useDefaultTeam } from '../../hooks/useDefaultTeam'
+import { useRequestedTeam } from '../../hooks/useRequestedTeam'
 import { useRecentTaskTeams } from '../../hooks/useRecentTaskTeams'
 import { useUser } from '@/features/common/UserContext'
 import { QueueMessageHandler } from '@/features/inbox'
@@ -375,13 +376,20 @@ function ChatAreaContent({
       !teamIdFromUrl &&
       !selectedTeamForNewTask
   )
-  // The completed catalog remains authoritative for visibility and refreshes.
+  const requestedTeam = useRequestedTeam(
+    teamIdFromUrl,
+    !effectiveTaskId &&
+      !taskIdFromUrl &&
+      !catalogTeams.some(team => team.id === Number(teamIdFromUrl))
+  )
+  const independentlyResolvedTeam = requestedTeam ?? earlyDefaultTeam
   const teams = useMemo(
     () =>
-      earlyDefaultTeam && !catalogTeams.some(team => team.id === earlyDefaultTeam.id)
-        ? [earlyDefaultTeam, ...catalogTeams]
+      independentlyResolvedTeam &&
+      !catalogTeams.some(team => team.id === independentlyResolvedTeam.id)
+        ? [independentlyResolvedTeam, ...catalogTeams]
         : catalogTeams,
-    [catalogTeams, earlyDefaultTeam]
+    [catalogTeams, independentlyResolvedTeam]
   )
 
   // Select the team before resolving generation models. Attachment limits are synchronized
