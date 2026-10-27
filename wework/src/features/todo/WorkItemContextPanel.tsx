@@ -3,16 +3,20 @@ import { ArrowUpRight } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
+import { projectStoreLocation, type ProjectSpaceApi } from './projectSpaceSelection'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { RuntimeTaskAddress } from '@/types/api'
+import type { ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import { TodoEditor } from './TodoEditor'
 
 interface WorkItemContextPanelProps {
   api: ProjectSpaceApi
+  services: Pick<WorkbenchServices, 'projectSpaceDetailServices'>
   project: CloudProject
   item: CloudLoopItem
   currentTask: RuntimeTaskAddress
+  currentUserId?: string | number
+  localProjects?: ProjectWithTasks[]
   deviceNamesById?: Readonly<Record<string, string>>
   onOpenBoard: () => void
   onOpenTask: (address: RuntimeTaskAddress) => Promise<void> | void
@@ -20,14 +24,19 @@ interface WorkItemContextPanelProps {
 
 export function WorkItemContextPanel({
   api,
+  services,
   project,
   item,
   currentTask,
+  currentUserId,
+  localProjects,
   deviceNamesById,
   onOpenBoard,
   onOpenTask,
 }: WorkItemContextPanelProps) {
   const { t } = useTranslation('common')
+  const detailServices =
+    services.projectSpaceDetailServices?.[projectStoreLocation(project.project_store)]
   const [currentItem, setCurrentItem] = useState(item)
   const [allItems, setAllItems] = useState<CloudLoopItem[]>([item])
 
@@ -73,6 +82,12 @@ export function WorkItemContextPanel({
           selectedTaskId={currentTask.taskId}
           deviceNamesById={deviceNamesById}
           api={api}
+          projectChatClient={detailServices?.projectChatClient}
+          projectChatAgentApi={detailServices?.projectChatAgentApi}
+          teamApi={detailServices?.teamApi}
+          selfManagedExecution={project.project_store === 'local'}
+          currentUserId={project.current_user_id ?? currentUserId}
+          localProjects={localProjects}
           item={currentItem}
           project={project}
           allItems={allItems}

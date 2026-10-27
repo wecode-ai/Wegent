@@ -5,6 +5,8 @@ import { join } from 'node:path'
 
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
+import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
+import { createCodexProtocolGate } from '../modules/codex-protocol-gate.mjs'
 
 const WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER = `${WORKBENCH} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -13,6 +15,7 @@ const CANCEL_PROMPT = 'WEWORK_E2E_MODEL_OVERLOAD_CANCEL'
 const COMPLETION = 'WEWORK_E2E_MODEL_OVERLOAD_RECOVERED'
 const TOOL_MARKER = 'WEWORK_E2E_MODEL_OVERLOAD_TOOL_DONE'
 const CALL_ID = 'wework-overload-tool'
+const TERMINAL_ERROR = 'WEWORK_E2E_TERMINAL_PERMISSION_DENIED'
 
 function sse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
@@ -113,8 +116,15 @@ export function createDesktopScenario({
 }) {
   let active = false
   let cancelling = false
+  let terminal = false
+  let terminalRequests = 0
+  let releaseOverload
+  const overloadReleased = new Promise(resolve => {
+    releaseOverload = resolve
+  })
   const requests = []
   const cancelRequests = []
+  const nativeGate = createCodexProtocolGate({ resultDir, kind: 'overload-terminal' })
   let releaseCompletion
   const completionReleased = new Promise(resolve => {
     releaseCompletion = resolve
@@ -126,12 +136,32 @@ export function createDesktopScenario({
     modelProviderAuthToml: '',
     modelProviderConfigToml: 'http_headers = { Authorization = "Bearer wework-e2e-test-key" }\n',
     appEnvironment: { WEWORK_E2E_SEED_LOCAL_MODELS: 'false' },
+    prepareApp: nativeGate.prepareApp,
 
     async handleHttp(request, response, url) {
       if (!active || request.method !== 'POST') return false
       if (!['/responses', '/v1/responses'].includes(url.pathname)) return false
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
+      if (terminal) {
+        terminalRequests += 1
+        const id = `terminal-error-${Date.now()}`
+        response.writeHead(200, { 'Content-Type': 'text/event-stream' })
+        response.end(
+          sse([
+            { type: 'response.created', response: { id } },
+            {
+              type: 'response.failed',
+              response: {
+                id,
+                status: 'failed',
+                error: { code: 'invalid_prompt', message: TERMINAL_ERROR },
+              },
+            },
+          ])
+        )
+        return true
+      }
       const id = `wework-model-overload-${Date.now()}`
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.write(sse([{ type: 'response.created', response: { id } }]))
@@ -154,6 +184,7 @@ export function createDesktopScenario({
       assert.equal(toolOutputs.length, 1, 'Recovery lost or duplicated the completed tool output')
       assert.ok(JSON.stringify(toolOutputs[0]).includes(TOOL_MARKER))
       if (requests.length === 2) {
+        await overloadReleased
         response.end(sse([overloaded(id)]))
         return true
       }
@@ -193,6 +224,51 @@ export function createDesktopScenario({
         uiTimeoutMs,
         'The real tool did not finish before the model overload'
       )
+      const gates = runtimeTransportGates(control)
+      const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        .workbench.currentRuntimeTask
+      await gates.arm({
+        id: 'old-failed-history',
+        kind: 'response',
+        name: 'runtime.tasks.transcript',
+        where: [
+          { path: 'params.taskId', equals: address.taskId },
+          { path: 'result.turns.*.status', equals: 'failed' },
+        ],
+      })
+      await gates.arm({
+        id: 'live-recovery',
+        kind: 'event',
+        name: 'response.block.created',
+        hold: false,
+        where: [
+          { path: 'payload.taskId', equals: address.taskId },
+          { path: 'payload.data.block.tool_name', equals: 'runtime_reconnecting' },
+        ],
+      })
+      await nativeGate.arm()
+      releaseOverload()
+      const nativeFailure = await nativeGate.wait()
+      await gates.wait('old-failed-history', () =>
+        control.command('dispatchRuntimeEventLagged', 'body')
+      )
+      const failedHistory = await gates.read('old-failed-history')
+      assert.ok(
+        failedHistory.value.result.turns.some(
+          turn => turn.id === nativeFailure.turnId && turn.status === 'failed'
+        ),
+        'The held failed snapshot did not belong to the real native terminal turn'
+      )
+      await nativeGate.release()
+      await gates.wait('live-recovery')
+      await gates.release('old-failed-history')
+      const ordering = await gates.save(resultDir, 'overload-history-race.json', [
+        'old-failed-history',
+        'live-recovery',
+      ])
+      assert.ok(ordering['old-failed-history'].capturedAt < ordering['live-recovery'].deliveredAt)
+      assert.ok(ordering['live-recovery'].deliveredAt < ordering['old-failed-history'].deliveredAt)
+      await control.command('waitFor', `${WORKBENCH} [data-testid="pause-response-button"]`)
       await waitUntil(
         () => requests.length === 3,
         uiTimeoutMs,
@@ -271,6 +347,31 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
 
+      await gates.reset()
+      cancelling = false
+      terminal = true
+      await control.command('waitFor', COMPOSER)
+      await control.command('fill', COMPOSER, { value: TERMINAL_ERROR })
+      await control.command('press', COMPOSER, { key: 'Enter' })
+      await control.command('waitFor', `${WORKBENCH} [data-testid="assistant-error-card"]`, {
+        text: TERMINAL_ERROR,
+      })
+      await waitUntil(
+        async () =>
+          JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane?.status
+            ?.isBusy === false,
+        uiTimeoutMs,
+        'A real terminal error remained in recovery'
+      )
+      assert.equal(terminalRequests, 1, 'A real terminal error was retried as recoverable overload')
+      assert.equal(
+        JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
+          .currentRuntimeTask.taskId,
+        taskId,
+        'Terminal error verification left the recovered conversation'
+      )
+      terminal = false
+
       cancelling = true
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
@@ -310,6 +411,7 @@ export function createDesktopScenario({
       return {
         active,
         cancelling,
+        terminalRequests,
         requests: requests.length,
         cancelRequests: cancelRequests.length,
       }

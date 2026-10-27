@@ -7,14 +7,12 @@ import {
   ChevronDown,
   ChevronRight,
   Columns2,
-  Columns3,
   Edit3,
   FolderOpen,
   FolderPlus,
   Globe2,
   GitCompareArrows,
   Laptop,
-  ListTodo,
   Loader2,
   MessageCircle,
   MessageCircleOff,
@@ -56,7 +54,6 @@ import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDi
 import type { ProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { getRuntimeProjectOwner } from '@/lib/runtime-project-state'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
-import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { AppReleaseNotesDialog } from '@/features/app-update/AppReleaseNotesDialog'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
@@ -68,7 +65,10 @@ import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { executeDshCommand } from '@/features/dsh-runtime/dshExtensions'
 import { useDshMenuCommands } from '@/features/dsh-runtime/useDshMenuCommands'
 import { OPEN_NOTIFICATION_SETTINGS_EVENT } from '@/features/notifications/notificationPreferences'
-import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
+import {
+  getRuntimeTaskReminderItemKey,
+  getRuntimeTaskReminderKey,
+} from '@/features/workbench/runtimeTaskReminders'
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import {
@@ -110,6 +110,7 @@ import {
   shouldIgnoreWorkbenchShortcut,
   keybindingFromKeyboardEvent,
   TOGGLE_PRIORITY_FILTER_COMMAND,
+  COLLAPSE_READ_CONVERSATIONS_COMMAND,
 } from '@/lib/keybindings'
 import {
   runtimeProjectToProject,
@@ -172,6 +173,11 @@ import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { SidebarSortableList } from './SidebarSortableList'
 import { SidebarHoverCard } from './SidebarHoverCard'
 import { DesktopSidebarPrioritySection } from './DesktopSidebarPrioritySection'
+import {
+  DesktopSidebarTaskViewControl,
+  type DesktopSidebarTaskViewAction,
+} from './DesktopSidebarTaskViewControl'
+import { useCollapsedReadConversations } from './useCollapsedReadConversations'
 import {
   createDesktopSidebarPrioritySession,
   reconcileDesktopSidebarPrioritySession,
@@ -315,8 +321,6 @@ interface DesktopSidebarProps {
   onOpenSettings: (options?: OpenSettingsOptions) => void
   onLogout: () => void
 }
-
-type TaskViewAction = 'priority' | 'board'
 
 interface RuntimeTaskPinMutation {
   createdRevision: number
@@ -2448,6 +2452,7 @@ function ProjectItem({
   currentRuntimeTask,
   splitGroupMemberships,
   unreadTaskKeys,
+  collapsedReadTaskKeys,
   imNotificationSettings,
   showDeviceMarker,
   sidebarStateDeviceId,
@@ -2478,6 +2483,7 @@ function ProjectItem({
   currentRuntimeTask?: RuntimeTaskAddress | null
   splitGroupMemberships: Readonly<Record<string, WorkbenchSplitGroupMembership>>
   unreadTaskKeys: ReadonlySet<string>
+  collapsedReadTaskKeys: ReadonlySet<string>
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   showDeviceMarker: boolean
   sidebarStateDeviceId?: string | null
@@ -2530,8 +2536,12 @@ function ProjectItem({
     [runtimeWorkspaces]
   )
   const runtimeTaskItems = useMemo(
-    () => allRuntimeTaskItems.filter(({ task }) => !task.pinned),
-    [allRuntimeTaskItems]
+    () =>
+      allRuntimeTaskItems.filter(
+        ({ workspace, task }) =>
+          !task.pinned && !collapsedReadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
+      ),
+    [allRuntimeTaskItems, collapsedReadTaskKeys]
   )
   const [runtimeTaskVisibleLimit, setRuntimeTaskVisibleLimit] = useState(
     RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
@@ -2985,7 +2995,9 @@ function ProjectItem({
                 data-testid={`project-local-tasks-empty-${project.id}`}
                 className="ml-9 rounded-md px-2 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
               >
-                {t('workbench.no_chats', '暂无会话')}
+                {allRuntimeTaskItems.some(({ task }) => !task.pinned)
+                  ? t('workbench.read_conversations_collapsed', '已读会话已收起')
+                  : t('workbench.no_chats', '暂无会话')}
               </div>
             ) : (
               <>
@@ -3325,11 +3337,12 @@ export function DesktopSidebar({
     readStoredBoolean(chatsExpandedStorageKey, true)
   )
   const [priorityFilterActive, setPriorityFilterActive] = useState(false)
-  const [taskViewAction, setTaskViewAction] = useState<TaskViewAction>(() =>
+  const [taskViewAction, setTaskViewAction] = useState<DesktopSidebarTaskViewAction>(() =>
     onToggleMyWork ? 'board' : 'priority'
   )
   const [prioritySession, setPrioritySession] = useState<DesktopSidebarPrioritySession | null>(null)
   const priorityFilterShortcut = useConfiguredKeybinding(TOGGLE_PRIORITY_FILTER_COMMAND)
+  const collapseReadShortcut = useConfiguredKeybinding(COLLAPSE_READ_CONVERSATIONS_COMMAND)
   const [priorityShowPinned, setPriorityShowPinned] = useState(() =>
     readStoredBoolean(priorityPinnedStorageKey, false)
   )
@@ -3548,9 +3561,47 @@ export function DesktopSidebar({
       }),
     [runtimeTaskPinOverrides, visibleChatTaskItems]
   )
+  const { collapsibleTaskKeys, keepVisibleTaskKeys } = useMemo(() => {
+    const collapsibleTaskKeys = new Set<string>()
+    const keepVisibleTaskKeys = new Set(visibleUnreadRuntimeTaskKeys)
+    if (currentRuntimeTask) keepVisibleTaskKeys.add(getRuntimeTaskReminderKey(currentRuntimeTask))
+    const items = [
+      ...allSidebarRuntimeProjects.flatMap(projectWork =>
+        getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces)
+      ),
+      ...chatTaskItems,
+    ]
+    for (const { workspace, task } of items) {
+      const key = getRuntimeTaskReminderItemKey(workspace, task)
+      const lifecycle = lifecycleSnapshot.tasks.get(
+        getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+      )
+      collapsibleTaskKeys.add(key)
+      if (
+        lifecycle?.derived.isBusy ||
+        lifecycle?.derived.shouldShowSidebarWaiting ||
+        isRuntimeTaskWaiting(task)
+      ) {
+        keepVisibleTaskKeys.add(key)
+      }
+    }
+    return { collapsibleTaskKeys, keepVisibleTaskKeys }
+  }, [
+    allSidebarRuntimeProjects,
+    chatTaskItems,
+    currentRuntimeTask,
+    lifecycleSnapshot.tasks,
+    visibleUnreadRuntimeTaskKeys,
+  ])
+  const { collapsedReadTaskKeys, collapseReadConversations, expandReadConversations } =
+    useCollapsedReadConversations(storageScope, collapsibleTaskKeys, keepVisibleTaskKeys)
   const regularChatTaskItems = useMemo(
-    () => chatTaskItemsWithPinState.filter(({ task }) => !task.pinned),
-    [chatTaskItemsWithPinState]
+    () =>
+      chatTaskItemsWithPinState.filter(
+        ({ workspace, task }) =>
+          !task.pinned && !collapsedReadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
+      ),
+    [chatTaskItemsWithPinState, collapsedReadTaskKeys]
   )
   const pinnedTaskItems = useMemo(() => {
     const projectTasks = sidebarRuntimeProjects.flatMap(projectWork =>
@@ -3567,6 +3618,14 @@ export function DesktopSidebar({
         (right.task.pinnedOrder ?? Number.MAX_SAFE_INTEGER)
     )
   }, [chatTaskItemsWithPinState, sidebarRuntimeProjects])
+  const visiblePinnedTaskItems = useMemo(
+    () =>
+      pinnedTaskItems.filter(
+        ({ workspace, task }) =>
+          !collapsedReadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
+      ),
+    [collapsedReadTaskKeys, pinnedTaskItems]
+  )
   const allPriorityViewTaskItems = useMemo<RuntimePriorityTaskItem[]>(() => {
     const projectTasks = sidebarRuntimeProjects.flatMap(projectWork =>
       getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces).map(({ workspace, task }) => ({
@@ -3668,9 +3727,26 @@ export function DesktopSidebar({
     },
     [priorityShowPinned, priorityViewSources, setPriorityFilterActive, setPrioritySession]
   )
-  const selectedTaskViewAction = taskViewAction === 'board' && onToggleMyWork ? 'board' : 'priority'
+  const selectedTaskViewAction =
+    taskViewAction === 'board' && !onToggleMyWork ? 'priority' : taskViewAction
+  const collapseReadTaskView = useCallback(() => {
+    setTaskViewAction('collapse-read')
+    if (taskView === 'default-work-items') onToggleMyWork?.()
+    setPriorityFilterEnabled(false)
+    collapseReadConversations()
+  }, [collapseReadConversations, onToggleMyWork, setPriorityFilterEnabled, taskView])
+  const expandReadTaskView = useCallback(() => {
+    setTaskViewAction('collapse-read')
+    if (taskView === 'default-work-items') onToggleMyWork?.()
+    setPriorityFilterEnabled(false)
+    expandReadConversations()
+  }, [expandReadConversations, onToggleMyWork, setPriorityFilterEnabled, taskView])
   const selectTaskViewAction = useCallback(
-    (action: TaskViewAction) => {
+    (action: DesktopSidebarTaskViewAction) => {
+      if (action === 'collapse-read') {
+        collapseReadTaskView()
+        return
+      }
       setTaskViewAction(action)
       if (action === 'board') {
         setPriorityFilterEnabled(false)
@@ -3680,7 +3756,7 @@ export function DesktopSidebar({
       if (taskView === 'default-work-items') onToggleMyWork?.()
       setPriorityFilterEnabled(true)
     },
-    [onToggleMyWork, setPriorityFilterEnabled, setTaskViewAction, taskView]
+    [collapseReadTaskView, onToggleMyWork, setPriorityFilterEnabled, setTaskViewAction, taskView]
   )
   const togglePriorityTaskView = useCallback(() => {
     setTaskViewAction('priority')
@@ -4004,14 +4080,15 @@ export function DesktopSidebar({
     () =>
       Boolean(
         currentRuntimeTask &&
-        pinnedTaskItems.some(({ workspace, task }) =>
+        visiblePinnedTaskItems.some(({ workspace, task }) =>
           isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
         )
       ),
-    [currentRuntimeTask, pinnedTaskItems]
+    [currentRuntimeTask, visiblePinnedTaskItems]
   )
   const currentRuntimeTaskRowVisible = Boolean(
-    currentRuntimeTaskKey &&
+    currentRuntimeTask &&
+    !collapsedReadTaskKeys.has(getRuntimeTaskReminderKey(currentRuntimeTask)) &&
     (currentRuntimeTaskPinned ||
       (selectedRuntimeProjectId !== null &&
         displayedProjectsExpanded &&
@@ -4021,15 +4098,34 @@ export function DesktopSidebar({
   const autoExpandedProjectKeyRef = useRef<string | null>(null)
 
   const handleToggleProject = (projectId: number) => {
+    const projectWork = runtimeWorkByProjectId.get(projectId)
+    const projectTaskKeys = new Set(
+      getRuntimeSidebarTaskItems(projectWork?.deviceWorkspaces).map(({ workspace, task }) =>
+        getRuntimeTaskReminderItemKey(workspace, task)
+      )
+    )
+    const hasCollapsedReadTasks = [...projectTaskKeys].some(key => collapsedReadTaskKeys.has(key))
+    if (hasCollapsedReadTasks) expandReadConversations(projectTaskKeys)
     setExpandedProjectIds(previous => {
       const next = new Set(previous)
-      if (next.has(projectId)) {
+      if (next.has(projectId) && !hasCollapsedReadTasks) {
         next.delete(projectId)
       } else {
         next.add(projectId)
       }
       return next
     })
+  }
+
+  const handleToggleChats = () => {
+    const chatTaskKeys = new Set(
+      chatTaskItemsWithPinState.map(({ workspace, task }) =>
+        getRuntimeTaskReminderItemKey(workspace, task)
+      )
+    )
+    const hasCollapsedReadTasks = [...chatTaskKeys].some(key => collapsedReadTaskKeys.has(key))
+    if (hasCollapsedReadTasks) expandReadConversations(chatTaskKeys)
+    setChatsExpanded(expanded => hasCollapsedReadTasks || !expanded)
   }
 
   useEffect(() => {
@@ -4117,21 +4213,23 @@ export function DesktopSidebar({
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (
-        event.defaultPrevented ||
-        shouldIgnoreWorkbenchShortcut(event) ||
-        !priorityFilterShortcut ||
-        keybindingFromKeyboardEvent(event) !== priorityFilterShortcut
-      )
-        return
+      if (event.defaultPrevented || shouldIgnoreWorkbenchShortcut(event) || event.repeat) return
+      const shortcut = keybindingFromKeyboardEvent(event)
+      const action =
+        collapseReadShortcut && shortcut === collapseReadShortcut
+          ? collapseReadTaskView
+          : priorityFilterShortcut && shortcut === priorityFilterShortcut
+            ? togglePriorityTaskView
+            : null
+      if (!action) return
       event.preventDefault()
       event.stopPropagation()
-      togglePriorityTaskView()
+      action()
     }
 
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [priorityFilterShortcut, togglePriorityTaskView])
+  }, [collapseReadShortcut, collapseReadTaskView, priorityFilterShortcut, togglePriorityTaskView])
 
   useEffect(() => {
     if (!currentRuntimeTaskKey || !currentRuntimeTaskRowVisible) return
@@ -4219,100 +4317,25 @@ export function DesktopSidebar({
                     </button>
                   </Tooltip>
                 )}
-                <span
-                  data-testid="runtime-task-view-control"
-                  className="inline-flex shrink-0 items-center rounded-lg"
-                >
-                  <TitlebarTooltip
-                    label={
-                      selectedTaskViewAction === 'board'
-                        ? t('workbench.work_item_create_title', '看板')
-                        : priorityFilterActive
-                          ? t('workbench.priority_filter_turn_off', '关闭优先级筛选')
-                          : t('workbench.priority_filter', '按优先级筛选')
-                    }
-                    shortcut={
-                      selectedTaskViewAction === 'priority' && !priorityFilterActive
-                        ? (priorityFilterShortcut ?? undefined)
-                        : undefined
-                    }
-                    align="end"
-                    testId="runtime-priority-filter-tooltip"
-                  >
-                    <button
-                      type="button"
-                      data-testid="runtime-priority-filter-button"
-                      onClick={
-                        selectedTaskViewAction === 'board' ? onToggleMyWork : togglePriorityTaskView
-                      }
-                      aria-pressed={
-                        selectedTaskViewAction === 'board'
-                          ? taskView === 'default-work-items'
-                          : priorityFilterActive
-                      }
-                      className={cn(
-                        'relative flex h-7 w-7 shrink-0 items-center justify-center text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-blue-500',
-                        onToggleMyWork ? 'rounded-l-lg' : 'rounded-lg',
-                        (selectedTaskViewAction === 'board'
-                          ? taskView === 'default-work-items'
-                          : priorityFilterActive) && 'bg-[rgb(var(--color-sidebar-active))]'
-                      )}
-                      aria-label={
-                        selectedTaskViewAction === 'board'
-                          ? t('workbench.work_item_create_title', '看板')
-                          : priorityNeedsAttention && !priorityFilterActive
-                            ? t(
-                                'workbench.priority_filter_needs_attention',
-                                '按优先级筛选，需要关注'
-                              )
-                            : priorityFilterActive
-                              ? t('workbench.priority_filter_turn_off', '关闭优先级筛选')
-                              : t('workbench.priority_filter', '按优先级筛选')
-                      }
-                    >
-                      {selectedTaskViewAction === 'board' ? (
-                        <Columns3 className="h-4 w-4" aria-hidden="true" />
-                      ) : (
-                        <ListTodo className="h-4 w-4" aria-hidden="true" />
-                      )}
-                      {selectedTaskViewAction === 'priority' &&
-                        priorityNeedsAttention &&
-                        !priorityFilterActive && (
-                          <span
-                            data-testid="runtime-priority-filter-attention-dot"
-                            aria-hidden="true"
-                            className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary"
-                          />
-                        )}
-                    </button>
-                  </TitlebarTooltip>
-                  {onToggleMyWork ? (
-                    <ActionMenu
-                      ariaLabel={t('workbench.task_view_menu', '任务视图')}
-                      testId="runtime-task-view-menu-button"
-                      menuTestId="runtime-task-view-menu"
-                      icon={ChevronDown}
-                      placement="bottom-end"
-                      showTriggerTooltip={false}
-                      items={[
-                        {
-                          label: t('workbench.priority_filter', '按优先级筛选'),
-                          icon: ListTodo,
-                          testId: 'runtime-task-view-priority',
-                          shortcut: priorityFilterShortcut ?? undefined,
-                          onSelect: () => selectTaskViewAction('priority'),
-                        },
-                        {
-                          label: t('workbench.work_item_create_title', '看板'),
-                          icon: Columns3,
-                          testId: 'runtime-task-view-board',
-                          onSelect: () => selectTaskViewAction('board'),
-                        },
-                      ]}
-                      triggerClassName="flex h-7 w-4 shrink-0 items-center justify-center rounded-r-lg text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-blue-500 [&_svg]:h-2.5 [&_svg]:w-2.5"
-                    />
-                  ) : null}
-                </span>
+                <DesktopSidebarTaskViewControl
+                  action={selectedTaskViewAction}
+                  boardAvailable={Boolean(onToggleMyWork)}
+                  boardActive={taskView === 'default-work-items'}
+                  priorityActive={priorityFilterActive}
+                  priorityNeedsAttention={priorityNeedsAttention}
+                  priorityShortcut={priorityFilterShortcut}
+                  collapseReadShortcut={collapseReadShortcut}
+                  hasCollapsedReadConversations={collapsedReadTaskKeys.size > 0}
+                  onSelect={selectTaskViewAction}
+                  onRun={
+                    selectedTaskViewAction === 'collapse-read'
+                      ? collapseReadTaskView
+                      : selectedTaskViewAction === 'board'
+                        ? () => onToggleMyWork?.()
+                        : togglePriorityTaskView
+                  }
+                  onExpandReadConversations={expandReadTaskView}
+                />
               </>
             }
           />
@@ -4452,11 +4475,11 @@ export function DesktopSidebar({
                     >
                       {t('workbench.pinned')}
                     </div>
-                    {pinnedTaskItems.length > 0 && (
+                    {visiblePinnedTaskItems.length > 0 && (
                       <SidebarSortableList
                         testId="pinned-runtime-task-sortable-list"
                         className="space-y-0.5"
-                        items={pinnedTaskItems}
+                        items={visiblePinnedTaskItems}
                         getId={({ workspace, task }) => getRuntimeTaskSortableId(workspace, task)}
                         getLabel={({ task }) => task.title}
                         getExternalDragData={({ workspace, task }) => ({
@@ -4573,6 +4596,7 @@ export function DesktopSidebar({
                             currentRuntimeTask={currentRuntimeTask}
                             splitGroupMemberships={splitGroupMemberships}
                             unreadTaskKeys={visibleUnreadRuntimeTaskKeys}
+                            collapsedReadTaskKeys={collapsedReadTaskKeys}
                             imNotificationSettings={imNotificationSettings}
                             showDeviceMarker={false}
                             sidebarStateDeviceId={sidebarStateDeviceId}
@@ -4873,6 +4897,7 @@ export function DesktopSidebar({
                               currentRuntimeTask={currentRuntimeTask}
                               splitGroupMemberships={splitGroupMemberships}
                               unreadTaskKeys={visibleUnreadRuntimeTaskKeys}
+                              collapsedReadTaskKeys={collapsedReadTaskKeys}
                               imNotificationSettings={imNotificationSettings}
                               showDeviceMarker={false}
                               sidebarStateDeviceId={sidebarStateDeviceId}
@@ -4911,11 +4936,12 @@ export function DesktopSidebar({
                     title={t('workbench.tasks')}
                     expanded={displayedChatsExpanded}
                     hasContent={
-                      standaloneLocalHarnessSessions.length > 0 || regularChatTaskItems.length > 0
+                      standaloneLocalHarnessSessions.length > 0 ||
+                      chatTaskItemsWithPinState.length > 0
                     }
                     toggleTestId="runtime-chat-section-toggle"
                     iconTestId="runtime-chat-section-chevron-right"
-                    onToggle={() => setChatsExpanded(expanded => !expanded)}
+                    onToggle={handleToggleChats}
                   >
                     <div className="flex items-center">
                       <ActionMenu
@@ -4962,7 +4988,9 @@ export function DesktopSidebar({
                           data-testid="runtime-chat-empty"
                           className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
                         >
-                          {t('workbench.no_chats', '暂无会话')}
+                          {chatTaskItemsWithPinState.some(({ task }) => !task.pinned)
+                            ? t('workbench.read_conversations_collapsed', '已读会话已收起')
+                            : t('workbench.no_chats', '暂无会话')}
                         </div>
                       ) : regularChatTaskItems.length > 0 ? (
                         <SidebarSortableList

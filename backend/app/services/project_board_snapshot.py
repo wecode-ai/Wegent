@@ -14,6 +14,7 @@ from app.schemas.delivery import (
 )
 from app.schemas.project_board import ProjectBoardSnapshotResponse
 from app.services.cloud_projects import cloud_project_service
+from app.services.cloud_projects.access import CloudProjectAccess
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import project_chat_service
@@ -30,36 +31,50 @@ class ProjectBoardSnapshotService:
         assignee_id: str | None = None,
         execution_state: str | None = None,
     ) -> tuple[CloudProject, list[LoopItemResponse]]:
-        project = cloud_project_service.get(db, project_id, user_id)
-        if project.task_provider in {"github", "gitlab"}:
-            items = external_loop_item_provider.list(
-                db,
-                project_id,
-                user_id,
-                assignee_type=assignee_type,
-                assignee_id=assignee_id,
-            )
-            return project, [LoopItemResponse.model_validate(item) for item in items]
-
-        items = loop_item_service.list(
+        access = cloud_project_service.access(db, project_id, user_id)
+        return access.project, self._item_views(
             db,
-            project_id,
+            access,
             user_id,
             assignee_type=assignee_type,
             assignee_id=assignee_id,
             execution_state=execution_state,
         )
-        access = cloud_project_service.access(db, project_id, user_id)
-        return project, [
-            LoopItemResponse.model_validate(
-                loop_item_service.response_values(
-                    db,
-                    item,
-                    user_id,
-                    access=access,
-                )
+
+    def _item_views(
+        self,
+        db: Session,
+        access: CloudProjectAccess,
+        user_id: int,
+        *,
+        assignee_type: str | None = None,
+        assignee_id: str | None = None,
+        execution_state: str | None = None,
+    ) -> list[LoopItemResponse]:
+        project = access.project
+        if project.task_provider in {"github", "gitlab"}:
+            items = external_loop_item_provider.list(
+                db,
+                project.id,
+                user_id,
+                assignee_type=assignee_type,
+                assignee_id=assignee_id,
             )
-            for item in items
+            return [LoopItemResponse.model_validate(item) for item in items]
+
+        items = loop_item_service.list_for_access(
+            db,
+            access,
+            user_id,
+            assignee_type=assignee_type,
+            assignee_id=assignee_id,
+            execution_state=execution_state,
+        )
+        return [
+            LoopItemResponse.model_validate(values)
+            for values in loop_item_service.response_values_many(
+                db, items, user_id, access=access
+            )
         ]
 
     def get(
@@ -69,7 +84,7 @@ class ProjectBoardSnapshotService:
         user_id: int,
     ) -> ProjectBoardSnapshotResponse:
         access = cloud_project_service.access(db, project_id, user_id)
-        _, items = self.list_item_views(db, project_id, user_id)
+        items = self._item_views(db, access, user_id)
         if access.is_viewer:
             return ProjectBoardSnapshotResponse(
                 items=items,
@@ -78,17 +93,16 @@ class ProjectBoardSnapshotService:
                 agents=[],
             )
         item_ids = [item.id for item in items]
-        bindings = loop_item_service.list_project_task_bindings(
+        bindings = loop_item_service.list_project_task_bindings_for_access(
             db,
-            project_id,
-            user_id,
+            access,
             item_ids=item_ids,
         )
-        members = cloud_project_service.list_members(db, project_id, user_id)
-        agents = project_chat_service.list_agents(
+        members = cloud_project_service.list_members_for_access(db, access, user_id)
+        agents = project_chat_service.list_agents_for_access(
             db,
+            access,
             user_id=user_id,
-            project_id=str(project_id),
         )
         return ProjectBoardSnapshotResponse(
             items=items,

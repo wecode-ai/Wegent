@@ -29,6 +29,7 @@ import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
+import { decodeDesktopControlImage } from './desktop-control-image'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
 import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
@@ -48,13 +49,19 @@ import {
   reconcileRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeTaskAddress } from '@/types/api'
+import type { RuntimeTaskLifecycleSnapshot } from '@/features/workbench/runtimeTaskLifecycle/types'
+import { summarizeRuntimeTaskExecution } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import {
+  awaitLocalExecutorRequestHoldForE2E,
   failNextLocalExecutorRequestForE2E,
   ensureBundledPluginInstalled,
   getInitializedBundledPluginMarketplace,
   getBundledPluginUpdateState,
+  getLocalExecutorRequestHoldSnapshotForE2E,
   getLocalExecutorStatus,
+  holdLocalExecutorRequestsForE2E,
   readLocalExecutorLog,
+  releaseLocalExecutorRequestHoldForE2E,
 } from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
@@ -75,6 +82,13 @@ import { installDesktopE2EClipboard } from './clipboard'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { bindDshConversationController } from '@/features/dsh-runtime/dshExtensions'
 import { readConversationAssetChunk } from '@/features/dsh-runtime/dshConversationTranscript'
+import { RUNTIME_WORK_CHANGED_EVENT } from '@/desktop/runtimeWorkSync'
+import {
+  armRuntimeTransportGate,
+  readRuntimeTransportGate,
+  releaseRuntimeTransportGate,
+  resetRuntimeTransportGates,
+} from './runtime-transport-gates'
 import type {
   WeworkConversationAssetChunk,
   WeworkConversationSnapshot,
@@ -2024,8 +2038,28 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           JSON.parse(command.value ?? '{}')
         )
       )
+    case 'armRuntimeTransportGate':
+      armRuntimeTransportGate(JSON.parse(command.value ?? '{}'))
+      return ''
+    case 'readRuntimeTransportGate':
+      return JSON.stringify(readRuntimeTransportGate(command.value ?? ''))
+    case 'releaseRuntimeTransportGate':
+      releaseRuntimeTransportGate(command.value ?? '')
+      await waitForDesktopControlTick()
+      return ''
+    case 'resetRuntimeTransportGates':
+      resetRuntimeTransportGates(JSON.parse(command.value || '[]'))
+      return ''
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
+    case 'refreshRuntimeWork':
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: RUNTIME_WORK_CHANGED_EVENT,
+          newValue: command.value ?? '{}',
+        })
+      )
+      return ''
     case 'getLocalRuntimeTranscript':
       return JSON.stringify(
         await requestLocalExecutor('runtime.tasks.transcript', JSON.parse(command.value ?? '{}'))
@@ -2047,6 +2081,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         await requestLocalExecutor('runtime.tasks.send', { taskId, requestUserInputResponse })
       )
     }
+    case 'cancelRuntimeTaskDirectly': {
+      const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
+      if (!address.deviceId || !address.taskId) {
+        throw new Error('cancelRuntimeTaskDirectly requires deviceId and taskId')
+      }
+      return JSON.stringify(await requestLocalExecutor('runtime.tasks.cancel', { ...address }))
+    }
     case 'restartLocalCodexAppServerIfIdle':
       return JSON.stringify(
         await requestLocalExecutor('runtime.codex.app_server.restart', { ifIdle: true })
@@ -2063,6 +2104,34 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       root[E2E_DROPPED_RUNTIME_EVENTS_KEY] ??= []
       root[E2E_DROPPED_RUNTIME_EVENTS_KEY].push(command.value ?? '')
+      return ''
+    }
+    case 'holdLocalExecutorRequests': {
+      const { method, phase } = JSON.parse(command.value ?? '{}') as {
+        method?: string
+        phase?: 'before-dispatch' | 'after-response'
+      }
+      if (!method) throw new Error('holdLocalExecutorRequests requires a method')
+      holdLocalExecutorRequestsForE2E(method, phase)
+      return ''
+    }
+    case 'awaitLocalExecutorRequestHold':
+      await awaitLocalExecutorRequestHoldForE2E()
+      return JSON.stringify(getLocalExecutorRequestHoldSnapshotForE2E())
+    case 'getLocalExecutorRequestHoldSnapshot':
+      return JSON.stringify(getLocalExecutorRequestHoldSnapshotForE2E())
+    case 'releaseLocalExecutorRequestHold':
+      return String(releaseLocalExecutorRequestHoldForE2E())
+    case 'failNextLocalExecutorRequest': {
+      const { method, message } = JSON.parse(command.value ?? '{}') as {
+        method?: string
+        message?: string
+      }
+      if (!method) throw new Error('failNextLocalExecutorRequest requires a method')
+      void failNextLocalExecutorRequestForE2E(
+        method,
+        message ?? 'Desktop E2E intentional local executor failure'
+      )
       return ''
     }
     case 'clearRuntimeGoalDirectly':
@@ -2116,6 +2185,31 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         return pressDesktopControlKey(command.target ?? command.selector, command.key)
       }
       return ''
+    case 'getRuntimeLifecycleState': {
+      let snapshot: unknown = null
+      window.dispatchEvent(
+        new CustomEvent('wework:e2e:runtime-task-lifecycle', {
+          detail: {
+            address: JSON.parse(command.value ?? '{}'),
+            type: 'capture_snapshot',
+            capture: (state: RuntimeTaskLifecycleSnapshot | null) => {
+              snapshot = state
+                ? {
+                    key: state.key,
+                    execution: state.execution,
+                    turn: state.turn,
+                    goalStatus: state.goalStatus,
+                    unread: state.unread,
+                    derived: state.derived,
+                    task: summarizeRuntimeTaskExecution(state.task),
+                  }
+                : null
+            },
+          },
+        })
+      )
+      return JSON.stringify(snapshot)
+    }
     case 'activateRuntimeTaskCompletionNotification': {
       const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
       await invokeDesktopHost('e2e.activateNotification', {
@@ -2525,6 +2619,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'decodeImage': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      return JSON.stringify(await decodeDesktopControlImage(element))
+    }
     case 'getConversationSearchHighlightMetrics': {
       const containers = findDesktopControlElements(command.selector)
         .map(element => ({ element, ...readConversationSearchContent(element) }))

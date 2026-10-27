@@ -52,29 +52,43 @@ def completed_activity_for_turn(
     )
 
 
+def runtime_event_sequence(payload: dict) -> int | None:
+    """Return a positive Runtime event sequence, or None when it is unusable."""
+    raw_sequence = payload.get("eventSeq", payload.get("event_seq"))
+    if isinstance(raw_sequence, bool):
+        return None
+    try:
+        sequence = int(raw_sequence)
+    except (TypeError, ValueError):
+        return None
+    return sequence if sequence > 0 else None
+
+
 def can_restore_reconciled_completion(
-    db: Session, *, execution: LoopItemExecution, event_name: str, payload: dict
+    db: Session,
+    *,
+    execution: LoopItemExecution,
+    event_name: str,
+    payload: dict,
+    activity: ProjectChatMessage | None = None,
 ) -> bool:
     """Allow final text repair after a snapshot won the terminal-state race."""
     if event_name != "response.completed":
         return False
-    raw_sequence = payload.get("eventSeq", payload.get("event_seq"))
-    if isinstance(raw_sequence, bool):
-        return False
-    try:
-        sequence = int(raw_sequence)
-    except (TypeError, ValueError):
+    sequence = runtime_event_sequence(payload)
+    if sequence is None:
         return False
     # Keep the aggregate -> activity lock order and read the concurrent winner.
     db.refresh(execution, with_for_update=True)
     if execution.status != "completed" or sequence <= execution.last_event_seq:
         return False
-    activity = completed_activity_for_turn(
-        db,
-        device_ids=[execution.runtime_device_id],
-        task_id=execution.runtime_task_id,
-        turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
-    )
+    if activity is None:
+        activity = completed_activity_for_turn(
+            db,
+            device_ids=[execution.runtime_device_id],
+            task_id=execution.runtime_task_id,
+            turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
+        )
     return activity is not None and (
         str((activity.metadata_json or {}).get("execution_id")) == str(execution.id)
         and "runtime_completed_at" in (activity.metadata_json or {})

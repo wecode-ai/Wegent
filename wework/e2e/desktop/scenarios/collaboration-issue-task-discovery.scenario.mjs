@@ -209,9 +209,15 @@ export function createDesktopScenario({
       control,
       'The workbench did not reload after enabling experimental features'
     )
-    await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]', {
+    await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+      visible: true,
       timeoutMs: workbenchReadyTimeoutMs,
     })
+    await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+      visible: true,
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
     await selectCollaborationDomain(control, CONTENT, 'cloud')
     await control.command(
       'waitFor',

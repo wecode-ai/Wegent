@@ -1,6 +1,17 @@
-export async function runWithCheckpointResources({ checkpoints, workerCount, resourceFor, run }) {
+export async function runWithCheckpointResources({
+  checkpoints,
+  workerCount,
+  resourceFor,
+  exclusiveFor = () => false,
+  run,
+}) {
+  const exclusiveCheckpoints = checkpoints.filter(checkpoint => exclusiveFor(checkpoint))
+  for (const checkpoint of exclusiveCheckpoints) {
+    await run(checkpoint)
+  }
+  const parallelCheckpoints = checkpoints.filter(checkpoint => !exclusiveFor(checkpoint))
   const resourcesByCheckpoint = new Map(
-    checkpoints.map(checkpoint => {
+    parallelCheckpoints.map(checkpoint => {
       const configuredResources = resourceFor(checkpoint)
       const resources = Array.isArray(configuredResources)
         ? configuredResources
@@ -12,7 +23,7 @@ export async function runWithCheckpointResources({ checkpoints, workerCount, res
   )
   const constrainedResources = new Set()
   const resourceCounts = new Map()
-  for (const checkpoint of checkpoints) {
+  for (const checkpoint of parallelCheckpoints) {
     for (const resource of resourcesByCheckpoint.get(checkpoint)) {
       const count = (resourceCounts.get(resource) ?? 0) + 1
       resourceCounts.set(resource, count)
@@ -20,10 +31,10 @@ export async function runWithCheckpointResources({ checkpoints, workerCount, res
     }
   }
   const pending = [
-    ...checkpoints.filter(checkpoint =>
+    ...parallelCheckpoints.filter(checkpoint =>
       resourcesByCheckpoint.get(checkpoint).some(resource => constrainedResources.has(resource))
     ),
-    ...checkpoints.filter(
+    ...parallelCheckpoints.filter(
       checkpoint =>
         !resourcesByCheckpoint.get(checkpoint).some(resource => constrainedResources.has(resource))
     ),
