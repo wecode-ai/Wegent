@@ -279,7 +279,8 @@ export interface CollaborationOwnedAgent extends CollaborationAgent {
   owner_type: "user" | "workspace";
   owner_id: string;
   owner_name: string;
-  status: "available" | "unavailable";
+  /** Catalog reads do not promise execution readiness; launch revalidates it. */
+  status: "available" | "unavailable" | "unchecked";
   execution_environment_ids: string[];
   project_binding_input?: Record<string, unknown>;
 }

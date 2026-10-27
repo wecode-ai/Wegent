@@ -21,11 +21,15 @@ class _DependencyReader(KindReader):
     """Use the standard personal/public/group selection on prefetched rows."""
 
     def __init__(self, db: Session) -> None:
+        """
+        Initialize request-local dependency state without persisting authorization.
+        """
         self.db = db
         self._owned: dict[DependencyRef, Kind] = {}
         self._groups: dict[tuple[KindType, str, str], Kind] = {}
 
     def load(self, references: set[DependencyRef]) -> None:
+        """Load active dependency references under the standard ownership rules."""
         requests = [
             {
                 "owner": owner,
@@ -66,16 +70,19 @@ class _DependencyReader(KindReader):
     def get_personal(
         self, db: Session, user_id: int, kind: KindType, namespace: str, name: str
     ) -> Kind | None:
+        """Return the prefetched dependency for the exact personal identity."""
         return self._owned.get((user_id, kind, namespace, name))
 
     def get_public(
         self, db: Session, kind: KindType, namespace: str, name: str
     ) -> Kind | None:
+        """Return the prefetched dependency owned by the public identity."""
         return self._owned.get((0, kind, namespace, name))
 
     def get_group(
         self, db: Session, kind: KindType, namespace: str, name: str
     ) -> Kind | None:
+        """Return the prefetched dependency from the requested group namespace."""
         return self._groups.get((kind, namespace, name))
 
 
@@ -83,6 +90,9 @@ class TeamReadinessContext:
     """Own dependency and permission results for exactly one catalog read."""
 
     def __init__(self, db: Session, teams: list[Kind], execution_user_id: int) -> None:
+        """
+        Initialize request-local dependency state without persisting authorization.
+        """
         self.db = db
         self.execution_user_id = execution_user_id
         self.reader = _DependencyReader(db)
@@ -106,11 +116,13 @@ class TeamReadinessContext:
         self._load_bot_dependencies(bot_refs)
 
     def capabilities(self, user_id: int) -> ExecutionCapabilityLookup:
+        """Keep capability caches separate for each execution identity."""
         if user_id not in self._capabilities:
             self._capabilities[user_id] = ExecutionCapabilityLookup(self.db, user_id)
         return self._capabilities[user_id]
 
     def _load_bot_dependencies(self, references: set[DependencyRef]) -> None:
+        """Collect Ghosts, Shells and model names from resolved member Bots."""
         ghosts: set[DependencyRef] = set()
         for owner, kind, namespace, name in references:
             bot = self.reader.get_by_name_and_namespace(

@@ -36,6 +36,9 @@ def _kind(user_id: int, kind: str, name: str, spec: dict, namespace="default"):
 
 
 def _catalog(db: Session, user_id: int, owner_id: int, size: int) -> Namespace:
+    """
+    Create distinct agent dependencies and identity-scoped models at catalog scale.
+    """
     prefix = uuid.uuid4().hex[:8]
     group = Namespace(name=f"catalog-{prefix}", owner_user_id=owner_id)
     db.add(group)
@@ -102,6 +105,7 @@ async def test_resource_catalog_batches_distinct_dependencies_and_entity_permiss
     record_property,
     size: int,
 ) -> None:
+    """Keep dependency and group lookups bounded as distinct agent count grows."""
     group = _catalog(test_db, test_user.id, test_admin_user.id, size)
     resolver = Mock(spec=external_entity_resolver.IExternalEntityResolver)
     resolver.get_resource_ids_by_entity.return_value = [group.id]
@@ -125,6 +129,7 @@ async def test_resource_catalog_batches_distinct_dependencies_and_entity_permiss
     statements: list[str] = []
 
     def record_sql(connection, cursor, statement, *args):
+        """Collect SELECT statements for the catalog query budget."""
         if statement.lstrip().upper().startswith("SELECT"):
             statements.append(statement)
 
@@ -169,6 +174,7 @@ async def test_runtime_model_readiness_is_resolved_once_per_request(
     monkeypatch: pytest.MonkeyPatch,
     size: int,
 ) -> None:
+    """Reuse runtime model resolution only within the current catalog request."""
     _catalog(test_db, test_user.id, test_admin_user.id, size)
     for bot in test_db.query(Kind).filter_by(user_id=test_user.id, kind="Bot"):
         bot.json = {

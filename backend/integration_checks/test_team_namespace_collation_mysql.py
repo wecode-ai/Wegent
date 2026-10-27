@@ -18,6 +18,7 @@ from app.models.resource_member import ResourceMember
 from app.services.adapters.team_kinds import team_kinds_service
 from app.services.execution.readiness_context import TeamReadinessContext
 from app.services.execution.team_readiness import validate_team_execution_readiness
+from app.services.workspaces.personal_resources import _list_owned_agents
 
 
 @pytest.fixture(scope="module")
@@ -49,6 +50,42 @@ def mysql_db(mysql_url: URL) -> Iterator[Session]:
             db.rollback()
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        None,
+        [],
+        {"displayName": 42},
+        {"displayName": ""},
+        {"displayName": "Review Agent"},
+    ],
+)
+def test_personal_catalog_projects_metadata_without_execution_specs(
+    mysql_db: Session, metadata: object
+) -> None:
+    """Verify native MySQL JSON projection handles supported and malformed metadata."""
+    name = f"catalog-{uuid.uuid4().hex}"
+    team = Kind(
+        user_id=42,
+        kind="Team",
+        name=name,
+        namespace="default",
+        json={"metadata": metadata, "spec": {"members": []}},
+        is_active=True,
+    )
+    mysql_db.add(team)
+    mysql_db.flush()
+
+    summaries = _list_owned_agents(mysql_db, 42, include_readiness=False)
+
+    assert len(summaries) == 1
+    assert summaries[0].id == team.id
+    assert summaries[0].status == "unchecked"
+    assert summaries[0].name == (
+        "Review Agent" if metadata == {"displayName": "Review Agent"} else name
+    )
 
 
 def _create_namespace_grants(db: Session, member_role: str) -> tuple[Namespace, Kind]:
@@ -115,6 +152,7 @@ def test_namespace_grants_with_connection_collation(
 
 
 def _resource(kind: str, name: str, spec: dict, user_id: int = 1) -> Kind:
+    """Build an active resource with the requested identity for MySQL coverage."""
     return Kind(
         user_id=user_id,
         kind=kind,
@@ -134,6 +172,7 @@ def _resource(kind: str, name: str, spec: dict, user_id: int = 1) -> Kind:
 def test_batched_readiness_preserves_database_name_matching(
     mysql_db: Session, collation: str, referenced_model: bool
 ) -> None:
+    """Preserve MySQL name matching for direct and approved dependency references."""
     mysql_db.execute(text(f"SET NAMES utf8mb4 COLLATE {collation}"))
     model = _resource(
         "Model",

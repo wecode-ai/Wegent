@@ -431,7 +431,9 @@ export function createSharedWorkspaceHttpApi(
         },
       },
       async list() {
-        return mapCollaborationPlatformResourcesDto(await get("/v1/resources"));
+        return mapCollaborationPlatformResourcesDto(
+          await get("/v1/resources?include_readiness=false"),
+        );
       },
       async removeAgent(agent) {
         if (agent.team_id == null) {

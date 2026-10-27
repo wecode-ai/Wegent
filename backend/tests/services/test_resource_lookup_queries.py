@@ -10,6 +10,7 @@ from app.services.resource_lookup_queries import named_kind_rows
 
 
 def test_large_lookup_batches_preserve_names_and_scope(test_db: Session) -> None:
+    """Preserve namespace and identity matching across the lookup batch boundary."""
     names = {f"model-{index}" for index in range(501)}
     test_db.add_all(
         Kind(user_id=1, kind="Model", namespace="default", name=name, json={})

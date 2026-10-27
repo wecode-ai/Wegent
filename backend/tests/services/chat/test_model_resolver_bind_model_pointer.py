@@ -331,6 +331,7 @@ class TestResolveModelForBotWithPointer:
     """End-to-end (mocked DB) reproduction of the qiqi10-style incident."""
 
     def test_pointer_model_whitelist_blocks_disallowed_override(self):
+        """Reject a bound model override outside the configured model whitelist."""
         bot = _make_bot(model_ref_name="test-pointer-model")
         pointer_spec = {
             "modelConfig": {

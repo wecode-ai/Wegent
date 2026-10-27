@@ -111,8 +111,9 @@ def personal_environment_values(
     *,
     connection_status: str,
     owner: User,
-    workspace_ids: list[str],
+    workspace_ids: list[str] | None,
 ) -> dict[str, object]:
+    """Expose selector device data, including bindings only when requested."""
     spec = _kind_spec(device)
     device_type = str(spec.get("deviceType") or "local")
     return {
@@ -129,7 +130,7 @@ def personal_environment_values(
         "owner_id": str(owner.id),
         "owner_name": owner.user_name,
         "status": connection_status,
-        "workspace_ids": workspace_ids,
+        **({"workspace_ids": workspace_ids} if workspace_ids is not None else {}),
         "updated_at": device.updated_at,
     }
 
@@ -177,12 +178,14 @@ def owner_values(
 def agent_display_name(team: Kind) -> str:
     """Use the user-facing Team name throughout collaboration catalogs."""
     payload = team.json if isinstance(team.json, dict) else {}
-    metadata = payload.get("metadata")
+    return agent_catalog_name(team.name, payload.get("metadata"))
+
+
+def agent_catalog_name(name: str, metadata: object) -> str:
+    """Resolve a display name without loading the Team's execution specification."""
     display_name = metadata.get("displayName") if isinstance(metadata, dict) else None
     return (
-        display_name
-        if isinstance(display_name, str) and display_name.strip()
-        else team.name
+        display_name if isinstance(display_name, str) and display_name.strip() else name
     )
 
 

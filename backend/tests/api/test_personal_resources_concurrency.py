@@ -34,6 +34,7 @@ class ResourceApp:
 
 @pytest.fixture
 def resource_app(test_db: Session, test_user: User) -> ResourceApp:
+    """Create a real API app with a session lifecycle observable by the test."""
     team = create_runnable_wegent_team(
         test_db, user_id=test_user.id, name_prefix="slow-resource"
     )
@@ -54,6 +55,7 @@ def resource_app(test_db: Session, test_user: User) -> ResourceApp:
     session_closed = threading.Event()
 
     def database() -> Iterator[Session]:
+        """Provide the request-owned session and record dependency cleanup."""
         try:
             with Session(bind=test_db.get_bind()) as db:
                 yield db
@@ -71,6 +73,7 @@ def resource_app(test_db: Session, test_user: User) -> ResourceApp:
 def _block_readiness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[asyncio.Event, threading.Event, threading.Event]:
+    """Hold real readiness work until the test releases its worker."""
     loop = asyncio.get_running_loop()
     loop_thread = threading.get_ident()
     started = asyncio.Event()
@@ -79,6 +82,7 @@ def _block_readiness(
     original_validate = team_readiness.validate_team_execution_readiness
 
     def slow_validate(*args, **kwargs) -> None:
+        """Record the validation thread and block until explicitly released."""
         assert threading.get_ident() != loop_thread
         loop.call_soon_threadsafe(started.set)
         assert release.wait(timeout=5), "Test did not release readiness validation"
@@ -88,6 +92,7 @@ def _block_readiness(
             finished.set()
 
     async def online_statuses(keys):
+        """Record the async device-status thread without external Redis access."""
         assert threading.get_ident() == loop_thread
         return {}
 
@@ -104,6 +109,7 @@ def _block_readiness(
 async def _wait_for_readiness(
     resources: asyncio.Task[httpx.Response], started: asyncio.Event
 ) -> None:
+    """Wait until the worker has entered its controlled validation boundary."""
     waiting = asyncio.create_task(started.wait())
     try:
         done, _ = await asyncio.wait(
@@ -121,11 +127,13 @@ async def _wait_for_readiness(
 async def test_slow_personal_agent_readiness_does_not_block_board(
     resource_app: ResourceApp, test_db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Require an authorized board request to finish while readiness stays pending."""
     started, release, _ = _block_readiness(monkeypatch)
     loop_thread = threading.get_ident()
     sql_threads: list[int] = []
 
     def record_sql(*args) -> None:
+        """Record SELECT statements and their executing threads."""
         sql_threads.append(threading.get_ident())
 
     connection = test_db.get_bind()
@@ -167,6 +175,7 @@ async def test_slow_personal_agent_readiness_does_not_block_board(
 async def test_cancelled_resource_request_waits_before_session_cleanup(
     resource_app: ResourceApp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Keep the database session alive until a cancelled request finishes its worker."""
     started, release, finished = _block_readiness(monkeypatch)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=resource_app.app), base_url="http://test"

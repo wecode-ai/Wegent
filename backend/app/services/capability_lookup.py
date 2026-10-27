@@ -20,6 +20,9 @@ class ExecutionCapabilityLookup:
     """Resolve one execution identity without retaining permissions across requests."""
 
     def __init__(self, db: Session, user_id: int) -> None:
+        """
+        Keep capability reads and permission results within one execution identity.
+        """
         self.db = db
         self.user_id = user_id
         self.names: dict[str, set[str]] = defaultdict(set)
@@ -32,6 +35,7 @@ class ExecutionCapabilityLookup:
 
     @property
     def groups(self) -> list[str]:
+        """Resolve current group membership once for this request."""
         from app.services.group_permission import get_user_groups
 
         if self._group_names is None:
@@ -41,12 +45,14 @@ class ExecutionCapabilityLookup:
     def personal(
         self, kind: str, name: str, namespace: str | None = None
     ) -> Kind | None:
+        """Read an active personal capability in the requested namespace."""
         filters = [Kind.user_id == self.user_id]
         if namespace is not None:
             filters.append(Kind.namespace == namespace)
         return self._read_direct(kind, name, ("personal", namespace), filters)
 
     def public(self, kind: str, name: str) -> Kind | None:
+        """Read an active public capability from the default namespace."""
         return self._read_direct(
             kind,
             name,
@@ -55,6 +61,7 @@ class ExecutionCapabilityLookup:
         )
 
     def runtime_model(self, name: str) -> dict[str, Any] | None:
+        """Resolve each runtime model once without caching across requests."""
         from app.services.runtime_codex_model import (
             get_enabled_codex_runtime_model_spec,
         )
@@ -66,6 +73,7 @@ class ExecutionCapabilityLookup:
         return self._runtime_models[name]
 
     def group(self, kind: str, name: str, namespaces: list[str]) -> Kind | None:
+        """Read an active capability from the authorized group namespaces."""
         if not namespaces:
             return None
         return self._read_direct(
@@ -73,6 +81,7 @@ class ExecutionCapabilityLookup:
         )
 
     def referenced(self, kind: str, name: str, namespace: str) -> Kind | None:
+        """Index approved references without changing their namespace authority."""
         references = self._references[kind]
         if namespace not in references:
             namespaces = (
@@ -99,6 +108,7 @@ class ExecutionCapabilityLookup:
         return references[namespace].get(name)
 
     def _match_model_reference_names(self, name: str) -> None:
+        """Match approved model references using the database name collation."""
         self.names["Model"].add(name)
         missing = self.names["Model"] - self._model_reference_names
         if not missing:
@@ -119,6 +129,7 @@ class ExecutionCapabilityLookup:
     def _read_direct(
         self, kind: str, name: str, scope: tuple, filters: list[ColumnElement[bool]]
     ) -> Kind | None:
+        """Batch pending names and retain both found and absent scoped results."""
         self.names[kind].add(name)
         index = self._direct.setdefault((kind, *scope), {})
         missing = self.names[kind] - index.keys()
@@ -132,6 +143,7 @@ class ExecutionCapabilityLookup:
         return index[name]
 
     def _include_model_pointers(self, kind: str, rows: list[Kind]) -> None:
+        """Include bound model targets in subsequent batched model reads."""
         if kind != "Model":
             return
         for row in rows:

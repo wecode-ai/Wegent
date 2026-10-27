@@ -786,7 +786,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         if (endpoint === '/v1/workspaces/workspace-1/projects') {
           return { items: [project] }
         }
-        if (endpoint === '/v1/resources') {
+        if (endpoint === '/v1/resources?include_readiness=false') {
           return {
             agents: [
               {

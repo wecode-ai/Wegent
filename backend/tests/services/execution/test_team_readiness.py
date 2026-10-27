@@ -128,6 +128,7 @@ def test_team_readiness_accepts_complete_execution_graph(
     test_user,
     batched: bool,
 ) -> None:
+    """Accept the same complete graph with direct and batched dependency readers."""
     team = _team_graph(test_db, user_id=test_user.id)
 
     validate_team_execution_readiness(
@@ -162,6 +163,7 @@ def test_team_readiness_rejects_incomplete_execution_graph(
     error: str,
     batched: bool,
 ) -> None:
+    """Reject each missing or invalid dependency in either readiness path."""
     team = _team_graph(test_db, user_id=test_user.id, **graph_options)
 
     with pytest.raises(ValueError, match=error):
@@ -179,6 +181,7 @@ def test_team_readiness_rejects_incomplete_execution_graph(
 def test_readiness_keeps_model_reference_in_execution_users_scope(
     test_db: Session, test_user, test_admin_user, batched: bool
 ) -> None:
+    """Resolve models as the execution user while preserving Team-owner dependencies."""
     team = _team_graph(test_db, user_id=test_admin_user.id)
     model = (
         test_db.query(Kind)
@@ -221,6 +224,7 @@ def test_readiness_keeps_model_reference_in_execution_users_scope(
 def test_readiness_preserves_public_model_whitelist(
     test_db: Session, test_user, batched: bool
 ) -> None:
+    """Enforce public model restrictions in both readiness paths."""
     team = _team_graph(test_db, user_id=test_user.id)
     model = (
         test_db.query(Kind)
@@ -262,6 +266,7 @@ def test_readiness_preserves_public_model_whitelist(
 def test_readiness_follows_model_pointers(
     test_db: Session, test_user, batched: bool, cycle: bool
 ) -> None:
+    """Resolve bound model targets without changing readiness semantics."""
     team = _team_graph(test_db, user_id=test_user.id)
     model = test_db.query(Kind).filter_by(kind="Model", user_id=test_user.id).one()
     target = _resource(
@@ -295,6 +300,7 @@ def test_readiness_follows_model_pointers(
 def test_readiness_retains_runner_selected_models(
     test_db: Session, test_user, batched: bool
 ) -> None:
+    """Avoid requiring a platform model for runner-selected execution policies."""
     team = _team_graph(test_db, user_id=test_user.id, include_model=False)
     bot = test_db.query(Kind).filter_by(kind="Bot", user_id=test_user.id).one()
     bot.json = {

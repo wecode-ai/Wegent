@@ -63,6 +63,7 @@ def _validate_team_member(
     execution_user_id: int,
     context: TeamReadinessContext | None,
 ) -> None:
+    """Validate the member Bot and its required execution dependencies."""
     bot_ref = member.botRef
     bot_label = f"{bot_ref.namespace}/{bot_ref.name}"
     reader = context.reader if context is not None else kindReader
@@ -105,6 +106,7 @@ def _validate_ghost(
     bot_crd: Bot,
     context: TeamReadinessContext | None,
 ) -> None:
+    """Validate the referenced Ghost under the Team owner identity."""
     ghost_ref = bot_crd.spec.ghostRef
     reader = context.reader if context is not None else kindReader
     ghost = reader.get_by_name_and_namespace(
@@ -133,6 +135,7 @@ def _validate_shell(
     bot_crd: Bot,
     context: TeamReadinessContext | None,
 ) -> None:
+    """Validate the referenced Shell under the Team owner identity."""
     shell_ref = bot_crd.spec.shellRef
     shell = get_shell_by_name(
         db,
@@ -164,6 +167,7 @@ def _validate_model(
     execution_user_id: int,
     context: TeamReadinessContext | None,
 ) -> None:
+    """Resolve model configuration and permissions as the execution user."""
     try:
         get_model_config_for_bot(
             db,
