@@ -1014,6 +1014,28 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.derived.canSend).toBe(true)
   })
 
+  test.each(['before', 'after'] as const)(
+    'does not restore a completed native turn from a stale snapshot %s executor settlement',
+    order => {
+      const store = new RuntimeTaskLifecycleStore(`settled-snapshot-${order}`)
+      const running = task({
+        running: true,
+        status: 'running',
+        turnStatus: 'inProgress',
+        threadStatus: 'active',
+        runtimeHandle: { lastTurnId: 'completed-native-turn' },
+      })
+      store.syncRuntimeWork(runtimeWork(running))
+      store.turnStarted(address, 'completed-native-turn')
+      store.turnSettled(address, 'completed-native-turn', 'succeeded')
+      if (order === 'after') store.executorSettled(address)
+      store.syncRuntimeWork(runtimeWork({ ...running, updatedAt: 2000 }))
+      expect(store.getTask(address)?.turn.active).toBe(false)
+      if (order === 'before') store.executorSettled(address)
+      expect(store.getTask(address)?.derived.canSend).toBe(true)
+    }
+  )
+
   test('settles a live turn when its active Goal is explicitly paused', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))

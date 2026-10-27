@@ -45,6 +45,14 @@ export function reduceRuntimeTaskLifecycle(
       const transitionMismatch =
         snapshotRunning !== null && expectedRunning !== null && snapshotRunning !== expectedRunning
       const snapshotConfirmsAutonomousTurn = isRuntimeTaskConfirmedActive(event.task)
+      const snapshotTurnId =
+        typeof event.task.runtimeHandle?.lastTurnId === 'string'
+          ? event.task.runtimeHandle.lastTurnId
+          : null
+      const snapshotTurnAlreadySettled =
+        snapshotTurnId !== null &&
+        snapshotTurnId === state.latestTurnId &&
+        state.turnOutcome !== null
       const snapshotRevivesSettledTaskWithoutIntent =
         (Boolean(state.task && isRuntimeTaskAuthoritativeCompletion(state.task)) ||
           (state.executionPhase === 'idle' && state.expectedExecutorRunning === false)) &&
@@ -53,6 +61,15 @@ export function reduceRuntimeTaskLifecycle(
         state.goalStatus !== 'active' &&
         state.expectedExecutorRunning !== true
       if (snapshotRevivesSettledTaskWithoutIntent) {
+        return state
+      }
+      if (
+        snapshotTurnAlreadySettled &&
+        snapshotConfirmsAutonomousTurn &&
+        state.executionPhase === 'idle' &&
+        expectedRunning !== true &&
+        !goalExecutionActive
+      ) {
         return state
       }
       if (
@@ -75,10 +92,10 @@ export function reduceRuntimeTaskLifecycle(
               : state.executionPhase
       const restoredTurnId =
         !hasIdentifiedActiveTurn &&
+        !snapshotTurnAlreadySettled &&
         snapshotConfirmsAutonomousTurn &&
-        isRuntimeTurnRunningStatus(event.task.turnStatus) &&
-        typeof event.task.runtimeHandle?.lastTurnId === 'string'
-          ? event.task.runtimeHandle.lastTurnId
+        isRuntimeTurnRunningStatus(event.task.turnStatus)
+          ? snapshotTurnId
           : null
       const turnPhase =
         queuedStatus || terminalStatus || snapshotRunning === false
