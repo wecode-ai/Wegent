@@ -214,6 +214,16 @@ export async function createDesktopScenario({
       return true
     },
     async verify(control) {
+      const preferences = JSON.parse(
+        await control.command('setAppPreferences', 'body', {
+          value: JSON.stringify({ replyPredictionsEnabled: false }),
+        })
+      )
+      assert.equal(
+        preferences.replyPredictionsEnabled,
+        false,
+        'Plugin account auth scenario must not start background reply predictions'
+      )
       const local = await cloud.waitForConnectedAppDevice()
       assert.equal((await api('/plugin-connections/automation')).enabled, true)
       await rm(sourceAuth)

@@ -2,6 +2,7 @@ import {
   loadRuntimeFileChangesDiff,
   revertRuntimeFileChanges,
 } from '@wegent/chat-core/runtime-file-changes'
+import { applyRequestUserInputResponseToBlock } from '@wegent/chat-core/runtime-user-input'
 import { useCallback } from 'react'
 import type { Dispatch } from 'react'
 import { ApiError } from '@/api/http'
@@ -83,6 +84,7 @@ import {
   applyRuntimeConversationAction,
   beginRuntimeConversationOperation,
   removeRuntimeConversationTurn,
+  updateRuntimeConversationBlocks,
 } from './runtimeConversationCache'
 import { findFileChangesBySubtaskId } from './runtimePaneMessages'
 import { isRuntimeTaskBusyError } from './runtimePaneStatus'
@@ -420,9 +422,8 @@ export function useWorkbenchRuntimeMessaging({
         : beginRuntimeConversationOperation(request.address)
       const isCurrent = options?.isCurrent ?? operation!.isCurrent
       let sendRequested = false
-      const isRequestUserInputResponse = Boolean(
+      const userInputResponse =
         request.requestUserInputResponse ?? request.request_user_input_response
-      )
       const optimisticUserMessage = options?.optimisticUserMessage
       const outboundRequestWithClientId = optimisticUserMessage
         ? {
@@ -433,10 +434,7 @@ export function useWorkbenchRuntimeMessaging({
       try {
         if (!isCurrent()) return false
         // Replies settle an existing native request and do not select a model.
-        if (
-          !isRequestUserInputResponse &&
-          blockRuntimeSendForUnavailableModel(request.address, options)
-        )
+        if (!userInputResponse && blockRuntimeSendForUnavailableModel(request.address, options))
           return false
         if (optimisticUserMessage) {
           applyRuntimeConversationAction(request.address, {
@@ -446,7 +444,7 @@ export function useWorkbenchRuntimeMessaging({
         }
         const outboundRequest = await prepareRuntimeSendRequest(outboundRequestWithClientId)
         if (!isCurrent()) return false
-        if (!options?.silentBusyRetry && !isRequestUserInputResponse) {
+        if (!options?.silentBusyRetry && !userInputResponse) {
           lifecycleStore.sendRequested(outboundRequest.address)
           sendRequested = true
         }
@@ -455,10 +453,14 @@ export function useWorkbenchRuntimeMessaging({
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
         }
-        if (options?.silentBusyRetry && !isRequestUserInputResponse) {
+        if (options?.silentBusyRetry && !userInputResponse) {
           lifecycleStore.sendRequested(outboundRequest.address)
         }
-        if (isRequestUserInputResponse) {
+        if (userInputResponse) {
+          // Terminal history may omit transient forms before work-list refresh finishes.
+          updateRuntimeConversationBlocks(outboundRequest.address, block =>
+            applyRequestUserInputResponseToBlock(block, userInputResponse)
+          )
           lifecycleStore.userInputResponded(outboundRequest.address)
         } else if (response.status === 'queued') {
           lifecycleStore.sendQueued(outboundRequest.address, response.queuePosition)

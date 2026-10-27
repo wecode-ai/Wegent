@@ -526,7 +526,7 @@ def test_managed_final_event_restores_content_during_outcome_snapshot(
     test_db.expire_all()
     assert row.content == "Complete answer from the real Runtime"
     assert row.status == execution.status == "completed"
-    assert execution.last_event_seq == 10
+    assert execution.last_event_seq == 12
     assert row.metadata_json["runtime_turn_id"] == "turn-1"
 
 

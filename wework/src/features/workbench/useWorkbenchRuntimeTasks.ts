@@ -58,9 +58,9 @@ import type {
   RefreshWorkLists,
 } from './workbenchContextTypes'
 import {
+  archiveRuntimeConversation,
   beginRuntimeConversationHydration,
   completeRuntimeConversationHydration,
-  evictRuntimeConversation,
 } from './runtimeConversationCache'
 import { archiveRuntimeTaskAddresses, findFailedRuntimeTaskArchive } from './runtimeTaskArchive'
 import { logRuntimeQueueStage } from './runtimeQueueDiagnostics'
@@ -318,7 +318,7 @@ export function useWorkbenchRuntimeTasks({
         ...archiveResults.flatMap(result => (result.response?.accepted ? [result.address] : [])),
       ]
       if (archivedAddresses.length > 0) {
-        archivedAddresses.forEach(evictRuntimeConversation)
+        archivedAddresses.forEach(archiveRuntimeConversation)
         archivedAddresses.forEach(address => lifecycleStore.remove(address))
         archivedAddresses.forEach(address => logRuntimeQueueStage(address, 'queue-archive-evicted'))
         markRuntimeTasksArchived(archivedAddresses)

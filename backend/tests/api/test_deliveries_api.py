@@ -142,6 +142,103 @@ def test_todo_attachment_flow(
     assert not delivery_storage.objects
 
 
+@pytest.mark.parametrize(
+    ("filename", "encoded_filename"),
+    [
+        (
+            "截屏 2026-10-19 17.53.45.png",
+            "%E6%88%AA%E5%B1%8F%202026-10-19%2017.53.45.png",
+        ),
+        ("café.png", "caf%C3%A9.png"),
+    ],
+)
+def test_todo_attachment_content_supports_non_ascii_filename(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+    filename: str,
+    encoded_filename: str,
+) -> None:
+    item_id = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Chinese attachment name"},
+    ).json()["id"]
+    uploaded = test_client.post(
+        f"/api/v1/loop-items/{item_id}/attachments",
+        headers=_auth(test_token),
+        files={"file": (filename, b"image-bytes", "image/png")},
+    )
+    assert uploaded.status_code == 201
+
+    content = test_client.get(
+        f"/api/v1/loop-item-attachments/{uploaded.json()['id']}/content",
+        headers=_auth(test_token),
+    )
+
+    assert content.status_code == 200
+    assert content.content == b"image-bytes"
+    assert content.headers["content-type"].startswith("image/png")
+    assert (
+        content.headers["content-disposition"]
+        == f"inline; filename*=UTF-8''{encoded_filename}"
+    )
+    assert len(delivery_storage.objects) == 1
+
+
+@pytest.mark.parametrize(
+    ("filename", "encoded_filename"),
+    [
+        ("结果.txt", "%E7%BB%93%E6%9E%9C.txt"),
+        ("café.txt", "caf%C3%A9.txt"),
+    ],
+)
+def test_delivery_asset_content_supports_non_ascii_filename(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+    filename: str,
+    encoded_filename: str,
+) -> None:
+    item = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Delivery filename"},
+    )
+    assert item.status_code == 201
+    draft = test_client.post(
+        f"/api/v1/loop-items/{item.json()['id']}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "# Result"},
+    )
+    assert draft.status_code == 201
+    delivery_id = draft.json()["id"]
+    uploaded = test_client.post(
+        f"/api/v1/deliveries/{delivery_id}/assets",
+        headers=_auth(test_token),
+        data={"relative_path": "result.txt"},
+        files={"file": (filename, b"delivered result", "text/plain")},
+    )
+    assert uploaded.status_code == 201
+    content_url = f"/api/v1/delivery-assets/{uploaded.json()['id']}/content"
+    assert test_client.get(content_url, headers=_auth(test_token)).status_code == 404
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{delivery_id}/finalize", headers=_auth(test_token)
+    )
+    assert finalized.status_code == 200
+
+    content = test_client.get(content_url, headers=_auth(test_token))
+
+    assert content.status_code == 200
+    assert content.content == b"delivered result"
+    assert content.headers["content-type"].startswith("text/plain")
+    assert content.headers["content-disposition"] == (
+        f"inline; filename*=UTF-8''{encoded_filename}"
+    )
+
+
 @pytest.fixture
 def delivery_project(test_db: Session, test_user: User) -> CloudProject:
     public_id = str(uuid.uuid4())
