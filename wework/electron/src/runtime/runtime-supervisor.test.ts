@@ -258,6 +258,10 @@ describe('RuntimeSupervisor', () => {
       { timeout: 3_000 }
     )
     await supervisor.stop()
+    if (process.platform === 'win32') {
+      // Windows stop must wait for taskkill's descendant operation, not just the leader event.
+      expect(processIsAlive(grandchildPid)).toBe(false)
+    }
     await vi.waitFor(() => expect(processIsAlive(grandchildPid)).toBe(false), {
       timeout: 3_000,
     })

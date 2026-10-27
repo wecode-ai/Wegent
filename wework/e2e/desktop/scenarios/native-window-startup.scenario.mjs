@@ -4,23 +4,15 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { telemetryEvents } from '../modules/response-protocol.mjs'
 import { verifyStartupRecovery } from '../modules/startup-recovery.mjs'
+import {
+  assertStartupProgressStages,
+  parseStartupEvents,
+  verifyStartupSplashProgress,
+} from '../modules/startup-splash-progress.mjs'
+import { resolveDesktopPackageLayout } from '../modules/desktop-package-layout.mjs'
 
 const SPLASH_CLOSE_TIMEOUT_MS = 10_000
 const SPLASH_CLOSE_POLL_INTERVAL_MS = 50
-
-function parseStartupEvents(appLog) {
-  const events = []
-  for (const match of appLog.matchAll(/\[startup\]\s+\{([\s\S]*?)\}/g)) {
-    const body = match[1]
-    const step = body.match(/\bstep:\s*'([^']+)'/)?.[1]
-    const status = body.match(/\bstatus:\s*'([^']+)'/)?.[1]
-    const elapsedMs = Number(body.match(/\belapsedMs:\s*(\d+)/)?.[1])
-    if (step && status && Number.isFinite(elapsedMs)) {
-      events.push({ step, status, elapsedMs })
-    }
-  }
-  return events
-}
 
 function startupEventIndex(events, step, status) {
   return events.findIndex(event => event.step === step && event.status === status)
@@ -61,6 +53,26 @@ async function waitForStartupLogs(resultDir) {
   assert.fail(`The Electron startup log did not contain the required stages:\n${appLog}`)
 }
 
+async function waitForMainProcessLog(resultDir) {
+  const logPath = join(resultDir, 'electron-user-data', 'logs', 'wework-main.log')
+  const deadline = Date.now() + SPLASH_CLOSE_TIMEOUT_MS
+  let mainLog = ''
+
+  do {
+    mainLog = await readFile(logPath, 'utf8').catch(() => '')
+    if (
+      mainLog.includes("step: 'desktop-runtime-start'") &&
+      mainLog.includes("step: 'renderer-startup-ready'") &&
+      mainLog.includes("step: 'startup-splash-close'")
+    ) {
+      return mainLog
+    }
+    await delay(SPLASH_CLOSE_POLL_INTERVAL_MS)
+  } while (Date.now() < deadline)
+
+  assert.fail(`The durable main-process log did not capture startup stages:\n${mainLog}`)
+}
+
 export async function createDesktopScenario({ resultDir }) {
   let restartDesktopApp
   return {
@@ -71,7 +83,9 @@ export async function createDesktopScenario({ resultDir }) {
     },
 
     async verify(control) {
-      await verifyStartupRecovery({ appBinary: process.env.WEWORK_E2E_APP_BIN, resultDir })
+      const { versionBinary } = await resolveDesktopPackageLayout(process.env.WEWORK_E2E_APP_BIN)
+      await verifyStartupSplashProgress({ appBinary: versionBinary, resultDir })
+      await verifyStartupRecovery({ appBinary: versionBinary, resultDir })
       const snapshot = await waitForClosedStartupSplash(control)
       assert.deepEqual(
         snapshot.events.map(event => event.name),
@@ -90,6 +104,11 @@ export async function createDesktopScenario({ resultDir }) {
         'The Electron startup splash evidence was not a PNG'
       )
       const appLog = await waitForStartupLogs(resultDir)
+      const mainProcessLog = await waitForMainProcessLog(resultDir)
+      assert.ok(
+        mainProcessLog.includes("step: 'startup-splash-close'"),
+        'The durable main-process log did not capture the splash closing'
+      )
       const startupReady = appLog.indexOf("step: 'renderer-startup-ready'")
       const taskListReady = appLog.indexOf("source: 'task-list'", startupReady)
       const splashClosed = appLog.indexOf("step: 'startup-splash-close'")
@@ -99,6 +118,7 @@ export async function createDesktopScenario({ resultDir }) {
         'The startup stages were logged out of order'
       )
       const runtimeStartupEvents = parseStartupEvents(appLog)
+      assertStartupProgressStages(runtimeStartupEvents)
       const corePrepareStarted = startupEventIndex(
         runtimeStartupEvents,
         'core-dsh-prepare',

@@ -54,10 +54,7 @@ await withTemporaryBuildDirectory({
   builds: [
     () =>
       configuredExecutorPath
-        ? waitForConfiguredExecutor(
-            resolve(configuredExecutorPath),
-            process.env.WEWORK_EXECUTOR_WAIT_SECONDS
-          )
+        ? prepareConfiguredNativeExecutables()
         : buildExecutor(executorProfile, packageTargets.cargoTarget, executorTargetDirectory),
     () => run(pnpmCommand, ['prepare:codex', '--materialize'], weworkRoot, packageEnvironment),
     () => run(pnpmCommand, ['prepare:dws'], weworkRoot, packageEnvironment),
@@ -70,7 +67,7 @@ await withTemporaryBuildDirectory({
       ),
     output => buildDshApp(output),
   ],
-  consume: async ([executorPath], appWebRoot) => {
+  consume: async ([{ executorPath, launcherPath }], appWebRoot) => {
     await rm(resourcesRoot, { recursive: true, force: true })
     await mkdir(join(resourcesRoot, 'bin'), { recursive: true, mode: 0o700 })
     const runtimeCatalog = JSON.parse(
@@ -126,6 +123,9 @@ await withTemporaryBuildDirectory({
     const executorName = targetExecutableName(packageTargets.cargoTarget, 'wegent-executor')
     const packagedExecutor = join(resourcesRoot, 'bin', executorName)
     await cp(executorPath, packagedExecutor)
+    if (launcherPath) {
+      await cp(launcherPath, join(resourcesRoot, 'bin', 'wework-launcher.exe'))
+    }
     if (process.platform !== 'win32') await chmod(packagedExecutor, 0o755)
     const executorSha256 = await hashComponentPath(packagedExecutor)
     const dwsName = targetExecutableName(packageTargets.dwsTarget, 'dws')
@@ -225,6 +225,7 @@ async function buildDshApp(output) {
 }
 
 async function buildExecutor(profile, target, targetDirectory) {
+  const windows = target.includes('windows')
   const buildArgs = [
     'build',
     '--manifest-path',
@@ -232,13 +233,55 @@ async function buildExecutor(profile, target, targetDirectory) {
     ...(profile === 'release' ? ['--release'] : []),
     '--bin',
     'wegent-executor',
+    ...(windows ? ['--bin', 'wework-launcher'] : []),
   ]
   if (target) buildArgs.push('--target', target)
   await run('cargo', buildArgs, repositoryRoot, {
     ...process.env,
     CARGO_TARGET_DIR: targetDirectory,
   })
-  return executorPackageBinaryPath(targetDirectory, target, profile)
+  return {
+    executorPath: executorPackageBinaryPath(targetDirectory, target, profile),
+    launcherPath: windows ? join(targetDirectory, target, profile, 'wework-launcher.exe') : null,
+  }
+}
+
+async function prepareConfiguredNativeExecutables() {
+  const executorPath = await waitForConfiguredExecutor(
+    resolve(configuredExecutorPath),
+    process.env.WEWORK_EXECUTOR_WAIT_SECONDS
+  )
+  if (!packageTargets.cargoTarget.includes('windows')) return { executorPath, launcherPath: null }
+  if (process.env.WEWORK_LAUNCHER_PATH?.trim()) {
+    const launcherPath = resolve(process.env.WEWORK_LAUNCHER_PATH.trim())
+    if (!(await stat(launcherPath)).isFile())
+      throw new Error('Configured Windows launcher is missing')
+    return { executorPath, launcherPath }
+  }
+  await run(
+    'cargo',
+    [
+      'build',
+      '--manifest-path',
+      join(executorRoot, 'Cargo.toml'),
+      ...(executorProfile === 'release' ? ['--release'] : []),
+      '--bin',
+      'wework-launcher',
+      '--target',
+      packageTargets.cargoTarget,
+    ],
+    repositoryRoot,
+    { ...process.env, CARGO_TARGET_DIR: executorTargetDirectory }
+  )
+  return {
+    executorPath,
+    launcherPath: join(
+      executorTargetDirectory,
+      packageTargets.cargoTarget,
+      executorProfile,
+      'wework-launcher.exe'
+    ),
+  }
 }
 
 async function waitForConfiguredExecutor(path, configuredWaitSeconds) {

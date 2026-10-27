@@ -14,6 +14,18 @@ If the error persists after refreshing, open the debug panel to view the logs an
 the steps that reproduce the problem. If the renderer process or the entire application
 exits and does not recover, reopen Wework.
 
+## Startup is slow or fails
+
+The startup splash shows the current stage and the file being scanned or unpacked. When a
+single stage makes no progress for a long time it shows the "first startup can take longer"
+reminder, which means loading is still running rather than having crashed. A hard failure
+shows the reason directly.
+
+Select **Copy diagnostics** on the splash, and **Open log folder** when the raw logs are
+needed. The copied text already includes the startup stage timeline, failure message,
+runtime state, and recent logs, so it can be sent to support as is. Logs live in the
+application data `logs` directory.
+
 ## Models and tasks
 
 - Check Codex sign-in or the local model URL under **Settings → Models**.

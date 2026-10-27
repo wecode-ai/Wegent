@@ -12,6 +12,7 @@ import identityModule from './build-identity.cjs'
 import builderConfig from '../electron-builder.config.cjs'
 import macosAppIcon from './macos-app-icon.cjs'
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
+import { finalizeWindowsVersionPackage } from './windows-version-package.mjs'
 
 // Electron-as-Node otherwise treats app.asar as a virtual directory during cleanup.
 process.noAsar = true
@@ -131,6 +132,16 @@ try {
         ['--force', '--deep', '--sign', '-', join(application, `${identity.productName}.app`)],
         electronRoot
       )
+    }
+  } else if (process.platform === 'win32') {
+    for (const application of applications) {
+      await finalizeWindowsVersionPackage({
+        appOutDir: application,
+        version: sourcePackage.version,
+        arch: process.arch,
+        executableName: identity.executableName,
+        launcherPath: join(application, 'resources', 'bin', 'wework-launcher.exe'),
+      })
     }
   }
 } finally {

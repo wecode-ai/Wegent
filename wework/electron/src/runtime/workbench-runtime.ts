@@ -1,6 +1,7 @@
 import type { DshRuntimeOptions } from './dsh-runtime.js'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import { DshRuntime } from './dsh-runtime.js'
+import { stopServices } from './stop-services.js'
 
 const FORBIDDEN_ENVIRONMENT_PREFIXES = [
   'WEWORK_ELECTRON_HOST_',
@@ -95,7 +96,12 @@ export class WorkbenchRuntimeManager {
   async stop(): Promise<void> {
     const runtimes = [...this.runtimes.values()]
     this.runtimes.clear()
-    await Promise.allSettled(runtimes.map(runtime => runtime.stop()))
+    await stopServices(
+      runtimes.map((runtime, index) => ({
+        name: `workbench runtime ${index + 1}`,
+        stop: () => runtime.stop(),
+      }))
+    )
   }
 }
 

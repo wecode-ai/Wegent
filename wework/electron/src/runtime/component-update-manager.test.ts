@@ -34,6 +34,25 @@ afterEach(async () => {
 })
 
 describe('ComponentUpdateManager', () => {
+  test('complete installations ignore broken legacy state and rebuild caches entirely offline', async () => {
+    const fixture = await createFixture()
+    const state = join(fixture.data, 'managed-components', 'state.json')
+    await mkdir(dirname(state), { recursive: true })
+    await writeFile(state, 'unreadable legacy update state')
+    const offline = async (): Promise<Response> => {
+      throw new Error('Network must not be needed')
+    }
+    const first = await createManager(fixture, offline).prepareBundledStartup()
+    expect(first.executor).toBe(join(fixture.resources, 'bin', 'wegent-executor'))
+    await rm(join(fixture.data, 'managed-components'), { recursive: true })
+    const repaired = await createManager(fixture, offline).prepareBundledStartup()
+    expect(
+      await readFile(
+        join(repaired.weworkCorePlugins, 'wework-app', 'web', 'vendor', 'static.js'),
+        'utf8'
+      )
+    ).toBe('stable static')
+  })
   test('publishes complete plugin content and shares concurrent initialization', async () => {
     const fixture = await createFixture()
     const manager = createManager(fixture, async () => new Response(null, { status: 404 }))

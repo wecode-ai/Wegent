@@ -48,6 +48,8 @@ export async function buildRelease(environment = process.env, runBuild = run) {
 }
 
 export function releaseBuildEnvironments(environment = process.env) {
+  const platform = environment.WEWORK_RELEASE_PLATFORM?.trim() || process.platform
+  if (platform === 'windows' || platform === 'win32') return [{}]
   const buildOnlineUpdate =
     environment.WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS?.trim().toLowerCase() !== 'true'
   return [{}, ...(buildOnlineUpdate ? [{ WEWORK_ONLINE_UPDATE_BUILD: 'true' }] : [])]

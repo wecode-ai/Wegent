@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
+import { resolveDesktopPackageLayout } from './desktop-package-layout.mjs'
 
 import {
   closeBottomWorkspacePanel,
@@ -531,7 +532,8 @@ async function buildDesktopApp(appIdentifier, codexBinary) {
     'Electron desktop E2E requires WEWORK_E2E_APP_BIN from pnpm ai:verify:electron:build'
   )
   const binaryPath = await resolveExecutable(configured, 'app', 'Configured Wework Electron app')
-  return cloneMacElectronApp(binaryPath, appIdentifier, codexBinary)
+  const layout = await resolveDesktopPackageLayout(binaryPath)
+  return cloneMacElectronApp(layout.versionBinary, appIdentifier, codexBinary)
 }
 
 async function verifyConnectedModelsOnLocalExecution({

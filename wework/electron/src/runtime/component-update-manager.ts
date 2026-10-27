@@ -112,6 +112,7 @@ export interface ComponentUpdateManagerOptions {
   retryDelay?: (attempt: number) => Promise<void>
   log?: (event: Record<string, unknown>) => void
   validateExecutor?: (path: string) => Promise<void>
+  onScanFile?: (relativePath: string) => void
 }
 
 export class ComponentUpdateManager {
@@ -133,10 +134,12 @@ export class ComponentUpdateManager {
   } | null = null
   private packaged: PackagedComponentManifest | null = null
   private readonly validateExecutor: (path: string) => Promise<void>
+  private readonly onScanFile: (relativePath: string) => void
   private usingPackagedFallback = false
 
   constructor(options: ComponentUpdateManagerOptions) {
     this.validateExecutor = options.validateExecutor ?? (async () => undefined)
+    this.onScanFile = options.onScanFile ?? (() => undefined)
     this.log = event => options.log?.({ stageId: this.activeStage?.id, ...event })
     this.resourcesRoot = resolve(options.resourcesRoot)
     this.root = join(resolve(options.dataDirectory), 'managed-components')
@@ -197,6 +200,13 @@ export class ComponentUpdateManager {
       return this.checkedPaths(packaged)
     }
     if (state !== saved) await this.writeState(state)
+    return paths
+  }
+
+  async prepareBundledStartup(): Promise<ComponentPaths> {
+    // Complete version installations never activate independently staged code.
+    const paths = await this.resolvePaths(await this.packagedManifest())
+    await this.validateExecutor(paths.executor)
     return paths
   }
 
@@ -536,7 +546,9 @@ export class ComponentUpdateManager {
         } else {
           const root = this.componentRoot(id, active.archiveSha256)
           const managedPath = active.entryPath === '.' ? root : join(root, active.entryPath)
-          if (await componentMatches(managedPath, active.contentSha256)) {
+          if (
+            await componentMatches(managedPath, active.contentSha256, file => this.onScanFile(file))
+          ) {
             path = managedPath
           } else if (active.contentSha256 === packagedComponent.sha256) {
             path = join(this.resourcesRoot, packagedComponent.path)
@@ -921,9 +933,13 @@ function validateState(input: unknown): ComponentState {
   return input as unknown as ComponentState
 }
 
-async function componentMatches(path: string, expectedSha256: string): Promise<boolean> {
+async function componentMatches(
+  path: string,
+  expectedSha256: string,
+  onFile?: (relativePath: string) => void
+): Promise<boolean> {
   try {
-    return (await hashComponentPath(path)) === expectedSha256
+    return (await hashComponentPath(path, onFile)) === expectedSha256
   } catch {
     return false
   }

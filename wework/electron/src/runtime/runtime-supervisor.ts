@@ -1,6 +1,7 @@
 import {
   spawn,
   type ChildProcessWithoutNullStreams,
+  type ChildProcess,
   type SpawnOptionsWithoutStdio,
 } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
@@ -284,7 +285,8 @@ export async function terminateProcessTree(
   timeoutMs: number
 ): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return
-  const processGroupId = process.platform === 'win32' ? null : child.pid
+  if (process.platform === 'win32') return terminateWindowsProcessTree(child, timeoutMs)
+  const processGroupId = child.pid
   const exited = once(child, 'exit').then(() => true)
   signalProcessTree(child, 'SIGTERM')
   const timer = new Promise<false>(resolve => {
@@ -303,6 +305,78 @@ export async function terminateProcessTree(
   if (processGroupId && !(await waitForProcessGroupExit(processGroupId, timeoutMs))) {
     throw new Error(`Timed out waiting for process group ${processGroupId} to exit`)
   }
+}
+
+async function terminateWindowsProcessTree(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs: number
+): Promise<void> {
+  if (!child.pid) throw new Error('Cannot stop a Windows runtime without its PID')
+  await new Promise<void>((resolve, reject) => {
+    let killer: ChildProcess | undefined
+    let settled = false
+    let leaderExited = child.exitCode !== null || child.signalCode !== null
+    let treeStopped = false
+    let stderr = ''
+    const cleanup = () => {
+      clearTimeout(timer)
+      child.off('exit', onLeaderExit)
+      child.off('error', fail)
+      killer?.off('exit', onTaskkillExit)
+    }
+    const fail = (error: Error) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      // A failed tree stop blocks installation; killing taskkill cannot confirm runtime exit.
+      if (killer?.exitCode === null && killer.signalCode === null) killer.kill()
+      reject(error)
+    }
+    const finish = () => {
+      if (settled || !leaderExited || !treeStopped) return
+      settled = true
+      cleanup()
+      resolve()
+    }
+    const onLeaderExit = () => {
+      leaderExited = true
+      finish()
+    }
+    const onTaskkillExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (code !== 0) {
+        fail(
+          new Error(
+            `taskkill failed for runtime ${child.pid} (code=${code}, signal=${signal}): ${stderr.trim()}`
+          )
+        )
+        return
+      }
+      treeStopped = true
+      finish()
+    }
+    const timer = setTimeout(
+      () => fail(new Error(`Timed out waiting for Windows process tree ${child.pid} to exit`)),
+      timeoutMs
+    )
+    child.once('exit', onLeaderExit)
+    child.once('error', fail)
+    try {
+      // Console runtimes require forced tree termination; await taskkill as well as the leader.
+      killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+        windowsHide: true,
+        stdio: ['ignore', 'ignore', 'pipe'],
+      })
+      killer.stderr?.setEncoding('utf8')
+      killer.stderr?.on('data', chunk => {
+        stderr = `${stderr}${String(chunk)}`.slice(-16_384)
+      })
+      killer.once('exit', onTaskkillExit)
+      // Retain this listener through kill cleanup so a late spawn/kill error is handled.
+      killer.on('error', fail)
+    } catch (error) {
+      fail(error instanceof Error ? error : new Error(String(error)))
+    }
+  })
 }
 
 async function waitForProcessGroupExit(
@@ -370,13 +444,6 @@ async function inspectProcessGroup(processGroupId: number): Promise<'absent' | '
 
 function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
   try {
-    if (process.platform === 'win32') {
-      // Console runtimes cannot receive taskkill's non-forced window-close request.
-      const args = ['/pid', String(child.pid), '/t', '/f']
-      const killer = spawn('taskkill', args, { windowsHide: true, stdio: 'ignore' })
-      killer.unref()
-      return
-    }
     if (child.pid) process.kill(-child.pid, signal)
     else child.kill(signal)
   } catch (error) {

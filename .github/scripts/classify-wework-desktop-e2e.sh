@@ -144,6 +144,14 @@ plugin_segments=(
 )
 formal_release_segments=(
   app-update-full
+  # Windows update checkpoints require complete version packages and the native launcher.
+  # wework-release-e2e.yml runs v2 checkpoints; wework-app.yml runs real legacy migration.
+  windows-update-install
+  windows-update-validation
+  windows-update-rollback
+  windows-update-recovery
+  windows-update-migration
+  windows-update-reinstall
 )
 cloud_worktree_segments=(
   cloud-worktree-capability
@@ -423,6 +431,12 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    # These real Windows suites run in the dedicated release workflows.
+    wework/e2e/desktop/scenarios/windows-update* | \
+      wework/e2e/desktop/modules/windows-update-fixtures.mjs | \
+      wework/e2e/desktop/modules/windows-nsis-controls.ps1)
+      return
+      ;;
     wework/e2e/desktop/scenarios/split-workbench.scenario.mjs)
       select_target "core:split-workbench"
       return
@@ -531,7 +545,12 @@ classify_wework_path() {
 
     # The native startup checkpoint owns splash-window creation and teardown.
     wework/electron/src/host/startup-splash* | \
-      wework/electron/src/shell/startup-splash/*)
+      wework/electron/src/host/startup-progress* | \
+      wework/electron/src/host/startup-diagnostics* | \
+      wework/electron/src/host/main-process-log* | \
+      wework/electron/src/shell/startup-splash/* | \
+      wework/e2e/desktop/modules/startup-splash-progress* | \
+      wework/e2e/desktop/scenarios/native-window-startup.scenario.mjs)
       select_target "core:native-window-startup"
       return
       ;;

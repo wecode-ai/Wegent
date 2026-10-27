@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test, vi } from 'vitest'
@@ -40,6 +40,22 @@ test('bounds concurrent file reads while preserving the canonical digest', async
     expect(reads.peak).toBeGreaterThan(1)
     expect(reads.peak).toBeLessThanOrEqual(8)
     expect(reads.active).toBe(0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('reports every scanned file relative to the component root', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-component-hash-'))
+  try {
+    await mkdir(join(root, 'nested'))
+    await writeFile(join(root, 'a.txt'), 'a')
+    await writeFile(join(root, 'nested', 'b.txt'), 'b')
+    const visited: string[] = []
+
+    await hashComponentPath(root, file => visited.push(file))
+
+    expect(visited.sort()).toEqual(['a.txt', join('nested', 'b.txt')])
   } finally {
     await rm(root, { recursive: true, force: true })
   }

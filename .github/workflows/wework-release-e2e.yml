@@ -6,8 +6,52 @@ on:
     paths:
       - .github/workflows/wework-app.yml
       - .github/workflows/wework-release-e2e.yml
+      - .github/workflows/wework-e2e.yml
       - .github/scripts/test-wework-shared-release.sh
+      - executor/src/bin/wework-launcher.rs
+      - executor/src/bin/wework_launcher/**
+      - executor/tests/wework_launcher.rs
+      - executor/tests/wework_launcher/**
+      - wework/electron/src/host/windows-app-update-service*
+      - wework/electron/src/host/native-update-handoff*
+      - wework/electron/src/host/physical-filesystem*
+      - wework/electron/src/host/version-*
+      - wework/electron/src/host/electron-capabilities.ts
+      - wework/electron/src/main.ts
+      - wework/electron/src/runtime/runtime-supervisor*
+      - wework/electron/src/runtime/stop-services*
+      - wework/electron/src/runtime/component-update-manager*
+      - wework/electron/src/runtime/desktop-components*
+      - wework/electron/src/runtime/workbench-runtime.ts
+      - wework/electron/src/runtime/desktop-runtime.ts
+      - wework/electron/scripts/windows-*
+      - wework/electron/scripts/build-release*
+      - wework/electron/scripts/package-app.mjs
+      - wework/electron/scripts/after-sign.cjs
+      - wework/electron/electron-builder.config.cjs
+      - wework/electron/scripts/stage-process-explorer*
+      - wework/electron/scripts/verify-windows-migration-lock*
+      - wework/scripts/*desktop*release*
+      - wework/scripts/*desktop*update*
+      - wework/scripts/update-channel-manifests*
+      - wework/scripts/windows-legacy-migration*
+      - wework/e2e/desktop/scenarios/windows-update*
+      - wework/e2e/desktop/modules/windows-update-fixtures.mjs
+      - wework/e2e/desktop/modules/desktop-package-layout*
+      - wework/e2e/desktop/modules/windows-nsis-controls.ps1
+      - wework/e2e/desktop/modules/startup-splash-progress*
+      - wework/e2e/desktop/checkpoints.mjs
+      - wework/e2e/desktop/run-checkpoints.mjs
+      - wework/e2e/desktop/modules/task-flow-main.mjs
+      - wework/e2e/desktop/modules/desktop-build-flows.mjs
   workflow_dispatch:
+    inputs:
+      suite:
+        description: Verification suite
+        type: choice
+        options: [shared-release, windows-update]
+        default: windows-update
+        required: true
 
 permissions:
   contents: write
@@ -16,7 +60,7 @@ jobs:
   shared-release:
     name: Preserve existing shared release
     # Fork workflows cannot create the isolated draft fixture with a read-only token.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: (github.event_name != 'workflow_dispatch' || inputs.suite == 'shared-release') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -26,3 +70,155 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: bash .github/scripts/test-wework-shared-release.sh
+
+  windows-update:
+    name: Real Windows complete-version updates
+    if: github.event_name != 'workflow_dispatch' || inputs.suite == 'windows-update'
+    runs-on: windows-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/windows-update-target
+      WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/windows-update-target
+      WEWORK_EXECUTOR_PROFILE: debug
+      ELECTRON_CACHE: ${{ github.workspace }}/.ci-cache/electron
+      WEGENT_CODEX_CACHE_DIR: ${{ github.workspace }}/.ci-cache/codex
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-workspace
+      - name: Install the independent Electron workspace and binary
+        shell: pwsh
+        run: |
+          pnpm --dir wework/electron install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to install Electron workspace dependencies' }
+          pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to prepare the Electron binary before parallel tests' }
+      - uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8f
+      - uses: ./.github/actions/setup-sccache
+      - name: Verify native process and filesystem recovery on Windows
+        run: cargo test --locked --manifest-path executor/Cargo.toml --test wework_launcher
+      - name: Verify stable launcher resource resolution
+        run: node --test wework/e2e/desktop/modules/desktop-package-layout.test.mjs wework/e2e/desktop/modules/startup-splash-progress.test.mjs
+      - name: Verify release packaging and channel contracts
+        shell: pwsh
+        run: |
+          pnpm --filter wework test electron/scripts/build-release.test.mjs electron/scripts/windows-version-package.test.mjs electron/scripts/stage-process-explorer.test.mjs electron/scripts/verify-windows-migration-lock.test.mjs scripts/desktop-component-release.test.mjs scripts/windows-legacy-migration.test.mjs scripts/generate-desktop-update-manifests.test.mjs scripts/update-channel-manifests.test.mjs scripts/publish-desktop-update-channel.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Release package contracts failed' }
+      - name: Verify real Windows runtime shutdown
+        run: pnpm --dir wework/electron test src/runtime/runtime-supervisor.test.ts src/runtime/runtime-supervisor.windows.test.ts src/host/windows-app-update-service.test.ts src/host/version-installation.test.ts
+      - name: Build the real Electron application and bundled runtime
+        run: pnpm --filter wework ai:verify:electron:build
+      - name: Resolve the versioned Windows installation
+        shell: pwsh
+        run: |
+          $root = (Resolve-Path 'wework/electron/release/WeWork-win32-x64').Path
+          $statePath = Join-Path $root 'update-state.json'
+          if (-not (Test-Path -LiteralPath $statePath)) { $statePath = Join-Path $root 'initial-update-state.json' }
+          $state = Get-Content -Raw $statePath | ConvertFrom-Json
+          if ($state.schemaVersion -ne 2) { throw 'Missing Windows v2 installation' }
+          $versionRoot = Join-Path $root $state.active.path
+          $resources = Join-Path $versionRoot 'resources'
+          $client = Join-Path $env:GITHUB_WORKSPACE 'wework/test-results/windows-update-client'
+          node wework/scripts/build-desktop-e2e-client.mjs $client
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to prepare the real desktop control client' }
+          @{
+            WEWORK_E2E_APP_BIN = Join-Path $root 'WeWork.exe'
+            WEWORK_E2E_EXECUTOR_BIN = Join-Path $resources 'bin/wegent-executor.exe'
+            WEWORK_E2E_CODEX_BIN = Join-Path $resources 'codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe'
+            WEWORK_E2E_SOCKET_IO_CLIENT = Join-Path $client 'socket.io-client.cjs'
+          }.GetEnumerator() | ForEach-Object {
+            if (-not (Test-Path -LiteralPath $_.Value -PathType Leaf)) { throw "Missing $($_.Key)" }
+            "$($_.Key)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+      - name: Prepare actual baseline and target Electron package versions
+        shell: pwsh
+        run: |
+          $fixtures = Join-Path $env:GITHUB_WORKSPACE 'wework/test-results/windows-update-fixtures'
+          node wework/e2e/desktop/modules/windows-update-fixtures.mjs $env:WEWORK_E2E_APP_BIN $fixtures
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to prepare complete version packages' }
+          "WEWORK_E2E_WINDOWS_UPDATE_FIXTURES=$(Join-Path $fixtures 'fixtures.json')" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Run real Windows update checkpoints as a standard user
+        timeout-minutes: 35
+        shell: pwsh
+        env:
+          CI: true
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
+          WEWORK_E2E_PARALLEL_SCOPE: core
+        run: |
+          $arguments = @(
+            'wework/e2e/desktop/run-checkpoints.mjs', '--parallel-segments',
+            'windows-update-install,windows-update-validation,windows-update-rollback,windows-update-recovery'
+          )
+          & ./.github/scripts/run-windows-standard-user-process.ps1 `
+            -FilePath (Get-Command node).Source @arguments
+      - name: Build a real unsigned full NSIS installer from the complete package
+        shell: pwsh
+        run: |
+          $root = (Resolve-Path 'wework/electron/release/WeWork-win32-x64').Path
+          $output = Join-Path $env:GITHUB_WORKSPACE 'wework/test-results/windows-unsigned-installer'
+          pnpm --dir wework/electron exec electron-builder --prepackaged $root --win nsis --x64 --publish never "-c.directories.output=$output"
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to build the real unsigned NSIS installer' }
+          $installers = @(Get-ChildItem -LiteralPath $output -Filter '*windows*x64*setup.exe' -File)
+          if ($installers.Count -ne 1) { throw 'Expected one full NSIS installer' }
+          $signature = Get-AuthenticodeSignature -LiteralPath $installers[0].FullName
+          @{
+            installer = $installers[0].Name
+            signature = $signature.Status.ToString()
+            purpose = 'Direct-install verification only; production updater signature checks remain enabled'
+          } | ConvertTo-Json | Set-Content 'wework/test-results/windows-unsigned-installer-signature.json' -Encoding utf8
+          "WEWORK_E2E_WINDOWS_MIGRATION_ASSETS=$output" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Download the actual published 0.5.10 Windows installation
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $destination = Join-Path $env:GITHUB_WORKSPACE 'wework/test-results/windows-legacy-installers/0.5.10'
+          New-Item -ItemType Directory -Force $destination | Out-Null
+          gh release download wework-v0.5.10 --repo wecode-ai/Wegent --pattern '*windows*x64*setup.exe' --dir $destination
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the actual 0.5.10 Windows installer' }
+          $installers = @(Get-ChildItem -LiteralPath $destination -Filter '*.exe' -File)
+          if ($installers.Count -ne 1) { throw 'Expected one real historical installer' }
+          $signature = Get-AuthenticodeSignature -LiteralPath $installers[0].FullName
+          if ($signature.Status -ne 'Valid') { throw "Published historical installer signature is $($signature.Status)" }
+          "WEWORK_E2E_LEGACY_WINDOWS_INSTALLER=$($installers[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          'WEWORK_E2E_LEGACY_WINDOWS_VERSION=0.5.10' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Verify direct NSIS overwrite, repeated installation, and the next v2 update
+        timeout-minutes: 20
+        shell: pwsh
+        env:
+          CI: true
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
+          WEWORK_E2E_PARALLEL_SCOPE: core
+        run: |
+          $arguments = @('wework/e2e/desktop/run-checkpoints.mjs', '--segment', 'windows-update-reinstall')
+          & ./.github/scripts/run-windows-standard-user-process.ps1 `
+            -FilePath (Get-Command node).Source @arguments
+      - name: Upload Windows update evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-complete-version-update-evidence
+          path: |
+            .ci-artifacts/windows-standard-user/*.log
+            wework/test-results/windows-unsigned-installer-signature.json
+            wework/test-results/desktop-e2e/**/windows-update-evidence.json
+            wework/test-results/desktop-e2e/**/windows-reinstall-evidence.json
+            wework/test-results/desktop-e2e/**/windows-reinstall-nsis.log
+            wework/test-results/desktop-e2e/**/windows-launcher.log
+            wework/test-results/desktop-e2e/**/*startup-evidence.json
+            wework/test-results/desktop-e2e/**/electron-user-data/logs/wework-main*.log
+            wework/test-results/desktop-e2e/**/failure.json
+            wework/test-results/desktop-e2e/**/app.log
+            wework/test-results/desktop-e2e/**/executor.log
+            wework/test-results/desktop-e2e/**/electron.log
+            wework/test-results/desktop-e2e/**/windows install/.updates/launcher.log
+          if-no-files-found: error
+          retention-days: 7

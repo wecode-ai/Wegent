@@ -6,19 +6,34 @@ import { fileURLToPath } from 'node:url'
 import { extract } from 'tar'
 
 const CORE_COMPONENT_PATTERN = /^WeworkComponent_coreDsh_.+\.tar\.gz$/
+const RUNTIME_DESCRIPTOR_PATTERN = /^harness-runtime-(?:macos|windows|linux)-.+\.json$/
 
 export async function collectHarnessRuntimeReleaseAssets(inputDirectory, outputDirectory) {
   const input = resolve(inputDirectory)
   const output = resolve(outputDirectory)
   await mkdir(output, { recursive: true })
-  const componentArchives = (await readdir(input))
-    .filter(name => CORE_COMPONENT_PATTERN.test(name))
-    .sort()
-  if (componentArchives.length === 0) {
-    throw new Error(`Core DSH component assets are unavailable: ${input}`)
+  const assets = await readdir(input)
+  const componentArchives = assets.filter(name => CORE_COMPONENT_PATTERN.test(name)).sort()
+  const directDescriptors = assets.filter(name => RUNTIME_DESCRIPTOR_PATTERN.test(name)).sort()
+  if (componentArchives.length === 0 && directDescriptors.length === 0) {
+    throw new Error(`Harness Runtime release assets are unavailable: ${input}`)
   }
   for (const archive of componentArchives) {
     await collectComponentArchive(join(input, archive), output)
+  }
+  for (const descriptor of directDescriptors) {
+    await collectRuntime(input, output, JSON.parse(await readFile(join(input, descriptor), 'utf8')))
+  }
+}
+
+export async function collectHarnessRuntimeDirectory(sourceRoot, outputDirectory) {
+  await mkdir(outputDirectory, { recursive: true })
+  const catalog = JSON.parse(await readFile(join(sourceRoot, 'runtimes.json'), 'utf8'))
+  if (!Array.isArray(catalog.runtimes) || catalog.runtimes.length === 0) {
+    throw new Error(`Harness Runtime catalog is invalid: ${sourceRoot}`)
+  }
+  for (const descriptor of catalog.runtimes) {
+    await collectRuntime(sourceRoot, outputDirectory, descriptor)
   }
 }
 
@@ -26,13 +41,7 @@ async function collectComponentArchive(archive, output) {
   const temporary = await mkdtemp(join(tmpdir(), 'wework-harness-runtime-release-'))
   try {
     await extract({ file: archive, cwd: temporary })
-    const catalog = JSON.parse(await readFile(join(temporary, 'runtimes.json'), 'utf8'))
-    if (!Array.isArray(catalog.runtimes) || catalog.runtimes.length === 0) {
-      throw new Error(`Harness Runtime catalog is invalid: ${archive}`)
-    }
-    for (const descriptor of catalog.runtimes) {
-      await collectRuntime(temporary, output, descriptor)
-    }
+    await collectHarnessRuntimeDirectory(temporary, output)
   } finally {
     await rm(temporary, { recursive: true, force: true })
   }

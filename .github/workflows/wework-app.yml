@@ -415,6 +415,137 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare signed Windows historical upgrade verification
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+          RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
+        run: |
+          $root = (Resolve-Path 'wework/electron/release-installer/win-unpacked').Path
+          $statePath = Join-Path $root 'update-state.json'
+          if (-not (Test-Path -LiteralPath $statePath)) { $statePath = Join-Path $root 'initial-update-state.json' }
+          $state = Get-Content -Raw $statePath | ConvertFrom-Json
+          $resources = Join-Path (Join-Path $root $state.active.path) 'resources'
+          $launcher = Join-Path $root 'WeWork.exe'
+          $versionExecutable = Join-Path (Join-Path $root $state.active.path) 'WeWork.exe'
+          $helper = Join-Path $resources 'bin/wework-launcher.exe'
+          $nativeSignatures = @($launcher, $versionExecutable, $helper) | ForEach-Object {
+            $signed = Get-AuthenticodeSignature -LiteralPath $_
+            if ($signed.Status -ne 'Valid') { throw "Packaged executable signature is $($signed.Status): $_" }
+            @{
+              path = [IO.Path]::GetRelativePath($root, $_)
+              status = $signed.Status.ToString()
+              signer = $signed.SignerCertificate.Subject
+              sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash
+            }
+          }
+          if ((Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $helper -Algorithm SHA256).Hash) {
+            throw 'The stable launcher and signed version helper bytes differ'
+          }
+          $client = Join-Path $env:GITHUB_WORKSPACE 'wework/test-results/windows-migration-client'
+          node wework/scripts/build-desktop-e2e-client.mjs $client
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to prepare the desktop controller' }
+          $assets = Join-Path $env:GITHUB_WORKSPACE 'wework/test-results/windows-migration-assets'
+          New-Item -ItemType Directory -Force $assets | Out-Null
+          Get-ChildItem (Join-Path $env:RUNNER_TEMP 'wework-release-assets') -File |
+            Where-Object { $_.Name -match '\.exe$|_windows_x64-update\.zip$|^components-windows-|^WeworkComponent_windowsMigration_' } |
+            Copy-Item -Destination $assets
+          $setup = Join-Path $assets ('WeWork_' + $env:RELEASE_VERSION + '_windows_x64-setup.exe')
+          $signature = Get-AuthenticodeSignature -LiteralPath $setup
+          if ($signature.Status -ne 'Valid') {
+            throw "Historical upgrade verification requires the real signed migration installer. Signature: $($signature.Status)"
+          }
+          @{
+            installer = [IO.Path]::GetFileName($setup)
+            status = $signature.Status.ToString()
+            signer = $signature.SignerCertificate.Subject
+            thumbprint = $signature.SignerCertificate.Thumbprint
+            executables = $nativeSignatures
+          } | ConvertTo-Json | Set-Content 'wework/test-results/windows-installer-signature.json' -Encoding utf8
+          gh release list --exclude-drafts --limit 100 --json tagName,isPrerelease |
+            Set-Content 'wework/test-results/windows-previous-releases.json' -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw 'Could not obtain actual historical releases' }
+          node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; import { compareWeworkVersions } from './wework/scripts/update-channel-manifests.mjs'; const releases = JSON.parse((await readFile('wework/test-results/windows-previous-releases.json', 'utf8')).replace(/^\uFEFF/, '')); const candidates = releases.filter(r => /^wework-v\d+\.\d+\.\d+(?:-beta\.\d+)?$/.test(r.tagName) && (process.env.RELEASE_CHANNEL === 'beta' || !r.isPrerelease)).map(r => r.tagName.slice('wework-v'.length)).filter(v => compareWeworkVersions(v, process.env.RELEASE_VERSION) < 0).sort((a,b) => compareWeworkVersions(b,a)); if (!candidates.length) throw new Error('No previous real release is available'); await writeFile('wework/test-results/windows-migration-versions.json', JSON.stringify([...new Set(['0.4.0','0.5.10',candidates[0]])]));"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not select the actual previous release' }
+          @{
+            WEWORK_E2E_APP_BIN = Join-Path $root 'WeWork.exe'
+            WEWORK_E2E_EXECUTOR_BIN = Join-Path $resources 'bin/wegent-executor.exe'
+            WEWORK_E2E_CODEX_BIN = Join-Path $resources 'codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe'
+            WEWORK_E2E_SOCKET_IO_CLIENT = Join-Path $client 'socket.io-client.cjs'
+            WEWORK_E2E_WINDOWS_MIGRATION_ASSETS = $assets
+          }.GetEnumerator() | ForEach-Object {
+            "$($_.Key)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+
+      - name: Prepare complete next-version packages for post-reinstall updates
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $fixtures = Join-Path $env:GITHUB_WORKSPACE 'wework/test-results/windows-release-update-fixtures'
+          node wework/e2e/desktop/modules/windows-update-fixtures.mjs $env:WEWORK_E2E_APP_BIN $fixtures
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to prepare actual next-version Electron packages' }
+          "WEWORK_E2E_WINDOWS_UPDATE_FIXTURES=$(Join-Path $fixtures 'fixtures.json')" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Verify historical in-app upgrades and direct Windows reinstalls
+        if: matrix.platform == 'windows'
+        timeout-minutes: 50
+        shell: pwsh
+        env:
+          CI: true
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
+          WEWORK_E2E_PARALLEL_SCOPE: core
+        run: |
+          $versions = Get-Content -Raw 'wework/test-results/windows-migration-versions.json' | ConvertFrom-Json
+          foreach ($version in $versions) {
+            $destination = Join-Path $env:GITHUB_WORKSPACE "wework/test-results/windows-legacy-installers/$version"
+            New-Item -ItemType Directory -Force $destination | Out-Null
+            gh release download "wework-v$version" --pattern '*windows*x64*setup.exe' --dir $destination
+            if ($LASTEXITCODE -ne 0) { throw "Could not download the real $version Windows installer" }
+            $installers = @(Get-ChildItem -LiteralPath $destination -Filter '*.exe' -File)
+            if ($installers.Count -ne 1) { throw "Expected one historical installer for $version" }
+            $signature = Get-AuthenticodeSignature -LiteralPath $installers[0].FullName
+            if ($signature.Status -ne 'Valid') { throw "Historical $version installer signature is $($signature.Status)" }
+            $env:WEWORK_E2E_LEGACY_WINDOWS_INSTALLER = $installers[0].FullName
+            $env:WEWORK_E2E_LEGACY_WINDOWS_VERSION = $version
+            foreach ($segment in @('windows-update-migration', 'windows-update-reinstall')) {
+              $arguments = @('wework/e2e/desktop/run-checkpoints.mjs', '--segment', $segment)
+              & ./.github/scripts/run-windows-standard-user-process.ps1 `
+                -FilePath (Get-Command node).Source @arguments
+              if ($LASTEXITCODE -ne 0) { throw "Real $segment failed from $version" }
+            }
+          }
+
+      - name: Upload Windows historical upgrade evidence
+        if: always() && matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-historical-upgrade-evidence-${{ needs.prepare-release.outputs.version }}
+          path: |
+            .ci-artifacts/windows-standard-user/*.log
+            wework/test-results/windows-installer-signature.json
+            wework/test-results/desktop-e2e/**/windows-migration-evidence.json
+            wework/test-results/desktop-e2e/**/windows-reinstall-evidence.json
+            wework/test-results/desktop-e2e/**/windows-reinstall-nsis.log
+            wework/test-results/desktop-e2e/**/windows-update-evidence.json
+            wework/test-results/desktop-e2e/**/windows-launcher.log
+            wework/test-results/desktop-e2e/**/*startup-evidence.json
+            wework/test-results/desktop-e2e/**/electron-user-data/logs/wework-main*.log
+            wework/test-results/desktop-e2e/**/windows install/.updates/launcher.log
+            wework/test-results/desktop-e2e/**/nsis-controls.json
+            wework/test-results/desktop-e2e/**/nsis-process.log
+            wework/test-results/desktop-e2e/**/failure.json
+            wework/test-results/desktop-e2e/**/app.log
+            wework/test-results/desktop-e2e/**/executor.log
+            wework/test-results/desktop-e2e/**/electron.log
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload release build
         uses: actions/upload-artifact@v4
         with:
@@ -554,47 +685,8 @@ jobs:
           )
 
           publish_channel() {
-            local channel="$1"
-            local electron_channel="$channel"
-            local current_assets="$RUNNER_TEMP/current-${channel}-assets.json"
-            local current_manifest="$RUNNER_TEMP/current-${channel}.yml"
-            [[ "$channel" == "stable" ]] && electron_channel="latest"
-
-            gh release view wework-updater --json assets > "$current_assets"
-            if gh release download wework-updater \
-              --pattern "${electron_channel}-mac.yml" \
-              --output "$current_manifest" \
-              --clobber >/dev/null 2>&1; then
-              current_version="$(
-                node wework/scripts/update-channel-manifests.mjs \
-                  read-electron-version "$current_manifest"
-              )"
-              if ! node wework/scripts/update-channel-manifests.mjs \
-                is-newer "$RELEASE_VERSION" "$current_version"; then
-                if node wework/scripts/update-channel-manifests.mjs \
-                  has-complete-channel-assets "$current_assets" "$channel"; then
-                  echo "Keeping newer or equal ${channel} update manifests at ${current_version}."
-                  return
-                fi
-                if node wework/scripts/update-channel-manifests.mjs \
-                  is-newer "$current_version" "$RELEASE_VERSION"; then
-                  echo "::error::The newer ${channel} channel at ${current_version} has incomplete updater assets."
-                  return 1
-                fi
-                echo "Repairing incomplete ${channel} updater assets at ${current_version}."
-              fi
-            fi
-
-            gh release upload wework-updater \
-              "release-manifests/components-${channel}-macos-arm64.json" \
-              "release-manifests/components-${channel}-macos-x64.json" \
-              "release-manifests/components-${channel}-windows-x64.json" \
-              "release-manifests/components-${channel}-linux-x64.json" \
-              --clobber
-            gh release upload wework-updater \
-              "release-manifests/${electron_channel}.yml" \
-              "release-manifests/${electron_channel}-mac.yml" \
-              --clobber
+            node wework/scripts/publish-desktop-update-channel.mjs \
+              release-manifests "$1" "$RELEASE_VERSION" "$RUNNER_TEMP"
           }
 
           publish_channel "$RELEASE_CHANNEL"

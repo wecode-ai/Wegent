@@ -3,16 +3,28 @@ import { describe, expect, test, vi } from 'vitest'
 import { buildRelease, releaseBuildEnvironments } from './build-release.mjs'
 
 describe('desktop release builds', () => {
+  test('builds only the self-contained installer on Windows', () => {
+    expect(
+      releaseBuildEnvironments({
+        WEWORK_RELEASE_PLATFORM: 'windows',
+        WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS: 'false',
+      })
+    ).toEqual([{}])
+  })
   test('does not build an unused host update before componentized updates are active', () => {
     expect(
       releaseBuildEnvironments({
+        WEWORK_RELEASE_PLATFORM: 'macos',
         WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS: 'true',
       })
     ).toEqual([{}])
   })
 
   test('preserves both release artifacts for local builds without workflow planning', () => {
-    expect(releaseBuildEnvironments({})).toEqual([{}, { WEWORK_ONLINE_UPDATE_BUILD: 'true' }])
+    expect(releaseBuildEnvironments({ WEWORK_RELEASE_PLATFORM: 'macos' })).toEqual([
+      {},
+      { WEWORK_ONLINE_UPDATE_BUILD: 'true' },
+    ])
   })
 
   test('builds installer and componentized host update in parallel', async () => {

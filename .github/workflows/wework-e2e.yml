@@ -509,17 +509,30 @@ jobs:
           key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
 
       - name: Build Windows Wework Electron E2E application
+        shell: pwsh
         env:
           CI: true
           WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/executor-target
           WEWORK_EXECUTOR_PROFILE: debug
         run: |
           pnpm --filter wework ai:verify:electron:build
-          node wework/scripts/build-desktop-e2e-client.mjs wework/electron/release/WeWork-win32-x64/resources/e2e-client
-          test -f wework/electron/release/WeWork-win32-x64/WeWork.exe
-          test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
-          test -f wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
-          test -f wework/electron/release/WeWork-win32-x64/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Electron build failed' }
+          $root = (Resolve-Path 'wework/electron/release/WeWork-win32-x64').Path
+          $statePath = Join-Path $root 'update-state.json'
+          if (-not (Test-Path -LiteralPath $statePath)) { $statePath = Join-Path $root 'initial-update-state.json' }
+          $state = Get-Content -Raw $statePath | ConvertFrom-Json
+          $resources = Join-Path (Join-Path $root $state.active.path) 'resources'
+          node wework/scripts/build-desktop-e2e-client.mjs (Join-Path $resources 'e2e-client')
+          if ($LASTEXITCODE -ne 0) { throw 'Windows E2E control client build failed' }
+          foreach ($path in @(
+            (Join-Path $root 'WeWork.exe'),
+            (Join-Path $resources 'bin/wegent-executor.exe'),
+            (Join-Path $resources 'codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe'),
+            (Join-Path $resources 'bundled-plugins/wework-personal/.agents/plugins/marketplace.json')
+          )) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing Windows E2E resource: $path" }
+          }
+          "WINDOWS_E2E_RESOURCES=$resources" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build Rust Backend Windows E2E gateway
         shell: pwsh
@@ -528,11 +541,13 @@ jobs:
           $env:CARGO_TARGET_DIR = $backendRsTarget
           cargo build --locked --manifest-path backend-rs/Cargo.toml --bin wegent-backend-rs
           $backendRsBin = Join-Path $backendRsTarget "debug/wegent-backend-rs.exe"
-          $appBackendRsBin = "wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe"
+          $appBackendRsBin = Join-Path $env:WINDOWS_E2E_RESOURCES 'bin/wegent-backend-rs.exe'
           Copy-Item -LiteralPath $backendRsBin -Destination $appBackendRsBin -Force
           if (-not (Test-Path $appBackendRsBin -PathType Leaf)) {
             throw "Missing Windows Rust Backend E2E gateway: $appBackendRsBin"
           }
+          node --input-type=module -e "import { writeWindowsReleaseManifest } from './wework/electron/scripts/windows-version-package.mjs'; import { readFile } from 'node:fs/promises'; import { dirname } from 'node:path'; const directory = dirname(process.env.WINDOWS_E2E_RESOURCES); const manifest = JSON.parse(await readFile(directory + '/release.json', 'utf8')); await writeWindowsReleaseManifest({ directory, version: manifest.version });"
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to finalize Windows E2E resource inventory' }
 
       - name: Prepare Windows Redis E2E tools
         shell: pwsh
@@ -666,6 +681,26 @@ jobs:
           name: wework-desktop-windows-core-e2e-build
           path: wework/electron/release/WeWork-win32-x64
 
+      - name: Resolve versioned Windows E2E resources
+        shell: pwsh
+        run: |
+          $root = (Resolve-Path 'wework/electron/release/WeWork-win32-x64').Path
+          $statePath = Join-Path $root 'update-state.json'
+          if (-not (Test-Path -LiteralPath $statePath)) { $statePath = Join-Path $root 'initial-update-state.json' }
+          $state = Get-Content -Raw $statePath | ConvertFrom-Json
+          if ($state.schemaVersion -ne 2) { throw 'Missing Windows v2 installation state' }
+          $resources = Join-Path (Join-Path $root $state.active.path) 'resources'
+          @{
+            WEWORK_E2E_APP_BIN = Join-Path $root 'WeWork.exe'
+            WEWORK_E2E_RESOURCE_ROOT = $resources
+            WEWORK_E2E_SOCKET_IO_CLIENT = Join-Path $resources 'e2e-client/socket.io-client.cjs'
+            WEWORK_E2E_EXECUTOR_BIN = Join-Path $resources 'bin/wegent-executor.exe'
+            WEWORK_E2E_BACKEND_RS_BIN = Join-Path $resources 'bin/wegent-backend-rs.exe'
+            WEWORK_E2E_CODEX_BIN = Join-Path $resources 'codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe'
+          }.GetEnumerator() | ForEach-Object {
+            "$($_.Key)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+
       - name: Download Windows Redis E2E tools
         uses: actions/download-artifact@v6
         with:
@@ -791,11 +826,6 @@ jobs:
         shell: pwsh
         env:
           CI: true
-          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/WeWork.exe
-          WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/e2e-client/socket.io-client.cjs
-          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
-          WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe
-          WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
           WEWORK_E2E_PARALLEL_SCOPE: core
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
@@ -806,7 +836,7 @@ jobs:
             $env:WEWORK_E2E_EXECUTOR_BIN,
             $env:WEWORK_E2E_BACKEND_RS_BIN,
             $env:WEWORK_E2E_CODEX_BIN,
-            (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json")
+            (Join-Path $env:WEWORK_E2E_RESOURCE_ROOT "bundled-plugins/wework-personal/.agents/plugins/marketplace.json")
           )) {
             if (-not (Test-Path $path -PathType Leaf)) {
               Get-ChildItem -Path (Split-Path $env:WEWORK_E2E_APP_BIN) -Force -ErrorAction Continue |

@@ -30,6 +30,7 @@ module.exports = {
   compression: 'normal',
   beforePack: macosAppIcon.prepare,
   afterPack: require('./scripts/verify-windows-migration-lock.cjs'),
+  afterSign: require('./scripts/after-sign.cjs'),
   extraMetadata: {
     name: identity.packageName,
     weworkUpdateBaseUrl: updateBaseUrl,
@@ -58,9 +59,6 @@ module.exports = {
     provider: 'generic',
     url: updateBaseUrl,
   },
-  ...(useCustomMacosNotarization
-    ? { afterSign: path.resolve(__dirname, 'scripts/notarize-macos.cjs') }
-    : {}),
   mac: {
     artifactName: `${artifactPrefix}_\${version}_macos_\${arch}.\${ext}`,
     category: 'public.app-category.developer-tools',
@@ -85,17 +83,16 @@ module.exports = {
     writeUpdateInfo: false,
   },
   win: {
-    // Desktop data migration runs before managed components can be resolved.
+    // Every Windows version is self-contained; online updates never install an NSIS host.
     extraResources:
-      onlineUpdateBuild && !onlineUpdateIncludesComponents
-        ? [{ from: 'resources/bin/wegent-executor.exe', to: 'bin/wegent-executor.exe' }]
-        : [],
-    artifactName: `${artifactPrefix}_\${version}_windows_\${arch}-setup.\${ext}`,
+      onlineUpdateBuild && !onlineUpdateIncludesComponents ? managedComponentResources : [],
+    artifactName: 'WeWork_${version}_windows_${arch}-setup.${ext}',
     electronLanguages: ['en-US', 'zh-CN'],
     icon: path.resolve(__dirname, '../resources/icons/icon.ico'),
     target: ['nsis'],
   },
   nsis: {
+    include: path.resolve(__dirname, 'scripts/windows-versioned-installer.nsh'),
     oneClick: false,
     allowElevation: false,
     allowToChangeInstallationDirectory: false,

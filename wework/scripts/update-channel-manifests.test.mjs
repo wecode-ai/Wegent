@@ -29,6 +29,7 @@ describe('Wework update channel manifests', () => {
       'components-stable-macos-x64.json',
       'components-stable-windows-x64.json',
       'components-stable-linux-x64.json',
+      'windows-stable-v2.json',
     ])
     expect(hasCompleteChannelAssets(stableAssets, 'stable')).toBe(true)
     expect(
@@ -46,6 +47,7 @@ describe('Wework update channel manifests', () => {
           'components-beta-macos-x64.json',
           'components-beta-windows-x64.json',
           'components-beta-linux-x64.json',
+          'windows-beta-v2.json',
         ],
         'beta'
       )

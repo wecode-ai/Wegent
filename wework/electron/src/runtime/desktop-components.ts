@@ -17,6 +17,7 @@ export interface DesktopComponentUpdateController {
 
 interface PrepareDesktopComponentsOptions {
   isPackaged: boolean
+  bundledOnly?: boolean
   managerOptions: ComponentUpdateManagerOptions
   createManager?: (
     options: ComponentUpdateManagerOptions
@@ -38,6 +39,9 @@ export async function prepareDesktopComponents(
   const manager =
     options.createManager?.(options.managerOptions) ??
     new ComponentUpdateManager(options.managerOptions)
+  if (options.bundledOnly) {
+    return { manager: null, paths: await manager.prepareBundledStartup() }
+  }
   return {
     manager,
     paths: await manager.prepareStartup(),

@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
+import { prepareWindowsMigrationAssets } from './windows-legacy-migration.mjs'
 
 const temporaryDirectories = []
 
@@ -25,13 +26,13 @@ test('generates Electron and component rolling manifests from one release', asyn
     `WeWork_${version}_macos_arm64.zip`,
     `WeWork_${version}_macos_x64.zip`,
     `WeWork_${version}_windows_x64-setup.exe`,
+    `WeWork_${version}_windows_x64-update.zip`,
   ]) {
     await writeFile(resolve(assets, name), name)
   }
   for (const [platform, arch] of [
     ['macos', 'arm64'],
     ['macos', 'x64'],
-    ['windows', 'x64'],
     ['linux', 'x64'],
   ]) {
     const components = {}
@@ -63,6 +64,7 @@ test('generates Electron and component rolling manifests from one release', asyn
       })
     )
   }
+  await prepareWindowsMigrationAssets({ directory: assets, version, arch: 'x64' })
   await writeFile(notes, '## Changes\n\n- Smooth migration')
 
   await run([
@@ -83,6 +85,25 @@ test('generates Electron and component rolling manifests from one release', asyn
   expect(await readFile(resolve(output, 'beta.yml'), 'utf8')).toContain(
     `WeWork_${version}_windows_x64-setup.exe`
   )
+  const windows = JSON.parse(await readFile(resolve(output, 'windows-stable-v2.json'), 'utf8'))
+  expect(windows).toMatchObject({
+    schemaVersion: 2,
+    version,
+    platform: 'windows',
+    arch: 'x64',
+    dataSchemaVersion: 1,
+    url: `https://github.com/wecode-ai/Wegent/releases/download/wework-v1.2.3/WeWork_${version}_windows_x64-update.zip`,
+  })
+  expect(windows.sha512).toBe(
+    createHash('sha512').update(`WeWork_${version}_windows_x64-update.zip`).digest('base64')
+  )
+  const legacy = JSON.parse(
+    await readFile(resolve(output, 'components-stable-windows-x64.json'), 'utf8')
+  )
+  expect(legacy.legacyMigration).toEqual({ protocolVersion: 2, kind: 'self-contained-installer' })
+  expect(Object.keys(legacy.components)).toHaveLength(7)
+  expect(legacy.components.coreDsh.entryPath).toBe('migration-ticket.json')
+  expect(legacy.components.coreDsh.downloadUrl).toContain('/wework-v1.2.3/')
   const components = JSON.parse(
     await readFile(resolve(output, 'components-stable-macos-arm64.json'), 'utf8')
   )
@@ -100,7 +121,7 @@ test('generates Electron and component rolling manifests from one release', asyn
   )
 })
 
-test('prefers slim Host update artifacts while retaining version release URLs', async () => {
+test('keeps macOS slim updates while Windows legacy clients receive a complete installer', async () => {
   const root = await mkdtemp(resolve(tmpdir(), 'wework-host-update-manifests-'))
   temporaryDirectories.push(root)
   const assets = resolve(root, 'assets')
@@ -111,20 +132,21 @@ test('prefers slim Host update artifacts while retaining version release URLs', 
   for (const name of [
     `WeWorkHostUpdate_${version}_macos_arm64.zip`,
     `WeWorkHostUpdate_${version}_macos_x64.zip`,
-    `WeWorkHostUpdate_${version}_windows_x64-setup.exe`,
+    `WeWork_${version}_windows_x64-setup.exe`,
+    `WeWork_${version}_windows_x64-update.zip`,
   ]) {
     await writeFile(resolve(assets, name), name)
   }
   for (const [platform, arch] of [
     ['macos', 'arm64'],
     ['macos', 'x64'],
-    ['windows', 'x64'],
   ]) {
     await writeFile(
       resolve(assets, `components-${platform}-${arch}.json`),
       JSON.stringify({ components: {} })
     )
   }
+  await prepareWindowsMigrationAssets({ directory: assets, version, arch: 'x64' })
   await writeFile(notes, '## Changes\n')
 
   await run(
@@ -146,8 +168,9 @@ test('prefers slim Host update artifacts while retaining version release URLs', 
     `WeWorkHostUpdate_${version}_macos_arm64.zip`
   )
   expect(await readFile(resolve(output, 'beta.yml'), 'utf8')).toContain(
-    `WeWorkHostUpdate_${version}_windows_x64-setup.exe`
+    `WeWork_${version}_windows_x64-setup.exe`
   )
+  expect(await readFile(resolve(output, 'beta.yml'), 'utf8')).not.toContain('WeWorkHostUpdate')
 })
 
 test('rejects an invalid release source SHA', async () => {
@@ -169,6 +192,25 @@ test('rejects an invalid release source SHA', async () => {
       'not-a-source-sha',
     ])
   ).rejects.toThrow('manifest generator exited with code 1')
+})
+
+test('rejects same-version runtime tags before producing Windows update manifests', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'wework-runtime-release-guard-'))
+  temporaryDirectories.push(root)
+  await expect(
+    run([
+      resolve(process.cwd(), 'scripts/generate-desktop-update-manifests.mjs'),
+      root,
+      resolve(root, 'output'),
+      '1.2.3',
+      'stable',
+      'wecode-ai/Wegent',
+      'wework-v1.2.3-runtime.abc123',
+      resolve(root, 'notes.md'),
+      'a'.repeat(40),
+    ])
+  ).rejects.toThrow('manifest generator exited with code 1')
+  await expect(readFile(resolve(root, 'output/windows-stable-v2.json'))).rejects.toThrow('ENOENT')
 })
 
 function run(args, environment = {}) {

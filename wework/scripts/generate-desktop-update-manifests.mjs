@@ -7,6 +7,7 @@ import { basename, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
 import { componentReleaseScope } from './desktop-component-release.mjs'
+import { isLegacyWindowsMigrationDescriptor } from './windows-legacy-migration.mjs'
 
 const [
   assetsDirectory,
@@ -36,6 +37,11 @@ if (
 if (channel !== 'stable' && channel !== 'beta') {
   throw new Error(`Unsupported Wework update channel: ${channel}`)
 }
+if (releaseTag !== `wework-v${version}`) {
+  throw new Error(
+    'Windows updates require a new appVersion; runtime-only release tags are not supported'
+  )
+}
 if (!/^[0-9a-f]{40,64}$/.test(sourceSha)) {
   throw new Error(`Invalid Wework source SHA: ${sourceSha}`)
 }
@@ -51,7 +57,8 @@ await mkdir(output, { recursive: true })
 
 const macArm = await updateAsset(`macos_arm64.zip`)
 const macX64 = await updateAsset(`macos_x64.zip`)
-const windows = await updateAsset(`windows_x64-setup.exe`)
+const windows = await asset(`WeWork_${version}_windows_x64-setup.exe`)
+const windowsUpdate = await asset(`WeWork_${version}_windows_x64-update.zip`)
 const electronChannels = channel === 'stable' ? ['latest', 'beta'] : ['beta']
 
 for (const targetChannel of electronChannels) {
@@ -64,6 +71,28 @@ for (const targetChannel of electronChannels) {
     resolve(output, `${targetChannel}.yml`),
     electronManifest(version, releaseDate, notes, [windows]),
     'utf8'
+  )
+}
+
+for (const targetChannel of channel === 'stable' ? ['stable', 'beta'] : ['beta']) {
+  await writeFile(
+    resolve(output, `windows-${targetChannel}-v2.json`),
+    `${JSON.stringify(
+      {
+        schemaVersion: 2,
+        version,
+        platform: 'windows',
+        arch: 'x64',
+        dataSchemaVersion: 1,
+        url: windowsUpdate.url,
+        sha512: windowsUpdate.sha512,
+        size: windowsUpdate.size,
+        releaseDate,
+        releaseNotes: notes,
+      },
+      null,
+      2
+    )}\n`
   )
 }
 
@@ -81,9 +110,13 @@ for (const [platform, architecture] of [
     if (platform === 'linux') continue
     throw new Error(`Component release descriptor is missing: ${sourcePath}`)
   }
+  const legacyMigration = isLegacyWindowsMigrationDescriptor(source)
+  if (platform === 'windows' && !legacyMigration) {
+    throw new Error('Windows releases must provide a legacy migration ticket descriptor')
+  }
   const components = {}
   for (const [id, component] of Object.entries(source.components ?? {})) {
-    const releaseScope = componentReleaseScope(id)
+    const releaseScope = legacyMigration ? 'version' : componentReleaseScope(id)
     if (component.releaseScope !== releaseScope) {
       throw new Error(
         `Component release scope mismatch for ${id}: expected ${releaseScope}, received ${component.releaseScope}`
@@ -120,8 +153,9 @@ for (const [platform, architecture] of [
           arch: architecture,
           releaseDate,
           capabilities: {
-            componentizedHostUpdate: 1,
+            ...(legacyMigration ? { windowsVersionedUpdate: 2 } : { componentizedHostUpdate: 1 }),
           },
+          ...(legacyMigration ? { legacyMigration: source.legacyMigration } : {}),
           components,
         },
         null,

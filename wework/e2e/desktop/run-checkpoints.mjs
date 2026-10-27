@@ -13,6 +13,7 @@ import {
 } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
+import { resolveDesktopPackageLayout } from './modules/desktop-package-layout.mjs'
 import {
   compactInactiveDesktopE2EResults,
   resolveDesktopE2EResultRoot,
@@ -104,6 +105,12 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'release-package-startup': './scenarios/release-package-startup.scenario.mjs',
   'app-update-full': './scenarios/app-update-full.scenario.mjs',
   'component-update': './scenarios/component-update.scenario.mjs',
+  'windows-update-install': './scenarios/windows-update.scenario.mjs',
+  'windows-update-validation': './scenarios/windows-update.scenario.mjs',
+  'windows-update-rollback': './scenarios/windows-update.scenario.mjs',
+  'windows-update-recovery': './scenarios/windows-update.scenario.mjs',
+  'windows-update-migration': './scenarios/windows-update-migration.scenario.mjs',
+  'windows-update-reinstall': './scenarios/windows-update-reinstall.scenario.mjs',
   'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
   'native-window-chrome': './scenarios/native-window-chrome.scenario.mjs',
   'renderer-storage': './scenarios/renderer-storage.scenario.mjs',
@@ -296,6 +303,12 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'release-package-startup',
   'app-update-full',
   'component-update',
+  'windows-update-install',
+  'windows-update-validation',
+  'windows-update-rollback',
+  'windows-update-recovery',
+  'windows-update-migration',
+  'windows-update-reinstall',
   'renderer-crash-recovery',
   'native-window-startup',
   'native-window-chrome',
@@ -545,10 +558,7 @@ async function extractArchive(archivePath, destination) {
 }
 
 async function prepareSharedHarnessRuntime(appBinary, parentDirectory) {
-  const resourcesRoot = resolve(
-    dirname(appBinary),
-    ...(process.platform === 'darwin' ? ['..', 'Resources'] : ['resources'])
-  )
+  const { resourcesRoot } = await resolveDesktopPackageLayout(appBinary)
   const resourceRoot = join(resourcesRoot, 'harness-runtime')
   const catalog = JSON.parse(await readFile(join(resourceRoot, 'runtimes.json'), 'utf8'))
   const runtimes =

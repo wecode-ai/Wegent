@@ -5,7 +5,10 @@ import { join } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
 import { create } from 'tar'
 
-import { collectHarnessRuntimeReleaseAssets } from './collect-harness-runtime-release-assets.mjs'
+import {
+  collectHarnessRuntimeDirectory,
+  collectHarnessRuntimeReleaseAssets,
+} from './collect-harness-runtime-release-assets.mjs'
 
 const roots = []
 
@@ -95,5 +98,41 @@ test('rejects conflicting assets with the same immutable name', async () => {
 
   await expect(collectHarnessRuntimeReleaseAssets(input, output)).rejects.toThrow(
     'Conflicting immutable Harness Runtime asset'
+  )
+})
+
+test('publishes Windows runtimes independently of the legacy migration ticket component', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-windows-runtime-assets-'))
+  roots.push(root)
+  const resources = join(root, 'resources')
+  const release = join(root, 'release')
+  const shared = join(root, 'shared')
+  await mkdir(resources)
+  const assetName = 'harness-runtime-windows-x64-dsh-0.1.1-fingerprint.tar.gz'
+  const bytes = Buffer.from('complete immutable Windows runtime')
+  const descriptor = {
+    dshVersion: '0.1.1',
+    role: 'core',
+    sourceFingerprint: 'a'.repeat(64),
+    assetName,
+    archiveSha256: createHash('sha256').update(bytes).digest('hex'),
+    archiveBytes: bytes.length,
+  }
+  await writeFile(join(resources, assetName), bytes)
+  await writeFile(join(resources, 'runtimes.json'), JSON.stringify({ runtimes: [descriptor] }))
+  await collectHarnessRuntimeDirectory(resources, release)
+  await collectHarnessRuntimeReleaseAssets(release, shared)
+  expect(await readFile(join(shared, assetName))).toEqual(bytes)
+  const published = JSON.parse(
+    await readFile(join(shared, assetName.replace(/\.tar\.gz$/, '.json')), 'utf8')
+  )
+  expect(published).toMatchObject({
+    archiveSha256: descriptor.archiveSha256,
+    archiveBytes: bytes.length,
+  })
+  expect(published.role).toBeUndefined()
+  await writeFile(join(release, assetName), 'corrupted archive')
+  await expect(collectHarnessRuntimeReleaseAssets(release, shared)).rejects.toThrow(
+    'does not match its descriptor'
   )
 })

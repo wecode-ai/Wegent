@@ -22,6 +22,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   width: 100%;
@@ -165,27 +169,22 @@ body {
   top: 50%;
   left: 50%;
   display: flex;
-  width: 392px;
-  height: 232px;
-  align-items: center;
-  justify-content: center;
+  width: min(420px, calc(100vw - 48px));
+  height: auto;
+  max-height: calc(100vh - 96px);
+  min-height: 0;
+  padding: 20px 24px 18px;
+  align-items: stretch;
+  justify-content: flex-start;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
   color: #171717;
   border-radius: 22px;
   background: rgb(250 250 250 / 97%);
   box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
   opacity: 0;
   transform: translate(-50%, calc(-50% + 12px)) scale(0.97);
-  transition: height 220ms ease;
-}
-
-:root[data-recovery-visible='true'] .splash {
-  height: 304px;
-}
-
-:root[data-confirmation-visible='true'] .splash {
-  height: 286px;
+  scrollbar-width: thin;
 }
 
 :root[data-animation-ready='true'] .splash {
@@ -193,8 +192,10 @@ body {
 }
 
 .workbench-scene {
-  width: 300px;
-  height: 126px;
+  width: 260px;
+  height: 109px;
+  flex: 0 0 auto;
+  margin: 0 auto;
 }
 
 .workbench {
@@ -454,61 +455,185 @@ body[data-stage='2'] .monitor-status {
 }
 
 .splash-copy {
-  height: 42px;
-  margin-top: 2px;
+  height: auto;
+  margin-top: 4px;
   text-align: center;
 }
 
 .splash h1 {
   margin: 0;
-  font-size: var(--text-lg);
+  font-size: 18px;
   font-weight: 500;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
+  line-height: 24px;
 }
 
 .splash p {
   margin: 4px 0 0;
   color: rgb(23 23 23 / 62%);
   font-size: var(--text-xs);
-  line-height: 16px;
-  transition:
-    opacity 140ms ease,
-    transform 140ms ease;
+  line-height: 18px;
 }
 
-.splash p.is-changing {
-  opacity: 0;
-  transform: translateY(2px);
+.progress-block {
+  margin-top: 13px;
 }
 
-.stage-indicator {
+.progress-meta {
   display: flex;
-  height: 8px;
-  align-items: center;
-  gap: 5px;
-  margin-top: 4px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  color: rgb(23 23 23 / 62%);
+  font-size: 11px;
 }
 
-.stage-dot {
-  display: block;
-  width: 4px;
+.progress-meta > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-meta .elapsed {
+  flex: 0 0 auto;
+  margin-left: 12px;
+  color: rgb(23 23 23 / 46%);
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.startup-progress {
+  position: relative;
   height: 4px;
+  overflow: hidden;
   border-radius: 999px;
-  background: rgb(23 23 23 / 14%);
-  transition:
-    width 260ms ease,
-    background-color 260ms ease;
+  background: rgb(23 23 23 / 8%);
 }
 
-.stage-dot.is-active {
-  width: 14px;
-  background: #7c3aed;
+.startup-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  border-radius: inherit;
+  background: #303030;
+  transition:
+    width 240ms linear,
+    background-color 180ms ease;
+}
+
+.startup-progress-fill::after {
+  position: absolute;
+  inset: 0 -14px 0 0;
+  content: '';
+  background: linear-gradient(90deg, transparent 0%, rgb(255 255 255 / 35%) 52%, transparent 100%);
+  opacity: 0;
+  animation: progress-breathe 1.5s ease-in-out infinite;
+}
+
+.is-running .startup-progress-fill::after {
+  opacity: 1;
+}
+
+.is-failed .startup-progress-fill {
+  background: #dc2626;
+}
+
+.is-failed .startup-progress-fill::after {
+  display: none;
+}
+
+.splash .activity-line {
+  margin-top: 7px;
+  overflow: hidden;
+  color: rgb(23 23 23 / 24%);
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-size: 9.5px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-static='true'] .startup-progress-fill {
+  transition: none;
+}
+
+.inline-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 11px;
+  padding: 9px 11px;
+  border: 1px solid rgb(23 23 23 / 14%);
+  border-radius: 10px;
+  background: rgb(23 23 23 / 3%);
+  text-align: left;
+  animation: note-in 160ms ease-out both;
+}
+
+.inline-note svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: rgb(23 23 23 / 62%);
+}
+
+.note-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.inline-note strong {
+  display: block;
+  color: #171717;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 17px;
+}
+
+.splash .inline-note p {
+  margin: 1px 0 0;
+  color: rgb(23 23 23 / 58%);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.inline-note-error {
+  border-color: #f2d4d4;
+  background: #fef7f7;
+}
+
+.inline-note-error svg,
+.inline-note-error strong {
+  color: #b91c1c;
 }
 
 .startup-recovery {
   width: 100%;
   margin-top: 10px;
-  padding: 0 24px;
+  padding: 0;
+}
+
+.startup-timeout-actions {
+  margin-top: 9px;
+}
+
+.startup-toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  z-index: 30;
+  max-width: calc(100vw - 48px);
+  padding: 7px 12px;
+  color: #171717;
+  border: 1px solid rgb(23 23 23 / 14%);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+  font-size: var(--text-xs);
+  text-align: center;
+  transform: translateX(-50%);
+  animation: toast-in 160ms ease-out both;
 }
 
 .startup-actions,
@@ -516,6 +641,7 @@ body[data-stage='2'] .monitor-status {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -575,6 +701,7 @@ body[data-stage='2'] .monitor-status {
 
 .startup-confirmation {
   width: calc(100% - 48px);
+  margin: 0 auto;
   text-align: center;
 }
 
@@ -592,9 +719,45 @@ body[data-stage='2'] .monitor-status {
 
 :root[data-confirmation-visible='true'] .workbench-scene,
 :root[data-confirmation-visible='true'] .splash-copy,
-:root[data-confirmation-visible='true'] .stage-indicator,
+:root[data-confirmation-visible='true'] .progress-block,
+:root[data-confirmation-visible='true'] .inline-note,
 :root[data-confirmation-visible='true'] .startup-recovery {
   display: none;
+}
+
+@keyframes progress-breathe {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes note-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
 
 @keyframes floor-arrive {
@@ -936,8 +1099,51 @@ body[data-stage='2'] .monitor-status {
     color: rgb(255 255 255 / 52%);
   }
 
-  .stage-dot {
-    background: rgb(255 255 255 / 16%);
+  .progress-meta {
+    color: rgb(255 255 255 / 58%);
+  }
+
+  .progress-meta .elapsed {
+    color: rgb(255 255 255 / 40%);
+  }
+
+  .splash .activity-line {
+    color: rgb(255 255 255 / 22%);
+  }
+
+  .startup-progress {
+    background: rgb(255 255 255 / 12%);
+  }
+
+  .startup-progress-fill {
+    background: #ededed;
+  }
+
+  .inline-note {
+    border-color: rgb(255 255 255 / 16%);
+    background: rgb(255 255 255 / 4%);
+  }
+
+  .inline-note svg {
+    color: rgb(255 255 255 / 56%);
+  }
+
+  .inline-note strong {
+    color: #f5f5f5;
+  }
+
+  .splash .inline-note p {
+    color: rgb(255 255 255 / 52%);
+  }
+
+  .inline-note-error {
+    border-color: #4a2626;
+    background: #2a1a1a;
+  }
+
+  .inline-note-error svg,
+  .inline-note-error strong {
+    color: #fca5a5;
   }
 
   .startup-button {
@@ -960,6 +1166,13 @@ body[data-stage='2'] .monitor-status {
 
   .startup-link-button {
     color: #66b8ff;
+  }
+
+  .startup-toast {
+    color: #f5f5f5;
+    border-color: rgb(255 255 255 / 16%);
+    background: #303030;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
   }
 
   .startup-action-error {
@@ -988,8 +1201,15 @@ body[data-stage='2'] .monitor-status {
   .human,
   .human-working-arm,
   .robot-sparks,
-  .assembly-piece {
+  .assembly-piece,
+  .startup-progress-fill::after,
+  .inline-note,
+  .startup-toast {
     animation: none;
+  }
+
+  .startup-progress-fill {
+    transition: none;
   }
 
   .startup-stage {
@@ -1021,8 +1241,6 @@ body[data-stage='2'] .monitor-status {
     display: none;
   }
 
-  .splash p,
-  .stage-dot,
   .monitor-status {
     transition: none;
   }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import { lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join, resolve } from 'node:path'
+import { resolveDesktopPackageLayout } from '../modules/desktop-package-layout.mjs'
 
 const PROFILE_NAME = 'wework-core'
 const NATIVE_PROVIDER = '@wework-e2e/native-dsh-provider'
@@ -153,10 +154,7 @@ export function apply(ctx) {
 
 async function assertReleasePackageResources() {
   const appBinary = resolve(process.env.WEWORK_E2E_APP_BIN ?? '')
-  const resourcesRoot =
-    process.platform === 'darwin'
-      ? resolve(appBinary, '..', '..', 'Resources')
-      : resolve(appBinary, '..', 'resources')
+  const { resourcesRoot } = await resolveDesktopPackageLayout(appBinary)
   const components = JSON.parse(await readFile(join(resourcesRoot, 'components.json'), 'utf8'))
   const catalog = JSON.parse(
     await readFile(join(resourcesRoot, 'harness-runtime', 'runtimes.json'), 'utf8')

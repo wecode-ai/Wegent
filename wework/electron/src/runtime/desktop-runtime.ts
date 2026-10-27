@@ -1,4 +1,5 @@
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
+import { stopServices } from './stop-services.js'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import {
   createCoreDshLaunch,
@@ -249,7 +250,11 @@ export class DesktopRuntime {
     this.coreDsh = null
     this.coreDshPlugins = null
     this.executor = null
-    await Promise.allSettled([this.workbench.stop(), coreDsh?.stop(), executor?.stop()])
+    await stopServices([
+      { name: 'workbench runtimes', stop: () => this.workbench.stop() },
+      { name: 'core DSH', stop: () => coreDsh?.stop() },
+      { name: 'executor', stop: () => executor?.stop() },
+    ])
   }
 
   private async prepareExecutor(): Promise<ManagedExecutorHandle | null> {

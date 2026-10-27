@@ -15,6 +15,13 @@ export interface WeworkUpdateInfo {
   body?: string
 }
 
+export interface AppUpdateController {
+  check(channel: WeworkUpdateChannel): Promise<WeworkUpdateInfo | null>
+  download(): Promise<void>
+  downloadProgress(): WeworkUpdateDownloadProgress
+  createInstallAction(): () => Promise<void>
+}
+
 interface AppUpdateServiceOptions {
   updater: AppUpdater
   currentVersion: () => string
@@ -29,7 +36,7 @@ interface AppUpdateServiceOptions {
   log?: (event: Record<string, unknown>) => void
 }
 
-export class AppUpdateService {
+export class AppUpdateService implements AppUpdateController {
   private readonly updater: AppUpdater
   private readonly currentVersion: () => string
   private readonly isPackaged: () => boolean

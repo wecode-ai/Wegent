@@ -3,6 +3,7 @@
 import { readFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
+import { isLegacyWindowsMigrationDescriptor } from './windows-legacy-migration.mjs'
 
 const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:-beta\.([1-9]\d*))?$/
 
@@ -61,6 +62,7 @@ export function expectedChannelAssetNames(channel) {
     `components-${channel}-macos-x64.json`,
     `components-${channel}-windows-x64.json`,
     `components-${channel}-linux-x64.json`,
+    `windows-${channel}-v2.json`,
   ]
 }
 
@@ -71,6 +73,21 @@ export function hasCompleteChannelAssets(assetNames, channel) {
 
 async function main() {
   const [command, ...args] = process.argv.slice(2)
+  if (command === 'is-legacy-windows-migration') {
+    const [manifestPath, electronManifestPath] = args
+    if (!manifestPath) {
+      throw new Error(
+        'Usage: update-channel-manifests.mjs is-legacy-windows-migration <manifest-json> [electron-yml]'
+      )
+    }
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    const matchesInstaller =
+      !electronManifestPath ||
+      parseElectronManifestVersion(await readFile(electronManifestPath, 'utf8')) ===
+        manifest.appVersion
+    process.exitCode = isLegacyWindowsMigrationDescriptor(manifest) && matchesInstaller ? 0 : 1
+    return
+  }
   if (command === 'is-newer') {
     const [candidate, current] = args
     if (!candidate || !current) {
@@ -107,7 +124,7 @@ async function main() {
   }
 
   throw new Error(
-    'Expected command: is-newer, has-complete-channel-assets, or read-electron-version'
+    'Expected command: is-newer, has-complete-channel-assets, read-electron-version, or is-legacy-windows-migration'
   )
 }
 

@@ -1454,7 +1454,8 @@ async function main() {
     }
     let activeAppEnvironment = appEnvironment
     const startDesktopAppProcess = async () => {
-      const child = spawn(appBinary, electronLaunchArguments, {
+      const launchBinary = (await desktopScenario?.resolveLaunchBinary?.()) ?? appBinary
+      const child = spawn(launchBinary, electronLaunchArguments, {
         cwd: launchWorkingDirectory,
         env: activeAppEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],

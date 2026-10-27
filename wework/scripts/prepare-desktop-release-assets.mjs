@@ -10,6 +10,9 @@ import { create } from 'tar'
 
 import { hashComponentPath } from './lib/component-content-hash.mjs'
 import { componentReleaseScope } from './desktop-component-release.mjs'
+import { collectHarnessRuntimeDirectory } from './collect-harness-runtime-release-assets.mjs'
+import { createWindowsUpdateArchive } from '../electron/scripts/windows-version-package.mjs'
+import { prepareWindowsMigrationAssets } from './windows-legacy-migration.mjs'
 
 const weworkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const installerRoot = join(weworkRoot, 'electron', 'release-installer')
@@ -56,17 +59,11 @@ if (platform === 'macos') {
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_windows_${arch}-setup\\.exe$`)
   )
-  await copyUpdateArtifacts([
-    installer,
-    ...(useComponentizedHostUpdate
-      ? [
-          await findFile(
-            onlineUpdateRoot,
-            new RegExp(`^WeWorkHostUpdate_${escape(version)}_windows_${arch}-setup\\.exe$`)
-          ),
-        ]
-      : []),
-  ])
+  await copyUpdateArtifacts([installer])
+  await createWindowsUpdateArchive({
+    installRoot: join(installerRoot, arch === 'x64' ? 'win-unpacked' : `win-${arch}-unpacked`),
+    outputFile: join(output, `WeWork_${version}_windows_${arch}-update.zip`),
+  })
 } else if (platform === 'linux') {
   const appImage = await findFile(
     installerRoot,
@@ -88,7 +85,12 @@ if (platform === 'macos') {
 } else {
   throw new Error(`Unsupported desktop release platform: ${platform}`)
 }
-await prepareComponentAssets()
+if (platform === 'windows') {
+  await collectHarnessRuntimeDirectory(join(componentResourcesRoot, 'harness-runtime'), output)
+  await prepareWindowsMigrationAssets({ directory: output, version, arch })
+} else {
+  await prepareComponentAssets()
+}
 
 async function prepareComponentAssets() {
   const packaged = JSON.parse(
@@ -171,12 +173,6 @@ async function findFile(root, pattern) {
     if (entry.isFile() && pattern.test(entry.name)) return join(root, entry.name)
   }
   throw new Error(`No file matching ${pattern} under ${root}`)
-}
-
-async function requireFile(path) {
-  if (!(await stat(path).catch(() => null))?.isFile()) {
-    throw new Error(`Required release file is missing: ${path}`)
-  }
 }
 
 function escape(value) {

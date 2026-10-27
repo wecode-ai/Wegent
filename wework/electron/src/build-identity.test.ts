@@ -200,7 +200,7 @@ test('builds the macOS installer without unused DMG update metadata', () => {
   expect(config.dmg.writeUpdateInfo).toBe(false)
 })
 
-test('builds a compressed slim Host update without managed components', () => {
+test('keeps slim Host updates on other platforms while Windows uses complete packages', () => {
   const config = JSON.parse(
     execFileSync(
       process.execPath,
@@ -240,7 +240,7 @@ process.stdout.write(JSON.stringify({
   ])
   expect(config.macTarget).toEqual(['zip'])
   expect(config.macArtifactName).toBe('WeWorkHostUpdate_${version}_macos_${arch}.${ext}')
-  expect(config.winArtifactName).toBe('WeWorkHostUpdate_${version}_windows_${arch}-setup.${ext}')
+  expect(config.winArtifactName).toBe('WeWork_${version}_windows_${arch}-setup.${ext}')
   expect(config.linuxArtifactName).toBe('WeWorkHostUpdate_${version}_linux_${arch}.${ext}')
 })
 
@@ -282,12 +282,12 @@ process.stdout.write(JSON.stringify(config.extraResources.map(resource => resour
 })
 
 test.each([
-  ['false', 'false', false],
-  ['true', 'false', true],
-  ['true', 'true', false],
+  ['false', 'false'],
+  ['true', 'false'],
+  ['true', 'true'],
 ])(
-  'bundles the Windows startup migration executor exactly once (host=%s, components=%s)',
-  (hostUpdate, includeComponents, bootstrapOnly) => {
+  'always bundles the complete Windows runtime (host=%s, components=%s)',
+  (hostUpdate, includeComponents) => {
     const config = JSON.parse(
       execFileSync(
         process.execPath,
@@ -306,10 +306,15 @@ test.each([
     expect(
       resources.filter(resource => ['bin', 'bin/wegent-executor.exe'].includes(resource.to))
     ).toHaveLength(1)
-    expect(config.win.extraResources).toEqual(
-      bootstrapOnly
-        ? [{ from: 'resources/bin/wegent-executor.exe', to: 'bin/wegent-executor.exe' }]
-        : []
+    expect(resources.map((resource: { to: string }) => resource.to)).toEqual(
+      expect.arrayContaining([
+        'harness-runtime',
+        'bin',
+        'codex',
+        'wework-core-plugins',
+        'wework-app-static',
+        'bundled-plugins',
+      ])
     )
     expect(config.mac.extraResources).toBeUndefined()
     expect(config.linux.extraResources).toBeUndefined()

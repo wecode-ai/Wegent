@@ -382,7 +382,7 @@ export class PluginDevelopmentManager {
     if (!child) return
     this.updateSession({ status: 'stopping' })
     await this.command('stop').catch(() => {})
-    await terminateProcessTree(child, 5_000).catch(() => {})
+    await terminateProcessTree(child, 5_000)
     if (this.child === child) this.child = null
     this.stopPolling()
     this.updateSession({

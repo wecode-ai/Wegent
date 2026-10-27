@@ -25,7 +25,7 @@ test('enables the custom notarization hook without embedding credentials', () =>
         `
 const config = require(process.argv[1])
 process.stdout.write(JSON.stringify({
-  afterSign: config.afterSign,
+  afterSign: typeof config.afterSign,
   notarize: config.mac.notarize,
 }))
 `,
@@ -41,8 +41,24 @@ process.stdout.write(JSON.stringify({
     )
   )
 
-  expect(config.afterSign).toBe(resolve(electronRoot, 'scripts/notarize-macos.cjs'))
+  expect(config.afterSign).toBe('function')
   expect(config.notarize).toBe(false)
+})
+
+test('the shared signing hook delegates macOS notarization to its existing implementation', async () => {
+  const module = require.cache[require.resolve('../scripts/notarize-macos.cjs')]!
+  const original = module.exports
+  const notarize = vi.fn().mockResolvedValue(undefined)
+  module.exports = notarize
+  vi.stubEnv('WEWORK_CUSTOM_MACOS_NOTARIZATION', 'true')
+  try {
+    const context = { electronPlatformName: 'darwin' }
+    await require('../scripts/after-sign.cjs')(context)
+    expect(notarize).toHaveBeenCalledExactlyOnceWith(context)
+  } finally {
+    module.exports = original
+    vi.unstubAllEnvs()
+  }
 })
 
 test('builds notarytool API key authorization for CI', () => {

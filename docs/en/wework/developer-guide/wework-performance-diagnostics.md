@@ -20,6 +20,22 @@ The desktop startup screen waits only for the local executor to report ready thr
 
 When the startup screen remains visible, align `Frontend logging initialized` in the frontend log with `app IPC stdio ready` in the executor log. The interval primarily measures local executor cold startup. Later entries such as `runtime work list finished` identify workbench data-loading time. Do not mistake a background cloud synchronization timeout for the local startup gate.
 
+### Startup Stages and Diagnostics
+
+The startup splash follows the real startup stages: `launch`, `shell`, `components`, `runtime-files`, `cli`, `workspace`, `services`, `core-dsh`, and `renderer`. It shows the slow-startup note after 30 seconds; when a single stage exceeds its own budget (usually 60 seconds), it only keeps the "first startup can take longer" reminder instead of ending the whole startup flow. The low-emphasis line below the progress bar shows the file currently being scanned or unpacked so the process is visibly working.
+
+Main-process console output is persisted: early bootstrap goes to `wework-startup-bootstrap.log`, normal operation to `wework-main.log`, and startup renderer errors to `renderer-startup.log`, all under the application data `logs` directory. On a timeout or failure, the splash offers **Copy diagnostics** and **Open log folder**. The copied bundle contains the startup stage timeline, current stage, failure message and stack, runtime state, log directories, recent log tails, and extracted error lines, with tokens and similar credentials redacted.
+
+To inspect splash states manually, run the preview command with a stage and state (the first run also builds):
+
+```bash
+pnpm --dir wework/electron preview:startup-splash --stage core-dsh --state slow
+pnpm --dir wework/electron preview:startup-splash --stage components --state timeout --theme dark
+pnpm --dir wework/electron preview:startup-splash --stage renderer --state failed --plugin @wegent/ai-fleet-defense
+```
+
+`--state` accepts `normal`, `slow`, `timeout`, and `failed`; `--stage` accepts the stage IDs above; `--elapsed`, `--activity`, and `--theme` override the elapsed time, activity file, and theme. Add `--capture <png>` to capture the window and exit, which is suitable for automated verification.
+
 ### First-Paint Gates and Idle Work
 
 The workbench first paint depends only on the local executor being available. It does not wait for the Codex app-server, plugin marketplace synchronization, or scans of directories eligible for cleanup. Features that need Codex start it on demand; maintenance such as plugin auto-updates, bundled marketplace preparation, and temporary-image cleanup runs through one renderer idle-task scheduler.

@@ -6,6 +6,7 @@ import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 
 import { hashComponentPath } from '../../../scripts/lib/component-content-hash.mjs'
+import { resolveDesktopPackageLayout } from '../modules/desktop-package-layout.mjs'
 
 const MARKER_NAME = join('e2e-component-update', 'nested', 'marker.txt')
 
@@ -15,7 +16,7 @@ export async function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   const appBinary = resolve(process.env.WEWORK_E2E_APP_BIN ?? '')
-  const resourcesRoot = resolveResourcesRoot(appBinary)
+  const { resourcesRoot } = await resolveDesktopPackageLayout(appBinary)
   const packaged = JSON.parse(await readFile(join(resourcesRoot, 'components.json'), 'utf8'))
   assert.ok(
     packaged.channel === 'stable' || packaged.channel === 'beta',
@@ -201,11 +202,6 @@ export async function createDesktopScenario({
       }
     },
   }
-}
-
-function resolveResourcesRoot(appBinary) {
-  if (process.platform === 'darwin') return resolve(appBinary, '..', '..', 'Resources')
-  return resolve(appBinary, '..', 'resources')
 }
 
 function componentTarget(platform, arch) {

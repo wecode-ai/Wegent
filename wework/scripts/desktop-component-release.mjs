@@ -3,6 +3,7 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { isLegacyWindowsMigrationDescriptor } from './windows-legacy-migration.mjs'
 
 const SHARED_COMPONENTS = new Set(['coreDsh', 'codex', 'dws'])
 const VERSION_COMPONENTS = new Set([
@@ -30,7 +31,9 @@ export async function listComponentAssets(assetsDirectory, scope) {
   for (const descriptor of descriptors) {
     const manifest = JSON.parse(await readFile(resolve(assets, descriptor), 'utf8'))
     for (const [id, component] of Object.entries(manifest.components ?? {})) {
-      const expectedScope = componentReleaseScope(id)
+      const expectedScope = isLegacyWindowsMigrationDescriptor(manifest)
+        ? 'version'
+        : componentReleaseScope(id)
       if (component.releaseScope !== expectedScope) {
         throw new Error(
           `Desktop component ${id} has release scope ${component.releaseScope}; expected ${expectedScope}`

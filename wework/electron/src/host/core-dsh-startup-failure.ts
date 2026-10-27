@@ -7,6 +7,21 @@ export interface JavaScriptExecutor {
   executeJavaScript: (code: string) => Promise<unknown>
 }
 
+export class CoreDshStartupPluginError extends Error {
+  constructor(readonly pluginName: string) {
+    super(`Core DSH plugin failed to load: ${pluginName}`)
+    this.name = 'CoreDshStartupPluginError'
+  }
+}
+
+export async function assertCoreDshStartupPluginsReady(
+  executor: JavaScriptExecutor,
+  pluginNames: string[]
+): Promise<void> {
+  const pluginName = await detectCoreDshStartupPluginFailure(executor, pluginNames)
+  if (pluginName) throw new CoreDshStartupPluginError(pluginName)
+}
+
 export async function detectCoreDshStartupPluginFailure(
   executor: JavaScriptExecutor,
   pluginNames: string[]
