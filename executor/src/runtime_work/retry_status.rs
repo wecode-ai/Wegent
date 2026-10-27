@@ -1,7 +1,8 @@
 use serde_json::{json, Value};
 
 use super::{
-    emit_response_event, now_ms, string_field, CodexNotificationEventMapper, EventEmitContext,
+    emit_response_event, now_ms, stream_thread_id, string_field, CodexNotificationEventMapper,
+    EventEmitContext,
 };
 
 pub(super) fn codex_error_will_retry(params: &Value) -> bool {
@@ -34,6 +35,20 @@ fn retry_reason(params: &Value) -> &'static str {
 }
 
 impl CodexNotificationEventMapper {
+    pub(super) fn clear_resumed_native_retry(
+        &mut self,
+        context: &EventEmitContext<'_>,
+        params: &Value,
+    ) {
+        let thread_id = stream_thread_id(params).unwrap_or_default();
+        let scoped_resumed = self.native_retry_waits.remove(&thread_id).is_some();
+        let unscoped_resumed =
+            !self.is_subagent_delta(params) && self.native_retry_waits.remove("").is_some();
+        if scoped_resumed || unscoped_resumed {
+            self.refresh_reconnecting(context);
+        }
+    }
+
     pub(super) fn refresh_reconnecting(&mut self, context: &EventEmitContext<'_>) {
         let params = if !self.proxy_retry_wait_ids.is_empty() {
             Some(json!({"error": {"codexErrorInfo": "rateLimitExceeded"}}))
@@ -404,5 +419,88 @@ mod tests {
             "done"
         );
         assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn unscoped_native_retry_clears_when_root_progress_has_a_thread_id() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
+        let mut mapper = CodexNotificationEventMapper::default();
+        for message in [
+            json!({"method": "error", "params": {"willRetry": true,
+                "error": {"codexErrorInfo": "rateLimitExceeded"}}}),
+            json!({"method": "turn/diff/updated", "params": {"threadId": "root"}}),
+        ] {
+            mapper.map(
+                &Some(event_tx.clone()),
+                "device",
+                "task",
+                &ExecutionRequest::default(),
+                message,
+            );
+        }
+        assert_eq!(
+            event_rx.try_recv().unwrap()["event"],
+            "response.block.created"
+        );
+        assert_eq!(
+            event_rx
+                .try_recv()
+                .expect("Root progress must end the unscoped wait")["payload"]["data"]["updates"]
+                ["status"],
+            "done"
+        );
+        assert!(mapper.native_retry_waits.is_empty());
+    }
+
+    #[test]
+    fn child_progress_does_not_clear_unscoped_root_or_proxy_waits() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
+        let mut mapper = CodexNotificationEventMapper {
+            root_thread_id: Some("root".to_owned()),
+            ..Default::default()
+        };
+        for message in [
+            json!({"method": "error", "params": {"willRetry": true,
+                "error": {"codexErrorInfo": "rateLimitExceeded"}}}),
+            proxy_wait("proxy", true),
+            json!({"method": "turn/diff/updated", "params": {"threadId": "child"}}),
+        ] {
+            mapper.map(
+                &Some(event_tx.clone()),
+                "device",
+                "task",
+                &ExecutionRequest::default(),
+                message,
+            );
+        }
+        assert_eq!(mapper.native_retry_waits.len(), 1);
+        event_rx.try_recv().unwrap();
+        event_rx.try_recv().unwrap();
+        assert!(event_rx.try_recv().is_err());
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device",
+            "task",
+            &ExecutionRequest::default(),
+            json!({"method": "turn/diff/updated", "params": {"threadId": "root"}}),
+        );
+        assert!(mapper.native_retry_waits.is_empty());
+        let remaining = event_rx.try_recv().unwrap();
+        assert_eq!(
+            remaining["payload"]["data"]["updates"]["tool_input"]["retry_reason"],
+            "rate_limit"
+        );
+        assert!(remaining["payload"]["data"]["updates"]["status"].is_null());
+        mapper.map(
+            &Some(event_tx),
+            "device",
+            "task",
+            &ExecutionRequest::default(),
+            proxy_wait("proxy", false),
+        );
+        assert_eq!(
+            event_rx.try_recv().unwrap()["payload"]["data"]["updates"]["status"],
+            "done"
+        );
     }
 }

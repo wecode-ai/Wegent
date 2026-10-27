@@ -201,6 +201,8 @@ Subagent model rate limits also appear in their owning task. When multiple subag
 
 Concurrent model requests in the same thread have independent wait lifetimes; one recovering request does not clear another request's wait. Proxy waits and native Codex retries are also tracked independently, retaining the rate-limit indicator while any request remains rate limited.
 
+If a retry error omits its thread identity, progress from the current root conversation clears that wait. Subagent progress does not clear the root wait or affect other model requests.
+
 ### Stopping a Task
 
 If you need to stop a running task:

@@ -322,10 +322,7 @@ impl CodexNotificationEventMapper {
         if codex_notification_resumes_turn(&notification.method)
             || (notification.method == "error" && !codex_error_will_retry(notification.params))
         {
-            let thread_id = stream_thread_id(notification.params).unwrap_or_default();
-            if self.native_retry_waits.remove(&thread_id).is_some() {
-                self.refresh_reconnecting(&emit_context);
-            }
+            self.clear_resumed_native_retry(&emit_context, notification.params);
         }
         if codex_stream_debug_enabled()
             && notification.method == "item/agentMessage/delta"
