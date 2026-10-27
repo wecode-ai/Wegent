@@ -73,7 +73,7 @@ where
 
     let mut row = row;
     if connection::response(Some(&ConnectorConnection::from_row(&row))).status == "expired" {
-        refresh::refresh(mysql, &app, user.users_id)
+        refresh::refresh(mysql, app, user.users_id)
             .await
             .map_err(map_refresh_error)?;
         row = db::find_connector_connection(mysql, slug, user.users_id)
@@ -82,7 +82,7 @@ where
             .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, CONNECTION_NOT_FOUND))?;
     }
 
-    match probe_upstream(mysql, &app, user).await {
+    match probe_upstream(mysql, app, user).await {
         Ok(()) => {
             let discovered_at = Utc::now().to_rfc3339();
             let _ = refresh::write_discovery_state(mysql, &row, Some(&discovered_at), None).await;
