@@ -29,6 +29,8 @@
 //! (`backend.rs`); `overwrite_attachment_id` overwrites an existing owned row
 //! instead of inserting one.
 pub mod backend;
+#[cfg(test)]
+mod consistency_tests;
 mod csv;
 pub(crate) mod document;
 mod jpeg_metadata;
@@ -51,10 +53,11 @@ pub use backend::{
 };
 pub(crate) use overwrite::{OverwriteError, Param, Preflush, overwrite_attachment_internal};
 use response::AttachmentResponse;
+pub(crate) use store::refresh_context;
 use store::{
     INSERT_CONTEXT_QUERY, UPDATE_BINARY_DATA_QUERY, UPDATE_FAILED_QUERY, UPDATE_PARSING_QUERY,
     UPDATE_READY_QUERY, UPDATE_READY_WITH_IMAGE_QUERY, UPDATE_TYPE_DATA_QUERY, build_type_data,
-    merge_extra_type_data, refresh_context, type_data_json,
+    merge_extra_type_data, type_data_json,
 };
 
 use std::sync::Arc;

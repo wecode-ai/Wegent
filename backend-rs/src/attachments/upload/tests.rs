@@ -6,9 +6,7 @@
 //! (`src/attachments/upload/mod.rs`).
 
 use super::*;
-use brz_mysql::{
-    FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult, MysqlTransaction, MysqlTransactionService,
-};
+use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult, MysqlTransaction};
 
 #[test]
 fn empty_uploads_are_rejected_before_the_upload_pipeline() {
@@ -121,12 +119,18 @@ impl MysqlTransaction for StatementLog {
         })
     }
 
-    async fn fetch_optional<S, A, T>(&mut self, _: S, _: A) -> MysqlResult<Option<T>>
+    async fn fetch_optional<S, A, T>(&mut self, sql: S, _: A) -> MysqlResult<Option<T>>
     where
         S: AsRef<str> + Send,
         A: MysqlArgs + Send,
         T: FromMysqlRow + Send,
     {
+        self.statements.push(
+            sql.as_ref()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
         Ok(None)
     }
 
@@ -224,16 +228,14 @@ async fn a_failed_storage_write_aborts_before_any_column_write() {
     assert!(transaction.statements.is_empty());
 }
 
-/// A `Mysql` double that records every non-transactional statement, so
-/// tests can assert the service's post-commit `db.refresh(context)` ran
-/// outside the upload transaction.
+/// Capture ordinary statements and primary transactions used by the upload tail.
 #[derive(Default, Clone)]
 struct StatementCapture {
     statements: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl brz_mysql::Mysql for StatementCapture {
-    type Transaction = MysqlTransactionService;
+    type Transaction = StatementLog;
 
     fn with_route<R: brz_mysql::MysqlRouting + 'static>(&self, _: R) -> brz_mysql::MysqlService {
         panic!("plain queries must reuse the configured service")
@@ -243,12 +245,18 @@ impl brz_mysql::Mysql for StatementCapture {
         self.clone()
     }
 
-    async fn with_transaction<T, F>(&self, _: F) -> MysqlResult<T>
+    async fn with_transaction<T, F>(&self, operation: F) -> MysqlResult<T>
     where
         T: Send,
         F: for<'a> AsyncFnOnce(&'a mut Self::Transaction) -> MysqlResult<T> + Send,
     {
-        panic!("unexpected transaction in the upload tail")
+        let mut transaction = StatementLog::default();
+        let result = operation(&mut transaction).await;
+        self.statements
+            .lock()
+            .unwrap()
+            .extend(transaction.statements);
+        result
     }
 
     async fn fetch_optional<S, A, T>(&self, sql: S, _: A) -> MysqlResult<Option<T>>
