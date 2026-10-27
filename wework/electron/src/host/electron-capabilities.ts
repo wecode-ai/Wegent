@@ -894,9 +894,11 @@ export function createElectronCapabilityRouter(
     if (data.length > 28 * 1024 * 1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
       throw new Error('Invalid or oversized MCP App download')
     }
-    const result = await dialog.showSaveDialog(requiredWindow(window), {
-      defaultPath: basename(stringParam(params, 'name')),
-    })
+    const result =
+      e2eSaveDialogOverride() ??
+      (await dialog.showSaveDialog(requiredWindow(window), {
+        defaultPath: basename(stringParam(params, 'name')),
+      }))
     if (result.canceled || !result.filePath) return { isError: true }
     await writeFile(result.filePath, Buffer.from(data, 'base64'))
     return {}

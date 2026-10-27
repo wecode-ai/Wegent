@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -21,6 +23,7 @@ const composer =
 
 export function createDesktopScenario({
   workspacePath,
+  resultDir,
   uiTimeoutMs,
   modelResponseTimeoutMs,
   captureScreenshot,
@@ -126,6 +129,9 @@ export function createDesktopScenario({
       await frameAction('click', '#refresh')
       await waitText('Counter 1')
       assert.equal(await frameAction('attribute', 'body', 'data-integrity'), 'verified')
+      await frameAction('click', '#download')
+      await waitText('Downloads complete')
+      assert.equal(await readFile(join(resultDir, 'conversation-export-e2e.zip'), 'utf8'), 'second')
       await frameAction('click', '#context')
       await waitText('Context saved')
       await captureScreenshot(control, 'mcp-apps-inline.png', 'body')

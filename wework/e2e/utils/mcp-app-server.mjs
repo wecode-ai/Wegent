@@ -59,7 +59,7 @@ document.querySelector('#refresh').onclick=async()=>{ const result=await window.
 </script></body></html>`
 
 const html = `<!doctype html><html><head><meta charset="utf-8"><title>Counter App</title></head>
-<body><h1>Counter App</h1><output id="status">Loading</output><input id="draft" aria-label="App draft"><button id="refresh">Read counter</button><button id="heartbeat">Send heartbeats</button><button id="expand">Expand</button><button id="pip">Picture in picture</button><button id="context">Update context</button>
+<body><h1>Counter App</h1><output id="status">Loading</output><input id="draft" aria-label="App draft"><button id="refresh">Read counter</button><button id="heartbeat">Send heartbeats</button><button id="expand">Expand</button><button id="pip">Picture in picture</button><button id="context">Update context</button><button id="download">Download resources</button>
 <script>
 let sequence=0; const pending=new Map();
 const request=(method,params)=>new Promise((resolve,reject)=>{const id=++sequence;pending.set(id,{resolve,reject});parent.postMessage({jsonrpc:'2.0',id,method,params},'*')});
@@ -70,6 +70,7 @@ document.querySelector('#refresh').onclick=async()=>{try{const r=await request('
 document.querySelector('#heartbeat').onclick=async()=>{try{let r;for(let i=0;i<3;i++)r=await request('tools/call',{name:'change_count',arguments:{token:'synthetic-panel-token',state:'loading'}});document.querySelector('#status').textContent='Heartbeats '+r.structuredContent.count}catch(e){document.querySelector('#status').textContent=e.message}};
 document.querySelector('#expand').onclick=()=>request('ui/request-display-mode',{mode:'fullscreen'});
 document.querySelector('#pip').onclick=()=>request('ui/request-display-mode',{mode:'pip'});
+document.querySelector('#download').onclick=async()=>{try{await request('ui/download-file',{contents:[{type:'resource',resource:{uri:'file:///broken%E0%A4',mimeType:'text/plain',text:'first'}},{type:'resource',resource:{uri:'file:///report%20one.txt',mimeType:'text/plain',text:'second'}}]});document.querySelector('#status').textContent='Downloads complete'}catch(e){document.querySelector('#status').textContent=e.message}};
 document.querySelector('#context').onclick=async()=>{await request('ui/update-model-context',{structuredContent:{selection:'counter-selection'}});document.querySelector('#status').textContent='Context saved'};
 request('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'counter',version:'1.0.0'},appCapabilities:{}}).then(()=>parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}},'*')).catch(e=>{document.querySelector('#status').textContent=e.message});
 fetch('https://blocked.example.invalid/leak').then(()=>{document.body.dataset.csp='failed'}).catch(()=>{document.body.dataset.csp='blocked'});

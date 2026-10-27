@@ -292,9 +292,15 @@ export function McpAppHost({
                     String.fromCharCode(byte)
                   ).join('')
                 )
+          let name = 'download'
+          try {
+            name = decodeURIComponent(resource.uri.split('/').at(-1) || name)
+          } catch {
+            // A malformed display name must not discard this or later resources.
+          }
           const result = await invokeDesktopHost<{ isError?: boolean }>('mcpApps.saveFile', {
             data: bytes,
-            name: decodeURIComponent(resource.uri.split('/').at(-1) || 'download'),
+            name,
           })
           if (result.isError) return result
         }

@@ -5,10 +5,14 @@ import { McpAppHost } from './McpAppHost'
 
 const translate = vi.hoisted(() => (key: string) => key)
 const native = vi.hoisted(() => ({ invoke: vi.fn() }))
+const bridges = vi.hoisted(() => [] as Array<Record<string, unknown>>)
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: translate }) }))
 vi.mock('@/api/dsh/desktopHost', () => ({ invokeDesktopHost: native.invoke }))
 vi.mock('@modelcontextprotocol/ext-apps/app-bridge', () => ({
   AppBridge: class {
+    constructor() {
+      bridges.push(this as unknown as Record<string, unknown>)
+    }
     oninitialized?: () => void
     async connect() {
       queueMicrotask(() => this.oninitialized?.())
@@ -34,6 +38,7 @@ const running: ToolBlock = {
 
 beforeEach(() => {
   native.invoke.mockClear()
+  bridges.length = 0
 })
 
 describe('MCP App discovery', () => {
@@ -92,6 +97,40 @@ describe('MCP App close completion', () => {
     result: { content: [] },
     arguments: {},
   }
+
+  it('downloads remaining resources when a resource filename contains malformed percent encoding', async () => {
+    native.invoke.mockImplementation((method: string) => {
+      if (method === 'mcpApps.createDocument')
+        return Promise.resolve({
+          id: 'document',
+          url: 'codex-sandbox://test.web-sandbox.oaiusercontent.com/mcp-app.html',
+        })
+      if (method === 'mcpApps.saveFile') return Promise.resolve({})
+      if (method === 'mcpApps.releaseDocument') return Promise.resolve()
+      throw new Error('Unexpected host method: ' + method)
+    })
+    render(
+      <McpAppHost
+        block={running}
+        address={address}
+        api={{ requestMcpApp: vi.fn().mockResolvedValue(descriptor) }}
+      />
+    )
+    await act(async () => {})
+    const download = bridges.at(-1)!.ondownloadfile as (params: unknown) => Promise<unknown>
+    await expect(
+      download({
+        contents: [
+          { type: 'resource', resource: { uri: 'file:///broken%E0%A4', text: 'first' } },
+          { type: 'resource', resource: { uri: 'file:///report%20one.txt', text: 'second' } },
+        ],
+      })
+    ).resolves.toEqual({})
+    expect(native.invoke.mock.calls.filter(([method]) => method === 'mcpApps.saveFile')).toEqual([
+      ['mcpApps.saveFile', { name: 'download', data: btoa('first') }],
+      ['mcpApps.saveFile', { name: 'report one.txt', data: btoa('second') }],
+    ])
+  })
 
   it('dismisses and reopens a fullscreen-only view without releasing its document', async () => {
     native.invoke.mockImplementation((method: string) => {
