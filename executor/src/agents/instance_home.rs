@@ -611,7 +611,7 @@ pub(crate) fn task_skills_directory_at(
     Ok(skills)
 }
 
-fn agent_homes(agents: &Path) -> Result<Vec<PathBuf>, String> {
+pub(crate) fn agent_homes(agents: &Path) -> Result<Vec<PathBuf>, String> {
     let mut directories = vec![agents.to_path_buf()];
     for _ in 0..3 {
         let mut children = Vec::new();
