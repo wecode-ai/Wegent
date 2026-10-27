@@ -39,6 +39,17 @@ export async function verifyIssuePersonalTaskPrivacy({
   })
   const own = await request(`/api/v1/loop-items/${issueId}/tasks`)
   assert.ok(!own.some(binding => String(binding.task_user_id) === String(member.id)))
+  const binding = own.find(candidate => candidate.task_id === taskId)
+  assert.ok(binding, 'The checkpoint must supply its completed personal task')
+  const address = { deviceId: binding.device_id, taskId: binding.task_id }
+  const transcriptRequest = {
+    ...address,
+    projectSession: { projectId: String(projectId), issueId },
+  }
+  await request('/api/runtime-work/transcript', {
+    method: 'POST',
+    body: JSON.stringify(transcriptRequest),
+  })
   const memberBindings = await requestJson(
     login.access_token,
     `/api/v1/loop-items/${issueId}/tasks`
@@ -52,11 +63,7 @@ export async function verifyIssuePersonalTaskPrivacy({
   const denied = await fetch(`${backendUrl}/api/runtime-work/transcript`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${login.access_token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      deviceId: own[0].device_id,
-      taskId: own[0].task_id,
-      projectSession: { projectId: String(projectId), issueId },
-    }),
+    body: JSON.stringify(transcriptRequest),
   })
   assert.equal(
     denied.status,
@@ -77,9 +84,6 @@ export async function verifyIssuePersonalTaskPrivacy({
     0
   )
 
-  const binding = own.find(candidate => candidate.task_id === taskId)
-  assert.ok(binding, 'The checkpoint must supply its completed personal task')
-  const address = { deviceId: binding.device_id, taskId: binding.task_id }
   const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   assert.equal((await rpc('runtime.tasks.archive', address)).accepted, true)
   try {
