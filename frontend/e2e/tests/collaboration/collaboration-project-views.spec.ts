@@ -2,93 +2,119 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page, type Request } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
-import { createApiClient } from '../../utils/api-client'
-import { webApi } from '../../utils/collaboration-test-support'
+import { projectTest, type Resource } from '../../utils/collaboration-project-fixture'
+import { dragCollaborationIssueToColumn, webApi } from '../../utils/collaboration-test-support'
 
-interface Resource {
-  id: string
-  version: number
+async function dragIssueToLane(page: Page, issueId: string, source: string, target: string) {
+  return dragCollaborationIssueToColumn(page, issueId, target, source)
 }
 
-interface ScheduledProject {
-  path: string
-  issueId: string
-  title: string
-}
-
-const projectTest = test.extend<{ scheduledProject: ScheduledProject }>({
-  scheduledProject: async ({ page, request }, use) => {
-    await page.goto('/collaboration')
-    await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
-    const suffix = crypto.randomUUID()
-    const workspace = await webApi<Resource>(page, '/api/v1/workspaces', {
+projectTest(
+  'rejected robot starts preserve the board and detail status',
+  async ({ page, scheduledProject: { path } }) => {
+    const projectId = path.split('/').at(-1)!
+    const agent = await webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/chat-agents`, {
       method: 'POST',
-      body: { name: `Project views ${suffix}` },
+      body: {
+        name: 'Runner authorization regression',
+        runtime: 'codex',
+        execution_policy: { mode: 'project_pool' },
+        model_policy: { mode: 'user_select' },
+        workspace_binding: { type: 'standalone' },
+      },
     })
-    let project: Resource | undefined
-    try {
-      project = await webApi<Resource>(page, '/api/v1/cloud-projects', {
+    // A completed, assigned Issue is valid without starting a run.
+    const created = await webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
+      method: 'POST',
+      body: { title: 'Start without a runner', status: 'completed', assignee_agent_id: agent.id },
+    })
+    const inbox = await webApi<Resource>(page, `/api/v1/loop-items/${created.id}`, {
+      method: 'PATCH',
+      body: { version: created.version, status: 'inbox' },
+    })
+    await page.goto(path)
+    await dragIssueToLane(page, created.id, 'inbox', 'in_progress')
+    await expect(page.getByTestId('collaboration-board').getByRole('alert')).toContainText(
+      /机器人没有符合配置且获项目授权的执行环境|No project-authorized execution environment matches this agent/
+    )
+    await expect(
+      page.getByTestId('cloud-todo-column-inbox').getByTestId(`cloud-todo-card-${created.id}`)
+    ).toBeVisible()
+    const persisted = await webApi<Resource & { status: string }>(
+      page,
+      `/api/v1/loop-items/${created.id}`
+    )
+    expect({ status: persisted.status, version: persisted.version }).toEqual({
+      status: 'inbox',
+      version: inbox.version,
+    })
+    await page.reload()
+    await page
+      .getByTestId('cloud-todo-column-inbox')
+      .getByTestId(`cloud-todo-card-${created.id}`)
+      .click()
+    await page.getByTestId('cloud-todo-detail-status').selectOption('in_progress')
+    await page.getByTestId('cloud-todo-save').click()
+    await expect(page.getByTestId('cloud-todo-save-error')).toContainText(
+      /项目授权|project-authorized/
+    )
+    await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('inbox')
+  }
+)
+
+projectTest(
+  'expands linked task history in a bounded scroll area',
+  async ({ page, scheduledProject: { path, issueId } }) => {
+    // Persist historical session references through the real binding API.
+    for (let index = 0; index < 9; index += 1) {
+      await webApi(page, `/api/v1/loop-items/${issueId}/tasks`, {
         method: 'POST',
         body: {
-          workspace_id: workspace.id,
-          name: `Schedule ${suffix}`,
-          task_provider: 'local',
-          visibility: 'private',
+          deviceId: 'archived-history-device',
+          taskId: `${issueId}-history-${index}`,
+          taskTitle: `Historical task ${index + 1}`,
         },
       })
-      const users = await webApi<{ users: Array<{ id: number; user_name: string }> }>(
-        page,
-        `/api/users/search?q=${encodeURIComponent(REGULAR_USER.username)}&limit=20`
-      )
-      const member = users.users.find(user => user.user_name === REGULAR_USER.username)
-      expect(member, 'Global setup must provision the regular E2E user').toBeDefined()
-      await webApi(page, `/api/v1/cloud-projects/${project.id}/members`, {
-        method: 'POST',
-        body: { user_id: member!.id, role: 'Developer' },
-      })
-      const memberApi = createApiClient(request)
-      const login = await memberApi.login(REGULAR_USER.username, REGULAR_USER.password, 1)
-      expect(login.status).toBe(200)
-      const today = new Date()
-      today.setHours(12, 0, 0, 0)
-      const title = `Scheduled Issue ${suffix}`
-      const created = await memberApi.post<Resource>(
-        `/api/v1/cloud-projects/${project.id}/loop-items`,
-        {
-          title,
-          description: 'Created by another member to verify an unread board card.',
-          status: 'pending',
-          priority: 'none',
-          tags: [],
-          start_at: today.toISOString(),
-          due_at: today.toISOString(),
-        }
-      )
-      expect(created.status).toBe(201)
-      expect(created.data?.id).toBeTruthy()
-      await use({
-        path: `/collaboration/workspaces/${workspace.id}/projects/${project.id}`,
-        issueId: created.data!.id,
-        title,
-      })
-    } finally {
-      if (project) {
-        const current = await webApi<Resource>(page, `/api/v1/cloud-projects/${project.id}`)
-        await webApi(page, `/api/v1/cloud-projects/${project.id}?version=${current.version}`, {
-          method: 'DELETE',
-        })
-      }
-      const current = await webApi<Resource>(page, `/api/v1/workspaces/${workspace.id}`)
-      await webApi(page, `/api/v1/workspaces/${workspace.id}?version=${current.version}`, {
-        method: 'DELETE',
-      })
     }
-  },
-})
 
-projectTest.setTimeout(120_000)
+    await page.goto(path)
+    await page.getByTestId(`cloud-todo-card-${issueId}`).click()
+    const section = page.getByTestId('cloud-todo-tasks')
+    const list = section.getByTestId('cloud-todo-task-list')
+    const toggle = section.getByTestId('cloud-todo-toggle-tasks')
+    await expect(section.getByTestId('cloud-todo-execution-task-count')).toHaveText('9')
+    await expect(list.getByRole('button')).toHaveCount(2)
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await toggle.click()
+    await expect(list.getByRole('button')).toHaveCount(9)
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+
+    const geometry = () =>
+      list.evaluate(element => ({
+        height: element.clientHeight,
+        contentHeight: element.scrollHeight,
+        scrollTop: element.scrollTop,
+      }))
+    const before = await geometry()
+    expect(before.height).toBeGreaterThan(0)
+    expect(before.height).toBeLessThanOrEqual(280)
+    expect(before.contentHeight).toBeGreaterThan(before.height)
+    const last = list.getByRole('button').last()
+    await list.hover()
+    await page.mouse.wheel(0, before.contentHeight)
+    await expect.poll(async () => (await geometry()).scrollTop).toBeGreaterThan(0)
+    await expect(last).toBeInViewport()
+    expect((await geometry()).height).toBe(before.height)
+    await expect(toggle).toBeInViewport()
+
+    await toggle.click()
+    await expect(list.getByRole('button')).toHaveCount(2)
+    await toggle.click()
+    expect((await geometry()).scrollTop).toBe(0)
+  }
+)
 
 projectTest(
   'sorts lanes independently with compound rules and restores choices after reload',
@@ -356,7 +382,8 @@ async function dragBefore(
   const target = beforeId
     ? page.getByTestId(`cloud-todo-column-${lane}`).getByTestId(`collaboration-issue-${beforeId}`)
     : page.getByTestId(`cloud-todo-column-dropzone-${lane}-content`)
-  await source.scrollIntoViewIfNeeded()
+  // Resolve the actionable card after any saved-order refresh or layout change.
+  await source.hover({ position: { x: 20, y: 20 } })
   const from = (await source.boundingBox())!
   await page.mouse.move(from.x + 20, from.y + 20)
   await page.mouse.down()
@@ -464,6 +491,16 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
         for (const [index, id] of ids.entries())
           await expect(cards.nth(index)).toHaveAttribute('data-testid', `collaboration-issue-${id}`)
       }
+      const assertSavedMove = async (column: string, id: string) => {
+        // A committed backend order can precede the board refresh and card remount.
+        await expect(page.getByTestId('board-drop-feedback')).toBeVisible()
+        await expect(
+          page
+            .getByTestId(`cloud-todo-column-${column}`)
+            .getByTestId('board-drop-highlight')
+            .getByTestId(`cloud-todo-card-${id}`)
+        ).toBeVisible()
+      }
       await expect(sort).toHaveAttribute('data-sort-rules', 'priority-desc')
       const before = await snapshot()
       await dragBefore(page, lane, second.id, lane, first.id)
@@ -481,6 +518,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       )
       await dragBefore(page, lane, second.id, lane, first.id)
       expect((await reorder).ok()).toBe(true)
+      await assertSavedMove(lane, second.id)
       await assertOrder([second.id, first.id])
       await page.reload()
       await expect(sort).toHaveAttribute('data-sort-rules', 'manual')
@@ -492,6 +530,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       )
       await dragBefore(page, sourceLane, outside.id, lane, first.id)
       expect((await crossReorder).ok()).toBe(true)
+      await assertSavedMove(lane, outside.id)
       await assertOrder([second.id, outside.id, first.id])
       await page.reload()
       await assertOrder([second.id, outside.id, first.id])
@@ -511,6 +550,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       await page.getByTestId('cloud-board-sort-by-pending-manual').click()
       await pendingSort.click()
       await dragBefore(page, 'pending', first.id, 'pending', outside.id)
+      await assertSavedMove('pending', first.id)
       await expect
         .poll(async () => {
           const items = (await snapshot()).items
@@ -521,6 +561,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
         })
         .toBe(true)
       await dragBefore(page, 'pending', first.id, 'pending', null)
+      await assertSavedMove('pending', first.id)
       await expect
         .poll(async () => {
           const pending = (await snapshot()).items
@@ -534,10 +575,23 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
       const expected = canonical
         .filter(item => [first.id, second.id, outside.id].includes(item.id))
         .map(item => item.id)
+      const sharedProjectUpdates: string[] = []
+      const onRequest = (request: Request) => {
+        if (request.method() === 'PATCH' && request.url().endsWith(`/cloud-projects/${projectId}`))
+          sharedProjectUpdates.push(request.url())
+      }
+      page.on('request', onRequest)
+      const beforeGrouping = await webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}`)
       await page.getByTestId('cloud-board-group-by').click()
       await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()
+      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', groupBy)
       await assertOrder(expected)
+      page.off('request', onRequest)
+      expect(sharedProjectUpdates).toEqual([])
+      const afterGrouping = await webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}`)
+      expect(afterGrouping.version).toBe(beforeGrouping.version)
       await page.reload()
+      await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', groupBy)
       await assertOrder(expected)
     }
   )
@@ -665,6 +719,172 @@ for (const view of ['calendar', 'gantt'] as const) {
     }
   )
 }
+
+projectTest(
+  'saves mixed lanes and preserves status, tags and Issues through drag and deletion',
+  async ({ page, scheduledProject: { path, issueId } }) => {
+    const projectId = path.split('/').at(-1)!
+    const issuePath = `/api/v1/loop-items/${issueId}`
+    const issue = await webApi<{ version: number }>(page, issuePath)
+    await webApi(page, issuePath, {
+      method: 'PATCH',
+      body: { version: issue.version, status: 'completed', tags: ['shared'] },
+    })
+    await page.goto(path)
+    const toolbar = page.getByTestId('cloud-board-toolbar')
+    const actions = toolbar.getByTestId('cloud-board-view-actions')
+    const viewPicker = actions.getByTestId('board-view-picker')
+    await expect(viewPicker).toBeVisible()
+    await expect(actions.getByTestId('cloud-board-focus-running')).toBeVisible()
+    const pickerBox = await viewPicker.boundingBox()
+    const searchBox = await toolbar.getByTestId('cloud-board-search').boundingBox()
+    expect(pickerBox).not.toBeNull()
+    expect(searchBox).not.toBeNull()
+    expect(
+      Math.abs(pickerBox!.y + pickerBox!.height / 2 - searchBox!.y - searchBox!.height / 2)
+    ).toBeLessThanOrEqual(1)
+    await page.getByTestId('board-view-picker').click()
+    await page.getByTestId('board-view-new').click()
+    await page.getByTestId('board-view-name').fill('Mixed regression')
+    for (let index = 0; index < 4; index += 1)
+      await page.getByTestId('board-view-lane-remove-0').click()
+    for (const [index, tag] of [
+      [1, 'alpha'],
+      [2, 'beta'],
+    ] as const) {
+      await page.getByTestId('board-view-add-lane').click()
+      await page.getByTestId(`board-view-lane-value-${index}`).click()
+      await page.getByTestId(`board-view-lane-value-${index}-search`).fill(tag)
+      await page.getByTestId(`board-view-lane-value-${index}-create`).click()
+    }
+    await page.getByTestId('board-view-add-lane').click()
+    await page.getByTestId('board-view-lane-type-3').selectOption('status')
+    await page.getByTestId('board-view-lane-value-3').selectOption('pending')
+    await page.getByTestId('board-view-add-lane').click()
+    await page.getByTestId('board-view-lane-type-4').selectOption('status')
+    await page.getByTestId('board-view-lane-value-4').selectOption('in_progress')
+    await page.getByTestId('board-view-set-default').check()
+    await page.getByTestId('board-view-save').click()
+    await expect(page.getByTestId('board-view-editor')).toHaveCount(0)
+    const saved = await webApi<{
+      board_views: {
+        default_view_id: string
+        views: Array<{ id: string; columns: Array<{ id: string }> }>
+      }
+    }>(page, `/api/v1/cloud-projects/${projectId}`)
+    const view = saved.board_views.views[0]
+    expect(saved.board_views.default_view_id).toBe(view.id)
+    await expect(page.getByTestId('board-view-navigation').getByRole('button')).toHaveCount(1)
+    const [done, alpha, beta, pending] = view.columns.map(column => column.id)
+    const workingLane = page.getByTestId(`cloud-todo-column-${view.columns[4].id}`)
+    const focusToggle = actions.getByTestId('cloud-board-focus-running')
+    await expect(focusToggle).toBeVisible()
+    await focusToggle.click()
+    await expect(workingLane).toHaveClass(/w-\[480px\]/)
+    await expect(page.getByTestId(`cloud-todo-column-${alpha}`)).toHaveClass(/w-\[292px\]/)
+    await focusToggle.click()
+    await expect(workingLane).toHaveClass(/w-\[292px\]/)
+    await expect(page.getByTestId('collaboration-board-settings')).toHaveCount(0)
+    await page.getByTestId('board-view-picker').click()
+    await page.getByTestId('board-view-edit').click()
+    await expect(page.getByTestId('board-view-name')).toHaveValue('Mixed regression')
+    await expect(page.getByTestId('board-view-lane-value-1')).toHaveText('alpha')
+    await expect(page.getByTestId('board-view-lane-value-2')).toHaveText('beta')
+    await expect(page.getByTestId('board-view-set-default')).toBeChecked()
+    await expect(page.getByTestId(`board-view-preview-${alpha}`)).toContainText('alpha')
+    await expect(page.getByTestId('cloud-board-display-menu')).toBeVisible()
+    await page.getByTestId('cloud-board-display-menu').click()
+    await expect(
+      page.getByTestId('board-view-editor').getByTestId('cloud-project-card-display-settings')
+    ).toBeVisible()
+    await page.getByTestId('cloud-project-card-display-settings').press('Escape')
+    await expect(page.getByTestId('cloud-project-card-display-settings')).toHaveCount(0)
+    await expect(page.getByTestId('board-view-editor')).toBeVisible()
+    await page.getByTestId('board-view-lane-value-0').scrollIntoViewIfNeeded()
+    for (const index of [0, 1]) {
+      const field = page.getByTestId(`board-view-lane-value-${index}`)
+      const arrow = index === 0 ? field.locator('..').locator('svg') : field.locator('svg')
+      const fieldBox = await field.boundingBox()
+      const arrowBox = await arrow.boundingBox()
+      expect(fieldBox).not.toBeNull()
+      expect(arrowBox).not.toBeNull()
+      expect(
+        Math.abs(arrowBox!.y + arrowBox!.height / 2 - fieldBox!.y - fieldBox!.height / 2)
+      ).toBeLessThanOrEqual(1)
+      const rightInset = fieldBox!.x + fieldBox!.width - arrowBox!.x - arrowBox!.width
+      expect(rightInset).toBeGreaterThanOrEqual(12)
+      expect(rightInset).toBeLessThanOrEqual(13)
+    }
+    await page.getByTestId('board-view-lane-value-1').click()
+    await expect(page.getByTestId('board-view-lane-value-1-search')).toHaveValue('')
+    await expect(page.getByTestId('board-view-lane-value-1-option-alpha')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    await expect(page.getByTestId('board-view-lane-value-1-option-beta')).toBeDisabled()
+    await expect(page.getByTestId('board-view-lane-value-1-option-shared')).toBeVisible()
+    const triggerBounds = await page.getByTestId('board-view-lane-value-1').boundingBox()
+    const popupBounds = await page.getByTestId('board-view-lane-value-1-popover').boundingBox()
+    expect(triggerBounds).not.toBeNull()
+    expect(popupBounds).not.toBeNull()
+    const gap = Math.min(
+      Math.abs(popupBounds!.y - triggerBounds!.y - triggerBounds!.height),
+      Math.abs(triggerBounds!.y - popupBounds!.y - popupBounds!.height)
+    )
+    expect(gap).toBeGreaterThanOrEqual(3)
+    expect(gap).toBeLessThanOrEqual(5)
+    await page.getByTestId('board-view-lane-value-1-search').press('Escape')
+    await expect(page.getByTestId('board-view-editor')).toBeVisible()
+    await expect(page.getByTestId('project-board-settings-dialog')).toHaveCount(0)
+    await page.getByTestId('board-view-cancel').click()
+    await page.goto(`${path}?view=manage&section=project`)
+    await page.getByTestId('cloud-project-manage-tags-toggle').click()
+    for (const tag of ['shared', 'alpha', 'beta'])
+      await expect(page.getByTestId(`cloud-project-tag-${tag}`)).toBeVisible()
+    await page.goto(path)
+    await expect(page.getByTestId('board-view-picker')).toContainText('Mixed regression')
+    await expect(page.getByTestId('collaboration-board').locator('p[role="status"]')).toHaveCount(0)
+    const expectItem = async (status: string, tags: string[]) =>
+      expect
+        .poll(async () => {
+          const item = await webApi<{ status: string; tags: string[] }>(page, issuePath)
+          return { status: item.status, tags: item.tags }
+        })
+        .toEqual({ status, tags })
+    const card = (lane: string) =>
+      page.getByTestId(`cloud-todo-column-${lane}`).getByTestId(`cloud-todo-card-${issueId}`)
+    await dragIssueToLane(page, issueId, done, alpha)
+    await expectItem('completed', ['shared', 'alpha'])
+    await expect(card(done)).toBeVisible()
+    await expect(card(alpha)).toBeVisible()
+    await expect(page.getByTestId('board-drop-feedback')).toBeVisible()
+    await expect(card(alpha).getByTestId(`cloud-todo-card-status-${issueId}`)).toContainText(
+      /已完成|Done|Completed/
+    )
+    await dragIssueToLane(page, issueId, alpha, beta)
+    await expectItem('completed', ['shared', 'beta'])
+    await expect(card(alpha)).toHaveCount(0)
+    await dragIssueToLane(page, issueId, beta, pending)
+    await expectItem('pending', ['shared', 'beta'])
+    await expect(card(beta)).toBeVisible()
+    await expect(card(pending)).toBeVisible()
+    await dragIssueToLane(page, issueId, pending, done)
+    await expectItem('completed', ['shared', 'beta'])
+    await page.reload()
+    await expect(page.getByTestId('board-view-picker')).toContainText('Mixed regression')
+    await expect(card(done)).toBeVisible()
+    await expect(card(beta)).toBeVisible()
+    await page.getByTestId('board-view-picker').click()
+    await page.getByTestId('board-view-edit').click()
+    await page.getByTestId('board-view-delete').click()
+    await page.getByTestId('board-view-delete').click()
+    await expect(page.getByTestId('board-view-editor')).toHaveCount(0)
+    await page.getByTestId('board-view-picker').click()
+    await expect(page.getByTestId(`board-view-${view.id}`)).toHaveCount(0)
+    await expect(page.getByTestId('board-view-default')).toContainText(/默认|Default/)
+    await expectItem('completed', ['shared', 'beta'])
+  }
+)
 
 test('removes My Work and Run Center from navigation and their former URLs', async ({ page }) => {
   await page.goto('/collaboration')

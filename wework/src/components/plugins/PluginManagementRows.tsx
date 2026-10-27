@@ -81,6 +81,8 @@ export function InstalledPluginRow({
             ? t('workbench.plugins_distribution_external', '第三方市场')
             : t('workbench.plugins_distribution_public', 'Wework官方')
   const subtitle = buildInstalledPluginSubtitle(plugin, marketplaceItem, t)
+  const recoveryError = plugin.raw.spec.sourcePayload?.runtimeRecoveryError
+  const needsRecovery = typeof recoveryError === 'string' && Boolean(recoveryError.trim())
 
   useEffect(() => {
     if (!isMenuOpen) return
@@ -127,6 +129,16 @@ export function InstalledPluginRow({
         <small className="mt-0.5 block truncate text-sm leading-5 text-text-muted">
           {subtitle}
         </small>
+        {needsRecovery && (
+          <small
+            role="status"
+            data-testid={`installed-plugin-recovery-${plugin.id}`}
+            title={recoveryError}
+            className="block truncate text-sm leading-5 text-text-secondary"
+          >
+            {t('workbench.plugins_runtime_recovery_required')}
+          </small>
+        )}
       </div>
     </>
   )
@@ -140,7 +152,7 @@ export function InstalledPluginRow({
         <button
           type="button"
           aria-label={`${t('workbench.plugins_view_plugin_detail', '查看 {{name}} 详情', { name: plugin.name })}`}
-          className="grid min-h-[75px] grid-cols-[42px_minmax(0,1fr)] items-center gap-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus/30"
+          className="grid min-h-[75px] grid-cols-[42px_minmax(0,1fr)] items-center gap-3 py-2 text-left focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus/30"
           onClick={onOpen}
         >
           {mainContent}
@@ -160,7 +172,7 @@ export function InstalledPluginRow({
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             {t('workbench.plugins_uninstalling', '正在卸载')}
           </span>
-        ) : onTry ? (
+        ) : onTry && !needsRecovery ? (
           <button
             type="button"
             aria-label={`${t('workbench.plugins_try_now', '立即对话')} ${plugin.name}`}
@@ -181,7 +193,7 @@ export function InstalledPluginRow({
             title={toggleLabel}
             data-testid={`installed-plugin-toggle-${plugin.id}`}
             className={[
-              'relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40',
+              'relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40',
               plugin.enabled ? 'bg-emerald-600' : 'bg-border',
             ].join(' ')}
             onClick={onToggle}
@@ -216,7 +228,7 @@ export function InstalledPluginRow({
               <button
                 type="button"
                 data-testid={`installed-plugin-share-${plugin.id}`}
-                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
                 onClick={() => {
                   setIsMenuOpen(false)
                   onShare()
@@ -230,7 +242,7 @@ export function InstalledPluginRow({
               <button
                 type="button"
                 data-testid={`installed-plugin-publish-${plugin.id}`}
-                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
                 onClick={() => {
                   setIsMenuOpen(false)
                   onPublish()
@@ -244,7 +256,7 @@ export function InstalledPluginRow({
               <button
                 type="button"
                 data-testid={`installed-plugin-copy-${plugin.id}`}
-                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
                 onClick={() => {
                   setIsMenuOpen(false)
                   onCopy()

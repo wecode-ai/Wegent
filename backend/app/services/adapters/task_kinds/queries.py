@@ -35,6 +35,7 @@ from .query_utils import (
 from .task_detail_helpers import (
     add_group_chat_info_to_task,
     convert_subtasks_to_dict,
+    filter_conversation_contexts_for_viewer,
     get_bots_for_subtasks,
     get_requested_skills_from_task,
 )
@@ -405,6 +406,9 @@ class TaskQueryMixin:
 
         bots = get_bots_for_subtasks(db, all_bot_ids)
         subtasks_dict = convert_subtasks_to_dict(subtasks, bots)
+        filter_conversation_contexts_for_viewer(
+            db, subtasks=subtasks_dict, user_id=user_id
+        )
 
         task_dict["user"] = user
         task_dict["team"] = team

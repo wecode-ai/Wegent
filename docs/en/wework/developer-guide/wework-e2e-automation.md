@@ -4,11 +4,15 @@ sidebar_position: 34
 
 # E2E Automation
 
+Desktop E2E fixtures use `GPT 5.6 Luna`. Real runtime catalogs advertise both `GPT-5.6 Luna` and `GPT 5.6 Luna`, so default-model selection assertions accept these two display names while retaining model ID and provider checks. Task restoration assertions retain the fixture's original display name.
+
+Desktop checkpoint cleanup retains `backend-rs-logs/` so CI can upload Rust gateway startup logs. Settings follows the current global route while retaining the original tab's application route, allowing Back to restore the application.
+
 Wework provides a dedicated Playwright E2E entrypoint and a test-only frontend automation bridge for operating the Wework Vite/React frontend in CI. The default entrypoint runs in browser mode, which covers most frontend interactions; the desktop task-flow E2E below covers native-window and task-execution behavior.
 
 Issue MCP attachment coverage uses the shared `setup-minio-e2e` Action on Linux and Windows to build and verify the same pinned real MinIO version. Only main writes caches; scenarios use the platform executable through `WEWORK_E2E_MINIO_BIN`.
 
-The first model-routing task and real Harness CLI launch use the workbench startup budget. Streaming scroll waits for the model request before applying the original ten-second UI assertion. After changing projects, wait for the execution mode control to become available. Scroll moved board cards into view before checking result visibility, and use the responsive view helper for cloud Stand-in navigation. Failed workbench snapshots include resource connection, request, and response timings with paths only, excluding query parameters.
+The first model-routing task and real Harness CLI launch use the workbench startup budget. Streaming scroll waits for the model request before applying the original ten-second UI assertion. After changing projects, wait for the execution mode control to become available. Scroll moved board cards into view before checking result visibility, and use the responsive view helper for cloud Stand-in navigation.
 
 Numeric Process Explorer filters match the exact PID, excluding matches in other processes' launch arguments or PID substrings. Text filters still search process names and launch details. The application-menu checkpoint retains its assertion that filtering by the application PID excludes unrelated helpers.
 
@@ -105,6 +109,8 @@ Tests do not mock backend APIs. When Backend is not running, the login-page smok
 
 The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real provider account, it starts only a loopback model service implementing OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages. Each interface runs a text response plus a send → `apply_patch` → tool result → completion lifecycle, while real Codex executes the tool in the isolated workspace.
 
+Reply predictions and their image-description requests are dispatched independently of the foreground scenario. A previous conversation's background image request can arrive after the protocol matrix starts. The model fixture identifies it first, retains the image-description protocol checks and response, and leaves matrix state unchanged. `desktop-reply-prediction-fixture.test.mjs` covers this cross-scenario path; foreground endpoint and model ID assertions remain intact.
+
 The model protocol matrix defines 18 combinations across execution location, model source, and protocol:
 
 - Local execution covers local custom models, built-in Codex models, and cloud Model CRDs across all three protocols, for 9 complete text and tool lifecycles.
@@ -117,6 +123,8 @@ Matrix submissions use a 10-second timeout. If the composer already displays a s
 
 `e2e:desktop:embedded-browser` runs the embedded-browser Agent operation regression through a scenario module. It uses the real Electron renderer, Executor, Codex app-server, and browser MCP server, opens a local fixture page, and verifies the Electron `WebContentsView` bridge control path. The scenario covers bridge identity lookup, authenticated bridge requests, page open, structured `inspect`, `fill`, `click`, `wait`, `scroll`, `screenshot`, `capabilities`, high-risk action approval, and combined MCP tools such as `open_and_inspect` and `wait_and_inspect`. It also starts a long `waitFor` and then verifies an independent `click` is not blocked, preventing bridge concurrency regressions. When local-file support changes, the scenario also opens a `file://` HTML fixture, Markdown and extensionless text fixtures, and a local folder fixture through the bridge, and verifies that an unpreviewable local file shows a toast instead of entering the download list. Results are written to `embedded-browser-agent-result.json`.
 
+The `conversation-state` checkpoint keeps the reading paragraph visible before and after opening a file panel. Shared viewport restoration incorporates reader movement into the same semantic anchor baseline, so scrolling away from the bottom cannot make a programmatic correction look like native range clamping and apply the same layout shift twice. `useReaderViewportAnchor.test.ts` reproduces the CI scroll coordinates and 48px height change across consecutive restorations; existing E2E geometry assertions remain unchanged.
+
 The `renderer-storage` checkpoint writes model, draft, and layout `localStorage`
 fixtures in the real packaged Electron app, flushes the persistence queue, and
 restarts Core DSH. It requires the page origin after restart to differ from the
@@ -126,13 +134,18 @@ ordinary read within the same renderer process.
 
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/run-checkpoints.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
+The `collaboration-runtime-reconciliation` Core checkpoint runs independently and creates its own isolated cloud project, Issue, agent, and real Executor. A transparent WebSocket proxy holds actual completion events to cover snapshot-first, final-event-first, and terminal transactions contending on a real MySQL row lock. Each order checks the complete final text in the database, the Issue UI, and after reload. While a continuation's model response is held, it replays duplicate, reordered, unsequenced, and empty old completion events. Every replay waits for the real backend acknowledgement before asserting that the new turn, workflow, and execution capacity remain unchanged. The proxy only schedules transport; every component except the model service is real. Cleanup releases the model, transaction locks, and proxy connections.
+
+The `runtime-input-answer-persistence` Core checkpoint answers real MCP elicitation forms in the main workbench pane and a temporary chat. The Executor, Codex app-server, MCP server, desktop automation transport, and work-list refresh stay real; only the model service is mocked. Executor request gates hold the accepted answer after the real response and hold the terminal continuation so the terminal history deterministically arrives before the work-list refresh completes. The checkpoint asserts that the full answer summary remains visible before and after the refresh. It also verifies that a transport failure and a stale executor rejection never mark the answer as accepted, and that archiving while acceptance is pending does not restore the answer.
+
 The main desktop runner also supports execution through ordered checkpoints.
 The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
 `cloud-project-creation`, `cloud-space-mention`, `priority-filter`,
 `telemetry-consent`, `automation-lifecycle`, `project-automation`,
 `project-assignment-notification`, `offline-local-project-space`,
 `core-dsh-plugin-management`, `plugin-auto-update`, `plugin-workspace-publication`,
-`project-ai-settings`, `model-routing`, `permission-modes`, `computer-use`,
+`project-ai-settings`, `model-routing`, `permission-modes`,
+`runtime-input-answer-persistence`, `computer-use`,
 `task-status-sync`, `task-board-association`, `core-task-flow`, `task-attachments`,
 `cloud-git-worktree`, `cloud-worktree-capability`,
 `cloud-worktree-create`, `cloud-worktree-queued-cancel`, `cloud-worktree-tools`,
@@ -166,12 +179,56 @@ dedicated Linux shard so competing full-stack instances do not change the benchm
 CPU allocation. It retains all functional assertions and logs pointer movement,
 pointer-up dispatch, and split readiness timings. Other functional shards still
 allow up to four instances.
-Core and Cloud matrix jobs also provide
-suite-level parallelism across runners. Shards are balanced from observed CI
-durations and capped to bound the complete suite's critical path; a new or
+Core and Cloud matrix jobs also provide suite-level parallelism across runners.
+Core uses 10 shards, with Windows sharing the same matrix, and Cloud uses 8.
+Combining short shards reuses container initialization, checkout, artifact
+downloads, and runtime preparation without increasing checkpoint concurrency
+within a runner. The two Core benchmark shards and three Cloud account-auth and
+long-plugin-list shards remain separate. The concurrency limit must accommodate
+the complete matrix in one scheduling wave; classifier regression tests enforce
+both the shard budget and this constraint. Shared runner capacity can still
+introduce external queueing.
+Lint, unit-test, platform E2E, and desktop E2E summary jobs use
+`always() && !cancelled()`: failures still produce a summary, while cancellation
+stops superseded summaries from waiting for runners and blocking newer runs.
+Cleanup and diagnostic upload steps retain their existing cancellation handling.
+
+Step timings from successful runs `39920301020` and `39920742402` separate test
+work from setup overhead. In the first sample, non-test steps across 42 shards
+consumed about 60 runner minutes, or 31% of shard execution time; setup overhead
+was higher in the second sample. The final 18 shards remove 24 setup cycles.
+
+Checkpoint timings from `39930854745` drive the final allocation: longest tasks
+start first and cumulative work is balanced, while CLI and Electron preparation
+remain shared. That run's `workspace-tabs` failed early because Issue creation
+did not wait for readiness after navigating to the board. Its successful
+116-second duration from `39920301020` supplies the estimate instead of its
+incomplete failure duration. The click uses the existing `clickWhenEnabled`
+with the default ten-second timeout and preserves all business assertions.
+The 112 ordinary Core checkpoints total 10,246 seconds, distributed into eight
+shards of 14 tasks with four concurrent workers each. Predicted durations are
+323–332 seconds; a ninth shard only reduces the maximum to 320 seconds.
+The 37 ordinary Cloud checkpoints total 5,769 seconds, distributed into five
+shards with predicted durations of 291–339 seconds; a sixth shard only reduces
+the maximum to 321 seconds. Two Core and three Cloud shards remain isolated.
+These scheduling estimates exclude per-shard setup and runtime resource
+variation and are not measured savings.
+Background-terminal history verification reads the first visible xterm row's
+`aria-posinset`, then waits for each native PageUp to strictly decrease that row
+until reaching the start of history. Each operation retains the default
+ten-second timeout, all twelve initial output lines are asserted, and native
+PageDown restores the viewport. A single ten-second deadline cannot bound many
+page operations: control latency under concurrent CI can exhaust it while
+history remains intact. Focused regressions cover a slow control channel, stalled
+scrolling, and missing history.
+Shards are balanced from observed CI durations; a new or
 materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures.
 Long scenarios are split into independent checkpoints as well as balanced shards:
+The newly merged `stand-in-project-enable` checkpoint has no historical sample.
+It shares preparation with the stand-in configuration flows in Core shard 3,
+which now contains 15 tasks; other ordinary Core shards contain 14. The estimates
+above exclude this new checkpoint.
 
 - `plugin-account-auth` expands into password sync, exclusive credential transfer, OAuth, DWS accounts, conversation QR, and GitHub checkpoints.
 - `plugin-uninstall-resilience` expands into write coordination, lost response, unknown result, restart recovery, and reinstall race checkpoints. `plugin-write-coordination` independently checks API responsiveness during contention, post-commit ACK conflicts, and later sync recovery. Removal recovery checkpoints create another active installation so catalog refresh is tested alongside pending cleanup.
@@ -233,11 +290,8 @@ spend time optimizing the Executor. Release packaging leaves the variable unset
 and continues to build the `release` Executor by default. Desktop E2E builds
 skip the duplicate TypeScript typecheck that the parallel Lint workflow runs in full,
 while retaining the real Vite and Electron artifact build; test coverage and the
-type gate remain unchanged. The macOS Inspector path also uses the debug
-Executor profile and disables dev-profile debuginfo. It builds a release
-Executor only when the memory checkpoint actually runs (`ci:memory`, `ci:all`,
-or a non-pull-request run), because optimized code generation is relevant to
-memory measurements but does not add Inspector coverage. The macOS memory job keys its pnpm store from both
+type gate remain unchanged. The shared macOS Inspector and memory E2E build uses
+a release Executor so memory measurements use optimized code. The macOS memory job keys its pnpm store from both
 the workspace and Electron lockfiles, then installs offline so registry stalls
 cannot consume the critical-path budget. Its large streaming Markdown response
 uses a targeted 30-second completion budget while ordinary memory interactions
@@ -431,7 +485,10 @@ Task-board bulk actions confirm that the blank conversation is active before eac
 the editor node alone is insufficient. Goal restart fixtures observe one running task and
 one queued task before releasing the model response occupying the single execution slot.
 Work-list refreshes preserve the device owning an opened workspace so an earlier response
-cannot replace a newly selected cloud workspace. Diagnostics record project-selection
+cannot replace a newly selected cloud workspace.
+Workbench and conversation diagnostics share a 100ms publication scheduler. Continuous state updates must not cancel a pending publication, and each publication reads the latest state. Disabling diagnostics or unmounting cancels pending work so an inactive pane cannot overwrite the current snapshot. A failed conversation-title isolation assertion retains its assistant-count baseline and the title, lifecycle, and message summary from each poll.
+Manual conversation renames emit the existing `runtime.task.title.updated` event after persistence so other workbench consumers immediately receive the private title. Terminal history diagnostics record keyboard and actual viewport metadata without terminal contents. Native input waits for a trusted keyboard event at the exact target and a successful host response, rather than fixed 16ms settling timers. Missing events retain the 10-second step budget, and listeners are removed on success or failure. For native CPU traces, point `WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY` to an absolute directory. Isolated E2E saves `renderer-*.trace.json` every 20 seconds to identify renderer long tasks.
+Diagnostics record project-selection
 reducer actions and IDs, draft scopes and parent acknowledgement revisions, Codex app-server
 process IDs and initialization exit states, and failed Windows process-tree termination states.
 Configuration normalization and replacement record file size and the presence of model and built-in OpenAI URL fields; replacements also record their call site, without configuration contents.
@@ -692,6 +749,8 @@ New E2E tests should prefer this helper and `data-testid` locators instead of un
 
 ## CI Guidance
 
+The platform E2E base image, `docker/wework-e2e/browser.Dockerfile`, preinstalls the Docker CLI through `docker.io` and checks `docker --version` during its build. Shards use that CLI when preparing the remote workspace Executor without running apt update or installation. The Dockerfile content hash determines the image tag, so CI builds a new image after changes and reuses it in subsequent runs.
+
 Local list bootstrap reads and manual refreshes share one revision. A superseded bootstrap read must exit before both publishing its list and starting cloud synchronization, preventing stale startup work from restarting synchronization and clearing a selected local project. The original task-discovery E2E keeps its execution-mode and local execution assertions unchanged.
 
 Cloud Issue change notifications must invalidate an in-flight older board snapshot and start a read after the notification. Use the shared controller’s `loadProjectSnapshot(projectId, { invalidate: true })` to reuse its mutation-generation protection. This prevents a reassignment notification from sharing an older read triggered by unassignment. Ordinary duplicate reads remain coalesced. Frontend CI runs the controller concurrency regression; the original human Issue E2E retains its 10-second UI wait.
@@ -699,6 +758,12 @@ Cloud Issue change notifications must invalidate an in-flight older board snapsh
 Platform E2E services must start etcd and MinIO before Milvus. The GitHub runner pulls and starts containers sequentially in configuration order. Placing MinIO after Milvus can leave its DNS name unavailable during Milvus initialization while later images are being pulled. Health checks run after all containers have started and cannot repair this startup ordering.
 
 Desktop E2E `clickWhenEnabled` starts the existing ten-second conversation layout diagnostic window. Milestone and failure artifacts retain `conversation-diagnostics` JSON with virtual ranges, message measurements, and scroll positions. These records contain no message text and do not change UI waits or business assertions. Compare them with `workbench-debug.json` when a completed message is missing from the rendered conversation.
+
+On Windows, a worktree's `.git` file can have the hidden attribute, causing Node's default `writeFile` mode to return `EPERM`. The archived-cleanup fixture opens the existing file with `r+`, explicitly truncates and writes it, and closes the handle in `finally`. Corruption, restoration, and failure cleanup share this implementation.
+
+For consecutive sends, compare request counts with composer diagnostics: a previous send resolving asynchronously must not clear a subsequently written draft. The pane uses an input-write version to constrain submission cleanup. Once the composer clears or the user writes the next draft, the old submission no longer owns that draft. Unit tests interleaving asynchronous acceptance and new draft writes must cover both ordinary messages and messages with code comments.
+
+The desktop control channel registers after model fixtures finish seeding, retaining diagnostic access if seeding fails. Workbench Home migration probes use `ensureLocalModelCatalogReady` to await model-catalog synchronization and its app-server restart before accessing the migrated Home with native Codex. Executor startup alone does not establish catalog readiness. A failed native probe retains `native-migration-turn-failure.json` with the actual Home, database integrity, and thread history mode. Check initialization warnings first: a log-database open failure can surface as a `list_turns` error without losing thread history.
 
 Opening project settings waits for and clicks the current project's edit or rename action directly. The sidebar chooses its menu identifier from the project's state owner and source; a snapshot taken before the menu renders cannot determine that action. Cloud project save, restart, and restored-settings assertions remain unchanged.
 
@@ -760,12 +825,10 @@ not equivalent coverage.
 Regular draft PRs do not run browser or desktop E2E. Merge queue runs the
 complete browser plus Linux and Windows Desktop Core suites before a commit
 enters `main`; `main` does not repeat checks that already passed for the merge
-group. The macOS memory gate runs by default only on scheduled and manual runs.
-Add the `ci:memory` label when a PR must validate the memory boundary. Applying that
-label starts only the memory gate and does not repeat browser, Linux desktop, or
-Windows desktop E2E. Applying `ci:all` runs browser, Linux desktop, Windows
+group. The macOS memory gate runs only for non-draft PRs carrying `ci:memory` or `ci:all`.
+Regular PRs, scheduled runs, and manual runs do not execute memory E2E. Applying `ci:all` runs browser, Linux desktop, Windows
 desktop, and macOS memory E2E even when the PR's changed paths would not
-normally select Wework E2E. The workflow also runs a complete regression every
+normally select Wework E2E. The workflow also runs a regression excluding memory E2E every
 day at 04:00 UTC. Keeping `ci:all` on a PR also runs all Windows Core shards
 on subsequent pushes. Windows builds, shards, and the summary share one
 scheduling condition; skipped required jobs fail the gate. The macOS memory
@@ -776,6 +839,20 @@ the assertion ends automatically with the hook, avoiding sleep-induced test time
 Authenticated flows should create users and data through backend APIs before the test, then use real login or a real token injection. Do not mock backend HTTP responses in Playwright.
 
 ### Readiness for Local Project Scenarios
+
+During installation reconciliation, plugin install/update primary actions and update confirmation reflect the same pending state as their handlers. Healthy installed plugins without updates remain available for immediate use. `plugin-runtime-path-recovery` retains its update confirmation, real invocation, uninstall, and restart assertions.
+
+`voice-input` uses `clickWhenEnabled` for New Task on initial entry and after restart. Control-channel and telemetry-dialog readiness do not establish sidebar readiness. Preserve the shared 10-second action budget and all first-use setup, dialog dismissal, and post-restart assertions.
+
+xterm updates all accessible row contents before batching transform resets, width measurements, and transform writes. This avoids per-row forced layouts. The dependency patch covers source, CommonJS, and ESM; a regression uses real xterm to verify all row contents are updated before the first measurement. `background-terminals` retains native paging, history, and accessibility assertions, with CPU profiles available to inspect layout hotspots.
+
+Transcript conversion updates `runtimeStatus` together with the current message's `status`; a completed user message must not leave a stale status that overrides its streaming assistant. Smart app verification logs stage start, completion, and duration without environment variables or credentials. Locate stalled stages from these logs instead of extending E2E waits.
+
+Smart app verification sets `NPM_CONFIG_WORKSPACE_DIR` to the project itself and disables implicit dependency installation before scripts. Typechecking, tests, builds, and runtime probes still execute. Verification must not read or install the containing host workspace. Real pnpm regressions cover a conflicting host package-manager version and prevent creation of its lockfile.
+
+Desktop artifacts restore through `actions/download-artifact@v6`, including the upstream fix that rejects the pending promise on stream timeout instead of exiting successfully with a partial directory. See the [artifact SDK timeout fix](https://github.com/actions/toolkit/commit/523ce8ccda300661be06e592b615399fcfc282dc). Windows network-failure diagnostics retain connection states, dynamic/excluded port ranges, socket-exhaustion events, and memory-pool counters without process command lines or credentials.
+
+Stand-in completion can arrive before the runtime unread flag. A new completion after observation starts must remain unread, and delivery must consult the current read ledger rather than consume it as restored history. Persist delivery records once per batch before sending alerts. Regressions cover late unread updates, no replay after reload, and a single delivery-ledger write for 1,000 records.
 
 `createSingleRootLocalProject` must wait until the new project is the workbench’s current project. Closing the creation dialog or finding an older composer is insufficient. The cloud-context and running-history scenarios also select a registered model explicitly through `selectE2EModel` before entering the first message. Their stalled-context, attachment, history recovery, and task-move assertions remain intact.
 
@@ -790,3 +867,13 @@ After a held cloud model request times out and is cancelled, explicitly refresh 
 When a blank conversation submission completes, reuse the current-task identity check and consume its draft key only if the created task is still selected. A late completion from the previous request must not clear text entered after returning to a new conversation. Rejected creation still restores the original draft and attachments. Regressions cover delayed creation and delayed refresh; the original nine-task bulk completion and archive E2E remains unchanged.
 
 Chunked history transport names immutable snapshots by their compressed-content hash. Concurrent requests reuse the same file through atomic publication without replacement, avoiding replacement of a snapshot being read on Windows. Regressions preserve the published file and its modification time, keep active readers valid, and restore the complete history from four concurrent requests. The original running-history E2E remains unchanged.
+
+Submission diagnostics retain Enter composition suppression, configured send key, and submission guard state (content presence, model readiness, and disabled controls) in the existing bounded composer event buffer without recording draft text. Trace native input, submission decisions, and Executor requests in order; the final button state does not establish its state when a key arrived.
+
+On a Windows socket-buffer error, the desktop runner immediately saves one port, process, memory, and TCP-event snapshot (`windows-network-exhaustion-at-error.json`) alongside the existing failure-time snapshot. An application-startup timeout can outlast TCP port reclamation, so its later snapshot cannot exclude allocation failure at the original error. Diagnostics neither retry requests nor replace the original failure.
+
+Publish native editor callbacks only during React layout commit. A suspended concurrent model-readiness render must not replace the send handler of the visible composer. Regressions cover native callback identity and the actual shared submission guard: an enabled composer submits with committed model readiness and remains usable after abandoning the suspended update.
+
+Isolated Windows desktop E2E launches disable Chromium `TcpPortRandomizationWin` so rapid loopback connections use normal OS port allocation. Electron 44.7.0 / Chromium 152.0.7977.130 enables this feature by default; upstream [572515601](https://issuetracker.google.com/issues/572515601) confirms WSAENOBUFS at low connection counts on Windows Server 2025 and other affected systems. Repository logs record native `ERR_NO_BUFFER_SPACE` together with TCP event 4231. Merge existing scenario feature switches and deduplicate entries; retain startup, model HTTP-error, and resource assertions.
+
+The Windows desktop E2E test step has a 40-minute budget within the 60-minute job limit, leaving time to upload failure logs and diagnostic artifacts. A previous Core shard 7 hit the job deadline; its job-log endpoint returned 404 and the run log archive omitted that shard, so evidence could not be recovered from the destroyed runner. Step timeouts remain failures and retain the existing always-run uploads.

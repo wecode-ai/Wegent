@@ -332,6 +332,17 @@ export class RuntimeTaskLifecycleStore {
       running: transcript.running ?? null,
       preserveActiveTurn: options.preserveActiveTurn === true,
     })
+    const recoveredTurn = this.getTask(address)?.turn
+    const completedRecoveredTurn =
+      transcript.running === false && recoveredTurn?.phase === 'streaming'
+        ? transcript.turns.find(
+            turn => turn.id === recoveredTurn.id && isTerminalTurnStatus(turn.status)
+          )
+        : undefined
+    if (completedRecoveredTurn) {
+      // Canonical history can settle a recovered turn even when a newer turn was observed first.
+      this.executorSettled(address)
+    }
     const currentTurn = this.getTask(address)?.turn
     const terminalTurn = transcript.turns.findLast(turn => isTerminalTurnStatus(turn.status))
     const ignoreStaleIdleTranscript =
@@ -349,14 +360,20 @@ export class RuntimeTaskLifecycleStore {
     const current = this.getTask(address)
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
     if (hasStreamingTurn) {
+      if (ignoreStaleRunningTranscript) {
+        const machine = this.ensureMachine(this.canonicalizeAddress(address))
+        for (const turn of transcript.turns) {
+          if (turn.id && (turn.status === 'pending' || turn.status === 'streaming')) {
+            machine.observeTurn(turn.id)
+          }
+        }
+        return
+      }
       if (
-        ignoreStaleRunningTranscript ||
-        (currentTurn?.active &&
-          streamingTurn?.id &&
-          (this.isPriorTurn(address, streamingTurn.id) ||
-            (transcript.running === false &&
-              currentTurn.id &&
-              streamingTurn.id !== currentTurn.id)))
+        currentTurn?.active &&
+        streamingTurn?.id &&
+        (this.isPriorTurn(address, streamingTurn.id) ||
+          (transcript.running === false && currentTurn.id && streamingTurn.id !== currentTurn.id))
       )
         return
       this.executorStarted(address)
@@ -372,7 +389,8 @@ export class RuntimeTaskLifecycleStore {
       this.executorSettled(address)
       this.turnSettled(
         address,
-        transcript.turns.findLast(turn => isTerminalTurnStatus(turn.status))?.id
+        terminalTurn?.id,
+        terminalTurn ? terminalTurnOutcome(terminalTurn.status) : undefined
       )
     }
   }
@@ -815,7 +833,8 @@ function shouldIgnoreStaleRunningTranscript(current: RuntimeTaskLifecycleSnapsho
   return Boolean(
     current &&
     !current.derived.isRunning &&
-    (current.turn.outcome !== null ||
+    (current.task?.goalExecutionStatus === 'needsAttention' ||
+      current.turn.outcome !== null ||
       (current.goalStatus !== 'active' &&
         current.task !== null &&
         isRuntimeTaskAuthoritativeCompletion(current.task)))

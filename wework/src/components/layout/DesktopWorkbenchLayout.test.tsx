@@ -1,4 +1,13 @@
-import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  configure,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useEffect, useMemo, useState } from 'react'
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -2072,7 +2081,29 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
   })
 
-  test('keeps a retained board bound to its own workspace tab route', async () => {
+  test('keeps a retained board bound to its own workspace tab route', async ({
+    onTestFinished,
+  }) => {
+    const dialogMethods = ['showModal', 'close'] as const
+    const descriptors = dialogMethods.map(method =>
+      Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, method)
+    )
+    for (const method of dialogMethods) {
+      Object.defineProperty(HTMLDialogElement.prototype, method, {
+        configurable: true,
+        value: function (this: HTMLDialogElement) {
+          this.open = method === 'showModal'
+        },
+      })
+    }
+    onTestFinished(() => {
+      cleanup()
+      dialogMethods.forEach((method, index) => {
+        const descriptor = descriptors[index]
+        if (descriptor) Object.defineProperty(HTMLDialogElement.prototype, method, descriptor)
+        else Reflect.deleteProperty(HTMLDialogElement.prototype, method)
+      })
+    })
     deliveryApiMock.available = true
     const project = {
       id: 'project-1',
@@ -2142,8 +2173,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    await userEvent.click(screen.getByTestId('collaboration-board-settings'))
-    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('board-view-picker'))
+    await userEvent.click(screen.getByTestId('board-view-edit'))
+    expect(screen.getByTestId('board-view-editor')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '看板设置' })).toHaveClass(
       'text-heading-sm',
       'font-medium'
@@ -2156,7 +2188,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('board-view-editor')).toBeInTheDocument()
     expect(actions.updateActiveTab).not.toHaveBeenCalled()
 
     view.rerender(
@@ -2166,7 +2198,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('board-view-editor')).toBeInTheDocument()
   })
 
   test('returns to the workspace after opening settings from its account menu', async () => {
@@ -7689,7 +7721,7 @@ describe('DesktopWorkbenchLayout', () => {
         taskId: 'runtime-subagent-panel',
         threadId: 'thread-1',
       }),
-      { includeFullContent: true }
+      { includeFullContent: true, threadOnly: true }
     )
     expect(screen.getByTestId('right-workspace-panel')).toContainElement(
       screen.getByTestId('subagent-conversation-panel')
@@ -7847,6 +7879,135 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getAllByTestId('project-chat-composer')).toHaveLength(2)
     expect(screen.getByTestId('desktop-floating-composer-card')).toBeInTheDocument()
   })
+
+  test.each(['launcher', 'chat'])(
+    'keeps a pending MCP confirmation visible above the expanded %s panel',
+    async panel => {
+      renderWorkspacePanelLayout({
+        mainWidth: 1000,
+        messages: [
+          {
+            id: 'assistant-publish-confirmation',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-10-22T00:00:00.000Z',
+            blocks: [
+              {
+                id: 'publish-confirmation',
+                type: 'tool',
+                toolName: 'request_user_input',
+                status: 'pending',
+                renderPayload: {
+                  kind: 'request_user_input',
+                  requestId: 0,
+                  interactionScope: 'publish-turn',
+                  interactionKind: 'mcp_form',
+                  interactionStatus: 'pending',
+                  itemId: 'mcp_server_elicitation',
+                  questions: [
+                    {
+                      id: 'decision',
+                      question: '请确认是否正式发布当前编辑结果',
+                      options: [{ label: '确认发布' }, { label: '暂不发布' }],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      })
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      if (panel === 'chat') {
+        await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+      }
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-expanded-button'))
+
+      expect(screen.getAllByTestId('request-user-input-card')).toHaveLength(1)
+      expect(screen.getByTestId('request-user-input-card')).toBeVisible()
+      expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass('z-critical')
+      expect(screen.queryAllByTestId('project-chat-composer')).toHaveLength(
+        panel === 'chat' ? 1 : 0
+      )
+
+      await userEvent.click(screen.getByTestId('request-user-input-option-decision-0'))
+
+      expect(baseProps.onRequestUserInputSubmit).toHaveBeenCalledWith(
+        {
+          requestId: 0,
+          interactionScope: 'publish-turn',
+          itemId: 'mcp_server_elicitation',
+          answers: { decision: { answers: ['确认发布'] } },
+        },
+        { appendUserMessage: false, forceDefaultCollaborationMode: false }
+      )
+    }
+  )
+
+  test.each(['timeout', 'focus'])(
+    'restores the composer after MCP expiry on %s without a runtime settlement event',
+    async trigger => {
+      vi.useFakeTimers()
+      const deadline = Date.now() + 1_000
+      const view = renderWorkspacePanelLayout({
+        messages: [
+          {
+            id: 'assistant-expiring-confirmation',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-10-22T00:00:00.000Z',
+            blocks: [
+              {
+                id: 'expiring-confirmation',
+                type: 'tool',
+                toolName: 'request_user_input',
+                status: 'pending',
+                renderPayload: {
+                  kind: 'request_user_input',
+                  requestId: 0,
+                  interactionScope: 'expiring-turn',
+                  interactionKind: 'mcp_form',
+                  interactionStatus: 'pending',
+                  expiresAtUnixMs: deadline,
+                  questions: [
+                    { id: 'decision', question: '确认发布？', options: [{ label: '确认' }] },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      })
+      try {
+        expect(screen.getByTestId('request-user-input-card')).toBeVisible()
+        expect(screen.queryByTestId('project-chat-composer')).not.toBeInTheDocument()
+
+        await act(async () => {
+          if (trigger === 'focus') {
+            vi.setSystemTime(deadline)
+            fireEvent.focus(window)
+          } else {
+            await vi.advanceTimersByTimeAsync(1_000)
+          }
+        })
+
+        expect(screen.queryByTestId('request-user-input-card')).not.toBeInTheDocument()
+        expect(screen.getByTestId('project-chat-composer')).toBeVisible()
+        expect(baseProps.onRequestUserInputSubmit).not.toHaveBeenCalled()
+        const session = paneSessionMockRef.current as {
+          ignoreRequestUserInput: ReturnType<typeof vi.fn>
+        }
+        expect(session.ignoreRequestUserInput).not.toHaveBeenCalled()
+        expect(screen.getByTestId('request-user-input-expired')).toHaveTextContent('请求已超时')
+      } finally {
+        view.unmount()
+        vi.useRealTimers()
+      }
+    }
+  )
 
   test('shows the workbench background through the right and bottom panels', async () => {
     localStorage.setItem(
@@ -13942,40 +14103,68 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('does not reuse a migrated default browser label after switching panes', async () => {
     runtimeMocks.electron = true
-    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const browser = await import('@/lib/embedded-browser')
+    const listen = browser.listenEmbeddedBrowserOpenRequests
+    const releaseSubscriptions: (() => void)[] = []
+    // Keep native subscription setup pending across the pane switch.
+    const subscription = vi
+      .spyOn(browser, 'listenEmbeddedBrowserOpenRequests')
+      .mockImplementation(handler => {
+        const listener = listen(handler)
+        return (
+          listener?.then(
+            unlisten =>
+              new Promise<typeof unlisten>(resolve => {
+                releaseSubscriptions.push(() => resolve(unlisten))
+              })
+          ) ?? null
+        )
+      })
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture(2)
     desktopHostMocks.invoke.mockClear()
     const { rerender, unmount } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
 
-    await waitFor(() => {
-      expect(requestEmbeddedBrowserOpen('https://example.com/')).toBe(true)
-    })
-    await waitFor(() => {
-      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+    try {
+      await waitFor(() => {
+        expect(requestEmbeddedBrowserOpen('https://example.com/')).toBe(true)
+      })
+      await waitFor(() => {
+        expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+          'browser.open',
+          expect.objectContaining({
+            label: 'workspace-browser-runtime-a',
+            url: 'https://example.com/',
+          })
+        )
+      })
+
+      rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+
+      await waitFor(() => {
+        expect(requestEmbeddedBrowserOpen('https://example.org/')).toBe(true)
+      })
+      await waitFor(() => {
+        expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+          'browser.open',
+          expect.objectContaining({
+            label: 'workspace-browser-runtime-b',
+            url: 'https://example.org/',
+          })
+        )
+      })
+      expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith(
         'browser.open',
         expect.objectContaining({
-          label: 'workspace-browser-runtime-a',
-          url: 'https://example.com/',
-        })
-      )
-    })
-
-    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
-
-    await waitFor(() => {
-      expect(requestEmbeddedBrowserOpen('https://example.org/')).toBe(true)
-    })
-    await waitFor(() => {
-      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
-        'browser.open',
-        expect.objectContaining({
-          label: 'workspace-browser-runtime-b',
+          label: expect.stringMatching(/^workspace-browser-runtime-a(?:-|$)/),
           url: 'https://example.org/',
         })
       )
-    })
-
-    unmount()
-    await new Promise(resolve => setTimeout(resolve, 1_100))
+    } finally {
+      unmount()
+      releaseSubscriptions.forEach(release => release())
+      subscription.mockRestore()
+      await new Promise(resolve => setTimeout(resolve, 1_100))
+    }
   }, 10_000)
 
   test('opens an embedded browser requested by an inactive runtime task', async () => {
@@ -14111,7 +14300,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('preserves the open file when switching runtime tasks', async () => {
-    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture(2)
     const workspaceFileApi = {
       listWorkspaceEntries: vi.fn().mockImplementation((_deviceId: string, path: string) =>
         Promise.resolve({
@@ -14200,81 +14389,109 @@ describe('DesktopWorkbenchLayout', () => {
     expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(4)
   }, 15_000)
 
-  test('preserves an absolute file opened from a message when switching runtime tasks', async () => {
-    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
-    const workspaceFileApi = {
-      listWorkspaceEntries: vi.fn().mockImplementation((_deviceId: string, path: string) =>
-        Promise.resolve({
-          path,
-          entries: [],
-        })
-      ),
-      readWorkspaceTextFile: vi.fn().mockImplementation((_deviceId: string, path: string) =>
-        Promise.resolve({
-          path,
-          name: 'outside.md',
-          content: 'outside workspace preview',
-          editable: true,
-          revision: 'sha256:outside',
-          truncated: false,
-          size: 25,
-          modifiedAt: null,
-        })
-      ),
-    }
-    const messages = [
-      {
-        id: 'assistant-edited-absolute-file',
-        taskId: 101,
-        role: 'assistant' as const,
-        content: '',
-        status: 'completed' as const,
-        createdAt: '2026-08-05T00:00:00.000Z',
-        blocks: [
-          {
-            id: 'edit-absolute-file',
-            subtaskId: 101,
-            type: 'tool' as const,
-            toolName: 'edit_file',
-            toolInput: {
-              path: '/tmp/outside.md',
-              old_string: 'before',
-              new_string: 'after',
+  test.each([false, true])(
+    'restores a message file after switching tasks (standalone: %s)',
+    async standalone => {
+      const { propsForTask, taskA, taskB, localDevice, runtimeWork } =
+        createLocalRuntimeTaskPanelFixture()
+      const workspaceFileApi = {
+        listWorkspaceEntries: vi.fn().mockImplementation((_deviceId: string, path: string) =>
+          Promise.resolve({
+            path,
+            entries: [],
+          })
+        ),
+        readWorkspaceTextFile: vi.fn().mockImplementation((_deviceId: string, path: string) =>
+          Promise.resolve({
+            path,
+            name: 'outside.md',
+            content: 'outside workspace preview',
+            editable: true,
+            revision: 'sha256:outside',
+            truncated: false,
+            size: 25,
+            modifiedAt: null,
+          })
+        ),
+      }
+      const messages = [
+        {
+          id: 'assistant-edited-absolute-file',
+          taskId: 101,
+          role: 'assistant' as const,
+          content: '',
+          status: 'completed' as const,
+          createdAt: '2026-08-05T00:00:00.000Z',
+          blocks: [
+            {
+              id: 'edit-absolute-file',
+              subtaskId: 101,
+              type: 'tool' as const,
+              toolName: 'edit_file',
+              toolInput: {
+                path: '/tmp/outside.md',
+                old_string: 'before',
+                new_string: 'after',
+              },
+              status: 'completed' as const,
+              createdAt: 1770000000000,
             },
-            status: 'completed' as const,
-            createdAt: 1770000000000,
+          ],
+        },
+      ]
+      const standaloneWork = {
+        projects: [],
+        chats: runtimeWork.projects[0].deviceWorkspaces,
+        totalTasks: runtimeWork.totalTasks,
+      }
+      const propsWithFileMessage = (task: typeof taskA) => {
+        const props = propsForTask(task)
+        if (!standalone) return { ...props, messages, workspaceFileApi }
+        return {
+          ...props,
+          state: {
+            ...props.state,
+            currentProject: null,
+            projects: [],
+            runtimeWork: standaloneWork,
           },
-        ],
-      },
-    ]
-    const propsWithFileMessage = (task: typeof taskA) => ({
-      ...propsForTask(task),
-      messages,
-      workspaceFileApi,
-    })
-    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
-    const { rerender } = render(<DesktopWorkbenchLayout {...propsWithFileMessage(taskA)} />)
+          projectWork: {
+            ...props.projectWork,
+            currentProject: null,
+            currentProjectId: null,
+            projects: [],
+            devices: [localDevice],
+            runtimeWork: standaloneWork,
+          },
+          messages,
+          workspaceFileApi,
+        }
+      }
+      const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+      const { rerender } = render(<DesktopWorkbenchLayout {...propsWithFileMessage(taskA)} />)
 
-    await userEvent.click(activePane().getByRole('button', { name: /正在编辑 outside\.md/ }))
-    expect(await activePane().findByTestId('workspace-markdown-preview')).toHaveTextContent(
-      'outside workspace preview'
-    )
-
-    rerender(<DesktopWorkbenchLayout {...propsWithFileMessage(taskB)} />)
-    rerender(<DesktopWorkbenchLayout {...propsWithFileMessage(taskA)} />)
-
-    await waitFor(() => {
-      expect(activePane().getByTestId('right-workspace-file-tab')).toHaveAttribute(
-        'aria-selected',
-        'true'
-      )
-      expect(activePane().getByTestId('workspace-file-path')).toHaveTextContent('/tmp/outside.md')
-      expect(activePane().getByTestId('workspace-markdown-preview')).toHaveTextContent(
+      await userEvent.click(activePane().getByRole('button', { name: /正在编辑 outside\.md/ }))
+      expect(await activePane().findByTestId('workspace-markdown-preview')).toHaveTextContent(
         'outside workspace preview'
       )
-    })
-    expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(2)
-  })
+
+      rerender(<DesktopWorkbenchLayout {...propsWithFileMessage(taskB)} />)
+      rerender(<DesktopWorkbenchLayout {...propsWithFileMessage(taskA)} />)
+
+      await waitFor(() => {
+        expect(activePane().getByTestId('right-workspace-file-tab')).toHaveAttribute(
+          'aria-selected',
+          'true'
+        )
+        expect(activePane().getByTestId('workspace-file-path')).toHaveTextContent('/tmp/outside.md')
+        expect(activePane().getByTestId('workspace-markdown-preview')).toHaveTextContent(
+          'outside workspace preview'
+        )
+      })
+      expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(2)
+    },
+    10_000
+  )
 
   test('preserves the review when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture(2)

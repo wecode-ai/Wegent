@@ -556,7 +556,7 @@ export async function closeEmbeddedBrowser(
 ): Promise<void> {
   await invokeDesktopHost<void>('browser.close', {
     label,
-    expectedNativeLabel: expectedNativeLabel ?? null,
+    ...(expectedNativeLabel !== undefined ? { expectedNativeLabel } : {}),
   })
 }
 

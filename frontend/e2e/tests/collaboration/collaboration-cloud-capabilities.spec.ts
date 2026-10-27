@@ -2,10 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test, type Browser, type Page } from '@playwright/test'
+import { expect, test, type Browser, type Page, type Request } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import {
+  dragCollaborationIssueToColumn,
   openBlankProjectCreation,
   selectCollaborationProjectView,
   webApi,
@@ -288,50 +289,30 @@ async function selectGroupBy(
   projectId: string,
   groupBy: 'status' | 'priority' | 'assignee' | 'tag'
 ): Promise<void> {
-  const updateResponse = page.waitForResponse(
-    response =>
-      response.request().method() === 'PATCH' &&
-      new URL(response.url()).pathname.endsWith(`/cloud-projects/${projectId}`)
-  )
-  await page.getByTestId('cloud-board-group-by').click()
-  await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()
-  const response = await updateResponse
-  expect(response.ok(), `Board grouping update failed: ${await response.text()}`).toBe(true)
-  await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', groupBy)
+  const projectPath = `/api/v1/cloud-projects/${encodeURIComponent(projectId)}`
+  const before = await webApi<CloudProject>(page, projectPath)
+  const updates: string[] = []
+  const recordUpdate = (request: Request) => {
+    if (request.method() === 'PATCH' && new URL(request.url()).pathname === projectPath) {
+      updates.push(request.url())
+    }
+  }
+  page.on('request', recordUpdate)
+  try {
+    await page.getByTestId('cloud-board-group-by').click()
+    await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()
+    await expect(page.getByTestId('cloud-board-group-by')).toHaveAttribute('data-value', groupBy)
+    const after = await webApi<CloudProject>(page, projectPath)
+    expect(updates, 'Personal grouping must not update the shared project').toEqual([])
+    expect(after.board_config).toEqual(before.board_config)
+    expect(after.version).toBe(before.version)
+  } finally {
+    page.off('request', recordUpdate)
+  }
 }
 
 async function dragIssueTo(page: Page, issueId: string, columnKey: string): Promise<void> {
-  const source = page.getByTestId(`collaboration-issue-${issueId}`)
-  const target = page.getByTestId(`cloud-todo-column-dropzone-${columnKey}`)
-  await expect(source).toBeVisible()
-  await expect(target).toBeAttached()
-
-  const mutationResponse = page.waitForResponse(response => {
-    const pathname = new URL(response.url()).pathname
-    return (
-      ['PATCH', 'POST'].includes(response.request().method()) &&
-      (pathname.includes(`/loop-items/${encodeURIComponent(issueId)}`) ||
-        pathname.endsWith('/loop-items/reorder'))
-    )
-  })
-  const handle = page.getByTestId(`cloud-todo-card-${issueId}`)
-  await handle.scrollIntoViewIfNeeded()
-  const sourceBox = await handle.boundingBox()
-  expect(sourceBox).not.toBeNull()
-  await page.mouse.move(sourceBox!.x + 20, sourceBox!.y + 20)
-  await page.mouse.down()
-  try {
-    await page.mouse.move(sourceBox!.x + 30, sourceBox!.y + 20)
-    await expect(page.getByTestId('project-board-drag-overlay')).toBeVisible()
-    await target.scrollIntoViewIfNeeded()
-    const targetBox = await target.boundingBox()
-    expect(targetBox).not.toBeNull()
-    await page.mouse.move(targetBox!.x + targetBox!.width / 2, targetBox!.y + 10, { steps: 10 })
-    await expect(page.getByTestId(`cloud-todo-column-drag-hint-${columnKey}`)).toBeVisible()
-  } finally {
-    await page.mouse.up()
-  }
-  const response = await mutationResponse
+  const response = await dragCollaborationIssueToColumn(page, issueId, columnKey)
   expect(response.ok(), `Board mutation failed: ${await response.text()}`).toBe(true)
 }
 
@@ -951,10 +932,19 @@ test.describe('Collaboration cloud capabilities', () => {
           )
         ).board_config?.statuses.length ?? 0
       await selectCollaborationProjectView(page, 'board')
-      await page.getByTestId('collaboration-board-settings').click()
-      await expect(page.getByTestId('project-board-settings-dialog')).toBeVisible()
+      await page.getByTestId('board-view-picker').click()
+      await page.getByTestId('board-view-edit').click()
+      await expect(page.getByTestId('board-view-editor')).toBeVisible()
       await page.getByTestId('cloud-board-status-add').click()
       await expect(page.locator('[data-testid^="cloud-board-status-status-"]')).toHaveCount(1)
+      await page.getByTestId('cloud-board-display-menu').click()
+      const priorityDisplay = page.getByTestId('cloud-board-display-priority')
+      const previousPriorityDisplay = await priorityDisplay.getAttribute('aria-checked')
+      await priorityDisplay.click()
+      await page.getByTestId('cloud-board-display-menu').click()
+      await captureEvidence(page, 'web-10-project-manage')
+      await page.getByTestId('board-view-save').click()
+      await expect(page.getByTestId('board-view-editor')).toBeHidden()
       await expect
         .poll(async () => {
           const updated = await webApi<CloudProject>(
@@ -964,11 +954,6 @@ test.describe('Collaboration cloud capabilities', () => {
           return updated.board_config?.statuses.length
         })
         .toBe(statusCountBefore + 1)
-      await page.getByTestId('cloud-board-display-menu').click()
-      const priorityDisplay = page.getByTestId('cloud-board-display-priority')
-      const previousPriorityDisplay = await priorityDisplay.getAttribute('aria-checked')
-      await priorityDisplay.click()
-      await page.getByTestId('cloud-board-display-menu').click()
       await expect
         .poll(async () => {
           const updated = await webApi<CloudProject & { card_display: { show_priority: boolean } }>(
@@ -978,10 +963,6 @@ test.describe('Collaboration cloud capabilities', () => {
           return String(updated.card_display.show_priority)
         })
         .not.toBe(previousPriorityDisplay)
-      await captureEvidence(page, 'web-10-project-manage')
-
-      await page.getByTestId('project-board-settings-close').click()
-      await expect(page.getByTestId('project-board-settings-dialog')).toBeHidden()
       await expect(page).toHaveURL(
         new RegExp(
           `${collaborationProjectPath(workspace.id, project.id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`

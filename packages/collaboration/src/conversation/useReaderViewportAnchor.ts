@@ -111,11 +111,17 @@ export function useReaderViewportAnchor({
           anchorElement.getBoundingClientRect())
 
     const anchorOffset = anchorRect.top - scroller.getBoundingClientRect().top
+    const previousAnchorOffset = anchor.offsetFromScrollerTop
     const readerScrollTop = readReaderScrollOffsetSinceAnchor(
       scroller,
       getMaximumScrollOffset(scroller)
     )
-    const correction = anchorOffset - anchor.offsetFromScrollerTop + readerScrollTop
+    const correction = anchorOffset - previousAnchorOffset + readerScrollTop
+    // Fold reader movement into the same semantic anchor before recording our correction.
+    // Otherwise a sample at the range boundary can make our own write appear out of range,
+    // discard it on the next measurement, and apply the same layout correction twice.
+    anchor.scrollTopPx += readerScrollTop
+    anchor.offsetFromScrollerTop -= readerScrollTop
     const layout = `${Math.round(getMaximumScrollOffset(scroller))}:${scroller.clientWidth}:${scroller.clientHeight}`
     // A layout this rule has not measured yet counts as still moving: the first frame of a re-layout is
     // exactly the one that used to hand the reader a position taken in the middle of it.
@@ -125,7 +131,7 @@ export function useReaderViewportAnchor({
       recordScrollDiagnostic('anchor-correction', scroller, {
         ...getConversationDiagnosticContext(anchorElement),
         anchorOffset,
-        previousAnchorOffset: anchor.offsetFromScrollerTop,
+        previousAnchorOffset,
         readerScrollTop,
         correction,
         appliedCorrection: 0,
@@ -146,7 +152,7 @@ export function useReaderViewportAnchor({
     recordScrollDiagnostic('anchor-correction', scroller, {
       ...getConversationDiagnosticContext(anchorElement),
       anchorOffset,
-      previousAnchorOffset: anchor.offsetFromScrollerTop,
+      previousAnchorOffset,
       readerScrollTop,
       correction,
       appliedCorrection: appliedScrollTop,

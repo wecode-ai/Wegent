@@ -1003,6 +1003,28 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('settings-menu')).not.toBeInTheDocument()
   })
 
+  test('keeps cloud logout available without a configured backend URL', async () => {
+    const disconnect = vi.fn()
+    renderSidebar(
+      {},
+      {
+        status: 'connected',
+        isConnected: true,
+        backendUrl: 'http://localhost:8000',
+        user: { id: 7, user_name: 'cloud-user', email: 'cloud@example.com' },
+        disconnect,
+      }
+    )
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+
+    expect(screen.getByTestId('logout-menu-button')).toHaveTextContent('退出登录')
+
+    await userEvent.click(screen.getByTestId('logout-menu-button'))
+
+    expect(disconnect).toHaveBeenCalledTimes(1)
+  })
+
   test('shows an exposed update button in the account row when an app update is available', async () => {
     const installUpdate = vi.fn().mockResolvedValue(undefined)
     renderSidebar({}, undefined, {

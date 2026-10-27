@@ -81,6 +81,46 @@ function setup() {
 }
 
 describe("shared runtime execution session", () => {
+  it("replaces positions when the native thread changes instead of joining branches", async () => {
+    const { session, client } = setup();
+    vi.mocked(client.getTranscript).mockResolvedValueOnce({
+      ...page(),
+      threadId: "old",
+    });
+    session.start();
+    await session.reload();
+    vi.mocked(client.getTranscript).mockResolvedValueOnce({
+      ...page(1, 2),
+      threadId: "new",
+    });
+    await session.reload();
+    expect(session.getSnapshot().turns.map((turn) => turn.id)).toEqual(["1"]);
+    session.stop();
+  });
+
+  it("publishes in-flight live text immediately and preserves it over an older history read", async () => {
+    const { session, client, handlers } = setup();
+    session.start();
+    await session.reload();
+    const pending = deferred<RuntimeTranscriptResponse>();
+    vi.mocked(client.getTranscript).mockReturnValueOnce(pending.promise);
+    const reload = session.reload();
+    await vi.waitFor(() =>
+      expect(client.getTranscript).toHaveBeenCalledTimes(2),
+    );
+    handlers().onMessageAction?.({
+      type: "assistant_chunk",
+      subtaskId: "50",
+      itemId: "text-50",
+      content: "Live text",
+      contentMode: "snapshot",
+    });
+    expect(session.getSnapshot().messages.at(-1)?.content).toBe("Live text");
+    pending.resolve(page());
+    await reload;
+    expect(session.getSnapshot().messages.at(-1)?.content).toBe("Live text");
+    session.stop();
+  });
   it("clears a stale running result when the executor confirms idle with missing history", async () => {
     const { session, client, handlers } = setup();
     session.start();

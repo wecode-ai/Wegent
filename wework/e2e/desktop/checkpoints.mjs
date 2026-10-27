@@ -1,6 +1,7 @@
 export const DESKTOP_CHECKPOINTS = [
   'remote-device-onboarding',
   'workspace-tabs',
+  'notification-tab-navigation',
   'cloud-project-creation',
   'cloud-device-lifecycle',
   'cloud-model-recovery',
@@ -8,17 +9,32 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-model-presets',
   'cloud-space-mention',
   'collaboration-shared-core',
+  'collaboration-deliveries',
   'collaboration-issue-task-discovery',
   'collaboration-app-queue-identity',
+  'collaboration-runtime-reconciliation',
   'collaboration-first-use',
   'collaboration-worktree-policy',
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
+  'stand-in-action-confirmation',
+  'stand-in-list-confirmation',
+  'stand-in-profile',
+  'stand-in-profile-settings',
+  'stand-in-model-catalog',
+  'stand-in-identities',
+  'stand-in-connections',
+  'stand-in-mcp',
+  'stand-in-cli',
+  'stand-in-plugin-bridge',
+  'stand-in-assignment-notifications',
+  'stand-in-personal-task',
   'stand-in',
   'stand-in-cloud',
   'stand-in-permissions',
   'stand-in-workspace',
   'stand-in-controls',
+  'stand-in-project-enable',
   'stand-in-notifications',
   'collaboration-remote-agent-dispatch',
   'collaboration-local-group-coordinate',
@@ -31,6 +47,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-issue-comment-attachments',
   'collaboration-issue-comment-notification',
   'collaboration-issue-mcp-comments',
+  'collaboration-issue-attachment-preview',
   'collaboration-issue-archive',
   'collaboration-board-sorting',
   'collaboration-board-move-recovery',
@@ -39,6 +56,7 @@ export const DESKTOP_CHECKPOINTS = [
   'external-content-import',
   'send-key-preference',
   'reply-predictions',
+  'archived-worktree-cleanup',
   'reply-prediction-auth',
   'model-settings',
   'codex-native-catalog',
@@ -53,6 +71,7 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-context-resilience',
   'cloud-login-proxy',
   'core-dsh-plugin-management',
+  'voice-input',
   'plugin-development',
   'plugin-auto-update',
   'plugin-account-auth',
@@ -73,6 +92,8 @@ export const DESKTOP_CHECKPOINTS = [
   'plugin-uninstall-reinstall-race',
 
   'plugin-composer-long-list',
+  'plugin-collaboration-composer-isolation',
+  'plugin-runtime-path-recovery',
   'plugin-toggle-persistence',
   'plugin-workspace-publication',
   'project-ai-settings',
@@ -80,6 +101,7 @@ export const DESKTOP_CHECKPOINTS = [
   'fork-provider-preservation',
   'codex-account-login',
   'permission-modes',
+  'runtime-input-answer-persistence',
   'computer-use',
   'task-status-sync',
   'task-board-association',
@@ -109,6 +131,7 @@ export const DESKTOP_CHECKPOINTS = [
   'release-package-startup',
   'app-update-full',
   'component-update',
+  'renderer-crash-recovery',
   'native-window-startup',
   'native-window-chrome',
   'renderer-storage',
@@ -130,12 +153,15 @@ export const DESKTOP_CHECKPOINTS = [
   'streaming-timers',
   'streaming-scroll',
   'streaming-message-order',
+  'streaming-conversation-switching',
   'streaming-subagents',
 
+  'collaboration-issue-badges',
   'change-request-status',
   'git-commit-generation',
   'claude-runtime',
   'local-file-preview',
+  'office-file-preview',
   'local-harness',
   'harness-apps',
   'harness-app-development',
@@ -162,6 +188,7 @@ export const PLUGIN_SEGMENTS = [
 ]
 
 export const DESKTOP_CHECKPOINT_GROUPS = new Map([
+  ['stand-in-profile', ['stand-in-profile-settings', 'stand-in-model-catalog']],
   [
     'plugin-account-auth',
     [
@@ -194,6 +221,7 @@ export const DESKTOP_CHECKPOINT_GROUPS = new Map([
       'streaming-timers',
       'streaming-scroll',
       'streaming-message-order',
+      'streaming-conversation-switching',
       'streaming-subagents',
     ],
   ],
@@ -212,3 +240,17 @@ export const DESKTOP_CHECKPOINT_GROUPS = new Map([
     ],
   ],
 ])
+
+export function expandDesktopCheckpoints(checkpoints) {
+  const expanded = []
+  const seen = new Set()
+  for (const checkpoint of checkpoints) {
+    const members = DESKTOP_CHECKPOINT_GROUPS.get(checkpoint) ?? [checkpoint]
+    for (const member of members) {
+      if (seen.has(member)) continue
+      seen.add(member)
+      expanded.push(member)
+    }
+  }
+  return expanded
+}

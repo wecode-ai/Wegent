@@ -5,8 +5,10 @@
 # Standalone Dockerfile - All services in one container
 # This builds a single image containing Backend, Frontend, Wework, Chat Shell, and Executor
 
+ARG NODE_VERSION=22.23.4
+
 # ========== Stage 1: Build Frontend ==========
-FROM node:22-slim AS frontend-builder
+FROM node:${NODE_VERSION}-slim AS frontend-builder
 
 WORKDIR /app
 
@@ -53,7 +55,7 @@ RUN corepack enable \
     && pnpm --config.verify-deps-before-run=false run build
 
 # ========== Stage 2: Build Wework ==========
-FROM node:22-slim AS wework-builder
+FROM node:${NODE_VERSION}-slim AS wework-builder
 
 WORKDIR /app
 
@@ -92,10 +94,15 @@ RUN corepack enable \
 # ========== Stage 3: Build Python Base with Tools ==========
 FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS python-base
 
+ARG NODE_VERSION
+
 WORKDIR /app
 
-# Verify Node.js is available (already installed in base image)
-RUN node --version && npm --version
+# Update Node.js even when the published base image predates the security release.
+RUN dnf upgrade -y nodejs-${NODE_VERSION} \
+    && test "$(node --version)" = "v${NODE_VERSION}" \
+    && npm --version \
+    && dnf clean all
 
 # Install system packages for document generation and embedded services.
 # AlmaLinux MySQL requests CAP_SYS_NICE as an effective file capability.
@@ -117,7 +124,7 @@ RUN dnf install -y \
     redis \
     # MySQL server for standalone mode (embedded)
     mysql-server \
-    && npm install -g @anthropic-ai/claude-code@2.1.277 @openai/codex@0.155.1 \
+    && npm install -g @anthropic-ai/claude-code@2.1.310 @openai/codex@0.155.1 \
     && { ! getcap /usr/libexec/mysqld | grep -q . || setcap -r /usr/libexec/mysqld; } \
     && test -z "$(getcap /usr/libexec/mysqld)" \
     && /usr/sbin/mysqld --version \
@@ -163,6 +170,7 @@ RUN dnf install -y gcc ca-certificates openssl-devel pkgconf-pkg-config \
 ENV PATH=/root/.cargo/bin:${PATH}
 
 COPY executor/Cargo.toml executor/Cargo.lock /app/executor/
+COPY executor/vendor /app/executor/vendor
 COPY executor/src /app/executor/src
 COPY sdk/plugin-auth /app/sdk/plugin-auth
 COPY sdk/plugin-creator /app/sdk/plugin-creator

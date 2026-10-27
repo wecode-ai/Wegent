@@ -29,6 +29,8 @@
 //! (`backend.rs`); `overwrite_attachment_id` overwrites an existing owned row
 //! instead of inserting one.
 pub mod backend;
+#[cfg(test)]
+mod consistency_tests;
 pub(crate) mod document;
 mod jpeg_metadata;
 pub(crate) mod model_image;
@@ -36,7 +38,10 @@ mod model_jpeg;
 pub(crate) mod office;
 mod overwrite;
 pub(crate) mod pdf;
+mod resample;
 mod response;
+mod s3;
+pub use s3::S3StorageBackend;
 mod store;
 #[cfg(test)]
 mod tests;
@@ -49,10 +54,11 @@ pub use backend::{
 };
 pub(crate) use overwrite::{OverwriteError, Param, Preflush, overwrite_attachment_internal};
 use response::AttachmentResponse;
+pub(crate) use store::refresh_context;
 use store::{
     INSERT_CONTEXT_QUERY, UPDATE_BINARY_DATA_QUERY, UPDATE_FAILED_QUERY, UPDATE_PARSING_QUERY,
     UPDATE_READY_QUERY, UPDATE_READY_WITH_IMAGE_QUERY, UPDATE_TYPE_DATA_QUERY, build_type_data,
-    merge_extra_type_data, refresh_context, type_data_json,
+    merge_extra_type_data, type_data_json,
 };
 
 use std::sync::Arc;
@@ -96,7 +102,7 @@ struct OwnerEntityRow {
     #[allow(dead_code, reason = "selected to match the source column list")]
     email: Option<String>,
     #[allow(dead_code, reason = "selected to match the source column list")]
-    git_info: brz_mysql::Json<brz_json::OpaqueJson>,
+    git_info: Option<brz_mysql::Json<brz_json::OpaqueJson>>,
     #[allow(dead_code, reason = "selected to match the source column list")]
     is_active: i8,
     #[allow(dead_code, reason = "selected to match the source column list")]

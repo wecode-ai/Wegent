@@ -14,6 +14,7 @@ ENV PATH=/root/.cargo/bin:${PATH}
 FROM builder-base AS builder-deps
 
 COPY executor/Cargo.toml executor/Cargo.lock ./
+COPY executor/vendor ./vendor
 RUN mkdir -p src/bin \
     && printf 'pub fn placeholder() {}\n' > src/lib.rs \
     && printf 'fn main() {}\n' > src/bin/wegent-executor.rs \
@@ -30,7 +31,7 @@ RUN find src -type f -exec touch {} + \
 
 FROM ${BASE_IMAGE}
 
-RUN npm install -g @anthropic-ai/claude-code@2.1.277 @openai/codex@0.155.1 \
+RUN npm install -g @anthropic-ai/claude-code@2.1.310 @openai/codex@0.155.1 \
     && npm cache clean --force
 
 COPY --from=builder /workspace/src/executor/target/release/wegent-executor /app/executor

@@ -11,6 +11,7 @@ interface RuntimeTaskLifecycleAutomationEvent {
   transcript?: RuntimePaneTranscript
   goalStatus?: RuntimeGoalStatus | null
   task?: RuntimeTaskSummary
+  capture?: (snapshot: ReturnType<RuntimeTaskLifecycleStore['getTask']>) => void
 }
 
 export function registerRuntimeTaskLifecycleAutomation(
@@ -19,7 +20,9 @@ export function registerRuntimeTaskLifecycleAutomation(
 ): () => void {
   const handleLifecycleEvent = (event: Event) => {
     const detail = (event as CustomEvent<RuntimeTaskLifecycleAutomationEvent>).detail
-    if (detail?.type === 'turn_settled') {
+    if (detail?.type === 'capture_snapshot') {
+      detail.capture?.(store.getTask(detail.address))
+    } else if (detail?.type === 'turn_settled') {
       store.turnSettled(detail.address, detail.turnId)
     } else if (detail?.type === 'transcript_received' && detail.transcript) {
       store.syncTranscript(detail.address, detail.transcript)

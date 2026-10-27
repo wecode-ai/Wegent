@@ -433,6 +433,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
                 DeliveryApi['updateCloudProject']
               >[1]['provider_config'],
               board_config: input.boardConfig,
+              board_views: input.boardViews,
+              tag_change: input.tagChange,
               card_display: input.cardDisplay,
               pull_request_automation: input.pullRequestAutomation as Parameters<
                 DeliveryApi['updateCloudProject']
@@ -797,10 +799,6 @@ export function createWeworkWorkspaceRuntimePort(
         description
       )
       return { issue: toIssue(result.item) }
-    },
-    async updateTrackedTaskTitle(task, title) {
-      const issue = await deliveryApi.updateTaskTrackingTitle(toRuntimeTaskAddress(task), title)
-      return issue ? toIssue(issue) : null
     },
     async reportExecutionLifecycle(projectId, executionId, event) {
       const execution = { id: executionId, cloud_project_id: projectId }

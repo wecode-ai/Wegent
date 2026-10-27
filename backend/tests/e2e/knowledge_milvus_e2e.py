@@ -11,6 +11,7 @@ from contextlib import ExitStack
 from threading import Lock
 
 import httpx
+from knowledge_milvus_readiness import run_readiness_scenarios
 from knowledge_remote_index import _rebuild_through_entry, _rebuild_with_new_content
 from knowledge_remote_index_support import (
     EMBEDDING_MODEL_URL,
@@ -35,6 +36,7 @@ from knowledge_remote_index_support import (
 
 def run() -> None:
     _require_remote_services()
+    run_readiness_scenarios()
     milvus_url = os.environ["E2E_MILVUS_URL"]
     name = f"milvus-e2e-{uuid.uuid4().hex[:12]}"
     with _create_client() as client, ExitStack() as cleanup:

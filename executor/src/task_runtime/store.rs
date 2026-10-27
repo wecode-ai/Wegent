@@ -17,7 +17,9 @@ use uuid::Uuid;
 
 mod code_projects;
 pub(crate) mod execution_workspace;
+mod issue_badges;
 mod ordering;
+mod project_tags;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
@@ -49,6 +51,18 @@ mod collaboration_dispatch;
 
 #[path = "stand_in.rs"]
 mod stand_in;
+
+#[path = "personal_stand_in.rs"]
+pub mod personal_stand_in;
+
+#[path = "stand_in_proposals.rs"]
+mod stand_in_proposals;
+
+#[path = "stand_in_memories.rs"]
+mod stand_in_memories;
+
+#[path = "stand_in_inbox.rs"]
+mod stand_in_inbox;
 
 const LOCAL_SCHEMA_VERSION: i64 = 10;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
@@ -313,6 +327,20 @@ impl LocalTaskStore {
         project_id: &str,
         input: ProjectUpdate,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        if let Some(change) = input.tag_change.as_ref() {
+            let mut fields = serde_json::to_value(&input)
+                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
+            fields
+                .as_object_mut()
+                .unwrap()
+                .retain(|key, value| key != "version" && key != "tag_change" && !value.is_null());
+            if !fields.as_object().unwrap().is_empty() {
+                return Err(TaskRuntimeError::Invalid(
+                    "Tag changes cannot be combined with other project updates".into(),
+                ));
+            }
+            return self.change_project_tag(project_id, input.version, change);
+        }
         let project = self.get_project(project_id)?;
         if project.version != input.version {
             return Err(TaskRuntimeError::VersionConflict);
@@ -323,6 +351,7 @@ impl LocalTaskStore {
         let provider = task_provider(&project)?;
         let mut metadata = project.metadata;
         if let Some(tags) = input.tags {
+            super::tagging::validate_tags(&tags)?;
             metadata["tags"] = json!(tags);
         }
         if let Some(provider_config) = input.provider_config {
@@ -335,6 +364,10 @@ impl LocalTaskStore {
         }
         if let Some(board_config) = input.board_config {
             metadata["board_config"] = board_config;
+        }
+        if let Some(board_views) = input.board_views {
+            super::board_views::validate_update(&metadata["board_views"], &board_views)?;
+            metadata["board_views"] = board_views;
         }
         if let Some(card_display) = input.card_display {
             metadata["card_display"] = card_display;
@@ -503,6 +536,7 @@ impl LocalTaskStore {
         validate_name(&input.title, "task title")?;
         validate_status(&input.status)?;
         validate_priority(&input.priority)?;
+        super::tagging::validate_tags(&input.tags)?;
         validate_schedule_range(start_at.as_deref(), due_at.as_deref())?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -549,6 +583,11 @@ impl LocalTaskStore {
         };
         let completed_at = (status == "completed").then(|| now.clone());
         let mut metadata = json!({"tags": input.tags});
+        issue_badges::update_source(
+            &mut metadata,
+            "issue",
+            &format!("{}\n{}", input.title, input.description),
+        );
         if let Some(start_at) = start_at {
             metadata["start_at"] = json!(start_at);
         }
@@ -687,6 +726,9 @@ impl LocalTaskStore {
         if let Some(priority) = input.priority.as_deref() {
             validate_priority(priority)?;
         }
+        if let Some(tags) = input.tags.as_ref() {
+            super::tagging::validate_tags(tags)?;
+        }
         let selected_agent = input
             .assignee_agent_id
             .as_ref()
@@ -713,6 +755,7 @@ impl LocalTaskStore {
             })
             .unwrap_or_default();
         let previous_parent_id = current.parent_id.clone();
+        let content_updated = input.title.is_some() || input.description.is_some();
         let title = input.title.or(current.title);
         let description = input.description.unwrap_or(current.description);
         let mut status = input.status.or_else(|| current.status.clone());
@@ -733,6 +776,13 @@ impl LocalTaskStore {
                 None
             };
         let mut metadata = current.metadata;
+        if content_updated {
+            issue_badges::update_source(
+                &mut metadata,
+                "issue",
+                &format!("{}\n{}", title.as_deref().unwrap_or_default(), description),
+            );
+        }
         if let Some(group_id) = &input.assignee_group_id {
             metadata["collaboration_group"] = if group_id.is_some() {
                 selected_collaboration_group
@@ -1257,8 +1307,11 @@ impl LocalTaskStore {
         &self,
         create: &LocalCommentCreate,
     ) -> Result<LocalComment, TaskRuntimeError> {
-        let connection = self.connection()?;
-        insert_comment(&connection, create, "completed")
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let comment = insert_comment(&transaction, create, "completed")?;
+        transaction.commit()?;
+        Ok(comment)
     }
 
     pub fn start_runtime_comment(
@@ -1392,7 +1445,14 @@ impl LocalTaskStore {
             params![execution_id],
             |row| row.get::<_, String>(0),
         )?;
-        Ok(Some(comment_row(&connection, &message_id)?))
+        let comment = comment_row(&connection, &message_id)?;
+        issue_badges::update_stored_source(
+            &connection,
+            &comment.task_id,
+            &format!("comment:{message_id}"),
+            &comment.content,
+        )?;
+        Ok(Some(comment))
     }
 
     // ------------------------------------------------------------------
@@ -4705,6 +4765,12 @@ fn insert_comment(
         ],
     )?;
     refresh_runtime_projection_additional_context(connection, &create.task_id)?;
+    issue_badges::update_stored_source(
+        connection,
+        &create.task_id,
+        &format!("comment:{message_id}"),
+        &create.content,
+    )?;
     comment_row(connection, &message_id)
 }
 
@@ -5225,6 +5291,19 @@ fn update_agent_comment(
            AND json_extract(metadata, '$.execution_id') = ?4",
         params![status, content, updated_at, execution_id],
     )?;
+    let mut statement = connection.prepare("SELECT task_id, message_id FROM loop_item_comments WHERE deleted_at IS NULL AND json_extract(metadata, '$.execution_id') = ?1")?;
+    let comments = statement.query_map([execution_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for comment in comments {
+        let (task_id, message_id) = comment?;
+        issue_badges::update_stored_source(
+            connection,
+            &task_id,
+            &format!("comment:{message_id}"),
+            content,
+        )?;
+    }
     Ok(())
 }
 

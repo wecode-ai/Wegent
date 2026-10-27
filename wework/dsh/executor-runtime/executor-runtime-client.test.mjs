@@ -5,8 +5,25 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { gzipSync } from 'node:zlib'
-import { ExecutorRuntimeClient, ExecutorRuntimeError } from './executor-runtime-client.js'
+import {
+  ExecutorRuntimeClient,
+  ExecutorRuntimeError,
+  executorRequestTimeoutMs,
+} from './executor-runtime-client.js'
 import { LocalEndpointTransport } from './local-endpoint-transport.js'
+
+test('keeps auth RPC alive while the host prepares Python', () => {
+  for (const method of [
+    'executor.plugin_auth.migrate',
+    'executor.plugin_auth.run',
+    'runtime.connections.cli',
+    'runtime.local_connector_auth.health',
+    'runtime.local_connector_auth.start',
+  ]) {
+    assert.equal(executorRequestTimeoutMs(method, 120_000), 18 * 60_000 + 5_000)
+  }
+  assert.equal(executorRequestTimeoutMs('executor.health', 120_000), 120_000)
+})
 
 test('negotiates local endpoint RPC without owning event history', async () => {
   const fixture = await executorFixture()

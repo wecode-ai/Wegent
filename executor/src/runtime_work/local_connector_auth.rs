@@ -22,9 +22,12 @@ use crate::local::app_ipc::AppIpcError;
 use super::util::string_field;
 use tools::{parse_tool_spec, resolve_auth_tool, LocalAuthToolSpec};
 
+mod connection_tools;
 mod diagnostics;
+pub(crate) use connection_tools::{run_connection_tool, run_plugin_tool};
 mod github_cli;
 mod logout;
+mod python;
 mod tools;
 
 #[derive(Debug, Clone)]
@@ -382,6 +385,11 @@ fn load_local_auth_spec(
     plugin_root: &Path,
     connector_slug: Option<&str>,
 ) -> Result<LocalAuthSpec, AppIpcError> {
+    let manifest = read_plugin_manifest(plugin_root)?;
+    parse_local_auth_spec(&manifest, connector_slug)
+}
+
+fn read_plugin_manifest(plugin_root: &Path) -> Result<Value, AppIpcError> {
     let manifest_path = [
         plugin_root.join(".codex-plugin/plugin.json"),
         plugin_root.join(".claude-plugin/plugin.json"),
@@ -393,6 +401,13 @@ fn load_local_auth_spec(
         .map_err(|error| AppIpcError::new("plugin_manifest_read_failed", error.to_string()))?;
     let manifest: Value = serde_json::from_str(&raw)
         .map_err(|error| AppIpcError::new("plugin_manifest_invalid", error.to_string()))?;
+    Ok(manifest)
+}
+
+fn parse_local_auth_spec(
+    manifest: &Value,
+    connector_slug: Option<&str>,
+) -> Result<LocalAuthSpec, AppIpcError> {
     let connectors = manifest
         .get("connectors")
         .and_then(Value::as_array)
@@ -764,8 +779,19 @@ async fn run_plugin_command(
     timeout_seconds: u64,
 ) -> Result<Value, AppIpcError> {
     let mut invocation = diagnostics::Invocation::new(plugin_root);
-    let result =
-        run_plugin_command_inner(plugin_root, args, tool, timeout_seconds, &invocation).await;
+    let result = async {
+        let requires_python = python::prepare_command(plugin_root, args, tool).await?;
+        run_plugin_command_inner(
+            plugin_root,
+            args,
+            tool,
+            timeout_seconds,
+            requires_python,
+            &invocation,
+        )
+        .await
+    }
+    .await;
     invocation.finish(result.as_ref().err().map(|error| error.code.as_str()));
     result
 }
@@ -775,6 +801,7 @@ async fn run_plugin_command_inner(
     args: &[String],
     tool: Option<&Path>,
     timeout_seconds: u64,
+    requires_python: bool,
     invocation: &diagnostics::Invocation,
 ) -> Result<Value, AppIpcError> {
     if args.is_empty() {
@@ -793,6 +820,9 @@ async fn run_plugin_command_inner(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    if requires_python {
+        crate::python_runtime::isolate_python_environment(&mut command);
+    }
     if let Some(tool) = tool {
         command.env("WEGENT_LOCAL_AUTH_TOOL", tool);
     }

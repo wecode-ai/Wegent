@@ -466,7 +466,6 @@ impl RuntimeWorkRpcHandler {
         struct ManualProjectTaskGroups {
             unlisted: Vec<usize>,
             listed: Vec<usize>,
-            unlisted_before_listed: bool,
         }
 
         let mut groups = HashMap::<String, ManualProjectTaskGroups>::new();
@@ -488,7 +487,6 @@ impl RuntimeWorkRpcHandler {
                     .or_insert_with(|| ManualProjectTaskGroups {
                         unlisted: Vec::new(),
                         listed: Vec::new(),
-                        unlisted_before_listed: link.group_project_key.is_some(),
                     });
             if project_index.is_thread_in_manual_order(&project_key, thread_id) {
                 group.listed.push(index);
@@ -505,32 +503,16 @@ impl RuntimeWorkRpcHandler {
                     .thread_sort_order(&project_key, left_thread, 0)
                     .cmp(&project_index.thread_sort_order(&project_key, right_thread, 0))
             });
-            if group.unlisted_before_listed {
-                group.unlisted.sort_by(|left, right| {
-                    compare_unlisted_manual_project_links(&links[*left], &links[*right])
-                });
-            } else {
-                group.unlisted.sort_by(|left, right| {
-                    links[*left]
-                        .list_order
-                        .unwrap_or(usize::MAX / 2)
-                        .cmp(&links[*right].list_order.unwrap_or(usize::MAX / 2))
-                });
-            }
+            group.unlisted.sort_by(|left, right| {
+                compare_unlisted_manual_project_links(&links[*left], &links[*right])
+            });
 
             for (sidebar_order, index) in group.listed.iter().enumerate() {
                 links[*index].sidebar_order = Some(sidebar_order);
             }
-            let ordered_indices = if group.unlisted_before_listed {
-                group.unlisted.into_iter().chain(group.listed)
-            } else {
-                group.listed.into_iter().chain(group.unlisted)
-            };
+            let ordered_indices = group.unlisted.into_iter().chain(group.listed);
             for (next_order, index) in ordered_indices.enumerate() {
                 links[index].list_order = Some(next_order);
-                if !group.unlisted_before_listed {
-                    links[index].sidebar_order = Some(next_order);
-                }
             }
         }
     }
@@ -622,11 +604,20 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn thread_messages(&self, thread_id: &str) -> Vec<Value> {
-        match self
-            .read_codex_turn_page(thread_id, 1, CodexTranscriptDirection::Ascending)
-            .await
+        match load_codex_transcript(
+            &self.codex_app_server,
+            CodexTranscriptRequest {
+                thread_id,
+                cursor: None,
+                limit: CODEX_TRANSCRIPT_PAGE_SIZE,
+                direction: CodexTranscriptDirection::Descending,
+                full_content: true,
+                prefer_rollout_history: false,
+            },
+        )
+        .await
         {
-            Ok(thread) => transcript_messages(&thread, &self.device_id),
+            Ok(page) => transcript_messages(&page.thread, &self.device_id),
             Err(error) => {
                 eprintln!("failed to read Codex app-server thread {thread_id}: {error}");
                 Vec::new()
@@ -654,7 +645,14 @@ impl RuntimeWorkRpcHandler {
             self.register_thread_event_route_from_store(&thread_id);
         }
         self.ensure_notification_router().await;
-        self.codex_app_server.request(method, params).await
+        match method {
+            "thread/goal/set" | "thread/goal/clear" => {
+                self.codex_app_server
+                    .mutate_thread_goal(method, params)
+                    .await
+            }
+            _ => self.codex_app_server.request(method, params).await,
+        }
     }
 
     pub(super) fn link_from_thread(&self, thread: &Value) -> Option<RuntimeTaskLink> {

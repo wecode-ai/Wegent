@@ -18,6 +18,10 @@ The Executor stores local ownership; the backend stores cloud ownership. A colla
 
 When a project has no execution environment, the New Issue page and creation dialog show no environment notice. You can still create and handle Issues manually. Offline devices and failed environment checks retain their notices and configuration, viewing, or retry actions.
 
+## Create a collaboration project
+
+New local and cloud collaboration projects include only the current user by default. Agents are added only when you select them through the collaborator picker. You can also create the project first and add Agents from its settings. Importing a local code project does not automatically add the current-device Agent.
+
 ## Change an existing Issue's owner
 
 After selecting or clearing an owner in Issue details, select **Save assignment** beside the owner. The header does not show a duplicate save action. Saving also submits other pending detail edits. If saving fails, the draft and save action remain available for correction and resubmission.
@@ -35,6 +39,10 @@ If the comment fails to send, its draft and selected assignee remain. If the com
 The `collaboration-issue-assignment-activity` desktop regression verifies first-mention selection, persisted comments and ownership, assignment without a comment, and assignment history. Focused component tests cover manual overrides, permissions, duplicate submission, and failure recovery.
 
 ## Work on an Issue assigned to me
+
+On the project board, choose **Assignee** as the grouping field, then select yourself in the adjacent filter to see your assigned Issues. Clear the filter to show all assignees again. Grouping is a personal preference for the current account and project and persists across reloads. Members and viewers can use it without changing the shared board configuration. Shared status columns and card display settings remain managed by project administrators.
+
+When grouped by tag, an Issue can appear in multiple columns. Dropping within the same column leaves tags unchanged. Moving between columns replaces only the source tag and preserves other tags; moving into the untagged column clears all tags.
 
 Open an assigned native cloud Issue from Inbox or its project board. Wework sends a desktop notification when another member assigns it.
 
@@ -67,6 +75,7 @@ Archiving a parent Issue also archives its child Issues so the active task tree 
 3. Issue-only `#` suggestions, distinct reference icons, and saved references.
 4. Manual ownership changes and clearing without native selects; no task slash menu.
 5. Seeding a local project through the real Tasks project API, reloading twice, and verifying one imported project with a working collaboration entry.
+6. Filtering a member's assigned Issues, combining search, and clearing the filter; retaining personal grouping after reload and isolating preferences between projects. Viewer and administrator grouping changes also leave the shared board configuration and version unchanged.
 
 Cloud fixtures are archived by the checkpoint cleanup. Local fixtures live only in the test Executor home. Failures retain runner logs; tests do not skip or retry to hide failures.
 

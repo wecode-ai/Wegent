@@ -22,15 +22,17 @@
 //! origin. This preserves the source's outer `ServerErrorMiddleware` response:
 //! no CORS headers or `Vary: Origin`. Ordinary business results keep CORS.
 
-use brz_mysql::{Mysql, MysqlResult, MysqlTransaction};
+use brz_mysql::MysqlResult;
 use brz_redis::Redis;
 use chrono::Local;
 use serde_json::Value;
 
 use crate::device_identity::{
-    DeviceKindRow, PluginDeviceInstallationRow, plugin_device_id, reconcile_plugin_device_rows,
+    DeviceKindRow, PluginDeviceInstallationRow, plugin_device_id_on,
+    reconcile_plugin_device_rows_on,
 };
 use crate::http_compat::FastApiError;
+use crate::plugins_marketplace::query::PluginQuery;
 use crate::state::AppState;
 
 use super::auth;
@@ -68,53 +70,95 @@ struct DesiredInstalledKind {
 #[brz_http_server::post("/api/plugins/installed/sync-device")]
 async fn sync_installed_plugins_to_device(
     #[inject(state)] state: &AppState,
-    #[auth] user: auth::InstalledPluginsUser,
+    #[auth] actor: auth::SyncDeviceUser,
     device_id: String,
     reconcile: Option<bool>,
 ) -> Result<Value, FastApiError> {
-    let normalized_device_id = device_id.trim();
-    if normalized_device_id.is_empty() {
-        return Err(FastApiError::detail(
-            brz_http_server::StatusCode::BAD_REQUEST,
-            "device_id is required",
-        ));
-    }
-
     if reconcile.unwrap_or(false) {
-        reconcile_device_plugins(state, user.id, normalized_device_id).await
+        reconcile_device_plugins(state, &actor.user_name, &device_id).await
     } else {
-        sync_device(state, user.id, normalized_device_id).await
+        sync_device(state, &actor.user_name, &device_id).await
+    }
+}
+
+/// Outcome of the source's request-session transaction.
+enum SessionOutcome {
+    /// `get_current_user` or the endpoint's `device_id` check rejected the
+    /// request before any business work ran.
+    Rejected(FastApiError),
+    /// `ensure_pending_for_device`'s `db.commit()` succeeded.
+    Applied { user_id: i64, pending_count: usize },
+}
+
+/// Source `get_current_user` on the request session: the active `users` row,
+/// or the exact rejection detail its failed branch raises.
+async fn session_user<Q>(
+    session: &mut Q,
+    user_name: &str,
+) -> MysqlResult<Result<auth::UserRow, FastApiError>>
+where
+    Q: PluginQuery,
+{
+    match auth::find_user_by_name_on(session, user_name).await? {
+        Some(user) if user.is_active => Ok(Ok(user)),
+        Some(_) => Ok(Err(FastApiError::unauthorized(
+            auth::USER_NOT_ACTIVATED_DETAIL,
+        ))),
+        None => Ok(Err(FastApiError::unauthorized(auth::UNAUTHORIZED_DETAIL))),
     }
 }
 
 /// Source `sync_installed_plugins_to_device`'s non-reconcile branch.
+///
+/// `get_current_user`, `reconcile_stale_installed_catalog_refs`, and
+/// `ensure_pending_for_device` share the request's `db` session in the source,
+/// so the auth read, the catalog repair reads, the device lock, and the pending
+/// upserts all commit at `ensure_pending_for_device`'s `db.commit()`. One
+/// pinned transaction reproduces that session.
 async fn sync_device(
     state: &AppState,
-    user_id: i64,
+    user_name: &str,
     device_id: &str,
 ) -> Result<Value, FastApiError> {
-    reconcile_stale_installed_catalog_refs(
-        &state.mysql,
-        state.redis.as_ref(),
-        &state.entity_resolvers,
-        user_id,
-    )
-    .await
-    .map_err(|error| {
-        tracing::error!(%error, user_id, "sync-device catalog reconcile failed");
-        FastApiError::unhandled()
-    })?;
-
-    let pending_count = state
+    let outcome = state
         .mysql
         .with_transaction(async |transaction| {
-            ensure_pending_for_device(transaction, &state.mysql, user_id, device_id).await
+            let mut session = &mut *transaction;
+            let user = match session_user(&mut session, user_name).await? {
+                Ok(user) => user,
+                Err(rejection) => return Ok(SessionOutcome::Rejected(rejection)),
+            };
+            if device_id.trim().is_empty() {
+                return Ok(SessionOutcome::Rejected(FastApiError::detail(
+                    brz_http_server::StatusCode::BAD_REQUEST,
+                    "device_id is required",
+                )));
+            }
+            reconcile_stale_installed_catalog_refs(
+                &mut session,
+                state.redis.as_ref(),
+                &state.entity_resolvers,
+                user.id,
+            )
+            .await?;
+            let pending_count = ensure_pending_for_device(&mut session, user.id, device_id).await?;
+            Ok(SessionOutcome::Applied {
+                user_id: user.id,
+                pending_count,
+            })
         })
         .await
         .map_err(|error| {
-            tracing::error!(%error, user_id, "sync-device pending refresh failed");
+            tracing::error!(%error, user_name, "sync-device pending refresh failed");
             FastApiError::unhandled()
         })?;
+    let (user_id, pending_count) = match outcome {
+        SessionOutcome::Rejected(rejection) => return Err(rejection),
+        SessionOutcome::Applied {
+            user_id,
+            pending_count,
+        } => (user_id, pending_count),
+    };
 
     // Source `db.close()` ends the request-scoped session: SQLAlchemy rolls
     // back the idle transaction started after the commit.
@@ -141,7 +185,8 @@ async fn record_sync_result(
     state
         .mysql
         .with_transaction(async |transaction| {
-            record_device_sync_result(transaction, &state.mysql, user_id, result).await
+            let mut session = &mut *transaction;
+            record_device_sync_result(&mut session, user_id, result).await
         })
         .await
         .map_err(|error| {
@@ -375,12 +420,31 @@ fn runtime_instance_matches(device: &DeviceKindRow, online: &Value) -> bool {
 /// require the executor's `scope="plugins"` acknowledgement.
 async fn reconcile_device_plugins(
     state: &AppState,
-    user_id: i64,
+    user_name: &str,
     device_id: &str,
 ) -> Result<Value, FastApiError> {
-    let mut payload = desired_plugins(state, user_id, device_id).await?;
+    // The source's request session only reads `current_user` (via
+    // `get_current_user`, before the endpoint body runs) and is closed before
+    // the device round trip starts, so this lookup stays on the pool.
+    let mut pool = &state.mysql;
+    let user = match session_user(&mut pool, user_name).await.map_err(|error| {
+        tracing::error!(%error, user_name, "reconcile user lookup failed");
+        FastApiError::unhandled()
+    })? {
+        Ok(user) => user,
+        Err(rejection) => return Err(rejection),
+    };
+    let normalized_device_id = device_id.trim();
+    if normalized_device_id.is_empty() {
+        return Err(FastApiError::detail(
+            brz_http_server::StatusCode::BAD_REQUEST,
+            "device_id is required",
+        ));
+    }
+    let user_id = user.id;
+    let mut payload = desired_plugins(state, user_id, normalized_device_id).await?;
     for _attempt in 0..DESIRED_STATE_SYNC_ATTEMPTS {
-        let result = sync_device_payload(state, user_id, device_id, &payload).await?;
+        let result = sync_device_payload(state, user_id, normalized_device_id, &payload).await?;
         if !result.success || !result.errors.is_empty() || result.plugins.iter().any(is_failed_item)
         {
             return Err(FastApiError::detail(
@@ -394,7 +458,7 @@ async fn reconcile_device_plugins(
                 "Update the desktop runtime to reconcile plugins",
             ));
         }
-        let latest = desired_plugins(state, user_id, device_id).await?;
+        let latest = desired_plugins(state, user_id, normalized_device_id).await?;
         if plugin_snapshot(&latest) != plugin_snapshot(&payload) {
             payload = latest;
             continue;
@@ -404,7 +468,7 @@ async fn reconcile_device_plugins(
         sync.insert("success".to_string(), Value::Bool(true));
         sync.insert(
             "device_id".to_string(),
-            Value::String(device_id.to_string()),
+            Value::String(normalized_device_id.to_string()),
         );
         sync.insert("mode".to_string(), Value::String("merge".to_string()));
         sync.insert(
@@ -415,7 +479,10 @@ async fn reconcile_device_plugins(
         sync.insert("synced".to_string(), Value::from(1));
         let mut response = serde_json::Map::new();
         response.insert("reconciled".to_string(), Value::Bool(true));
-        response.insert("deviceId".to_string(), Value::String(device_id.to_string()));
+        response.insert(
+            "deviceId".to_string(),
+            Value::String(normalized_device_id.to_string()),
+        );
         response.insert("pendingCount".to_string(), Value::from(0));
         response.insert("sync".to_string(), Value::Object(sync));
         return Ok(Value::Object(response));
@@ -433,8 +500,9 @@ async fn desired_plugins(
     user_id: i64,
     device_id: &str,
 ) -> Result<Value, FastApiError> {
+    let mut pool = &state.mysql;
     reconcile_stale_installed_catalog_refs(
-        &state.mysql,
+        &mut pool,
         state.redis.as_ref(),
         &state.entity_resolvers,
         user_id,
@@ -536,33 +604,29 @@ fn reconciliation_failure_detail(result: &SyncResult) -> String {
 
 /// Source `plugin_device_installation_service.ensure_pending_for_device`.
 ///
-/// Runs inside the caller's write transaction so the reconcile lock, the alias
-/// rewrites, and the pending upserts commit together. The source mutates ORM
-/// objects during iteration and emits every INSERT/UPDATE only at the
-/// `db.commit()` flush, so the write statements are collected here and flushed
-/// through [`PendingFlush`] instead of being executed inline.
-async fn ensure_pending_for_device<T, M>(
-    transaction: &mut T,
-    mysql: &M,
+/// Runs on the caller's request-session handle so the reconcile lock, the
+/// identity reads, the alias rewrites, and the pending upserts share one
+/// connection and commit together. The source mutates ORM objects during
+/// iteration and emits every INSERT/UPDATE only at the `db.commit()` flush, so
+/// the write statements are collected here and flushed through
+/// [`PendingFlush`] instead of being executed inline.
+async fn ensure_pending_for_device<Q>(
+    session: &mut Q,
     user_id: i64,
     device_id: &str,
 ) -> MysqlResult<usize>
 where
-    T: MysqlTransaction,
-    M: Mysql,
+    Q: PluginQuery,
 {
-    let identity_map = reconcile_plugin_device_rows::<_, _, PluginDeviceInstallationRow>(
-        transaction,
-        mysql,
-        user_id,
-    )
-    .await?;
-    let normalized_device_id = plugin_device_id(mysql, user_id, device_id).await?;
+    let identity_map =
+        reconcile_plugin_device_rows_on::<_, PluginDeviceInstallationRow>(session, user_id).await?;
+    let normalized_device_id = plugin_device_id_on(session, user_id, device_id).await?;
     if normalized_device_id.is_empty() {
         return Ok(0);
     }
-    let desired: Vec<DesiredInstalledKind> =
-        mysql.fetch_all(DESIRED_INSTALLS_QUERY, (user_id,)).await?;
+    let desired: Vec<DesiredInstalledKind> = session
+        .fetch_all(DESIRED_INSTALLS_QUERY, (user_id,))
+        .await?;
     let mut changed = 0usize;
     // The session's identity map is seeded by `reconcile_plugin_device_rows`'s
     // `FOR UPDATE` read (primary-key ascending), so the flush emits the UPDATE
@@ -572,7 +636,7 @@ where
     let mut flush = PendingFlush::default();
     for installed in &desired {
         changed += ensure_desired_install_pending(
-            transaction,
+            session,
             user_id,
             &normalized_device_id,
             installed,
@@ -581,7 +645,7 @@ where
         )
         .await?;
     }
-    flush.emit(transaction, &identity_map).await?;
+    flush.emit(session, &identity_map).await?;
     Ok(changed)
 }
 
@@ -611,17 +675,17 @@ impl PendingFlush {
     /// collection is sorted by identity-map position first: the iteration may
     /// visit rows in any order, but the source's flush follows the identity
     /// map populated by the `FOR UPDATE` read.
-    async fn emit<T>(
+    async fn emit<Q>(
         &mut self,
-        transaction: &mut T,
+        session: &mut Q,
         identity_map: &[PluginDeviceInstallationRow],
     ) -> MysqlResult<()>
     where
-        T: MysqlTransaction,
+        Q: PluginQuery,
     {
         self.updates.sort_by_key(|(index, _)| *index);
         for insert in &self.inserts {
-            transaction
+            session
                 .execute(
                     INSERT_INSTALLATION_QUERY,
                     (
@@ -647,7 +711,7 @@ impl PendingFlush {
                  plugin_device_installations.id = ?",
                 assigns.join(", ")
             );
-            transaction
+            session
                 .execute(statement, (flush_timestamp(), row.id))
                 .await?;
         }
@@ -669,8 +733,8 @@ fn flush_timestamp() -> String {
 /// are collected into `flush` (emitted at the source's `db.commit()`), exactly
 /// like the source's ORM flush.
 #[allow(clippy::too_many_arguments)]
-async fn ensure_desired_install_pending<T>(
-    transaction: &mut T,
+async fn ensure_desired_install_pending<Q>(
+    session: &mut Q,
     user_id: i64,
     device_id: &str,
     installed: &DesiredInstalledKind,
@@ -678,12 +742,12 @@ async fn ensure_desired_install_pending<T>(
     flush: &mut PendingFlush,
 ) -> MysqlResult<usize>
 where
-    T: MysqlTransaction,
+    Q: PluginQuery,
 {
     let Some(release_id) = integer_release_id(&installed.json) else {
         return Ok(0);
     };
-    let row: Option<PluginDeviceInstallationRow> = transaction
+    let row: Option<PluginDeviceInstallationRow> = session
         .fetch_optional(DEVICE_ROW_QUERY, (installed.id, device_id))
         .await?;
     let Some(row) = row else {
@@ -858,5 +922,44 @@ mod tests {
              plugin_device_installations.id = ?"
         ));
         assert_eq!(flush_timestamp().len(), "YYYY-MM-DD HH:MM:SS.ffffff".len());
+    }
+
+    /// The source's `get_current_user` runs on the request session, so the
+    /// handler resolves the row through its own transaction and keeps the
+    /// source's rejection details.
+    #[tokio::test]
+    async fn session_user_reports_the_source_auth_failure() {
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        let mut session = &mysql;
+        let rejection = session_user(&mut session, "ghost")
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(rejection.detail_message(), Some(auth::UNAUTHORIZED_DETAIL));
+        assert_eq!(mysql.queries().len(), 1);
+        assert!(mysql.queries()[0].sql.contains("WHERE user_name = ?"));
+    }
+
+    /// Source `ensure_pending_for_device` starts with the user's `FOR UPDATE`
+    /// read and keeps every later read and flush on the same session handle;
+    /// the pending refresh must therefore reach the caller's transaction
+    /// rather than the pool.
+    #[tokio::test]
+    async fn pending_refresh_locks_on_the_caller_session_first() {
+        let mysql = crate::sql_test_support::KindQueryCapture::writing();
+        let mut session = &mysql;
+        assert_eq!(
+            ensure_pending_for_device(&mut session, 3, "app-record-266867")
+                .await
+                .unwrap(),
+            0
+        );
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 3, "lock, alias read, then desired installs");
+        assert!(queries[0].sql.contains(
+            "FROM plugin_device_installations WHERE plugin_device_installations.user_id = ? FOR UPDATE"
+        ));
+        assert!(queries[1].sql.contains("kinds.kind = 'Device'"));
+        assert!(queries[2].sql.contains("kinds.kind = 'InstalledPlugin'"));
     }
 }

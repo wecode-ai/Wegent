@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.models.subtask import SubtaskRole, SubtaskStatus
 from app.services.chat import compaction_checkpoint
 from app.services.task_fork_history import ForkHistoryItem
+from tests.retained_python_handlers import component_client
 
 
 def _subtask(message_id: int, role: SubtaskRole):
@@ -80,10 +81,11 @@ def internal_chat_client(monkeypatch):
     app = FastAPI()
     app.include_router(chat_storage.router, prefix="/internal")
     app.dependency_overrides[get_db] = lambda: SimpleNamespace()
-    return TestClient(
-        app,
-        headers={"Authorization": "Bearer test-internal-token"},
-    )
+    with TestClient(
+        app, headers={"Authorization": "Bearer test-internal-token"}
+    ) as production:
+        with component_client(production, ("chat_history",), api_prefix="") as client:
+            yield client
 
 
 def test_internal_history_uses_fork_resolver(internal_chat_client, monkeypatch):

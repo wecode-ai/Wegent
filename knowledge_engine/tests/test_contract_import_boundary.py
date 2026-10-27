@@ -31,8 +31,7 @@ FORBIDDEN_MODULES = (
     "celery",
 )
 
-_BOUNDARY_SCRIPT = textwrap.dedent(
-    f"""
+_BOUNDARY_SCRIPT = textwrap.dedent(f"""
     import json
     import sys
 
@@ -111,8 +110,7 @@ _BOUNDARY_SCRIPT = textwrap.dedent(
         "retriever_namespace": retriever_config.namespace,
         "embedding_namespace": embedding_config.model_namespace,
     }}))
-    """
-)
+    """)
 
 
 def _run_boundary_script() -> dict[str, Any]:

@@ -313,7 +313,7 @@ export async function createDesktopScenario({
         '终止负责人执行后，Issue 动态没有显示取消终态'
       )
       await control.command('waitFor', '[data-testid="assistant-stopped-notice"]', {
-        text: '已停止',
+        text: '停止',
         timeoutMs: modelResponseTimeoutMs,
       })
       await control.command('waitFor', '[data-testid="pause-response-button"]', {

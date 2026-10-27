@@ -56,6 +56,7 @@ import {
 } from './shared.mjs'
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
+import { prepareGoalCompletionRace } from './goal-completion-race.mjs'
 
 const SUPERVISOR_MODEL_KEY = `public:${CLOUD_PUBLIC_MODEL_NAME}:default:0`
 
@@ -162,7 +163,12 @@ async function getSelectedSupervisorModel(control) {
   })
 }
 
-async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, executorLogPath }) {
+async function verifyActiveGoalIdleUnreadLifecycle({
+  composerSelector,
+  control,
+  executorLogPath,
+  nativeCompletionRace = false,
+}) {
   control.setScenario('goal_idle')
   const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
   const taskRowsBeforeGoal = new Set(
@@ -208,8 +214,12 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   )
   const runningDebugSnapshot = await waitForWorkbenchDebugState(
     control,
-    snapshot => snapshot.pane?.status?.isAssistantStreaming === true,
-    'The running Goal turn never entered visible streaming state'
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === goalTaskId &&
+      snapshot.pane?.currentRuntimeTask?.taskId === goalTaskId &&
+      snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
+      snapshot.pane?.status?.isAssistantStreaming === true,
+    'The running Goal turn never exposed its authoritative streaming state'
   )
   assert.equal(
     runningDebugSnapshot.workbench?.lifecycleCurrentTaskRunning,
@@ -421,6 +431,13 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   await assertConversationTextNotDuplicated(control, [GOAL_IDLE_PROMPT])
   await captureVerificationScreenshot(control, 'goal-idle-03-reloaded-continuation.png')
 
+  const completionRace = nativeCompletionRace
+    ? await prepareGoalCompletionRace(
+        control,
+        reloadedContinuationDebugSnapshot.workbench.currentRuntimeTask
+      )
+    : null
+
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)
   await waitForSnapshot(
@@ -435,6 +452,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   await captureVerificationScreenshot(control, 'goal-idle-04-background-unread-free.png')
 
   control.releaseGoalIdleResponse()
+  await completionRace?.settleBeforeStaleReads(executorLogPath)
   await control.command('waitFor', `[data-testid="${goalUnreadTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -491,6 +509,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     'The completed Goal kept the composer busy'
   )
   await captureVerificationScreenshot(control, 'goal-idle-06-completed-read.png')
+  await completionRace?.releaseFreshReads()
 
   await sendPrompt(control, composerSelector, GOAL_IDLE_FOLLOW_UP_PROMPT)
   await withTimeout(
@@ -506,13 +525,18 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
       snapshot.pane?.status?.isAssistantStreaming === true,
     'The ordinary continuation after Goal completion did not enter running state'
   )
-  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
-    value: JSON.stringify({
-      address: followUpDebugSnapshot.workbench.currentRuntimeTask,
-      type: 'goal_status_received',
-      goalStatus: 'complete',
-    }),
-  })
+  if (completionRace) {
+    // Repeat the original native notification while a real explicit follow-up is active.
+    await completionRace.replayComplete()
+  } else {
+    await control.command('dispatchRuntimeLifecycleEvent', 'body', {
+      value: JSON.stringify({
+        address: followUpDebugSnapshot.workbench.currentRuntimeTask,
+        type: 'goal_status_received',
+        goalStatus: 'complete',
+      }),
+    })
+  }
   try {
     await waitForSnapshot(
       control,
@@ -561,6 +585,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     DEFAULT_STEP_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
+  await completionRace?.reset()
 }
 
 async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLogPath }) {

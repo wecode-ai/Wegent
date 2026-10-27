@@ -7,11 +7,7 @@ import type {
   CodexReference,
 } from "@wegent/chat-core/runtime";
 import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from "../markdown/MarkdownServices";
-import {
-  basename,
-  fileExtension,
-  getDisplayCodexReferences,
-} from "./codexReferences";
+import { basename, fileExtension } from "./codexReferences";
 
 const DEFAULT_VISIBLE_REFERENCE_COUNT = 3;
 
@@ -71,15 +67,14 @@ export function CodexReferenceList({
 }) {
   const { t } = useConversationTranslation();
   const [expanded, setExpanded] = useState(false);
-  const uniqueReferences = getDisplayCodexReferences(references);
-  if (uniqueReferences.length === 0) return null;
+  if (references.length === 0) return null;
   const hiddenCount = Math.max(
     0,
-    uniqueReferences.length - DEFAULT_VISIBLE_REFERENCE_COUNT,
+    references.length - DEFAULT_VISIBLE_REFERENCE_COUNT,
   );
   const visibleReferences = expanded
-    ? uniqueReferences
-    : uniqueReferences.slice(0, DEFAULT_VISIBLE_REFERENCE_COUNT);
+    ? references
+    : references.slice(0, DEFAULT_VISIBLE_REFERENCE_COUNT);
 
   return (
     <section
@@ -200,7 +195,7 @@ function MemoryCitationEntryRow({
   return (
     <button
       type="button"
-      className="group/memory-entry relative block w-full min-w-0 rounded-lg px-2 py-1 text-left text-sm leading-6 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-default disabled:hover:bg-transparent"
+      className="group/memory-entry relative block w-full min-w-0 rounded-lg px-2 py-1 text-left text-sm leading-6 transition-colors hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30 disabled:cursor-default disabled:hover:bg-transparent"
       data-testid="codex-memory-citation-entry"
       onClick={() =>
         openFileWithOptionalLocation(onOpenFile, entry.path, lineStart, lineEnd)

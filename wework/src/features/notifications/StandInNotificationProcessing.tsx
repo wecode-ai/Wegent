@@ -14,11 +14,11 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { projectRuntimePaneTranscript } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { useTranslation } from '@/hooks/useTranslation'
-import { StandInIcon } from '@/features/todo/StandInIcon'
+import { StandInIcon } from '@wegent/collaboration'
 import { NotificationFeedRow, type NotificationFeedRowProps } from './NotificationFeedRow'
 
 const ACTION_CLASS =
-  'inline-flex min-h-11 items-center gap-1.5 rounded-lg bg-muted/80 px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:min-h-7'
+  'inline-flex min-h-11 items-center gap-1.5 rounded-lg bg-muted/80 px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:min-h-7'
 
 export function StandInNotificationProcessing({
   notification,
@@ -81,7 +81,10 @@ export function StandInNotificationProcessing({
         setLoaded({
           signature,
           question: pending?.renderPayload ?? null,
-          summary: notificationTextFromMessages(response.messages)?.body ?? '',
+          summary:
+            (status === 'failed' ? transcript.turns.at(-1)?.error : '') ||
+            notificationTextFromMessages(response.messages)?.body ||
+            '',
         })
       })
       .catch(cause => {
@@ -166,33 +169,38 @@ export function StandInNotificationProcessing({
   )
   const showReplyEditor = canReply && (replyOpen || displayStatus === 'waiting')
   const showReplyAction = canReply && !showReplyEditor
-  const showProcessing = canStart || (state && displayStatus !== 'running') || error || loadError
+  const showProcessing = canStart || state || error || loadError
 
   return (
     <section data-testid={`notification-processing-${notification.id}`}>
       <NotificationFeedRow
         {...rowProps}
-        kind={state ? 'stand_in' : 'issue_dispatch_assignment'}
-        avatarLabel={state ? undefined : actorName}
-        title={state ? t('notifications.stand_in_identity') : actorName || rowProps.title}
-        event={
+        kind="issue_dispatch_assignment"
+        avatarLabel={actorName}
+        title={actorName || rowProps.title}
+        badge={
           state ? (
-            <span className="flex items-center gap-1.5">
-              <span data-testid={`notification-stand-in-status-${notification.id}`}>
-                {t(`notifications.stand_in_${displayStatus}`)}
-              </span>
-              {displayStatus === 'running' && (
-                <LoaderCircle className="h-3 w-3 animate-spin" aria-hidden="true" />
-              )}
+            <span className="inline-flex shrink-0 items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-xs text-text-secondary">
+              <StandInIcon className="h-3 w-3" aria-hidden="true" />
+              {t('notifications.stand_in_handling')}
             </span>
-          ) : actorName ? (
-            t('notifications.stand_in_assignment')
           ) : undefined
         }
-        body={state || actorName ? rowProps.title : ''}
+        event={actorName ? t('notifications.stand_in_assignment') : undefined}
+        body={actorName ? rowProps.title : ''}
         processing={
           showProcessing ? (
             <div className="space-y-2">
+              {state && (
+                <span className="flex items-center gap-1.5 text-xs text-text-secondary">
+                  <span data-testid={`notification-stand-in-status-${notification.id}`}>
+                    {t(`notifications.stand_in_${displayStatus}`)}
+                  </span>
+                  {displayStatus === 'running' && (
+                    <LoaderCircle className="h-3 w-3 animate-spin" aria-hidden="true" />
+                  )}
+                </span>
+              )}
               {(state?.summary || summary) && (
                 <p className="line-clamp-2 rounded-lg bg-muted/70 px-3 py-2 text-sm text-text-secondary">
                   {state?.summary || summary}
@@ -258,7 +266,7 @@ export function StandInNotificationProcessing({
                 />
               ) : showReplyEditor ? (
                 <form
-                  className="flex items-center gap-1 rounded-lg border border-border/60 bg-muted/20 p-1 focus-within:ring-1 focus-within:ring-focus"
+                  className="flex items-center gap-1 rounded-lg border border-border/60 bg-muted/20 p-1 keyboard:focus-within:ring-1 keyboard:focus-within:ring-focus"
                   onSubmit={event => {
                     event.preventDefault()
                     if (draft.trim()) void send(draft.trim())
@@ -282,7 +290,7 @@ export function StandInNotificationProcessing({
                     data-testid={`notification-stand-in-send-${notification.id}`}
                     aria-label={t('notifications.stand_in_send')}
                     disabled={busy || !draft.trim()}
-                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-text-primary text-background hover:bg-text-primary/90 focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-30 md:h-7 md:w-7"
+                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-text-primary text-background hover:bg-text-primary/90 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-30 md:h-7 md:w-7"
                   >
                     <ArrowUp className="h-4 w-4" />
                   </button>

@@ -9,7 +9,7 @@
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-async fn packet(stream: &mut TcpStream, sequence: u8, body: &[u8]) {
+pub(crate) async fn packet(stream: &mut TcpStream, sequence: u8, body: &[u8]) {
     let length = (body.len() as u32).to_le_bytes();
     stream
         .write_all(&[length[0], length[1], length[2], sequence])
@@ -18,7 +18,7 @@ async fn packet(stream: &mut TcpStream, sequence: u8, body: &[u8]) {
     stream.write_all(body).await.unwrap();
 }
 
-async fn read_packet(stream: &mut TcpStream) -> Option<Vec<u8>> {
+pub(crate) async fn read_packet(stream: &mut TcpStream) -> Option<Vec<u8>> {
     let mut header = [0; 4];
     stream.read_exact(&mut header).await.ok()?;
     let length = u32::from_le_bytes([header[0], header[1], header[2], 0]);
@@ -27,12 +27,8 @@ async fn read_packet(stream: &mut TcpStream) -> Option<Vec<u8>> {
     Some(body)
 }
 
-/// A minimal local server accepts initialization and records prepared SQL.
-/// Returning a SQL error avoids needing a result schema and is intentional.
-async fn serve_connection(
-    mut stream: TcpStream,
-    queries: tokio::sync::mpsc::UnboundedSender<String>,
-) {
+/// Complete the SDK's protocol 4.1 authentication against a local fixture.
+pub(crate) async fn handshake(stream: &mut TcpStream) {
     let capabilities: u32 = 0x0008_a208; // protocol 4.1, transactions, auth, database
     let mut hello = vec![10];
     hello.extend_from_slice(b"8.0.0-test\0");
@@ -45,9 +41,18 @@ async fn serve_connection(
     hello.push(21);
     hello.extend_from_slice(&[0; 10]);
     hello.extend_from_slice(b"abcdefghijkl\0mysql_native_password\0");
-    packet(&mut stream, 0, &hello).await;
-    read_packet(&mut stream).await.unwrap();
-    packet(&mut stream, 2, &[0, 0, 0, 2, 0, 0, 0]).await;
+    packet(stream, 0, &hello).await;
+    read_packet(stream).await.unwrap();
+    packet(stream, 2, &[0, 0, 0, 2, 0, 0, 0]).await;
+}
+
+/// A minimal local server accepts initialization and records prepared SQL.
+/// Returning a SQL error avoids needing a result schema and is intentional.
+async fn serve_connection(
+    mut stream: TcpStream,
+    queries: tokio::sync::mpsc::UnboundedSender<String>,
+) {
+    handshake(&mut stream).await;
     while let Some(request) = read_packet(&mut stream).await {
         if request.first() == Some(&0x01) {
             return;
@@ -68,23 +73,38 @@ async fn serve_connection(
                 "unexpected command: {}",
                 request[0]
             );
-            packet(&mut stream, 1, &[0, 0, 0, 2, 0, 0, 0]).await;
+            // SQLx verifies SERVER_STATUS_IN_TRANS after START TRANSACTION.
+            let begins_transaction = request[0] == 0x03
+                && String::from_utf8_lossy(&request[1..])
+                    .trim()
+                    .eq_ignore_ascii_case("BEGIN");
+            let status = if begins_transaction { 3 } else { 2 };
+            packet(&mut stream, 1, &[0, 0, 0, status, 0, 0, 0]).await;
         }
     }
 }
 
-pub(crate) async fn capture_queries(listener: TcpListener, count: usize) -> Vec<String> {
+/// Keep transaction connections alive through rollback; the caller stops the
+/// server after its operation completes, rather than after its first query.
+pub(crate) async fn capture_queries_until(
+    listener: TcpListener,
+    mut stop: tokio::sync::oneshot::Receiver<()>,
+) -> Vec<String> {
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
     let mut connections = tokio::task::JoinSet::new();
     let mut queries = Vec::new();
-    while queries.len() < count {
+    loop {
         tokio::select! {
             accepted = listener.accept() => {
                 let (stream, _) = accepted.unwrap();
                 connections.spawn(serve_connection(stream, sender.clone()));
             }
             query = receiver.recv() => queries.push(query.unwrap()),
+            _ = &mut stop => break,
         }
+    }
+    while let Ok(query) = receiver.try_recv() {
+        queries.push(query);
     }
     connections.abort_all();
     queries

@@ -6,9 +6,7 @@
 //! (`src/attachments/upload/mod.rs`).
 
 use super::*;
-use brz_mysql::{
-    FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult, MysqlTransaction, MysqlTransactionService,
-};
+use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult, MysqlTransaction};
 
 /// An object store whose write always fails, like the source `save`
 /// raising when `put_object` fails.
@@ -61,12 +59,18 @@ impl MysqlTransaction for StatementLog {
         })
     }
 
-    async fn fetch_optional<S, A, T>(&mut self, _: S, _: A) -> MysqlResult<Option<T>>
+    async fn fetch_optional<S, A, T>(&mut self, sql: S, _: A) -> MysqlResult<Option<T>>
     where
         S: AsRef<str> + Send,
         A: MysqlArgs + Send,
         T: FromMysqlRow + Send,
     {
+        self.statements.push(
+            sql.as_ref()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
         Ok(None)
     }
 
@@ -122,6 +126,22 @@ fn the_owner_reload_follows_the_image_upload_gate() {
     assert!(!USER_ENTITY_BY_ID_QUERY.contains("LIMIT"));
 }
 
+/// The upload endpoint is registered exactly once by the router that
+/// `Application` builds; the route table selects the same method and path.
+#[test]
+fn the_upload_route_is_registered_once() {
+    // `method_bit`: POST.
+    const POST: u16 = 1 << 5;
+    let methods: Vec<u16> =
+        brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
+            .into_iter()
+            .flat_map(|entry| (entry.0.routes)())
+            .filter(|route| route.path == "/api/attachments/upload")
+            .map(|route| route.methods)
+            .collect();
+    assert_eq!(methods, [POST], "the upload endpoint is registered once");
+}
+
 /// A failing object write must not fall through to the MySQL `binary_data`
 /// column: the source `save` raises, the session never commits, and the
 /// endpoint renders 500 `Failed to upload attachment`.
@@ -148,16 +168,14 @@ async fn a_failed_storage_write_aborts_before_any_column_write() {
     assert!(transaction.statements.is_empty());
 }
 
-/// A `Mysql` double that records every non-transactional statement, so
-/// tests can assert the service's post-commit `db.refresh(context)` ran
-/// outside the upload transaction.
+/// Capture ordinary statements and primary transactions used by the upload tail.
 #[derive(Default, Clone)]
 struct StatementCapture {
     statements: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl brz_mysql::Mysql for StatementCapture {
-    type Transaction = MysqlTransactionService;
+    type Transaction = StatementLog;
 
     fn with_route<R: brz_mysql::MysqlRouting + 'static>(&self, _: R) -> brz_mysql::MysqlService {
         panic!("plain queries must reuse the configured service")
@@ -167,12 +185,18 @@ impl brz_mysql::Mysql for StatementCapture {
         self.clone()
     }
 
-    async fn with_transaction<T, F>(&self, _: F) -> MysqlResult<T>
+    async fn with_transaction<T, F>(&self, operation: F) -> MysqlResult<T>
     where
         T: Send,
         F: for<'a> AsyncFnOnce(&'a mut Self::Transaction) -> MysqlResult<T> + Send,
     {
-        panic!("unexpected transaction in the upload tail")
+        let mut transaction = StatementLog::default();
+        let result = operation(&mut transaction).await;
+        self.statements
+            .lock()
+            .unwrap()
+            .extend(transaction.statements);
+        result
     }
 
     async fn fetch_optional<S, A, T>(&self, sql: S, _: A) -> MysqlResult<Option<T>>

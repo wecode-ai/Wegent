@@ -104,6 +104,8 @@ const SAFE_DETAIL_KEYS = new Set([
   'historyIncomplete',
   'historyPending',
   'historyFailed',
+  'requestFailed',
+  'locationFailed',
   'loading',
   'loadingMoreBefore',
   'startTime',

@@ -52,6 +52,51 @@ def completed_activity_for_turn(
     )
 
 
+def runtime_event_sequence(payload: dict) -> int | None:
+    """Return a positive Runtime event sequence, or None when it is unusable."""
+    raw_sequence = payload.get("eventSeq", payload.get("event_seq"))
+    if isinstance(raw_sequence, bool):
+        return None
+    try:
+        sequence = int(raw_sequence)
+    except (TypeError, ValueError):
+        return None
+    return sequence if sequence > 0 else None
+
+
+def can_restore_reconciled_completion(
+    db: Session,
+    *,
+    execution: LoopItemExecution,
+    event_name: str,
+    payload: dict,
+    activity: ProjectChatMessage | None = None,
+) -> bool:
+    """Allow final text repair after a snapshot won the terminal-state race."""
+    if event_name != "response.completed":
+        return False
+    sequence = runtime_event_sequence(payload)
+    if sequence is None:
+        return False
+    # Keep the aggregate -> activity lock order and read the concurrent winner.
+    db.refresh(execution, with_for_update=True)
+    if execution.status != "completed" or sequence <= execution.last_event_seq:
+        return False
+    if activity is None:
+        activity = completed_activity_for_turn(
+            db,
+            device_ids=[execution.runtime_device_id],
+            task_id=execution.runtime_task_id,
+            turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
+        )
+    return activity is not None and (
+        str((activity.metadata_json or {}).get("execution_id")) == str(execution.id)
+        and "runtime_completed_at" in (activity.metadata_json or {})
+        and activity.project_id == execution.cloud_project_id
+        and activity.task_id == execution.loop_item_id
+    )
+
+
 def _match_turn(
     row: ProjectChatMessage,
     snapshot: RuntimeExecutionSnapshot,
@@ -166,7 +211,10 @@ def _persist_outcome(
     user_id: int,
     device_ids: list[str],
 ) -> bool:
-    from app.services.loop_item_executions.service import loop_item_execution_service
+    from app.services.loop_item_executions.service import (
+        CAPACITY_STATUSES,
+        loop_item_execution_service,
+    )
 
     status = TERMINAL_STATUSES[turn.status]
     metadata = dict(row.metadata_json or {})
@@ -209,6 +257,17 @@ def _persist_outcome(
         return False
     metadata = dict(row.metadata_json or {})
     if execution is not None:
+        if execution.status != status and execution.status not in CAPACITY_STATUSES:
+            return False
+        # Reconciliation commits the terminal root and activity. Persist their
+        # turn binding in that same commit so a final event can recover text
+        # even when it arrives before this outcome-only report returns.
+        row.metadata_json = {
+            **metadata,
+            "runtime_turn_id": turn.id,
+            "runtime_completed_at": turn.completed_at,
+        }
+        db.flush()
         # Managed runs have their own aggregate root. Never update a different
         # attempt merely because it reused the same Runtime conversation.
         execution = loop_item_execution_service.reconcile_runtime_snapshot(

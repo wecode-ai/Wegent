@@ -117,7 +117,7 @@ Wework 的 Codex 本机会话只使用一条主读取路径，避免列表、打
 
 本地设备代理属于这个共享 Codex app-server 的进程级配置，而不是单次任务配置。Wework 在本地 executor 启动完成后、插件列表、模型列表、限额读取或任务 RPC 可能首次启动 app-server 之前，通过 `runtime.codex.runtime_config.update` 同步当前代理。无论哪个 RPC 首先触发进程，executor 都必须使用同一份代理环境启动唯一的 app-server，后续任务继续复用该进程。用户修改或关闭代理后，Wework 会把新配置随 app-server 重启请求一起发送；executor 不能让没有任务上下文的辅助 RPC 用默认环境提前启动一个绕过代理的共享进程。
 
-分页页面之间只按稳定消息 ID 合并。provider 游标不编码全局 message offset，因此前端不能根据游标生成 `messageIndex`、缺失区间或完整会话导航。发言导航只覆盖当前已经加载的消息；加载更早页面后再从合并结果重建导航。
+分页页面之间只按稳定消息 ID 合并。provider 游标不编码全局 message offset，因此前端不能根据游标生成 `messageIndex` 或缺失区间。完整发言导航单独通过 `thread/turns/list(itemsView=summary)` 获取轮次 ID、顺序和请求/回复摘要，不加载历史工具输出。摘要保留原始请求的 `userMessageId`，避免只加载到追问时替换原始请求标记；回放摘要优先采用标为最终回复的助手消息。导航按轮次 ID 关联已加载消息；轮次序号和页面局部消息索引不能互相匹配。仅有助手回复的页面仍按回复的轮次 ID 高亮对应标记，同轮追问按消息顺序紧随原始请求。未加载消息的标记也保留摘要供悬停预览。 加载导航目标后，先通知虚拟列表挂载目标消息行，再等待 DOM 锚点定位和结束加载状态。
 
 继续 LocalTask 时，Wework 调用：
 
@@ -221,6 +221,8 @@ Wework 通过设备级 RPC `runtime.worktrees.settings.get/update`、`runtime.wo
 项目操作菜单可以从项目当前 Git 工作区的 `HEAD` 创建永久工作树，并把新目录立即注册为独立项目。此类请求通过 `runtime.worktrees.prepare` 传递 `permanent: true`；Executor 把该标记持久化到 `worktrees.json`，自动清理候选计算必须排除永久工作树。永久只表示不会因关联任务归档或保留数量限制而被自动删除，用户仍可通过项目移除或工作树管理操作显式删除它。
 
 在打包 Wework App 的 `local-first` 模式下，选择、拖拽或粘贴已有本地文件时，附件的 `local_path` 直接引用源文件，不创建附件副本。会话后续读取的是该路径上的文件；源文件移动或删除后，读取可能失败。移除附件不会删除源文件。截图、粘贴正文等没有源路径的内容仍保存到 `$WEGENT_EXECUTOR_HOME/workspace/attachments/draft`。本机执行通过 executor IPC 传递本地 `attachments`；云端或远程执行仍在发送前上传附件，使用 Backend `attachmentIds`，并移除请求中的本机路径。
+
+本地引用和临时附件不设固定文件总大小上限。无源路径的内容以有界分块写入本机，保留大小、偏移和文件完整性校验，磁盘写入失败会直接报错。云端上传限制由云端附件接口负责。附件错误按输入作用域隔离，可单独关闭；关闭错误不清空草稿或有效附件。重选同名文件会清除旧错误，先前请求的延迟失败不能覆盖新请求状态。
 
 ```mermaid
 flowchart LR

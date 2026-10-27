@@ -112,7 +112,13 @@ function projectChatControls(overrides: Partial<ProjectChatControls> = {}): Proj
   }
 }
 
-function AttachmentChatInput({ upload }: { upload: (file: File) => Promise<Attachment> }) {
+function AttachmentChatInput({
+  upload,
+  variant = 'desktop',
+}: {
+  upload: (file: File) => Promise<Attachment>
+  variant?: 'desktop' | 'compact'
+}) {
   const [value, setValue] = useState('')
   const attachments = useComposerAttachments({
     uploadAttachment: upload,
@@ -124,7 +130,7 @@ function AttachmentChatInput({ upload }: { upload: (file: File) => Promise<Attac
       onChange={setValue}
       onSubmit={vi.fn()}
       disabled={false}
-      variant="desktop"
+      variant={variant}
       projectChat={projectChatControls(attachments)}
     />
   )
@@ -1729,6 +1735,33 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('attachment-file-input')).not.toHaveAttribute('accept')
   })
+
+  test.each(['desktop', 'compact'] as const)(
+    'dismisses an attachment failure in the %s composer without losing the draft',
+    async variant => {
+      const upload = vi.fn().mockRejectedValue(new Error('test disk full'))
+      render(<AttachmentChatInput upload={upload} variant={variant} />)
+      const editor = screen.getByTestId('chat-message-input')
+      await userEvent.click(editor)
+      await userEvent.keyboard('keep this draft')
+      const input = screen.getByTestId(
+        variant === 'desktop' ? 'attachment-file-input' : 'mobile-image-file-input'
+      )
+      await userEvent.upload(input, new File(['test'], 'failed.log'))
+
+      const error = await screen.findByTestId('attachment-error-badge')
+      expect(error).toHaveTextContent('failed.log')
+      expect(error).toHaveTextContent('test disk full')
+      expect(error).not.toHaveTextContent('failed.log:')
+      const dismiss = screen.getByTestId('dismiss-attachment-error-button')
+      dismiss.focus()
+      await userEvent.keyboard('{Enter}')
+
+      expect(screen.queryByTestId('attachment-error-badge')).not.toBeInTheDocument()
+      expect(editor).toHaveValue('keep this draft')
+      expect(upload).toHaveBeenCalledTimes(1)
+    }
+  )
 
   test.each([
     ['test-document.md', 'text/markdown'],

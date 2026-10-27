@@ -148,7 +148,9 @@
   background: rgb(var(--color-bg-hover));
 }
 
-.collaboration-primary-navigation > button:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-primary-navigation
+  > button:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
   outline-offset: 2px;
 }
@@ -160,12 +162,20 @@
   stroke-width: 1.75;
 }
 
-.collaboration-workspace-section-actions > button:focus-visible,
-.collaboration-workspace-section-toggle:focus-visible,
-.collaboration-workspace-identity:focus-visible,
-.collaboration-workspace-toggle:focus-visible,
-.collaboration-workspace-project:focus-visible,
-.collaboration-workspace-actions > button:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-workspace-section-actions
+  > button:focus-visible,
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-workspace-section-toggle:focus-visible,
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-workspace-identity:focus-visible,
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-workspace-toggle:focus-visible,
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-workspace-project:focus-visible,
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-workspace-actions
+  > button:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
   outline-offset: 2px;
 }
@@ -546,10 +556,10 @@
 
 .collaboration-workspace-project > .collaboration-project-sidebar-badge {
   position: absolute;
-  left: 0;
+  left: -4px;
   display: flex;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   overflow: visible;
 }
 
@@ -595,7 +605,8 @@
   background: rgb(var(--color-bg-hover));
 }
 
-.collaboration-project-new-conversation:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-project-new-conversation:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
   outline-offset: 2px;
 }
@@ -743,7 +754,9 @@
   background: rgb(var(--color-bg-muted));
 }
 
-.collaboration-issue-home-guides > button:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-issue-home-guides
+  > button:focus-visible {
   outline: 2px solid rgb(var(--color-focus));
   outline-offset: 2px;
 }
@@ -1494,7 +1507,9 @@
   background: rgb(var(--color-bg-hover));
 }
 
-.collaboration-resource-catalog-list > article:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-resource-catalog-list
+  > article:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
   outline-offset: -2px;
 }
@@ -1706,8 +1721,10 @@
   background: rgb(var(--color-bg-hover));
 }
 
-.collaboration-resource-bind-button:focus-visible,
-.collaboration-resource-settings-button:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-resource-bind-button:focus-visible,
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-resource-settings-button:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
   outline-offset: 2px;
 }
@@ -2643,9 +2660,15 @@
   font-weight: 400;
 }
 
-.collaboration-resource-form input:focus,
-.collaboration-resource-form select:focus,
-.collaboration-resource-form textarea:focus {
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-resource-form
+  input:focus,
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-resource-form
+  select:focus,
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-resource-form
+  textarea:focus {
   border-color: rgb(var(--color-primary));
   box-shadow: 0 0 0 2px rgb(var(--color-primary) / 0.12);
 }
@@ -3148,8 +3171,19 @@
 .collaboration-group-people-editor input:focus-visible,
 .collaboration-group-people-picker input:focus-visible,
 .collaboration-group-people-editor button:focus-visible {
-  border-color: rgb(var(--color-primary));
   outline: 0;
+}
+
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-group-people-editor
+  input:focus-visible,
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-group-people-picker
+  input:focus-visible,
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-group-people-editor
+  button:focus-visible {
+  border-color: rgb(var(--color-primary));
   box-shadow: 0 0 0 3px rgb(var(--color-primary) / 14%);
 }
 
@@ -3927,6 +3961,11 @@
 
 .collaboration-resource-list > button:focus-visible {
   border-radius: 8px;
+}
+
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-resource-list
+  > button:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
   outline-offset: 3px;
 }
@@ -4474,7 +4513,8 @@
   opacity: 0.55;
 }
 
-.collaboration-issue-table-sort:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-issue-table-sort:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
   outline-offset: 1px;
 }
@@ -4559,6 +4599,12 @@
 
 .collaboration-issue-table td:nth-child(2) button:focus-visible {
   border-radius: 4px;
+}
+
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-issue-table
+  td:nth-child(2)
+  button:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
   outline-offset: 2px;
 }
@@ -4622,7 +4668,8 @@
   background: rgb(var(--color-muted));
 }
 
-.collaboration-issue-table-delete:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .collaboration-issue-table-delete:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
   outline-offset: 2px;
 }

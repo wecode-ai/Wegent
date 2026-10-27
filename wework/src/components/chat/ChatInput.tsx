@@ -105,6 +105,7 @@ export interface ProjectChatControls {
   toggleSkill: (skill: SkillRef) => void
   handleFileSelect: (files: File | File[]) => Promise<void>
   removeAttachment: (attachmentId: number) => Promise<void>
+  dismissAttachmentError?: (filename: string) => void
   listLocalSkills: () => Promise<LocalDeviceSkill[]>
   listLocalApps?: () => Promise<LocalDeviceApp[]>
 }
@@ -179,6 +180,7 @@ export interface ChatInputProps {
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
   projectWorkBar?: ReactNode
+  showModelSelector?: boolean
   showExecutionTools?: boolean
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
@@ -335,6 +337,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     projectWork,
     showProjectWorkBar = true,
     showExecutionTools = true,
+    showModelSelector,
     queuedMessages = [],
     guidanceMessages = [],
     codeComments = [],
@@ -713,6 +716,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             </div>
           )}
           <ProjectChatComposer
+            composerScopeKey={controls.scopeKey}
             ref={composerRef}
             {...composerProps}
             pluginPickerIconOnly={pluginPickerIconOnly}
@@ -727,6 +731,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             codeComments={codeComments}
             uploadingFiles={controls.uploadingFiles}
             attachmentErrors={controls.errors}
+            onDismissAttachmentError={controls.dismissAttachmentError}
             contextUsage={controls.contextUsage}
             onSelectModel={model => requestModelSelection(model)}
             onSelectModelAndOptions={(model, options) => requestModelSelection(model, options)}
@@ -770,6 +775,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             projectPhrases={projectQuickPhrases}
             showProjectWorkBar={showProjectWorkBar}
             showExecutionTools={showExecutionTools}
+            showModelSelector={showModelSelector}
             projectWorkBarMiddleContext={projectWorkBarMiddleContext}
             projectWorkBar={projectWorkBar}
             projectWorkBarTrailingContext={projectWorkBarTrailingContext}
@@ -840,6 +846,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
           codeComments={codeComments}
           uploadingFiles={controls.uploadingFiles}
           attachmentErrors={controls.errors}
+          onDismissAttachmentError={controls.dismissAttachmentError}
           onFileSelect={files => controls.handleFileSelect(files)}
           planModeActive={planModeActive}
           onSetPlanMode={handleSetPlanMode}

@@ -21,6 +21,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.endpoints.adapter.attachments import _build_content_disposition
 from app.core.config import settings
 from app.core.security import (
     get_current_user,
@@ -600,7 +601,31 @@ async def update_loop_item(
             bound_rule_id="",
         )
 
-    item = loop_item_service.update(db, item_id, current_user.id, values)
+    refresh_execution = bool(
+        existing.assignee_agent_id
+        and (
+            "assignee_agent_id" not in values.model_fields_set
+            or values.assignee_agent_id == existing.assignee_agent_id
+        )
+        and not values.assignee_group_id
+        and ("execution_config" in values.model_fields_set or entered_processing)
+    )
+    try:
+        item = loop_item_service.update(
+            db, item_id, current_user.id, values, commit=False
+        )
+        if refresh_execution and item.assignee_agent_id:
+            item = loop_item_service.refresh_agent_execution_configuration(
+                db,
+                item=item,
+                user_id=current_user.id,
+                commit=False,
+            )
+        db.commit()
+        db.refresh(item)
+    except Exception:
+        db.rollback()
+        raise
     queue_wakeup_scheduled = False
     if (item.assignee_agent_id and "assignee_agent_id" in values.model_fields_set) or (
         "assignee_group_id" in values.model_fields_set
@@ -613,11 +638,6 @@ async def update_loop_item(
     elif item.assignee_agent_id and (
         "execution_config" in values.model_fields_set or entered_processing
     ):
-        item = loop_item_service.refresh_agent_execution_configuration(
-            db,
-            item=item,
-            user_id=current_user.id,
-        )
         from app.tasks.robot_queue_tasks import consume_queues_background
 
         background_tasks.add_task(consume_queues_background)
@@ -830,10 +850,11 @@ def list_loop_item_comments(
     ]
 
 
-@router.get(
-    "/loop-items/{item_id}/assignments",
-    response_model=IssueAssignmentListResponse,
-)
+# MIGRATION-CANDIDATE(api="GET /api/v1/loop-items/*/assignments"): remove after final confirmation.
+# @router.get(
+#     "/loop-items/{item_id}/assignments",
+#     response_model=IssueAssignmentListResponse,
+# )
 def list_issue_assignments(
     item_id: str,
     db: Session = Depends(get_db),
@@ -1156,7 +1177,7 @@ def read_loop_item_attachment(
     return Response(
         content=content,
         media_type=content_type,
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={"Content-Disposition": _build_content_disposition(filename, "inline")},
     )
 
 
@@ -1171,10 +1192,11 @@ def delete_loop_item_attachment(
     loop_item_attachment_provider_router.delete(db, attachment_id, current_user.id)
 
 
-@router.get(
-    "/loop-items/{item_id}/tasks",
-    response_model=list[LoopItemTaskBindingResponse],
-)
+# MIGRATION-CANDIDATE(api="GET /api/v1/loop-items/*/tasks"): remove after final confirmation.
+# @router.get(
+#     "/loop-items/{item_id}/tasks",
+#     response_model=list[LoopItemTaskBindingResponse],
+# )
 def list_loop_item_tasks(
     item_id: str,
     db: Session = Depends(get_db),
@@ -1304,7 +1326,7 @@ def read_delivery_asset(
     return Response(
         content=content,
         media_type=content_type,
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={"Content-Disposition": _build_content_disposition(filename, "inline")},
     )
 
 

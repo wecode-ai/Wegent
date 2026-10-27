@@ -8,6 +8,8 @@ import { ModelAutomaticReasoningOption } from "./ModelAutomaticReasoningOption";
 import {
   getModelDisplayLabel,
   groupModelsByFamily,
+  isSameModelSelection,
+  modelSelectionKey,
   type ModelControlConfig,
 } from "./model-ui";
 import {
@@ -37,6 +39,7 @@ interface MobileModelSelectorProps {
   activateMobileFamily(id: string): void;
   mobileModels: UnifiedModel[];
   selectedModel: UnifiedModel | null;
+  getModelOptionId?: (model: UnifiedModel) => string;
   selectedModelOptions: ModelOptions;
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void;
   handleSelectModel(model: UnifiedModel | null): void;
@@ -58,6 +61,7 @@ export function MobileModelSelector({
   activateMobileFamily,
   mobileModels,
   selectedModel,
+  getModelOptionId,
   selectedModelOptions,
   onBlockedModelSelect,
   handleSelectModel,
@@ -177,9 +181,7 @@ export function MobileModelSelector({
                 className="scrollbar-none min-h-0 flex-1 space-y-2 overflow-y-auto pb-2"
               >
                 {mobileModels.map((model) => {
-                  const selected =
-                    model.name === selectedModel?.name &&
-                    model.type === selectedModel?.type;
+                  const selected = isSameModelSelection(model, selectedModel);
                   const modelDisabled = Boolean(model.compatibilityDisabled);
                   const disabledMessage = modelDisabled
                     ? modelCompatibilityDisabledMessage(
@@ -189,9 +191,9 @@ export function MobileModelSelector({
                     : undefined;
                   return (
                     <button
-                      key={`${model.type}:${model.name}`}
+                      key={modelSelectionKey(model)}
                       type="button"
-                      data-testid={`model-option-${model.name}`}
+                      data-testid={`model-option-${getModelOptionId?.(model) ?? model.name}`}
                       data-model-provider-id={codexProviderId(model)}
                       aria-disabled={modelDisabled}
                       title={disabledMessage}

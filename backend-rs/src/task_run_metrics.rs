@@ -176,6 +176,27 @@ pub(crate) async fn record_events<R: Redis>(
     Ok(())
 }
 
+/// `TaskRunMetricHooks._before_flush`/`_after_commit` for a **new** assistant
+/// subtask (`app/services/task_run_metric_hooks.py:72-84,155-171`): the id
+/// joins the hour/day run totals, while a new non-failed subtask does not sync
+/// the failure aggregates.
+pub(crate) async fn record_inserted_assistant_subtask<R: Redis>(
+    redis: &R,
+    subtask_id: i64,
+    created_at: NaiveDateTime,
+) -> RedisResult<()> {
+    let event = SubtaskMetricEvent {
+        subtask_id,
+        created_at,
+        failed: false,
+        state_changed_at: now_local(),
+        message: None,
+        record_total: true,
+        sync_failure: false,
+    };
+    record_events(redis, std::slice::from_ref(&event)).await
+}
+
 /// `TaskRunMetricsStore._queue_failure_sync` plus the pipeline's script cache
 /// check.
 async fn sync_failure<R: Redis>(
@@ -618,13 +639,21 @@ mod tests {
             R: FromRedisValue + Send,
         {
             self.record(&command);
-            let reply = if command.arg_at(1).is_some_and(|arg| arg != b"EXISTS") {
+            let reply = match command.name().as_ref() {
+                // `SCRIPT EXISTS` reports the configured cache state.
+                "SCRIPT" if command.arg_at(1).is_some_and(|arg| arg == b"EXISTS") => {
+                    RedisValue::Array(vec![RedisValue::Int(if self.digest_present {
+                        1
+                    } else {
+                        0
+                    })])
+                }
                 // `SCRIPT LOAD` answers with the digest it computed.
-                RedisValue::SimpleString(sync_failure_sha1().to_string())
-            } else if self.digest_present {
-                RedisValue::Array(vec![RedisValue::Int(1)])
-            } else {
-                RedisValue::Array(vec![RedisValue::Int(0)])
+                "SCRIPT" => RedisValue::SimpleString(sync_failure_sha1().to_string()),
+                // The totals branch's `PFADD`/`EXPIRE`/`SET` replies.
+                "PFADD" | "EXPIRE" => RedisValue::Int(1),
+                "SET" => RedisValue::SimpleString("OK".to_string()),
+                _ => RedisValue::Array(vec![RedisValue::Int(1)]),
             };
             R::from_redis_value(&reply)
         }
@@ -916,5 +945,45 @@ mod tests {
         let redis = ScriptCapture::default();
         record_events(&redis, &[]).await.expect("no events");
         assert!(redis.captured().is_empty());
+    }
+
+    /// A newly inserted assistant subtask joins the hour/day run totals:
+    /// `_before_flush` marks it `record_total` and a new non-failed row does
+    /// not sync the failure aggregates.
+    #[tokio::test]
+    async fn a_new_assistant_subtask_records_the_run_totals() {
+        let redis = ScriptCapture::default();
+        record_inserted_assistant_subtask(&redis, 904623193040252, at(20, 15, 1, 11))
+            .await
+            .expect("metrics published");
+        let captured = redis.captured();
+        assert_eq!(captured.len(), 5, "{captured:?}");
+        assert_eq!(
+            captured[0],
+            Captured(
+                "PFADD".to_string(),
+                vec![
+                    "task-run-monitor:v2:total:hour:2026102015".to_string(),
+                    "904623193040252".to_string(),
+                ]
+            )
+        );
+        assert_eq!(
+            captured[1],
+            Captured(
+                "EXPIRE".to_string(),
+                vec![
+                    "task-run-monitor:v2:total:hour:2026102015".to_string(),
+                    retention_seconds().to_string(),
+                ]
+            )
+        );
+        assert_eq!(captured[2].0, "PFADD");
+        assert_eq!(captured[2].1[0], "task-run-monitor:v2:total:day:20261020");
+        assert_eq!(captured[2].1[1], "904623193040252".to_string());
+        assert_eq!(captured[3].0, "EXPIRE");
+        assert_eq!(captured[3].1[0], "task-run-monitor:v2:total:day:20261020");
+        assert_eq!(captured[4].0, "SET");
+        assert_eq!(captured[4].1[0], "task-run-monitor:v2:as-of");
     }
 }

@@ -812,6 +812,11 @@ def test_create_gitlab_item_with_collaboration_group_preserves_group_owner(
     )
     assert notification.payload["action"] == "coordinate_collaboration_group"
     assert notification.payload["itemId"] == created.values["id"]
+    assert notification.payload["projectName"] == project.name
+    assert notification.payload["itemKey"] == created.values["id"]
+    assert notification.payload["itemTitle"] == "Created for collaboration group"
+    assert notification.payload["itemStatus"] == "收集箱"
+    assert notification.payload["assigneeName"] == test_user.user_name
 
 
 def test_reassigning_same_external_collaboration_group_dispatches_once(
@@ -953,6 +958,11 @@ def test_assign_user_on_gitlab_creates_index_row_without_execution(
     assert notify.call_args.kwargs["task_title"] == "External task 1"
     assert notify.call_args.kwargs["instructions"] == "Do the thing"
     assert notify.call_args.kwargs["assignment_id"]
+    target_payload = notify.call_args.kwargs["notification_target"].payload()
+    assert target_payload["projectName"] == "GitLab board"
+    assert target_payload["itemKey"] == _item_id(project)
+    assert target_payload["itemTitle"] == "External task 1"
+    assert target_payload["itemStatus"] == "待开始"
     row = test_db.get(LoopItem, _item_id(project))
     assert row is not None
     assert notify.call_args.kwargs["issue"] == row

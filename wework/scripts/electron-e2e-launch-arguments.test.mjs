@@ -35,10 +35,10 @@ test('runs the GPU service in-process for isolated root Electron E2E', () => {
 
 test('keeps scenario arguments for every platform', () => {
   const extraArguments = ['--proxy-server=http://127.0.0.1:18080']
-  assert.deepEqual(
-    resolveElectronLaunchArguments({ platform: 'win32', extraArguments }),
-    extraArguments
-  )
+  assert.deepEqual(resolveElectronLaunchArguments({ platform: 'win32', extraArguments }), [
+    '--disable-features=TcpPortRandomizationWin',
+    ...extraArguments,
+  ])
   assert.deepEqual(
     resolveElectronLaunchArguments({
       platform: 'linux',
@@ -66,4 +66,17 @@ test('rejects disabling the sandbox outside isolated Xvfb', () => {
       }),
     /only inside isolated Xvfb/
   )
+})
+
+test('keeps Windows loopback traffic on the OS allocator without losing scenario features', () => {
+  const extraArguments = [
+    '--disable-features=FirstFeature,TcpPortRandomizationWin',
+    '--proxy-server=http://127.0.0.1:18080',
+    '--disable-features=SecondFeature',
+  ]
+  assert.deepEqual(resolveElectronLaunchArguments({ platform: 'win32', extraArguments }), [
+    '--disable-features=TcpPortRandomizationWin,FirstFeature,SecondFeature',
+    '--proxy-server=http://127.0.0.1:18080',
+  ])
+  assert.equal(extraArguments.length, 3, 'Resolving flags mutated scenario arguments')
 })

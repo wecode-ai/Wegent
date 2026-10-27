@@ -19,6 +19,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.endpoints.adapter.attachments import _build_content_disposition
 from app.core.security import (
     get_current_user,
     get_current_user_jwt_apikey_tasktoken,
@@ -489,7 +490,8 @@ def archive_cloud_project(
     cloud_project_service.archive(db, project_id, current_user.id, version)
 
 
-@router.get("/{project_id}/members", response_model=list[CloudProjectMemberResponse])
+# MIGRATION-CANDIDATE(api="GET /api/v1/cloud-projects/*/members"): remove after final confirmation.
+# @router.get("/{project_id}/members", response_model=list[CloudProjectMemberResponse])
 def list_cloud_project_members(
     project_id: int,
     db: Session = Depends(get_db),
@@ -679,7 +681,7 @@ def read_cloud_file(
     return Response(
         content=content,
         media_type=content_type,
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={"Content-Disposition": _build_content_disposition(filename, "inline")},
     )
 
 

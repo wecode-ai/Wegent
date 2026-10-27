@@ -46,14 +46,25 @@ runs:
       if: steps.install.outcome == 'success'
       shell: bash
       run: |
-        {
-          echo "CARGO_INCREMENTAL=0"
-          echo "RUSTC_WRAPPER=sccache"
-          echo "SCCACHE_BASEDIRS=$GITHUB_WORKSPACE"
-          echo "SCCACHE_GHA_ENABLED=true"
-          echo "SCCACHE_GHA_VERSION=wegent-sccache-v1-$RUNNER_OS-$RUNNER_ARCH"
-        } >> "$GITHUB_ENV"
-
+        export CARGO_INCREMENTAL=0
+        export SCCACHE_BASEDIRS="$GITHUB_WORKSPACE"
+        export SCCACHE_GHA_ENABLED=true
+        export SCCACHE_GHA_VERSION="wegent-sccache-v1-$RUNNER_OS-$RUNNER_ARCH"
         if [[ "${{ inputs.save-cache }}" != "true" && "$GITHUB_REF" != "refs/heads/main" ]]; then
-          echo "SCCACHE_GHA_RW_MODE=READ_ONLY" >> "$GITHUB_ENV"
+          export SCCACHE_GHA_RW_MODE=READ_ONLY
         fi
+
+        # Stats can succeed without starting the server or checking remote storage.
+        if ! sccache rustc -vV >/dev/null 2>&1; then
+          echo "::warning::sccache could not start; continuing without Rust compiler caching"
+          exit 0
+        fi
+
+        {
+          echo "RUSTC_WRAPPER=sccache"
+          for variable in CARGO_INCREMENTAL SCCACHE_BASEDIRS SCCACHE_GHA_ENABLED SCCACHE_GHA_VERSION SCCACHE_GHA_RW_MODE; do
+            if declare -p "$variable" >/dev/null 2>&1; then
+              printf '%s=%s\n' "$variable" "${!variable}"
+            fi
+          done
+        } >> "$GITHUB_ENV"

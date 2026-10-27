@@ -8,7 +8,12 @@
  *
  * Future types to be added: 'person' | 'bot' | 'team'
  */
-export type ContextType = 'knowledge_base' | 'queue_message' | 'dingtalk_doc' | 'external_knowledge'
+export type ContextType =
+  | 'knowledge_base'
+  | 'queue_message'
+  | 'dingtalk_doc'
+  | 'external_knowledge'
+  | 'conversation'
 
 /**
  * Canonical external knowledge reference shape.
@@ -134,6 +139,16 @@ export interface ExternalKnowledgeContext extends BaseContextItem {
 }
 
 /**
+ * A previous task referenced from the composer. The backend resolves the task
+ * transcript and injects it as untrusted background context.
+ */
+export interface ConversationContext extends BaseContextItem {
+  type: 'conversation'
+  task_id: number
+  task_updated_at?: string
+}
+
+/**
  * Union type for all context items
  * 所有上下文项的联合类型
  *
@@ -147,3 +162,4 @@ export type ContextItem =
   | QueueMessageContext
   | DingTalkDocContext
   | ExternalKnowledgeContext
+  | ConversationContext

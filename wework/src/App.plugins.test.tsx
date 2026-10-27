@@ -345,6 +345,7 @@ const workbenchValue: WorkbenchContextValue = {
     setSelectedModelOption: vi.fn(),
     setInput: vi.fn(),
     setInputForScope: vi.fn(),
+    getInputRevisionForScope: vi.fn().mockReturnValue(0),
     setSelectedSkills: vi.fn(),
     toggleSkill: vi.fn(),
     handleFileSelect: vi.fn(),
@@ -1181,6 +1182,24 @@ describe('App plugins route', () => {
     expect(telemetryMocks.track).not.toHaveBeenCalledWith('feature_opened', {
       feature: 'sites',
     })
+  })
+
+  test('shows settings over an application tab and returns to the retained application', async () => {
+    await updateAppPreferences({ experimentalFeaturesEnabled: true })
+    window.history.pushState({}, '', '/sites?app_type=smart_app')
+    await renderApp()
+    expect(await screen.findByTestId('smart-apps-marketplace-page')).toBeVisible()
+
+    await act(async () => {
+      window.history.pushState({}, '', '/settings/general')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    expect(await screen.findByTestId('wework-settings-page')).toBeVisible()
+    await userEvent.click(screen.getByTestId('settings-back-button'))
+    expect(await screen.findByTestId('smart-apps-marketplace-page')).toBeVisible()
+    expect(window.location.pathname).toBe('/sites')
+    expect(new URLSearchParams(window.location.search).get('app_type')).toBe('smart_app')
   })
 
   test('automatically observes an installed Smart App open', async () => {

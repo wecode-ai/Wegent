@@ -8,6 +8,15 @@ import type { ProjectCreateHostAdapter } from "./project-create/types";
 
 export type CollaborationProjectId = string;
 
+export interface CollaborationIssueBadge {
+  id: string;
+  label: string;
+  url?: string;
+  icon?: string;
+  tone?: "neutral" | "success" | "warning" | "danger";
+  tooltip?: string;
+}
+
 export type CollaborationRole = "Owner" | "Maintainer" | "Developer" | "Viewer";
 export type CollaborationWorkspaceRole = CollaborationRole;
 
@@ -73,6 +82,9 @@ export interface CollaborationProject {
   task_provider: string;
   provider_config: Record<string, unknown>;
   execution_environment?: CollaborationExecutionEnvironmentConfig;
+  board_views?:
+    | import("./project-board/projectBoardViews").ProjectBoardViews
+    | null;
   board_config?: {
     group_by: "status" | "priority" | "assignee" | "tag";
     processing_start_status_id: string | null;
@@ -146,6 +158,7 @@ export interface CollaborationIssue {
   description: string;
   status: string;
   priority: CollaborationPriority;
+  badges?: CollaborationIssueBadge[];
   start_at?: string | null;
   due_at: string | null;
   tags: string[];

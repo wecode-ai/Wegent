@@ -56,6 +56,7 @@ ENV PATH=/root/.cargo/bin:${PATH}
 
 WORKDIR /build/executor
 COPY executor/Cargo.toml executor/Cargo.lock ./
+COPY executor/vendor ./vendor
 COPY executor/src ./src
 COPY sdk/plugin-auth /build/sdk/plugin-auth
 COPY sdk/plugin-creator /build/sdk/plugin-creator
@@ -79,7 +80,7 @@ ARG APP_VERSION=dev
 ARG VCS_REF=unknown
 ARG DEVICE_APT_MIRROR=
 ARG DEVICE_APT_PORTS_MIRROR=${DEVICE_APT_MIRROR}
-ARG NODE_VERSION=22.23.2
+ARG NODE_VERSION=22.23.4
 ARG NODE_DIST_MIRROR=https://nodejs.org/dist
 ARG NPM_REGISTRY=https://registry.npmjs.org
 ARG GH_VERSION=2.100.0
@@ -135,7 +136,7 @@ RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
 
 # Install the agent CLIs from the selected npm registry.
 RUN npm install -g --registry "$NPM_REGISTRY" \
-      @anthropic-ai/claude-code@2.1.277 @openai/codex@0.155.1 \
+      @anthropic-ai/claude-code@2.1.310 @openai/codex@0.155.1 \
     && npm cache clean --force
 
 # Install the GitHub (gh) and GitLab (glab) CLIs used by git hosting features.

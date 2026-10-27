@@ -78,11 +78,17 @@ const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
 const TRANSCRIPT_EXPORT_TIMEOUT_SECONDS: u64 = 10 * 60;
+// Python provisioning (uv + CPython) precedes the adapter's own action deadline.
+const PYTHON_AUTH_REQUEST_TIMEOUT_SECONDS: u64 = 18 * 60;
 
 fn app_ipc_request_timeout_seconds(method: Option<&str>) -> u64 {
     match method {
-        Some("executor.plugin_auth.migrate") => 280,
-        Some("executor.plugin_auth.run") => 200,
+        Some(
+            "executor.plugin_auth.migrate" | "executor.plugin_auth.run" | "runtime.connections.cli",
+        ) => PYTHON_AUTH_REQUEST_TIMEOUT_SECONDS,
+        Some(method) if method.starts_with("runtime.local_connector_auth.") => {
+            PYTHON_AUTH_REQUEST_TIMEOUT_SECONDS
+        }
         Some("runtime.tasks.transcript.export") => TRANSCRIPT_EXPORT_TIMEOUT_SECONDS,
         // Context compaction waits for the Codex app-server to finish the
         // compaction turn, so the request deadline must outlive that budget.
@@ -1548,6 +1554,19 @@ impl AppIpcServer {
         let args = string_list(params.get("args"))?;
         let path = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
         let env = string_env(params.get("env"))?;
+        let linked_provider = match command_key {
+            "git_github_pull_request_view" => Some("github"),
+            "git_gitlab_merge_request_view" => Some("gitlab"),
+            _ => None,
+        };
+        if let Some(provider) = linked_provider {
+            if let Err(error) =
+                super::linked_change_requests::validate_linked_request(provider, &args, &env).await
+            {
+                return serde_json::to_value(CommandResult::error(error, 0.0, false))
+                    .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+            }
+        }
         if is_workspace_file_command(command_key) {
             return serde_json::to_value(
                 execute_workspace_file_command_with_input(
@@ -3268,6 +3287,16 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &["git", "remote", "get-url", "origin"],
             None,
         )),
+        "git_github_pull_request_view" => Some(command_definition(
+            "gh pr view --json <status-fields> <url>",
+            &["gh", "pr", "view", "--json", "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus,mergedAt,updatedAt"],
+            Some(PostProcessor::Json),
+        )),
+        "git_gitlab_merge_request_view" => Some(command_definition(
+            "glab mr view --output json <iid> --repo <url>",
+            &["glab", "mr", "view", "--output", "json"],
+            Some(PostProcessor::Json),
+        )),
         "git_github_pull_requests" => Some(command_definition(
             "gh pr list --state all --head <branch>",
             &[
@@ -3641,6 +3670,25 @@ mod tests {
     }
 
     #[test]
+    fn python_auth_requests_allow_provisioning_before_execution() {
+        for method in [
+            "executor.plugin_auth.migrate",
+            "executor.plugin_auth.run",
+            "runtime.connections.cli",
+            "runtime.local_connector_auth.health",
+            "runtime.local_connector_auth.start",
+            "runtime.local_connector_auth.poll",
+            "runtime.local_connector_auth.logout",
+        ] {
+            assert!(
+                app_ipc_request_timeout_seconds(Some(method))
+                    > crate::python_runtime::PYTHON_RUNTIME_ENSURE_TIMEOUT_SECONDS + 280
+            );
+        }
+        assert_eq!(app_ipc_request_timeout_seconds(Some("executor.health")), 75);
+    }
+
+    #[test]
     fn context_compaction_outlives_the_executor_action_budget() {
         assert_eq!(
             app_ipc_request_timeout_seconds(Some("runtime.tasks.compact")),
@@ -3967,6 +4015,16 @@ mod tests {
             .await
             .expect("client input should close");
         serving.await.expect("app IPC task should finish");
+    }
+
+    #[test]
+    fn linked_change_request_commands_accept_explicit_repository_urls() {
+        let github = local_app_command("git_github_pull_request_view").unwrap();
+        assert_eq!(&github.argv[..4], &["gh", "pr", "view", "--json"]);
+        assert!(github.argv[4].contains("statusCheckRollup"));
+        assert!(github.argv[4].contains("mergedAt"));
+        let gitlab = local_app_command("git_gitlab_merge_request_view").unwrap();
+        assert_eq!(gitlab.argv, &["glab", "mr", "view", "--output", "json"]);
     }
 
     #[test]

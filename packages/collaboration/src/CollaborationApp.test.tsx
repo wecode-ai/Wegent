@@ -12,6 +12,10 @@ import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 const collaborationAppMocks = vi.hoisted(() => ({
   useController: vi.fn(),
+  useAssignments: vi.fn(() => ({
+    assignmentsByIssueId: {},
+    replaceIssueAssignments: vi.fn(),
+  })),
   stateSetters: [] as Array<{
     initialValue: unknown;
     setter: ReturnType<typeof vi.fn>;
@@ -46,6 +50,11 @@ vi.mock("./workspace-controller", () => ({
   useCollaborationWorkspaceController: collaborationAppMocks.useController,
 }));
 
+vi.mock("./platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./platform")>()),
+  useIssueAssignmentsByIssueId: collaborationAppMocks.useAssignments,
+}));
+
 vi.mock("./project-board/projectBoardDnd", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./project-board/projectBoardDnd")>()),
   useProjectBoardSensors: () => [],
@@ -65,7 +74,7 @@ import { CollaborationFilesAdapter } from "./web-adapter/CollaborationFilesAdapt
 import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
 import { ProjectBoardAdapter } from "./web-adapter/ProjectBoardAdapter";
 import { ProjectIssueTable } from "./platform";
-import { ProjectBoardBody } from "./project-board";
+import { BoardViewNavigation, ProjectBoardBody } from "./project-board";
 import { WorkspaceProjectsHomeAdapter } from "./web-adapter/WorkspaceProjectsHomeAdapter";
 import {
   CollaborationProjectViewShell,
@@ -226,6 +235,7 @@ function createWorkspaceHomeHost(): WorkspaceProjectsHomeHost {
 
 describe("CollaborationApp API boundary", () => {
   beforeEach(() => {
+    collaborationAppMocks.useAssignments.mockClear();
     collaborationAppMocks.useController.mockReset();
     collaborationAppMocks.stateSetters.length = 0;
     collaborationAppMocks.useController.mockReturnValue({
@@ -255,6 +265,24 @@ describe("CollaborationApp API boundary", () => {
       },
     });
   });
+
+  it.each(["board", "calendar", "gantt", "files", "manage", "table"] as const)(
+    "loads assignment records only when the active view is table (%s)",
+    (view) => {
+      const project = createProject(1);
+      collaborationAppMocks.useController.mockReturnValue(
+        controllerWithProject(project),
+      );
+      const host = createHost(false, undefined);
+      host.location = { projectId: project.id, issueId: null, view };
+
+      renderApp(host);
+
+      expect(collaborationAppMocks.useAssignments).toHaveBeenCalledWith(
+        expect.objectContaining({ enabled: view === "table" }),
+      );
+    },
+  );
 
   it("accepts the grouped SharedWorkspaceApi as its only cloud API", () => {
     expectTypeOf<
@@ -774,7 +802,15 @@ describe("CollaborationApp API boundary", () => {
     });
     renderBoardIssueCard.mock.calls[0][0].onMarkRead();
     expect(controller.commands.markIssueRead).toHaveBeenCalledWith(issue);
-    expect(board?.props.onOpenBoardSettings).toEqual(expect.any(Function));
+    expect(board?.props.onSaveViews).toEqual(expect.any(Function));
+    const viewNavigation = findByType(
+      boardBody?.props.viewNavigation,
+      BoardViewNavigation,
+    );
+    expect(viewNavigation?.props.canManage).toBe(true);
+    expect(viewNavigation?.props.controller.saveView).toEqual(
+      expect.any(Function),
+    );
   });
 
   it("passes the selected Issue task bindings to a custom detail renderer", () => {
@@ -880,6 +916,26 @@ describe("CollaborationApp API boundary", () => {
 
     expect(board?.props.onDeleteIssue).toBeUndefined();
     expect(table?.props.onDelete).toBeUndefined();
+  });
+
+  it("propagates failed board writes so the board never announces a successful move", async () => {
+    const host = createHost(false, "home");
+    host.location = { projectId: "project-1", issueId: null, view: "board" };
+    const controller = controllerWithProject(createProject(1));
+    controller.commands.updateIssue.mockRejectedValue(
+      new Error("Permission denied"),
+    );
+    collaborationAppMocks.useController.mockReturnValue(controller);
+    const app = CollaborationApp({ api: createApi(), host });
+    const shell = findByType(app, CollaborationProjectViewShell);
+    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
+    await expect(
+      board!.props.onMove({ id: "issue-1", version: 1 } as CollaborationIssue, {
+        kind: "tag",
+        tags: ["frontend"],
+        optimisticItems: [],
+      }),
+    ).rejects.toThrow("Permission denied");
   });
 
   it("wires completed Issue archiving into board, table, and detail", () => {

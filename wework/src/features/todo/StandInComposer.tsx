@@ -1,7 +1,11 @@
 import { useEffect, type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { useStandInModels } from './useStandInModels'
-import type { WorkspaceStandInSettings, WorkspaceProjectAgent } from '@wegent/collaboration'
+import {
+  runnerModelKey,
+  type WorkspaceStandInSettings,
+  type WorkspaceProjectAgent,
+} from '@wegent/collaboration'
 import { useProjectWorktreeAvailabilityProbe } from '@/components/layout/useProjectWorktreeAvailabilityProbe'
 import { resolveProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import { ProjectWorkBar, ProjectWorkSection } from '@/components/chat/composer/ProjectWorkBar'
@@ -29,6 +33,7 @@ export function StandInComposer({
   runtimeWork,
   devices,
   services,
+  showPrompt = true,
 }: {
   draft: WorkspaceStandInSettings
   onChange: Dispatch<SetStateAction<WorkspaceStandInSettings>>
@@ -42,6 +47,7 @@ export function StandInComposer({
   runtimeWork?: RuntimeWorkListResponse | null
   devices: DeviceInfo[]
   services?: WorkbenchServices
+  showPrompt?: boolean
 }) {
   const { t } = useTranslation('common')
   const composerCatalog = useRuntimeComposerCatalog(
@@ -57,10 +63,20 @@ export function StandInComposer({
   )
   const models = useStandInModels(services, draft, selectedAgent)
   useEffect(() => {
-    const model = models.defaultIdentity
-    if (!draft.model && model)
-      onChange(current => (current.model ? current : { ...current, model }))
-  }, [draft.model, models.defaultIdentity, onChange])
+    if (!showPrompt && !draft.model) return
+    const model = models.fixedIdentity ?? (showPrompt ? models.defaultIdentity : null)
+    if (
+      model &&
+      (!draft.model ||
+        (models.fixedIdentity && runnerModelKey(draft.model) !== runnerModelKey(model)))
+    )
+      onChange(current =>
+        current.model &&
+        (!models.fixedIdentity || runnerModelKey(current.model) === runnerModelKey(model))
+          ? current
+          : { ...current, model }
+      )
+  }, [draft.model, models.defaultIdentity, models.fixedIdentity, onChange, showPrompt])
   const rows = (runtimeWork?.projects ?? []).flatMap(row => {
     const workspace = row.deviceWorkspaces.find(
       workspace =>
@@ -95,8 +111,8 @@ export function StandInComposer({
       : resolveProjectWorktreeAvailability({ project, workspace, device })
   const selectProject = (id: number | null) => {
     const row = rows.find(row => runtimeProjectToProject(row).id === id)
-    onChange({
-      ...draft,
+    onChange(current => ({
+      ...current,
       workspace: row
         ? {
             projectKey: runtimeProjectKey(row.project),
@@ -104,7 +120,7 @@ export function StandInComposer({
             executionMode: 'current_workspace',
           }
         : null,
-    })
+    }))
   }
   const projectWork: ProjectWorkControls = {
     projects,
@@ -123,20 +139,24 @@ export function StandInComposer({
     onSelectProject: selectProject,
     onSelectProjectWorkspace: projectId => selectProject(projectId),
     onSelectStandaloneDevice: () => {},
-    onExecutionModeChange: executionMode => {
-      if (draft.workspace)
-        onChange({
-          ...draft,
-          workspace: {
-            ...draft.workspace,
-            executionMode: executionMode === 'git_worktree' ? 'git_worktree' : 'current_workspace',
-          },
-        })
-    },
+    onExecutionModeChange: executionMode =>
+      onChange(current =>
+        current.workspace
+          ? {
+              ...current,
+              workspace: {
+                ...current.workspace,
+                executionMode:
+                  executionMode === 'git_worktree' ? 'git_worktree' : 'current_workspace',
+              },
+            }
+          : current
+      ),
     worktreeBranch: draft.workspace?.branch,
-    onWorktreeBranchChange: branch => {
-      if (draft.workspace) onChange({ ...draft, workspace: { ...draft.workspace, branch } })
-    },
+    onWorktreeBranchChange: branch =>
+      onChange(current =>
+        current.workspace ? { ...current, workspace: { ...current.workspace, branch } } : current
+      ),
     onListBranches:
       services?.deviceApi && project
         ? () => listProjectBranches(services.deviceApi!, project)
@@ -145,12 +165,7 @@ export function StandInComposer({
   const environment = draft.workspace
     ? `${project?.name ?? draft.workspace.projectKey} · ${t(draft.workspace.executionMode === 'git_worktree' ? 'standIn.new_worktree' : 'standIn.current_workspace')}`
     : t('standIn.inherit_environment')
-  const valid =
-    !submitDisabled &&
-    !models.loading &&
-    !models.unavailable &&
-    !(draft.workspace && !selected) &&
-    !(draft.workspace?.executionMode === 'git_worktree' && !availability.available)
+  const valid = !submitDisabled
   useEffect(() => {
     onValidityChange?.(valid)
   }, [valid, onValidityChange])
@@ -160,13 +175,22 @@ export function StandInComposer({
         className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-sm"
         data-testid="stand-in-workspace-bar"
       >
-        <span className="text-text-muted">{t('standIn.agent_label')}</span>
-        <div className="min-w-0">{controls}</div>
+        {controls && (
+          <>
+            <span className="text-text-muted">{t('standIn.agent_label')}</span>
+            <div className="min-w-0">{controls}</div>
+          </>
+        )}
         <span className="text-text-muted">{t('standIn.device_label')}</span>
         <div className="min-w-0">{deviceControl}</div>
         <span className="text-text-muted">{t('standIn.local_project')}</span>
         <div className="min-w-0" inert={disabled || !draft.executionDeviceId}>
-          <ProjectWorkBar {...projectWork} className="min-h-8 px-0" showWorkSection={false} />
+          <ProjectWorkBar
+            {...projectWork}
+            className="min-h-8 px-0"
+            menuClassName="z-critical"
+            showWorkSection={false}
+          />
         </div>
         <span className="text-text-muted">{t('standIn.workspace_label')}</span>
         <div className="flex min-h-8 min-w-0 flex-wrap items-center gap-1" inert={disabled}>
@@ -180,6 +204,7 @@ export function StandInComposer({
         <div className="min-w-0">
           <ModelSelector
             models={models.models}
+            getModelOptionId={models.getModelOptionId}
             selectedModel={models.selectedModel}
             selectedModelOptions={draft.modelOptions ?? {}}
             disabled={disabled || models.fixed}
@@ -195,44 +220,46 @@ export function StandInComposer({
           />
         </div>
       </div>
-      <ComposerCatalogContext.Provider value={composerCatalog}>
-        <BufferedChatInput
-          value={draft.prompt}
-          onChange={prompt => onChange(current => ({ ...current, prompt }))}
-          onDraftEdit={prompt => onChange(current => ({ ...current, prompt }))}
-          onSubmit={prompt => onSave(prompt ?? draft.prompt)}
-          disabled={disabled}
-          submitDisabled={!valid}
-          clearOnSubmit={false}
-          allowEmptySubmit
-          placeholder={t(
-            draft.goalMode ? 'standIn.goal_placeholder' : 'standIn.dynamic_placeholder',
-            {
-              environment: draft.workspace ? environment : t('standIn.default_workspace'),
+      {showPrompt && (
+        <ComposerCatalogContext.Provider value={composerCatalog}>
+          <BufferedChatInput
+            value={draft.prompt}
+            onChange={prompt => onChange(current => ({ ...current, prompt }))}
+            onDraftEdit={prompt => onChange(current => ({ ...current, prompt }))}
+            onSubmit={prompt => onSave(prompt ?? draft.prompt)}
+            disabled={disabled}
+            submitDisabled={!valid}
+            clearOnSubmit={false}
+            allowEmptySubmit
+            placeholder={t(
+              draft.goalMode ? 'standIn.goal_placeholder' : 'standIn.dynamic_placeholder',
+              {
+                environment: draft.workspace ? environment : t('standIn.default_workspace'),
+              }
+            )}
+            variant="desktop"
+            presentation="configuration"
+            inputTestId="stand-in-prompt"
+            submitButtonTestId="stand-in-save"
+            submitLabel={t('standIn.save')}
+            showProjectWorkBar={false}
+            showWorkspaceMenu={false}
+            showExecutionTools={false}
+            onSetGoal={() => onChange(current => ({ ...current, goalMode: true }))}
+            goalDraftActive={Boolean(draft.goalMode)}
+            onCancelGoalDraft={() => onChange(current => ({ ...current, goalMode: false }))}
+            toolbarLeadingContext={
+              <>
+                {models.error && (
+                  <span role="status" className="text-xs text-error">
+                    {models.error}
+                  </span>
+                )}
+              </>
             }
-          )}
-          variant="desktop"
-          presentation="configuration"
-          inputTestId="stand-in-prompt"
-          submitButtonTestId="stand-in-save"
-          submitLabel={t('standIn.save')}
-          showProjectWorkBar={false}
-          showWorkspaceMenu={false}
-          showExecutionTools={false}
-          onSetGoal={() => onChange(current => ({ ...current, goalMode: true }))}
-          goalDraftActive={Boolean(draft.goalMode)}
-          onCancelGoalDraft={() => onChange(current => ({ ...current, goalMode: false }))}
-          toolbarLeadingContext={
-            <>
-              {models.error && (
-                <span role="status" className="text-xs text-error">
-                  {models.error}
-                </span>
-              )}
-            </>
-          }
-        />
-      </ComposerCatalogContext.Provider>
+          />
+        </ComposerCatalogContext.Provider>
+      )}
     </div>
   )
 }

@@ -13,6 +13,16 @@
  */
 
 import * as http from 'http'
+import { writeAnthropicStreamingResponse, writeAnthropicJsonResponse } from './mock-anthropic'
+import {
+  writeAnthropicStreamingToolCalls,
+  writeAnthropicJsonToolCalls,
+  writeAnthropicToolUseResponse,
+  type ToolCallRule,
+  type ToolResponse,
+} from './mock-anthropic-tools'
+import { handleClaudeBackgroundRequest } from './mock-claude-background'
+import { handleClaudeCompactionRequest } from './mock-claude-compaction'
 import { handleEmbeddingRequest } from './mock-embedding'
 import { handleMineruRequest } from './mock-mineru'
 import { handleProviderMcpHttpRequest, providerMcpToolCallCount } from './mock-provider-mcp'
@@ -20,6 +30,7 @@ import {
   deferredToolSearchCall,
   modelToolDefinitions,
   modelToolMatches,
+  resolveToolName,
 } from './model-tool-discovery'
 
 interface CapturedRequest {
@@ -52,13 +63,6 @@ interface ModelRequest {
   tools?: Array<Record<string, unknown>>
 }
 
-interface ToolResponse {
-  id: string
-  nameIncludes: string
-  input: Record<string, unknown>
-  text?: string
-}
-
 interface StreamRule {
   matchText: string
   responseContent?: string
@@ -66,11 +70,6 @@ interface StreamRule {
   responseTools?: ToolResponse[]
   chunkDelayMs?: number
   doneDelayMs?: number
-}
-
-interface ToolCallRule {
-  toolName: string
-  arguments: Record<string, unknown>
 }
 
 interface ToolScenarioStep {
@@ -250,13 +249,6 @@ function resolveScenarioToolCalls(
     ...toolCall,
     arguments: resolveScenarioValue(toolCall.arguments, request) as Record<string, unknown>,
   }))
-}
-
-function resolveToolName(request: ModelRequest | null, requestedName: string): string {
-  return (
-    modelToolDefinitions(request).find(tool => modelToolMatches(tool, requestedName))?.name ??
-    requestedName
-  )
 }
 
 function resolveResponsesTool(
@@ -586,304 +578,6 @@ function writeResponsesToolCalls(
   res.end()
 }
 
-function writeAnthropicSseEvent(res: http.ServerResponse, event: string, data: unknown): void {
-  res.write(`event: ${event}\n`)
-  res.write(`data: ${JSON.stringify(data)}\n\n`)
-}
-
-function writeAnthropicStreamingResponse(
-  res: http.ServerResponse,
-  content: string,
-  model: string,
-  chunkDelayMs: number,
-  doneDelayMs: number
-): void {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  })
-
-  writeAnthropicSseEvent(res, 'message_start', {
-    type: 'message_start',
-    message: {
-      id: `msg_${Date.now()}`,
-      type: 'message',
-      role: 'assistant',
-      model,
-      content: [],
-      stop_reason: null,
-      stop_sequence: null,
-      usage: {
-        input_tokens: 100,
-        output_tokens: 0,
-      },
-    },
-  })
-  writeAnthropicSseEvent(res, 'content_block_start', {
-    type: 'content_block_start',
-    index: 0,
-    content_block: {
-      type: 'text',
-      text: '',
-    },
-  })
-
-  const chunks = content.split(' ')
-  let index = 0
-
-  const sendChunk = () => {
-    if (index < chunks.length) {
-      const text = index === 0 ? chunks[index] : ' ' + chunks[index]
-      writeAnthropicSseEvent(res, 'content_block_delta', {
-        type: 'content_block_delta',
-        index: 0,
-        delta: {
-          type: 'text_delta',
-          text,
-        },
-      })
-      index++
-      setTimeout(sendChunk, chunkDelayMs)
-      return
-    }
-
-    setTimeout(() => {
-      writeAnthropicSseEvent(res, 'content_block_stop', {
-        type: 'content_block_stop',
-        index: 0,
-      })
-      writeAnthropicSseEvent(res, 'message_delta', {
-        type: 'message_delta',
-        delta: {
-          stop_reason: 'end_turn',
-          stop_sequence: null,
-        },
-        usage: {
-          output_tokens: Math.max(1, chunks.length),
-        },
-      })
-      writeAnthropicSseEvent(res, 'message_stop', {
-        type: 'message_stop',
-      })
-      res.end()
-    }, doneDelayMs)
-  }
-
-  sendChunk()
-}
-
-function writeAnthropicStreamingToolCalls(
-  res: http.ServerResponse,
-  request: ModelRequest | null,
-  model: string,
-  toolCalls: ToolCallRule[]
-): void {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  })
-  writeAnthropicSseEvent(res, 'message_start', {
-    type: 'message_start',
-    message: {
-      id: `msg_${Date.now()}`,
-      type: 'message',
-      role: 'assistant',
-      model,
-      content: [],
-      stop_reason: null,
-      usage: { input_tokens: 100, output_tokens: 0 },
-    },
-  })
-  toolCalls.forEach((toolCall, index) => {
-    writeAnthropicSseEvent(res, 'content_block_start', {
-      type: 'content_block_start',
-      index,
-      content_block: {
-        type: 'tool_use',
-        id: `toolu_${Date.now()}_${index}`,
-        name: resolveToolName(request, toolCall.toolName),
-        input: {},
-      },
-    })
-    writeAnthropicSseEvent(res, 'content_block_delta', {
-      type: 'content_block_delta',
-      index,
-      delta: {
-        type: 'input_json_delta',
-        partial_json: JSON.stringify(toolCall.arguments),
-      },
-    })
-    writeAnthropicSseEvent(res, 'content_block_stop', {
-      type: 'content_block_stop',
-      index,
-    })
-  })
-  writeAnthropicSseEvent(res, 'message_delta', {
-    type: 'message_delta',
-    delta: { stop_reason: 'tool_use', stop_sequence: null },
-    usage: { output_tokens: toolCalls.length * 10 },
-  })
-  writeAnthropicSseEvent(res, 'message_stop', { type: 'message_stop' })
-  res.end()
-}
-
-function writeAnthropicJsonToolCalls(
-  res: http.ServerResponse,
-  request: ModelRequest | null,
-  model: string,
-  toolCalls: ToolCallRule[]
-): void {
-  writeJson(res, 200, {
-    id: `msg_${Date.now()}`,
-    type: 'message',
-    role: 'assistant',
-    model,
-    content: toolCalls.map((toolCall, index) => ({
-      type: 'tool_use',
-      id: `toolu_${Date.now()}_${index}`,
-      name: resolveToolName(request, toolCall.toolName),
-      input: toolCall.arguments,
-    })),
-    stop_reason: 'tool_use',
-    stop_sequence: null,
-    usage: { input_tokens: 100, output_tokens: toolCalls.length * 10 },
-  })
-}
-
-function findToolName(request: ModelRequest | null, nameIncludes: string): string | null {
-  const tool = request?.tools?.find(candidate => {
-    const name = candidate.name
-    return typeof name === 'string' && name.includes(nameIncludes)
-  })
-  const name = tool?.name
-  return typeof name === 'string' ? name : null
-}
-
-function writeAnthropicToolUseResponse(
-  res: http.ServerResponse,
-  request: ModelRequest | null,
-  tool: ToolResponse,
-  model: string
-): void {
-  const toolName = findToolName(request, tool.nameIncludes)
-  if (!toolName) {
-    writeJson(res, 400, {
-      error: `Configured response tool was not offered: ${tool.nameIncludes}`,
-    })
-    return
-  }
-  const input = JSON.stringify(tool.input)
-
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  })
-  writeAnthropicSseEvent(res, 'message_start', {
-    type: 'message_start',
-    message: {
-      id: `msg_${Date.now()}`,
-      type: 'message',
-      role: 'assistant',
-      model,
-      content: [],
-      stop_reason: null,
-      stop_sequence: null,
-      usage: {
-        input_tokens: 100,
-        output_tokens: 0,
-      },
-    },
-  })
-  let toolBlockIndex = 0
-  if (tool.text) {
-    writeAnthropicSseEvent(res, 'content_block_start', {
-      type: 'content_block_start',
-      index: 0,
-      content_block: {
-        type: 'text',
-        text: '',
-      },
-    })
-    writeAnthropicSseEvent(res, 'content_block_delta', {
-      type: 'content_block_delta',
-      index: 0,
-      delta: {
-        type: 'text_delta',
-        text: tool.text,
-      },
-    })
-    writeAnthropicSseEvent(res, 'content_block_stop', {
-      type: 'content_block_stop',
-      index: 0,
-    })
-    toolBlockIndex = 1
-  }
-  writeAnthropicSseEvent(res, 'content_block_start', {
-    type: 'content_block_start',
-    index: toolBlockIndex,
-    content_block: {
-      type: 'tool_use',
-      id: tool.id,
-      name: toolName,
-      input: {},
-    },
-  })
-  writeAnthropicSseEvent(res, 'content_block_delta', {
-    type: 'content_block_delta',
-    index: toolBlockIndex,
-    delta: {
-      type: 'input_json_delta',
-      partial_json: input,
-    },
-  })
-  writeAnthropicSseEvent(res, 'content_block_stop', {
-    type: 'content_block_stop',
-    index: toolBlockIndex,
-  })
-  writeAnthropicSseEvent(res, 'message_delta', {
-    type: 'message_delta',
-    delta: {
-      stop_reason: 'tool_use',
-      stop_sequence: null,
-    },
-    usage: {
-      output_tokens: 1,
-    },
-  })
-  writeAnthropicSseEvent(res, 'message_stop', {
-    type: 'message_stop',
-  })
-  res.end()
-}
-
-function writeAnthropicJsonResponse(
-  res: http.ServerResponse,
-  content: string,
-  model: string
-): void {
-  writeJson(res, 200, {
-    id: `msg_${Date.now()}`,
-    type: 'message',
-    role: 'assistant',
-    model,
-    content: [
-      {
-        type: 'text',
-        text: content,
-      },
-    ],
-    stop_reason: 'end_turn',
-    stop_sequence: null,
-    usage: {
-      input_tokens: 100,
-      output_tokens: Math.max(1, content.split(' ').length),
-    },
-  })
-}
-
 /**
  * Create the mock HTTP server
  */
@@ -930,6 +624,10 @@ const server = http.createServer((req, res) => {
     if (handleProviderMcpHttpRequest(req, res, body, PORT)) {
       return
     }
+
+    if (handleClaudeBackgroundRequest(req, res, body)) return
+
+    if (handleClaudeCompactionRequest(req, res, body)) return
 
     if (await handleEmbeddingRequest(req, res, body)) return
 

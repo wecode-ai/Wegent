@@ -20,6 +20,10 @@ pub async fn revoke_pending<T: LocalBackendTransport>(
         .as_array()
         .filter(|ids| ids.len() <= 10)
         .ok_or(AuthError("plugin_auth_invalid_response"))?;
+    if !ids.is_empty() {
+        // Resolve the runtime before any provider revocation claims its 90s lease.
+        super::migration::ensure_registered_python(home, &[], None).await?;
+    }
     for id in ids {
         let id = identifier(id)?;
         // One unavailable provider must not prevent other queued revocations.

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
+import { collectPluginDeviceStatusReports } from '@/features/plugins/pluginDeviceAutoSync'
 import {
   hasLocalCodexMaterialization,
   isCloudManagedInstalledPlugin,
@@ -102,6 +103,32 @@ function localCodexPlugin(overrides?: {
 }
 
 describe('mergeInstalledPlugins', () => {
+  test.each([false, true])('requires local evidence in cached account rows: %s', localPresent => {
+    const cloud = cloudPlugin({ installState: 'not_installed', version: '1.0.0' })
+    cloud.status.devices = [
+      {
+        deviceId: 'current-device',
+        desiredReleaseId: 6,
+        actualReleaseId: null,
+        state: 'pending',
+        attemptCount: 0,
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ]
+
+    const cached = {
+      ...cloud,
+      spec: {
+        ...cloud.spec,
+        sourcePayload: localPresent ? { localPresent: true, localVersion: '1.0.0' } : null,
+      },
+    }
+    const merged = mergeInstalledPlugins([cloud], [cached], 'current-device', true)
+
+    expect(merged).toHaveLength(localPresent ? 1 : 0)
+    if (localPresent) expect(hasLocalCodexMaterialization(merged[0]!)).toBe(true)
+  })
+
   test('keeps local Codex installs when cloud installs are present', () => {
     const merged = mergeInstalledPlugins([cloudPlugin()], [localCodexPlugin()], 'current-device')
 
@@ -445,7 +472,7 @@ describe('hasLocalCodexMaterialization', () => {
 })
 
 describe('resolveProgressiveLocalInstalledRaw', () => {
-  const cached = [cloudPlugin({ id: 1 })]
+  const cached = [localCodexPlugin({ id: 'cached-local' })]
   const peeked = [localCodexPlugin()]
   const refreshed = [localCodexPlugin({ id: 'refreshed-local' })]
 
@@ -508,6 +535,51 @@ describe('resolveProgressiveLocalInstalledRaw', () => {
         localStateIsPeek: true,
       })
     ).toEqual(peeked)
+  })
+
+  test('reuses only materialized packages from a mixed account cache', () => {
+    const materializedCloud = cloudPlugin({
+      id: 2,
+      sourcePayload: { localPresent: true, localVersion: '1.0.0' },
+    })
+
+    expect(
+      resolveProgressiveLocalInstalledRaw({
+        hasCachedSnapshot: true,
+        cachedInstalledRaw: [cloudPlugin(), ...cached, materializedCloud],
+        localStateIsPeek: false,
+      })
+    ).toEqual([...cached, materializedCloud])
+  })
+
+  test('does not turn pending cloud membership into device evidence across progressive paints', () => {
+    const pendingCloud = cloudPlugin({ installState: 'not_installed', version: '1.0.0' })
+    pendingCloud.status = {
+      state: 'pending',
+      devices: [
+        {
+          deviceId: 'current-device',
+          desiredReleaseId: 6,
+          actualReleaseId: null,
+          state: 'pending',
+          attemptCount: 0,
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ],
+    }
+    const firstPaint = mergeInstalledPlugins([pendingCloud], [], '', true)
+    const localInventory = resolveProgressiveLocalInstalledRaw({
+      hasCachedSnapshot: true,
+      cachedInstalledRaw: firstPaint,
+      localStateIsPeek: false,
+    })
+    const nextPaint = mergeInstalledPlugins([pendingCloud], localInventory, '', true)
+
+    expect(firstPaint).toHaveLength(1)
+    expect(localInventory).toEqual([])
+    expect(nextPaint).toEqual(firstPaint)
+    expect(hasLocalCodexMaterialization(nextPaint[0]!)).toBe(false)
+    expect(collectPluginDeviceStatusReports(nextPaint, [], 'current-device')).toEqual([])
   })
 })
 

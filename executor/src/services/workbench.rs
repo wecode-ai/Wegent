@@ -171,6 +171,7 @@ pub fn verify_published_package(
     }
     let digest = digest.to_ascii_lowercase();
     let hash = format!("sha256:{digest}");
+    ensure_package_directories(root, kind)?;
     let _lock = lock_package(root, kind, &hash)?;
     verify_published_package_locked(root, kind, &hash)
 }
@@ -186,6 +187,9 @@ fn verify_published_package_locked(
     let record_path = shared
         .join("metadata")
         .join(format!("{}-{digest}.json", kind.directory()));
+    if record_path.is_symlink() {
+        return Err("Package records must be regular files".into());
+    }
     let record: PackageRecord = serde_json::from_slice(&fs::read(record_path).map_err(io_error)?)
         .map_err(|error| format!("Invalid package record: {error}"))?;
     if record.archive_hash != hash
@@ -296,6 +300,7 @@ pub fn publish_package(
     };
     let shared = root.join("shared");
     let destination = shared.join(kind.directory()).join(&hash[7..]);
+    ensure_package_directories(root, kind)?;
     let _lock = lock_package(root, kind, &hash)?;
     let metadata_dir = shared.join("metadata");
     fs::create_dir_all(&metadata_dir).map_err(io_error)?;
@@ -334,6 +339,30 @@ pub fn publish_package(
         path: destination,
         archive_hash: hash,
     })
+}
+
+fn ensure_package_directories(root: &Path, kind: PackageKind) -> Result<(), String> {
+    if !root.is_absolute() || root.components().any(|part| part == Component::ParentDir) {
+        return Err("Workbench home must be absolute without parent traversal".into());
+    }
+    let package_directory = root.join("shared").join(kind.directory());
+    if package_directory.is_symlink() || (package_directory.exists() && !package_directory.is_dir())
+    {
+        return Err("Package store directories must be real directories".into());
+    }
+    for directory in [
+        root.to_owned(),
+        root.join("shared"),
+        root.join("shared/metadata"),
+        root.join("shared/locks"),
+        root.join("shared/staging"),
+    ] {
+        if directory.is_symlink() || (directory.exists() && !directory.is_dir()) {
+            return Err("Package store directories must be real directories".into());
+        }
+        fs::create_dir_all(directory).map_err(io_error)?;
+    }
+    Ok(())
 }
 
 fn io_error(error: std::io::Error) -> String {

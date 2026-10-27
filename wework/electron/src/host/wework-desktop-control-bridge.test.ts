@@ -11,6 +11,87 @@ afterEach(async () => {
 })
 
 describe('WeworkDesktopControlBridge', () => {
+  test('waits for Python readiness with a token that cannot control the desktop', async () => {
+    const registryDirectory = await mkdtemp(join(tmpdir(), 'wework-control-python-'))
+    directories.push(registryDirectory)
+    let complete!: (status: unknown) => void
+    const ensurePython = vi.fn(
+      () =>
+        new Promise(resolve => {
+          complete = resolve
+        })
+    )
+    const bridge = new WeworkDesktopControlBridge({
+      instanceId: 'python-test',
+      instanceKind: 'main',
+      displayName: 'Wework',
+      projectRoot: null,
+      registryDirectory,
+      window: () => null,
+      ensurePython,
+    })
+    await bridge.start()
+    const environment = bridge.environment()
+    const endpoint = environment.WEWORK_PYTHON_RUNTIME_URL!
+    const headers = { Authorization: `Bearer ${environment.WEWORK_PYTHON_RUNTIME_TOKEN}` }
+    try {
+      const unauthorized = await fetch(endpoint, { method: 'POST' })
+      expect(unauthorized.status).toBe(401)
+      expect(ensurePython).not.toHaveBeenCalled()
+
+      const desktop = await fetch(new URL('/status', endpoint), { headers })
+      expect(desktop.status).toBe(401)
+
+      let settled = false
+      const pending = fetch(endpoint, { method: 'POST', headers })
+        .then(response => response.json())
+        .then(result => {
+          settled = true
+          return result
+        })
+      await vi.waitFor(() => expect(ensurePython).toHaveBeenCalledOnce())
+      expect(settled).toBe(false)
+      complete({ state: 'installed', version: '3.12.12' })
+      await expect(pending).resolves.toEqual({
+        ok: true,
+        data: { state: 'installed', version: '3.12.12' },
+      })
+
+      ensurePython.mockRejectedValueOnce(new Error('Python download failed'))
+      const failure = await fetch(endpoint, { method: 'POST', headers }).then(response =>
+        response.json()
+      )
+      expect(failure).toEqual({ ok: false, error: 'Python download failed' })
+    } finally {
+      await bridge.stop()
+    }
+    expect(bridge.environment()).toEqual({})
+  })
+
+  test('closes pending Python requests during shutdown', async () => {
+    const registryDirectory = await mkdtemp(join(tmpdir(), 'wework-control-python-stop-'))
+    directories.push(registryDirectory)
+    const ensurePython = vi.fn(() => new Promise(() => undefined))
+    const bridge = new WeworkDesktopControlBridge({
+      instanceId: 'python-stop-test',
+      instanceKind: 'main',
+      displayName: 'Wework',
+      projectRoot: null,
+      registryDirectory,
+      window: () => null,
+      ensurePython,
+    })
+    await bridge.start()
+    const environment = bridge.environment()
+    const pending = fetch(environment.WEWORK_PYTHON_RUNTIME_URL!, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${environment.WEWORK_PYTHON_RUNTIME_TOKEN}` },
+    }).catch(() => null)
+    await vi.waitFor(() => expect(ensurePython).toHaveBeenCalledOnce())
+    await bridge.stop()
+    await expect(pending).resolves.toBeNull()
+  })
+
   test('registers an authenticated generic desktop instance and removes it on stop', async () => {
     const registryDirectory = await mkdtemp(join(tmpdir(), 'wework-control-'))
     directories.push(registryDirectory)

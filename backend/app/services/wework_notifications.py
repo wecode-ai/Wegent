@@ -18,7 +18,12 @@ from app.services.notification_copy import (
     WEB_LINK_LABEL,
     WEWORK_LINK_LABEL,
     NotificationLink,
+    NotificationTarget,
     push_copy,
+)
+from app.services.notification_target import (
+    board_notification_target,
+    board_status_label,
 )
 from app.services.wework_notification_preferences import (
     get_notification_preferences,
@@ -270,7 +275,26 @@ async def _deliver_notification_payload(
     if not channels["im"]:
         return
     try:
-        sessions = await im_session_service.list_user_sessions(db, user_id=user_id)
+        sessions = [
+            session
+            for session in await im_session_service.list_user_sessions(
+                db, user_id=user_id
+            )
+            if session.user_id == user_id
+        ]
+        eligible_sessions = im_notification_dispatcher.notification_sessions(
+            db, sessions
+        )
+        if not eligible_sessions:
+            if sessions:
+                logger.info(
+                    "Wework IM delivery skipped: connected channels lack a "
+                    "notification card: id=%s user_id=%s",
+                    notification_id,
+                    user_id,
+                )
+            return
+        sessions = eligible_sessions
         payload = (
             notification["payload"]
             if isinstance(notification.get("payload"), dict)
@@ -283,8 +307,6 @@ async def _deliver_notification_payload(
             payload=payload,
         )
         for session in sessions:
-            if session.user_id != user_id:
-                continue
             result = await im_notification_dispatcher.send_notification(
                 db,
                 session,
@@ -306,8 +328,9 @@ def send_wework_notification(
     db: Session, *, user_id: int, values: NotificationCreate
 ) -> WeworkNotification:
     recipient_id = values.recipient_user_id or user_id
+    target: NotificationTarget | None = None
     if values.project_id is not None:
-        _validate_project_source(db, user_id, recipient_id, values)
+        target = _validate_project_source(db, user_id, recipient_id, values)
     elif recipient_id != user_id:
         raise HTTPException(403, "Notifying another user requires a shared project")
     row = create_notification(
@@ -319,6 +342,7 @@ def send_wework_notification(
         project_id=str(values.project_id) if values.project_id is not None else None,
         item_id=values.item_id,
         url=values.url,
+        payload=target.payload() if target is not None else None,
     )
     db.commit()
     if row in db:
@@ -328,7 +352,7 @@ def send_wework_notification(
 
 def _validate_project_source(
     db: Session, user_id: int, recipient_id: int, values: NotificationCreate
-) -> None:
+) -> NotificationTarget:
     from app.services.cloud_project_visibility import project_participant_ids
     from app.services.cloud_projects import cloud_project_service
     from app.services.loop_items.external_provider import external_loop_item_provider
@@ -343,12 +367,29 @@ def _validate_project_source(
     recipient = cloud_project_service.access(db, values.project_id, recipient_id)
     if recipient.is_viewer or recipient_id not in member_ids:
         raise HTTPException(403, "Recipient must be a project member")
+    target = NotificationTarget(
+        project_id=str(access.project.id),
+        project_name=access.project.name,
+    )
     if values.item_id:
         if access.project.task_provider in {"github", "gitlab"}:
             item = external_loop_item_provider.get(db, values.item_id, user_id)
             item_project_id = item["cloud_project_id"]
+            target = NotificationTarget(
+                project_id=str(access.project.id),
+                project_name=access.project.name,
+                item_id=values.item_id,
+                item_key=values.item_id,
+                item_title=str(item.get("title") or values.item_id),
+                item_status=board_status_label(
+                    access.project, str(item.get("status") or "")
+                ),
+                assignee_name=str(item.get("assignee_name") or "") or None,
+            )
         else:
             item = loop_item_service.get(db, values.item_id, user_id)
             item_project_id = item.cloud_project_id
+            target = board_notification_target(db, access.project, item)
         if str(item_project_id) != str(values.project_id):
             raise HTTPException(404, "Issue not found in project")
+    return target

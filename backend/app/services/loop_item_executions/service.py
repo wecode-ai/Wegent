@@ -49,6 +49,7 @@ from app.services.loop_item_executions.profile import (
 from app.services.loop_item_executions.runtime_identity import (
     execution_conversation_task_id,
     execution_runtime_task_id,
+    execution_runtime_turn_id,
     runtime_task_id_for,
 )
 from app.services.project_automation_domain import TERMINAL_RUN_STATUSES
@@ -295,9 +296,24 @@ def execution_ai_state(
 
     if execution.status == STATUS_PENDING_APPROVAL:
         return None
-    state = dict(existing) if isinstance(existing, dict) else {}
     agent = db.get(ProjectChatAgent, execution.agent_id) if execution.agent_id else None
     team = db.get(Kind, execution.team_id) if execution.team_id else None
+    return execution_ai_state_from_resources(
+        execution, existing=existing, agent=agent, team=team
+    )
+
+
+def execution_ai_state_from_resources(
+    execution: LoopItemExecution,
+    *,
+    existing: object = None,
+    agent: ProjectChatAgent | None = None,
+    team: Kind | None = None,
+) -> dict[str, object] | None:
+    """Render execution state using resources loaded by the caller."""
+    if execution.status == STATUS_PENDING_APPROVAL:
+        return None
+    state = dict(existing) if isinstance(existing, dict) else {}
 
     def iso(value: datetime) -> str | None:
         optional = _optional_datetime(value)
@@ -465,6 +481,9 @@ def _execution_is_claimable_by_device(
     from app.services.device.identity import resolve_owned_device_alias
     from app.services.runner_routing import execution_environment_ids
 
+    if execution.assignment_pending:
+        return False
+
     runner = resolve_owned_device_alias(
         db, user_id=owner_user_id, device_id=submitted_device_id
     )
@@ -585,200 +604,66 @@ class LoopItemExecutionService:
         automation_context: dict[str, Any] | None = None,
         instruction: str | None = None,
     ) -> LoopItemExecution:
-        """Create a run row when a task is assigned to a robot.
+        """Prepare and enqueue an assignment that requires synchronous planning."""
+        from app.services.loop_item_executions.assignment import prepare_assignment
 
-        A manual-approval robot starts in `pending_approval`; an auto robot
-        enters the queue immediately.
-        """
-
-        from app.services.project_chat.service import bot_config, compiled_bot_config
-
-        inferred_context, _ = self._task_automation_context(db, loop_item_id)
-        effective_context = (
-            dict(automation_context)
-            if automation_context is not None
-            else inferred_context
-        )
-        effective_context.setdefault("dispatch_role", "executor")
-        if instruction is not None:
-            effective_context["execution_prompt"] = instruction
-        persisted_config = bot_config(agent)
-        mode = str(persisted_config.get("execution_mode") or "auto")
-        runtime_source = str(effective_context.get("runtime_source") or "agent_default")
-        runtime_profile_id = effective_context.get("runtime_profile_id")
-        if runtime_source == "agent_default":
-            runtime_profile_id = persisted_config.get("default_runtime_profile_id")
-        runtime_profile = (
-            db.get(RuntimeProfile, str(runtime_profile_id))
-            if runtime_profile_id
-            else None
-        )
-        if runtime_profile is not None and runtime_profile.status != "active":
-            runtime_profile = None
-        task = self.resolve_task_context(
+        return self._enqueue(
             db,
-            execution=LoopItemExecution(
+            **prepare_assignment(
+                self,
+                db,
                 loop_item_id=loop_item_id,
                 cloud_project_id=cloud_project_id,
+                agent=agent,
+                assigner_user_id=assigner_user_id,
+                environment=environment,
+                execution_device_id=execution_device_id,
+                priority=priority,
+                automation_context=automation_context,
+                instruction=instruction,
             ),
-            user_id=assigner_user_id,
-        )
-        runtime_subject_user_id = int(
-            effective_context.get("runtime_subject_user_id")
-            or (task.assignee_user_id if task else 0)
-            or (task.created_by_user_id if task else 0)
-            or assigner_user_id
-        )
-        from app.services.collaboration_permissions import (
-            collaboration_permission_service,
         )
 
-        if not collaboration_permission_service.check(
-            db, assigner_user_id, "execute", cloud_project_id
-        ).allowed:
-            raise HTTPException(
-                403, "Insufficient permission to execute in this project"
-            )
-        bound_team_id = persisted_config.get("wegent_team_id")
-        if bound_team_id:
-            from app.services.project_automation_domain import runnable_wegent_team
-
-            runnable_wegent_team(
-                db, assigner_user_id, int(bound_team_id), project_id=cloud_project_id
-            )
-        config = compiled_bot_config(
-            db,
-            agent,
-            execution_user_id=runtime_subject_user_id,
-        )
-        runtime = str(config["runtime"])
-        team_id = int(config["wegent_team_id"]) if runtime == "wegent" else None
-        profile_metadata = (
-            dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
-        )
-        configured_model = str(
-            effective_context.get("model")
-            or profile_metadata.get("model")
-            or config.get("model")
-            or ""
-        )
-        configured_model_type = (
-            effective_context.get("model_type")
-            or profile_metadata.get("model_type")
-            or config.get("model_type")
-        )
-        configured_model_options = dict(
-            effective_context.get("model_options")
-            or profile_metadata.get("model_options")
-            or config.get("model_options")
-            or {}
-        )
-        owner_user_id = int(
-            runtime_profile.user_id if runtime_profile else runtime_subject_user_id
-        )
-        from app.services.loop_item_executions.profile import (
-            inherited_workflow_workspace_source,
+    def enqueue_for_assignment(
+        self,
+        db: Session,
+        *,
+        loop_item_id: str,
+        cloud_project_id: str,
+        agent: ProjectChatAgent,
+        assigner_user_id: int,
+        environment: str,
+        execution_device_id: str | None,
+        priority: str | None,
+        automation_context: dict[str, Any] | None = None,
+        continuation: dict[str, Any] | None = None,
+    ) -> LoopItemExecution:
+        """Admit authorized work without evaluating its execution readiness."""
+        from app.services.loop_item_executions.queued_assignment import (
+            enqueue_assignment,
         )
 
-        inherited_workspace_source = inherited_workflow_workspace_source(
-            effective_context
-        )
-        inherited_device_id = (
-            inherited_workspace_source["deviceId"]
-            if inherited_workspace_source is not None
-            else None
-        )
-        device_id = (
-            None
-            if runtime == "wegent"
-            else (
-                str(
-                    inherited_device_id
-                    or effective_context.get("execution_device_id")
-                    or (
-                        runtime_profile.device_id
-                        if runtime_profile is not None
-                        else None
-                    )
-                    or config.get("execution_device_id")
-                    or execution_device_id
-                    or ""
-                )
-                or None
-            )
-        )
-        if runtime == "wegent":
-            selected_environment = "wegent"
-        elif device_id and not config.get("execution_policy"):
-            from app.services.loop_item_executions.profile import (
-                wework_execution_environment,
-            )
-
-            selected_environment = wework_execution_environment(
-                db,
-                user_id=owner_user_id,
-                execution_device_id=device_id,
-            )
-        else:
-            selected_environment = str(environment or "local")
-        runtime_selection = {
-            "runtime_source": runtime_source,
-            "runtime_profile_id": runtime_profile.id if runtime_profile else None,
-            "runtime_profile_version": (
-                runtime_profile.version if runtime_profile else None
-            ),
-            "model": configured_model or None,
-            "model_type": configured_model_type,
-            "model_options": configured_model_options,
-            "capability_mode": config.get("capability_mode"),
-            "workspace_policy": (profile_metadata.get("workspace_policy") or "project"),
-        }
-        if runtime != "wegent" and config.get("execution_policy"):
-            from app.services.runner_routing import resolve_routing
-
-            routing = resolve_routing(
-                db,
-                config=config,
-                agent_id=agent.id,
-                project_id=cloud_project_id,
-                issue_id=loop_item_id,
-                user_id=assigner_user_id,
-                selection=effective_context.get("runner_selection"),
-                automatic=bool(effective_context.get("run_id")),
-            )
-            runtime_selection["runner_routing"] = routing.snapshot()
-            # Native selectors and the actual owner are materialized at claim time.
-            runtime_selection.update(
-                model=routing.model.model_id, model_type="runtime", model_options={}
-            )
-            configured_model = routing.model.model_id
-            device_id = None
-            owner_user_id = assigner_user_id
-        workspace_binding_required = "workspace_binding" in effective_context
-        waiting_runtime = runtime != "wegent" and not runtime_configuration_complete(
-            execution_device_id=device_id,
-            model=configured_model,
-            require_model=config.get("capability_mode") != "follow_device",
-            workspace_binding_required=workspace_binding_required,
-            workspace_binding=effective_context.get("workspace_binding"),
-        )
-        return self._enqueue(
+        return enqueue_assignment(
+            self,
             db,
             loop_item_id=loop_item_id,
             cloud_project_id=cloud_project_id,
-            executor_type="project_robot",
-            owner_user_id=owner_user_id,
-            agent_id=agent.id,
-            team_id=team_id,
+            agent=agent,
             assigner_user_id=assigner_user_id,
-            environment=selected_environment,
-            execution_device_id=device_id,
+            environment=environment,
+            execution_device_id=execution_device_id,
             priority=priority,
-            automation_context=effective_context,
-            requires_approval=mode == "manual_approval",
-            runtime_selection=runtime_selection,
-            waiting_runtime=waiting_runtime,
+            automation_context=automation_context,
+            continuation=continuation,
         )
+
+    def prepare_queued_assignments(self, db: Session) -> int:
+        """Resolve admitted work in the queue consumer, after comment acceptance."""
+        from app.services.loop_item_executions.queued_assignment import (
+            prepare_queued_assignments,
+        )
+
+        return prepare_queued_assignments(self, db)
 
     def create_for_team_assignment(
         self,
@@ -1195,7 +1080,8 @@ class LoopItemExecutionService:
         now = utcnow()
         origin_context = row.runtime_origin_context
         needs_runtime = (
-            not row.uses_runner_routing
+            not row.assignment_pending
+            and not row.uses_runner_routing
             and not row.team_id
             and not runtime_configuration_complete(
                 execution_device_id=row.execution_device_id,
@@ -1247,6 +1133,7 @@ class LoopItemExecutionService:
                 LoopItemExecution.id == execution_id,
                 LoopItemExecution.team_id > 0,
                 LoopItemExecution.status == STATUS_QUEUED,
+                ~LoopItemExecution.assignment_pending,
             )
             .update(
                 {
@@ -1481,6 +1368,7 @@ class LoopItemExecutionService:
         CAS; it does not mirror or gate the Executor's local capacity.
         """
 
+        self.prepare_queued_assignments(db)
         submitted_execution_device_id = execution_device_id
         execution_device_ids = _owned_execution_device_ids(
             db,
@@ -1500,6 +1388,7 @@ class LoopItemExecutionService:
                     LoopItemExecution.uses_runner_routing,
                 ),
                 LoopItemExecution.agent_id == agent_id,
+                ~LoopItemExecution.assignment_pending,
                 or_(
                     and_(
                         LoopItemExecution.execution_device_id.in_(execution_device_ids),
@@ -1596,6 +1485,7 @@ class LoopItemExecutionService:
     ) -> Optional[LoopItemExecution]:
         """Claim one queued run for a stable execution target."""
 
+        self.prepare_queued_assignments(db)
         submitted_execution_device_id = execution_device_id
         execution_device_ids = _owned_execution_device_ids(
             db,
@@ -1620,6 +1510,7 @@ class LoopItemExecutionService:
                 LoopItemExecution.execution_device_id == "",
             ),
             LoopItemExecution.status == STATUS_QUEUED,
+            ~LoopItemExecution.assignment_pending,
         )
         rows = (
             db.query(LoopItemExecution)
@@ -2089,6 +1980,77 @@ class LoopItemExecutionService:
                 LoopItemExecution.executor_owner_user_id == owner_user_id
             )
         return query.order_by(LoopItemExecution.id.desc()).first()
+
+    def reconciled_activity_for_runtime(
+        self,
+        db: Session,
+        *,
+        runtime_device_id: str,
+        runtime_task_id: str,
+        turn_id: object,
+        owner_user_id: int | None = None,
+    ) -> Optional[ProjectChatMessage]:
+        """Return an outcome-only activity owned by a terminal execution.
+
+        A reconciliation can elect the terminal execution before the final
+        Runtime event arrives. The execution is then no longer active, so the
+        delayed final text must be matched through the execution aggregate
+        instead of the streaming-activity query. A delayed event is eligible
+        only when its turn is bound to the activity or deterministically owned
+        by the execution, so an older turn cannot overwrite a later one.
+        """
+
+        if not isinstance(turn_id, str) or not turn_id:
+            logger.info(
+                "[LoopItemExecution] Refused delayed completion without a turn "
+                "device=%s task=%s",
+                runtime_device_id,
+                runtime_task_id,
+            )
+            return None
+        device_ids = runtime_device_identity_ids(
+            db,
+            runtime_device_id,
+            owner_user_id=owner_user_id,
+        )
+        if not device_ids:
+            return None
+        query = db.query(LoopItemExecution).filter(
+            LoopItemExecution.runtime_device_id.in_(device_ids),
+            LoopItemExecution.runtime_task_id == runtime_task_id,
+            LoopItemExecution.status == STATUS_COMPLETED,
+        )
+        if owner_user_id is not None:
+            query = query.filter(
+                LoopItemExecution.executor_owner_user_id == owner_user_id
+            )
+        executions = query.order_by(LoopItemExecution.id.desc()).all()
+        for execution in executions:
+            activity = self._linked_activity(db, execution)
+            if activity is None or activity.status != "completed":
+                continue
+            if (activity.content or "").strip() not in {"", "Runtime reconciled"}:
+                continue
+            metadata = (
+                activity.metadata_json
+                if isinstance(activity.metadata_json, dict)
+                else {}
+            )
+            bound_turn_id = metadata.get("runtime_turn_id")
+            if isinstance(bound_turn_id, str) and bound_turn_id:
+                if bound_turn_id == turn_id:
+                    return activity
+                continue
+            if execution_runtime_turn_id(execution) == turn_id:
+                return activity
+        logger.info(
+            "[LoopItemExecution] Refused unassociated delayed completion "
+            "device=%s task=%s turn=%s",
+            runtime_device_id,
+            runtime_task_id,
+            turn_id,
+        )
+        return None
 
     def open_execution_activity(
         self,
@@ -3056,6 +3018,29 @@ class LoopItemExecutionService:
         return None
 
     @staticmethod
+    def _bind_activity_runtime_turn(
+        db: Session,
+        execution: LoopItemExecution,
+        payload: dict,
+    ) -> None:
+        """Bind the current Runtime turn so later snapshots match exactly."""
+
+        raw_turn_id = payload.get("subtaskId") or payload.get("subtask_id")
+        if not isinstance(raw_turn_id, str):
+            return
+        turn_id = raw_turn_id.strip()
+        if not turn_id:
+            return
+        activity = LoopItemExecutionService._linked_activity(db, execution)
+        if activity is None or activity.status not in {"pending", "streaming"}:
+            return
+        metadata = dict(activity.metadata_json or {})
+        if metadata.get("runtime_turn_id") == turn_id:
+            return
+        metadata["runtime_turn_id"] = turn_id
+        activity.metadata_json = metadata
+
+    @staticmethod
     def _is_subagent_activity(activity: ProjectChatMessage) -> bool:
         metadata = (
             activity.metadata_json if isinstance(activity.metadata_json, dict) else {}
@@ -3359,6 +3344,8 @@ class LoopItemExecutionService:
                 commit=False,
                 push=False,
             )
+        if event_name == "response.created":
+            self._bind_activity_runtime_turn(db, row, payload)
         db.commit()
         db.refresh(row)
         return row
@@ -4476,6 +4463,7 @@ class LoopItemExecutionService:
                 db,
                 execution_id=row.id,
                 note="Runtime reconciled",
+                content="",
                 expected_status=row.status,
                 expected_version=row.version,
             )

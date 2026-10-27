@@ -76,6 +76,7 @@ import type {
   RuntimeTaskForkRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTranscriptRequest,
+  RuntimeTranscriptSearchRequest,
   RuntimeWorkspaceOpenRequest,
   RuntimeWorkspaceRemoveRequest,
   RuntimeWorkspaceRenameRequest,
@@ -156,10 +157,6 @@ function recordValue(value: unknown): Record<string, unknown> {
 function stringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key]
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
-
-function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
-  return models
 }
 
 function cloudExecutableModels(models: UnifiedModel[]): UnifiedModel[] {
@@ -1066,6 +1063,11 @@ export function createHybridWorkbenchServices(
         throw error
       }
     },
+    searchRuntimeTranscript(data: RuntimeTranscriptSearchRequest) {
+      return (
+        data.projectSession ? cloudServices.runtimeWorkApi! : routeByAddress(data)
+      ).searchRuntimeTranscript(data)
+    },
     async searchRuntimeWork(data: RuntimeWorkSearchRequest) {
       if (data.source === 'cloud') {
         return searchCloudRuntimeWork(data)
@@ -1675,13 +1677,109 @@ export function createHybridWorkbenchServices(
           return { data: [] }
         })
         return {
-          data: mergeModelCatalogs(annotateLocalModels(localModels.data), cloudModels.getModels()),
+          data: mergeModelCatalogs(localModels.data, cloudModels.getModels()),
         }
       },
     },
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async memories(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).memories(userId, deviceId)
+      },
+      async saveMemory(userId, deviceId, memory) {
+        return (await standInApiForDevice(deviceId)).saveMemory(userId, deviceId, memory)
+      },
+      async deleteMemory(userId, deviceId, id, version) {
+        return (await standInApiForDevice(deviceId)).deleteMemory(userId, deviceId, id, version)
+      },
+      async inbox(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).inbox(userId, deviceId)
+      },
+      async workMessages(userId, deviceId, workId) {
+        return (await standInApiForDevice(deviceId)).workMessages(userId, deviceId, workId)
+      },
+      async runWork(userId, deviceId, workId) {
+        return (await standInApiForDevice(deviceId)).runWork(userId, deviceId, workId)
+      },
+      async organizeWork(userId, deviceId, workId, messageIds, targetWorkId) {
+        return (await standInApiForDevice(deviceId)).organizeWork(
+          userId,
+          deviceId,
+          workId,
+          messageIds,
+          targetWorkId
+        )
+      },
+      async adjustMessage(userId, deviceId, workId, messageId, targetWorkId) {
+        return (await standInApiForDevice(deviceId)).adjustMessage(
+          userId,
+          deviceId,
+          workId,
+          messageId,
+          targetWorkId
+        )
+      },
+      async retrySource(userId, deviceId, source) {
+        return (await standInApiForDevice(deviceId)).retrySource(userId, deviceId, source)
+      },
+      async connectionProviders(deviceId) {
+        return (await standInApiForDevice(deviceId)).connectionProviders(deviceId)
+      },
+      async installConnectionDependencies(deviceId, providerId, aliases) {
+        return (await standInApiForDevice(deviceId)).installConnectionDependencies(
+          deviceId,
+          providerId,
+          aliases
+        )
+      },
+      async searchConnectionResources(deviceId, providerId, kind, query, cursor) {
+        return (await standInApiForDevice(deviceId)).searchConnectionResources(
+          deviceId,
+          providerId,
+          kind,
+          query,
+          cursor
+        )
+      },
+      async conversation(userId, deviceId, message, roleId, options) {
+        return (await standInApiForDevice(deviceId)).conversation(
+          userId,
+          deviceId,
+          message,
+          roleId,
+          options
+        )
+      },
+      async proposal(userId, deviceId, roleId) {
+        return (await standInApiForDevice(deviceId)).proposal(userId, deviceId, roleId)
+      },
+      async resolveProposal(userId, deviceId, proposalId, accept) {
+        return (await standInApiForDevice(deviceId)).resolveProposal(
+          userId,
+          deviceId,
+          proposalId,
+          accept
+        )
+      },
+      async notifyAssignment(projectId, issueId, assignmentId, userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).notifyAssignment(
+          projectId,
+          issueId,
+          assignmentId,
+          userId,
+          deviceId
+        )
+      },
+      async personalAgents(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).personalAgents(userId, deviceId)
+      },
+      async personalGet(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)
+      },
+      async personalSave(userId, settings, deviceId) {
+        return (await standInApiForDevice(deviceId)).personalSave(userId, settings, deviceId)
+      },
       async readTask(deviceId, taskId) {
         return (await standInApiForDevice(deviceId)).readTask(deviceId, taskId)
       },
@@ -1710,12 +1808,13 @@ export function createHybridWorkbenchServices(
           standInId
         )
       },
-      async save(projectId, userId, projectStore, settings) {
-        return (await standInApiForDevice(settings.executionDeviceId)).save(
+      async save(projectId, userId, projectStore, settings, deviceId) {
+        return (await standInApiForDevice(deviceId)).save(
           projectId,
           userId,
           projectStore,
-          settings
+          settings,
+          deviceId
         )
       },
     },

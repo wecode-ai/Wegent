@@ -6,7 +6,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
-  VenetianMask,
   Bot,
   CircleCheck,
   Cloud,
@@ -32,6 +31,7 @@ import { ensureWorkspaceEnvironmentSharing } from "../execution-environment/ensu
 import type { CollaborationTranslate } from "../i18n";
 
 import { CollaborationApp } from "../CollaborationApp";
+import { StandInIcon } from "../StandInIcon";
 import { ProjectLoadingSkeleton } from "../project-shell";
 import { ActionMenu } from "../controls/ActionMenu";
 import { ProjectCreationAction } from "./ProjectCreationAction";
@@ -110,7 +110,7 @@ const platformMessages = {
     projectActions: "项目操作",
     allSpaces: "所有空间",
     home: "新建 Issue",
-    standIn: "我的替身",
+    standIn: "我的分身",
     newConversation: "新建对话",
     teams: "协作小组",
     devices: "设备",
@@ -678,28 +678,34 @@ function CollaborationPlatformNavigation({
   )?.workspace_id;
   const selectedWorkspaceId =
     host.location.workspaceId ?? selectedProjectWorkspaceId ?? null;
+  const firstWorkspaceId = navigationWorkspaces[0]?.workspace.id ?? null;
+  const autoExpandedWorkspaceId = selectedWorkspaceId ?? firstWorkspaceId;
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
     () =>
       new Set(
-        selectedWorkspaceId
-          ? [selectedWorkspaceId]
+        autoExpandedWorkspaceId
+          ? [autoExpandedWorkspaceId]
           : navigationWorkspaces
               .slice(0, 1)
               .map(({ workspace }) => workspace.id),
       ),
   );
+  const [autoExpandedWorkspaceSelection, setAutoExpandedWorkspaceSelection] =
+    useState<string | null>(autoExpandedWorkspaceId);
   const [workspacesExpanded, setWorkspacesExpanded] = useState(true);
   const [retryingNavigation, setRetryingNavigation] = useState(false);
   const fullSidebar = host.capabilities.sidebarPresentation !== "context";
-  useEffect(() => {
-    const workspaceId =
-      selectedWorkspaceId ?? navigationWorkspaces[0]?.workspace.id;
-    if (!workspaceId) return;
-    setExpandedWorkspaceIds((current) => {
-      if (current.has(workspaceId)) return current;
-      return new Set([...current, workspaceId]);
-    });
-  }, [navigationWorkspaces, selectedWorkspaceId]);
+  // Expansion follows the selected workspace during render so it cannot land
+  // after the user has already clicked the toggle that was just rendered.
+  if (autoExpandedWorkspaceSelection !== autoExpandedWorkspaceId) {
+    setAutoExpandedWorkspaceSelection(autoExpandedWorkspaceId);
+    if (autoExpandedWorkspaceId) {
+      setExpandedWorkspaceIds((current) => {
+        if (current.has(autoExpandedWorkspaceId)) return current;
+        return new Set([...current, autoExpandedWorkspaceId]);
+      });
+    }
+  }
   const openWorkspaceHome = (
     workspaceId: string,
     collaborationDomain: CollaborationDomain,
@@ -795,7 +801,7 @@ function CollaborationPlatformNavigation({
                   })
                 }
               >
-                <VenetianMask aria-hidden="true" />
+                <StandInIcon />
                 <span>{messages.standIn}</span>
               </button>
             )}
@@ -3249,6 +3255,11 @@ export function CollaborationPlatformApp({
     !host.location.projectId &&
     !host.location.workspaceId &&
     host.location.rootView === "devices";
+  const isStandInPage =
+    !host.location.projectId &&
+    !host.location.workspaceId &&
+    host.location.rootView === "stand-in" &&
+    Boolean(host.renderStandInPage);
   const deviceCatalog = useDeviceCatalog(
     api,
     isDevicePage,
@@ -3420,6 +3431,10 @@ export function CollaborationPlatformApp({
   }, [state.navigationProjects]);
   const hasFullWorkspaceAccess =
     state.workspace?.id === host.location.workspaceId;
+  const workspaceAccessRef = useRef(hasFullWorkspaceAccess);
+  useLayoutEffect(() => {
+    workspaceAccessRef.current = hasFullWorkspaceAccess;
+  }, [hasFullWorkspaceAccess]);
   const scopedApi = useMemo<SharedWorkspaceApi>(() => {
     if (!host.location.workspaceId) return api;
     const workspaceId = host.location.workspaceId;
@@ -3435,21 +3450,17 @@ export function CollaborationPlatformApp({
             );
             if (selectedProject) return [selectedProject];
           }
-          const projects = await (hasFullWorkspaceAccess
+          const hasWorkspaceAccess = workspaceAccessRef.current;
+          const projects = await (hasWorkspaceAccess
             ? api.projects.list(workspaceId)
             : api.projects.list());
-          if (hasFullWorkspaceAccess || !projectId) return projects;
+          if (hasWorkspaceAccess || !projectId) return projects;
           return projects.filter((project) => project.id === projectId);
         },
         create: (input) => api.projects.create({ ...input, workspaceId }),
       },
     };
-  }, [
-    api,
-    host.location.projectId,
-    host.location.workspaceId,
-    hasFullWorkspaceAccess,
-  ]);
+  }, [api, host.location.projectId, host.location.workspaceId]);
   const workspaceAgentConfigurationApi = useMemo(
     () =>
       host.location.workspaceId
@@ -3772,7 +3783,7 @@ export function CollaborationPlatformApp({
     });
   };
   let content: React.ReactNode;
-  if (state.loading && !isDevicePage) {
+  if (state.loading && !isDevicePage && !isStandInPage) {
     content = (
       <ProjectLoadingSkeleton
         label={translate("common.loading", "正在加载…")}
@@ -3783,7 +3794,7 @@ export function CollaborationPlatformApp({
         }
       />
     );
-  } else if (state.error && !isDevicePage) {
+  } else if (state.error && !isDevicePage && !isStandInPage) {
     content = (
       <div className="collaboration-alert" role="alert">
         {state.error}
@@ -3870,7 +3881,17 @@ export function CollaborationPlatformApp({
     });
     content =
       rootView === "stand-in" && host.renderStandInPage ? (
-        host.renderStandInPage({ projects: domainProjects })
+        host.renderStandInPage({
+          projects: state.navigationProjects,
+          onClose: () =>
+            host.navigate({
+              ...host.location,
+              rootView: "home",
+              workspaceId: null,
+              projectId: null,
+              issueId: null,
+            }),
+        })
       ) : rootView === "agents" ||
         rootView === "teams" ||
         rootView === "devices" ? (

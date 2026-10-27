@@ -6,7 +6,15 @@ import {
   createIssueBoardCardLabels,
   createCollaborationTranslator,
 } from '@wegent/collaboration'
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
+import type { CollaborationIssueBadge } from '@wegent/collaboration'
 import type { CloudLoopItem } from '@/api/deliveries'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
@@ -41,6 +49,7 @@ import {
   type UseBoardRuntimeConversationsOptions,
 } from './useBoardRuntimeConversations'
 import { Archive, CircleCheck } from 'lucide-react'
+import { IssueBadges } from './IssueBadges'
 
 export interface BoardCardDisplaySettings {
   showAssignee: boolean
@@ -60,6 +69,7 @@ function useBoardTranslate() {
 }
 
 interface CloudTodoCardContentProps {
+  statusNames?: Record<string, string>
   item: CloudLoopItem
   goalBinding?: CloudTodoBoardTaskBinding
   display: BoardCardDisplaySettings
@@ -69,6 +79,7 @@ interface CloudTodoCardContentProps {
 }
 
 export function CloudTodoCardContent({
+  statusNames,
   item,
   goalBinding,
   display,
@@ -80,7 +91,10 @@ export function CloudTodoCardContent({
       item={item}
       reference={item.id}
       display={display}
-      labels={createIssueBoardCardLabels(t)}
+      labels={{
+        ...createIssueBoardCardLabels(t),
+        ...(statusNames ? { statuses: statusNames } : {}),
+      }}
       agentNames={agentNames}
       translate={t}
       goal={
@@ -114,8 +128,8 @@ export interface CloudTodoBoardTaskBinding {
 }
 
 interface CloudTodoBoardCardProps {
+  statusNames?: Record<string, string>
   item: CloudLoopItem
-  columnKey?: string
   unread?: boolean
   taskBindings?: CloudTodoBoardTaskBinding[]
   onClick: () => void
@@ -142,6 +156,7 @@ interface CloudTodoBoardCardProps {
   }
   progressDisplay?: BoardCardProgressDisplay
   changeRequestMonitor?: ChangeRequestMonitor | null
+  renderBadges?: (badges: CollaborationIssueBadge[]) => ReactNode
   onContinueChangeRequestRepair?: (
     binding: CloudTodoBoardTaskBinding,
     snapshot: TaskChangeRequestSnapshot
@@ -149,8 +164,8 @@ interface CloudTodoBoardCardProps {
 }
 
 export function CloudTodoBoardCard({
+  statusNames,
   item,
-  columnKey,
   unread,
   taskBindings = [],
   onClick,
@@ -171,6 +186,7 @@ export function CloudTodoBoardCard({
   cardAction,
   progressDisplay = 'compact',
   changeRequestMonitor = null,
+  renderBadges,
   onContinueChangeRequestRepair,
 }: CloudTodoBoardCardProps) {
   const t = useBoardTranslate()
@@ -221,12 +237,14 @@ export function CloudTodoBoardCard({
         : []
   return (
     <IssueBoardCard
-      columnKey={columnKey}
       item={item}
       unread={unread}
       reference={item.id}
       display={display}
-      labels={createIssueBoardCardLabels(t)}
+      labels={{
+        ...createIssueBoardCardLabels(t),
+        ...(statusNames ? { statuses: statusNames } : {}),
+      }}
       agentNames={agentNames}
       translate={t}
       archiveLabel={archiveLabel}
@@ -248,6 +266,19 @@ export function CloudTodoBoardCard({
       dragEnabled={editable && !dragDisabled}
       cardClassName="group/cloud-todo-card"
       onOpen={onClick}
+      summary={
+        item.can_view_detail !== false && item.badges?.length ? (
+          renderBadges ? (
+            renderBadges(item.badges)
+          ) : (
+            <IssueBadges
+              badges={item.badges}
+              compact
+              testId={`cloud-todo-card-badges-${item.id}`}
+            />
+          )
+        ) : null
+      }
       childrenAction={
         cardAction ? (
           <span className="absolute right-2 top-2 z-20">
@@ -262,8 +293,8 @@ export function CloudTodoBoardCard({
                 }}
                 className={
                   cardAction.kind === 'archive'
-                    ? 'flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-red-600 focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover/cloud-todo-card:opacity-100'
-                    : 'flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-text-primary focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover/cloud-todo-card:opacity-100'
+                    ? 'flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-red-600 focus:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover/cloud-todo-card:opacity-100'
+                    : 'flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:bg-muted hover:text-text-primary focus:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover/cloud-todo-card:opacity-100'
                 }
               >
                 {cardAction.kind === 'archive' ? (

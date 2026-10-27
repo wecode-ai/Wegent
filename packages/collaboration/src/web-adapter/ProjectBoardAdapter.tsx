@@ -2,7 +2,7 @@ import {
   projectBoardDnd,
   projectBoardCollisionDetection,
   projectBoardDrop,
-  projectBoardActiveItemId,
+  projectBoardDragItemId,
   useProjectBoardSensors,
 } from "../project-board/projectBoardDnd";
 import { ProjectBoardDragOverlay } from "../project-board/ProjectBoardDragOverlay";
@@ -10,6 +10,7 @@ import { BrowserIssueBoardCard } from "../issue-card/BrowserIssueBoardCard";
 import { useBrowserBoardRuntimeWork } from "./useBrowserBoardRuntimeWork";
 import type { SharedWorkspaceRuntimeApi } from "../ports/SharedWorkspaceApi";
 import type { CollaborationTranslate } from "../i18n";
+import { runnerEnvironmentError } from "../execution-environment/runnerEnvironmentError";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -25,8 +26,17 @@ import {
   createStandardCloudBoardColumns,
   createProjectBoardSortLabels,
   ProjectBoardBody,
+  isExecutionBoardColumn,
   ProjectBoardGroupPicker,
   useStandardCloudBoardController,
+  useSavedBoardViews,
+  savedBoardColumns,
+  BoardViewNavigation,
+  BoardViewNotice,
+  collectProjectTags,
+  boardDropHint,
+  matchesBoardView,
+  type ProjectBoardViews,
   type ProjectBoardColumn,
   type ProjectBoardGroupBy,
   type StandardCloudBoardMutation,
@@ -87,6 +97,7 @@ export type ProjectBoardIssueCardRenderer = (
 ) => ReactNode;
 
 interface ProjectBoardAdapterProps {
+  emptyState?: ReactNode;
   toolbarAction?: ReactNode;
   runtime?: SharedWorkspaceRuntimeApi;
   previewDisabled?: boolean;
@@ -103,8 +114,10 @@ interface ProjectBoardAdapterProps {
   onCreateIssue(): void;
   onArchiveCompleted?(issues: CollaborationIssue[]): void;
   onOpenArchive?(): void;
-  onOpenBoardSettings?(): void;
-  onGroupByChange(groupBy: ProjectBoardGroupBy): Promise<void>;
+  onSaveViews?(
+    config: ProjectBoardViews,
+    settings?: import("../project-board/projectBoardViews").BoardViewSaveSettings,
+  ): Promise<void>;
   onOpen(issue: CollaborationIssue): void;
   onDeleteIssue?(issue: CollaborationIssue): void;
   onMove(
@@ -133,6 +146,7 @@ function issueSearchText(
 }
 
 export function ProjectBoardAdapter({
+  emptyState,
   toolbarAction,
   runtime,
   previewDisabled = false,
@@ -147,8 +161,7 @@ export function ProjectBoardAdapter({
   onOpenArchive,
   onMarkRead,
   onDeleteIssue,
-  onOpenBoardSettings,
-  onGroupByChange,
+  onSaveViews,
   onMove,
   onOpen,
   project,
@@ -156,12 +169,31 @@ export function ProjectBoardAdapter({
   statuses,
   taskBindings,
 }: ProjectBoardAdapterProps) {
+  const savedViews = useSavedBoardViews({
+    projectKey: `${project.project_store}:${project.id}`,
+    config: project.board_views,
+    revision: project.version,
+    translate,
+    save: async (config, settings) => {
+      if (!onSaveViews) throw new Error(translate("saveFailed"));
+      await onSaveViews(config, settings);
+    },
+  });
   const supportsOrder = ["local", "native", "backend"].includes(
     project.task_provider,
   );
+  const canManageViews =
+    Boolean(onSaveViews) &&
+    (project.project_store === "local" ||
+      project.access_role === "Owner" ||
+      project.access_role === "Maintainer");
   const runtimeWork = useBrowserBoardRuntimeWork(
     renderIssueCard ? undefined : runtime,
     taskBindings,
+  );
+  const availableTags = useMemo(
+    () => collectProjectTags(project, issues),
+    [project, issues],
   );
   const createColumns = useCallback(
     (groupBy: ProjectBoardGroupBy): ProjectBoardColumn[] =>
@@ -202,7 +234,7 @@ export function ProjectBoardAdapter({
           },
           unassigned: labels.unassigned,
         },
-        tags: project.tags,
+        tags: availableTags,
       }),
     [
       agents,
@@ -211,7 +243,7 @@ export function ProjectBoardAdapter({
       labels.noTag,
       labels.unassigned,
       members,
-      project.tags,
+      availableTags,
       statuses,
     ],
   );
@@ -224,19 +256,37 @@ export function ProjectBoardAdapter({
     [project],
   );
   const controller = useStandardCloudBoardController({
-    createColumns,
+    tagLimitError: translate(
+      "todo.tag_limit_exceeded",
+      "最多添加 20 个不同标签",
+    ),
+    view: savedViews.view,
+    viewScope: `${project.id}:${savedViews.view?.id ?? "default"}`,
+    defaultColumnSorts: savedViews.view?.sorts,
+    createColumns: (groupBy) =>
+      savedViews.view
+        ? savedBoardColumns(savedViews.view, statuses, createColumns("status"))
+        : createColumns(groupBy),
     defaultGroupBy: project.board_config?.group_by ?? "status",
     extensions,
     focusStorageKey: `collaboration-board-focus:${project.id}`,
     items: issues,
     supportsOrder,
-    onGroupByChange,
-    onMove: (issue, _column, _beforeItemId, mutation) =>
-      onMove(issue, mutation),
-    personalGroupStorageKey: null,
+    onMove: async (issue, _column, _beforeItemId, mutation) => {
+      try {
+        return await onMove(issue, mutation);
+      } catch (error) {
+        const message = runnerEnvironmentError(error, translate);
+        throw message ? new Error(message) : error;
+      }
+    },
+    personalGroupStorageKey:
+      project.current_user_id === undefined
+        ? null
+        : `collaboration-board-group:v1:${project.current_user_id}:${project.project_store}:${project.id}`,
     personalSortStorageKey:
       project.current_user_id != null
-        ? `collaboration-board-column-sort:v2:${project.current_user_id}:${project.id}`
+        ? `collaboration-board-column-sort:v2:${project.current_user_id}:${project.id}${savedViews.view ? `:view:${savedViews.view.id}` : ""}`
         : null,
   });
   const display = project.card_display ?? {
@@ -245,7 +295,12 @@ export function ProjectBoardAdapter({
     show_tags: true,
     show_date: true,
   };
-  const cardLabels = createIssueBoardCardLabels(translate);
+  const cardLabels = {
+    ...createIssueBoardCardLabels(translate),
+    statuses: Object.fromEntries(
+      statuses.map((status) => [status.id, status.name]),
+    ),
+  };
   const sensors = useProjectBoardSensors();
   const activeItem = issues.find(
     (issue) => issue.id === controller.activeDragItemId,
@@ -257,10 +312,55 @@ export function ProjectBoardAdapter({
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
       <ProjectBoardBody<CollaborationIssue>
+        emptyState={
+          issues.length === 0 && !savedViews.view ? emptyState : undefined
+        }
+        customView={Boolean(savedViews.view)}
+        dropFeedback={
+          controller.lastMove
+            ? {
+                ...controller.lastMove,
+                message: translate("todo.board_drop_success", undefined, {
+                  title:
+                    issues.find(
+                      (issue) => issue.id === controller.lastMove?.itemId,
+                    )?.title ?? "",
+                  action:
+                    controller.columns.find(
+                      (column) => column.key === controller.lastMove?.columnKey,
+                    )?.label ?? "",
+                }),
+              }
+            : null
+        }
+        viewNavigation={
+          <BoardViewNavigation
+            key={`${project.project_store}:${project.id}`}
+            controller={savedViews}
+            statuses={statuses}
+            tags={availableTags}
+            canManage={canManageViews}
+            settings={{
+              cardDisplay: project.card_display,
+              boardConfig: project.board_config,
+              canEditStatuses: project.task_provider === "local",
+            }}
+            translate={translate}
+          />
+        }
         toolbarAction={toolbarAction}
+        viewNotice={
+          <BoardViewNotice
+            controller={savedViews}
+            statuses={statuses}
+            translate={translate}
+          />
+        }
         state={controller.state}
         activeDragItemId={controller.activeDragItemId}
-        boardError={boardError ?? runtimeWork?.error ?? null}
+        boardError={
+          boardError ?? controller.moveError ?? runtimeWork?.error ?? null
+        }
         boardItemsLoading={false}
         breadcrumb={controller.breadcrumb}
         columns={controller.columns}
@@ -272,17 +372,21 @@ export function ProjectBoardAdapter({
           collisionDetection: projectBoardCollisionDetection,
           onDragStart: (
             event: Pick<Parameters<typeof projectBoardDrop>[0], "active">,
-          ) =>
+          ) => {
+            controller.setActiveSourceColumnKey(
+              event.active.data.current?.columnKey ?? null,
+            );
             controller.setActiveDragItemId(
-              projectBoardActiveItemId(event.active),
-            ),
+              projectBoardDragItemId(event.active),
+            );
+          },
           onDragCancel: () => controller.setActiveDragItemId(null),
           onDragEnd: (event: Parameters<typeof projectBoardDrop>[0]) => {
             controller.setActiveDragItemId(null);
             if (
               issues.some(
                 (issue) =>
-                  issue.id === projectBoardActiveItemId(event.active) &&
+                  issue.id === projectBoardDragItemId(event.active) &&
                   canEditCollaborationIssue(issue),
               )
             )
@@ -302,11 +406,22 @@ export function ProjectBoardAdapter({
           supportsOrder ? createProjectBoardSortLabels(translate) : undefined
         }
         getColumnDragHint={(column) =>
-          controller.activeDragItemId ? `移到这里：${column.label}` : undefined
+          activeItem
+            ? boardDropHint(
+                activeItem,
+                column,
+                controller.columns.find(
+                  (source) => source.key === controller.activeSourceColumnKey,
+                ),
+                controller.state.groupBy,
+                translate,
+              )
+            : undefined
         }
         getColumnEmptyState={(column) => ({
           hint: labels.noIssues,
-          ...(controller.state.groupBy === "status" && column.status === "inbox"
+          ...((column.type ?? controller.state.groupBy) === "status" &&
+          column.status === "inbox"
             ? {
                 action: {
                   ariaLabel: `在${column.label}中新建 Issue`,
@@ -328,7 +443,9 @@ export function ProjectBoardAdapter({
         isMyTasksBoard={false}
         layerCount={
           issues.filter(
-            (issue) => issue.parent_id === controller.currentParentId,
+            (issue) =>
+              issue.parent_id === controller.currentParentId &&
+              matchesBoardView(issue, savedViews.view),
           ).length
         }
         onBreadcrumbSelect={controller.setCurrentParentId}
@@ -374,36 +491,22 @@ export function ProjectBoardAdapter({
           />
         )}
         renderBoardSettingsAction={
-          onOpenBoardSettings || onOpenArchive
+          onOpenArchive
             ? () => (
-                <>
-                  {onOpenArchive ? (
-                    <button
-                      type="button"
-                      className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
-                      data-testid={collaborationTestIds.issueArchiveOpen}
-                      onClick={onOpenArchive}
-                    >
-                      {translate("todo.archive_box", "已归档")}
-                    </button>
-                  ) : null}
-                  {onOpenBoardSettings ? (
-                    <button
-                      type="button"
-                      className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
-                      data-testid="collaboration-board-settings"
-                      onClick={onOpenBoardSettings}
-                    >
-                      看板设置
-                    </button>
-                  ) : null}
-                </>
+                <button
+                  type="button"
+                  className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                  data-testid={collaborationTestIds.issueArchiveOpen}
+                  onClick={onOpenArchive}
+                >
+                  {translate("todo.archive_box", "已归档")}
+                </button>
               )
             : undefined
         }
         renderColumnHeaderActions={(column, columnItems, state) => {
           if (
-            state.groupBy !== "status" ||
+            (column.type ?? state.groupBy) !== "status" ||
             column.status !== "completed" ||
             !onArchiveCompleted
           ) {
@@ -430,6 +533,9 @@ export function ProjectBoardAdapter({
           ) : null;
         }}
         renderItem={(issue, column) => {
+          const focused =
+            controller.state.focusExecutionColumns &&
+            isExecutionBoardColumn(column, controller.state.groupBy);
           const issueDisplay = {
             showAssignee: display.show_assignee,
             showDate: display.show_date,
@@ -439,7 +545,6 @@ export function ProjectBoardAdapter({
           const cardProps = {
             translate,
             item: issue,
-            columnKey: column.key,
             unread: false,
             reference: `${project.project_key}-${issue.sequence_number}`,
             labels: cardLabels,
@@ -476,7 +581,7 @@ export function ProjectBoardAdapter({
               column,
               defaultCard,
               display: issueDisplay,
-              focused: controller.state.focusExecutionColumns,
+              focused,
               issue,
               onOpen: () => onOpen(issue),
               onDelete: cardProps.onArchive,
@@ -493,7 +598,7 @@ export function ProjectBoardAdapter({
               taskBindings={taskBindings.filter(
                 (binding) => binding.issueId === issue.id,
               )}
-              focused={controller.state.focusExecutionColumns}
+              focused={focused}
               previewDisabled={previewDisabled}
               childrenAction={childrenAction}
             />

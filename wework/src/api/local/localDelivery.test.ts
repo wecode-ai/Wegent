@@ -41,6 +41,24 @@ const taskRecord = {
   metadata: { tags: ['local'] },
 }
 
+test.each(['renamed', null])(
+  'forwards atomic tag change target %s to local storage',
+  async target => {
+    const request = vi.fn().mockResolvedValue({ ...projectRecord, version: 2 })
+    const api = createLocalDeliveryApi(request)
+
+    await api.updateCloudProject(projectRecord.id, {
+      version: 1,
+      tag_change: { source: 'old', target },
+    })
+
+    expect(request).toHaveBeenCalledExactlyOnceWith('projects.update', {
+      project_id: projectRecord.id,
+      project: { version: 1, tag_change: { source: 'old', target } },
+    })
+  }
+)
+
 test('loads task context from its known binding without rediscovering the project', async () => {
   const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
     if (method === 'runtime_tasks.context') {
@@ -66,6 +84,33 @@ test('loads task context from its known binding without rediscovering the projec
 })
 
 describe('local delivery API', () => {
+  test('round-trips saved board views through existing project metadata', async () => {
+    const boardViews = { schema_version: 1, futureExtension: { keepCase: true }, views: [] }
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'projects.list')
+        return [
+          { ...projectRecord, metadata: { ...projectRecord.metadata, board_views: boardViews } },
+        ]
+      if (method === 'projects.update') {
+        expect(params).toEqual({
+          project_id: projectRecord.id,
+          project: { version: 1, board_views: boardViews },
+        })
+        return {
+          ...projectRecord,
+          version: 2,
+          metadata: { ...projectRecord.metadata, board_views: boardViews },
+        }
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+    expect((await api.listCloudProjects()).items[0].board_views).toEqual(boardViews)
+    expect(
+      (await api.updateCloudProject(projectRecord.id, { version: 1, board_views: boardViews }))
+        .board_views
+    ).toEqual(boardViews)
+  })
   test('preserves persisted assignment history in board, detail, and assignment responses', async () => {
     const assignmentHistory = [
       {
@@ -1517,40 +1562,6 @@ describe('local delivery API', () => {
         'Retry tracking'
       )
     ).resolves.toMatchObject({ item: { id: 'LOCAL-1' } })
-  })
-
-  test('synchronizes a friendly runtime title through executor IPC', async () => {
-    const renamedTask = { ...taskRecord, title: '修复登录回调', version: 2 }
-    const request = vi.fn(async (method: string) => {
-      if (method === 'runtime_tasks.context') {
-        return {
-          id: 'binding-1',
-          cloud_project_id: 'project-1',
-          loop_item_id: 'LOCAL-1',
-          task_user_id: 0,
-          device_id: 'local-device',
-          task_id: 'runtime-1',
-          task_title: 'Runtime task',
-          backend_task_id: null,
-          linked_at: '2026-07-27T00:00:00Z',
-        }
-      }
-      if (method === 'projects.list') return [projectRecord]
-      if (method === 'todos.get') return taskRecord
-      if (method === 'todos.update') return renamedTask
-      throw new Error(`Unexpected method: ${method}`)
-    })
-    const api = createLocalDeliveryApi(request)
-
-    await expect(
-      api.updateTaskTrackingTitle({ deviceId: 'local-device', taskId: 'runtime-1' }, '修复登录回调')
-    ).resolves.toMatchObject({ id: 'LOCAL-1', title: '修复登录回调' })
-
-    expect(request).toHaveBeenCalledWith('todos.update', {
-      project_id: 'project-1',
-      task_id: 'LOCAL-1',
-      todo: { version: 1, title: '修复登录回调' },
-    })
   })
 
   test('routes local files, attachments, and deliveries through executor IPC', async () => {

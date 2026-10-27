@@ -81,7 +81,9 @@ export function workspaceHttpRequestBody(value: unknown): unknown {
       // Runtime/provider option names are opaque API values.
       return [
         wireKey,
-        wireKey === "model_options" ? nested : workspaceHttpRequestBody(nested),
+        wireKey === "model_options" || wireKey === "board_views"
+          ? nested
+          : workspaceHttpRequestBody(nested),
       ];
     }),
   );

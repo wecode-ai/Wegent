@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import { toWegentStoreInstalledPlugin } from '@wegent/chat-core/codex-installed-plugins'
 import type { InstalledPlugin, LocalDeviceApp, PluginMarketplaceItem } from '@/types/api'
 import {
   loadPluginInventory,
@@ -375,9 +376,7 @@ describe('shared domain inventory regressions', () => {
     }
     await loadAndSelect({
       deviceId: 'device',
-      readLocalInstalledPlugins: async () => [
-        { ...dingtalk, spec: { ...dingtalk.spec, version: '1.0.0' } },
-      ],
+      readLocalInstalledPlugins: async () => [localDingtalk],
       listCloudInstalledPlugins: async () => [cloud],
       listCodexApps: async () => [],
     })
@@ -405,10 +404,10 @@ describe('shared domain inventory regressions', () => {
 
   test('keeps actual release components and templates when updating component settings', async () => {
     const local: InstalledPlugin = {
-      ...dingtalk,
+      ...localDingtalk,
       spec: {
-        ...dingtalk.spec,
-        version: '1.0.0',
+        ...localDingtalk.spec,
+        components: dingtalk.spec.components,
         interface: { defaultPrompt: ['Installed template'] },
         componentStates: { 'skills:other': false },
       },
@@ -462,6 +461,9 @@ describe('shared domain inventory regressions', () => {
       spec: { ...before.spec, componentStates: { 'skills:other': false, 'skills:dingtalk': true } },
     })
     expect(snapshot.installedPlugins[0]!.spec.releaseId).toBe(1)
+    expect(snapshot.installedPlugins[0]!.spec.components.skills).toEqual(
+      dingtalk.spec.components.skills
+    )
     expect(selectComposerPluginApps(snapshot)[0]!.trialTemplates?.map(item => item.name)).toEqual([
       'Installed template',
     ])
@@ -474,7 +476,7 @@ describe('shared domain inventory regressions', () => {
     }
     const apps = await loadAndSelect({
       deviceId: 'device',
-      readLocalInstalledPlugins: async () => [dingtalk],
+      readLocalInstalledPlugins: async () => [localDingtalk],
       listCloudInstalledPlugins: async () => [pending],
       listCodexApps: async () => [],
     })
@@ -617,7 +619,37 @@ const dingtalk: InstalledPlugin = {
   status: { state: 'enabled' },
 }
 
+const localDingtalk = toWegentStoreInstalledPlugin(
+  {
+    name: 'dingtalk',
+    packageId: '1-wegent-dingtalk-1.0.0',
+    installedPluginId: 62,
+    cloudPluginId: 1,
+    marketplace: 'wegent',
+    version: '1.0.0',
+    enabled: true,
+    displayName: '钉钉',
+    description: 'DingTalk',
+    pluginPath: '/plugins/1-wegent-dingtalk-1.0.0',
+  },
+  '/plugins',
+  key => key
+)
+
 describe('pluginInventory', () => {
+  test('does not expose a pending account installation without a local package', async () => {
+    const apps = await loadAndSelect({
+      deviceId: 'local-device',
+      listCodexApps: async () => [],
+      readLocalInstalledPlugins: async () => [],
+      listCloudInstalledPlugins: async () => [
+        { ...dingtalk, spec: { ...dingtalk.spec, installState: 'not_installed' } },
+      ],
+    })
+    expect(getPluginMarketplaceCache('test')!.installedPlugins).toEqual([])
+    expect(apps).toEqual([])
+  })
+
   test('matches the browser inventory and excludes cloud rows without release membership', async () => {
     const incomplete = { ...dingtalk, spec: { ...dingtalk.spec, releaseId: null } }
     for (const cloud of [[dingtalk], [incomplete], []]) {
@@ -665,8 +697,8 @@ describe('pluginInventory', () => {
       },
     }
     const local: InstalledPlugin = {
-      ...dingtalk,
-      spec: { ...dingtalk.spec, interface: { defaultPrompt: ['installed template'] } },
+      ...localDingtalk,
+      spec: { ...localDingtalk.spec, interface: { defaultPrompt: ['installed template'] } },
     }
     const apps = await loadAndSelect({
       deviceId: 'local-device',

@@ -11,6 +11,7 @@ export * from "./CollaborationSettings";
 export * from "./dto-mappers";
 export * from "./execution-environment/IssueExecutionEnvironmentNotice";
 export * from "./execution-environment/issueEnvironmentReadiness";
+export * from "./execution-environment/runnerEnvironmentError";
 export * from "./files";
 export * from "./http-api";
 export * from "./i18n";
@@ -44,3 +45,5 @@ export {
   mapAutomationExecutionCatalog,
 } from "./runtime-profile/executionCatalog";
 export { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
+
+export { StandInIcon } from "./StandInIcon";

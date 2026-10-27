@@ -12,6 +12,8 @@ mod cargo_cache;
 mod claude_code;
 mod claude_options;
 mod codex;
+#[cfg(test)]
+pub(crate) use codex::LaunchEnvironment as CodexLaunchEnvironment;
 mod codex_log_db;
 mod dify;
 pub(crate) mod environment_setup;
@@ -48,7 +50,7 @@ pub(crate) use codex::{
     bind_codex_thread_model_route, codex_notification_requires_user_input,
     codex_runtime_approval_policy, configured_inference_model_provider, executor_home,
     mcp_server_elicitation_request_user_input_params, replace_config,
-    select_wework_codex_user_instructions, wework_codex_home,
+    select_wework_codex_user_instructions, task_identity_thread_config, wework_codex_home,
     CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
     CODEX_WORKSPACE_PERMISSION_PROFILE,
 };
@@ -56,9 +58,9 @@ pub use codex::{
     run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
     CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerEngine,
     CodexAppServerTurn, CodexAppServerTurnOptions, CodexCancellationState, CodexIdleMutationError,
-    CodexNotificationSender, CodexRequestUserInputReceiver, CodexResponseValueOrigin,
-    CodexThreadStartedCallback, CodexTurnInterrupter, CODEX_APP_SERVER_EXECUTOR_SHUTDOWN,
-    CODEX_APP_SERVER_TURN_CANCELLED,
+    CodexNotification, CodexNotificationSender, CodexRequestUserInputReceiver,
+    CodexResponseValueOrigin, CodexThreadStartedCallback, CodexTurnInterrupter,
+    CODEX_APP_SERVER_EXECUTOR_SHUTDOWN, CODEX_APP_SERVER_TURN_CANCELLED,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
@@ -283,7 +285,16 @@ fn claude_code_process_timeout_seconds() -> u64 {
 fn stream_process_engine_for(agent_kind: &AgentKind, spec: CommandSpec) -> StreamProcessEngine {
     match agent_kind {
         AgentKind::ClaudeCode => {
-            StreamProcessEngine::new(spec, claude_code_process_timeout_seconds())
+            let timeout_seconds = claude_code_process_timeout_seconds();
+            // Let the executor's deadline own termination. Claude's shorter
+            // print-mode ceiling otherwise kills still-running subagents.
+            let spec = spec
+                .env(
+                    "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS",
+                    timeout_seconds.saturating_mul(1000).to_string(),
+                )
+                .env("CLAUDE_CODE_BG_TASKS_REPORT_RUNNING", "1");
+            StreamProcessEngine::new(spec, timeout_seconds)
         }
         agent_kind => unreachable!("unsupported process agent kind: {agent_kind:?}"),
     }
@@ -711,6 +722,42 @@ mod tests {
         let _timeout = EnvGuard::remove("WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS");
 
         assert_eq!(claude_code_process_timeout_seconds(), 86_400);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_background_wait_uses_the_executor_deadline() {
+        let _lock = env_lock();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _ceiling = EnvGuard::set("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", "600000");
+        let _report = EnvGuard::set("CLAUDE_CODE_BG_TASKS_REPORT_RUNNING", "0");
+        for (configured, expected) in [
+            (None, 86_400_000),
+            (Some("1200"), 1_200_000),
+            (Some("42"), 42_000),
+        ] {
+            let _timeout = match configured {
+                Some(value) => EnvGuard::set("WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS", value),
+                None => EnvGuard::remove("WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS"),
+            };
+            let spec = CommandSpec::new("sh")
+                .arg("-c")
+                .arg(r#"printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"$CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:$CLAUDE_CODE_BG_TASKS_REPORT_RUNNING\"}]}}" '{"type":"result","subtype":"success","is_error":false}'"#)
+                .env("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", "600000")
+                .env("CLAUDE_CODE_BG_TASKS_REPORT_RUNNING", "0");
+
+            let outcome = runtime.block_on(
+                stream_process_engine_for(&AgentKind::ClaudeCode, spec)
+                    .run(ExecutionRequest::default()),
+            );
+
+            assert_eq!(
+                outcome,
+                ExecutionOutcome::Completed {
+                    content: format!("{expected}:1")
+                }
+            );
+        }
     }
 
     #[test]

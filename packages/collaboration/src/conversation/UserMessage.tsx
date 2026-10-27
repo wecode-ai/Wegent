@@ -29,7 +29,7 @@ import {
 } from '../issue-detail/attachmentPresentation'
 import {
   splitRuntimeUserMessage,
-  visibleRuntimeUserMessage,
+  projectRuntimeUserText,
 } from '@wegent/chat-core/runtime-user-message'
 import { UserMessageEditForm } from './UserMessageEditForm'
 import { isIMSource } from '@wegent/chat-core/im-source'
@@ -126,9 +126,7 @@ export function UserMessage({
     () => parseCodexLocalFileMentions(message.content),
     [message.content]
   )
-  const displayContent = normalizeCodexUserMessageContent(
-    codexLocalFileMentions?.requestText ?? visibleRuntimeUserMessage(message.content)
-  )
+  const displayContent = getUserMessageTextContent(message.content)
   const imageAttachments = useMemo(
     () => (message.attachments ?? []).filter(isImageAttachment),
     [message.attachments]
@@ -278,6 +276,7 @@ export function UserMessage({
           >
             <div
               data-testid="user-message-content"
+              data-search-region-id={message.runtimeItemId ?? message.id}
               data-message-selectable-text
               className={[
                 'relative overflow-hidden break-words bg-muted px-4 py-1.5',
@@ -322,7 +321,7 @@ export function UserMessage({
                     <span
                       data-testid="message-code-comment-context-badge"
                       tabIndex={0}
-                      className="inline-flex h-6 w-fit items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2 text-xs font-medium leading-none text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                      className="inline-flex h-6 w-fit items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2 text-xs font-medium leading-none text-text-secondary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary keyboard:focus-visible:ring-offset-2"
                     >
                       <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
                       <span>
@@ -382,9 +381,14 @@ export function UserMessage({
 }
 
 export function getUserMessageTextContent(content: string): string {
-  return normalizeCodexUserMessageContent(
-    parseCodexLocalFileMentions(content)?.requestText ?? visibleRuntimeUserMessage(content)
-  )
+  return getUserMessageTextProjection(content).content
+}
+
+export function getUserMessageTextProjection(content: string) {
+  const request = projectRuntimeUserText(content)
+  const mentions = parseCodexLocalFileMentions(content)
+  if (mentions && !mentions.requestText) return { content: '', sourceStart: 0, sourceEnd: 0 }
+  return { ...request, content: normalizeCodexUserMessageContent(request.content) }
 }
 
 function normalizeCodexUserMessageContent(content: string): string {
@@ -571,7 +575,7 @@ function MessageTextAttachment({
       <button
         type="button"
         data-testid="message-text-attachment"
-        className={`${className} cursor-pointer hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2`}
+        className={`${className} cursor-pointer hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary keyboard:focus-visible:ring-offset-2`}
         aria-label={preview}
         title={preview}
         onClick={() => {

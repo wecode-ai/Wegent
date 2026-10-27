@@ -2,13 +2,15 @@ import { createAccountAuthFixture } from '../modules/plugin-account-auth-fixture
 import { verifyPluginAuthCoordination } from '../modules/plugin-auth-coordination.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { verifyDwsCloudAccount } from '../modules/dws-account-auth.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
+import { managedRoot } from '../modules/managed-plugin-root.mjs'
 import {
   createConversationAuthModelFixture,
+  sendOrdinaryChat,
   verifyConversationQrAuthorization,
 } from '../modules/plugin-conversation-auth.mjs'
 import {
@@ -54,25 +56,6 @@ async function waitForValue(read, accept, timeoutMs, message) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(message)
-}
-
-async function managedRoot(home, installedId) {
-  const manifestPath = join(home, 'capabilities/manifest-v2.json')
-  const manifest = await readFile(manifestPath, 'utf8')
-    .then(JSON.parse)
-    .catch(error => {
-      if (error.code === 'ENOENT') return null
-      throw error
-    })
-  const item = Object.values(manifest?.plugins ?? {}).find(
-    item => item.installed_plugin_id === installedId && item.managed && item.enabled
-  )
-  if (!item) return null
-  assert.ok(item.runtime?.codex_link, 'Managed plugin has no Codex runtime mapping')
-  const root = resolve(home, 'capabilities', item.runtime.codex_link)
-  assert.notEqual(root, resolve(home, 'capabilities', item.store_path))
-  assert.ok(!(await lstat(root)).isSymbolicLink(), 'Expected a real runtime copy')
-  return root
 }
 
 export async function createDesktopScenario({
@@ -199,8 +182,10 @@ export async function createDesktopScenario({
       if (authEvents) {
         events = authEvents
       } else if (latestModelInputText(body).includes(ordinaryPrompt)) {
+        const message = `${ordinaryPrompt} #${ordinaryRequests + 1}`
+        assert.ok(latestModelInputText(body).includes(message), 'Unexpected ordinary chat message')
         ordinaryRequests += 1
-        events = [assistantMessage(`${ordinaryPrompt} completed`)]
+        events = [assistantMessage(`${message} completed`)]
       } else if (requestText.includes(prompt) && command) {
         const result = accountCommandResult(body.input, callId)
         if (result?.sessionId) {
@@ -229,6 +214,16 @@ export async function createDesktopScenario({
       return true
     },
     async verify(control) {
+      const preferences = JSON.parse(
+        await control.command('setAppPreferences', 'body', {
+          value: JSON.stringify({ replyPredictionsEnabled: false }),
+        })
+      )
+      assert.equal(
+        preferences.replyPredictionsEnabled,
+        false,
+        'Plugin account auth scenario must not start background reply predictions'
+      )
       const local = await cloud.waitForConnectedAppDevice()
       assert.equal((await api('/plugin-connections/automation')).enabled, true)
       await rm(sourceAuth)
@@ -679,9 +674,11 @@ export async function createDesktopScenario({
                   'gh authorization card remained open after cancellation'
                 )
               }
-              await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: ordinaryPrompt })
-              await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
-              await control.command('waitFor', 'body', { text: `${ordinaryPrompt} completed` })
+              await sendOrdinaryChat({
+                control,
+                ordinaryPrompt,
+                getOrdinaryRequests: () => ordinaryRequests,
+              })
               const recovered = JSON.parse(await control.command('snapshot', 'body'))
               assert.ok(
                 !recovered.testIds.includes('github-cli-auth'),

@@ -126,6 +126,7 @@ export interface CloudLoopItem {
   can_edit?: boolean
   security_level?: 'open' | 'related'
   detail_loaded?: boolean
+  badges?: CollaborationIssue['badges']
   content_revision?: number
   activity_read_sequence?: number
   has_additional_context?: boolean
@@ -316,6 +317,7 @@ export interface ProjectTaskAttachment extends CloudLoopItemAttachment {
 }
 
 export interface CloudProject {
+  board_views?: import('@wegent/collaboration').ProjectBoardViews | null
   id: CloudProjectId
   workspace_id?: string | null
   workspace_access_role?: 'Owner' | 'Maintainer' | 'Developer' | 'Viewer' | null
@@ -715,6 +717,7 @@ export function createDeliveryApi(client: HttpClient) {
     updateCloudProject(
       projectId: CloudProjectIdInput,
       data: {
+        tag_change?: { source: string; target: string | null }
         name?: string
         description?: string
         tags?: string[]
@@ -724,6 +727,7 @@ export function createDeliveryApi(client: HttpClient) {
         default_issue_security?: 'open' | 'related'
         card_display?: CloudProject['card_display']
         board_config?: CloudProject['board_config']
+        board_views?: CloudProject['board_views']
         pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
         collaboration_groups?: CloudProject['collaboration_groups']
@@ -1094,28 +1098,6 @@ export function createDeliveryApi(client: HttpClient) {
         await api.bindTask(item.id, task, taskTitle)
         pendingTrackedItems.delete(trackingKey)
         return { item }
-      })
-    },
-    async updateTaskTrackingTitle(
-      task: RuntimeTaskAddress,
-      title: string
-    ): Promise<CloudLoopItem | null> {
-      return enqueueTaskTrackingMutation(task, async () => {
-        let context: CloudTaskContext
-        try {
-          context = await api.findCloudContextForTask(task)
-        } catch (error) {
-          if (error instanceof ApiError && error.status === 404) return null
-          throw error
-        }
-        if (!context.loop_item_id) return null
-        const item = await api.getLoopItem(context.loop_item_id)
-        return item.title === title
-          ? item
-          : api.updateLoopItem(item.id, {
-              version: item.version,
-              title,
-            })
       })
     },
     unbindCloudContext(task: RuntimeTaskAddress): Promise<void> {

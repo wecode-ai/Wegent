@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
   ManagedExecutorRuntime,
+  executorRequestTimeoutMs,
   managedExecutorLogPath,
   prepareManagedExecutorEnvironment,
   requestExecutor,
@@ -13,6 +14,19 @@ import {
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('managed executor runtime', () => {
+  test('allows Python provisioning before auth operations without extending ordinary requests', () => {
+    for (const method of [
+      'executor.plugin_auth.migrate',
+      'executor.plugin_auth.run',
+      'runtime.connections.cli',
+      'runtime.local_connector_auth.start',
+      'runtime.local_connector_auth.health',
+    ]) {
+      expect(executorRequestTimeoutMs(method)).toBe(18 * 60_000 + 5_000)
+    }
+    expect(executorRequestTimeoutMs('executor.health')).toBe(75_000)
+  })
+
   test('reuses the existing executor home by default', () => {
     const environment = prepareManagedExecutorEnvironment({
       dataDirectory: '/unused-electron-data',
@@ -24,6 +38,23 @@ describe('managed executor runtime', () => {
     expect(environment.WEGENT_EXECUTOR_HOME).toBe(join(homedir(), '.wework'))
     expect(environment.WEGENT_CODEX_HOME).toBe(join(homedir(), '.wework', 'codex'))
     expect(environment.CODEX_HOME).toBe(join(homedir(), '.wework', 'codex'))
+    expect(environment.WEGENT_PLUGIN_RUNTIME_TARGET).toBe('codex')
+  })
+
+  test('limits managed plugins to Codex without changing Claude execution homes', () => {
+    const environment = prepareManagedExecutorEnvironment({
+      dataDirectory: '/unused-electron-data',
+      environment: {
+        VITE_WEWORK_E2E: 'true',
+        WEGENT_PLUGIN_RUNTIME_TARGET: 'claude',
+        WEGENT_CLAUDE_HOME: '/configured/claude',
+        CLAUDE_CONFIG_DIR: '/native/claude',
+      },
+    })
+
+    expect(environment.WEGENT_PLUGIN_RUNTIME_TARGET).toBe('codex')
+    expect(environment.WEGENT_CLAUDE_HOME).toBe('/configured/claude')
+    expect(environment.CLAUDE_CONFIG_DIR).toBe('/native/claude')
   })
 
   test('preserves the executor log path contract for supervisor-owned logs', () => {

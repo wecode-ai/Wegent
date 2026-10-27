@@ -86,6 +86,7 @@ import { ChatMessage, type ExecutionTaskSummary } from './TaskActivityMessage'
 import { resolveMessageRunStatus } from './taskActivityMessageUtils'
 import { statusHistoryLabels } from './statusHistoryLabels'
 import { memberNameById } from './todoShared'
+import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import type { CloudProjectMember } from '@/api/deliveries'
 
 interface TaskActivityViewProps {
@@ -250,7 +251,7 @@ export function TaskActivityView({
   // Local project spaces keep their board, comments and runs in the local
   // executor; every delivery/approval call must route to the project's space
   // API instead of always hitting the cloud backend.
-  const projectLocation = (project as { location?: 'local' | 'cloud' }).location
+  const projectLocation = project.project_store === 'local' ? 'local' : 'cloud'
   const projectDeliveryApi =
     projectLocation === 'local'
       ? (services.projectSpaceApis?.local ?? services.deliveryApi)
@@ -392,6 +393,7 @@ export function TaskActivityView({
       handleFileSelect: attachmentSelection.handleFileSelect,
       addExistingAttachment: attachmentSelection.addExistingAttachment,
       removeAttachment: attachmentSelection.removeAttachment,
+      dismissAttachmentError: attachmentSelection.dismissAttachmentError,
       resetAttachments: attachmentSelection.resetAttachments,
       listLocalSkills: async () => [],
       listLocalApps: async () => [],
@@ -427,7 +429,7 @@ export function TaskActivityView({
   // that work item's task composer.
   // Local spaces expose both the signed-in identity and the device identity.
   const humanUserIds =
-    projectLocation === 'local' || project.project_store === 'local'
+    projectLocation === 'local'
       ? [currentUserId, chatCurrentUserId].filter((id): id is string | number => id != null)
       : (chatCurrentUserId ?? currentUserId)
   const currentHumanDispatch = humanDispatchAssignment(threadMessages, humanUserIds)
@@ -691,7 +693,7 @@ export function TaskActivityView({
   }
   const replyQueue = useTaskReplyQueue({
     store: taskReplyQueueStore,
-    scope: `task-activity:${projectLocation ?? 'cloud'}:${project.id}:${task.id}`,
+    scope: `task-activity:${projectLocation}:${project.id}:${task.id}`,
     cards: commentCards,
     enabled: Boolean(client) && !sending,
     busy: cardSessionActive,
@@ -1066,6 +1068,7 @@ export function TaskActivityView({
 
   return (
     <>
+      <IssueChangeRequestBadges api={services.deviceApi} badges={task.badges ?? []} />
       <IssueActivityFeed
         mode={linear ? 'linear' : rail ? 'rail' : 'document'}
         testId={`cloud-task-activity-${task.id}`}
@@ -1432,7 +1435,7 @@ export function TaskActivityView({
             executionDetail.messageId,
           ])}
           address={
-            projectLocation === 'local' || project.project_store === 'local'
+            projectLocation === 'local'
               ? executionDetail.address
               : {
                   ...executionDetail.address,

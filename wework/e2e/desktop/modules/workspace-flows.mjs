@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
+import {
+  assertFullscreenIssueComposerColumn,
+  assertFullscreenIssueComposerColumnAtWindowSize,
+} from './issue-composer-layout.mjs'
 import { verifyWorkspaceTabReturn } from './workspace-tab-return.mjs'
 import { verifyNewTaskBoardAssociation } from './new-task-board-association.mjs'
 
@@ -109,6 +113,7 @@ export async function expandCollaborationWorkspace(
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
   await control.command('waitFor', toggleSelector, { visible: true, timeoutMs })
+  const expandedSelector = `${toggleSelector}[aria-expanded="true"]`
   const expanded = await control.command('getAttribute', toggleSelector, {
     value: 'aria-expanded',
   })
@@ -116,8 +121,9 @@ export async function expandCollaborationWorkspace(
     expanded === 'true' || expanded === 'false',
     'A workspace toggle must expose its expanded state'
   )
-  if (expanded === 'false') await control.command('click', toggleSelector)
-  await control.command('waitFor', `${toggleSelector}[aria-expanded="true"]`, {
+  if (expanded === 'true') return
+  await control.command('click', toggleSelector)
+  await control.command('waitFor', expandedSelector, {
     visible: true,
     timeoutMs,
   })
@@ -1004,11 +1010,43 @@ async function verifyWorkspaceIssueCreation(control) {
   const createIssuePanel = `${createIssueDialog} [data-testid="cloud-todo-create-panel"]`
   const createIssueTitle = `${createIssueDialog} [data-testid="cloud-todo-title"]`
   const createIssueDescription = `${createIssueDialog} [data-testid="cloud-todo-detail-description"]`
-  await control.command('click', createIssueSelector)
+  const createIssueFullscreen = `${createIssueDialog} [data-testid="cloud-todo-create-fullscreen"]`
+  const createIssueContent = `${createIssueDialog} [data-testid="cloud-todo-create-content"]`
+  const createIssueFooter = `${createIssueDialog} [data-testid="cloud-todo-create-footer"]`
+  await control.command('clickWhenEnabled', createIssueSelector)
   await control.command('waitFor', createIssuePanel, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', createIssueFullscreen)
+  await control.command('waitFor', `${createIssuePanel}.h-full`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', createIssueContent, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await assertFullscreenIssueComposerColumn(control, {
+    contentSelector: createIssueContent,
+    footerSelector: createIssueFooter,
+    panelSelector: createIssuePanel,
+    label: 'Workspace fullscreen Issue composer',
+  })
+  await assertFullscreenIssueComposerColumnAtWindowSize(control, {
+    contentSelector: createIssueContent,
+    footerSelector: createIssueFooter,
+    panelSelector: createIssuePanel,
+    windowSize: { width: 640, height: 800 },
+    maxContentWidth: 700,
+    label: 'Narrow workspace fullscreen Issue composer',
+  })
+  await captureVerificationScreenshot(
+    control,
+    'workspace-issue-01-fullscreen.png',
+    createIssuePanel
+  )
+  await control.command('click', createIssueFullscreen)
   await control.command('fill', createIssueTitle, {
     value: issueTitle,
   })
@@ -1528,21 +1566,35 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
 }
 
 async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
+  const issuePanel =
+    '[data-testid="right-workspace-panel-shell"][aria-hidden="false"] [data-testid="work-item-context-panel"]'
+  const comment = '从任务页 Issue 详情发送的动态在协作页保持一致'
   await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'workspace-02-task-associated.png')
   await control.command('click', '[data-testid="work-item-open-details"]')
+  await control.command('waitFor', issuePanel, {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const activityComposer = `${issuePanel} [data-testid="cloud-task-activity-composer"]`
+  await control.command('waitFor', activityComposer, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', activityComposer, { value: comment })
   await control.command(
-    'waitFor',
-    '[data-testid="right-workspace-panel-shell"][aria-hidden="false"] [data-testid="work-item-context-panel"]',
-    {
-      text: 'WEWORK_DESKTOP_E2E_TASK',
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+    'clickWhenEnabled',
+    `${issuePanel} [data-testid="task-comment-form"] [data-testid="send-message-button"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
+  await control.command('waitFor', `${issuePanel} [data-testid="cloud-task-activity-list"]`, {
+    text: comment,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(control, 'workspace-04-details-and-executions.png')
   await control.command('click', '[data-testid="work-item-open-board"]')
   const activeBoardContentSelector = await requireActiveWorkItemsTab(
@@ -1580,6 +1632,11 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="cloud-task-activity-list"]`,
+    { text: comment, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
   const activeTaskConversationSelector = `${activeBoardContentSelector} [data-testid^="cloud-todo-open-task-conversation-"]`
   await control.command('waitFor', activeTaskConversationSelector, {
     visible: true,

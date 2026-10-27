@@ -47,6 +47,81 @@ fn client_origin_matches_the_source_pattern() {
     assert!(parse_client_origin(Some("app")).is_err());
 }
 
+/// The representative recorded case (`api-projects/74a644ce`, user 3671,
+/// `include_tasks=false`) issues exactly this statement: the caller's owned or
+/// approved-shared active project rows of the requested origin, ordered by
+/// `sort_order`.
+#[tokio::test]
+async fn query_projects_renders_the_recorded_statement() {
+    use crate::sql_test_support::KindQueryCapture;
+
+    let mysql = KindQueryCapture::default();
+    let rows = query_projects(&mysql, 3671, "frontend").await.unwrap();
+    assert!(rows.is_empty());
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 1);
+    // The owner id binds as an integer, the shared-reader entity id as text,
+    // and the origin as text.
+    assert_eq!(queries[0].args, 3);
+    assert_eq!(queries[0].first_integer, Some(3671));
+    let recorded = "SELECT projects.id AS projects_id, projects.user_id AS projects_user_id, \
+        projects.name AS projects_name, projects.description AS projects_description, \
+        projects.color AS projects_color, projects.client_origin AS projects_client_origin, \
+        projects.config AS projects_config, projects.sort_order AS projects_sort_order, \
+        projects.is_expanded AS projects_is_expanded, projects.is_active AS projects_is_active, \
+        projects.created_at AS projects_created_at, projects.updated_at AS projects_updated_at \
+        FROM projects WHERE (projects.user_id = ? OR (EXISTS (SELECT * FROM resource_members \
+        WHERE resource_members.resource_type = 'Project' \
+        AND resource_members.resource_id = projects.id \
+        AND resource_members.entity_type = 'user' AND resource_members.entity_id = ? \
+        AND resource_members.status = 'approved'))) AND projects.is_active = true \
+        AND projects.client_origin = ? ORDER BY projects.sort_order ASC";
+    assert_eq!(
+        queries[0].sql,
+        recorded.split_whitespace().collect::<Vec<_>>().join(" ")
+    );
+}
+
+/// `include_tasks=false` counts the caller's projects in one grouped query
+/// (`task_store.count_active_tasks_by_project`), and an empty project list
+/// issues no count statement (the source's `if not project_owners` guard).
+#[tokio::test]
+async fn count_active_tasks_by_project_renders_the_grouped_count() {
+    use crate::sql_test_support::KindQueryCapture;
+    use crate::task_store::count_active_tasks_by_project_read;
+
+    let mysql = KindQueryCapture::default();
+    let counts =
+        count_active_tasks_by_project_read(&mysql, "tasks", &[(101, 3671)], Some("frontend"))
+            .await
+            .unwrap();
+    assert!(counts.is_empty());
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 1);
+    assert_eq!(queries[0].args, 3);
+    let recorded = "SELECT tasks.project_id AS tasks_project_id, \
+        count(tasks.id) AS count_1 FROM tasks \
+        WHERE tasks.kind = 'Task' AND tasks.is_active = 1 \
+        AND coalesce(CASE JSON_EXTRACT(JSON_EXTRACT(tasks.json, '$.\"status\"'), \
+        '$.\"status\"') WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(\
+        JSON_EXTRACT(tasks.json, '$.\"status\"'), '$.\"status\"')) END, '') != 'DELETE' \
+        AND tasks.client_origin = ? \
+        AND (tasks.project_id, tasks.user_id) IN ((?, ?)) GROUP BY tasks.project_id";
+    assert_eq!(
+        queries[0].sql,
+        recorded.split_whitespace().collect::<Vec<_>>().join(" ")
+    );
+
+    let empty = KindQueryCapture::default();
+    assert!(
+        count_active_tasks_by_project_read(&empty, "tasks", &[], Some("frontend"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(empty.queries().is_empty());
+}
+
 /// The route's declared response type must be the typed model, which the API
 /// adapter converts through its JSON kind. The source declares
 /// `response_model=ProjectListResponse`, so FastAPI renders the body with the
@@ -196,6 +271,7 @@ fn stored_project_config_decodes_and_serializes() {
     .unwrap();
     let json = serde_json::to_string(&config).unwrap();
     assert!(json.contains("\"mode\":\"workspace\""));
+    assert!(json.contains("\"taskSource\":null"));
     assert!(json.contains("\"device_id\":\"d1\""));
     assert!(json.contains("\"execution\""));
     assert!(json.contains("\"targetType\":\"local\""));
@@ -212,11 +288,33 @@ fn stored_project_config_rejects_unknown_fields() {
     assert!(result.is_err());
 }
 
+/// `ProjectConfig.taskSource` is a declared source field: an automatically
+/// created task-group project stores it, so the response must round-trip it
+/// instead of rejecting the stored config.
+#[test]
+fn stored_project_config_keeps_the_task_source() {
+    let config: StoredProjectConfig = serde_json::from_str(r#"{"taskSource":"api"}"#).unwrap();
+    assert!(matches!(config.task_source, Some(ProjectTaskSource::Api)));
+    let json = serde_json::to_string(&config).unwrap();
+    assert!(json.contains("\"taskSource\":\"api\""));
+    assert!(json.contains("\"mode\":null"));
+}
+
+#[test]
+fn stored_project_config_preserves_task_source() {
+    let config: StoredProjectConfig = serde_json::from_str(r#"{"taskSource":"dingtalk"}"#).unwrap();
+    let json = serde_json::to_value(config).unwrap();
+    assert_eq!(json["taskSource"], "dingtalk");
+    let invalid: Result<StoredProjectConfig, _> = serde_json::from_str(r#"{"taskSource":"other"}"#);
+    assert!(invalid.is_err());
+}
+
 #[test]
 fn stored_project_config_empty_object_serializes_all_nulls() {
     let config: StoredProjectConfig = serde_json::from_str("{}").unwrap();
     let json = serde_json::to_string(&config).unwrap();
     assert!(json.contains("\"mode\":null"));
+    assert!(json.contains("\"taskSource\":null"));
     assert!(json.contains("\"device_id\":null"));
     assert!(json.contains("\"execution\":null"));
     assert!(json.contains("\"team\":null"));

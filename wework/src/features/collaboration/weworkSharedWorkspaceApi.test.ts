@@ -199,7 +199,6 @@ function createMockDeliveryApi() {
     unbindTask: vi.fn().mockResolvedValue(undefined),
     unbindCloudContext: vi.fn().mockResolvedValue(undefined),
     trackProjectTask: vi.fn().mockResolvedValue({ item: issue }),
-    updateTaskTrackingTitle: vi.fn().mockResolvedValue(issue),
     getWorkflowPlan: vi.fn().mockResolvedValue(workflowPlan),
     approveWorkflowPlan: vi.fn().mockResolvedValue(workflowPlan),
     approveWorkflowReview: vi.fn().mockResolvedValue(workflowPlan),
@@ -239,6 +238,24 @@ function createMockDeliveryApi() {
 }
 
 describe('createWeworkDeliverySharedWorkspaceApi', () => {
+  it.each(['renamed', null])(
+    'maps atomic tag change target %s to the delivery API',
+    async target => {
+      const deliveryApi = createMockDeliveryApi()
+      const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+
+      await api.projects.update('project-1', {
+        version: 2,
+        tagChange: { source: 'old', target },
+      })
+
+      expect(deliveryApi.updateCloudProject).toHaveBeenCalledExactlyOnceWith('project-1', {
+        version: 2,
+        tag_change: { source: 'old', target },
+      })
+    }
+  )
+
   it('preserves current project authority and member override provenance', async () => {
     const deliveryApi = createMockDeliveryApi()
     const authoritative: CloudProject = {
@@ -1262,7 +1279,6 @@ describe('createWeworkWorkspaceRuntimePort', () => {
     await expect(port.trackProjectTask(project.id, task, 'Task', 'Description')).resolves.toEqual({
       issue,
     })
-    await expect(port.updateTrackedTaskTitle(task, 'Renamed')).resolves.toEqual(issue)
 
     expect(deliveryApi.bindTask).toHaveBeenCalledWith(
       issue.id,

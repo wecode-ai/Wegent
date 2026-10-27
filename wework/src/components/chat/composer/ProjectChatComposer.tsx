@@ -40,6 +40,7 @@ import { desktopComposerTransferServices } from './desktopComposerServices'
 import { useComposerModelSelector } from './useComposerModelSelector'
 
 interface ProjectChatComposerProps {
+  composerScopeKey?: string
   presentation?: 'chat' | 'document' | 'configuration'
   value: string
   onChange: (value: string) => void
@@ -69,6 +70,7 @@ interface ProjectChatComposerProps {
   codeComments?: CodeCommentContext[]
   uploadingFiles: Map<string, { file: File; progress: number }>
   attachmentErrors: Map<string, string>
+  onDismissAttachmentError?: (filename: string) => void
   contextUsage?: RuntimeContextUsage
   onSelectModel: (model: UnifiedModel | null) => boolean | void
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
@@ -104,6 +106,7 @@ interface ProjectChatComposerProps {
   projectPhrases?: QuickPhrase[]
   showProjectWorkBar?: boolean
   projectWorkBar?: ReactNode
+  showModelSelector?: boolean
   showExecutionTools?: boolean
   isStreaming?: boolean
   onPause?: () => void
@@ -126,6 +129,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
   function ProjectChatComposer(
     {
       value,
+      composerScopeKey,
       presentation,
       onChange,
       onBlur,
@@ -154,6 +158,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       codeComments = [],
       uploadingFiles,
       attachmentErrors,
+      onDismissAttachmentError,
       contextUsage,
       onSelectModel,
       onSelectModelAndOptions,
@@ -189,6 +194,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       projectPhrases = [],
       showProjectWorkBar = true,
       showExecutionTools = true,
+      showModelSelector,
       isStreaming = false,
       onPause,
       showWorkspaceMenu,
@@ -225,6 +231,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
         },
         focus: () => composerRef.current?.focus(),
         getValue: () => composerRef.current?.getValue() ?? value,
+        captureInsertion: () => composerRef.current?.captureInsertion?.() ?? null,
         insertReference: reference => composerRef.current?.insertReference(reference),
         setValue: (nextValue, selectionOffset) =>
           composerRef.current?.setValue(nextValue, selectionOffset),
@@ -338,6 +345,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               attachments={attachments}
               uploadingFiles={uploadingFiles}
               errors={attachmentErrors}
+              onDismissAttachmentError={onDismissAttachmentError}
               codeComments={codeComments}
               onRemoveAttachment={onRemoveAttachment}
               onShowTextAttachment={onShowTextAttachment}
@@ -382,6 +390,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           )}
           renderToolbar={toolbarProps => (
             <ComposerToolbar
+              composerScopeKey={composerScopeKey}
+              captureInsertion={() => composerRef.current?.captureInsertion?.() ?? null}
               onInsertPluginReference={reference => {
                 composerRef.current?.insertReference(reference)
                 composerRef.current?.focus()
@@ -395,6 +405,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               disabled={disabled}
               pluginPickerIconOnly={pluginPickerIconOnly}
               showExecutionTools={showExecutionTools}
+              showModelSelector={showModelSelector}
               models={models}
               selectedModel={selectedModel}
               activeModel={activeModel}

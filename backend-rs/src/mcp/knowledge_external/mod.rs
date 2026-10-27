@@ -31,7 +31,9 @@
 //! 6. A `200` binary response with the stored media type, the RFC 5987
 //!    `Content-Disposition`, and `X-Content-Type-Options: nosniff`.
 
+pub mod auth;
 mod rate_limit;
+mod sse;
 mod token;
 
 use std::sync::Arc;
@@ -447,7 +449,7 @@ fn parse_document_id(raw: &str) -> Option<i64> {
 /// the rightmost `x-forwarded-for` entry after the trusted proxy hops
 /// (`--forwarded-allow-ips`, `127.0.0.1` by default) are stripped from the
 /// right.
-fn client_ip(x_forwarded_for: Option<&str>) -> String {
+pub(super) fn client_ip(x_forwarded_for: Option<&str>) -> String {
     let Some(value) = x_forwarded_for else {
         return "unknown".to_string();
     };
@@ -547,12 +549,9 @@ fn json_error(status: StatusCode, error: &str, code: &str) -> FastApiError {
 mod tests {
     use super::*;
 
-    /// The cutover is real only when the route table selects the pattern the
-    /// handler registers. `config/routes.toml` lists
-    /// `/api/mcp/knowledge-external/documents/:document_id/file` (inherited by
-    /// `backend-rs-intra` through `routes-public.toml`).
+    /// The formal download stays Python-owned with its Rust handler retained.
     #[test]
-    fn route_table_selects_the_registered_document_file_handler() {
+    fn formal_download_keeps_python_ownership_and_rust_registration() {
         const PATH: &str = "/api/mcp/knowledge-external/documents/:document_id/file";
         // `method_bit`: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT.
         const GET: u16 = 1 << 1;
@@ -560,7 +559,7 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
         let config = crate::hybrid::load_routes_config(&path).expect("routes file loads");
         let table = crate::RouteTable::compile(config).expect("routes compile");
-        assert!(table.matches(
+        assert!(!table.matches(
             &http::Method::GET,
             "/api/mcp/knowledge-external/documents/30830/file"
         ));

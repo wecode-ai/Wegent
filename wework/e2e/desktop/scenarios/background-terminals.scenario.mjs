@@ -1,3 +1,4 @@
+import { readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -65,22 +66,34 @@ async function changeTheme(control, mode) {
   await control.command('click', '[data-testid="settings-back-button"]')
 }
 
-async function verifyTerminalHistory(control, timeoutMs) {
+export async function verifyTerminalHistory(control, timeoutMs) {
   const panel = '[data-testid="background-terminal-output-panel"]'
   const tree = `${panel} .xterm-accessibility-tree`
   const textarea = `${panel} .xterm-helper-textarea`
   await control.command('waitFor', tree, { text: MARKERS[0] })
-  const deadline = Date.now() + timeoutMs
+  const firstRow = `${tree} > [role="listitem"]:first-child[aria-posinset]`
+  // A full viewport is required: at the live bottom, new output scrolls it again.
+  await control.command('waitFor', `${firstRow}:not([aria-posinset="1"])`, { timeoutMs })
+  let position
   let pages = 0
-  while (
-    !(await control.command('getText', `${tree} > div`))
-      .split('\n')
-      .includes(`${MARKERS[0]}_TICK_1`) &&
-    Date.now() < deadline
-  ) {
-    await control.command('nativePress', textarea, { key: 'Shift+PageUp' })
-    pages += 1
-  }
+  do {
+    const observation = JSON.parse(
+      await control.command('nativePress', textarea, {
+        key: 'Shift+PageUp',
+        target: `${panel} [data-testid="background-terminal-xterm"]`,
+      })
+    )
+    position = Number(observation.viewportBefore)
+    assert.ok(Number.isSafeInteger(position) && position > 0, 'Missing native page-up baseline')
+    const next = Number(observation.viewportAfter)
+    assert.ok(
+      Number.isSafeInteger(next) && next > 0 && (position === 1 ? next === 1 : next < position),
+      `Native page-up did not move backwards: ${position} -> ${next}`
+    )
+    await control.command('waitFor', `${firstRow}[aria-posinset="${next}"]`, { timeoutMs })
+    if (position > 1) pages += 1
+    position = next
+  } while (position > 1)
   await control.command('waitFor', tree, { text: `${MARKERS[0]}_TICK_12` })
   const lines = (await control.command('getText', `${tree} > div`)).split('\n')
   for (let tick = 1; tick <= 12; tick += 1)
@@ -102,6 +115,7 @@ export function createDesktopScenario({
   let launched = false
   const toolResults = []
   return {
+    appEnvironment: { WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir },
     async handleHttp(request, response, url) {
       if (
         !active ||
@@ -109,9 +123,7 @@ export function createDesktopScenario({
         !['/responses', '/v1/responses'].includes(url.pathname)
       )
         return false
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      const body = await readRequestBody(request)
       toolResults.push(
         ...(Array.isArray(body.input) ? body.input : []).filter(
           item => item.type === 'function_call_output'
@@ -237,15 +249,7 @@ export function createDesktopScenario({
 
       const readyCount = control.readyCount
       await control.command('reloadMainWindow', 'body')
-      await Promise.race([
-        control.awaitReadyAfter(readyCount),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error('Background terminal reload did not reconnect')),
-            uiTimeoutMs
-          )
-        ),
-      ])
+      await control.awaitReadyAfter(readyCount)
       await showSummary(control)
       assert.equal(
         Number(

@@ -44,6 +44,23 @@ impl Drop for AdapterChild {
     }
 }
 
+pub(super) fn adapter_uses_python(adapter: &NativeAdapter) -> bool {
+    adapter
+        .script
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("py"))
+}
+
+pub(super) async fn ensure_adapter_python(adapter: &NativeAdapter) -> Result<(), AuthError> {
+    if adapter_uses_python(adapter) {
+        crate::python_runtime::ensure_managed_python()
+            .await
+            .map_err(|_| AuthError("python_runtime_unavailable"))?;
+    }
+    Ok(())
+}
+
 pub(super) async fn invoke(
     adapter: &NativeAdapter,
     interpreter: &Path,
@@ -52,6 +69,7 @@ pub(super) async fn invoke(
     working_directory: Option<&Path>,
     deadline: Duration,
 ) -> Result<AdapterResult, AuthError> {
+    let requires_python = adapter_uses_python(adapter);
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
         .map_err(|_| AuthError("plugin_auth_transport_unavailable"))?;
@@ -80,6 +98,9 @@ pub(super) async fn invoke(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    if requires_python {
+        crate::python_runtime::isolate_python_environment(&mut command);
+    }
     if let Some(configuration) = local_configuration {
         command.env("WEGENT_PLUGIN_AUTH_LOCAL_CONFIGURATION", configuration);
     }

@@ -57,6 +57,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           filter: blob:none
 
@@ -133,7 +134,7 @@ jobs:
         if: steps.classify.outputs.wework_desktop_e2e == 'true'
         id: runtime
         env:
-          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'shared/assets/**') }}
+          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'shared/assets/**') }}
           BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**') }}
         run: |
           runtime_output="$(mktemp)"
@@ -188,6 +189,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           filter: blob:none
 
       - name: Set up Node workspace
@@ -238,6 +240,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           filter: blob:none
           persist-credentials: false
 
@@ -331,7 +334,10 @@ jobs:
     timeout-minutes: 60
     env:
       HOME: /root
+      WEWORK_E2E_MYSQLD_BIN: ${{ github.workspace }}/.github/scripts/run-ci-mysqld.sh
     container:
+      # Codex creates its own user/mount namespaces inside this disposable runner.
+      options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
@@ -345,8 +351,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           filter: blob:none
           persist-credentials: false
+
+      - name: Verify native sandbox namespaces
+        run: bash .github/scripts/verify-native-sandbox-namespaces.sh
 
       - name: Restore local harness CLIs
         if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime') || contains(matrix.segments, 'collaboration-agent-automation-chain')
@@ -365,7 +375,7 @@ jobs:
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Wework desktop Core E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts
@@ -394,6 +404,7 @@ jobs:
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
+          RUNNER_PROCESS_DIAGNOSTICS: ${{ contains(matrix.segments, 'background-terminals') && '1' || '0' }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
@@ -463,6 +474,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           filter: blob:none
 
       - name: Set up Node workspace
@@ -620,6 +632,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           filter: blob:none
           persist-credentials: false
 
@@ -648,13 +661,13 @@ jobs:
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Windows Wework desktop Core E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-windows-core-e2e-build
           path: wework/electron/release/WeWork-win32-x64
 
       - name: Download Windows Redis E2E tools
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-windows-redis-e2e-tools
           path: wework/test-results/windows-e2e-tools/redis
@@ -772,6 +785,8 @@ jobs:
 
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e
+        # Finish before the job deadline so failure logs and artifacts can upload.
+        timeout-minutes: 40
         continue-on-error: true
         shell: pwsh
         env:
@@ -794,6 +809,13 @@ jobs:
             (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json")
           )) {
             if (-not (Test-Path $path -PathType Leaf)) {
+              Get-ChildItem -Path (Split-Path $env:WEWORK_E2E_APP_BIN) -Force -ErrorAction Continue |
+                Select-Object Name, Length, Attributes | Format-Table | Out-String | Write-Host
+              if (Get-Command Get-MpThreatDetection -ErrorAction SilentlyContinue) {
+                Get-MpThreatDetection -ErrorAction Continue |
+                  Select-Object InitialDetectionTime, ActionSuccess, Resources |
+                  ConvertTo-Json -Depth 3 | Write-Host
+              }
               throw "Missing Windows Wework desktop E2E resource: $path"
             }
           }
@@ -859,7 +881,10 @@ jobs:
     timeout-minutes: 60
     env:
       HOME: /root
+      WEWORK_E2E_MYSQLD_BIN: ${{ github.workspace }}/.github/scripts/run-ci-mysqld.sh
     container:
+      # Codex creates its own user/mount namespaces inside this disposable runner.
+      options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
@@ -873,11 +898,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           filter: blob:none
           persist-credentials: false
 
+      - name: Verify native sandbox namespaces
+        run: bash .github/scripts/verify-native-sandbox-namespaces.sh
+
       - name: Download shared Wework desktop E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts
@@ -891,6 +920,12 @@ jobs:
           python-version: "3.12"
           setup-python: "false"
           setup-uv: "false"
+
+      - name: Set up real object storage for plugin sync recovery E2E
+        if: contains(matrix.segments, 'plugin-write-coordination')
+        uses: ./.github/actions/setup-minio-e2e
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Prepare real GitHub CLI for account authentication E2E
         if: contains(matrix.segments, 'plugin-account-auth')
@@ -996,7 +1031,10 @@ jobs:
     timeout-minutes: 25
     env:
       HOME: /root
+      WEWORK_E2E_MYSQLD_BIN: ${{ github.workspace }}/.github/scripts/run-ci-mysqld.sh
     container:
+      # Codex creates its own user/mount namespaces inside this disposable runner.
+      options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
@@ -1009,10 +1047,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           filter: blob:none
+          persist-credentials: false
+
+      - name: Verify native sandbox namespaces
+        run: bash .github/scripts/verify-native-sandbox-namespaces.sh
 
       - name: Download shared Wework desktop E2E build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: wework-desktop-core-e2e-build
           path: .ci-artifacts
@@ -1081,7 +1124,7 @@ jobs:
       - wework-desktop-windows-core-e2e
       - wework-desktop-e2e
       - wework-desktop-memory-e2e
-    if: always()
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
 
     steps:
@@ -1183,6 +1226,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           filter: blob:none
 
       - name: Set up ORAS
@@ -1198,7 +1242,7 @@ jobs:
       - name: Resolve shared macOS Wework E2E build
         id: macos-build
         env:
-          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs') }}
+          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs', 'executor/vendor/**') }}
           BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
         run: |
           mkdir -p .ci-artifacts
@@ -1328,7 +1372,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-executor
-          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-executor-runtime-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-executor-runtime-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs', 'executor/vendor/**') }}
 
       - name: Restore macOS arm64 Rust backend runtime
         if: steps.macos-build.outputs.cache-hit != 'true'
@@ -1340,7 +1384,7 @@ jobs:
       - name: Restore macOS arm64 runtimes from OCI
         if: steps.macos-build.outputs.cache-hit != 'true'
         env:
-          EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs') }}
+          EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs', 'executor/vendor/**') }}
           EXECUTOR_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-head-${{ github.event.pull_request.head.sha || github.sha }}
           BACKEND_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-v1-${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
           BACKEND_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-head-${{ github.event.pull_request.head.sha || github.sha }}
@@ -1428,7 +1472,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Run Wework desktop memory E2E
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all')
+        if: github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all'))
         env:
           CI: true
         run: |

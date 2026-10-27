@@ -63,6 +63,9 @@ pub struct TaskCrdInput<'a> {
     /// `params.task_type`; defaults to `code` for a git workspace else `chat`.
     pub task_type: Option<&'a str>,
     pub source: &'a str,
+    /// `params.project_id`: the Task's project row. The source writes the
+    /// `projectId` label between `source` and `is_api_call`.
+    pub project_id: i64,
     pub api_key_name: Option<&'a str>,
     pub model_id: Option<&'a str>,
     pub force_override_bot_model: bool,
@@ -125,6 +128,9 @@ pub fn build_task_crd(input: &TaskCrdInput<'_>) -> Value {
         json!(input.auto_delete_executor.unwrap_or("false")),
     );
     labels.insert("source".to_string(), json!(input.source));
+    if input.project_id != 0 {
+        labels.insert("projectId".to_string(), json!(input.project_id.to_string()));
+    }
     if input.is_api_call {
         labels.insert("is_api_call".to_string(), json!("true"));
     }
@@ -201,6 +207,7 @@ mod tests {
             title: None,
             task_type: Some("chat"),
             source: "chat_shell",
+            project_id: 0,
             api_key_name: Some("auth_intro_audit"),
             model_id: Some("deepseek-flash-not-think(公网)"),
             force_override_bot_model: true,
@@ -289,6 +296,39 @@ mod tests {
         assert_eq!(task_title(&long, None), format!("{}...", "a".repeat(50)));
         assert_eq!(task_title("short", None), "short");
         assert_eq!(task_title("short", Some("custom")), "custom");
+    }
+
+    #[test]
+    fn project_id_label_sits_between_source_and_is_api_call() {
+        // Recorded create Task: labels `... "source": "chat_shell",
+        // "projectId": "2571", "is_api_call": "true", ...`.
+        let payload = build_task_crd(&TaskCrdInput {
+            project_id: 2571,
+            ..recorded_input()
+        });
+        let labels = payload["metadata"]["labels"].as_object().expect("labels");
+        assert_eq!(labels["projectId"], serde_json::json!("2571"));
+        let keys: Vec<&String> = labels.keys().collect();
+        let source = keys
+            .iter()
+            .position(|key| *key == "source")
+            .expect("source");
+        let project = keys
+            .iter()
+            .position(|key| *key == "projectId")
+            .expect("projectId");
+        let api = keys
+            .iter()
+            .position(|key| *key == "is_api_call")
+            .expect("is_api_call");
+        assert_eq!(project, source + 1);
+        assert_eq!(api, project + 1);
+        // A task without a project keeps the source's conditional label.
+        assert!(
+            build_task_crd(&recorded_input())["metadata"]["labels"]
+                .get("projectId")
+                .is_none()
+        );
     }
 
     #[test]

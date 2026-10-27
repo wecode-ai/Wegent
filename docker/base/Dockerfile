@@ -4,6 +4,8 @@
 
 FROM almalinux:9.4
 
+ARG NODE_VERSION=22.23.4
+
 RUN dnf upgrade -y \
  && dnf install -y epel-release curl-minimal vim gcc make git wget gnupg python3.12 python3.12-devel python3.12-pip which file file-libs \
     nspr nss nss-util atk at-spi2-atk cups-libs libxcb libxkbcommon at-spi2-core \
@@ -11,12 +13,12 @@ RUN dnf upgrade -y \
     # OCR dependencies for scanned PDF support
     tesseract tesseract-langpack-chi_sim tesseract-langpack-eng poppler-utils \
  && curl -fsSL https://rpm.nodesource.com/setup_22.x | bash - \
- && dnf install -y nodejs gh tar gzip\
+ && dnf install -y nodejs-${NODE_VERSION} gh tar gzip\
  && ln -sf /usr/bin/python3.12 /usr/bin/python \
  && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
  && ln -sf /usr/bin/pip3.12 /usr/bin/pip3 \
  && ln -sf /usr/bin/pip3.12 /usr/bin/pip \
- && npm install -g @anthropic-ai/claude-code@2.1.277 \
+ && npm install -g @anthropic-ai/claude-code@2.1.310 \
  && npm cache clean --force \
  && dnf clean all \
  && yum clean all \

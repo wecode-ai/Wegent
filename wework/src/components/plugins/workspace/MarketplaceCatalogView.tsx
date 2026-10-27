@@ -34,6 +34,7 @@ const SEARCH_GRID_BREAKPOINT_PX = 1050
 function VirtualizedSearchGrid({
   items,
   isLoggedIn,
+  isReconciling,
   installingMarketplacePluginIds,
   uninstallingPluginIds,
   allowPendingRetry,
@@ -43,6 +44,7 @@ function VirtualizedSearchGrid({
 }: {
   items: PluginMarketplaceItem[]
   isLoggedIn: boolean
+  isReconciling: boolean
   installingMarketplacePluginIds: Set<string | number>
   uninstallingPluginIds: Set<string | number>
   allowPendingRetry: boolean
@@ -100,6 +102,7 @@ function VirtualizedSearchGrid({
                   key={item.id}
                   item={item}
                   isLoggedIn={isLoggedIn}
+                  isReconciling={isReconciling}
                   isInstalling={installingMarketplacePluginIds.has(item.id)}
                   isUninstalling={uninstallingPluginIds.has(item.installedPluginId ?? item.id)}
                   allowPendingRetry={allowPendingRetry}
@@ -119,6 +122,7 @@ function VirtualizedSearchGrid({
 function MarketplaceCardGrid({
   items,
   isLoggedIn,
+  isReconciling,
   installingMarketplacePluginIds,
   uninstallingPluginIds,
   allowPendingRetry,
@@ -128,6 +132,7 @@ function MarketplaceCardGrid({
 }: {
   items: PluginMarketplaceItem[]
   isLoggedIn: boolean
+  isReconciling: boolean
   installingMarketplacePluginIds: Set<string | number>
   uninstallingPluginIds: Set<string | number>
   allowPendingRetry: boolean
@@ -140,6 +145,7 @@ function MarketplaceCardGrid({
       <VirtualizedSearchGrid
         items={items}
         isLoggedIn={isLoggedIn}
+        isReconciling={isReconciling}
         installingMarketplacePluginIds={installingMarketplacePluginIds}
         uninstallingPluginIds={uninstallingPluginIds}
         allowPendingRetry={allowPendingRetry}
@@ -156,6 +162,7 @@ function MarketplaceCardGrid({
           key={item.id}
           item={item}
           isLoggedIn={isLoggedIn}
+          isReconciling={isReconciling}
           isInstalling={installingMarketplacePluginIds.has(item.id)}
           isUninstalling={uninstallingPluginIds.has(item.installedPluginId ?? item.id)}
           allowPendingRetry={allowPendingRetry}
@@ -193,6 +200,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   marketplaceCategorySections,
   visibleSearchResultLimit,
   isLoggedIn,
+  isReconciling,
   installingMarketplacePluginIds,
   uninstallingPluginIds,
   allowPendingRetry,
@@ -234,6 +242,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   marketplaceCategorySections: MarketplaceCategorySection[]
   visibleSearchResultLimit: number
   isLoggedIn: boolean
+  isReconciling: boolean
   installingMarketplacePluginIds: Set<string | number>
   uninstallingPluginIds: Set<string | number>
   allowPendingRetry: boolean
@@ -532,6 +541,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
                     <MarketplaceCardGrid
                       items={preview}
                       isLoggedIn={isLoggedIn}
+                      isReconciling={isReconciling}
                       installingMarketplacePluginIds={installingMarketplacePluginIds}
                       uninstallingPluginIds={uninstallingPluginIds}
                       allowPendingRetry={allowPendingRetry}

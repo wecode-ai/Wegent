@@ -3,15 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod aitable_provider;
+mod board_views;
 mod content;
 mod credentials;
 mod issue_provider;
 pub mod mcp;
 pub(crate) mod mcp_http;
 mod model;
+pub use store::personal_stand_in;
 mod router;
 pub(crate) mod runner_routing;
 mod store;
+mod tagging;
 
 use serde_json::Value;
 
@@ -20,11 +23,10 @@ pub use model::{
     ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, DeliveryFinalize,
     IssueComment, LocalComment, LocalCommentCreate, LocalExecution, LocalExecutionClaim,
     LocalRuntimeCommentStart, LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile,
-    ProjectStoreKind, ProjectUpdate, RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate,
-    TaskProviderKind, TaskReorder, TaskSearch, TaskUpdate,
+    ProjectStoreKind, ProjectTagChange, ProjectUpdate, RuntimeTaskAddress, TaskAttachment,
+    TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskSearch, TaskUpdate,
 };
 pub use router::TaskRuntime;
-pub(crate) use store::execution_workspace::apply_project_workspace;
 pub use store::{LocalTaskStore, TaskRuntimeError};
 
 const COLLABORATION_MEMBER_RESULT_INSTRUCTIONS: &str = "\

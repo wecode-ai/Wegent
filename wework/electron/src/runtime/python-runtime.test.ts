@@ -38,7 +38,8 @@ describe('PythonRuntimeManager', () => {
     expect(environment.WEGENT_PYTHON_PATH).toBe(join(runtimeBin, 'python3'))
     expect(environment.UV_PYTHON_BIN_DIR).toBeUndefined()
     expect(environment.UV_MANAGED_PYTHON).toBeUndefined()
-    expect(environment.UV_PYTHON_INSTALL_MIRROR_URL).toBeUndefined()
+    expect(environment.UV_PYTHON_INSTALL_MIRROR).toBeUndefined()
+    expect(environment.PYTHONNOUSERSITE).toBe('1')
     await expect(manager.status()).resolves.toMatchObject({
       id: 'python',
       managed: true,
@@ -46,6 +47,56 @@ describe('PythonRuntimeManager', () => {
       path: join(runtimeBin, 'python3'),
     })
   })
+
+  test.each(['darwin', 'win32'] as const)(
+    'does not inherit external Python import paths on %s',
+    async platform => {
+      const directory = await temporaryDirectory()
+      const runtimeBin = join(directory, 'runtime', 'bin')
+      const environment =
+        platform === 'win32'
+          ? {
+              Path: 'C:\\Windows\\System32',
+              PythonHome: 'C:\\OtherPython',
+              PythonPath: 'C:\\OtherPackages',
+              PythonUserBase: 'C:\\UserPackages',
+              PythonNoUserSite: '0',
+              PLUGIN_SETTING: 'preserved',
+            }
+          : {
+              PATH: '/usr/bin',
+              PYTHONHOME: '/other-python',
+              PYTHONPATH: '/other-packages',
+              PYTHONUSERBASE: '/user-packages',
+              PYTHONNOUSERSITE: '0',
+              PLUGIN_SETTING: 'preserved',
+            }
+      const original = { ...environment }
+      const manager = new PythonRuntimeManager({
+        dataDirectory: directory,
+        environment,
+        runtimeBin,
+        platform,
+      })
+
+      const prepared = manager.environment()
+
+      expect(prepared.PATH).toBe(
+        platform === 'win32' ? `${runtimeBin};C:\\Windows\\System32` : `${runtimeBin}:/usr/bin`
+      )
+      expect(prepared.PYTHONNOUSERSITE).toBe('1')
+      expect(prepared.PLUGIN_SETTING).toBe('preserved')
+      expect(
+        Object.keys(prepared).filter(key =>
+          ['PYTHONHOME', 'PYTHONPATH', 'PYTHONUSERBASE'].includes(key.toUpperCase())
+        )
+      ).toEqual([])
+      expect(Object.keys(prepared).filter(key => key.toUpperCase() === 'PYTHONNOUSERSITE')).toEqual(
+        ['PYTHONNOUSERSITE']
+      )
+      expect(environment).toEqual(original)
+    }
+  )
 
   test('installs Python once and validates the managed launcher', async () => {
     const directory = await temporaryDirectory()
@@ -59,8 +110,10 @@ describe('PythonRuntimeManager', () => {
     let pythonReady = false
     const runFile = vi.fn(
       async (file: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
-        if (file === pythonPath && args[0] === '--version') {
+        if (file === pythonPath && args[0] === '-c') {
           if (!pythonReady) throw new Error('missing')
+          expect(args[1]).toContain('import ensurepip, ssl, sys, venv, zlib')
+          expect(options.env.PYTHONNOUSERSITE).toBe('1')
           return { stdout: 'Python 3.12.12\n', stderr: '' }
         }
         if (file === uvPath) {
@@ -78,12 +131,17 @@ describe('PythonRuntimeManager', () => {
           expect(options.env).toMatchObject({
             UV_MANAGED_PYTHON: 'true',
             UV_PYTHON_BIN_DIR: runtimeBin,
-            UV_PYTHON_INSTALL_MIRROR_URL:
+            UV_PYTHON_INSTALL_MIRROR:
               'https://python-standalone.org/mirror/astral-sh/python-build-standalone/',
+            UV_PYTHON_INSTALL_DIR: join(directory, 'managed-runtimes', 'python', 'installations'),
+            UV_CACHE_DIR: join(directory, 'managed-runtimes', 'python', 'cache'),
             HTTP_PROXY: 'http://proxy.internal:8080',
             HTTPS_PROXY: 'http://proxy.internal:8080',
             ALL_PROXY: 'http://proxy.internal:8080',
           })
+          expect(options.env.UV_PYTHON_INSTALL_MIRROR_URL).toBeUndefined()
+          expect(options.env.UV_OFFLINE).toBeUndefined()
+          expect(options.env.UV_NO_MANAGED_PYTHON).toBeUndefined()
           await mkdir(runtimeBin, { recursive: true })
           await writeFile(pythonPath, 'fake python')
           pythonReady = true
@@ -94,7 +152,13 @@ describe('PythonRuntimeManager', () => {
     )
     const manager = new PythonRuntimeManager({
       dataDirectory: directory,
-      environment: {},
+      environment: {
+        UV_OFFLINE: '1',
+        UV_NO_MANAGED_PYTHON: 'true',
+        UV_PYTHON_INSTALL_DIR: '/user-python',
+        UV_PYTHON_INSTALL_MIRROR: 'https://user-mirror.invalid/',
+        UV_PYTHON_INSTALL_MIRROR_URL: 'https://incorrect-mirror.invalid/',
+      },
       runtimeBin,
       platform: 'darwin',
       arch: 'arm64',
@@ -127,7 +191,7 @@ describe('PythonRuntimeManager', () => {
     await writeFile(pythonPath, 'fake python')
     let version = '3.12.8'
     const runFile = vi.fn(async (file: string, args: string[]) => {
-      if (file === pythonPath && args[0] === '--version') {
+      if (file === pythonPath && args[0] === '-c') {
         return { stdout: `Python ${version}\n`, stderr: '' }
       }
       if (file === uvPath) {
@@ -168,7 +232,7 @@ describe('PythonRuntimeManager', () => {
     await writeFile(pythonPath, 'fake python')
     const log = vi.fn()
     const runFile = vi.fn(async (file: string, args: string[]) => {
-      if (file === pythonPath && args[0] === '--version') {
+      if (file === pythonPath && args[0] === '-c') {
         return { stdout: 'Python 3.12.8\n', stderr: '' }
       }
       if (file === uvPath) throw new Error('offline')
@@ -213,6 +277,33 @@ describe('PythonRuntimeManager', () => {
     })
 
     await expect(manager.status()).resolves.toMatchObject({ state: 'notInstalled', version: null })
+  })
+
+  test('rejects a version-compatible Python when its required standard library cannot load', async () => {
+    const directory = await temporaryDirectory()
+    const runtimeBin = join(directory, 'runtime', 'bin')
+    const pythonPath = join(runtimeBin, 'python3')
+    await mkdir(runtimeBin, { recursive: true })
+    await writeFile(pythonPath, 'fake python')
+    const runFile = vi.fn(async (_file: string, args: string[]) => {
+      if (args[0] === '--version') return { stdout: 'Python 3.12.12\n', stderr: '' }
+      throw new Error('ModuleNotFoundError: No module named _ssl')
+    })
+    const manager = new PythonRuntimeManager({
+      dataDirectory: directory,
+      environment: {},
+      runtimeBin,
+      platform: 'darwin',
+      arch: 'arm64',
+      runFile,
+    })
+
+    await expect(manager.status()).resolves.toMatchObject({ state: 'notInstalled', version: null })
+    expect(runFile).toHaveBeenCalledWith(
+      pythonPath,
+      ['-c', expect.stringContaining('import ensurepip, ssl, sys, venv, zlib')],
+      expect.objectContaining({ env: expect.objectContaining({ PYTHONNOUSERSITE: '1' }) })
+    )
   })
 
   test('removes a corrupted cached uv executable before redownloading', async () => {

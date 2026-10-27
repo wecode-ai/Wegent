@@ -119,6 +119,10 @@ export function mergeLocalInstalledWithStorePackages(
     if (!store?.spec.sourcePayload?.managedByWegent) return item
     return {
       ...item,
+      status:
+        item.status.state === 'recovery_required' || store.status.state === 'recovery_required'
+          ? { ...item.status, state: store.status.state }
+          : item.status,
       spec: {
         ...item.spec,
         sourcePayload: {
@@ -127,6 +131,10 @@ export function mergeLocalInstalledWithStorePackages(
           managedByWegent: true,
           cloudPluginId: store.spec.sourcePayload.cloudPluginId ?? null,
           cloudInstalledPluginId: store.spec.sourcePayload.cloudInstalledPluginId ?? null,
+          ...(store.spec.sourcePayload.runtimeRecoveryError !== undefined ||
+          item.spec.sourcePayload?.runtimeRecoveryError !== undefined
+            ? { runtimeRecoveryError: store.spec.sourcePayload.runtimeRecoveryError ?? null }
+            : {}),
         },
       },
     }
@@ -349,6 +357,7 @@ function cloudRowLocalPresencePayload(
   const cloudKindId = localPluginId(cloudItem)
   return {
     localPresent: true,
+    runtimeRecoveryError: localMatch.spec.sourcePayload?.runtimeRecoveryError ?? null,
     ...(cloudKindId ? { cloudInstalledPluginId: cloudKindId } : {}),
     ...(localVersion ? { localVersion } : {}),
   }
@@ -368,7 +377,9 @@ function localRowsMatchingCloudPlugin(
   localItems: InstalledPlugin[],
   cloud: InstalledPlugin
 ): InstalledPlugin[] {
-  return localItems.filter(local => localMatchesCloudPlugin(local, cloud))
+  return localItems.filter(
+    local => hasLocalCodexMaterialization(local) && localMatchesCloudPlugin(local, cloud)
+  )
 }
 
 function pickPreferredLocalMaterialization(
@@ -385,9 +396,10 @@ function pickPreferredLocalMaterialization(
 /**
  * Progressive paints may reuse a device-local Codex peek beside an account-scoped
  * marketplace cache. Same-device installs are authoritative for materialized packages;
- * a peek from another device must not widen the current account strip.
+ * a peek from another device must not widen the current account strip. Account-only
+ * records in a mixed cache are never evidence of a local package.
  */
-export function resolveProgressiveLocalInstalledRaw<T>(options: {
+export function resolveProgressiveLocalInstalledRaw<T extends InstalledPlugin>(options: {
   hasCachedSnapshot: boolean
   cachedInstalledRaw: T[]
   localInstalledRaw?: T[] | null
@@ -395,16 +407,19 @@ export function resolveProgressiveLocalInstalledRaw<T>(options: {
   cachedDeviceId?: string | null
   localDeviceId?: string | null
 }): T[] {
+  const cachedLocal = options.hasCachedSnapshot
+    ? options.cachedInstalledRaw.filter(hasLocalCodexMaterialization)
+    : []
   if (options.hasCachedSnapshot && options.localStateIsPeek) {
     const cachedDeviceId = options.cachedDeviceId?.trim() || ''
     const localDeviceId = options.localDeviceId?.trim() || ''
     if (localDeviceId && (!cachedDeviceId || cachedDeviceId === localDeviceId)) {
-      return options.localInstalledRaw ?? options.cachedInstalledRaw
+      return options.localInstalledRaw ?? cachedLocal
     }
-    return options.cachedInstalledRaw
+    return cachedLocal
   }
   if (options.localInstalledRaw != null) {
     return options.localInstalledRaw
   }
-  return options.hasCachedSnapshot ? options.cachedInstalledRaw : []
+  return cachedLocal
 }

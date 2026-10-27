@@ -1,5 +1,5 @@
 import type { DndContextProps, DragCancelEvent, DragEndEvent, DragStartEvent } from '@dnd-kit/core'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -52,10 +52,17 @@ vi.mock('@/telemetry/client', () => telemetryMocks)
 vi.mock('@dnd-kit/core', async importOriginal => {
   const actual = await importOriginal<typeof import('@dnd-kit/core')>()
   const ActualDndContext = actual.DndContext
-  const activeCard = () => ({
-    id: JSON.stringify([item.status, item.id]),
-    data: { current: { itemId: item.id } },
-  })
+  const dragSource = () => {
+    const columnKey = document
+      .querySelector(`[data-testid="cloud-todo-card-${item.id}"]`)
+      ?.closest('section[data-testid^="cloud-todo-column-"]')
+      ?.getAttribute('data-testid')
+      ?.slice('cloud-todo-column-'.length)
+    return {
+      id: JSON.stringify(['status', columnKey, item.id]),
+      data: { current: { itemId: item.id, columnKey, groupBy: 'status' } },
+    }
+  }
   return {
     ...actual,
     DndContext: ({ children, ...props }: DndContextProps) => (
@@ -67,7 +74,7 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-start"
           onClick={() =>
             props.onDragStart?.({
-              active: activeCard(),
+              active: dragSource(),
             } as DragStartEvent)
           }
         />
@@ -77,7 +84,7 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-cancel"
           onClick={() =>
             props.onDragCancel?.({
-              active: activeCard(),
+              active: dragSource(),
             } as DragCancelEvent)
           }
         />
@@ -87,8 +94,8 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-to-pending"
           onClick={() =>
             props.onDragEnd?.({
-              active: activeCard(),
-              over: { id: 'todo-column:pending' },
+              active: dragSource(),
+              over: { id: 'todo-column:pending', data: { current: undefined } },
             } as DragEndEvent)
           }
         />
@@ -98,10 +105,10 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-before-third"
           onClick={() =>
             props.onDragEnd?.({
-              active: activeCard(),
+              active: dragSource(),
               over: {
-                id: 'todo-card:["in_progress","WEG-3"]',
-                data: { current: { columnKey: 'in_progress' } },
+                id: 'todo-card:["status","in_progress","WEG-3"]',
+                data: { current: { itemId: 'WEG-3', columnKey: 'in_progress', groupBy: 'status' } },
               },
             } as DragEndEvent)
           }
@@ -112,8 +119,8 @@ vi.mock('@dnd-kit/core', async importOriginal => {
           data-testid="mock-dnd-drag-to-in-progress"
           onClick={() =>
             props.onDragEnd?.({
-              active: activeCard(),
-              over: { id: 'todo-column:in_progress' },
+              active: dragSource(),
+              over: { id: 'todo-column:in_progress', data: { current: undefined } },
             } as DragEndEvent)
           }
         />
@@ -764,6 +771,20 @@ async function openIssueFromBoard(itemId = 'WEG-1') {
 
 describe('CloudTodoWorkspace', () => {
   beforeEach(() => {
+    Object.defineProperties(HTMLDialogElement.prototype, {
+      showModal: {
+        configurable: true,
+        value() {
+          this.open = true
+        },
+      },
+      close: {
+        configurable: true,
+        value() {
+          this.open = false
+        },
+      },
+    })
     HTMLElement.prototype.scrollTo = vi.fn()
     clearRuntimeConversationCacheForTests()
     telemetryMocks.track.mockClear()
@@ -778,6 +799,9 @@ describe('CloudTodoWorkspace', () => {
   })
 
   afterEach(() => {
+    cleanup()
+    Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal')
+    Reflect.deleteProperty(HTMLDialogElement.prototype, 'close')
     clearRuntimeConversationCacheForTests()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
@@ -1442,6 +1466,8 @@ describe('CloudTodoWorkspace', () => {
     const viewActions = screen.getByTestId('cloud-board-view-actions')
     expect(viewActions).toHaveClass('ml-auto')
     expect(viewActions).toContainElement(focusView)
+    expect(viewActions).toContainElement(screen.getByTestId('board-view-picker'))
+    expect(screen.queryByTestId('cloud-board-settings')).not.toBeInTheDocument()
     expect(focusView).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveClass('w-[292px]')
     expect(screen.getByTestId('cloud-todo-column-in_review')).toHaveClass('w-[292px]')
@@ -3176,6 +3202,7 @@ describe('CloudTodoWorkspace', () => {
     workbenchServices.deliveryApi!.updateCloudProject = vi.fn(async (_projectId, values) => ({
       ...project,
       card_display: values.card_display,
+      board_views: values.board_views,
       version: project.version + 1,
     }))
 
@@ -3199,12 +3226,19 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('高')
     expect(screen.getAllByText('发布').length).toBeGreaterThan(0)
 
-    await userEvent.click(screen.getByTestId('cloud-board-settings'))
-    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-board-settings')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-board-view-actions')).toContainElement(
+      screen.getByTestId('board-view-picker')
+    )
+    await userEvent.click(screen.getByTestId('board-view-picker'))
+    await userEvent.click(screen.getByTestId('board-view-edit'))
+    expect(screen.getByTestId('board-view-editor')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-project-board-layout-settings')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-board-display-menu'))
     expect(screen.getByTestId('cloud-project-card-display-settings')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-board-display-assignee'))
+    expect(workbenchServices.deliveryApi!.updateCloudProject).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('board-view-save'))
     await waitFor(() =>
       expect(workbenchServices.deliveryApi!.updateCloudProject).toHaveBeenCalledWith(
         '11',
@@ -3213,9 +3247,83 @@ describe('CloudTodoWorkspace', () => {
         })
       )
     )
-    await userEvent.click(screen.getByTestId('project-board-settings-close'))
+    await waitFor(() => expect(screen.queryByTestId('board-view-editor')).not.toBeInTheDocument())
     expect(screen.queryByText('hongyu9')).not.toBeInTheDocument()
     expect(screen.getAllByText('发布').length).toBeGreaterThan(0)
+  })
+
+  it('opens the current mixed lanes from board settings and keeps default workflow settings separate', async () => {
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({
+      items: [{ ...item, tags: [] }],
+    })
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [
+        {
+          ...project,
+          tags: ['bug'],
+          board_config: {
+            group_by: 'status',
+            processing_start_status_id: 'in_progress',
+            statuses: [
+              { id: 'inbox', name: '收集箱', color: 'gray' },
+              { id: 'pending', name: '待开始', color: 'blue' },
+              { id: 'in_progress', name: '进行中', color: 'orange' },
+              { id: 'in_review', name: '待确认', color: 'purple' },
+              { id: 'completed', name: '已完成', color: 'green' },
+            ],
+          },
+          board_views: {
+            schema_version: 1,
+            views: [
+              {
+                id: 'mixed',
+                name: '测试视图',
+                columns: [
+                  { id: 'inbox', type: 'status', value: 'inbox' },
+                  { id: 'test', type: 'tag', value: '测试' },
+                  { id: 'bug', type: 'tag', value: 'bug' },
+                  { id: 'requirement', type: 'tag', value: '需求' },
+                  { id: 'working', type: 'status', value: 'in_progress' },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('board-view-picker'))
+    await userEvent.click(screen.getByTestId('board-view-mixed'))
+    expect(screen.getByTestId('cloud-board-view-actions')).toContainElement(
+      screen.getByTestId('cloud-board-focus-running')
+    )
+    await userEvent.click(screen.getByTestId('cloud-board-focus-running'))
+    expect(screen.getByTestId('cloud-todo-column-working')).toHaveClass('w-[480px]')
+    expect(screen.getByTestId('cloud-todo-column-bug')).toHaveClass('w-[292px]')
+    await userEvent.click(screen.getByTestId('cloud-board-focus-running'))
+    expect(screen.getByTestId('cloud-todo-column-working')).toHaveClass('w-[292px]')
+    await userEvent.click(screen.getByTestId('board-view-picker'))
+    await userEvent.click(screen.getByTestId('board-view-edit'))
+    expect(screen.getByTestId('board-view-name')).toHaveValue('测试视图')
+    for (const [index, tag] of ['测试', 'bug', '需求'].entries()) {
+      expect(screen.getByTestId(`board-view-lane-value-${index + 1}`)).toHaveTextContent(tag)
+    }
+    expect(screen.queryByTestId('project-board-settings-dialog')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('board-view-cancel'))
+    await userEvent.click(screen.getByTestId('board-view-picker'))
+    await userEvent.click(screen.getByTestId('board-view-default'))
+    await userEvent.click(screen.getByTestId('board-view-picker'))
+    await userEvent.click(screen.getByTestId('board-view-edit'))
+    expect(screen.getByTestId('cloud-project-board-layout-settings')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-board-status-in_progress')).toHaveTextContent('进行中')
   })
 
   it('does not render an assignee for an unassigned board card', async () => {

@@ -15,17 +15,12 @@ import {
 
 const mocks = vi.hoisted(() => ({
   ensureLocalExecutorStarted: vi.fn(),
-  ensurePython: vi.fn(),
   requestLocalExecutor: vi.fn(),
 }))
 
 vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: () => mocks.ensureLocalExecutorStarted(),
   requestLocalExecutor: (...args: unknown[]) => mocks.requestLocalExecutor(...args),
-}))
-
-vi.mock('@/desktop/executionEnvironments', () => ({
-  ensurePython: () => mocks.ensurePython(),
 }))
 
 describe('pluginLocalConnectorAuthTarget', () => {
@@ -73,7 +68,6 @@ describe('localConnectorAuthHealth cache', () => {
   beforeEach(() => {
     clearLocalConnectorAuthHealthCache()
     mocks.ensureLocalExecutorStarted.mockReset()
-    mocks.ensurePython.mockReset().mockResolvedValue({ state: 'installed' })
     mocks.requestLocalExecutor.mockReset()
     mocks.ensureLocalExecutorStarted.mockResolvedValue({ deviceId: 'local-device' })
     mocks.requestLocalExecutor.mockResolvedValue({ status: 'ok' })
@@ -94,32 +88,12 @@ describe('localConnectorAuthHealth cache', () => {
     expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(2)
   })
 
-  test('ensures managed Python before starting Python authorization', async () => {
-    const target = {
-      pluginKey: 'python-connector',
-      connectorSlug: 'python-connector',
-      localAuth: {
-        kind: 'local_qr' as const,
-        health: ['python3', 'auth.py', 'health'],
-        start: ['python3', 'auth.py', 'start'],
-        poll: ['python3', 'auth.py', 'poll'],
-      },
-    }
-
-    await localConnectorAuthStart(target)
-
-    expect(mocks.ensurePython).toHaveBeenCalledOnce()
-    expect(mocks.ensureLocalExecutorStarted).toHaveBeenCalledOnce()
-    expect(mocks.ensurePython.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.ensureLocalExecutorStarted.mock.invocationCallOrder[0]
-    )
-  })
-
   test.each([
+    ['Python', ['scripts/auth.py', 'login']],
     ['shell', ['scripts/local-auth.sh', 'login']],
     ['PowerShell', ['scripts/local-auth.ps1', 'login']],
     ['native', ['bin/local-auth', 'login']],
-  ])('does not block %s authorization on managed Python', async (_name, start) => {
+  ])('delegates %s runtime readiness to the executor', async (_name, start) => {
     const target = {
       pluginKey: 'native-connector',
       connectorSlug: 'native-connector',
@@ -133,8 +107,20 @@ describe('localConnectorAuthHealth cache', () => {
 
     await localConnectorAuthStart(target)
 
-    expect(mocks.ensurePython).not.toHaveBeenCalled()
     expect(mocks.ensureLocalExecutorStarted).toHaveBeenCalledOnce()
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('runtime.local_connector_auth.start', {
+      pluginKey: target.pluginKey,
+      connectorSlug: target.connectorSlug,
+      pluginRoot: undefined,
+      sessionId: undefined,
+    })
+  })
+
+  test('propagates runtime preparation failure from the executor', async () => {
+    mocks.requestLocalExecutor.mockRejectedValueOnce(new Error('python_runtime_unavailable'))
+    await expect(
+      localConnectorAuthStart({ pluginKey: 'wiki', connectorSlug: 'wiki' })
+    ).rejects.toThrow('python_runtime_unavailable')
   })
 
   test('gh login is owned by the CLI, so every health check reads the actual executor state', async () => {

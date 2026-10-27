@@ -87,7 +87,7 @@ export class ManagedExecutorRuntime {
   request<Result>(
     method: string,
     params: Record<string, unknown> = {},
-    signal = AbortSignal.timeout(75_000)
+    signal = AbortSignal.timeout(executorRequestTimeoutMs(method))
   ): Promise<Result> {
     return requestExecutor<Result>(this.endpoint, this.token, method, params, signal)
   }
@@ -100,6 +100,15 @@ export class ManagedExecutorRuntime {
       await rm(this.endpoint, { force: true })
     }
   }
+}
+
+export function executorRequestTimeoutMs(method: string): number {
+  const preparesPython =
+    method === 'executor.plugin_auth.migrate' ||
+    method === 'executor.plugin_auth.run' ||
+    method === 'runtime.connections.cli' ||
+    method.startsWith('runtime.local_connector_auth.')
+  return preparesPython ? 18 * 60_000 + 5_000 : 75_000
 }
 
 export function requestExecutor<Result>(
@@ -218,6 +227,7 @@ export function prepareManagedExecutorEnvironment(
     CODEX_HOME: codexHome,
     WEGENT_CODEX_HOME: codexHome,
     WEGENT_EXECUTOR_HOME: executorHome,
+    WEGENT_PLUGIN_RUNTIME_TARGET: 'codex',
     WEGENT_EXECUTOR_DISABLE_FILE_LOG: 'true',
   }
 }

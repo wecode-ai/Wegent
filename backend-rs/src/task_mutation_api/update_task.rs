@@ -28,16 +28,21 @@ use brz_json::OpaqueJson;
 const PROMPT_MAX_BYTES: usize = 60_000;
 
 /// `task_kinds_service.update_task` at the route's boundaries.
+///
+/// `client_origin` is the route's validated `ClientOriginQuery` for
+/// `PUT /api/tasks/{task_id}`. The cancel flow calls the same service without
+/// an origin (`cancel_task` passes no query parameter), which drops the origin
+/// predicate from the owned-active-task read.
 pub(crate) async fn update_task(
     state: &AppState,
     user_id: i64,
     task_id: i64,
-    client_origin: &str,
+    client_origin: Option<&str>,
     update: &TaskUpdateBody,
 ) -> Result<TaskInDbResponse, FastApiError> {
     let row = state
         .task_store
-        .get_owned_active_task(task_id, user_id, Some(client_origin))
+        .get_owned_active_task(task_id, user_id, client_origin)
         .await
         .map_err(|error| internal(&error))?
         .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Task not found"))?;

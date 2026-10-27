@@ -20,6 +20,7 @@ import { RUNTIME_RETRY_CONTINUATION_PROMPT } from '@/components/layout/runtimeRe
 import { runtimeTaskBindingAddress } from '@/features/todo/runtimeTaskBindingAddress'
 import { modelSelectionFromRuntimeHandle } from '@/features/workbench/runtimeContextUsage'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import {
   useComposerCatalogBinding,
   type ComposerCatalogBinding,
@@ -64,6 +65,7 @@ const mocks = vi.hoisted(() => ({
     content: string
     status: 'done' | 'failed'
     createdAt: string
+    blocks?: WorkbenchMessage['blocks']
   }>,
   lifecycleSnapshot: null as {
     turn?: { id: string | null }
@@ -98,6 +100,11 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onRequestUserInputSubmit,
     onRequestUserInputIgnore,
     scrollOrigin,
+    hasMoreBefore,
+    loadingMoreBefore,
+    onLoadMoreBefore,
+    transcriptError,
+    onRetryTranscript,
   }: {
     messages: Array<{
       id: string
@@ -117,8 +124,30 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     }) => void
     onRequestUserInputIgnore?: (payload: { kind: string; request_id: string }) => void
     scrollOrigin?: 'top' | 'bottom'
+    hasMoreBefore?: boolean
+    loadingMoreBefore?: boolean
+    onLoadMoreBefore?: () => void
+    transcriptError?: string | null
+    onRetryTranscript?: () => void
   }) => (
     <div data-testid="mock-message-list" data-scroll-origin={scrollOrigin}>
+      {messages.map(message => (
+        <span key={message.id}>{message.content}</span>
+      ))}
+      {hasMoreBefore && (
+        <button
+          data-testid="mock-load-older"
+          disabled={loadingMoreBefore}
+          onClick={onLoadMoreBefore}
+        >
+          Older messages
+        </button>
+      )}
+      {transcriptError && (
+        <button data-testid="mock-retry-history" onClick={onRetryTranscript}>
+          {transcriptError}
+        </button>
+      )}
       {messages.flatMap(message =>
         (message.attachments ?? []).map(messageAttachment => (
           <span key={messageAttachment.id} data-testid="sent-message-attachment">
@@ -483,6 +512,24 @@ describe('TemporaryChatPanel', () => {
     mocks.runtimeWork = null
   })
 
+  it('places contextual configuration decisions beside the composer and hides them when inactive', () => {
+    const props = {
+      currentProject: null,
+      source: null,
+      instanceId: 'configuration',
+      composerHeader: <div data-testid="pending-configuration">Review changes</div>,
+    }
+    const { rerender } = render(<TemporaryChatPanel {...props} />)
+    const decision = screen.getByTestId('pending-configuration')
+    const composer = screen.getByTestId('mock-composer')
+    expect(decision.parentElement).toContainElement(composer)
+    expect(
+      decision.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    rerender(<TemporaryChatPanel {...props} active={false} />)
+    expect(screen.queryByTestId('pending-configuration')).not.toBeInTheDocument()
+  })
+
   it('binds parallel drawer catalogs to their own devices and tasks', async () => {
     const second = { deviceId: 'device-2', taskId: 'task-2' }
     render(
@@ -544,6 +591,109 @@ describe('TemporaryChatPanel', () => {
       finish({ running: false, messages: [], turns: [], contextUsage: usage(100) })
     )
     expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-context-tokens', '700')
+  })
+
+  it('loads earlier pages, keeps messages on failure and retries the same cursor', async () => {
+    const olderTurn: RuntimeConversationTurn = {
+      id: 'older-turn',
+      status: 'done',
+      items: [
+        {
+          id: 'older',
+          type: 'user_message',
+          message: {
+            id: 'older',
+            role: 'user',
+            content: 'Earlier question',
+            status: 'done',
+            createdAt: '',
+          },
+        },
+      ],
+    }
+    mocks.conversationMessages = [
+      {
+        id: 'latest',
+        role: 'assistant',
+        content: 'Latest reply',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    mocks.loadRuntimeTranscriptForPane
+      .mockResolvedValueOnce({ messages: [], turns: [], beforeCursor: 'older-page' })
+      .mockRejectedValueOnce(new Error('Transfer interrupted'))
+      .mockImplementationOnce(async () => {
+        const transcript = { messages: [], turns: [olderTurn], beforeCursor: null }
+        // The shared loader publishes canonical turns before resolving the page.
+        mocks.conversationMessages = [
+          ...transcript.turns.flatMap(turn =>
+            turn.items.flatMap(item => (item.type === 'user_message' ? [item.message] : []))
+          ),
+          ...mocks.conversationMessages,
+        ]
+        return transcript
+      })
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="paged-history"
+        sendEphemeral={false}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('mock-load-older'))
+    expect(await screen.findByTestId('mock-retry-history')).toHaveTextContent(
+      'Transfer interrupted'
+    )
+    expect(screen.getByText('Latest reply')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('mock-retry-history'))
+    expect(await screen.findByText('Earlier question')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-load-older')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mock-retry-history')).not.toBeInTheDocument()
+    expect(mocks.loadRuntimeTranscriptForPane).toHaveBeenLastCalledWith(address, {
+      limit: 5,
+      beforeCursor: 'older-page',
+    })
+    expect(mocks.loadRuntimeTranscriptForPane.mock.calls.slice(1)).toEqual([
+      [address, { limit: 5, beforeCursor: 'older-page' }],
+      [address, { limit: 5, beforeCursor: 'older-page' }],
+    ])
+  })
+
+  it('retains cached messages and retries an initial load failure without a page cursor', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'cached',
+        role: 'assistant',
+        content: 'Cached reply',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    mocks.loadRuntimeTranscriptForPane
+      .mockRejectedValueOnce(new Error('Initial transfer interrupted'))
+      .mockResolvedValueOnce({ messages: [], turns: [], beforeCursor: 'older-page' })
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="cached-history"
+        sendEphemeral={false}
+      />
+    )
+    expect(await screen.findByTestId('mock-retry-history')).toHaveTextContent(
+      'Initial transfer interrupted'
+    )
+    expect(screen.getByText('Cached reply')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-load-older')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('mock-retry-history'))
+    expect(await screen.findByTestId('mock-load-older')).toBeInTheDocument()
+    expect(screen.getByText('Cached reply')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-retry-history')).not.toBeInTheDocument()
+    expect(mocks.loadRuntimeTranscriptForPane.mock.calls).toEqual([[address], [address]])
   })
 
   it('shows a history error instead of an empty conversation and retries the bound address', async () => {
@@ -1012,6 +1162,82 @@ describe('TemporaryChatPanel', () => {
         modelId: 'moonshot-kimi-k2.7-code-highspeed',
       }),
       expect.any(Object)
+    )
+  })
+
+  it('replaces the composer with pending confirmation and submits its native response', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'assistant-approval',
+        role: 'assistant',
+        content: '准备发送回复。',
+        status: 'done',
+        createdAt: '2026-10-24T00:00:00Z',
+        blocks: [
+          {
+            id: 'approval',
+            type: 'tool',
+            toolName: 'request_user_input',
+            status: 'pending',
+            renderPayload: {
+              kind: 'request_user_input',
+              requestId: 'approval-9',
+              questions: [
+                {
+                  id: 'mcp_tool_call_approval_reply',
+                  question: '发送这条回复？',
+                  options: [{ label: 'Allow' }, { label: 'Cancel' }],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]
+    const view = render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="composer-approval"
+      />
+    )
+    expect(screen.queryByTestId('mock-composer')).not.toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-chat-composer-shell')).toContainElement(
+      screen.getByTestId('request-user-input-card')
+    )
+    view.rerender(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="composer-approval"
+        active={false}
+      />
+    )
+    expect(screen.queryByTestId('request-user-input-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mock-composer')).not.toBeInTheDocument()
+    view.rerender(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="composer-approval"
+        active
+      />
+    )
+    await userEvent.click(
+      screen.getByTestId('request-user-input-option-mcp_tool_call_approval_reply-0')
+    )
+    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address,
+        requestUserInputResponse: {
+          requestId: 'approval-9',
+          itemId: undefined,
+          answers: { mcp_tool_call_approval_reply: { answers: ['Allow'] } },
+        },
+      })
     )
   })
 

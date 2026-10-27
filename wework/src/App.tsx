@@ -69,6 +69,7 @@ import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecu
 import { PluginAutoUpdateCoordinator } from '@/features/plugins/PluginAutoUpdateCoordinator'
 import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { cn } from '@/lib/utils'
+import { isSettingsRoute } from '@/lib/navigation'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { createHttpClient } from '@/api/http'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
@@ -380,6 +381,16 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
     hasMountedProvider: !iframe,
     hasMountedWorkbench: nativeWorkbenchActive,
   }))
+  // Retained tabs keep their workbench state while hidden. Track each reveal so
+  // the provider can revalidate data that another tab may have changed.
+  const [workspaceTabRevealRevision, setWorkspaceTabRevealRevision] = useState(0)
+  const wasActiveRef = useRef(active)
+  useEffect(() => {
+    if (active && !wasActiveRef.current) {
+      setWorkspaceTabRevealRevision(value => value + 1)
+    }
+    wasActiveRef.current = active
+  }, [active])
   const nextIframe =
     iframe &&
     surfaceHistory.iframe?.src === iframe.src &&
@@ -478,6 +489,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
               user={user}
               onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
               workspaceTabId={tab.id}
+              workspaceTabRevealRevision={workspaceTabRevealRevision}
               composerAppsSourceActive={active && !iframe}
               debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}
@@ -746,7 +758,11 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           cloudWebUrl={cloudWebUrl}
           onOpenWeworkForAppshot={onOpenWeworkForAppshot}
           onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
-          tab={tab}
+          tab={
+            tab.id === workspaceTabs.activeTabId && isSettingsRoute(path)
+              ? { ...tab, contentRoute: `${path}${search}` }
+              : tab
+          }
           user={user}
         />
       ))}

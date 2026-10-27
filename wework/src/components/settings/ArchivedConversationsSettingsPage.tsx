@@ -5,9 +5,14 @@ import { createLocalAppServices } from '@/api/local/localServices'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
 import { WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
+import { unmarkRuntimeConversationArchived } from '@/features/workbench/runtimeConversationCache'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   getArchivedBulkDeleteProgress,
+  getArchivedCleanupError,
+  beginArchivedCleanup,
+  hasArchivedCleanupFailedKey,
+  subscribeArchivedCleanupError,
   hasArchivedBulkDeletedKey,
   notifyArchivedBulkDeleteDeleted,
   setArchivedBulkDeleteProgress,
@@ -323,6 +328,7 @@ export function ArchivedConversationsSettingsPage({
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
   const [operationError, setOperationError] = useState<string | null>(null)
+  const [cleanupError, setCleanupError] = useState(getArchivedCleanupError)
   const [bulkDeleteProgress, setBulkDeleteProgress] = useState<ArchivedBulkDeleteProgress | null>(
     getArchivedBulkDeleteProgress()
   )
@@ -344,7 +350,6 @@ export function ArchivedConversationsSettingsPage({
     try {
       const archivedItems = await fetchArchivedConversations()
       setItems(archivedItems.filter(item => !hasArchivedBulkDeletedKey(itemAddressKey(item))))
-      setOperationError(null)
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : ''
       setError(
@@ -378,6 +383,15 @@ export function ArchivedConversationsSettingsPage({
   }, [loadArchivedConversations])
 
   useEffect(() => subscribeArchivedBulkDeleteProgress(setBulkDeleteProgress), [])
+
+  useEffect(
+    () =>
+      subscribeArchivedCleanupError(error => {
+        setCleanupError(error)
+        if (error) void loadArchivedConversations()
+      }),
+    [loadArchivedConversations]
+  )
 
   useEffect(
     () =>
@@ -449,6 +463,7 @@ export function ArchivedConversationsSettingsPage({
       } else {
         const address = archivedConversationAddress(item)
         await api.unarchiveConversation(address)
+        unmarkRuntimeConversationArchived(address)
         await onRefreshWorkLists?.({ unarchivedTasks: [address] })
       }
       if (harnessSessionId) {
@@ -507,6 +522,12 @@ export function ArchivedConversationsSettingsPage({
   const confirmDelete = async () => {
     if (!pendingDelete) return
     if (pendingDelete.type !== 'single' && pendingDelete.items.length === 0) return
+    setOperationError(null)
+    beginArchivedCleanup(
+      (pendingDelete.type === 'single' ? [pendingDelete.item] : pendingDelete.items).map(
+        itemAddressKey
+      )
+    )
 
     if (pendingDelete.type !== 'single') {
       let deleteItems = pendingDelete.items
@@ -572,8 +593,10 @@ export function ArchivedConversationsSettingsPage({
             item => !hasArchivedBulkDeletedKey(itemAddressKey(item))
           )
           setItems(remainingItems)
-          const remainingTargetItems = remainingItems.filter(item =>
-            targetKeys.has(itemAddressKey(item))
+          const remainingTargetItems = remainingItems.filter(
+            item =>
+              targetKeys.has(itemAddressKey(item)) &&
+              !hasArchivedCleanupFailedKey(itemAddressKey(item))
           )
           if (remainingTargetItems.length === 0) break
           deleteItems = remainingTargetItems
@@ -641,7 +664,9 @@ export function ArchivedConversationsSettingsPage({
           )
         }
       }
-      setItems(currentItems => currentItems.filter(currentItem => currentItem.id !== item.id))
+      if (!hasArchivedCleanupFailedKey(itemAddressKey(item))) {
+        setItems(currentItems => currentItems.filter(currentItem => currentItem.id !== item.id))
+      }
       setPendingDelete(null)
       track('feature_action_completed', {
         domain: 'archived_conversation',
@@ -749,12 +774,14 @@ export function ArchivedConversationsSettingsPage({
         </div>
       )}
 
-      {operationError && (
+      {(cleanupError || operationError) && (
         <div
           data-testid="archived-operation-error"
+          role="alert"
           className="mt-4 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-600"
         >
-          {operationError}
+          {cleanupError && <div>{cleanupError}</div>}
+          {operationError && <div>{operationError}</div>}
         </div>
       )}
 

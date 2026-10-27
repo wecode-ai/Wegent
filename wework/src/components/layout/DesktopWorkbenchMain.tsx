@@ -30,7 +30,6 @@ import {
 } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
-import { decodeMarkdownFilePath } from '@/components/chat/assistantMarkdownLinks'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
@@ -218,6 +217,7 @@ import {
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
+import { useRequestUserInputExpiryRefresh } from './useRequestUserInputExpiryRefresh'
 import {
   getRuntimeWorkbenchPaneKeys,
   getWorkbenchPaneKey,
@@ -1705,7 +1705,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ...currentRuntimeTask,
         threadId: selectedSubagentConversationId,
       },
-      { includeFullContent: true }
+      { includeFullContent: true, threadOnly: true }
     )
       .then(transcript => {
         setSubagentTranscripts(current => ({
@@ -2079,13 +2079,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ? `calc(${rightPanelWidth} - ${rightTitlebarActionsWidth})`
     : '0px'
   const temporaryChatAvailable = !activeLocalHarnessSession
+  const canBrowseFiles = Boolean(
+    workspaceProject ||
+    selectedWorkspaceFile?.target ||
+    openFileRequest?.target ||
+    openFileRequest?.attachment ||
+    Object.keys(fileTabs).length
+  )
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
-    const canBrowseFiles = Boolean(
-      workspaceProject ||
-      openFileRequest?.target ||
-      openFileRequest?.attachment ||
-      Object.keys(fileTabs).length
-    )
     const availableContextTabs = workItemContextAvailable
       ? rightPanelTabs
       : rightPanelTabs.filter(tab => tab !== 'work-item')
@@ -2106,14 +2107,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ? permittedTabs
       : [...permittedTabs, rightPanelView]
   }, [
-    openFileRequest?.target,
-    openFileRequest?.attachment,
-    fileTabs,
+    canBrowseFiles,
     rightPanelTabs,
     rightPanelView,
     temporaryChatAvailable,
     workItemContextAvailable,
-    workspaceProject,
   ])
   const effectiveRightPanelView =
     (!temporaryChatAvailable && rightPanelView.startsWith('chat:')) ||
@@ -2243,12 +2241,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           isDirectory: selectedWorkspaceFile.isDirectory,
         }
       : null
-  const canBrowseFiles = Boolean(
-    workspaceProject ||
-    openFileRequest?.target ||
-    openFileRequest?.attachment ||
-    Object.keys(fileTabs).length
-  )
   const devWorkspacePath = getWeworkDevInstanceInfo()?.worktree?.trim() ?? ''
   const centralHarnessTargetDevice = composerWorkspaceTarget?.deviceId
     ? devices.find(device => device.device_id === composerWorkspaceTarget.deviceId)
@@ -2984,6 +2976,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     paneMessages,
     paneSession.answeredRequestUserInputIds
   )
+  useRequestUserInputExpiryRefresh(pendingRequestUserInput?.expiresAtUnixMs)
   const selectedAssistantPlanContent = useMemo(
     () => findSelectedAssistantPlanContent(paneMessages, selectedAssistantPlan),
     [paneMessages, selectedAssistantPlan]
@@ -3087,6 +3080,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       attachments: paneSession.attachments,
       uploadingFiles: paneSession.uploadingFiles,
       errors: paneSession.attachmentErrors,
+      dismissAttachmentError: paneSession.dismissAttachmentError,
       handleFileSelect: paneSession.handleFileSelect,
       removeAttachment: paneSession.removeAttachment,
       modelSelectorOpenSignal,
@@ -3109,6 +3103,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [
       modelSelectorOpenSignal,
       paneSession.attachmentErrors,
+      paneSession.dismissAttachmentError,
       paneSession.attachments,
       paneSession.handleFileSelect,
       paneSession.removeAttachment,
@@ -4379,7 +4374,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setFileOpenError(null)
       try {
         const trimmedPath = await resolveHomeRelativeWorkspacePath(
-          decodeMarkdownFilePath(path.trim()),
+          path.trim(),
           effectiveWorkspaceTarget?.deviceId ??
             resolveLocalWorkbenchDeviceId(devices, LOCAL_WORKBENCH_DEVICE_ALIAS)!,
           getDeviceHomeDirectory
@@ -5261,6 +5256,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
                     }
                     hasMoreBefore={paneSession.transcriptHasMoreBefore}
+                    onSearchTranscript={paneSession.searchTranscript}
+                    onEnsureSearchMatch={paneSession.ensureSearchMatch}
+                    searchPage={paneSession.searchPage}
+                    onLoadSearchContext={paneSession.loadSearchContext}
+                    onReleaseSearchPage={paneSession.releaseSearchPage}
                     loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
                     turnNavigation={paneSession.turnNavigation}
                     loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
@@ -5312,7 +5312,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       displayedRightPanelExpanded && 'z-critical'
                     )}
                     stickyFooter={
-                      temporaryChatExpanded || isCreatingWorktree ? null : (
+                      (temporaryChatExpanded && !pendingRequestUserInput) ||
+                      isCreatingWorktree ? null : (
                         <>
                           <div
                             className={cn(
@@ -5371,7 +5372,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                     {t('workbench.back_to_work_item', '返回 Issue')}
                                   </button>
                                 </div>
-                              ) : !displayedRightPanelExpanded ? (
+                              ) : !displayedRightPanelExpanded || pendingRequestUserInput ? (
                                 <>
                                   {showConversationDeviceBanner ? (
                                     <ConversationDeviceOfflineBanner
@@ -5398,6 +5399,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         'implementation-plan'
                                       }
                                       payload={pendingRequestUserInput}
+                                      messages={paneMessages}
                                       onSubmit={response => {
                                         const isImplementationPlanRequest =
                                           isImplementationPlanRequestUserInput(
@@ -5931,9 +5933,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   <WorkItemContextPanel
                     key={`${boundCloudProject.id}:${boundCloudItem.id}:${boundCloudItem.version}:${currentProjectSpaceRuntimeTask.deviceId}:${currentProjectSpaceRuntimeTask.taskId}`}
                     api={boundProjectSpaceApi}
+                    services={services}
                     project={boundCloudProject}
                     item={boundCloudItem}
                     currentTask={currentProjectSpaceRuntimeTask}
+                    currentUserId={state.user?.id}
+                    localProjects={state.projects}
                     deviceNamesById={getWorkbenchDeviceNamesById(state.devices)}
                     onOpenBoard={openBoundProjectSpaceTask}
                     onOpenTask={openRuntimeTask}

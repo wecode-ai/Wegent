@@ -12,6 +12,7 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
+import { createCollaborationTranslator } from '@wegent/collaboration'
 import type {
   ProjectManageApi,
   ProjectManageExtensionContext,
@@ -159,7 +160,11 @@ export function CloudProjectManageView({
   section?: 'all' | 'overview' | 'members' | 'agents' | 'board'
   onProjectUpdated?: (project: CloudProject) => void
 }) {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
+  const translate = useMemo(
+    () => createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en'),
+    [i18n.language]
+  )
   const manageApi = useMemo<
     ProjectManageApi<CloudProject, CloudProjectMember, CloudLoopItem, CloudUserSearchItem>
   >(
@@ -183,7 +188,7 @@ export function CloudProjectManageView({
         Trash2,
         X,
       },
-      translate: (key, fallback, options) => t(key, fallback, options),
+      translate: (key, fallback, options) => translate(key, t(key, fallback, options), options),
       confirm: message => window.confirm(message),
       trackCompleted: action =>
         track('feature_action_completed', { domain: 'project_space', action }),
@@ -195,7 +200,7 @@ export function CloudProjectManageView({
       ),
       renderActionMenu: options => <ActionMenu {...options} />,
     }),
-    [t]
+    [t, translate]
   )
   const renderProviderSettings = useMemo(
     () =>

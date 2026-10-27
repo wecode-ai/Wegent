@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { chmod, copyFile, mkdir, rename, rm, stat } from 'node:fs/promises'
-import { delimiter, dirname, join, win32 } from 'node:path'
+import { dirname, join, posix, win32 } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
@@ -17,6 +17,10 @@ const UV_DOWNLOAD_TIMEOUT_MS = 120_000
 const UV_DOWNLOAD_BASE_URL = `https://mjs.sinaimg.cn/umd/cs-packages/uv/${UV_VERSION}`
 const PYTHON_DOWNLOAD_MIRROR_URL =
   'https://python-standalone.org/mirror/astral-sh/python-build-standalone/'
+const PYTHON_HEALTH_CHECK = [
+  'import ensurepip, ssl, sys, venv, zlib',
+  'print(f"Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")',
+].join('; ')
 
 interface UvArtifact {
   archiveName: string
@@ -142,7 +146,11 @@ export class PythonRuntimeManager {
       })
     this.log = options.log ?? (() => undefined)
     this.runtimeEnvironment = {
-      ...withPrependedPath(options.environment, this.runtimeBin, this.platform),
+      ...withPrependedPath(
+        isolatedPythonEnvironment(options.environment, this.platform),
+        this.runtimeBin,
+        this.platform
+      ),
       WEGENT_PYTHON_PATH: this.pythonPath(),
       WEWORK_RUNTIME_BIN: this.runtimeBin,
     }
@@ -234,8 +242,9 @@ export class PythonRuntimeManager {
 
   private async inspectInstalledPython(): Promise<PythonRuntimeStatus | null> {
     const path = this.pythonPath()
+    if (!(await isFile(path))) return null
     try {
-      const { stdout, stderr } = await this.runFile(path, ['--version'], {
+      const { stdout, stderr } = await this.runFile(path, ['-c', PYTHON_HEALTH_CHECK], {
         env: this.runtimeEnvironment,
         timeout: 5_000,
       })
@@ -247,7 +256,8 @@ export class PythonRuntimeManager {
         version: `${match[1]}.${match[2]}.${match[3]}`,
         installedBytes: details.size,
       })
-    } catch {
+    } catch (error) {
+      this.log({ event: 'python-runtime-health-check-failed', error: errorMessage(error) })
       return null
     }
   }
@@ -301,14 +311,19 @@ export class PythonRuntimeManager {
   }
 
   private async bootstrapEnvironment(): Promise<NodeJS.ProcessEnv> {
+    const inherited = Object.fromEntries(
+      Object.entries(this.runtimeEnvironment).filter(
+        ([key]) => !key.toUpperCase().startsWith('UV_')
+      )
+    )
     const environment: NodeJS.ProcessEnv = {
-      ...this.runtimeEnvironment,
+      ...inherited,
       UV_CACHE_DIR: join(this.root, 'cache'),
       UV_MANAGED_PYTHON: 'true',
       UV_PYTHON_BIN_DIR: this.runtimeBin,
       UV_PYTHON_INSTALL_DIR: join(this.root, 'installations'),
       UV_PYTHON_INSTALL_REGISTRY: 'false',
-      UV_PYTHON_INSTALL_MIRROR_URL: PYTHON_DOWNLOAD_MIRROR_URL,
+      UV_PYTHON_INSTALL_MIRROR: PYTHON_DOWNLOAD_MIRROR_URL,
     }
     if (!this.resolveProxy) return environment
 
@@ -431,6 +446,21 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function isolatedPythonEnvironment(
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform
+): NodeJS.ProcessEnv {
+  const isolated = { ...environment }
+  for (const key of Object.keys(isolated)) {
+    const normalized = platform === 'win32' ? key.toUpperCase() : key
+    if (['PYTHONHOME', 'PYTHONPATH', 'PYTHONUSERBASE', 'PYTHONNOUSERSITE'].includes(normalized)) {
+      delete isolated[key]
+    }
+  }
+  isolated.PYTHONNOUSERSITE = '1'
+  return isolated
+}
+
 function withPrependedPath(
   environment: NodeJS.ProcessEnv,
   directory: string,
@@ -447,7 +477,7 @@ function withPrependedPath(
       if (key !== 'PATH' && key.toLowerCase() === 'path') delete normalized[key]
     }
   }
-  const separator = platform === 'win32' ? win32.delimiter : delimiter
+  const separator = platform === 'win32' ? win32.delimiter : posix.delimiter
   const entries = currentPath?.split(separator).filter(Boolean) ?? []
   normalized.PATH = [directory, ...entries.filter(entry => entry !== directory)].join(separator)
   return normalized

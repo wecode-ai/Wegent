@@ -49,6 +49,7 @@ export interface WorkspaceProjectCreateInput {
 
 export interface WorkspaceProjectUpdateInput {
   version: number;
+  tagChange?: { source: string; target: string | null };
   name?: string;
   description?: string;
   tags?: string[];
@@ -58,6 +59,7 @@ export interface WorkspaceProjectUpdateInput {
   defaultIssueSecurity?: "open" | "related";
   providerConfig?: Record<string, unknown>;
   boardConfig?: CollaborationProject["board_config"];
+  boardViews?: CollaborationProject["board_views"];
   cardDisplay?: CollaborationProject["card_display"];
   pullRequestAutomation?: Record<string, unknown>;
   workflowDefinition?: Record<string, unknown>;
@@ -282,6 +284,7 @@ export interface WorkspaceDeliveryAsset {
 }
 
 export interface WorkspaceDelivery {
+  createdByUserId?: number | null;
   id: string;
   issueId: string;
   status: "draft" | "delivered";
@@ -962,6 +965,7 @@ export interface SharedWorkspaceApi {
     save(
       projectId: string,
       settings: WorkspaceStandInSettings,
+      deviceId?: string,
     ): Promise<WorkspaceStandInSettings>;
   };
   /** Device-addressed execution transcripts and live runtime events. */
@@ -1026,10 +1030,6 @@ export interface WeworkWorkspaceRuntimePort {
     title: string,
     description: string,
   ): Promise<{ issue: CollaborationIssue }>;
-  updateTrackedTaskTitle(
-    task: WorkspaceRuntimeTaskAddress,
-    title: string,
-  ): Promise<CollaborationIssue | null>;
   reportExecutionLifecycle(
     projectId: string,
     executionId: number,

@@ -22,9 +22,12 @@ import {
 import { TemporaryConversationLayout } from '@wegent/collaboration/conversation'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
-import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 import {
-  applyRequestUserInputResponseToBlock,
+  RequestUserInputCard,
+  type RequestUserInputPayload,
+} from '@/components/chat/RequestUserInputCard'
+import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
+import {
   findRequestUserInputPayload,
   isAsyncRequestUserInputPayload,
   requestUserInputPayloadKey,
@@ -44,16 +47,12 @@ import {
 } from '@/features/workbench/runtimePaneStatus'
 import {
   appendAcceptedRuntimeConversationMessage,
-  abortRuntimeConversationHydration,
   applyRuntimeConversationAction,
-  beginRuntimeConversationHydration,
-  completeRuntimeConversationHydration,
   getRuntimeConversationMessages,
   getRuntimeConversationTurns,
   getRuntimeConversationTurnIds,
   removeRuntimeConversationTurn,
   subscribeRuntimeConversation,
-  updateRuntimeConversationBlocks,
 } from '@/features/workbench/runtimeConversationCache'
 import {
   useRuntimeTaskLifecycle,
@@ -68,34 +67,19 @@ import { createAppliedRuntimeGuidanceMessage } from '@/features/workbench/runtim
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
-  Attachment,
   ModelOptions,
-  ModelType,
   ProjectWithTasks,
   RequestUserInputResponse,
   RuntimeSendRequest,
-  RuntimeGoalCreateInput,
   RuntimeTaskAddress,
   UnifiedModel,
 } from '@/types/api'
 import type {
   RuntimeConversationTurn,
   RuntimePaneQueuedMessage,
+  RuntimeTaskComposerCreateOptions,
   WorkbenchMessage,
 } from '@/types/workbench'
-
-export interface RuntimeTaskComposerCreateOptions {
-  attachments: Attachment[]
-  initialGoal?: RuntimeGoalCreateInput
-  executionModel: {
-    modelId?: string
-    modelType?: ModelType | null
-    modelOptions?: ModelOptions
-  }
-  optimisticUserMessage: WorkbenchMessage & { role: 'user' }
-  onError: (message: string) => void
-  onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
-}
 
 interface TemporaryChatPanelProps {
   currentProject: ProjectWithTasks | null
@@ -114,15 +98,18 @@ interface TemporaryChatPanelProps {
   sendEphemeral?: boolean
   emptyStateText?: string
   placeholder?: string
+  showExecutionTools?: boolean
   allowInitialGoal?: boolean
   expanded?: boolean
   wideComposer?: boolean
   collapseComposerWhenIdle?: boolean
   readOnly?: boolean
+  active?: boolean
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
   projectWorkBarMiddleContext?: ReactNode
   projectWorkBarTrailingContext?: ReactNode
+  composerHeader?: ReactNode
   onRestoreConversation?: () => void
   initialScrollPosition?: 'restore' | 'latest'
   scrollOrigin?: 'top' | 'bottom'
@@ -143,6 +130,7 @@ export function TemporaryChatPanel({
   sendEphemeral = true,
   emptyStateText = '临时聊天不会出现在左侧任务列表。',
   placeholder = '要求后续变更',
+  showExecutionTools = true,
   allowInitialGoal = false,
   expanded = false,
   wideComposer = false,
@@ -152,10 +140,12 @@ export function TemporaryChatPanel({
   showProjectWorkBar = false,
   projectWorkBarMiddleContext,
   projectWorkBarTrailingContext,
+  composerHeader,
   onRestoreConversation,
   initialScrollPosition = 'restore',
   scrollOrigin = 'bottom',
   onOpenRuntimeTask,
+  active = true,
 }: TemporaryChatPanelProps) {
   const { t, i18n } = useTranslation('common')
   const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en'
@@ -280,6 +270,9 @@ export function TemporaryChatPanel({
   const [historyLoading, setHistoryLoading] = useState(Boolean(initialAddress && !sendEphemeral))
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [historyRevision, setHistoryRevision] = useState(0)
+  const [historyBeforeCursor, setHistoryBeforeCursor] = useState<string | null>(null)
+  const [historyLoadingMoreBefore, setHistoryLoadingMoreBefore] = useState(false)
+  const historyRequest = useRef({ loadingMore: false })
   const [sending, setSending] = useState(false)
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
@@ -354,30 +347,25 @@ export function TemporaryChatPanel({
     if (!address || sendEphemeral) return
     if (createdAddressKeyRef.current === `${address.deviceId}:${address.taskId}`) return
     let cancelled = false
-    const hydrationToken = beginRuntimeConversationHydration(address)
+    historyRequest.current = { loadingMore: false }
     setHistoryLoading(true)
     setHistoryError(null)
+    setHistoryBeforeCursor(null)
+    setHistoryLoadingMoreBefore(false)
     const usageRevision = contextUsageStore.getRevision()
     void loadRuntimeTranscriptForPane(address)
       .then(transcript => {
-        if (cancelled) {
-          abortRuntimeConversationHydration(address, hydrationToken)
-          return
-        }
+        if (cancelled) return
         contextUsageStore.receiveTranscript(transcript.contextUsage, usageRevision)
+        setHistoryBeforeCursor(transcript.beforeCursor ?? null)
         lifecycleStore.syncTranscript(address, transcript, {
           preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isTurnActive ?? false,
         })
-        const nextMessages = completeRuntimeConversationHydration(
-          address,
-          hydrationToken,
-          transcript.turns
-        )
+        const nextMessages = getRuntimeConversationMessages(address)
         if (nextMessages.length > 0) setMessages(nextMessages)
       })
       .catch(caughtError => {
-        abortRuntimeConversationHydration(address, hydrationToken)
-        if (!cancelled && getRuntimeConversationMessages(address).length === 0) {
+        if (!cancelled) {
           setHistoryError(caughtError instanceof Error ? caughtError.message : String(caughtError))
         }
       })
@@ -386,7 +374,7 @@ export function TemporaryChatPanel({
       })
     return () => {
       cancelled = true
-      abortRuntimeConversationHydration(address, hydrationToken)
+      historyRequest.current = { loadingMore: false }
     }
   }, [
     address,
@@ -396,6 +384,37 @@ export function TemporaryChatPanel({
     sendEphemeral,
     historyRevision,
   ])
+
+  const loadMoreHistory = useCallback(async () => {
+    if (!address || !historyBeforeCursor || historyRequest.current.loadingMore) return
+    const request = historyRequest.current
+    request.loadingMore = true
+    setHistoryLoadingMoreBefore(true)
+    try {
+      const transcript = await loadRuntimeTranscriptForPane(address, {
+        limit: 5,
+        beforeCursor: historyBeforeCursor,
+      })
+      if (historyRequest.current !== request) return
+      setMessages(getRuntimeConversationMessages(address))
+      setTurns(getRuntimeConversationTurns(address))
+      setHistoryBeforeCursor(transcript.beforeCursor ?? null)
+      setHistoryError(null)
+    } catch (caughtError) {
+      if (historyRequest.current !== request) return
+      setHistoryError(caughtError instanceof Error ? caughtError.message : String(caughtError))
+    } finally {
+      if (historyRequest.current === request) {
+        request.loadingMore = false
+        setHistoryLoadingMoreBefore(false)
+      }
+    }
+  }, [address, historyBeforeCursor, loadRuntimeTranscriptForPane])
+
+  const retryHistory = useCallback(() => {
+    if (historyBeforeCursor) void loadMoreHistory()
+    else setHistoryRevision(value => value + 1)
+  }, [historyBeforeCursor, loadMoreHistory])
 
   useEffect(() => {
     if (!address) return
@@ -678,6 +697,7 @@ export function TemporaryChatPanel({
       address,
       goalDraftActive,
       createTask,
+      lifecycleStore,
       createTemporaryRuntimeTask,
       currentProject,
       input,
@@ -800,19 +820,12 @@ export function TemporaryChatPanel({
         conversationQueue.enqueue(answerMessage)
         return sendQueuedMessageAsGuidance(answerMessage)
       }
-      const sent = await sendRuntimePaneMessage({
+      return sendRuntimePaneMessage({
         address,
         message: requestUserInputResponseText(response),
         requestUserInputResponse: response,
         ...runtimeContext,
       })
-      if (!sent) return false
-      setMessages(
-        updateRuntimeConversationBlocks(address, block =>
-          applyRequestUserInputResponseToBlock(block, response)
-        )
-      )
-      return true
     },
     [
       address,
@@ -845,12 +858,13 @@ export function TemporaryChatPanel({
     [address, cancelRuntimePaneTask]
   )
 
+  const pendingRequest = pendingRequestUserInputPayload(messages, hiddenRequestUserInputIds)
   return (
     <TemporaryConversationLayout
       messageCount={messages.length}
       loading={historyLoading}
       loadError={historyError}
-      onRetry={() => setHistoryRevision(value => value + 1)}
+      onRetry={retryHistory}
       testId={testId}
       emptyStateText={emptyStateText}
       expanded={expanded}
@@ -858,51 +872,72 @@ export function TemporaryChatPanel({
       onRestoreConversation={onRestoreConversation}
       translate={conversationTranslate}
       composer={
-        readOnly ? null : (
-          <ComposerCatalogContext.Provider value={composerCatalog}>
-            <BufferedChatInput
-              predictionAddress={address}
-              value={input}
-              replaceDraftKey={replaceDraftKey}
-              onChange={setInput}
-              onDraftEdit={() => setError(null)}
-              onSubmit={send}
-              disabled={taskModelIdentityPending}
-              pluginPickerIconOnly
-              requireText
-              error={error}
-              placeholder={placeholder}
-              variant="desktop"
-              collapseWhenIdle={collapseComposerWhenIdle}
-              projectChat={sideChatProjectChat}
-              projectWork={projectWork}
-              showProjectWorkBar={showProjectWorkBar}
-              projectWorkBarMiddleContext={projectWorkBarMiddleContext}
-              projectWorkBarTrailingContext={projectWorkBarTrailingContext}
-              queuedMessages={queuedMessages}
-              onCancelQueuedMessage={cancelQueuedMessage}
-              onSendQueuedAsGuidance={guideQueuedMessage}
-              onEditQueuedMessage={editQueuedMessage}
-              isStreaming={busy}
-              onPause={pause}
-              goalDraftActive={goalDraftActive}
-              onSetGoal={
-                allowInitialGoal && createTask && !address
-                  ? () => {
-                      setGoalDraftActive(true)
-                      setError(null)
-                    }
-                  : undefined
-              }
-              onCancelGoalDraft={() => setGoalDraftActive(false)}
-            />
-          </ComposerCatalogContext.Provider>
+        readOnly || !active ? null : (
+          <>
+            {!pendingRequest && composerHeader}
+            {pendingRequest ? (
+              <RequestUserInputCard
+                key={requestUserInputPayloadKey(pendingRequest)}
+                payload={pendingRequest}
+                messages={messages}
+                onSubmit={submitRequestUserInput}
+                onIgnore={() => void ignoreRequestUserInput(pendingRequest)}
+              />
+            ) : (
+              <ComposerCatalogContext.Provider value={composerCatalog}>
+                <BufferedChatInput
+                  predictionAddress={address}
+                  value={input}
+                  replaceDraftKey={replaceDraftKey}
+                  onChange={setInput}
+                  onDraftEdit={() => setError(null)}
+                  onSubmit={send}
+                  disabled={taskModelIdentityPending}
+                  showExecutionTools={showExecutionTools}
+                  showModelSelector
+                  pluginPickerIconOnly
+                  requireText
+                  error={error}
+                  placeholder={placeholder}
+                  variant="desktop"
+                  collapseWhenIdle={collapseComposerWhenIdle}
+                  projectChat={sideChatProjectChat}
+                  projectWork={projectWork}
+                  showProjectWorkBar={showProjectWorkBar}
+                  projectWorkBarMiddleContext={projectWorkBarMiddleContext}
+                  projectWorkBarTrailingContext={projectWorkBarTrailingContext}
+                  queuedMessages={queuedMessages}
+                  onCancelQueuedMessage={cancelQueuedMessage}
+                  onSendQueuedAsGuidance={guideQueuedMessage}
+                  onEditQueuedMessage={editQueuedMessage}
+                  isStreaming={busy}
+                  onPause={pause}
+                  goalDraftActive={goalDraftActive}
+                  onSetGoal={
+                    allowInitialGoal && createTask && !address
+                      ? () => {
+                          setGoalDraftActive(true)
+                          setError(null)
+                        }
+                      : undefined
+                  }
+                  onCancelGoalDraft={() => setGoalDraftActive(false)}
+                />
+              </ComposerCatalogContext.Provider>
+            )}
+          </>
         )
       }
     >
       <ScrollableMessageArea
         messages={messages}
         turns={turns}
+        loading={historyLoading || historyLoadingMoreBefore}
+        hasMoreBefore={Boolean(historyBeforeCursor)}
+        loadingMoreBefore={historyLoadingMoreBefore}
+        onLoadMoreBefore={loadMoreHistory}
+        transcriptError={messages.length ? historyError : null}
+        onRetryTranscript={retryHistory}
         isWaitingForAssistant={busy}
         devices={state.devices}
         conversationKey={address?.taskId ?? instanceId}
@@ -937,6 +972,7 @@ export function TemporaryChatPanel({
         onRequestUserInputIgnore={address && !readOnly ? ignoreRequestUserInput : undefined}
         onOpenAssistantPlan={onOpenRuntimeTask ? openRuntimeTask : undefined}
         hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+        hideRequestUserInputBlocks={Boolean(pendingRequest) && !readOnly}
         initialScrollPosition={initialScrollPosition}
         scrollOrigin={scrollOrigin}
       />

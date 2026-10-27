@@ -2,7 +2,6 @@ import { formatNotificationTime } from './notificationTime'
 import type { ReactNode } from 'react'
 import { AtSign, Bell, Bot, ClipboardCheck, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { StandInIcon } from '@/features/todo/StandInIcon'
 
 const KIND_ICONS: Record<string, LucideIcon> = {
   mention: AtSign,
@@ -15,6 +14,7 @@ export interface NotificationFeedRowProps {
   processing?: ReactNode
   event?: ReactNode
   avatarLabel?: string
+  badge?: ReactNode
   testId: string
   kind?: string
   title: string
@@ -43,9 +43,10 @@ export function NotificationFeedRow({
   processing,
   event,
   avatarLabel,
+  badge,
 }: NotificationFeedRowProps) {
   const time = formatNotificationTime(timestamp)
-  const KindIcon = kind === 'stand_in' ? StandInIcon : (KIND_ICONS[kind ?? ''] ?? Bell)
+  const KindIcon = KIND_ICONS[kind ?? ''] ?? Bell
   const taskOnly = kind === 'issue_dispatch_assignment' && !avatarLabel
   const timeLabel = time ? (
     <time
@@ -78,7 +79,7 @@ export function NotificationFeedRow({
           data-testid={testId}
           data-unread={unread ? 'true' : undefined}
           disabled={busy}
-          className="block min-h-11 w-full text-left after:absolute after:inset-0 after:z-0 after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-focus disabled:opacity-50 md:min-h-6"
+          className="block min-h-11 w-full text-left after:absolute after:inset-0 after:z-0 after:content-[''] focus-visible:outline-none keyboard:focus-visible:after:ring-2 keyboard:focus-visible:after:ring-inset keyboard:focus-visible:after:ring-focus disabled:opacity-50 md:min-h-6"
           onClick={onClick}
         >
           <span className="flex items-baseline justify-between gap-3">
@@ -91,6 +92,7 @@ export function NotificationFeedRow({
               {unread && <span className="sr-only">{unreadLabel}：</span>}
               {title}
             </span>
+            {badge}
             {!event && !taskOnly && timeLabel}
           </span>
           {(event || (taskOnly && time)) && (

@@ -21,7 +21,6 @@ import type {
   RuntimeSubagentStatus,
   WorkbenchMessage,
 } from '@/types/workbench'
-import type { RuntimeTransportReplacedPayload } from '@/stream/chatStream'
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import { mergeRuntimeConversationTurns } from './runtimeConversationTurns'
 
@@ -42,6 +41,8 @@ export interface RuntimeConversationMetadata {
 }
 
 export const turnsByConversation = new Map<string, RuntimeConversationTurn[]>()
+export const threadIdsByConversation = new Map<string, string>()
+export const supersededTurnIdsByConversation = new Map<string, Set<string>>()
 export const projectedMessagesByConversation = new Map<
   string,
   { turns: RuntimeConversationTurn[]; messages: WorkbenchMessage[] }
@@ -49,9 +50,7 @@ export const projectedMessagesByConversation = new Map<
 export const metadataByConversation = new Map<string, RuntimeConversationMetadata>()
 const listenersByConversation = new Map<string, Set<Subscription>>()
 const retainingListenersByConversation = new Map<string, Set<Subscription>>()
-export const runtimeTransportReplacedListeners = new Set<
-  (payload: RuntimeTransportReplacedPayload) => void
->()
+const archivedConversationKeys = new Set<string>()
 export const hydrationByConversation = new Map<
   string,
   { token: symbol; bufferedActions: RuntimePaneMessageAction[] }
@@ -114,6 +113,8 @@ function canonicalRuntimeConversationDeviceId(deviceId: string): string {
 function conversationMaps(): Map<string, unknown>[] {
   return [
     turnsByConversation,
+    threadIdsByConversation,
+    supersededTurnIdsByConversation,
     projectedMessagesByConversation,
     metadataByConversation,
     listenersByConversation,
@@ -132,6 +133,24 @@ function migrateRuntimeConversation(previousKey: string, nextKey: string): void 
   cancelPendingStreamingNotification(previousKey)
   cancelTerminalConversationEviction(previousKey)
   cancelTerminalConversationEviction(nextKey)
+  const previousThread = threadIdsByConversation.get(previousKey)
+  const currentThread = threadIdsByConversation.get(nextKey)
+  const replacedThread = Boolean(
+    previousThread && currentThread && previousThread !== currentThread
+  )
+  if (replacedThread) {
+    turnsByConversation.delete(previousKey)
+    hydrationByConversation.delete(previousKey)
+    supersededTurnIdsByConversation.delete(previousKey)
+    evictConversationViewport(previousKey)
+  }
+  moveEntry(threadIdsByConversation, previousKey, nextKey, (_, current) => current)
+  moveEntry(
+    supersededTurnIdsByConversation,
+    previousKey,
+    nextKey,
+    (previous, current) => new Set([...previous, ...current])
+  )
   moveEntry(turnsByConversation, previousKey, nextKey, (previous, current) =>
     isMoreRecent(previous, current)
       ? mergeRuntimeConversationTurns(current, previous)
@@ -270,6 +289,7 @@ export function notifyRuntimeConversation(key: string, action?: RuntimePaneMessa
 }
 
 export function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTurn[]): void {
+  if (archivedConversationKeys.has(key)) return
   projectedMessagesByConversation.delete(key)
   cacheBoundedEntry(turnsByConversation, key, turns, evictedKey => {
     projectedMessagesByConversation.delete(evictedKey)
@@ -284,6 +304,7 @@ export function cacheRuntimeConversationQueuedMessagesByKey(
   key: string,
   messages: RuntimePaneQueuedMessage[]
 ): void {
+  if (archivedConversationKeys.has(key)) return
   if (messages.length === 0) {
     queuedMessagesByConversation.delete(key)
     scheduleTerminalConversationEviction(key)
@@ -332,6 +353,14 @@ export function evictRuntimeConversationKey(key: string): void {
   evictConversationViewport(key)
 }
 
+export function markRuntimeConversationArchived(key: string): void {
+  archivedConversationKeys.add(key)
+}
+
+export function unmarkRuntimeConversationArchived(key: string): void {
+  archivedConversationKeys.delete(key)
+}
+
 export function getRuntimeConversationCacheStats() {
   return { messageEntries: turnsByConversation.size, ...getConversationViewportCacheStats() }
 }
@@ -342,8 +371,8 @@ export function clearRuntimeConversationCacheStore(): void {
   for (const entries of conversationMaps()) {
     entries.clear()
   }
-  runtimeTransportReplacedListeners.clear()
   canonicalDeviceIdByAlias.clear()
+  archivedConversationKeys.clear()
   revisionByValue = new WeakMap()
   nextRevision = 1
   clearConversationViewportCache()

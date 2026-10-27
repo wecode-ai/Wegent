@@ -79,6 +79,15 @@ function WorktreeRow({
           <div className="mt-1 truncate text-xs text-text-secondary" title={item.path}>
             {item.path}
           </div>
+          {item.lastError && (
+            <div
+              data-testid="worktree-error"
+              role="alert"
+              className="mt-1 break-words text-xs text-red-600"
+            >
+              {item.lastError}
+            </div>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button
@@ -307,7 +316,7 @@ export function WorktreesSettingsPage({
 
   const groups = useMemo(
     () =>
-      groupWorktrees(items.filter(item => item.state === 'active' || item.state === 'restorable')),
+      groupWorktrees(items.filter(item => ['active', 'restorable', 'failed'].includes(item.state))),
     [items]
   )
   const unavailable = !api || availableDevices.length === 0
@@ -380,7 +389,7 @@ export function WorktreesSettingsPage({
                   }}
                   placeholder={t('workbench.worktrees_default')}
                   disabled={saving}
-                  className="w-56 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-primary disabled:opacity-50 max-sm:w-full"
+                  className="w-56 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none transition-colors placeholder:text-text-muted keyboard:focus:border-primary disabled:opacity-50 max-sm:w-full"
                 />
               }
             />
@@ -422,7 +431,7 @@ export function WorktreesSettingsPage({
                       if (event.key === 'Enter') event.currentTarget.blur()
                     }}
                     disabled={saving || !settings.autoCleanupEnabled}
-                    className="w-24 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none [appearance:textfield] focus:border-primary disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    className="w-24 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none [appearance:textfield] keyboard:focus:border-primary disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                   />
                 </div>
               }

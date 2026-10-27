@@ -1,7 +1,3 @@
-import { IssueStandInControl } from './IssueStandInControl'
-import type { SharedWorkspaceApi } from '@wegent/collaboration'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo } from '@/types/api'
 import { useImperativeHandle, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import {
@@ -23,27 +19,9 @@ import { AnchorPopover } from './AnchorPopover'
 import type { IssueHomeTaskComposerProps } from '@wegent/collaboration/platform'
 
 /** The Tasks-tab input with Issue persistence supplied by the collaboration host. */
-export function WeworkIssueHomeComposer({
-  ref,
-  api,
-  services,
-  devices = [],
-  userId,
-  ...props
-}: IssueHomeTaskComposerProps & {
-  api?: SharedWorkspaceApi
-  services?: WorkbenchServices
-  userId?: number
-  devices?: DeviceInfo[]
-}) {
+export function WeworkIssueHomeComposer({ ref, ...props }: IssueHomeTaskComposerProps) {
   const { t } = useTranslation('common')
   const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null)
-  const [standIn, setStandIn] = useState<{
-    projectId: string
-    deviceId: string | null
-    profileId?: string
-  } | null>(null)
-  const standInDeviceId = standIn?.projectId === props.projectId ? standIn.deviceId : null
   const input = useRef<ComposerInputHandle>(null)
   const selectedProject = props.projects.find(project => project.id === props.projectId)
   const projectLocation = (project: IssueHomeTaskComposerProps['projects'][number]) => {
@@ -106,7 +84,7 @@ export function WeworkIssueHomeComposer({
               data-testid={`collaboration-issue-guide-${id}`}
               disabled={props.disabled}
               onClick={() => insert(t(`issue_creation.${id}_prompt`))}
-              className="inline-flex min-h-11 items-center gap-2 rounded-lg px-2 text-lg text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg px-2 text-lg text-text-secondary transition-colors hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary disabled:opacity-50"
             >
               <Icon aria-hidden="true" className="h-5 w-5 shrink-0" />
               {t(`issue_creation.${id}_title`)}
@@ -134,7 +112,7 @@ export function WeworkIssueHomeComposer({
                       : props.projectLabel
                   }
                   onClick={event => setAnchor(event.currentTarget)}
-                  className="inline-flex min-h-11 min-w-0 max-w-full items-center gap-2 rounded-md bg-surface px-2 text-sm text-text-primary hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary md:min-h-7"
+                  className="inline-flex min-h-11 min-w-0 max-w-full items-center gap-2 rounded-md bg-surface px-2 text-sm text-text-primary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary md:min-h-7"
                 >
                   <ProjectIcon className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
                   <span className="truncate">{selectedProject?.name}</span>
@@ -154,15 +132,7 @@ export function WeworkIssueHomeComposer({
             value={props.value}
             onChange={props.onChange}
             onDraftEdit={handleDraftChange}
-            onSubmit={value =>
-              standInDeviceId
-                ? props.onSubmit(
-                    value ?? props.value,
-                    standInDeviceId,
-                    standIn?.profileId ?? 'default'
-                  )
-                : props.onSubmit(value ?? props.value)
-            }
+            onSubmit={value => props.onSubmit(value ?? props.value)}
             disabled={props.disabled}
             requireText
             placeholder={props.placeholder}
@@ -175,28 +145,6 @@ export function WeworkIssueHomeComposer({
             showExecutionTools={false}
             toolbarLeadingContext={
               <div className="flex flex-wrap items-center gap-1">
-                {api?.standIn?.run && services && selectedProject && (
-                  <IssueStandInControl
-                    api={api}
-                    services={services}
-                    project={selectedProject}
-                    devices={devices}
-                    disabled={props.disabled}
-                    deviceId={standInDeviceId}
-                    userId={userId}
-                    profileId={standIn?.profileId ?? 'default'}
-                    onSelectProfile={profileId =>
-                      setStandIn({
-                        projectId: props.projectId,
-                        deviceId: standInDeviceId,
-                        profileId,
-                      })
-                    }
-                    onSelect={deviceId =>
-                      setStandIn({ projectId: props.projectId, deviceId, profileId: 'default' })
-                    }
-                  />
-                )}
                 {(
                   [
                     { symbol: '@', Icon: AtSign, label: 'mention_member' },
@@ -204,7 +152,7 @@ export function WeworkIssueHomeComposer({
                   ] as const
                 ).map(({ symbol, Icon, label }) =>
                   symbol === '@' && props.ownerControl ? (
-                    <span key={label}>{standInDeviceId ? null : props.ownerControl}</span>
+                    <span key={label}>{props.ownerControl}</span>
                   ) : (
                     <button
                       key={label}
@@ -214,7 +162,7 @@ export function WeworkIssueHomeComposer({
                       title={t(`issue_creation.${label}`)}
                       aria-label={t(`issue_creation.${label}`)}
                       onClick={() => insert(symbol)}
-                      className="inline-flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 md:h-7 md:w-7"
+                      className="inline-flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary disabled:opacity-50 md:h-7 md:w-7"
                     >
                       <Icon className="h-4 w-4" aria-hidden="true" />
                     </button>
@@ -263,7 +211,7 @@ export function WeworkIssueHomeComposer({
                 data-testid={`collaboration-issue-project-${project.id}`}
                 disabled={props.disabled}
                 aria-pressed={project.id === props.projectId}
-                className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-2 text-left text-base text-text-primary hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary"
+                className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-2 text-left text-base text-text-primary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary"
                 onClick={() => {
                   props.onSelectProject(project.id)
                   closePicker()
