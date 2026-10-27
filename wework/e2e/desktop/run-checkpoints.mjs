@@ -5,7 +5,6 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extract } from 'tar'
 
 import {
   DESKTOP_CHECKPOINTS,
@@ -21,6 +20,7 @@ import {
 } from './result-retention.mjs'
 import { prepareDesktopE2EBuild } from '../../scripts/lib/desktop-e2e-build.mjs'
 import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
+import { extractRuntimeArchive } from '../../scripts/lib/extract-runtime-archive.mjs'
 
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
@@ -590,12 +590,6 @@ async function fileSha256(path) {
   return hash.digest('hex')
 }
 
-async function extractArchive(archivePath, destination) {
-  // Use the production archive library: Git Bash tar interprets Windows drive
-  // letters in absolute archive paths as remote hosts.
-  await extract({ file: archivePath, cwd: destination, strict: true })
-}
-
 async function prepareSharedHarnessRuntime(appBinary, parentDirectory) {
   const resourcesRoot = resolve(
     dirname(appBinary),
@@ -636,7 +630,7 @@ async function prepareSharedHarnessRuntime(appBinary, parentDirectory) {
 
     const extractedRoot = join(runtimeRoot, runtime.sourceFingerprint)
     await mkdir(extractedRoot, { recursive: true })
-    await extractArchive(archivePath, extractedRoot)
+    await extractRuntimeArchive(archivePath, extractedRoot)
     const identity = JSON.parse(await readFile(join(extractedRoot, 'runtime.json'), 'utf8'))
     if (
       identity.dshVersion !== runtime.dshVersion ||
