@@ -4992,6 +4992,41 @@ fn codex_launch_config_includes_computer_use_mcp_server() {
 }
 
 #[test]
+fn source_collaboration_approval_exemption_survives_start_resume_fork_and_turn() {
+    let _environment = environment::LaunchEnvironment::new();
+    for kind in ["connection_work", "dingtalk_work", "issue_dispatch"] {
+        for ask in [false, true] {
+            let request = serde_json::from_value(json!({
+                "task_id":"source-collaboration-review",
+                "origin":{"type":kind,"initiatedBy":"stand_in","askBeforeAct":ask,
+                    "cloudProjectId":"project-1","loopItemId":"issue-1"}
+            }))
+            .unwrap();
+            let launch = build_codex_launch_config(&request).unwrap();
+            let key = "mcp_servers.wework_space.default_tools_approval_mode";
+            assert_eq!(
+                launch.config_overrides.iter().filter(|entry| entry.starts_with(&format!("{key}="))).count(),
+                2,
+                "One managed default and one source policy override; never apply source policy twice"
+            );
+            for params in [
+                thread_start_params(&request, &launch),
+                thread_resume_params("thread", &request, &launch),
+                thread_fork_params("thread", None, &request, &launch),
+            ] {
+                assert_eq!(params["config"][key], "approve");
+                assert_eq!(
+                    params["approvalsReviewer"],
+                    external_work::reviewer(&request)
+                );
+            }
+            let turn = turn_start_params("thread", &request, &launch, vec![]);
+            assert_eq!(turn["approvalsReviewer"], external_work::reviewer(&request));
+        }
+    }
+}
+
+#[test]
 fn codex_thread_binds_project_space_through_context_grant() {
     let _environment = environment::LaunchEnvironment::new();
     let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
