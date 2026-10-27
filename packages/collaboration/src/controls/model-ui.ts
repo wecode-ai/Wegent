@@ -303,18 +303,23 @@ export function isModelInterfaceModel(model: UnifiedModel | null): boolean {
   return kind === "model-interface" || kind.startsWith("model-interface:");
 }
 
+export function modelSelectionKey(model: UnifiedModel): string {
+  return JSON.stringify([
+    model.type,
+    model.name,
+    modelConfigString(model, "codexProviderId") ||
+      (model.type === "runtime" ? (model.runtime?.provider ?? "") : ""),
+    model.namespace ?? "",
+    String(model.resourceUserId ?? ""),
+  ]);
+}
+
 export function isSameModelSelection(
   left: UnifiedModel | null,
   right: UnifiedModel | null,
 ): boolean {
-  if (!left || !right || left.type !== right.type || left.name !== right.name) {
-    return false;
-  }
-  return (
-    modelConfigString(left, "codexProviderId") ===
-      modelConfigString(right, "codexProviderId") &&
-    (left.namespace ?? "") === (right.namespace ?? "") &&
-    String(left.resourceUserId ?? "") === String(right.resourceUserId ?? "")
+  return Boolean(
+    left && right && modelSelectionKey(left) === modelSelectionKey(right),
   );
 }
 
