@@ -59,6 +59,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-collaboration-composer-isolation':
     './scenarios/plugin-collaboration-composer-isolation.scenario.mjs',
   'plugin-runtime-path-recovery': './scenarios/plugin-runtime-path-recovery.scenario.mjs',
+  'plugin-runtime-route-refresh': './scenarios/plugin-runtime-route-refresh.scenario.mjs',
+  'plugin-background-sync-isolation': './scenarios/plugin-background-sync-isolation.scenario.mjs',
+  'plugin-periodic-reconcile': './scenarios/plugin-periodic-reconcile.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
   'runtime-input-answer-persistence': './scenarios/runtime-input-answer-persistence.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
@@ -162,8 +165,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
     './scenarios/collaboration-issue-assignment-activity.scenario.mjs',
   'collaboration-issue-comment-attachments':
     './scenarios/collaboration-issue-comment-attachments.scenario.mjs',
-  'collaboration-issue-comment-notification':
+  'collaboration-issue-comment-notification-navigation':
     './scenarios/collaboration-issue-comment-notification.scenario.mjs',
+  'issue-notification-read': './scenarios/issue-notification-read.scenario.mjs',
   'collaboration-issue-mcp-comments': './scenarios/collaboration-issue-mcp-comments.scenario.mjs',
   'collaboration-issue-attachment-preview':
     './scenarios/collaboration-issue-attachment-preview.scenario.mjs',
@@ -226,6 +230,9 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-composer-long-list',
   'plugin-collaboration-composer-isolation',
   'plugin-runtime-path-recovery',
+  'plugin-runtime-route-refresh',
+  'plugin-background-sync-isolation',
+  'plugin-periodic-reconcile',
   'codex-account-login',
   'cloud-space-mention',
   'collaboration-issue-badges',
@@ -276,7 +283,8 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-issue-comment-mention',
   'collaboration-issue-assignment-activity',
   'collaboration-issue-comment-attachments',
-  'collaboration-issue-comment-notification',
+  'collaboration-issue-comment-notification-navigation',
+  'issue-notification-read',
   'collaboration-issue-mcp-comments',
   'collaboration-issue-attachment-preview',
   'collaboration-issue-archive',

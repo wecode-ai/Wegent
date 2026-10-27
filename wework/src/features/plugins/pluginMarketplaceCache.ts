@@ -397,13 +397,15 @@ export function getPluginMarketplaceCache(cacheKey: string): PluginMarketplaceCa
   return null
 }
 
-/** Read-only diagnostics omit account keys, tokens and component configuration. */
+/** Read-only diagnostics omit account keys, tokens and MCP configuration. */
 export function getPluginInventoryDiagnostics() {
   return {
     deviceId: snapshot?.deviceId ?? null,
+    mutationRevision: snapshot?.mutationRevision ?? 0,
     installedPlugins: (snapshot?.installedPlugins ?? []).map(plugin => ({
       pluginKey: plugin.spec.source.pluginKey,
       enabled: plugin.spec.enabled,
+      componentStates: plugin.spec.componentStates ?? {},
       installState: plugin.spec.installState,
     })),
   }

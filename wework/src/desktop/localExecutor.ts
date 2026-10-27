@@ -30,6 +30,7 @@ export interface LocalExecutorStatus {
   running: boolean
   ready?: boolean
   deviceId?: string
+  deviceRouteId?: string
   runtimeInstanceId?: string
   codexInitializeElapsedMs?: number
   version?: string
@@ -452,6 +453,7 @@ export function getInitializedBundledPluginMarketplace(): BundledPluginMarketpla
   return initializedBundledPluginMarketplace
 }
 
+/** Stable Executor-home identity used by local state and caches. */
 export function getKnownLocalExecutorDeviceId(): string | null {
   return (
     initializedLocalExecutorStatus?.deviceId?.trim() ||
@@ -488,6 +490,7 @@ export function ensureLocalExecutorAvailable(
           running: true,
           ready: true,
           deviceId: description.device_id,
+          deviceRouteId: description.device_route_id?.trim() || undefined,
           runtimeInstanceId: description.runtime_instance_id,
           version: description.version,
         }
