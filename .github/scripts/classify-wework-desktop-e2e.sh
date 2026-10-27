@@ -1850,15 +1850,18 @@ build_matrix() {
   if [[ "${selected[plugins:all]:-false}" == "true" ]]; then
     append_matrix_entry plugins Plugins e2e:desktop:plugins
   else
-    for segment in "${plugin_segments[@]}"; do
-      if [[ "${selected[plugins:$segment]:-false}" == "true" ]]; then
-        append_matrix_entry \
-          "plugins-$segment" \
-          "Plugins / $segment" \
-          e2e:desktop:plugins \
-          "$segment"
+    local selected_plugins=()
+    local plugin_segment
+    for plugin_segment in "${plugin_segments[@]}"; do
+      if [[ "${selected[plugins:$plugin_segment]:-false}" == "true" ]]; then
+        selected_plugins+=("$plugin_segment")
       fi
     done
+    if ((${#selected_plugins[@]} > 0)); then
+      local joined_plugins
+      joined_plugins="$(IFS=,; printf '%s' "${selected_plugins[*]}")"
+      append_matrix_entry plugins Plugins e2e:desktop:plugins "$joined_plugins"
+    fi
   fi
 
   local cloud_shard_index
