@@ -1,3 +1,4 @@
+import { useWorkbenchPaneId } from '@/components/layout/workbenchPanePresentation'
 import { createContext, useContext, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { McpUiDisplayMode } from '@modelcontextprotocol/ext-apps/app-bridge'
@@ -5,12 +6,15 @@ import type { ToolBlock } from '@wegent/chat-core/runtime-conversation'
 import type { RuntimeMcpAppsApi } from '@/api/mcpApps'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { McpAppHost } from './McpAppHost'
+import { registerMcpAppPanel } from './workspacePanels'
 
 interface Entry {
   block: ToolBlock
   container: HTMLDivElement
   anchor: HTMLDivElement | null
-  overlay: boolean
+  mode: McpUiDisplayMode
+  dismiss?: () => void
+  removePanel?: () => void
 }
 interface Registry {
   attach: (block: ToolBlock, anchor: HTMLDivElement) => () => void
@@ -29,6 +33,7 @@ export function McpAppsProvider({
   api: RuntimeMcpAppsApi
   onMessage?: (text: string) => Promise<void>
 }) {
+  const paneId = useWorkbenchPaneId()
   const parking = useRef<HTMLDivElement>(null)
   const overlays = useRef<HTMLDivElement>(null)
   const entries = useRef(new Map<string, Entry>())
@@ -37,13 +42,14 @@ export function McpAppsProvider({
     attach(block, anchor) {
       let entry = entries.current.get(block.id)
       if (!entry) {
-        entry = { block, container: document.createElement('div'), anchor, overlay: false }
+        entry = { block, container: document.createElement('div'), anchor, mode: 'inline' }
         entries.current.set(block.id, entry)
+        entry.container.className = 'flex min-h-0 flex-1 flex-col'
         anchor.append(entry.container)
         setRendered([...entries.current.values()])
       } else {
         entry.anchor = anchor
-        if (!entry.overlay) moveDocument(anchor, entry.container)
+        if (entry.mode === 'inline') moveDocument(anchor, entry.container)
         if (entry.block !== block) {
           entry.block = block
           setRendered([...entries.current.values()])
@@ -52,11 +58,21 @@ export function McpAppsProvider({
       const attached = entry
       return () => {
         if (attached.anchor === anchor) attached.anchor = null
-        if (!attached.overlay && parking.current?.isConnected && attached.container.isConnected)
+        if (
+          attached.mode === 'inline' &&
+          parking.current?.isConnected &&
+          attached.container.isConnected
+        )
           moveDocument(parking.current, attached.container)
       }
     },
   }))
+  useLayoutEffect(
+    () => () => {
+      for (const entry of entries.current.values()) entry.removePanel?.()
+    },
+    []
+  )
   return (
     <Context.Provider value={registry}>
       {children}
@@ -69,9 +85,34 @@ export function McpAppsProvider({
             address={address}
             api={api}
             onMessage={onMessage}
-            onDisplayModeChange={(mode: McpUiDisplayMode) => {
-              entry.overlay = mode !== 'inline'
-              const target = entry.overlay ? overlays.current : (entry.anchor ?? parking.current)
+            onDisplayModeChange={(mode: McpUiDisplayMode, dismiss) => {
+              entry.dismiss = dismiss
+              if (entry.mode === mode) return
+              entry.removePanel?.()
+              entry.removePanel = undefined
+              entry.mode = mode
+              if (mode === 'fullscreen') {
+                entry.removePanel = registerMcpAppPanel({
+                  id: `mcp-app:${encodeURIComponent(JSON.stringify([paneId, address.deviceId, address.taskId, entry.block.id]))}`,
+                  address,
+                  paneId,
+                  title: entry.block.mcpServer ?? entry.block.toolName,
+                  dismiss: () => entry.dismiss?.(),
+                  attach: anchor => {
+                    moveDocument(anchor, entry.container)
+                    return () => {
+                      if (entry.container.parentElement === anchor && parking.current)
+                        moveDocument(parking.current, entry.container)
+                    }
+                  },
+                })
+              }
+              const target =
+                mode === 'pip'
+                  ? overlays.current
+                  : mode === 'inline'
+                    ? (entry.anchor ?? parking.current)
+                    : parking.current
               if (target && entry.container.parentElement !== target)
                 moveDocument(target, entry.container)
             }}

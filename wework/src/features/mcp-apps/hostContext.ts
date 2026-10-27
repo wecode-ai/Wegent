@@ -31,6 +31,7 @@ export function appHostContext(
   descriptor: McpAppDescriptor,
   callId: string
 ): McpUiHostContext {
+  const bounds = frame.getBoundingClientRect()
   const root = document.documentElement
   const tokens = getComputedStyle(root)
   const body = getComputedStyle(document.body)
@@ -55,8 +56,13 @@ export function appHostContext(
     displayMode: mode,
     availableDisplayModes: appDisplayModes(descriptor),
     containerDimensions: {
-      width: frame.getBoundingClientRect().width,
-      maxHeight: window.innerHeight,
+      width: bounds.width,
+      maxWidth: bounds.width,
+      ...(mode === 'inline'
+        ? { maxHeight: window.innerHeight }
+        : bounds.height > 0
+          ? { maxHeight: bounds.height }
+          : {}),
     },
     // The SDK documents every style variable as optional despite its Record type.
     styles: { variables: variables as McpUiStyles },

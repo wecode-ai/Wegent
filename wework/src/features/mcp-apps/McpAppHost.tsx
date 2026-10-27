@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react'
 import { AppBridge, type McpUiDisplayMode } from '@modelcontextprotocol/ext-apps/app-bridge'
 import { Maximize2, Minimize2, RefreshCw, X } from 'lucide-react'
@@ -63,13 +64,14 @@ export function McpAppHost({
   api: RuntimeMcpAppsApi
   onMessage?: (text: string) => Promise<void>
   onContext?: (context: Record<string, unknown>) => Promise<void>
-  onDisplayModeChange?: (mode: McpUiDisplayMode) => void
+  onDisplayModeChange?: (mode: McpUiDisplayMode, dismiss: () => void) => void
 }) {
   const { t } = useTranslation('common')
   const [descriptor, setDescriptor] = useState<McpAppDescriptor | null>()
   const [failure, setFailure] = useState<string>()
   const [attempt, setAttempt] = useState(0)
   const [closed, setClosed] = useState(false)
+  const [panelDismissed, setPanelDismissed] = useState(false)
   const [closing, setClosing] = useState(false)
   const [mode, setMode] = useState<McpUiDisplayMode>('inline')
   const [height, setHeight] = useState(400)
@@ -87,9 +89,6 @@ export function McpAppHost({
   )
   const hasMessage = onMessage !== undefined
   const hasContext = onContext !== undefined
-  useLayoutEffect(() => {
-    onDisplayModeChange?.(closed ? 'inline' : mode)
-  }, [closed, mode, onDisplayModeChange])
   const closeApp = useCallback(async () => {
     setClosing(true)
     const app = bridge.current
@@ -110,6 +109,14 @@ export function McpAppHost({
       setClosing(false)
     }
   }, [document])
+
+  const dismissPanel = useCallback(() => {
+    if (appDisplayModes(descriptor).includes('inline')) setMode('inline')
+    else setPanelDismissed(true)
+  }, [descriptor])
+  useLayoutEffect(() => {
+    onDisplayModeChange?.(closed || panelDismissed ? 'inline' : mode, dismissPanel)
+  }, [closed, panelDismissed, mode, onDisplayModeChange, dismissPanel])
 
   const discovered = useRef(false)
   const discoveryPending = useRef(false)
@@ -136,6 +143,14 @@ export function McpAppHost({
       })
       .catch(error => {
         if (epoch === discoveryEpoch.current) {
+          console.debug(
+            '[Wework] MCP App discovery failed',
+            JSON.stringify({
+              callId: block.id,
+              requestedStatus: status,
+              currentStatus: latest().block.status,
+            })
+          )
           discovered.current = true
           setFailure(String(error.message ?? error))
         }
@@ -288,6 +303,7 @@ export function McpAppHost({
     }
     app.onrequestdisplaymode = async ({ mode }) => {
       if (!appDisplayModes(descriptor).includes(mode)) return { mode: latest().mode }
+      setPanelDismissed(false)
       setMode(mode)
       return { mode }
     }
@@ -370,79 +386,94 @@ export function McpAppHost({
   if (descriptor === undefined && !failure) return null
   const availableModes = appDisplayModes(descriptor)
   const title = descriptor?.tool?.title ?? descriptor?.server ?? t('mcp_apps.title')
+  const metadata = record(descriptor?.resource.contents[0]?._meta)
+  const prefersBorder =
+    (record(metadata.ui).prefersBorder ?? metadata['openai/widgetPrefersBorder']) !== false
   return (
     <section
       data-testid="mcp-app"
       data-mcp-call-id={block.id}
       data-display-mode={mode}
       className={
-        mode === 'fullscreen' && !closed
-          ? 'fixed inset-0 z-critical flex flex-col bg-background text-text-primary'
+        mode === 'fullscreen' && !closed && !panelDismissed
+          ? 'flex h-full min-h-0 flex-1 flex-col bg-background text-text-primary'
           : mode === 'pip' && !closed
             ? 'fixed bottom-4 right-4 z-critical w-96 overflow-hidden rounded-xl border border-border bg-background text-text-primary shadow-lg'
-            : 'my-2 overflow-hidden rounded-xl border border-border bg-background text-text-primary'
+            : `my-2 overflow-hidden bg-background text-text-primary ${prefersBorder ? 'rounded-lg shadow-sm outline-1 -outline-offset-1 outline-border' : ''}`
       }
     >
-      <div className="flex h-9 items-center gap-2 border-b border-border px-3">
-        <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
-        {failure && (
-          <button
-            data-testid="mcp-app-retry"
-            title={t('mcp_apps.retry')}
-            aria-label={t('mcp_apps.retry')}
-            onClick={() => {
-              discovered.current = false
-              setDescriptor(undefined)
-              setFailure(undefined)
-              setDocument(undefined)
-              setAttempt(value => value + 1)
-            }}
-          >
-            <RefreshCw className="size-4" />
-          </button>
-        )}
-        <button
-          data-testid="mcp-app-expand"
-          disabled={!closed && availableModes.length < 2}
-          title={t('mcp_apps.expand')}
-          aria-label={t('mcp_apps.expand')}
-          onClick={() => {
-            if (closed) {
-              discovered.current = false
-              setDescriptor(undefined)
-              setFailure(undefined)
-              setAttempt(value => value + 1)
-            }
-            setClosed(false)
-            setMode(value =>
-              value === 'fullscreen'
-                ? (availableModes.find(mode => mode !== value) ?? value)
-                : availableModes.includes('fullscreen')
-                  ? 'fullscreen'
-                  : (availableModes.find(mode => mode !== value) ?? value)
-            )
-          }}
-        >
-          {mode === 'fullscreen' ? (
-            <Minimize2 className="size-4" />
-          ) : (
-            <Maximize2 className="size-4" />
+      {(mode !== 'fullscreen' || closed || panelDismissed || failure) && (
+        <div className="flex h-9 items-center gap-2 border-b border-border px-3">
+          <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
+          {failure && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-text-secondary"
+              data-testid="mcp-app-retry"
+              title={t('mcp_apps.retry')}
+              aria-label={t('mcp_apps.retry')}
+              onClick={() => {
+                discovered.current = false
+                setDescriptor(undefined)
+                setFailure(undefined)
+                setDocument(undefined)
+                setAttempt(value => value + 1)
+              }}
+            >
+              <RefreshCw className="size-4" />
+            </Button>
           )}
-        </button>
-        {!closed && (
-          <button
-            data-testid="mcp-app-close"
-            title={t('mcp_apps.close')}
-            aria-label={t('mcp_apps.close')}
-            disabled={closing}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-text-secondary"
+            data-testid="mcp-app-expand"
+            disabled={!closed && !panelDismissed && availableModes.length < 2}
+            title={t('mcp_apps.expand')}
+            aria-label={t('mcp_apps.expand')}
             onClick={() => {
-              void closeApp()
+              if (closed) {
+                discovered.current = false
+                setDescriptor(undefined)
+                setFailure(undefined)
+                setAttempt(value => value + 1)
+              }
+              setClosed(false)
+              setPanelDismissed(false)
+              setMode(value =>
+                value === 'fullscreen'
+                  ? (availableModes.find(mode => mode !== value) ?? value)
+                  : availableModes.includes('fullscreen')
+                    ? 'fullscreen'
+                    : (availableModes.find(mode => mode !== value) ?? value)
+              )
             }}
           >
-            <X className="size-4" />
-          </button>
-        )}
-      </div>
+            {mode === 'fullscreen' && !panelDismissed && !closed ? (
+              <Minimize2 className="size-4" />
+            ) : (
+              <Maximize2 className="size-4" />
+            )}
+          </Button>
+          {!closed && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-text-secondary"
+              data-testid="mcp-app-close"
+              title={t('mcp_apps.close')}
+              aria-label={t('mcp_apps.close')}
+              disabled={closing}
+              onClick={() => {
+                void closeApp()
+              }}
+            >
+              <X className="size-4" />
+            </Button>
+          )}
+        </div>
+      )}
       {failure && (
         <p role="alert" className="p-3 text-sm text-text-secondary">
           {failure}
@@ -451,6 +482,7 @@ export function McpAppHost({
       {!closed && descriptor && (
         <iframe
           ref={frame}
+          hidden={panelDismissed}
           data-testid="mcp-app-frame"
           data-ready={document && initializedDocument === document.id ? 'true' : undefined}
           title={title}

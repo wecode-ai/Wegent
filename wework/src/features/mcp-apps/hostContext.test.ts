@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { McpAppDescriptor } from '@/api/mcpApps'
 import { appDisplayModes, appHostContext, appInitialDisplayMode } from './hostContext'
 
@@ -16,6 +16,16 @@ afterEach(() => {
 })
 
 describe('MCP App host context', () => {
+  it('reports the right panel bounds instead of the whole window', () => {
+    const frame = document.createElement('iframe')
+    vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({ width: 640, height: 480 } as DOMRect)
+    expect(
+      appHostContext(frame, 'fullscreen', descriptor(), 'call').containerDimensions
+    ).toMatchObject({
+      maxWidth: 640,
+      maxHeight: 480,
+    })
+  })
   it('honors explicit display mode restrictions, including unsupported-only declarations', () => {
     expect(appDisplayModes(descriptor())).toEqual(['inline', 'fullscreen', 'pip'])
     expect(appDisplayModes(descriptor(['fullscreen']))).toEqual(['fullscreen'])

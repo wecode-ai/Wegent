@@ -19,7 +19,12 @@ const callId = 'mcp-app-open'
 const composer =
   '[data-active-workbench-pane="true"] [data-testid="chat-message-input"][contenteditable="true"]'
 
-export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelResponseTimeoutMs }) {
+export function createDesktopScenario({
+  workspacePath,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  captureScreenshot,
+}) {
   let calls = 0
   let activeCase = { callId, tool: 'show_app', prompt, completion }
   return {
@@ -100,6 +105,17 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         } while (Date.now() < deadline)
         assert.equal(actual, text)
       }
+      const dismissRightPanel = async () => {
+        await control.command('hover', '[data-testid^="right-workspace-mcp-app-tab-"][role="tab"]')
+        await control.command(
+          'click',
+          '[data-testid^="right-workspace-mcp-app-tab-"][data-testid$="-close-button"]'
+        )
+        await control.command(
+          'waitFor',
+          '[data-testid="mcp-app-slot"] [data-testid="mcp-app"][data-display-mode="inline"]'
+        )
+      }
       await waitText('Result 0 ui-only-marker')
       assert.equal(await frameAction('attribute', 'body', 'data-csp'), 'blocked')
       await frameAction('fill', '#draft', 'preserved draft')
@@ -107,10 +123,11 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       await waitText('Counter 1')
       await frameAction('click', '#context')
       await waitText('Context saved')
+      await captureScreenshot(control, 'mcp-apps-inline.png', 'body')
       await frameAction('click', '#expand')
       await control.command(
         'waitFor',
-        '[data-testid="mcp-app-overlays"] [data-testid="mcp-app"][data-display-mode="fullscreen"]'
+        '[data-testid="mcp-app-workspace-panel"] [data-testid="mcp-app"][data-display-mode="fullscreen"]'
       )
       const [viewport] = JSON.parse(await control.command('getElementMetrics', 'body'))
       const [fullscreen] = JSON.parse(
@@ -119,17 +136,35 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
           '[data-testid="mcp-app"][data-display-mode="fullscreen"]'
         )
       )
-      assert.equal(fullscreen.left, 0)
-      assert.equal(fullscreen.top, 0)
-      assert.equal(fullscreen.width, viewport.clientWidth)
-      assert.equal(fullscreen.height, viewport.clientHeight)
+      const [panel] = JSON.parse(
+        await control.command('getElementMetrics', '[data-testid="mcp-app-workspace-panel"]')
+      )
+      assert.ok(panel.left > 0, 'The app must share the main window with the conversation')
+      assert.equal(fullscreen.left, panel.left)
+      assert.equal(fullscreen.top, panel.top)
+      assert.equal(fullscreen.width, panel.clientWidth)
+      assert.equal(fullscreen.height, panel.clientHeight)
+      await control.command('waitFor', composer)
+      await captureScreenshot(control, 'mcp-apps-right-panel.png', 'body')
+
       assert.equal(
         await control.command('getAttribute', '[data-testid="mcp-app-frame"]', { value: 'src' }),
         frameUrl
       )
-      await control.command('click', '[data-testid="mcp-app-expand"]')
-      await control.command('waitFor', '[data-testid="mcp-app"][data-display-mode="inline"]')
+      await dismissRightPanel()
       assert.equal(await frameAction('value', '#draft'), 'preserved draft')
+      await control.command('click', '[data-testid="mcp-app-expand"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="mcp-app-workspace-panel"] [data-testid="mcp-app-frame"]'
+      )
+      await dismissRightPanel()
+      assert.equal(
+        await control.command('getAttribute', '[data-testid="mcp-app-frame"]', { value: 'src' }),
+        frameUrl
+      )
+      assert.equal(await frameAction('value', '#draft'), 'preserved draft')
+      await captureScreenshot(control, 'mcp-apps-restored-inline.png', 'body')
       await frameAction('click', '#pip')
       await control.command(
         'waitFor',
@@ -145,8 +180,8 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       assert.equal(pip.bottom, viewport.clientHeight - 16)
       assert.equal(await frameAction('value', '#draft'), 'preserved draft')
       await control.command('click', '[data-testid="mcp-app-expand"]')
-      await control.command('click', '[data-testid="mcp-app-expand"]')
-      await control.command('waitFor', '[data-testid="mcp-app"][data-display-mode="inline"]')
+      await control.command('waitFor', '[data-testid="mcp-app-workspace-panel"]')
+      await dismissRightPanel()
       const list = await requestExecutor(
         control,
         'runtime.mcp_apps.request',
@@ -155,6 +190,15 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       )
       assert.ok(list.tools.some(tool => tool.name === 'read_count'))
       assert.ok(!list.tools.some(tool => tool.name === 'model_only'))
+      assert.equal(
+        await requestExecutor(
+          control,
+          'runtime.mcp_apps.request',
+          { address, callId: 'foreign' },
+          uiTimeoutMs
+        ),
+        null
+      )
       for (const data of [
         { callId: 'foreign', method: 'initialize' },
         { callId, method: 'tools/call', params: { name: 'model_only', arguments: {} } },
@@ -220,6 +264,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         { value: 'src' }
       )
       await waitText('Result 0 ui-only-marker')
+      await control.command('waitFor', original + '[data-display-mode="inline"]')
       await control.command('click', original + ' [data-testid="mcp-app-close"]')
       await control.command('waitFor', original + ' [data-testid="mcp-app-frame"]', {
         visible: false,

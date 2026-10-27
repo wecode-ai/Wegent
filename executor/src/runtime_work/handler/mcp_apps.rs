@@ -82,8 +82,12 @@ impl RuntimeWorkRpcHandler {
             )
             .await
             .map_err(|_| app_error("Cannot read source invocation"))?;
-        let source = source_call(&read["thread"], &call_id)
-            .ok_or_else(|| app_error("Source invocation does not belong to this task"))?;
+        let source = match source_call(&read["thread"], &call_id) {
+            Some(source) => source,
+            // Streamed model calls can precede the native MCP invocation record.
+            None if payload["method"].is_null() => return Ok(Value::Null),
+            None => return Err(app_error("Source invocation does not belong to this task")),
+        };
         if read["thread"]["status"]["type"] == "notLoaded" {
             self.resume_codex_thread_for_action(&link, &thread_id)
                 .await

@@ -20,6 +20,8 @@ Apps can call their source server's tools, read resources, send conversation mes
 
 State-preserving DOM moves keep app browsing contexts alive when virtualized tool rows leave the viewport. Closing an app or leaving its task releases the bridge and temporary document. Model context is stored by source invocation and included in later messages as untrusted app data.
 
+The desktop workbench supports both inline conversation cards and right-side app tabs. A fullscreen request uses the right workspace container. Expanding and restoring move the same sandbox node, preserving input, login state, and in-flight requests. Closing the right-side tab restores apps that support inline presentation to the conversation. Fullscreen-only apps retain their document and collapse to a reopening control. Closing the app itself releases its document.
+
 ## Security boundaries
 
 - The executor derives authority from a real invocation in the owning task. Apps cannot choose another task, server, plugin, connector, or account.
