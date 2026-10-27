@@ -262,9 +262,11 @@ async fn optimistic_lock_failure_stops_before_any_asset_writes() {
         "10",
         &input(),
         &[],
-        "new/md",
-        None,
-        "new/manifest",
+        ContentKeys {
+            markdown: "new/md",
+            chat: None,
+            manifest: "new/manifest",
+        },
     )
     .await;
     assert!(
@@ -282,9 +284,11 @@ async fn editing_only_updates_delivery_and_assets_without_republishing() {
         "10",
         &input(),
         &[asset()],
-        "new/md",
-        None,
-        "new/manifest",
+        ContentKeys {
+            markdown: "new/md",
+            chat: None,
+            manifest: "new/manifest",
+        },
     )
     .await
     .unwrap();

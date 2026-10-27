@@ -38,6 +38,12 @@ struct NewFile {
     content_type: Option<String>,
 }
 
+struct ContentKeys<'a> {
+    markdown: &'a str,
+    chat: Option<&'a str>,
+    manifest: &'a str,
+}
+
 #[derive(FromMysqlRow)]
 struct DeliveryRow {
     id: String,
@@ -323,9 +329,11 @@ async fn update_delivery(
                 &item.cloud_project_id,
                 &input,
                 &new_assets,
-                &markdown_key,
-                chat_key.as_deref(),
-                &manifest_key,
+                ContentKeys {
+                    markdown: &markdown_key,
+                    chat: chat_key.as_deref(),
+                    manifest: &manifest_key,
+                },
             )
             .await
         })
@@ -363,15 +371,13 @@ async fn commit_update<T: MysqlTransaction>(
     project_id: &str,
     input: &Update,
     assets: &[Asset],
-    markdown_key: &str,
-    chat_key: Option<&str>,
-    manifest_key: &str,
+    keys: ContentKeys<'_>,
 ) -> brz_mysql::MysqlResult<()> {
     let changed = tx.execute(
         "UPDATE loop_items SET title = ?, markdown_object_key = ?, chat_object_key = ?, manifest_object_key = ?,
          version = version + 1, updated_at = UTC_TIMESTAMP() WHERE id = ? AND resource_type = 'delivery'
          AND status = 'delivered' AND version = ? AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01'))",
-        (input.title.trim(), markdown_key, chat_key.unwrap_or(""), manifest_key, delivery.id.as_str(), input.version),
+        (input.title.trim(), keys.markdown, keys.chat.unwrap_or(""), keys.manifest, delivery.id.as_str(), input.version),
     ).await?;
     if changed.rows_affected != 1 {
         return Err(MysqlError::InvalidQuery {
