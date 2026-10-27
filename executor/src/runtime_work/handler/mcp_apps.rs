@@ -298,3 +298,59 @@ mod tests {
         ));
     }
 }
+
+#[cfg(all(test, unix))]
+mod session_tests {
+    use super::super::tests::ScalarEnv;
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn unloaded_app_session_is_restored_before_accessing_its_mcp_catalog() {
+        let _lock = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all().build().unwrap().block_on(async {
+                let root = tempfile::tempdir().unwrap();
+                let _env: Vec<_> = ["HOME", "CODEX_HOME", "WEGENT_CODEX_HOME",
+                    "WEGENT_EXECUTOR_HOME", "WEGENT_WORKBENCH_HOME", "WEGENT_CAPABILITIES_HOME"]
+                    .into_iter().map(|key| {
+                        let directory = root.path().join(key);
+                        fs::create_dir_all(&directory).unwrap();
+                        ScalarEnv::set(key, directory.to_str().unwrap())
+                    }).collect();
+                let binary = root.path().join("codex-app.sh");
+                let log = root.path().join("requests.jsonl");
+                fs::write(&binary, format!(r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> '{}'
+  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"thread/read"'*) result='{{"thread":{{"id":"00000000-0000-0000-0000-000000000001","status":{{"type":"notLoaded"}},"turns":[{{"items":[{{"id":"call","type":"mcpToolCall","server":"counter","tool":"show","mcpAppResourceUri":"ui://app"}}]}}]}}}}';;
+    *'"method":"mcpServerStatus/list"'*) result='{{"data":[{{"name":"counter","tools":{{"show":{{"name":"show"}}}}}}]}}';;
+    *'"method":"mcpServer/resource/read"'*) result='{{"contents":[{{"uri":"ui://app","mimeType":"text/html;profile=mcp-app","text":"<p>Ready</p>"}}]}}';;
+    *) result='{{}}';;
+  esac
+  printf '{{"id":%s,"result":%s}}\n' "$id" "$result"
+  case "$line" in *'"method":"test/stop"'*) exit 0;; esac
+done
+"#, log.display())).unwrap();
+                fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+                let handler = RuntimeWorkRpcHandler::new("device", binary.to_str().unwrap());
+                let mut task = RuntimeTaskLink::new_pending("task".into(),
+                    root.path().join("project").display().to_string(), "App".into());
+                task.runtime_handle = json!({"threadId":"00000000-0000-0000-0000-000000000001"});
+                handler.upsert_local_task(task);
+                let result = handler.mcp_app_request(json!({"taskId":"task","callId":"call"}))
+                    .await.unwrap();
+                assert_eq!(result["resource"]["contents"][0]["text"], "<p>Ready</p>");
+                handler.codex_app_server.request("test/stop", json!({})).await.unwrap();
+                let calls: Vec<Value> = fs::read_to_string(log).unwrap().lines()
+                    .map(|line| serde_json::from_str(line).unwrap()).collect();
+                let resume = calls.iter().position(|c| c["method"] == "thread/resume").unwrap();
+                let catalog = calls.iter().position(|c| c["method"] == "mcpServerStatus/list").unwrap();
+                assert!(resume < catalog);
+                assert_eq!(calls[resume]["params"]["config"]["shell_environment_policy.set.WEGENT_TASK_ID"], "task");
+            });
+    }
+}
