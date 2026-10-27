@@ -401,6 +401,12 @@ jobs:
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Set up real object storage for delivery editing E2E
+        if: contains(matrix.segments, 'collaboration-delivery-editing')
+        uses: ./.github/actions/setup-minio-e2e
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
@@ -779,6 +785,12 @@ jobs:
 
       - name: Set up real object storage for Issue MCP E2E
         if: contains(matrix.segments, 'collaboration-issue-mcp-comments')
+        uses: ./.github/actions/setup-minio-e2e
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Set up real object storage for delivery editing E2E
+        if: contains(matrix.segments, 'collaboration-delivery-editing')
         uses: ./.github/actions/setup-minio-e2e
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}

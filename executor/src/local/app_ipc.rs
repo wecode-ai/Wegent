@@ -2715,6 +2715,23 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "deliveries.update" => {
+            let delivery_id = required_task_string(&params, "delivery_id")?;
+            let input = task_input(&params, "delivery")?;
+            serialize_task_value(
+                runtime
+                    .update_delivery(delivery_id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "deliveries.list_files" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            serialize_task_value(
+                runtime
+                    .list_project_delivery_files(project_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "deliveries.finalize" => {
             let item_id = required_task_string(&params, "item_id")?;
             let delivery_id = required_task_string(&params, "delivery_id")?;

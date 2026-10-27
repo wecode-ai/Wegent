@@ -17,9 +17,17 @@ from app.models.delivery import (
 )
 from app.schemas.delivery import (
     CollaborationMessageImportResponse,
+    DeliveryCreate,
     LoopItemCreate,
     LoopItemResponse,
 )
+
+
+def test_delivery_title_is_optional_for_old_clients_and_bounded() -> None:
+    assert DeliveryCreate(markdown="Notes").title == ""
+    assert DeliveryCreate(title="Result", markdown="Notes").title == "Result"
+    with pytest.raises(ValueError):
+        DeliveryCreate(title="x" * 256)
 
 
 def test_collaboration_message_import_response_requires_typed_issue() -> None:

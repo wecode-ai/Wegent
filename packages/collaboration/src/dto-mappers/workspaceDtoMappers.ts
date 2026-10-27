@@ -129,6 +129,11 @@ export function mapWorkspaceDeliveryDto(
   const row = asRecord(input);
   const markdown = row.markdown;
   return {
+    title: String(row.title ?? ""),
+    version: Number(row.version ?? 1),
+    sourceTaskSnapshot: (row.source_task_snapshot ??
+      row.sourceTaskSnapshot ??
+      null) as Record<string, unknown> | null,
     id: String(row.id),
     createdByUserId:
       row.created_by_user_id == null && row.createdByUserId == null

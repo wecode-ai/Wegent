@@ -1,4 +1,5 @@
 import { IssueDeliveryContent } from "./issue-detail/IssueDeliveryContent";
+import { IssueDeliveryEditor } from "./issue-detail/IssueDeliveryEditor";
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
 import { persistIssueDetailFields } from "./issue-detail/persistIssueDetailFields";
 import * as Popover from "@radix-ui/react-popover";
@@ -807,6 +808,7 @@ export function TodoEditor(props: TodoEditorProps) {
   );
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
+  const [editingDelivery, setEditingDelivery] = useState(false);
   const [selectedDelivery, setSelectedDelivery] =
     useState<DeliveryDetail | null>(null);
   const [tasks, setTasks] = useState<LoopItemTaskBinding[]>(
@@ -986,7 +988,8 @@ export function TodoEditor(props: TodoEditorProps) {
         const current = existing.find(
           (delivery) => delivery.id === currentDeliveryIdRef.current,
         );
-        return current
+        return current &&
+          !nextDeliveries.some((delivery) => delivery.id === current.id)
           ? [
               current,
               ...nextDeliveries.filter(
@@ -1118,6 +1121,7 @@ export function TodoEditor(props: TodoEditorProps) {
     selectedDeliveryRequestIdRef.current += 1;
     attachmentsRequestIdRef.current += 1;
     setDeliveries([]);
+    setEditingDelivery(false);
     setSelectedDelivery(null);
     setTasks(initialTaskBindingsRef.current ?? []);
     setAttachments([]);
@@ -1982,7 +1986,10 @@ export function TodoEditor(props: TodoEditorProps) {
           <button
             type="button"
             data-testid="todo-detail-delivery-back"
-            onClick={() => setSelectedDelivery(null)}
+            onClick={() => {
+              setSelectedDelivery(null);
+              setEditingDelivery(false);
+            }}
             className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary hover:bg-hover"
           >
             <ArrowLeft className="h-3.5 w-3.5" /> {t("todo.back", "返回")}
@@ -2002,8 +2009,46 @@ export function TodoEditor(props: TodoEditorProps) {
           <p className="font-mono text-xs text-text-muted">
             {item.id} · {t("todo.delivered", "已交付")}
           </p>
-          <h2 className="mt-2 text-heading-md font-semibold">{item.title}</h2>
-          <IssueDeliveryContent delivery={selectedDelivery} translate={t} />
+          <div className="mt-2 flex items-center gap-2">
+            <h2 className="min-w-0 flex-1 text-heading-md font-semibold">
+              {selectedDelivery.title || item.title}
+            </h2>
+            {editable && editorPort.deliveries.update && !editingDelivery && (
+              <button
+                type="button"
+                data-testid="delivery-edit"
+                onClick={() => setEditingDelivery(true)}
+                className="h-7 rounded-md px-2 text-sm hover:bg-hover"
+              >
+                {t("delivery.edit")}
+              </button>
+            )}
+          </div>
+          {editingDelivery ? (
+            <IssueDeliveryEditor
+              key={selectedDelivery.id}
+              delivery={selectedDelivery}
+              issueTitle={item.title}
+              api={editorPort.deliveries}
+              translate={t}
+              onCancel={() => setEditingDelivery(false)}
+              onSaved={(updated) => {
+                if (loadedEditItemIdRef.current !== updated.loop_item_id)
+                  return;
+                setSelectedDelivery((current) =>
+                  current?.id === updated.id ? updated : current,
+                );
+                setDeliveries((current) =>
+                  current.map((delivery) =>
+                    delivery.id === updated.id ? updated : delivery,
+                  ),
+                );
+                setEditingDelivery(false);
+              }}
+            />
+          ) : (
+            <IssueDeliveryContent delivery={selectedDelivery} translate={t} />
+          )}
         </div>
       </aside>
     );

@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
+import type {
+  WorkspaceDeliveryUpdate,
+  SharedWorkspaceApi,
+} from "../ports/SharedWorkspaceApi";
 import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-types";
 import type {
   CollaborationAttachment,
@@ -67,6 +70,9 @@ export interface SharedIssueDetailDeliveryAsset {
 }
 
 export interface SharedIssueDetailDelivery {
+  title?: string;
+  version?: number;
+  source_task_snapshot?: Record<string, unknown> | null;
   created_by_user_id?: number | null;
   markdown?: string;
   chat?: Record<string, unknown> | null;
@@ -190,6 +196,13 @@ export interface SharedIssueDetailPort {
   deliveries: {
     list(issueId: string): Promise<SharedIssueDetailDelivery[]>;
     get(deliveryId: string): Promise<SharedIssueDetailDeliveryDetail>;
+    update?(
+      deliveryId: string,
+      input: WorkspaceDeliveryUpdate,
+    ): Promise<SharedIssueDetailDeliveryDetail>;
+    loadSourceMessages?(
+      delivery: SharedIssueDetailDeliveryDetail,
+    ): Promise<unknown[]>;
   };
 }
 
@@ -208,6 +221,7 @@ export type SharedIssueDetailWorkspaceApi = Omit<
   agents: Pick<SharedWorkspaceApi["agents"], "list"> &
     Partial<Pick<SharedWorkspaceApi["agents"], "create">>;
   workspaces?: SharedWorkspaceApi["workspaces"];
+  runtime?: SharedWorkspaceApi["runtime"];
 };
 
 export function toSharedIssueDetailTaskBinding(
@@ -257,6 +271,9 @@ function toDelivery(
 ): SharedIssueDetailDelivery {
   return {
     id: delivery.id,
+    title: delivery.title,
+    version: delivery.version,
+    source_task_snapshot: delivery.sourceTaskSnapshot,
     created_by_user_id: delivery.createdByUserId,
     markdown: delivery.markdown,
     chat: delivery.chat,
@@ -421,6 +438,46 @@ export function createSharedIssueDetailPort(
         projects?.listCollaborationGroups?.(projectId) ?? Promise.resolve([]),
     },
     deliveries: {
+      ...(api.deliveries.update
+        ? {
+            update: (id: string, input: WorkspaceDeliveryUpdate) =>
+              api.deliveries.update!(id, input).then(toDeliveryDetail),
+          }
+        : {}),
+      ...(api.runtime
+        ? {
+            loadSourceMessages: async (
+              delivery: SharedIssueDetailDeliveryDetail,
+            ) => {
+              const snapshot = delivery.source_task_snapshot;
+              const deviceId = snapshot?.deviceId ?? snapshot?.device_id;
+              const taskId = snapshot?.taskId ?? snapshot?.task_id;
+              if (typeof deviceId !== "string" || typeof taskId !== "string")
+                throw new Error("Delivery source is unavailable");
+              const messages: unknown[] = [];
+              let beforeCursor: string | null = null;
+              do {
+                const result = await api.runtime!.getTranscript({
+                  deviceId,
+                  taskId,
+                  beforeCursor,
+                  includeFullContent: true,
+                });
+                if (result.historyUnavailable)
+                  throw new Error("Delivery source is unavailable");
+                messages.unshift(...result.messages);
+                if (!result.hasMoreBefore) break;
+                if (
+                  !result.beforeCursor ||
+                  result.beforeCursor === beforeCursor
+                )
+                  throw new Error("Invalid transcript pagination");
+                beforeCursor = result.beforeCursor;
+              } while (true);
+              return messages;
+            },
+          }
+        : {}),
       list: (issueId) =>
         api.deliveries.list(issueId).then((items) => items.map(toDelivery)),
       get: (deliveryId) =>

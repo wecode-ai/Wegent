@@ -555,6 +555,7 @@ class DeliveryChatSelection(BaseModel):
 
 
 class DeliveryCreate(BaseModel):
+    title: str = Field(default="", max_length=255)
     markdown: str = ""
     chat: dict[str, Any] | None = None
     chat_selection: DeliveryChatSelection | None = None
@@ -695,6 +696,8 @@ class DeliveryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    title: str = ""
+    version: int = 1
     loop_item_id: str
     created_by_user_id: int
     source_task_binding_id: int | None
