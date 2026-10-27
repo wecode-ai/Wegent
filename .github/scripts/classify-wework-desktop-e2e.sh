@@ -109,6 +109,7 @@ core_segments=(
   temporary-chat
   workspace-attachments
   rendering-extensions
+  mcp-apps
   streaming-content
   streaming-tools
   streaming-timers
@@ -212,7 +213,7 @@ cloud_shards=(
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
   core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,streaming-conversation-switching,task-status-sync,goal-state-sync,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login,notification-tab-navigation
-  project-assignment-notification,resilience,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle
+  project-assignment-notification,resilience,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle,mcp-apps
   window-lifecycle,model-routing,collaboration-app-queue-identity,stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,permission-modes,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
   collaboration-board-sorting,component-update,environment-panel-scroll,running-conversation-history,workspace-tabs,collaboration-board-move-recovery,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy
   claude-runtime,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery
@@ -1209,6 +1210,17 @@ classify_wework_path() {
 
     wework/e2e/desktop/modules/shared-skill-runtime.mjs)
       select_target "core:claude-runtime"
+      return
+      ;;
+
+    wework/src/features/mcp-apps/* | \
+      wework/src/api/mcpApps.ts | \
+      wework/electron/src/host/mcp-app-documents* | \
+      executor/src/agents/codex/mcp_apps.rs | \
+      executor/src/runtime_work/handler/mcp_apps.rs | \
+      wework/e2e/desktop/scenarios/mcp-apps.scenario.mjs | \
+      wework/e2e/utils/mcp-app-server.mjs)
+      select_target "core:mcp-apps"
       return
       ;;
 

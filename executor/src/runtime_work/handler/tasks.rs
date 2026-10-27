@@ -1028,6 +1028,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         if let Some(link) = existing_link.as_ref() {
+            super::mcp_apps::append_model_context(&mut request, link);
             // A failed preparation has no session yet. Retry its saved snapshot;
             // established conversations never prepare a new project directory.
             if link.thread_id.is_none() {

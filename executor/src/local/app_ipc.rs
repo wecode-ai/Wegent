@@ -108,6 +108,7 @@ const APP_IPC_CAPABILITIES: &[&str] = &[
     "runtime.connectors",
     "runtime.harness",
     "runtime.hooks",
+    "runtime.mcp_apps",
     "runtime.keybindings",
     "runtime.projects",
     "runtime.settings",

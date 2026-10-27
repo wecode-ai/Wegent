@@ -25,6 +25,7 @@ type SearchableMessageAreaProps = Omit<
   ScrollableMessageAreaProps,
   DesktopConversationPresentationProp
 > & {
+  mcpAppAddress?: import('@/types/api').RuntimeTaskAddress | null
   workspacePath?: string
   imageTarget?: { deviceId: string; workspacePath: string } | null
   virtualize?: boolean
@@ -50,6 +51,7 @@ type SearchableMessageAreaProps = Omit<
 }
 
 export function ScrollableMessageArea({
+  mcpAppAddress,
   workspacePath,
   imageTarget,
   virtualize,
@@ -126,7 +128,7 @@ export function ScrollableMessageArea({
     [visibleSearchPage, transcriptError, onRetryTranscript, props.loading, props.historyError, t]
   )
   return (
-    <DesktopToolServices imageTarget={imageTarget}>
+    <DesktopToolServices imageTarget={imageTarget} mcpAppAddress={mcpAppAddress}>
       <SharedScrollableMessageArea
         {...props}
         {...presentation}

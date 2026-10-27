@@ -5528,5 +5528,18 @@
     "crash_title": "Wework 页面出现错误",
     "crash_description": "页面遇到异常，暂时无法显示。请刷新页面重试；尚未保存的内容可能会丢失。如果问题持续，请打开调试面板查看日志。",
     "reload": "刷新页面"
+  },
+  "mcp_apps": {
+    "title": "MCP 应用",
+    "unsupported_resource": "应用返回了不支持的界面资源。",
+    "approval_title": "允许应用调用工具？",
+    "approval_message": "允许 {{server}} 执行 {{tool}}？",
+    "cancel": "取消",
+    "allow": "允许",
+    "retry": "重试应用",
+    "expand": "展开或还原应用",
+    "close": "关闭应用",
+    "send": "发送",
+    "unsupported_display_mode": "应用没有可用的显示模式。"
   }
 }

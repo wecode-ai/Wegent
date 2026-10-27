@@ -1,4 +1,5 @@
 export const DESKTOP_CHECKPOINTS = [
+  'mcp-apps',
   'remote-device-onboarding',
   'workspace-tabs',
   'notification-tab-navigation',
