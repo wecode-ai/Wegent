@@ -20,6 +20,22 @@ Wework 内置一个默认关闭的前端性能诊断开关，用于定位 releas
 
 排查启动页长时间不消失时，对齐前端日志的 `Frontend logging initialized` 与 executor 日志的 `app IPC stdio ready`。两者之间的时间主要反映本地 executor 冷启动；`runtime work list finished` 等后续记录用于判断工作台数据加载耗时。不要把后台云端同步的超时误判为本地启动门控。
 
+### 启动阶段与诊断信息
+
+启动闪屏按真实启动阶段推进：`launch`、`shell`、`components`、`runtime-files`、`cli`、`workspace`、`services`、`core-dsh`、`renderer`。当前阶段超过 30 秒时提示“启动比预期慢”；单个阶段超过自身预算（多数为 60 秒）时只保留“首次启动可能较慢”的提醒，不结束整个启动流程。闪屏下方的低透明度小字显示正在扫描或解压的文件，用于说明进程仍在工作。
+
+主进程控制台输出会持久化：应用初始化前写入 `wework-startup-bootstrap.log`，正常运行后写入 `wework-main.log`，启动期间的 renderer 错误写入 `renderer-startup.log`，均位于应用数据的 `logs` 目录。启动超时或失败时，闪屏提供 **复制诊断信息** 与 **打开日志目录**。诊断内容包含启动阶段时间线、当前阶段、失败消息与调用栈、runtime 状态、日志目录、最近日志尾部以及提取出的错误行，并对 token 等敏感字段脱敏。
+
+需要人工查看闪屏状态时，可用预览命令指定阶段与状态（首次运行会先构建）：
+
+```bash
+pnpm --dir wework/electron preview:startup-splash --stage core-dsh --state slow
+pnpm --dir wework/electron preview:startup-splash --stage components --state timeout --theme dark
+pnpm --dir wework/electron preview:startup-splash --stage renderer --state failed --plugin @wegent/ai-fleet-defense
+```
+
+`--state` 支持 `normal`、`slow`、`timeout`、`failed`；`--stage` 取值为上述阶段 id；`--elapsed`、`--activity`、`--theme` 可覆盖耗时、活动文件与主题。追加 `--capture <png>` 会截图后退出，适合自动化核验。
+
 ### 首屏门禁与闲时任务
 
 工作台首屏只依赖本地 executor 可用，不等待 Codex app-server、插件市场同步或可清理目录扫描。需要 Codex 的功能会在用户实际使用时启动它；插件自动升级、内置插件市场准备和临时图片清理等维护工作通过统一的 renderer 闲时任务调度器执行。
