@@ -27,7 +27,7 @@ pub struct SignedRequest {
 /// Sign a request against `s3` service in `region` for `access_key`.
 ///
 /// `host` is the `Host` header value, `method` the HTTP method, and `uri` the
-/// request path (no query string; object GETs and bucket HEADs carry none).
+/// percent-encoded request target (path and optional query string).
 /// The canonical signed headers are the fixed `host`/`x-amz-content-sha256`/
 /// `x-amz-date` set the unsigned-payload GET/HEAD requests carry.
 pub fn sign(
@@ -62,6 +62,8 @@ pub fn sign(
 /// sorted by name. `payload_sha256` is the hex `x-amz-content-sha256` digest
 /// of the request body (`sha256_hash(body)` for cleartext HTTP, `UNSIGNED-PAYLOAD`
 /// over TLS).
+/// `uri` must contain the already percent-encoded path and query sent on the
+/// wire. Query pairs are sorted independently; S3 object paths are not normalized.
 #[allow(clippy::too_many_arguments)]
 pub fn sign_headers(
     access_key: &str,
@@ -91,8 +93,11 @@ pub fn sign_headers(
         .map(|(name, value)| format!("{name}:{value}"))
         .collect::<Vec<_>>()
         .join("\n");
-    let canonical_request =
-        format!("{method}\n{uri}\n\n{canonical_headers}\n\n{signed_headers}\n{payload_sha256}");
+    let (path, query) = uri.split_once('?').unwrap_or((uri, ""));
+    let canonical_query = canonical_query(query);
+    let canonical_request = format!(
+        "{method}\n{path}\n{canonical_query}\n{canonical_headers}\n\n{signed_headers}\n{payload_sha256}"
+    );
 
     // String to sign.
     let credential_scope = format!("{date_stamp}/{region}/s3/aws4_request");
@@ -120,6 +125,20 @@ pub fn sign_headers(
         amz_date: amz_date.to_string(),
         content_sha256: payload_sha256.to_string(),
     }
+}
+
+fn canonical_query(query: &str) -> String {
+    let mut pairs: Vec<_> = query
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| pair.split_once('=').unwrap_or((pair, "")))
+        .collect();
+    pairs.sort_unstable();
+    pairs
+        .into_iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect::<Vec<_>>()
+        .join("&")
 }
 
 /// minio-py `_MULTI_SPACE_REGEX.sub(" ", value).strip()`: collapse runs of
@@ -174,6 +193,79 @@ pub fn amz_timestamp_now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Independent vectors generated with minio-py 7.2.20 sign_v4_s3.
+    #[test]
+    fn multipart_signatures_match_minio_sdk() {
+        for (method, uri, signature) in [
+            (
+                "POST",
+                "/bucket/key?uploads=",
+                "460e8cc644cc0bcd3f10c472d147981666b530997d2ef4496edeedad8d1dec64",
+            ),
+            (
+                "PUT",
+                "/bucket/key?uploadId=a%2Bb%2Fc%3D&partNumber=1",
+                "7e64d37bb02f14a6866e19581d287ff4558e21a125503c60158afbe4ed89aaf6",
+            ),
+            (
+                "POST",
+                "/bucket/key?uploadId=a%2Bb%2Fc%3D",
+                "b326d50b5991bfa4694f7258f76d001ebe839cd2c1ac2812ddb627f98fb3008f",
+            ),
+        ] {
+            let signed = sign_headers(
+                "access",
+                "secret",
+                "us-east-1",
+                method,
+                uri,
+                "20261026T130000Z",
+                EMPTY_BODY_SHA256,
+                &[
+                    ("host", "storage.example.invalid"),
+                    ("x-amz-content-sha256", EMPTY_BODY_SHA256),
+                    ("x-amz-date", "20261026T130000Z"),
+                ],
+            );
+            assert!(
+                signed
+                    .authorization
+                    .ends_with(&format!("Signature={signature}")),
+                "{uri}"
+            );
+        }
+    }
+
+    #[test]
+    fn query_pairs_sort_encoded_names_and_values_and_keep_empty_values() {
+        assert_eq!(
+            canonical_query("z=last&uploads&tag=b&tag=a&%C3%A9=%2B%2F%3D"),
+            "%C3%A9=%2B%2F%3D&tag=a&tag=b&uploads=&z=last"
+        );
+    }
+
+    #[test]
+    fn queryless_signature_matches_minio_sdk() {
+        let signed = sign_headers(
+            "access",
+            "secret",
+            "us-east-1",
+            "GET",
+            "/test.txt",
+            "20261026T130000Z",
+            EMPTY_BODY_SHA256,
+            &[
+                ("host", "storage.example.invalid"),
+                ("range", "bytes=0-9"),
+                ("x-amz-content-sha256", EMPTY_BODY_SHA256),
+                ("x-amz-date", "20261026T130000Z"),
+            ],
+        );
+        assert!(signed.authorization.ends_with(
+            "Signature=211209d1a3ba500a45a1ab06111cb94c12ddbc4529cabb0de4da0fffee69c2e2"
+        ));
+    }
 
     /// The AWS-documented SigV4 GET-object example
     /// (examplebucket/us-east-1, 20130524T000000Z).
