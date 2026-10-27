@@ -38,9 +38,9 @@ const settings: WorkspaceStandInSettings = {
 }
 
 function fixture(models = [cloud], nativeModels = [native]) {
-  const catalog = vi.fn<(deviceId: string) => Promise<{ models: RunnerModel[] }>>(
-    async () => ({ models: nativeModels })
-  )
+  const catalog = vi.fn<(deviceId: string) => Promise<{ models: RunnerModel[] }>>(async () => ({
+    models: nativeModels,
+  }))
   const listModels = vi.fn(async () => ({ data: models }))
   return {
     catalog,
