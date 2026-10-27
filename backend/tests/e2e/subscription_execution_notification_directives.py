@@ -240,7 +240,8 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
         with SessionLocal() as db:
             db.add(channel)
             db.commit()
-        self.created.append(("messager", channel.id))
+            channel_id = channel.id
+        self.created.append(("messager", channel_id))
         return channel.id
 
     def _create_subscription(
