@@ -163,6 +163,17 @@ test('keeps every fixture inside the real calendar and Gantt windows throughout 
 
 test.each([
   {
+    today: '2026-10-19T12:00:00',
+    target: '2026-11-02',
+    navigationCount: 0,
+    ranges: [
+      '2026-10-26 → 2026-10-28',
+      '2026-11-02 → 2026-11-04',
+      '2026-11-02 → 2026-11-05',
+      '2026-11-04 → 2026-11-07',
+    ],
+  },
+  {
     today: '2026-10-26T12:00:00',
     target: '2026-11-09',
     navigationCount: 1,
@@ -182,6 +193,17 @@ test.each([
       '2026-10-19 → 2026-10-21',
       '2026-10-19 → 2026-10-22',
       '2026-10-21 → 2026-10-24',
+    ],
+  },
+  {
+    today: '2026-12-28T12:00:00',
+    target: '2027-01-11',
+    navigationCount: 1,
+    ranges: [
+      '2027-01-04 → 2027-01-06',
+      '2027-01-11 → 2027-01-13',
+      '2027-01-11 → 2027-01-14',
+      '2027-01-13 → 2027-01-16',
     ],
   },
 ])('keeps the target date visible when scheduling from $today', async fixture => {
@@ -223,5 +245,11 @@ test.each([
     fixture.navigationCount
   )
   expect(calendar.visibleDates().has(fixture.target)).toBe(true)
+  expect(
+    calendar.calls.filter(({ action }) => action === 'waitFor').map(({ selector }) => selector)
+  ).toEqual([
+    `${CALENDAR} [data-testid="collaboration-calendar-day-${fixture.ranges[0].split(' → ')[0]}"]`,
+    `${CALENDAR} [data-testid="collaboration-calendar-day-${fixture.target}"]`,
+  ])
   expect(rangeIndex).toBe(3)
 })

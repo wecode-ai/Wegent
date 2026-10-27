@@ -59,6 +59,7 @@ import {
 import { executeVerificationControlCommand } from './verification-control'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { selectDesktopControlOption } from './desktop-control-select'
+import { dispatchDesktopControlWheel } from './desktop-control-wheel'
 import {
   getAppPreferences,
   updateAppPreferences,
@@ -2816,6 +2817,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       element.scrollIntoView({ block: 'center', inline: 'nearest' })
       element.dispatchEvent(new Event('scroll', { bubbles: true }))
       return element.textContent?.trim() ?? ''
+    }
+    case 'wheel': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      return dispatchDesktopControlWheel(element, command.value ?? '{}')
     }
     case 'expandProcessingSummaries':
       return expandDesktopProcessingSummaries()

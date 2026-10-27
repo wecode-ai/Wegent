@@ -1,3 +1,4 @@
+import { useScopedDraftInput } from './useScopedDraftInput'
 import { useDebugSnapshotPublisher } from './useDebugSnapshotPublisher'
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
@@ -453,7 +454,11 @@ export function WorkbenchProvider({
     currentRuntimeTask: state.currentRuntimeTask,
     standaloneChatKey: state.standaloneChatKey,
   })
-  const [draftInputByScope, setDraftInputByScope] = useState<Record<string, string>>(() =>
+  const {
+    inputs: draftInputByScope,
+    setInput: writeDraftInputForScope,
+    getRevision: getInputRevisionForScope,
+  } = useScopedDraftInput(() =>
     workspaceTabId ? (consumeWorkspaceTabTransfer(workspaceTabId)?.draftInputByScope ?? {}) : {}
   )
   const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
@@ -486,36 +491,32 @@ export function WorkbenchProvider({
     },
     [projectChatScopeKey]
   )
-  const setDraftInputForScope = useCallback((scopeKey: string, value: string) => {
-    setDraftInputByScope(current => {
-      if ((current[scopeKey] ?? '') === value) return current
-      if (!value && current[scopeKey] === undefined) return current
-      const next = { ...current }
-      if (value) next[scopeKey] = value
-      else delete next[scopeKey]
-      return next
-    })
-    if (!value.trim()) {
-      setTrialTemplatesByScope(current => {
-        if (!current[scopeKey]) return current
-        const next = { ...current }
-        delete next[scopeKey]
-        return next
-      })
-      setTrialPluginNameByScope(current => {
-        if (!current[scopeKey]) return current
-        const next = { ...current }
-        delete next[scopeKey]
-        return next
-      })
-      setTrialPluginAppByScope(current => {
-        if (!current[scopeKey]) return current
-        const next = { ...current }
-        delete next[scopeKey]
-        return next
-      })
-    }
-  }, [])
+  const setDraftInputForScope = useCallback(
+    (scopeKey: string, value: string) => {
+      writeDraftInputForScope(scopeKey, value)
+      if (!value.trim()) {
+        setTrialTemplatesByScope(current => {
+          if (!current[scopeKey]) return current
+          const next = { ...current }
+          delete next[scopeKey]
+          return next
+        })
+        setTrialPluginNameByScope(current => {
+          if (!current[scopeKey]) return current
+          const next = { ...current }
+          delete next[scopeKey]
+          return next
+        })
+        setTrialPluginAppByScope(current => {
+          if (!current[scopeKey]) return current
+          const next = { ...current }
+          delete next[scopeKey]
+          return next
+        })
+      }
+    },
+    [writeDraftInputForScope]
+  )
   const setDraftInput = useCallback(
     (value: string) => {
       setDraftInputForScope(projectChatScopeKey, value)
@@ -563,7 +564,7 @@ export function WorkbenchProvider({
   }, [projectChatScopeKey, trialPluginName])
   const applyQueuedPluginTrial = useCallback(
     (scopeKey: string, trial: NonNullable<ReturnType<typeof consumePluginTrial>>) => {
-      setDraftInputByScope(current => ({ ...current, [scopeKey]: trial.input }))
+      setDraftInputForScope(scopeKey, trial.input)
       const showGuide =
         trial.pluginName.trim().length > 0 &&
         shouldShowPluginTrialGuide(trial.pluginName, scopeKey) &&
@@ -605,7 +606,7 @@ export function WorkbenchProvider({
         return next
       })
     },
-    []
+    [setDraftInputForScope]
   )
   const applyQueuedPluginTrialToFreshChat = useCallback(
     (trial: NonNullable<ReturnType<typeof consumePluginTrial>>) => {
@@ -674,7 +675,6 @@ export function WorkbenchProvider({
         currentRuntimeTask: state.currentRuntimeTask,
         standaloneChatKey: state.standaloneChatKey,
       })
-      setDraftInputByScope(current => ({ ...current, [currentScopeKey]: trial.input }))
       applyQueuedPluginTrial(currentScopeKey, trial)
       navigateTo('/')
       window.dispatchEvent(
@@ -700,7 +700,6 @@ export function WorkbenchProvider({
       standaloneWorkspacePath: null,
       startFreshChat: true,
     })
-    setDraftInputByScope(current => ({ ...current, [nextScopeKey]: trial.input }))
     applyQueuedPluginTrial(nextScopeKey, trial)
     navigateTo('/')
     window.dispatchEvent(
@@ -1692,7 +1691,7 @@ export function WorkbenchProvider({
           return localSkillReference(skill, mentionName)
         })
         const input = `${references.join(' ')} `
-        setDraftInputByScope(current => ({ ...current, [nextScopeKey]: input }))
+        setDraftInputForScope(nextScopeKey, input)
       }
       writeLastProjectId(user.id, null)
       dispatch({
@@ -1712,6 +1711,7 @@ export function WorkbenchProvider({
     [
       availableSkills,
       listLocalSkills,
+      setDraftInputForScope,
       setSelectedSkillsForScope,
       state.devices,
       state.standaloneChatKey,
@@ -2701,6 +2701,7 @@ export function WorkbenchProvider({
     () => ({
       scopeKey: projectChatScopeKey,
       inputByScope: draftInputByScope,
+      getInputRevisionForScope,
       models: conversationModels,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
@@ -2772,6 +2773,7 @@ export function WorkbenchProvider({
       requestTaskComposerCatalogs,
       draftInput,
       draftInputByScope,
+      getInputRevisionForScope,
       composerError,
       composerErrorByScope,
       trialTemplates,

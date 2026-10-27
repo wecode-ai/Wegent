@@ -3,6 +3,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  cloudRunnerModels,
   runnerModelKey,
   type WorkspaceStandInSettings,
   type WorkspaceProjectAgent,
@@ -103,6 +104,52 @@ describe('Stand-in configuration composer', () => {
       }
     )
   })
+  it.each(['内网', '公网'])(
+    'distinguishes same-name network models and saves the %s resource identity',
+    async region => {
+      const save = vi.fn(async () => true)
+      const catalog = ['内网', '公网'].map(network => ({
+        name: `kimi-k3(${network})`,
+        displayName: `${network}:Kimi-K3`,
+        modelId: 'kimi-k3',
+        type: 'public' as const,
+        provider: 'openai',
+        namespace: 'default',
+        resourceUserId: 0,
+        config: { protocol: 'openai-responses' },
+      }))
+      const services = {
+        standInApi: { catalog: vi.fn(async () => ({ models: [] })) },
+        modelApi: { listModels: vi.fn(async () => ({ data: catalog })) },
+      } as unknown as WorkbenchServices
+      render(<Fixture save={save} services={services} />)
+      await waitFor(() =>
+        expect(screen.getByTestId('model-selector-button')).toHaveTextContent('内网:Kimi-K3')
+      )
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+      const cloudGroup = screen.getByTestId('model-source-cloud')
+      expect(within(cloudGroup).getByText('内网:Kimi-K3')).toBeInTheDocument()
+      expect(within(cloudGroup).getByText('公网:Kimi-K3')).toBeInTheDocument()
+      const selected = cloudRunnerModels(catalog).find(
+        model => model.runtime === 'codex' && model.label === `${region}:Kimi-K3`
+      )!
+      await userEvent.click(screen.getByTestId(`model-option-${runnerModelKey(selected)}`))
+      expect(screen.getByTestId('model-selector-button')).toHaveTextContent(`${region}:Kimi-K3`)
+      await userEvent.click(screen.getByTestId('stand-in-save'))
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: {
+            runtime: selected.runtime,
+            provider: selected.provider,
+            model_id: selected.model_id,
+            source: selected.source,
+            cloud_model: selected.cloud_model,
+          },
+        })
+      )
+    }
+  )
+
   it('persists a fixed agent model when agent details arrive after the default model', async () => {
     const save = vi.fn()
     const model = {

@@ -448,7 +448,8 @@ jobs:
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
       ]
-    runs-on: ubuntu-latest
+    # setup-python uses the runner tool cache; match the noble container's ABI.
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
       HOME: /root
@@ -665,6 +666,14 @@ jobs:
           RUNTIME_ACTIVITY_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           PYTHONPATH: ..:.
         run: uv run --no-sync python tests/integration/runtime_activity_mysql.py
+
+      - name: Verify MySQL project detachment concurrency
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          PROJECT_TASK_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          PYTHONPATH: ..:.
+        run: uv run --no-sync python tests/integration/project_task_detachment_mysql.py
 
       - name: Start backend server
         env:

@@ -107,7 +107,7 @@ export function SiteApplicationRow({
             data-testid={`site-internal-url-${site.siteid}`}
             aria-label={t('open_internal', { name: site.name })}
             onClick={() => openUrl(site.internal_url)}
-            className="mt-1 flex max-w-full items-center gap-1 text-left text-sm leading-5 text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+            className="mt-1 flex max-w-full items-center gap-1 text-left text-sm leading-5 text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
           >
             <span className="truncate">{site.internal_url}</span>
             <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -134,7 +134,7 @@ export function SiteApplicationRow({
           data-testid={`site-continue-development-${site.siteid}`}
           disabled={deleting || continuing}
           onClick={() => context.onContinueDevelopment(site)}
-          className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:cursor-default disabled:text-text-secondary disabled:opacity-70"
+          className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition-colors hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:cursor-default disabled:text-text-secondary disabled:opacity-70"
         >
           {continuing ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
@@ -240,7 +240,7 @@ function QrCodeDialog({
             type="button"
             data-testid="mini-program-qrcode-close"
             onClick={onClose}
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary shadow-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary shadow-sm transition-colors hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
           >
             <X className="h-3.5 w-3.5" aria-hidden="true" />
             {t('close', '关闭')}
@@ -373,7 +373,7 @@ export function MiniProgramApplicationRow({
               type="button"
               data-testid={`mini-program-qrcode-${program.siteid}`}
               onClick={() => setQrCodeOpen(true)}
-              className="inline-flex items-center gap-1.5 text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+              className="inline-flex items-center gap-1.5 text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
             >
               <QrCode className="h-3.5 w-3.5" aria-hidden="true" />
               {t('view_qrcode', '查看二维码')}
@@ -397,7 +397,7 @@ export function MiniProgramApplicationRow({
             type="button"
             data-testid={`mini-program-copy-link-${program.siteid}`}
             onClick={copyExperienceUrl}
-            className="inline-flex items-center gap-1.5 text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+            className="inline-flex items-center gap-1.5 text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
           >
             {copyState === 'copied' ? (
               <Check className="h-3.5 w-3.5" aria-hidden="true" />

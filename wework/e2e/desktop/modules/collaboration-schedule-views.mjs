@@ -148,12 +148,6 @@ export async function verifyCollaborationScheduleViews({
   )
 
   const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
-  // The next Monday plus one week can fall beyond the current month's grid.
-  if (Number(await control.command('getElementCount', calendarTarget)) === 0) {
-    await control.command('click', scoped('[data-testid="collaboration-schedule-next"]'))
-  }
-  await control.command('waitFor', calendarTarget, { visible: true, timeoutMs })
-
   const calendarBar = scoped('[data-testid^="collaboration-calendar-issue-"]')
   await control.command('waitFor', calendarBar, {
     text: issueTitle,

@@ -187,7 +187,7 @@ export default function DeveloperHome({ heading, onSelectSuggestion }: Developer
             type="button"
             data-testid="task-suggestions-back-button"
             onClick={() => setSelectedCategoryId(null)}
-            className="mb-2 flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+            className="mb-2 flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
           >
             <ChevronLeft className="h-4 w-4" />
             {t('workbench.task_suggestions.back', '返回全部建议')}
@@ -201,7 +201,7 @@ export default function DeveloperHome({ heading, onSelectSuggestion }: Developer
                 onClick={() =>
                   onSelectSuggestion(t(suggestion.promptKey, suggestion.fallbackPrompt))
                 }
-                className="flex min-h-11 items-center rounded-xl border border-border/70 bg-background/50 px-4 text-left text-sm font-medium leading-[18px] text-text-secondary transition-[background-color,color,transform] hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 active:scale-[0.99]"
+                className="flex min-h-11 items-center rounded-xl border border-border/70 bg-background/50 px-4 text-left text-sm font-medium leading-[18px] text-text-secondary transition-[background-color,color,transform] hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30 active:scale-[0.99]"
               >
                 {t(suggestion.labelKey, suggestion.fallbackLabel)}
               </button>
@@ -225,7 +225,7 @@ export default function DeveloperHome({ heading, onSelectSuggestion }: Developer
                   type="button"
                   data-testid={`task-suggestion-category-${category.id}`}
                   onClick={() => setSelectedCategoryId(category.id)}
-                  className="group flex min-h-[104px] flex-col justify-between rounded-2xl border-0 bg-background px-4 py-3 text-left shadow-[0_2px_4px_-1px_rgba(0,0,0,0.08)] ring-[0.5px] ring-black/10 transition-[background-color,box-shadow,transform] hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#339CFF] active:scale-[0.99] dark:ring-white/10"
+                  className="group flex min-h-[104px] flex-col justify-between rounded-2xl border-0 bg-background px-4 py-3 text-left shadow-[0_2px_4px_-1px_rgba(0,0,0,0.08)] ring-[0.5px] ring-black/10 transition-[background-color,box-shadow,transform] hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-[#339CFF] active:scale-[0.99] dark:ring-white/10"
                 >
                   <Icon className={cn('h-4 w-4', CATEGORY_TONES[category.tone])} />
                   <span className="text-sm font-medium leading-5 text-text-primary">

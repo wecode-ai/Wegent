@@ -36,7 +36,7 @@ export function ComposerPredictionStatus({
     <button
       type="button"
       data-testid={`${testId}-prediction-accept`}
-      className="flex h-7 items-center gap-2 rounded-md px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring max-md:min-h-11"
+      className="flex h-7 items-center gap-2 rounded-md px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary keyboard:focus-visible:outline keyboard:focus-visible:outline-2 keyboard:focus-visible:outline-ring max-md:min-h-11"
       onClick={() => {
         onAccept(prediction.text)
         prediction.onAccept()

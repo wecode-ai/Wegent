@@ -282,6 +282,7 @@ export interface WorkspaceDeliveryAsset {
 }
 
 export interface WorkspaceDelivery {
+  createdByUserId?: number | null;
   id: string;
   issueId: string;
   status: "draft" | "delivered";
