@@ -74,6 +74,11 @@ impl RuntimeWorkRpcHandler {
             .map_err(|_| app_error("Cannot read source invocation"))?;
         let source = source_call(&read["thread"], &call_id)
             .ok_or_else(|| app_error("Source invocation does not belong to this task"))?;
+        if read["thread"]["status"]["type"] == "notLoaded" {
+            self.resume_codex_thread_for_action(&link, &thread_id)
+                .await
+                .map_err(|_| app_error("Cannot restore the source MCP App session"))?;
+        }
         let server = source["server"]
             .as_str()
             .ok_or_else(|| app_error("Source server is unavailable"))?;

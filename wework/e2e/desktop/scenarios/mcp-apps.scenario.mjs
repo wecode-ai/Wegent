@@ -171,6 +171,46 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         })
         await assert.rejects(fetch(frameUrl))
       }
+      await requestExecutor(
+        control,
+        'codex.app_server_request',
+        {
+          method: 'thread/unsubscribe',
+          params: { threadId: address.threadId },
+        },
+        uiTimeoutMs
+      )
+      const deadline = Date.now() + uiTimeoutMs
+      let status
+      do {
+        const read = await requestExecutor(
+          control,
+          'codex.app_server_request',
+          {
+            method: 'thread/read',
+            params: { threadId: address.threadId },
+          },
+          uiTimeoutMs
+        )
+        status = read.thread.status.type
+        if (status === 'notLoaded') break
+        await new Promise(resolve => setTimeout(resolve, 100))
+      } while (Date.now() < deadline)
+      assert.equal(status, 'notLoaded')
+      const original = '[data-mcp-call-id="' + callId + '"]'
+      await control.command('click', original + ' [data-testid="mcp-app-expand"]')
+      await control.command('waitFor', original + ' [data-testid="mcp-app-frame"]')
+      frameUrl = await control.command(
+        'getAttribute',
+        original + ' [data-testid="mcp-app-frame"]',
+        { value: 'src' }
+      )
+      await waitText('Result 0 ui-only-marker')
+      await control.command('click', original + ' [data-testid="mcp-app-close"]')
+      await control.command('waitFor', original + ' [data-testid="mcp-app-frame"]', {
+        visible: false,
+      })
+      await assert.rejects(fetch(frameUrl))
       assert.ok(calls >= 8)
     },
   }

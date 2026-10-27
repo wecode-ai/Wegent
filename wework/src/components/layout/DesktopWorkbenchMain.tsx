@@ -1193,7 +1193,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     createDeviceDirectory,
     startNewChat,
   } = useWorkbenchPaneContext()
-  const { services, openRuntimeTask, workspaceTabId, loadRuntimeTranscriptForPane } = useWorkbench()
+  const {
+    services,
+    openRuntimeTask,
+    workspaceTabId,
+    loadRuntimeTranscriptForPane,
+    sendRuntimePaneMessage,
+  } = useWorkbench()
   const deviceApi = services?.deviceApi
   const { t } = useTranslation('common')
   const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
@@ -5236,7 +5242,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   onClick={focusComposerFromConversationClick}
                 >
                   <ScrollableMessageArea
-                    mcpAppAddress={currentRuntimeTask}
+                    mcpApp={
+                      currentRuntimeTask && services?.runtimeWorkApi?.requestMcpApp
+                        ? {
+                            address: currentRuntimeTask,
+                            api: { requestMcpApp: services.runtimeWorkApi.requestMcpApp },
+                            sendMessage: message =>
+                              sendRuntimePaneMessage({ address: currentRuntimeTask, message }),
+                          }
+                        : undefined
+                    }
                     searchActive={paneActive && paneVisible && workbenchVisible}
                     workspacePath={composerWorkspaceTarget?.path}
                     imageTarget={remoteImageTarget}

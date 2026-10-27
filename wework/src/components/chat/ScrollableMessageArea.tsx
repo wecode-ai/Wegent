@@ -11,7 +11,7 @@ import type {
   RuntimeConversationTurn,
   WorkbenchMessage,
 } from '@wegent/chat-core/runtime-conversation'
-import { DesktopToolServices } from './DesktopToolServices'
+import { DesktopToolServices, type DesktopMcpAppServices } from './DesktopToolServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { ConversationFindBar } from './ConversationFindBar'
@@ -25,7 +25,7 @@ type SearchableMessageAreaProps = Omit<
   ScrollableMessageAreaProps,
   DesktopConversationPresentationProp
 > & {
-  mcpAppAddress?: import('@/types/api').RuntimeTaskAddress | null
+  mcpApp?: DesktopMcpAppServices
   workspacePath?: string
   imageTarget?: { deviceId: string; workspacePath: string } | null
   virtualize?: boolean
@@ -51,7 +51,7 @@ type SearchableMessageAreaProps = Omit<
 }
 
 export function ScrollableMessageArea({
-  mcpAppAddress,
+  mcpApp,
   workspacePath,
   imageTarget,
   virtualize,
@@ -128,7 +128,7 @@ export function ScrollableMessageArea({
     [visibleSearchPage, transcriptError, onRetryTranscript, props.loading, props.historyError, t]
   )
   return (
-    <DesktopToolServices imageTarget={imageTarget} mcpAppAddress={mcpAppAddress}>
+    <DesktopToolServices imageTarget={imageTarget} mcpApp={mcpApp}>
       <SharedScrollableMessageArea
         {...props}
         {...presentation}
