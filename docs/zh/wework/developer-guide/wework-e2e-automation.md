@@ -708,7 +708,7 @@ Linux 与 Windows Desktop Core E2E 共享分类器输出的同一份分片矩阵
 
 普通 Draft PR 不运行浏览器或桌面 E2E。merge queue 会在提交进入 `main` 之前运行
 完整浏览器以及 Linux、Windows 桌面 Core 套件；`main` 不再重复运行已经通过的
-合并队列检查。macOS 内存门禁仅在带有 `ci:memory` 或 `ci:all` 标签的非 Draft PR 中运行；
+合并队列检查。macOS 内存门禁仅在带有 `ci:all` 标签的非 Draft PR 中运行；
 普通 PR、定时任务和手动任务均不运行内存 E2E。
 workflow 每天 UTC 04:00 运行一次回归（不含内存 E2E）。添加 `ci:all` 标签则会运行浏览器、
 Linux 与 Windows 桌面以及 macOS 内存 E2E，即使 PR 的改动路径通常不会触发

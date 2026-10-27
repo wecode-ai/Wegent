@@ -11,23 +11,31 @@ import {
   verifyBoardFieldDrag,
   waitForIssue,
 } from './collaboration-board-field-drag.mjs'
+import { waitForBoardValue } from './collaboration-board-flows.mjs'
 
 const TAGS = ['drag-A', 'drag-B', 'drag-C']
 
 const column = key => `[data-testid="cloud-todo-column-${key}"]`
 const card = (key, id) => `${column(key)} [data-testid="cloud-todo-card-${id}"]`
 
-async function assertIssueColumns(control, scoped, issueId, tags) {
-  for (const tag of [...TAGS, null]) {
-    const selector = scoped(card(tag ? `tag-${tag}` : 'tag-untagged', issueId))
-    const visible = tag ? tags.includes(tag) : tags.length === 0
+async function assertIssueColumns(control, scoped, issueId, tags, uiTimeoutMs) {
+  for (const [key, visible] of [
+    ...TAGS.map(tag => [`tag-${tag}`, tags.includes(tag)]),
+    ['tag-untagged', tags.length === 0],
+  ]) {
+    const selector = scoped(card(key, issueId))
     if (visible) {
       await control.command('waitFor', selector)
       await control.command('scrollIntoView', selector)
+    } else {
+      await waitForBoardValue(
+        async () => Number(await control.command('getElementCount', selector)),
+        0,
+        `The Issue ${issueId} remained in ${key}`,
+        uiTimeoutMs
+      )
     }
-    await control.command('waitFor', selector, {
-      visible,
-    })
+    await control.command('waitFor', selector, { visible })
   }
 }
 
@@ -66,7 +74,7 @@ async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }
   await reloadMainWindow(control, 'The multi-tag board fixture did not load')
   await openProjectBoard(control, scoped, project)
   await selectProjectBoardGrouping(control, scoped, 'tag')
-  await assertIssueColumns(control, scoped, moving.id, TAGS.slice(0, 2))
+  await assertIssueColumns(control, scoped, moving.id, TAGS.slice(0, 2), uiTimeoutMs)
 
   const sameColumn = `tag-${TAGS[1]}`
   await selectProjectBoardSort(control, scoped, sameColumn, ['priority-desc', 'created-asc'])
@@ -108,7 +116,7 @@ async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }
   await reloadMainWindow(control, 'The same-column tag drag did not reload')
   await openProjectBoard(control, scoped, project)
   await assertLaneOrder(control, scoped, sameColumn, [moving.id, sameColumnAnchor.id])
-  await assertIssueColumns(control, scoped, moving.id, TAGS.slice(0, 2))
+  await assertIssueColumns(control, scoped, moving.id, TAGS.slice(0, 2), uiTimeoutMs)
   console.log(
     '[desktop-e2e] PASS board-drag: multi-tag compound sort blocks manual drag; manual order persists without changing tags'
   )
@@ -147,10 +155,10 @@ async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }
     assert.equal(after.status, before.status)
     assert.equal(after.priority, before.priority)
     assert.equal(after.assignee_user_id, before.assignee_user_id)
-    await assertIssueColumns(control, scoped, movedIssue.id, move.expected)
+    await assertIssueColumns(control, scoped, movedIssue.id, move.expected, uiTimeoutMs)
     await reloadMainWindow(control, 'A cross-column tag drag did not reload')
     await openProjectBoard(control, scoped, project)
-    await assertIssueColumns(control, scoped, movedIssue.id, move.expected)
+    await assertIssueColumns(control, scoped, movedIssue.id, move.expected, uiTimeoutMs)
     console.log(
       `[desktop-e2e] PASS board-drag: tag ${sourceKey} -> ${targetKey}, expected tags=${JSON.stringify(move.expected)} persisted and survived reload`
     )

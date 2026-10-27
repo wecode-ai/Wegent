@@ -672,6 +672,15 @@ fn cached_runtime_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value> {
         .collect()
 }
 
+fn cached_temporary_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value> {
+    let mut messages = transcript_snapshot_messages(link);
+    append_unique_transcript_messages(&mut messages, cached_messages(link));
+    append_unique_transcript_messages(&mut messages, completed_transcript_messages(link));
+    normalize_overload_recovery_messages(&mut messages, &link.runtime_handle);
+    remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
+    messages
+}
+
 fn user_message_presentation(payload: &Value) -> Option<Value> {
     let client_user_message_id = payload
         .get("clientUserMessageId")
