@@ -68,8 +68,8 @@ const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
 const CODEX_APPLY_PATCH_FREEFORM_OVERRIDE: &str = "features.apply_patch_freeform=true";
 const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
     "suppress_unstable_features_warning=true";
-const CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
-    "features.tool_call_mcp_elicitation=false";
+const CODEX_ENABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
+    "features.tool_call_mcp_elicitation=true";
 const CODEX_ENABLE_UPDATE_PLAN_OVERRIDE: &str = "tools.update_plan.enabled=true";
 const CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE: &str =
     "features.default_mode_request_user_input=true";
@@ -1994,6 +1994,10 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
+        let _retry_subscription = local_model_proxy::retry_notifications::subscribe(
+            &thread_id,
+            notifications.as_ref(),
+        );
         let mut notification_rx = match early_notification_rx {
             Some(notification_rx) => notification_rx,
             None => {
@@ -2345,6 +2349,8 @@ pub async fn run_codex_app_server_turn_with_cancel(
         };
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
+        let _retry_subscription =
+            local_model_proxy::retry_notifications::subscribe(&thread_id, notifications.as_ref());
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
         }
@@ -4258,7 +4264,9 @@ fn codex_streaming_patch_config_overrides() -> Vec<String> {
 
 fn codex_runtime_default_config_overrides() -> Vec<String> {
     let mut overrides = codex_streaming_patch_config_overrides();
-    overrides.push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
+    // Native request_user_input has one waiter per turn. Keep MCP approvals on
+    // their separately correlated elicitation channel so they cannot replace it.
+    overrides.push(CODEX_ENABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
     overrides.push(CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned());
     overrides.push(CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE.to_owned());
     overrides.push(format!(

@@ -1308,9 +1308,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             if bot_dict:
                 detailed_bots.append(
                     {
+                        **bot_info,
                         "bot": bot_dict,
-                        "bot_prompt": bot_info.get("bot_prompt"),
-                        "role": bot_info.get("role"),
                     }
                 )
 

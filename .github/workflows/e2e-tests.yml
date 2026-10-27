@@ -200,9 +200,9 @@ jobs:
       - name: Resolve Backend Rust E2E runtime
         id: runtime
         env:
-          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**') }}
+          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', '.github/runtime-images/backend-rs-e2e.Dockerfile') }}
         run: |
-          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-backend-rs-e2e:v1-$SOURCE_DIGEST" \
+          echo "image=$(.github/scripts/resolve-backend-rs-e2e-runtime.sh)" \
             >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
@@ -277,14 +277,8 @@ jobs:
             .ci-artifacts/backend-rs-image/attachment-s3-e2e
           cp .ci-artifacts/attachment-hosting-e2e \
             .ci-artifacts/backend-rs-image/attachment-hosting-e2e
-          printf '%s\n' \
-            'FROM scratch' \
-            'COPY wegent-backend-rs /app/wegent-backend-rs' \
-            'COPY attachment-s3-e2e /app/attachment-s3-e2e' \
-            'COPY attachment-hosting-e2e /app/attachment-hosting-e2e' \
-            'ENTRYPOINT ["/app/wegent-backend-rs"]' \
-            > .ci-artifacts/backend-rs-image/Dockerfile
           docker build \
+            --file .github/runtime-images/backend-rs-e2e.Dockerfile \
             --tag "$IMAGE" \
             .ci-artifacts/backend-rs-image
           docker push "$IMAGE"

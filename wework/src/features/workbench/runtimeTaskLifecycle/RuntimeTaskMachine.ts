@@ -10,6 +10,7 @@ export class RuntimeTaskMachine {
   private state: RuntimeTaskLifecycleState
   private revision = 0
   private readonly observedTurnIds = new Set<string>()
+  private readonly settledTurnIds = new Set<string>()
 
   constructor(address: RuntimeTaskAddress, unread = false) {
     this.state = {
@@ -42,6 +43,9 @@ export class RuntimeTaskMachine {
     this.state = reduceRuntimeTaskLifecycle(previous, event)
     if (this.state.latestTurnId) this.observeTurn(this.state.latestTurnId)
     const changed = this.state !== previous
+    if (changed && event.type === 'turn_settled' && this.state.latestTurnId) {
+      this.settledTurnIds.add(this.state.latestTurnId)
+    }
     if (changed) this.revision += 1
     return changed
   }
@@ -59,8 +63,14 @@ export class RuntimeTaskMachine {
     this.observedTurnIds.add(turnId)
   }
 
+  isPriorSettledTurn(turnId: string): boolean {
+    // Streaming history can observe a future turn before the executor confirms its start.
+    return this.settledTurnIds.has(turnId) && this.isPriorTurn(turnId)
+  }
+
   mergeTurnHistory(previous: RuntimeTaskMachine): void {
     for (const turnId of previous.observedTurnIds) this.observedTurnIds.add(turnId)
+    for (const turnId of previous.settledTurnIds) this.settledTurnIds.add(turnId)
   }
 
   getState(): RuntimeTaskLifecycleState {
