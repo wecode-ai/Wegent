@@ -60,6 +60,9 @@ class VideoGenerationService:
                 raise ValueError("duration must be a number of seconds") from exc
         model_config["videoConfig"] = video_config
 
+        # Context/model reads are complete. Release their connection before the
+        # worker opens its own session, including with a one-connection pool.
+        db.rollback()
         images, videos, audios = await asyncio.to_thread(
             resolve_generation_reference_materials,
             token_info.user_id,
