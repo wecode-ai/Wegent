@@ -1679,7 +1679,74 @@ class SandboxManager(metaclass=SingletonMeta):
             f"[SandboxManager] Terminating expired sandbox: {sandbox.sandbox_id}, "
             f"last_activity={sandbox.last_activity_at}"
         )
+        if not await self._archive_before_terminate(sandbox):
+            logger.warning(
+                "[SandboxManager] Deferring termination of sandbox %s because "
+                "workspace archiving failed",
+                sandbox.sandbox_id,
+            )
+            return
         await self.terminate_sandbox(task_id_str)
+
+    async def _archive_before_terminate(self, sandbox: Sandbox) -> bool:
+        """Archive the sandbox workspace so the task stays resumable.
+
+        Expired sandboxes used to be deleted without an archive, which left the
+        task bound to a missing executor and made every follow-up unrecoverable.
+        Archiving is retried on each GC run; a sandbox idle far past the TTL is
+        still deleted so a broken archive cannot pin Pods forever.
+        """
+        idle_seconds = time.time() - (sandbox.last_activity_at or 0)
+        grace_seconds = self._config.timeout.redis_ttl * 3
+        try:
+            archived = await self._request_workspace_archive(sandbox)
+        except Exception as exc:
+            logger.warning(
+                "[SandboxManager] Workspace archive request failed for sandbox "
+                "%s: %s",
+                sandbox.sandbox_id,
+                exc,
+            )
+            archived = False
+
+        if archived:
+            logger.info(
+                "[SandboxManager] Archived workspace before terminating sandbox %s",
+                sandbox.sandbox_id,
+            )
+            return True
+        if idle_seconds >= grace_seconds:
+            logger.error(
+                "[SandboxManager] Workspace archive failed for sandbox %s after "
+                "%.0fs idle; terminating anyway to avoid pinning the Pod",
+                sandbox.sandbox_id,
+                idle_seconds,
+            )
+            return True
+        return False
+
+    async def _request_workspace_archive(self, sandbox: Sandbox) -> bool:
+        """Ask the backend to archive this sandbox's workspace."""
+        url = (
+            f"{TASK_API_DOMAIN.rstrip('/')}/api/internal/workspace-archives/"
+            f"{sandbox.sandbox_id}/archive-sandbox"
+        )
+        payload = {
+            "executor_name": sandbox.container_name,
+            "executor_namespace": sandbox.executor_namespace or "",
+        }
+        archive_timeout = float(os.getenv("SANDBOX_GC_ARCHIVE_TIMEOUT", "120"))
+        async with httpx.AsyncClient(timeout=archive_timeout) as client:
+            response = await client.post(url, json=payload)
+        if response.status_code >= 400:
+            logger.warning(
+                "[SandboxManager] Archive endpoint returned %s for sandbox %s: %s",
+                response.status_code,
+                sandbox.sandbox_id,
+                response.text[:200],
+            )
+            return False
+        return True
 
     async def _collect_expired_sandboxes(self) -> None:
         """Terminate expired sandboxes.

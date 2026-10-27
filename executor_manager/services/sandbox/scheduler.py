@@ -28,6 +28,9 @@ logger = setup_logger(__name__)
 # Configuration from environment variables
 GC_INTERVAL = int(os.getenv("GC_INTERVAL", "3600"))  # 1 hour default
 HEARTBEAT_CHECK_INTERVAL = int(os.getenv("HEARTBEAT_CHECK_INTERVAL", "5"))  # seconds
+QUEUE_STALL_CHECK_INTERVAL = int(
+    os.getenv("QUEUE_STALL_CHECK_INTERVAL", "60")
+)  # seconds
 
 
 class SandboxScheduler:
@@ -94,12 +97,26 @@ class SandboxScheduler:
             replace_existing=True,
         )
 
+        # Add queue stall job: fail tasks that were queued but never started
+        from executor_manager.services.task_queue_monitor import (
+            run_queue_stall_check,
+        )
+
+        self._scheduler.add_job(
+            run_queue_stall_check,
+            IntervalTrigger(seconds=QUEUE_STALL_CHECK_INTERVAL),
+            id="queue_stall_check",
+            name="Task Queue Stall Check",
+            replace_existing=True,
+        )
+
         self._scheduler.start()
         logger.info(
             f"[SandboxScheduler] Started with jobs: "
             f"sandbox_heartbeat_check (every {HEARTBEAT_CHECK_INTERVAL}s), "
             f"task_heartbeat_check (every {HEARTBEAT_CHECK_INTERVAL}s), "
-            f"sandbox_gc (every {GC_INTERVAL}s)"
+            f"sandbox_gc (every {GC_INTERVAL}s), "
+            f"queue_stall_check (every {QUEUE_STALL_CHECK_INTERVAL}s)"
         )
 
     async def stop(self) -> None:

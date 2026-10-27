@@ -214,6 +214,7 @@ class TaskQueueConsumer:
                 and task_result.get("executor_name")
             ):
                 # Success - executor was created
+                self.queue_service.clear_pending(task_id)
                 return
 
             # No executor_name means submission failed
@@ -249,6 +250,8 @@ class TaskQueueConsumer:
                 f"[TaskQueueConsumer] Task {task_id}/{subtask_id} requeued for retry"
             )
             return
+
+        self.queue_service.clear_pending(task_id)
 
         # Max retries exceeded - mark as FAILED
         logger.error(
