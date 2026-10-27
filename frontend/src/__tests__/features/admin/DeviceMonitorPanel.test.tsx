@@ -286,26 +286,43 @@ describe('DeviceMonitorPanel', () => {
   })
 
   it('refreshes only the device list when search changes', async () => {
-    render(<DeviceMonitorPanel />)
-
-    await waitFor(() => {
+    jest.useFakeTimers()
+    let unmount: (() => void) | undefined
+    try {
+      await act(async () => {
+        unmount = render(<DeviceMonitorPanel />).unmount
+      })
       expect(mockedAdminApis.getDeviceStats).toHaveBeenCalledTimes(1)
       expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(1)
-    })
 
-    fireEvent.change(await screen.findByTestId('device-search-input'), {
-      target: { value: 'mac' },
-    })
+      fireEvent.change(screen.getByTestId('device-search-input'), {
+        target: { value: 'mac' },
+      })
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(599)
+      })
+      expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1)
+      })
 
-    await waitFor(
-      () => {
-        expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(2)
-      },
-      { timeout: 1200 }
-    )
-
-    expect(mockedAdminApis.getDeviceStats).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId('device-card-device-1')).toBeInTheDocument()
+      expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(2)
+      expect(mockedAdminApis.getDevices).toHaveBeenLastCalledWith(
+        1,
+        20,
+        undefined,
+        undefined,
+        undefined,
+        'mac',
+        undefined,
+        undefined
+      )
+      expect(mockedAdminApis.getDeviceStats).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('device-card-device-1')).toBeInTheDocument()
+    } finally {
+      unmount?.()
+      jest.useRealTimers()
+    }
   })
 
   it('passes version filter params when version input changes', async () => {

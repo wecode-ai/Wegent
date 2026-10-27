@@ -312,6 +312,10 @@ export function useWorkbenchPaneSession({
     () => projectChat.resetAttachmentsForScope(inputScopeKey),
     [inputScopeKey, projectChat]
   )
+  const dismissAttachmentError = useCallback(
+    (filename: string) => projectChat.dismissAttachmentErrorForScope(inputScopeKey, filename),
+    [inputScopeKey, projectChat]
+  )
   const input = projectChat.inputByScope[inputScopeKey] ?? ''
   const setInputForScope = projectChat.setInputForScope
   const getInputRevisionForScope = projectChat.getInputRevisionForScope
@@ -2767,6 +2771,7 @@ export function useWorkbenchPaneSession({
     attachments: attachmentState.attachments,
     uploadingFiles: attachmentState.uploadingFiles,
     attachmentErrors: attachmentState.errors,
+    dismissAttachmentError,
     handleFileSelect,
     removeAttachment,
     messages,
