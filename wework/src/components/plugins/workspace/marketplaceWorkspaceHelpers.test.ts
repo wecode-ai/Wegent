@@ -3,6 +3,7 @@ import { navigateTo } from '@/lib/navigation'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import type { InstalledPluginItem } from '../PluginManagementRows'
 import {
+  createDefaultPluginApi,
   keepRicherMarketplacePluginDetail,
   marketplacePluginDetailSelectionKey,
   marketplacePluginDetailSource,
@@ -12,6 +13,7 @@ import {
   requiredConnectionNames,
   resolveCloudMarketplaceRevalidateIntervalMs,
   resolveMarketplaceUninstallId,
+  withMarketplacePluginDetail,
 } from './marketplaceWorkspaceHelpers'
 
 vi.mock('@/lib/navigation', () => ({
@@ -254,15 +256,67 @@ describe('pluginDetailActionErrorMessage', () => {
   })
 })
 
+describe('marketplace detail component settings', () => {
+  test.each([false, true, undefined])(
+    'preserves current cloud settings (%s) when an older detail arrives',
+    enabled => {
+      const installed = githubInstalledItem()
+      installed.raw.spec.pluginId = 101
+      installed.raw.spec.componentStates =
+        enabled === undefined ? {} : { 'skill:ci-debug': enabled }
+      const stale: InstalledPlugin = {
+        ...installed.raw,
+        spec: {
+          ...installed.raw.spec,
+          componentStates: { 'skill:ci-debug': !enabled },
+          components: {
+            ...emptyComponents,
+            skills: [{ name: 'ci-debug', description: 'Debug failing checks', path: 'ci-debug' }],
+          },
+        },
+      }
+
+      const detail = withMarketplacePluginDetail(installed, stale)
+
+      expect(detail.raw.spec.componentStates).toEqual(installed.raw.spec.componentStates)
+      expect(detail.raw.spec.components.skills).toEqual(stale.spec.components.skills)
+    }
+  )
+
+  test('loads disabled local skills from detail without replacing explicit current settings', () => {
+    const installed = githubInstalledItem()
+    const detail: InstalledPlugin = {
+      ...installed.raw,
+      spec: {
+        ...installed.raw.spec,
+        componentStates: { 'skill:ci-debug': false, 'skill:review': false },
+      },
+    }
+
+    expect(withMarketplacePluginDetail(installed, detail).raw.spec.componentStates).toEqual({
+      'skill:ci-debug': false,
+      'skill:review': false,
+    })
+
+    installed.raw.spec.componentStates = { 'skill:ci-debug': true }
+    expect(withMarketplacePluginDetail(installed, detail).raw.spec.componentStates).toEqual({
+      'skill:ci-debug': true,
+      'skill:review': false,
+    })
+  })
+})
+
 describe('keepRicherMarketplacePluginDetail', () => {
   test('keeps previously loaded skills when a later catalog row has empty components', () => {
     const empty = githubInstalledItem()
+    empty.raw.spec.componentStates = { 'skill:ci-debug': true }
     const rich: InstalledPluginItem = {
       ...empty,
       raw: {
         ...empty.raw,
         spec: {
           ...empty.raw.spec,
+          componentStates: { 'skill:ci-debug': false },
           components: {
             ...emptyComponents,
             skills: [{ name: 'ci-debug', description: 'Debug failing checks', path: 'ci-debug' }],
@@ -279,6 +333,7 @@ describe('keepRicherMarketplacePluginDetail', () => {
     }
 
     const kept = keepRicherMarketplacePluginDetail(rich, empty)
+    expect(kept.raw.spec.componentStates).toEqual({ 'skill:ci-debug': true })
     expect(kept.raw.spec.components.skills).toEqual([
       { name: 'ci-debug', description: 'Debug failing checks', path: 'ci-debug' },
     ])
@@ -289,6 +344,8 @@ describe('keepRicherMarketplacePluginDetail', () => {
         description: 'Access repositories, issues, and pull requests.',
       },
     ])
+    empty.raw.spec.componentStates = {}
+    expect(keepRicherMarketplacePluginDetail(rich, empty).raw.spec.componentStates).toEqual({})
   })
 })
 
@@ -315,5 +372,45 @@ describe('marketplacePluginDetailSelectionKey', () => {
     expect(marketplacePluginDetailSelectionKey(enterprise)).not.toBe(
       marketplacePluginDetailSelectionKey(personal)
     )
+  })
+})
+
+describe('plugin HTTP profile credentials', () => {
+  test('captures the implicit token so an old API cannot read a replacement account token', async () => {
+    localStorage.setItem('auth_token', 'original-account')
+    const api = createDefaultPluginApi('/api')
+    localStorage.setItem('auth_token', 'replacement-account')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ items: [] })))
+    try {
+      await api.listInstalledPlugins()
+      const options = vi.mocked(fetch).mock.calls[0][1]
+      expect(new Headers(options?.headers).get('Authorization')).toBe('Bearer original-account')
+    } finally {
+      localStorage.removeItem('auth_token')
+      vi.unstubAllGlobals()
+    }
+  })
+
+  test.each([
+    { token: undefined, redirects: true },
+    { token: 'explicit-cloud-account', redirects: false },
+    { token: null, redirects: false },
+  ])('preserves the existing 401 redirect policy: %o', async ({ token, redirects }) => {
+    localStorage.setItem('auth_token', 'implicit-account')
+    vi.mocked(navigateTo).mockClear()
+    const api = createDefaultPluginApi('/api', token)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(Response.json({ detail: 'Unauthorized' }, { status: 401 }))
+    )
+    try {
+      await expect(api.listInstalledPlugins()).rejects.toMatchObject({ status: 401 })
+      if (redirects) expect(navigateTo).toHaveBeenCalledExactlyOnceWith('/login')
+      else expect(navigateTo).not.toHaveBeenCalled()
+    } finally {
+      localStorage.removeItem('auth_token')
+      vi.mocked(navigateTo).mockClear()
+      vi.unstubAllGlobals()
+    }
   })
 })

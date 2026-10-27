@@ -100,6 +100,7 @@ import {
   installLocalHarnessDiagnostics,
 } from './local-harness-diagnostics'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
+import { nextConnectorSyncRevision } from '@/features/cloud-connection/connectorSyncRevision'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
 import { weworkTaskScheme } from '@/features/notifications/scheme'
@@ -2089,6 +2090,27 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(
         await requestLocalExecutor('runtime.codex.app_server.restart', { ifIdle: true })
       )
+    case 'configureLocalExecutorConnectors': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        apiBaseUrl: string
+        connectorToken: string
+        expiresAtMs: number
+      }
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.connectors.configure', {
+          apiBaseUrl: input.apiBaseUrl,
+          connectorToken: input.connectorToken,
+          expiresAtMs: input.expiresAtMs,
+          syncRevision: nextConnectorSyncRevision(),
+        })
+      )
+    }
+    case 'clearLocalExecutorConnectors':
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.connectors.clear', {
+          syncRevision: nextConnectorSyncRevision(),
+        })
+      )
     case 'setLocalRuntimeMaxConcurrentTasks':
       return JSON.stringify(
         await requestLocalExecutor('runtime.settings.update', {
@@ -3357,6 +3379,32 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return document.activeElement?.getAttribute('data-testid') ?? ''
     case 'getLocalExecutorStatus':
       return JSON.stringify(await getLocalExecutorStatus())
+    case 'getPluginRuntimeIdentityDiagnostics': {
+      const apiBaseUrl = command.value?.trim()
+      if (!apiBaseUrl) {
+        throw new Error('getPluginRuntimeIdentityDiagnostics requires an API base URL')
+      }
+      const { ensureLocalExecutorAvailable, getKnownLocalExecutorDeviceId } =
+        await import('@/desktop/localExecutor')
+      const { describeDshExecutor } = await import('@/api/dsh/executorTransport')
+      const { resolveLocalPluginDeviceRouteId } = await import('@/features/plugins/pluginDeviceApi')
+      const status = await ensureLocalExecutorAvailable()
+      const deviceId = getKnownLocalExecutorDeviceId()
+      if (!deviceId) throw new Error('Plugin Runtime identity is unavailable')
+      const pluginDeviceRouteId = await resolveLocalPluginDeviceRouteId(deviceId, {
+        apiBaseUrl,
+        token:
+          getDesktopE2ERuntimeConfig().cloudToken ??
+          import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim() ??
+          null,
+      })
+      return JSON.stringify({
+        status,
+        description: await describeDshExecutor(),
+        deviceId,
+        pluginDeviceRouteId,
+      })
+    }
     case 'getBundledPluginUpdates': {
       const marketplace = getInitializedBundledPluginMarketplace()
       return JSON.stringify({

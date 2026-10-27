@@ -579,6 +579,38 @@ describe('TaskActivityView', () => {
     await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledExactlyOnceWith(task.id, 2))
   })
 
+  it('acknowledges notifications on a visible visit to an already-read Issue', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 400,
+      height: 400,
+    } as DOMRect)
+    const task = {
+      id: 'WEG-1',
+      version: 1,
+      is_unread: false,
+      content_revision: 1,
+      activity_read_sequence: 0,
+    } as never
+    markLoopItemRead.mockResolvedValue(task)
+    const view = (requestKey: string) => (
+      <TaskActivityView
+        project={{ id: '11', name: 'Wework' } as never}
+        task={task}
+        issueTimeline
+        linear
+        focusedCommentRequestKey={requestKey}
+      />
+    )
+    const rendered = render(view('first-open'))
+    await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledExactlyOnceWith(task.id, 0))
+    rendered.rerender(view('first-open'))
+    expect(markLoopItemRead).toHaveBeenCalledOnce()
+    rendered.rerender(view('second-open'))
+    await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledTimes(2))
+    expect(markLoopItemRead).toHaveBeenLastCalledWith(task.id, 0)
+  })
+
   it('keeps failed reads retryable and clears the read error after a successful scroll retry', async () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       top: 0,

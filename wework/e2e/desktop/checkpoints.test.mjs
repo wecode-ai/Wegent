@@ -20,6 +20,13 @@ test('group expansion preserves ordering and runs each checkpoint once', () => {
   )
 })
 
+test('the CI notification checkpoint preserves navigation and covers Issue read synchronization', () => {
+  assert.deepEqual(expandDesktopCheckpoints(['collaboration-issue-comment-notification']), [
+    'collaboration-issue-comment-notification-navigation',
+    'issue-notification-read',
+  ])
+})
+
 test('every group member is registered and no unknown checkpoint is silently discarded', () => {
   for (const members of DESKTOP_CHECKPOINT_GROUPS.values()) {
     for (const member of members) assert.ok(DESKTOP_CHECKPOINTS.includes(member), member)

@@ -5291,6 +5291,28 @@ describe("CollaborationPlatformApp real component flow", () => {
     });
   });
 
+  it("clears the assignment draft after the persisted Issue replaces its source", async () => {
+    const api = await renderIssueWithCollaborationGroup();
+    vi.mocked(api.issues.assign).mockResolvedValue({
+      ...issue,
+      version: issue.version + 1,
+      assignee_user_id: member.user_id,
+      assignee_agent_id: null,
+      assignee_team_id: null,
+      assignee_group_id: null,
+    });
+    await click(byTestId("cloud-todo-detail-assignee"));
+    await click(
+      portalByTestId(
+        `cloud-todo-detail-assignee-option-user:${member.user_id}`,
+      ),
+    );
+    await click(byTestId("cloud-todo-save"));
+    expect(
+      container.querySelector('[data-testid="cloud-todo-save"]'),
+    ).toBeNull();
+  });
+
   it("mentions and assigns a project agent", async () => {
     const api = await renderIssueWithCollaborationGroup();
     const comment = byTestId(
