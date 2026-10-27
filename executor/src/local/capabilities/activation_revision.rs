@@ -13,6 +13,7 @@ struct Paths {
     plugins: BTreeMap<String, BTreeSet<PathBuf>>,
     skills: BTreeMap<String, BTreeSet<PathBuf>>,
     metadata: BTreeSet<PathBuf>,
+    cleanup: BTreeSet<PathBuf>,
 }
 
 #[derive(PartialEq)]
@@ -20,6 +21,7 @@ struct Snapshot {
     plugins: BTreeMap<String, Value>,
     skills: BTreeMap<String, Value>,
     metadata: BTreeMap<PathBuf, Value>,
+    cleanup: BTreeMap<PathBuf, Value>,
     mcps: Value,
 }
 
@@ -40,6 +42,24 @@ pub(super) struct ActivationRevision<'a> {
 }
 
 impl<'a> ActivationRevision<'a> {
+    // Observe orphan native paths immediately before GC mutates them. They may
+    // not belong to any plugin in the initial manifest or sync request.
+    pub fn observe_cleanup_path(&mut self, path: &Path) {
+        if !self.paths.cleanup.insert(path.to_owned()) {
+            return;
+        }
+        let started = Instant::now();
+        if let Some(Ok(before)) = &mut self.before {
+            match runtime(&BTreeSet::from([path.to_owned()]), false, None) {
+                Ok(state) => {
+                    before.cleanup.insert(path.to_owned(), state);
+                }
+                Err(error) => self.before = Some(Err(error)),
+            }
+        }
+        self.detection_ms += started.elapsed().as_millis();
+    }
+
     // Create and drop inside both the activation and publication locks. Include
     // requested destinations up front so cancellation before manifest save is covered.
     pub fn begin(
@@ -243,10 +263,21 @@ impl Snapshot {
             .iter()
             .map(|path| Ok((path.clone(), metadata(path)?)))
             .collect::<Result<_, CapabilitySyncError>>()?;
+        let cleanup = paths
+            .cleanup
+            .iter()
+            .map(|path| {
+                Ok((
+                    path.clone(),
+                    runtime(&BTreeSet::from([path.clone()]), false, None)?,
+                ))
+            })
+            .collect::<Result<_, CapabilitySyncError>>()?;
         Ok(Self {
             plugins,
             skills,
             metadata,
+            cleanup,
             mcps: manifest.get("mcps").cloned().unwrap_or_else(|| json!({})),
         })
     }

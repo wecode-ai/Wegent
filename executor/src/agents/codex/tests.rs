@@ -3806,6 +3806,59 @@ fn codex_thread_plan_trims_and_prioritizes_direct_thread() {
 }
 
 #[test]
+fn temporary_tasks_persist_native_history_without_changing_auxiliary_threads() {
+    let launch = CodexLaunchConfig::default();
+    let mut request = ExecutionRequest {
+        ephemeral: true,
+        ..ExecutionRequest::default()
+    };
+    assert_eq!(thread_start_params(&request, &launch)["ephemeral"], true);
+    assert_eq!(
+        thread_fork_params("source", None, &request, &launch)["ephemeral"],
+        true
+    );
+
+    request.persist_runtime_thread();
+    assert!(request.ephemeral, "the task must remain hidden");
+    assert!(thread_start_params(&request, &launch)
+        .get("ephemeral")
+        .is_none());
+    assert!(thread_fork_params("source", None, &request, &launch)
+        .get("ephemeral")
+        .is_none());
+
+    request.use_ephemeral_codex_thread();
+    assert!(request.uses_ephemeral_codex_thread());
+    assert!(request.extra.get("persist_runtime_thread").is_none());
+    assert_eq!(thread_start_params(&request, &launch)["ephemeral"], true);
+    assert_eq!(
+        thread_fork_params("source", None, &request, &launch)["ephemeral"],
+        true
+    );
+}
+
+#[test]
+fn missing_legacy_temporary_threads_explain_how_to_continue() {
+    let mut request = ExecutionRequest {
+        ephemeral: true,
+        ..ExecutionRequest::default()
+    };
+    let original = "thread not found: old-thread".to_owned();
+    let error = temporary_thread_error(&request, Some("old-thread"), original.clone());
+    assert!(error.contains("Open a new temporary chat"));
+    assert!(error.contains(&original));
+    assert_eq!(
+        temporary_thread_error(&request, Some("another-thread"), original.clone()),
+        original
+    );
+    request.persist_runtime_thread();
+    assert_eq!(
+        temporary_thread_error(&request, Some("old-thread"), original.clone()),
+        original
+    );
+}
+
+#[test]
 fn codex_thread_plan_ignores_empty_direct_thread_and_prioritizes_fork() {
     let plan = codex_thread_plan(
         Some("   "),

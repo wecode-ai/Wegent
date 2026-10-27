@@ -937,6 +937,7 @@ describe('TemporaryChatPanel', () => {
         }),
       })
     )
+    expect(mocks.loadRuntimeTranscriptForPane).not.toHaveBeenCalled()
   })
 
   it('notifies the parent with the resolved task address instead of its optimistic route', async () => {
