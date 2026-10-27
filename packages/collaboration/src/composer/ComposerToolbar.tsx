@@ -21,6 +21,7 @@ import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 
 export interface ComposerToolbarProps {
   translate: CollaborationTranslate
+  hideFeatureActions?: boolean
   renderFeatureMenus?: (compact: boolean) => ReactNode
   contextUsageIndicator?: ReactNode
   workspaceMenu?: ReactNode
@@ -74,6 +75,7 @@ const NARROW_MODEL_SELECTOR_MAX_WIDTH = 160
 export function ComposerToolbar({
   translate: t,
   renderFeatureMenus,
+  hideFeatureActions = false,
   contextUsageIndicator,
   workspaceMenu,
   renderModelSelector,
@@ -163,35 +165,41 @@ export function ComposerToolbar({
         data-composer-toolbar-group="features"
         className="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1"
       >
-        <AddContextMenu
-          translate={t}
-          disabled={disabled}
-          onFileSelect={onFileSelect}
-          onDraw={showAttachmentActions ? onDraw : undefined}
-          showAttachmentActions={showAttachmentActions}
-          onSetPlanMode={showExecutionTools && !planModeActive ? onSetPlanMode : undefined}
-          onSetGoal={showExecutionTools || !showAttachmentActions ? onSetGoal : undefined}
-          onConfigureSupervisor={showExecutionTools ? onConfigureSupervisor : undefined}
-          supervisorEnabled={showExecutionTools && supervisorEnabled}
-          supervisorPending={showExecutionTools && supervisorPending}
-        />
-        {renderFeatureMenus?.(compact)}
-        {leadingContext}
-        {goalDraftActive ? (
-          <GoalDraftPill translate={t} onCancel={onCancelGoalDraft} />
-        ) : planModeActive ? (
-          <ComposerModePill
+        {!hideFeatureActions && (
+          <AddContextMenu
             translate={t}
-            label={t('workbench.plan_mode', '计划模式')}
-            icon={ClipboardList}
-            testId="plan-mode-pill"
-            cancelTestId="cancel-plan-mode-button"
-            cancelLabel={t('workbench.disable_plan_mode', '关闭计划模式')}
             disabled={disabled}
-            onCancel={onClearPlanMode}
-            title={t('workbench.collaboration_mode', '运行模式')}
+            onFileSelect={onFileSelect}
+            onDraw={showAttachmentActions ? onDraw : undefined}
+            showAttachmentActions={showAttachmentActions}
+            onSetPlanMode={showExecutionTools && !planModeActive ? onSetPlanMode : undefined}
+            onSetGoal={showExecutionTools || !showAttachmentActions ? onSetGoal : undefined}
+            onConfigureSupervisor={showExecutionTools ? onConfigureSupervisor : undefined}
+            supervisorEnabled={showExecutionTools && supervisorEnabled}
+            supervisorPending={showExecutionTools && supervisorPending}
           />
-        ) : null}
+        )}
+        {renderFeatureMenus?.(compact)}
+        {!hideFeatureActions && (
+          <>
+            {leadingContext}
+            {goalDraftActive ? (
+              <GoalDraftPill translate={t} onCancel={onCancelGoalDraft} />
+            ) : planModeActive ? (
+              <ComposerModePill
+                translate={t}
+                label={t('workbench.plan_mode', '计划模式')}
+                icon={ClipboardList}
+                testId="plan-mode-pill"
+                cancelTestId="cancel-plan-mode-button"
+                cancelLabel={t('workbench.disable_plan_mode', '关闭计划模式')}
+                disabled={disabled}
+                onCancel={onClearPlanMode}
+                title={t('workbench.collaboration_mode', '运行模式')}
+              />
+            ) : null}
+          </>
+        )}
       </div>
       <div
         data-composer-toolbar-group="actions"

@@ -332,8 +332,6 @@ export function PluginsWorkspace({
   const [uninstallingPluginIds, setUninstallingPluginIds] = useState<Set<string | number>>(
     () => new Set()
   )
-  const pluginMutationPending =
-    installingMarketplacePluginIds.size > 0 || uninstallingPluginIds.size > 0
   const [updatingPluginPolicyIds, setUpdatingPluginPolicyIds] = useState<Set<string | number>>(
     () => new Set()
   )
@@ -1673,6 +1671,8 @@ export function PluginsWorkspace({
       })
   }
 
+  const pluginMutationInFlight =
+    installingMarketplacePluginIds.size > 0 || uninstallingPluginIds.size > 0
   const isReconcilingPlugins = usePluginRefreshReconciliation({
     request:
       reconciliationScope.accountKey === marketplaceCacheKeyValue &&
@@ -1682,7 +1682,7 @@ export function PluginsWorkspace({
     accountKey: marketplaceCacheKeyValue,
     deviceId: currentDeviceId,
     available: Boolean(cloudToken && cloudMarketplaceAvailable && deviceCloudConnected),
-    busy: pluginMutationPending,
+    busy: pluginMutationInFlight,
     operations: {
       readStore: readPluginReconciliationInventory,
       sync: () => pluginApi.syncInstalledPluginsToDevice(currentDeviceId, true),
@@ -3883,9 +3883,10 @@ export function PluginsWorkspace({
 
   useEffect(() => {
     if (!cloudMarketplaceAvailable || !cloudToken || !currentDeviceId) return
-    if (pluginMutationPending) return
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
+    // The foreground mutation owns its ACK; pending membership is not a repair gap yet.
+    if (pluginMutationInFlight) return
     const deviceId = currentDeviceId
     const lifetime = deviceSyncLifetimeRef.current
     const inventoryAtStart = getPluginMarketplaceCache(marketplaceCacheKeyValue)
@@ -4049,7 +4050,7 @@ export function PluginsWorkspace({
     pluginApi,
     pluginMarketplaceState.isLoading,
     pluginMarketplaceState.items,
-    pluginMutationPending,
+    pluginMutationInFlight,
   ])
 
   const pendingDevicePackageSync =

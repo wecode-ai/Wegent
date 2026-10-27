@@ -89,6 +89,9 @@ vi.mock('@wegent/collaboration', async importOriginal => ({
       <button onClick={() => props.host.navigate({ ...props.host.location, issueId: issue.id })}>
         Open Issue
       </button>
+      <button onClick={() => props.host.navigate({ ...props.host.location, issueId: 'TEST-2' })}>
+        Open another Issue
+      </button>
       <button
         data-testid="save-execution-environment"
         onClick={async () => {
@@ -133,7 +136,7 @@ vi.mock('@wegent/collaboration', async importOriginal => ({
         props.renderIssueDetail?.({
           api: props.api,
           project: { id: 'project' } as never,
-          issue,
+          issue: { ...issue, id: props.host.location.issueId },
           allIssues: [issue],
           assignments: [],
           taskBindings,
@@ -782,6 +785,27 @@ describe('Wework Issue conversation drawers', () => {
     await motion.finish()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByText('Open Issue')).toHaveFocus()
+  })
+
+  it('does not let a previous Issue exit dismiss the next Issue', async () => {
+    const user = userEvent.setup()
+    render(<Project />)
+    await user.click(screen.getByText('Open Issue'))
+    const motion = startMotion()
+    await user.click(screen.getByTestId('cloud-todo-detail-close'))
+    expect(screen.getByTestId('issue-conversation-drawers')).toHaveAttribute(
+      'data-dismissing',
+      'true'
+    )
+
+    await user.click(screen.getByText('Open another Issue'))
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-issue-id', 'TEST-2')
+    expect(screen.getByTestId('issue-conversation-drawers')).toHaveAttribute(
+      'data-dismissing',
+      'false'
+    )
+    await motion.finish()
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-issue-id', 'TEST-2')
   })
 
   it('finishes exit when reduced motion cancels the transition', async () => {

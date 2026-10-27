@@ -108,7 +108,8 @@ export function PluginAutoUpdateCoordinator() {
         while (pending && !disposed) {
           pending = false
           try {
-            pending = await runUpdatePass()
+            const retryNeeded = await runUpdatePass()
+            pending = pending || retryNeeded
           } catch (error) {
             console.warn('[Plugins] Automatic update check failed', error)
             track('operation_failed', { operation: 'plugin_auto_update' })
