@@ -76,18 +76,28 @@ def _candidate(**overrides) -> StalledCandidate:
 
 
 def test_list_stalled_candidates_filters_running_and_old(test_db):
-    """Only RUNNING assistant subtasks older than the cutoff are returned."""
+    """Only recent RUNNING assistant subtasks older than the cutoff are returned."""
     test_db.add(_task(100))
     test_db.add(_task(101))
+    test_db.add(_task(102))
     test_db.add(_subtask(200, 100, status=SubtaskStatus.RUNNING))
     test_db.add(_subtask(201, 100, status=SubtaskStatus.COMPLETED))
     test_db.add(_subtask(202, 100, status=SubtaskStatus.RUNNING, role=SubtaskRole.USER))
     test_db.add(_subtask(203, 101, status=SubtaskStatus.RUNNING))
+    test_db.add(
+        _subtask(
+            204,
+            102,
+            status=SubtaskStatus.RUNNING,
+            updated_at=NOW - timedelta(days=30),
+        )
+    )
     test_db.commit()
 
     rows = list_stalled_candidates(
         test_db,
         cutoff=NOW - timedelta(minutes=15),
+        max_age_cutoff=NOW - timedelta(days=7),
         limit=10,
     )
 
@@ -282,6 +292,7 @@ async def test_sweep_fails_stalled_candidates():
         failed = await sweep_stalled_subtasks(
             session,
             silent_timeout_seconds=900,
+            max_age_seconds=7 * 24 * 3600,
             heartbeat_timeout_seconds=1800,
             limit=10,
             now=NOW,

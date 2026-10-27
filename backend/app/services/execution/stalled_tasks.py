@@ -63,9 +63,10 @@ def list_stalled_candidates(
     db: Session,
     *,
     cutoff: datetime,
+    max_age_cutoff: datetime,
     limit: int,
 ) -> List[StalledCandidate]:
-    """Return RUNNING assistant subtasks that have not reported since cutoff."""
+    """Return recent RUNNING assistant subtasks that have not reported since cutoff."""
     rows = (
         db.query(
             Subtask.task_id,
@@ -80,6 +81,7 @@ def list_stalled_candidates(
             Subtask.role == SubtaskRole.ASSISTANT,
             Subtask.status == SubtaskStatus.RUNNING,
             Subtask.updated_at <= cutoff,
+            Subtask.updated_at >= max_age_cutoff,
             TaskResource.is_active != TaskResource.STATE_DELETED,
         )
         .order_by(Subtask.updated_at.asc(), Subtask.id.asc())
@@ -114,12 +116,18 @@ class StalledSubtaskSweeper:
         self._heartbeat_check_enabled = heartbeat_check_enabled
 
     def candidates(
-        self, db: Session, *, now: datetime, limit: int
+        self,
+        db: Session,
+        *,
+        now: datetime,
+        max_age_seconds: int,
+        limit: int,
     ) -> List[StalledCandidate]:
         """Load candidates for the given sweep time."""
         return list_stalled_candidates(
             db,
             cutoff=now - self._silent_timeout,
+            max_age_cutoff=now - timedelta(seconds=max_age_seconds),
             limit=limit,
         )
 
@@ -213,6 +221,7 @@ async def sweep_stalled_subtasks(
     db,
     *,
     silent_timeout_seconds: int,
+    max_age_seconds: int,
     heartbeat_timeout_seconds: int,
     limit: int,
     heartbeat_check_enabled: bool = False,
@@ -226,7 +235,12 @@ async def sweep_stalled_subtasks(
         heartbeat_check_enabled=heartbeat_check_enabled,
     )
     candidates = await db.run_sync(
-        lambda sync_db: sweeper.candidates(sync_db, now=current_time, limit=limit)
+        lambda sync_db: sweeper.candidates(
+            sync_db,
+            now=current_time,
+            max_age_seconds=max_age_seconds,
+            limit=limit,
+        )
     )
 
     failed: List[int] = []

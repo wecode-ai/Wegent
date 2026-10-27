@@ -154,6 +154,9 @@ async def stalled_task_worker(stop_event: asyncio.Event):
                         failed = await sweep_stalled_subtasks(
                             db,
                             silent_timeout_seconds=settings.TASK_STALLED_TIMEOUT_SECONDS,
+                            max_age_seconds=(
+                                settings.TASK_STALLED_MAX_AGE_DAYS * 24 * 3600
+                            ),
                             heartbeat_timeout_seconds=(
                                 settings.TASK_STALLED_HEARTBEAT_TIMEOUT_SECONDS
                             ),
