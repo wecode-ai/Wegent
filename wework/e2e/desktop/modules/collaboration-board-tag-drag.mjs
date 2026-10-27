@@ -21,7 +21,10 @@ async function assertIssueColumns(control, scoped, issueId, tags) {
   for (const tag of [...TAGS, null]) {
     const selector = scoped(card(tag ? `tag-${tag}` : 'tag-untagged', issueId))
     const visible = tag ? tags.includes(tag) : tags.length === 0
-    if (visible) await control.command('scrollIntoView', selector)
+    if (visible) {
+      await control.command('waitFor', selector)
+      await control.command('scrollIntoView', selector)
+    }
     await control.command('waitFor', selector, {
       visible,
     })
