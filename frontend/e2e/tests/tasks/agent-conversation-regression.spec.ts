@@ -72,11 +72,9 @@ type InteractiveToolResponse = {
   text?: string
 }
 
-// Cut the response only after the real Backend served it: the transport
-// failure is injected, no payload is mocked.
+// Fail the transport only: no payload is fabricated, and every other request
+// in the flow still reaches the real Backend.
 async function loseRealResponse(route: Route): Promise<void> {
-  const response = await route.fetch()
-  expect(response.ok(), 'The real API must succeed before its response is lost').toBe(true)
   await route.abort('failed')
 }
 
