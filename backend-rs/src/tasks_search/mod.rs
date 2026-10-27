@@ -17,6 +17,7 @@
 //! static paths before `:task_id` templates, so a non-numeric task id no longer
 //! reaches the detail handler and its `i64` binding.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -75,22 +76,36 @@ impl OwnedTaskSearchSource for StoreOwnedTaskSearchSource<'_> {
     ) -> MysqlResult<OwnedTaskSearchBatch> {
         let page = self.store.list_owned_task_ids(user_id, skip, limit).await?;
         let raw = self.store.list_tasks_by_ids(&page.ids).await?;
-        let tasks = raw
+        let candidates = raw
             .into_iter()
             .map(TaskListRow::from_mysql_row)
             .collect::<MysqlResult<Vec<_>>>()?
             .into_iter()
-            .map(|row| TaskSearchCandidate {
-                id: row.id,
-                json: row.json,
+            .map(|row| {
+                (
+                    row.id,
+                    TaskSearchCandidate {
+                        id: row.id,
+                        json: row.json,
+                    },
+                )
             })
             .collect();
         Ok(OwnedTaskSearchBatch {
             total: page.total,
             scanned: page.ids.len() as i64,
-            tasks,
+            tasks: order_by_page(&page.ids, candidates),
         })
     }
+}
+
+/// `list_tasks_by_ids` only filters by `id IN (...)`, so rows arrive in
+/// storage order. Restore the store's newest-first page order before the
+/// caller counts matches and slices the requested page, otherwise a page of
+/// matches is selected from the wrong rows.
+fn order_by_page(ids: &[i64], rows: Vec<(i64, TaskSearchCandidate)>) -> Vec<TaskSearchCandidate> {
+    let mut by_id: HashMap<i64, TaskSearchCandidate> = rows.into_iter().collect();
+    ids.iter().filter_map(|id| by_id.remove(id)).collect()
 }
 
 /// `Query(..., min_length=1)`, `Query(1, ge=1)`, `Query(10, ge=1, le=100)`.
@@ -177,8 +192,7 @@ async fn search_tasks(
         .map(TaskListRow::from_mysql_row)
         .collect::<brz_mysql::MysqlResult<Vec<_>>>()?;
 
-    let mut by_id: std::collections::HashMap<i64, TaskListRow> =
-        rows.into_iter().map(|row| (row.id, row)).collect();
+    let mut by_id: HashMap<i64, TaskListRow> = rows.into_iter().map(|row| (row.id, row)).collect();
     let mut ordered: Vec<TaskListRow> = Vec::new();
     for id in &matched.ids {
         if let Some(row) = by_id.remove(id) {
@@ -432,6 +446,110 @@ mod tests {
 
         assert_eq!(result.total, 1);
         assert_eq!(result.ids, vec![9]);
+    }
+
+    #[test]
+    fn restores_the_page_order_when_the_store_returns_rows_unsorted() {
+        let rows = vec![
+            (7, search_candidate(7, "oldest")),
+            (30, search_candidate(30, "newest")),
+            (12, search_candidate(12, "middle")),
+        ];
+
+        let ordered = order_by_page(&[30, 12, 7], rows);
+
+        assert_eq!(
+            ordered.iter().map(|task| task.id).collect::<Vec<_>>(),
+            vec![30, 12, 7]
+        );
+    }
+
+    #[test]
+    fn keeps_one_entry_when_a_task_row_repeats_across_tables() {
+        let rows = vec![
+            (9, search_candidate(9, "once")),
+            (9, search_candidate(9, "once")),
+        ];
+
+        assert_eq!(order_by_page(&[9], rows).len(), 1);
+    }
+
+    /// Mirrors the production source: the id page is newest first while
+    /// `list_tasks_by_ids` only filters by id and returns storage order.
+    struct StorageOrderedOwnedTaskSearchSource {
+        page_order: Vec<i64>,
+        storage: Vec<(i64, TaskSearchCandidate)>,
+    }
+
+    #[async_trait]
+    impl OwnedTaskSearchSource for StorageOrderedOwnedTaskSearchSource {
+        async fn batch(
+            &self,
+            _user_id: i64,
+            skip: i64,
+            limit: i64,
+        ) -> MysqlResult<OwnedTaskSearchBatch> {
+            let start = usize::try_from(skip).unwrap().min(self.page_order.len());
+            let end = start
+                .saturating_add(usize::try_from(limit).unwrap())
+                .min(self.page_order.len());
+            let ids = &self.page_order[start..end];
+            let mut rows = self
+                .storage
+                .iter()
+                .filter(|(id, _)| ids.contains(id))
+                .map(|(id, task)| {
+                    (
+                        *id,
+                        TaskSearchCandidate {
+                            id: task.id,
+                            json: task.json.clone(),
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            rows.sort_by_key(|(id, _)| *id);
+            Ok(OwnedTaskSearchBatch {
+                total: self.page_order.len() as i64,
+                scanned: ids.len() as i64,
+                tasks: order_by_page(ids, rows),
+            })
+        }
+    }
+
+    /// Every task in a batch matches; storage returns them in ascending id
+    /// order, the opposite of the newest-first id page. The selected page must
+    /// still be the newest matches.
+    #[tokio::test]
+    async fn selects_the_newest_matches_when_storage_order_is_ascending() {
+        let page_order = (0..30).rev().map(|index| 1_000 + index).collect::<Vec<_>>();
+        let storage = page_order
+            .iter()
+            .rev()
+            .map(|id| (*id, search_candidate(*id, "云主机安装")))
+            .collect::<Vec<_>>();
+        let source = StorageOrderedOwnedTaskSearchSource {
+            page_order,
+            storage,
+        };
+
+        let first = search_owned_task_ids(&source, 1555, "云主机", 0, 20)
+            .await
+            .unwrap();
+        assert_eq!(first.total, 30);
+        assert_eq!(
+            first.ids,
+            (0..20).rev().map(|index| 1_010 + index).collect::<Vec<_>>()
+        );
+
+        let second = search_owned_task_ids(&source, 1555, "云主机", 20, 20)
+            .await
+            .unwrap();
+        assert_eq!(second.total, 30);
+        assert_eq!(
+            second.ids,
+            (0..10).rev().map(|index| 1_000 + index).collect::<Vec<_>>()
+        );
     }
 }
 
