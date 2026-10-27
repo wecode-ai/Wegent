@@ -54,7 +54,7 @@ describe('LocalExecutorCloudBridge', () => {
       Promise.resolve(
         method === 'executor.backend.status'
           ? { configured: true, connected: mocks.backendConnected }
-          : {}
+          : { changed: true }
       )
     )
     mocks.issueToken.mockResolvedValue({
@@ -551,5 +551,319 @@ describe('LocalExecutorCloudBridge', () => {
     expect(mocks.ensure).toHaveBeenCalled()
     expect(mocks.connect).not.toHaveBeenCalled()
     expect(mocks.notifySkillsChanged).toHaveBeenCalled()
+  })
+
+  test('renews connector authorization without notifying unchanged capabilities', async () => {
+    vi.useFakeTimers()
+    let changed = true
+    mocks.request.mockImplementation(() => Promise.resolve({ changed }))
+    const view = render(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        apiBaseUrl="https://cloud.example.test/api"
+        isConnected
+        token="cloud-token"
+      />
+    )
+
+    try {
+      await flushAsyncEffects()
+      expect(mocks.notifySkillsChanged).toHaveBeenCalledTimes(1)
+
+      changed = false
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(14 * 60 * 1_000)
+      })
+
+      expect(mocks.issueToken).toHaveBeenCalledTimes(2)
+      expect(mocks.listApps).toHaveBeenCalledTimes(2)
+      expect(
+        mocks.request.mock.calls.filter(([method]) => method === 'runtime.connectors.configure')
+      ).toHaveLength(2)
+      expect(
+        mocks.request.mock.calls.filter(([method]) => method === 'runtime.connectors.apps.sync')
+      ).toHaveLength(2)
+      expect(mocks.notifySkillsChanged).toHaveBeenCalledTimes(1)
+
+      changed = true
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(14 * 60 * 1_000)
+      })
+
+      expect(mocks.issueToken).toHaveBeenCalledTimes(3)
+      expect(mocks.notifySkillsChanged).toHaveBeenCalledTimes(2)
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  test('keeps the connector expiry deadline through token issuance and slow synchronization', async () => {
+    vi.useFakeTimers()
+    const requestedAtMs = Date.now()
+    const firstToken = deferred<{
+      access_token: string
+      token_type: string
+      expires_in: number
+    }>()
+    const firstConfiguration = deferred<{ changed: boolean }>()
+    const firstSynchronization = deferred<{ changed: boolean }>()
+    let configurationCount = 0
+    let synchronizationCount = 0
+    mocks.issueToken.mockReturnValueOnce(firstToken.promise)
+    mocks.request.mockImplementation((method: string) => {
+      if (method === 'runtime.connectors.configure' && configurationCount++ === 0) {
+        return firstConfiguration.promise
+      }
+      if (method === 'runtime.connectors.apps.sync' && synchronizationCount++ === 0) {
+        return firstSynchronization.promise
+      }
+      return Promise.resolve({ changed: false })
+    })
+    const view = render(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        apiBaseUrl="https://cloud.example.test/api"
+        isConnected
+        token="cloud-token"
+      />
+    )
+
+    try {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+        firstToken.resolve({
+          access_token: 'scoped-connector-token',
+          token_type: 'bearer',
+          expires_in: 900,
+        })
+        await firstToken.promise
+      })
+
+      expect(mocks.request).toHaveBeenCalledWith(
+        'runtime.connectors.configure',
+        expect.objectContaining({ expiresAtMs: requestedAtMs + 900_000 })
+      )
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+        firstConfiguration.resolve({ changed: false })
+        await firstConfiguration.promise
+      })
+      await flushAsyncEffects()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(90_000)
+        firstSynchronization.resolve({ changed: true })
+        await firstSynchronization.promise
+      })
+      expect(mocks.notifySkillsChanged).toHaveBeenCalledTimes(1)
+
+      const remainingMs = requestedAtMs + 14 * 60 * 1_000 - Date.now()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(remainingMs - 1)
+      })
+      expect(mocks.issueToken).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(mocks.issueToken).toHaveBeenCalledTimes(2)
+      expect(mocks.notifySkillsChanged).toHaveBeenCalledTimes(1)
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  test('notifies an applied change when renewal supersedes a pending synchronization', async () => {
+    vi.useFakeTimers()
+    const firstSynchronization = deferred<{ changed: boolean }>()
+    let synchronizationCount = 0
+    mocks.request.mockImplementation((method: string) => {
+      if (method === 'runtime.connectors.apps.sync' && synchronizationCount++ === 0) {
+        return firstSynchronization.promise
+      }
+      return Promise.resolve({ changed: false })
+    })
+    const view = render(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        apiBaseUrl="https://cloud.example.test/api"
+        isConnected
+        token="cloud-token"
+      />
+    )
+
+    try {
+      await flushAsyncEffects()
+      expect(synchronizationCount).toBe(1)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(14 * 60 * 1_000)
+      })
+
+      expect(mocks.issueToken).toHaveBeenCalledTimes(2)
+      expect(
+        mocks.request.mock.calls.filter(([method]) => method === 'runtime.connectors.configure')
+      ).toHaveLength(2)
+      expect(synchronizationCount).toBe(2)
+
+      await act(async () => {
+        firstSynchronization.resolve({ changed: true })
+        await firstSynchronization.promise
+      })
+      expect(mocks.notifySkillsChanged).toHaveBeenCalledTimes(1)
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  test('does not replace a renewed connector timer when an older synchronization fails', async () => {
+    vi.useFakeTimers()
+    const firstSynchronization = deferred<{ changed: boolean }>()
+    let synchronizationCount = 0
+    mocks.request.mockImplementation((method: string) => {
+      if (method === 'runtime.connectors.apps.sync' && synchronizationCount++ === 0) {
+        return firstSynchronization.promise
+      }
+      return Promise.resolve({ changed: false })
+    })
+    const view = render(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        apiBaseUrl="https://cloud.example.test/api"
+        isConnected
+        token="cloud-token"
+      />
+    )
+
+    try {
+      await flushAsyncEffects()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(14 * 60 * 1_000)
+      })
+      expect(mocks.issueToken).toHaveBeenCalledTimes(2)
+
+      await act(async () => {
+        firstSynchronization.reject(new Error('superseded synchronization failed'))
+        await firstSynchronization.promise.catch(() => undefined)
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+      })
+      expect(mocks.issueToken).toHaveBeenCalledTimes(2)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(14 * 60 * 1_000 - 30_000)
+      })
+      expect(mocks.issueToken).toHaveBeenCalledTimes(3)
+      expect(mocks.notifySkillsChanged).not.toHaveBeenCalled()
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  test.each([
+    { failedAtMs: 0, renewedAtMs: 30_000 },
+    { failedAtMs: 830_000, renewedAtMs: 840_000 },
+  ])(
+    'retries synchronization failed at $failedAtMs without delaying renewal past $renewedAtMs',
+    async ({ failedAtMs, renewedAtMs }) => {
+      vi.useFakeTimers()
+      const firstSynchronization = deferred<{ changed: boolean }>()
+      const error = new Error('connector synchronization failed')
+      const logError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      let synchronizationCount = 0
+      mocks.request.mockImplementation((method: string) => {
+        if (method === 'runtime.connectors.apps.sync' && synchronizationCount++ === 0) {
+          return firstSynchronization.promise
+        }
+        return Promise.resolve({ changed: false })
+      })
+      const view = render(
+        <LocalExecutorCloudBridge
+          preferencesLoaded
+          apiBaseUrl="https://cloud.example.test/api"
+          isConnected
+          token="cloud-token"
+        />
+      )
+
+      try {
+        await flushAsyncEffects()
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(failedAtMs)
+          firstSynchronization.reject(error)
+          await firstSynchronization.promise.catch(() => undefined)
+        })
+        expect(logError).toHaveBeenCalledWith(
+          '[CloudConnection] Failed to synchronize connector authorization',
+          error
+        )
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(renewedAtMs - failedAtMs - 1)
+        })
+        expect(mocks.issueToken).toHaveBeenCalledTimes(1)
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1)
+        })
+        expect(mocks.issueToken).toHaveBeenCalledTimes(2)
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(14 * 60 * 1_000)
+        })
+        expect(mocks.issueToken).toHaveBeenCalledTimes(3)
+        expect(mocks.notifySkillsChanged).not.toHaveBeenCalled()
+      } finally {
+        view.unmount()
+        vi.useRealTimers()
+        logError.mockRestore()
+      }
+    }
+  )
+
+  test('does not notify when disconnecting unchanged connector state', async () => {
+    mocks.request.mockResolvedValue({ changed: false })
+
+    render(<LocalExecutorCloudBridge preferencesLoaded isConnected={false} token={null} />)
+
+    await flushAsyncEffects()
+
+    expect(mocks.request).toHaveBeenCalledWith('runtime.connectors.clear', {
+      syncRevision: expect.any(Number),
+    })
+    expect(mocks.notifySkillsChanged).not.toHaveBeenCalled()
+  })
+
+  test('ignores a connector synchronization result after the bridge unmounts', async () => {
+    const synchronization = deferred<{ changed: boolean }>()
+    mocks.request.mockImplementation((method: string) =>
+      method === 'runtime.connectors.apps.sync' ? synchronization.promise : Promise.resolve({})
+    )
+    const view = render(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        apiBaseUrl="https://cloud.example.test/api"
+        isConnected
+        token="cloud-token"
+      />
+    )
+
+    await waitFor(() =>
+      expect(mocks.request).toHaveBeenCalledWith('runtime.connectors.apps.sync', expect.any(Object))
+    )
+    view.unmount()
+
+    await act(async () => {
+      synchronization.resolve({ changed: true })
+      await synchronization.promise
+    })
+
+    expect(mocks.notifySkillsChanged).not.toHaveBeenCalled()
   })
 })
