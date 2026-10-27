@@ -1690,7 +1690,16 @@ describe('Wework collaboration workspace API', () => {
     })
   })
 
-  it.each(['active', 'archived', 'foreign', 'unlinked', 'local'] as const)(
+  it.each([
+    'active',
+    'archived',
+    'foreign',
+    'unlinked',
+    'local',
+    'superseded',
+    'superseded-error',
+    'dismissed',
+  ] as const)(
     'checks %s linked task availability through the shared project drawer',
     async status => {
       const project = {
@@ -1710,18 +1719,24 @@ describe('Wework collaboration workspace API', () => {
         backendTaskId: null,
         linkedAt: '2026-10-20T00:00:00Z',
       }
-      const readTask = vi
-        .fn()
-        .mockResolvedValue(
-          status === 'archived' ? { success: false, code: 'task_archived' } : { success: true }
-        )
+      const pendingRead = deferred<{ success: boolean; code?: string }>()
+      const delayed =
+        status === 'superseded' || status === 'superseded-error' || status === 'dismissed'
+      const laterBinding = { ...binding, id: 'later', taskId: 'later-task' }
+      const readTask = vi.fn((_deviceId: string, taskId: string) =>
+        delayed && taskId === binding.taskId
+          ? pendingRead.promise
+          : Promise.resolve(
+              status === 'archived' ? { success: false, code: 'task_archived' } : { success: true }
+            )
+      )
       render(
         createElement(WeworkSharedProject, {
           api: {
             projects: { list: vi.fn().mockResolvedValue([project]) },
             issues: {},
             taskBindings: {
-              list: vi.fn().mockResolvedValue(status === 'unlinked' ? [] : [binding]),
+              list: vi.fn().mockResolvedValue(status === 'unlinked' ? [] : [binding, laterBinding]),
             },
           } as unknown as SharedWorkspaceApi,
           localProjects: [],
@@ -1756,6 +1771,7 @@ describe('Wework collaboration workspace API', () => {
         }) as {
           props: {
             conversation: ReactNode
+            onClose(): void
             children(close: () => void): { props: ComponentProps<typeof TodoEditor> }
           }
         }
@@ -1763,6 +1779,25 @@ describe('Wework collaboration workspace API', () => {
       await act(async () => {
         editor.props.onOpenTaskConversation?.(toWeworkIssueTaskBinding(binding))
       })
+      if (delayed) {
+        await waitFor(() => expect(readTask).toHaveBeenCalledWith('device', 'task'))
+        await act(async () => {
+          if (status === 'dismissed') detail().props.onClose()
+          else editor.props.onOpenTaskConversation?.(toWeworkIssueTaskBinding(laterBinding))
+        })
+        const latestConversation = detail().props.conversation
+        if (status !== 'dismissed') expect(latestConversation).not.toBeNull()
+        await act(async () => {
+          pendingRead.resolve(
+            status === 'superseded-error'
+              ? { success: false, code: 'task_archived' }
+              : { success: true }
+          )
+        })
+        expect(detail().props.conversation).toBe(latestConversation)
+        expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
+        return
+      }
       if (status === 'active' || status === 'local') {
         await waitFor(() => expect(detail().props.conversation).not.toBeNull())
         expect(readTask).toHaveBeenCalledWith('device', 'task')
