@@ -81,7 +81,7 @@ export function EditSiteDialog({ site, loading, error, onCancel, onConfirm }: Ed
                   data-testid="site-edit-title-input"
                   disabled={loading}
                   maxLength={255}
-                  className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus focus:ring-2 focus:ring-focus/15 disabled:cursor-wait disabled:opacity-60"
+                  className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15 disabled:cursor-wait disabled:opacity-60"
                 />
               </label>
               <label className="block">
@@ -95,7 +95,7 @@ export function EditSiteDialog({ site, loading, error, onCancel, onConfirm }: Ed
                   disabled={loading}
                   maxLength={63}
                   placeholder={t('edit_domain_prefix_placeholder', '只允许小写字母、数字、短横线')}
-                  className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus focus:ring-2 focus:ring-focus/15 disabled:cursor-wait disabled:opacity-60"
+                  className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15 disabled:cursor-wait disabled:opacity-60"
                 />
               </label>
             </div>

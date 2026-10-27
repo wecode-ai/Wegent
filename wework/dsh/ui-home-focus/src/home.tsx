@@ -84,7 +84,7 @@ export default function FocusHome({ heading, onSelectSuggestion }: HomeProps) {
               type="button"
               data-testid={`focus-suggestion-${suggestion.id}`}
               onClick={() => onSelectSuggestion(t(suggestion.promptKey, suggestion.fallbackPrompt))}
-              className="group flex min-h-[104px] flex-col justify-between rounded-2xl border-0 bg-background px-4 py-3 text-left shadow-[0_2px_4px_-1px_rgba(0,0,0,0.08)] ring-[0.5px] ring-black/10 transition-[background-color,box-shadow,transform] hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#339CFF] active:scale-[0.99] dark:ring-white/10"
+              className="group flex min-h-[104px] flex-col justify-between rounded-2xl border-0 bg-background px-4 py-3 text-left shadow-[0_2px_4px_-1px_rgba(0,0,0,0.08)] ring-[0.5px] ring-black/10 transition-[background-color,box-shadow,transform] hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-[#339CFF] active:scale-[0.99] dark:ring-white/10"
             >
               <Icon className={`h-4 w-4 ${suggestion.tone}`} aria-hidden="true" />
               <span className="text-sm font-medium leading-5 text-text-primary">

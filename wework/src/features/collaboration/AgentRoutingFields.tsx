@@ -8,7 +8,7 @@ const accountSources = (environment: RunnerEnvironment) =>
   [...new Set(environment.models.map(model => model.account_label).filter(Boolean))].join(', ')
 
 const selectClass =
-  'wework-native-select h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:ring-2 focus:ring-focus/20 disabled:opacity-50 md:h-9'
+  'wework-native-select h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-50 md:h-9'
 
 export function AgentEnvironmentFields({
   routing,

@@ -113,7 +113,7 @@ function RemoveAttachmentButton<Id extends string | number>({
       type="button"
       data-testid="remove-attachment-button"
       onClick={() => onRemoveAttachment(attachmentId)}
-      className={`absolute flex h-6 w-6 items-center justify-center rounded-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${tile ? "-right-1.5 -top-1.5 [@media(hover:hover)]:opacity-0 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100 focus-visible:opacity-100" : "right-1 top-1"}`}
+      className={`absolute flex h-6 w-6 items-center justify-center rounded-full transition-opacity hover:opacity-80 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary keyboard:focus-visible:ring-offset-2 ${tile ? "-right-1.5 -top-1.5 [@media(hover:hover)]:opacity-0 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100 focus-visible:opacity-100" : "right-1 top-1"}`}
       aria-label="Remove attachment"
     >
       <X
@@ -177,7 +177,7 @@ function DocumentAttachmentCard({
           data-testid="attachment-document-preview-button"
           aria-label={filename}
           onClick={onOpen}
-          className="absolute inset-0 cursor-pointer rounded-2xl hover:bg-text-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+          className="absolute inset-0 cursor-pointer rounded-2xl hover:bg-text-primary/5 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-primary"
         />
       )}
       {children}
@@ -227,7 +227,7 @@ function TextAttachmentCard({
             <button
               type="button"
               data-testid="show-text-attachment-button"
-              className="relative z-10 inline-flex max-w-full items-center gap-1 underline underline-offset-2 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="relative z-10 inline-flex max-w-full items-center gap-1 underline underline-offset-2 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary"
               onClick={onShowText}
             >
               <span className="truncate">{labels.showText}</span>
@@ -244,7 +244,7 @@ function TextAttachmentCard({
           data-testid="attachment-text-open-button"
           aria-label={preview || labels.pastedText}
           onClick={onOpen}
-          className="absolute inset-0 cursor-pointer rounded-lg hover:bg-text-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+          className="absolute inset-0 cursor-pointer rounded-lg hover:bg-text-primary/5 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-primary"
         />
       )}
       {children}
@@ -323,7 +323,7 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
                 errorTestId="attachment-image-preview-error"
                 imageClassName="h-full w-full rounded-2xl object-cover"
                 placeholderClassName="flex h-full w-full items-center justify-center rounded-2xl bg-muted text-text-muted"
-                buttonClassName="block h-full w-full cursor-zoom-in rounded-2xl p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+                buttonClassName="block h-full w-full cursor-zoom-in rounded-2xl p-0 text-left focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-primary"
               />
               <AttachmentTileBorder />
               {attachment.ui_kind === "appshot" && (

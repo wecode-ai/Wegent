@@ -218,7 +218,7 @@ export function EnvironmentVariablesDialog({
                     maxLength={128}
                     placeholder="API_BASE_URL"
                     onChange={event => updateRow(row.id, { key: event.target.value.toUpperCase() })}
-                    className="h-9 rounded-md border border-border bg-background px-3 font-mono text-xs text-text-primary outline-none focus:border-focus"
+                    className="h-9 rounded-md border border-border bg-background px-3 font-mono text-xs text-text-primary outline-none keyboard:focus:border-focus"
                   />
                   <select
                     aria-label={t('environment_type', '类型')}
@@ -234,7 +234,7 @@ export function EnvironmentVariablesDialog({
                           type === 'secret' && row.type === 'secret' && row.secretConfigured,
                       })
                     }}
-                    className="h-9 rounded-md border border-border bg-background px-2 text-xs text-text-primary outline-none focus:border-focus"
+                    className="h-9 rounded-md border border-border bg-background px-2 text-xs text-text-primary outline-none keyboard:focus:border-focus"
                   >
                     <option value="plain">Plain</option>
                     <option value="secret">Secret</option>
@@ -254,7 +254,7 @@ export function EnvironmentVariablesDialog({
                     onChange={event =>
                       updateRow(row.id, { value: event.target.value, valueChanged: true })
                     }
-                    className="h-9 min-w-0 rounded-md border border-border bg-background px-3 text-xs text-text-primary outline-none focus:border-focus"
+                    className="h-9 min-w-0 rounded-md border border-border bg-background px-3 text-xs text-text-primary outline-none keyboard:focus:border-focus"
                   />
                   <button
                     type="button"

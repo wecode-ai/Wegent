@@ -12,6 +12,20 @@ The viewer enables the office, lite, and engineering capabilities: PDF, Word, Ex
 
 HTML must remain sandboxed and must not allow preview content to access Wework's same-origin state.
 
+## Office Document Scrolling
+
+PowerPoint renders a continuous slide list. Its file viewer must provide a scrolling container constrained by the panel height instead of clipping overflowing slides. Scrolling and PageDown/PageUp expose later slides; Word and Excel retain their renderer-owned document and table scrolling regions. Excel supports vertical and horizontal scrolling and worksheet switching.
+
+Returning to the original file tab after opening another file must restore the original tab's saved file. Do not permanently consume the initial selection after the first open, or reread a file that is already selected.
+
+After switching away from a task and returning, restore the file panel from the saved file target. Standalone tasks have no project association, so project presence must not determine whether their open files can be displayed, including while a task is running. Stale directory requests must not replace a more recently selected file.
+
+Browsing into a child of a restored directory must not reopen the original directory; refresh must read the directory currently being browsed. Restoration recognizes both the selected path and directory browsing before a file is opened.
+
+The desktop CI `office-file-preview` checkpoint generates real eight-slide and 32-slide PPTX, 180-paragraph DOCX, and two-sheet XLSX fixtures. It checks last-page visibility, returning to the top, both Excel scroll axes, worksheet switching, restoring the original PPT tab, and preview restoration after switching project tasks and running standalone tasks. Run it independently with `pnpm --filter wework e2e:desktop --segment office-file-preview`. Fixture data and screenshots stay in local test results.
+
+Isolated verification supports `ai:verify wheel --session <session-path> --selector '<selector>' --value '{"deltaX":800,"deltaY":1200}'`. This command dispatches pixel wheel input to test renderer-owned scrolling without forcing DOM scroll positions. It complements native keyboard paging and assertions about visible content.
+
 ## Image Preview
 
 PNG, JPEG, WebP, GIF, BMP, AVIF, TIFF, and SVG images use Flyfish Viewer's image renderer. The viewer container must receive Wework's active light or dark theme explicitly, and the canvas around the image uses Wework's semantic background color. The renderer must not force a white background onto image elements: images with an alpha channel render directly over the active theme background, including in the full-screen image preview.

@@ -542,7 +542,7 @@ export function MessageTurnNavigation({
                   )}
                   aria-busy={isLoading}
                   className={cn(
-                    "pointer-events-auto flex h-full w-full items-center justify-start rounded-md p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35",
+                    "pointer-events-auto flex h-full w-full items-center justify-start rounded-md p-0 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/35",
                     isLoading && "cursor-progress",
                   )}
                   data-active={isActive}

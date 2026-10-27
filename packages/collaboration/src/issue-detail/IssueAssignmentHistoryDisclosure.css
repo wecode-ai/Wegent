@@ -16,7 +16,8 @@
   background: rgb(var(--color-bg-muted));
 }
 
-.issue-assignment-history-summary:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .issue-assignment-history-summary:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
 }
