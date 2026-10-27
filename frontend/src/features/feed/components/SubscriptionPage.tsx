@@ -125,6 +125,7 @@ function SubscriptionPageContent() {
       if (detail?.type === 'create-subscription') {
         editRequestRef.current.invalidate()
         setEditingSubscription(null)
+        setFormInitialData(undefined)
         // Parse the data parameter if provided
         if (detail.params?.data && typeof detail.params.data === 'string') {
           try {
@@ -153,6 +154,7 @@ function SubscriptionPageContent() {
         if (data.type === 'create-subscription') {
           editRequestRef.current.invalidate()
           setEditingSubscription(null)
+          setFormInitialData(undefined)
           // Parse the data parameter if provided
           if (data.params?.data && typeof data.params.data === 'string') {
             try {
