@@ -93,6 +93,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   showCurrentTaskOnly?: boolean
   defaultAssistant?: import('@wegent/collaboration').CollaborationDefaultAssistant
   taskRefreshKey?: string | number
+  getRuntimeTranscript?: NonNullable<WorkbenchServices['runtimeWorkApi']>['getRuntimeTranscript']
   initialTaskBindings?: LoopItemTaskBinding[]
   taskExecutionStates?: Readonly<Record<string, SharedIssueDetailTaskExecutionState>>
   deviceNamesById?: Readonly<Record<string, string>>
@@ -160,10 +161,14 @@ export function TodoEditor(props: TodoEditorProps) {
   }, [props.api, props.projectChatAgentApi, props.sharedApi])
   const port = useMemo(
     () =>
-      createSharedIssueDetailPort(workspaceApi, async (blob, filename) => {
-        await saveBlobToDownloads(blob, filename)
-      }),
-    [workspaceApi]
+      createSharedIssueDetailPort(
+        workspaceApi,
+        async (blob, filename) => {
+          await saveBlobToDownloads(blob, filename)
+        },
+        props.getRuntimeTranscript
+      ),
+    [workspaceApi, props.getRuntimeTranscript]
   )
   const loadTeams = useCallback(
     () => props.teamApi?.listTeams() ?? Promise.resolve([]),

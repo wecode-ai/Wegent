@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { startTransition, Suspense, useState } from 'react'
 import '@/i18n'
@@ -79,6 +79,70 @@ function editorElement(item: CloudLoopItem) {
 }
 
 describe('TodoEditor external item sync', () => {
+  it('preserves a newly opened delivery edit when an earlier save finishes', async () => {
+    const first = {
+      id: 'delivery-first',
+      title: 'First delivery',
+      version: 1,
+      loop_item_id: baseItem.id,
+      created_by_user_id: 1,
+      source_task_binding_id: null,
+      source_task_snapshot: null,
+      status: 'delivered',
+      created_at: '2026-10-27T00:00:00Z',
+      delivered_at: '2026-10-27T00:00:00Z',
+      markdown: 'First notes',
+      chat: null,
+      assets: [],
+      fulfillments: [],
+    }
+    const second = {
+      ...first,
+      id: 'delivery-second',
+      title: 'Second delivery',
+      markdown: 'Second notes',
+    }
+    const pending = deferred<typeof first>()
+    const updateDelivery = vi.fn(() => pending.promise)
+    const deliveryApi = {
+      ...api,
+      updateDelivery,
+      listDeliveries: vi.fn(async () => ({ items: [first, second] })),
+      getDelivery: vi.fn(async (id: string) => (id === first.id ? first : second)),
+    } as never
+    const user = userEvent.setup()
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        readFirst
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={deliveryApi}
+        currentUserId={1}
+      />
+    )
+    await user.click(await screen.findByTestId(`todo-detail-open-delivery-${first.id}`))
+    await user.click(await screen.findByTestId('delivery-edit'))
+    await user.click(screen.getByTestId('delivery-edit-save'))
+    await waitFor(() => expect(updateDelivery).toHaveBeenCalledOnce())
+    await user.click(screen.getByTestId('todo-detail-delivery-back'))
+    await user.click(screen.getByTestId(`todo-detail-open-delivery-${second.id}`))
+    await user.click(await screen.findByTestId('delivery-edit'))
+    fireEvent.change(screen.getByTestId('delivery-edit-notes'), {
+      target: { value: 'Keep this new draft' },
+    })
+    await act(async () => {
+      pending.resolve({ ...first, version: 2 })
+      await pending.promise
+    })
+    expect(screen.getByTestId('delivery-edit-notes')).toHaveValue('Keep this new draft')
+    expect(screen.getByTestId('delivery-edit-title')).toHaveValue('Second delivery')
+  })
+
   it.each(['draft', 'source'] as const)(
     'preserves newer %s status changes when a pending save is rejected',
     async change => {

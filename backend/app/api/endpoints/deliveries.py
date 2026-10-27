@@ -172,6 +172,8 @@ def _delivery_response(db: Session, delivery: Delivery) -> DeliveryResponse:
     return DeliveryResponse.model_validate(
         {
             "id": delivery.id,
+            "title": delivery.title or "",
+            "version": delivery.version,
             "loop_item_id": delivery.loop_item_id,
             "created_by_user_id": delivery.created_by_user_id,
             "source_task_binding_id": delivery.source_task_binding_id,

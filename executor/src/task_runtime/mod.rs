@@ -22,10 +22,10 @@ use serde_json::Value;
 pub use model::{
     ArchivedLoopItem, ArchivedLoopItemPage, BinaryInput, ChatAgent, ChatAgentCreate,
     ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, DeliveryFinalize,
-    IssueComment, LocalComment, LocalCommentCreate, LocalExecution, LocalExecutionClaim,
-    LocalRuntimeCommentStart, LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile,
-    ProjectStoreKind, ProjectTagChange, ProjectUpdate, RuntimeTaskAddress, TaskAttachment,
-    TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskSearch, TaskUpdate,
+    DeliveryUpdate, IssueComment, LocalComment, LocalCommentCreate, LocalExecution,
+    LocalExecutionClaim, LocalRuntimeCommentStart, LoopItem, ProjectCreate, ProjectDescriptor,
+    ProjectFile, ProjectStoreKind, ProjectTagChange, ProjectUpdate, RuntimeTaskAddress,
+    TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskSearch, TaskUpdate,
 };
 pub use router::TaskRuntime;
 pub use store::{LocalTaskStore, TaskRuntimeError};
