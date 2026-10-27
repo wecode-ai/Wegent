@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCollaborationTranslator } from "../i18n";
@@ -60,6 +60,85 @@ function officialModel(modelId: string, isDefault = false): CodexOfficialModel {
 }
 
 describe("model controls without a desktop host", () => {
+  it.each(["zh-CN", "en"] as const)(
+    "distinguishes model sets from fixed models through selection and reset (%s)",
+    (locale) => {
+      const t = createCollaborationTranslator(locale);
+      const models = codexRuntimeModels(
+        [
+          officialModel("gpt-6-luna"),
+          officialModel("gpt-6.1-sol", true),
+          officialModel("gpt-6-astra"),
+        ],
+        null,
+        true,
+      );
+      const initialModel = models.find(
+        (model) => model.modelId === "gpt-6.1-sol",
+      )!;
+      function Harness() {
+        const [model, setModel] = useState(initialModel);
+        const [options, setOptions] = useState({ reasoning: "medium" });
+        return (
+          <ModelSelector
+            translate={t}
+            isMobile={false}
+            models={models}
+            selectedModel={model}
+            selectedModelOptions={options}
+            onSelectModel={setModel}
+            onSelectModelAndOptions={(nextModel, nextOptions) => {
+              setModel(nextModel);
+              setOptions({ reasoning: nextOptions.reasoning ?? "medium" });
+            }}
+            onSelectModelOption={(key, value) =>
+              setOptions((current) => ({ ...current, [key]: value }))
+            }
+            onOpenModelSettings={vi.fn()}
+          />
+        );
+      }
+      act(() => root.render(<Harness />));
+      act(() => element("model-selector-button").click());
+      expect(element("model-selection-mode").textContent).toBe(
+        t("workbench.model_recommended_set"),
+      );
+      expect(element("model-slider-description").textContent).toBe(
+        t("workbench.model_set_slider_hint"),
+      );
+
+      act(() => element("model-power-setting-gpt-6-astra-low").click());
+      expect(element("model-simple-name").textContent).toContain("astra");
+      expect(element("model-selection-mode").textContent).toBe(
+        t("workbench.model_recommended_set"),
+      );
+
+      // Explicitly choosing the same model still changes the slider's meaning.
+      act(() => element("model-advanced-toggle").click());
+      const astra = models.find((model) => model.modelId === "gpt-6-astra")!;
+      act(() => element(`model-option-${astra.name}`).click());
+      expect(element("model-selection-mode").textContent).toBe(
+        t("workbench.model_fixed"),
+      );
+      expect(element("model-slider-description").textContent).toBe(
+        t("workbench.fixed_model_slider_hint"),
+      );
+      expect(
+        document.querySelector(
+          '[data-testid="model-power-setting-gpt-6-1-sol-medium"]',
+        ),
+      ).toBeNull();
+
+      act(() => element("model-reset-default-button").click());
+      expect(element("model-selection-mode").textContent).toBe(
+        t("workbench.model_recommended_set"),
+      );
+      expect(element("model-simple-name").textContent).toBe(
+        initialModel.displayName,
+      );
+    },
+  );
+
   it.each([false, true])(
     "selects the preset owner without an explicit effort even when it is second (atomic=%s)",
     (atomic) => {

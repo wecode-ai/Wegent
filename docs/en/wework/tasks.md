@@ -105,7 +105,12 @@ The model provides the AI capability; the device determines where files and comm
 
 The coding-tool selector in the task composer chooses a local runtime such as Codex or Claude Code. The task composer currently does not provide a direct cloud Wegent Agent selector. To have a cloud Agent process project tasks automatically, configure its robot and execution environment under project-space **Automation**.
 
-When the composer has only one model group, the model selector displays all models in that group directly. When multiple groups are available, choose a group first, then select a model from its expanded submenu.
+Open the model selector in the composer to see the account source, selection mode, current model, and reasoning effort in separate rows:
+
+- **Recommended model set**: each slider position selects a model and reasoning effort combination. Moving the slider can change models. Other model sets display their own names.
+- **Fixed model**: after you explicitly select a model, the slider changes only that model's reasoning effort. Use the reset button to restore the default recommended model set.
+
+Click the mode or model name to open the full list, organized by local ChatGPT account, cloud models, and custom models. Long model names wrap in full, and the panel scrolls when space is limited.
 
 Wework remembers the model and reasoning effort separately for new-task defaults and active tasks:
 

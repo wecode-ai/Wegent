@@ -11,11 +11,18 @@ const models = [
   { name: 'preset-deepseek', label: 'Preset DeepSeek', family: 'deepseek' },
   { name: 'preset-sol', label: 'Preset Sol', family: 'gpt', effort: 'medium' },
   { name: 'preset-astra', label: 'Preset Astra', family: 'gpt', effort: 'high' },
+  {
+    name: 'preset-long',
+    label: 'Preset Long Model Name With Complete Account And Deployment Information 完整模型名称',
+    family: 'gpt',
+    effort: 'medium',
+    efforts: ['low', 'medium', 'high'],
+  },
 ]
 const cloudSource = '[data-testid="model-source-cloud"]'
 const recommended = `${cloudSource} > [data-model-preset="recommended"]`
 
-export function createDesktopScenario() {
+export function createDesktopScenario({ captureScreenshot }) {
   let cloudEnvironment
   const createdIds = []
   const request = (path, options = {}) =>
@@ -39,7 +46,10 @@ export function createDesktopScenario() {
         const ui = {
           family: model.family,
           ...(model.effort
-            ? { reasoningEfforts: [model.effort], defaultReasoningEffort: model.effort }
+            ? {
+                reasoningEfforts: model.efforts ?? [model.effort],
+                defaultReasoningEffort: model.effort,
+              }
             : {}),
         }
         if (model.name === 'preset-deepseek') {
@@ -119,6 +129,12 @@ export function createDesktopScenario() {
         await control.command('waitFor', '[data-testid="model-simple-header"]', {
           text: models[1].label,
         })
+        await control.command('waitFor', '[data-testid="model-selection-mode"]', {
+          text: '推荐模型集',
+        })
+        await control.command('waitFor', '[data-testid="model-slider-description"]', {
+          text: '调整档位会切换模型及推理强度',
+        })
         await control.command('press', 'body', { key: 'Escape' })
         await control.command('waitFor', selector, { text: models[1].label })
         await control.command('click', selector)
@@ -139,6 +155,9 @@ export function createDesktopScenario() {
           await control.command('waitFor', '[data-testid="model-simple-header"]', {
             text: model.label,
           })
+          await control.command('waitFor', '[data-testid="model-selection-mode"]', {
+            text: '推荐模型集',
+          })
           await control.command('press', 'body', { key: 'Escape' })
           await control.command('waitFor', selector, { text: model.label })
           await control.command('click', selector)
@@ -153,6 +172,49 @@ export function createDesktopScenario() {
             )
           }
         }
+        await control.command('click', '[data-testid="model-advanced-toggle"]')
+        await control.command('click', '[data-testid="model-option-preset-long"]')
+        await control.command('waitFor', '[data-testid="model-selection-mode"]', {
+          text: '固定模型',
+        })
+        await control.command('waitFor', '[data-testid="model-slider-description"]', {
+          text: '仅调整当前模型的推理强度',
+        })
+        assert.equal(
+          (await control.command('getText', '[data-testid="model-simple-name"]')).trim(),
+          models[4].label
+        )
+        const [menu] = JSON.parse(
+          await control.command('getElementMetrics', '[data-testid="model-selector-menu"]')
+        )
+        for (const id of ['model-simple-name', 'model-selection-mode', 'model-simple-source']) {
+          const [metrics] = JSON.parse(
+            await control.command('getElementMetrics', `[data-testid="${id}"]`)
+          )
+          assert.ok(metrics.width > 0 && metrics.height > 0, `${id} must be visible`)
+          assert.ok(metrics.scrollWidth <= metrics.clientWidth + 1, `${id} overflows horizontally`)
+          assert.ok(metrics.scrollHeight <= metrics.clientHeight + 1, `${id} clips its text`)
+          assert.ok(
+            metrics.left >= menu.left && metrics.right <= menu.right,
+            `${id} exceeds the menu`
+          )
+        }
+        await captureScreenshot(control, 'model-selector-fixed-long-name.png', 'body')
+        await control.command('click', '[data-testid="model-control-reasoning-high"]')
+        await control.command('waitFor', '[data-testid="model-simple-name"]', {
+          text: models[4].label,
+        })
+        await control.command('waitFor', '[data-testid="model-selection-mode"]', {
+          text: '固定模型',
+        })
+        await control.command('click', '[data-testid="model-reset-default-button"]')
+        await control.command('waitFor', '[data-testid="model-selection-mode"]', {
+          text: '推荐模型集',
+        })
+        await control.command('waitFor', '[data-testid="model-simple-name"]', {
+          text: models[1].label,
+        })
+        await captureScreenshot(control, 'model-selector-recommended.png', 'body')
         await control.command('click', '[data-testid="model-advanced-toggle"]')
         await control.command('click', `${cloudSource} > [data-model-preset="quality"]`)
         await control.command('press', 'body', { key: 'Escape' })

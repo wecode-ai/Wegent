@@ -2415,8 +2415,12 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('model-selector-tooltip')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-menu').parentElement).toHaveClass(
       'fixed',
-      'z-system-popover',
-      'w-[254px]'
+      'z-system-popover'
+    )
+    expect(screen.getByTestId('model-selector-menu')).toHaveClass('w-full')
+    expect(screen.getByTestId('model-selection-mode')).toHaveTextContent('固定模型')
+    expect(screen.getByTestId('model-slider-description')).toHaveTextContent(
+      '仅调整当前模型的推理强度'
     )
     expect(screen.getByTestId('model-selector-menu').parentElement?.parentElement).toBe(
       document.body

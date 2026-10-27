@@ -514,7 +514,7 @@ describe('ModelSelector desktop layout', () => {
 
       const menu = await screen.findByTestId('model-selector-menu')
       await waitFor(() => expect(menu.parentElement).toHaveStyle({ left: '216px' }))
-      expect(menu.parentElement).toHaveClass('w-[254px]')
+      expect(menu).toHaveClass('w-full')
       expect(menu.parentElement?.parentElement).toBe(document.body)
     } finally {
       HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect

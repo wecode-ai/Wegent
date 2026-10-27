@@ -1,3 +1,7 @@
+.menuWrapper {
+  width: min(320px, calc(100vw - 32px));
+}
+
 .mainMenu {
   transform-origin: right bottom;
   border: 0.5px solid var(--color-border, rgb(0 0 0 / 10%));
@@ -10,7 +14,7 @@
 
 .viewContainer {
   position: relative;
-  height: 80px;
+  height: 160px;
   transition: height 320ms cubic-bezier(0.19, 1, 0.22, 1);
 }
 
