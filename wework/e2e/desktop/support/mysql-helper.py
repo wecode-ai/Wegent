@@ -43,6 +43,16 @@ def main() -> None:
         if operation == "ping":
             connection.ping()
             result: Any = {"ready": True}
+        elif operation == "lock":
+            connection.autocommit(False)
+            with connection.cursor() as cursor:
+                cursor.execute(request["sql"], request.get("params", []))
+                cursor.fetchall()
+            print(json.dumps({"locked": True}), flush=True)
+            # Hold a real transaction until the runner releases it or closes stdin.
+            sys.stdin.readline()
+            connection.rollback()
+            result = {"released": True}
         else:
             with connection.cursor() as cursor:
                 cursor.execute(request["sql"], request.get("params", []))

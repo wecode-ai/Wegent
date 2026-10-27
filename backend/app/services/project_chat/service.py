@@ -25,6 +25,7 @@ from app.models.delivery import (
     loop_unset_datetime_for_connection,
 )
 from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -1242,6 +1243,7 @@ class ProjectChatService:
         event_name: str,
         payload: dict,
         owner_user_id: int | None = None,
+        accepted_terminal: bool = False,
     ) -> tuple[ProjectChatMessageView, str] | None:
         identities = [device_id]
         if owner_user_id is not None and record_id_from_route(device_id):
@@ -1258,7 +1260,9 @@ class ProjectChatService:
         turn_id = self._runtime_turn_id(payload)
         if event_name == "response.completed":
             from app.services.project_chat.execution_snapshot import (
+                can_restore_reconciled_completion,
                 completed_activity_for_turn,
+                runtime_event_sequence,
             )
 
             completed = completed_activity_for_turn(
@@ -1280,6 +1284,19 @@ class ProjectChatService:
                     owner_user_id=owner_user_id,
                 )
             if completed is not None:
+                execution = self._execution_for_completed_activity(db, completed)
+                if (
+                    execution is not None
+                    and not accepted_terminal
+                    and not can_restore_reconciled_completion(
+                        db,
+                        execution=execution,
+                        event_name=event_name,
+                        payload=payload,
+                        activity=completed,
+                    )
+                ):
+                    return None
                 # History reports outcomes without text. A delayed final event
                 # must still save its full content without replaying workflow.
                 content = self._project_chat_final_text(data, payload)
@@ -1291,6 +1308,15 @@ class ProjectChatService:
                             "runtime_turn_id": turn_id,
                         }
                     self._index_activity_change_requests(db, completed)
+                    sequence = runtime_event_sequence(payload)
+                    if (
+                        execution is not None
+                        and sequence is not None
+                        and sequence > execution.last_event_seq
+                    ):
+                        execution.last_event_seq = sequence
+                elif execution is not None and not accepted_terminal:
+                    return None
                 self._commit(db)
                 db.refresh(completed)
                 return self.to_view(completed, db=db), "snapshot"
@@ -1400,6 +1426,25 @@ class ProjectChatService:
         self._commit(db)
         db.refresh(row)
         return self.to_view(row, db=db), "snapshot"
+
+    @staticmethod
+    def _execution_for_completed_activity(
+        db: Session, activity: ProjectChatMessage
+    ) -> LoopItemExecution | None:
+        raw_execution_id = (activity.metadata_json or {}).get("execution_id")
+        if isinstance(raw_execution_id, bool) or raw_execution_id is None:
+            return None
+        try:
+            execution_id = int(raw_execution_id)
+        except (TypeError, ValueError):
+            return None
+        return (
+            db.query(LoopItemExecution)
+            .filter(LoopItemExecution.id == execution_id)
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
 
     @staticmethod
     def _project_automation_activity_is_terminal(
