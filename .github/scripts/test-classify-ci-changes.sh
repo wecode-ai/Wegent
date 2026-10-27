@@ -776,7 +776,7 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-account-auth-coordination"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"}]}
 wework_desktop_other_e2e=true
-wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
   "wework/src/features/plugins/localConnectorAuthGate.ts" \
   "wework/src/features/plugins/useLocalConnectorAuthGate.ts" \
   "wework/src/components/layout/DesktopEmptyTaskLauncher.tsx" \
@@ -798,7 +798,7 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-account-auth-coordination"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"}]}
 wework_desktop_other_e2e=true
-wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
     "$auth_path"
 done
 
@@ -807,7 +807,7 @@ assert_desktop_case "remote catalog changes invoke the network isolation checkpo
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings"}]}
 wework_desktop_other_e2e=true
-wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"},{"id":"plugins-plugin-composer-network-isolation","name":"Plugins / plugin-composer-network-isolation","command":"e2e:desktop:plugins","segment":"plugin-composer-network-isolation"}]}' \
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle,plugin-composer-network-isolation"}]}' \
   "wework/src/features/plugins/useOpenAiPluginCatalog.ts"
 
 for account_fixture in \
@@ -1130,7 +1130,7 @@ wework_desktop_core_e2e_matrix={"include":[]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-workspace-publication"}]}
 wework_desktop_other_e2e=true
-wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-marketplace-lifecycle","name":"Plugins / plugin-marketplace-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-marketplace-lifecycle"}]}' \
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-marketplace-lifecycle"}]}' \
   "sdk/plugin-creator/SKILL.md"
 for terminal_path in \
   wework/e2e/desktop/modules/terminal-compatibility-flows.mjs \
@@ -1363,7 +1363,7 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6
 wework_desktop_cloud_e2e=false
 wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=true
-wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"},{"id":"plugins-plugin-composer-network-isolation","name":"Plugins / plugin-composer-network-isolation","command":"e2e:desktop:plugins","segment":"plugin-composer-network-isolation"}]}' \
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle,plugin-composer-network-isolation"}]}' \
   "wework/src/api/local/codexPlugins.ts" \
   "wework/src/api/local/codexPlugins.install.test.ts" \
   "wework/src/api/local/codexPluginInstallation.ts"
@@ -1459,7 +1459,7 @@ assert_desktop_case "skill mention files select plugin and core coverage" \
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"}]}
 wework_desktop_other_e2e=true
-wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-skill-mention-rendering","name":"Plugins / skill-mention-rendering","command":"e2e:desktop:plugins","segment":"skill-mention-rendering"}]}' \
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"skill-mention-rendering"}]}' \
   "wework/src/components/chat/composer/ComposerMentionMenu.tsx"
 
 assert_desktop_case "model settings select task launch and model routing coverage" \
@@ -1872,7 +1872,7 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"plugin-uninstall-restart-recovery,plugin-uninstall-lost-response"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-write-coordination,plugin-account-auth-coordination"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"plugin-uninstall-unknown-result,plugin-registration-coordination"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"plugin-uninstall-reinstall-race"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"plugin-runtime-route-refresh,plugin-background-sync-isolation"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"}]}
 wework_desktop_other_e2e=true
-wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
   "wework/src/components/plugins/PluginsWorkspace.tsx"
 
 assert_desktop_case "Core DSH plugin files select their desktop checkpoint" \
@@ -1896,7 +1896,7 @@ assert_desktop_case "DSH UI plugin files select composition coverage" \
 wework_desktop_core_e2e=false
 wework_desktop_core_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=true
-wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-core-dsh-ui-plugin-composition","name":"Plugins / core-dsh-ui-plugin-composition","command":"e2e:desktop:plugins","segment":"core-dsh-ui-plugin-composition"}]}' \
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"core-dsh-ui-plugin-composition"}]}' \
   "wework/dsh/ui-applications/client.js"
 
 assert_desktop_case "Wework plugin developer Demo selects development and composition coverage" \
@@ -1904,7 +1904,7 @@ assert_desktop_case "Wework plugin developer Demo selects development and compos
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"plugin-development"}]}
 wework_desktop_other_e2e=true
-wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-core-dsh-ui-plugin-composition","name":"Plugins / core-dsh-ui-plugin-composition","command":"e2e:desktop:plugins","segment":"core-dsh-ui-plugin-composition"}]}' \
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"core-dsh-ui-plugin-composition"}]}' \
   "wework/dsh/plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo/client.js"
 
 assert_desktop_case "desktop sidebar selects all owned checkpoints" \
@@ -1994,7 +1994,7 @@ provider_native_step="$(
     "$platform_e2e_workflow" \
     "Run Provider-native E2E tests"
 )"
-if ! grep -Fq -- '--shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}' \
+if ! grep -Fq -- '--shard=${{ matrix.providerShardIndex }}/${{ matrix.shardTotal }}' \
   <<<"$provider_native_step" ||
   ! grep -Fq -- '--workers=1' <<<"$provider_native_step"; then
   printf 'Provider-native E2E must preserve serial execution while sharing all platform shards\n' >&2

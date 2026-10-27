@@ -112,7 +112,15 @@ fn plugin_reconcile_delay(runtime_instance_id: &str) -> Duration {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
-    PLUGIN_RECONCILE_INTERVAL + Duration::from_secs(hash % PLUGIN_RECONCILE_JITTER_SECS)
+    let interval = config::duration_from_env(
+        "LOCAL_PLUGIN_RECONCILE_INTERVAL",
+        PLUGIN_RECONCILE_INTERVAL.as_secs(),
+    );
+    let jitter = config::duration_from_env(
+        "LOCAL_PLUGIN_RECONCILE_JITTER",
+        PLUGIN_RECONCILE_JITTER_SECS,
+    );
+    interval + Duration::from_secs(hash % jitter.as_secs())
 }
 const DEVICE_UPGRADE_EVENT: &str = "device:upgrade";
 const DEVICE_RUN_EXTENSION_EVENT: &str = "device:run_extension";
