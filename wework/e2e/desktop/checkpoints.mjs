@@ -90,6 +90,7 @@ export const DESKTOP_CHECKPOINTS = [
   'plugin-uninstall-reinstall-race',
 
   'plugin-composer-long-list',
+  'plugin-collaboration-composer-isolation',
   'plugin-runtime-path-recovery',
   'plugin-runtime-route-refresh',
   'plugin-background-sync-isolation',

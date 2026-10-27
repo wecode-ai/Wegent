@@ -1,5 +1,6 @@
 import { createRequestId } from '@/lib/request-id'
 import { logModelLoading } from '@/lib/model-loading-diagnostics'
+import { deliverRuntimeTransport } from '@/e2e/runtime-transport-gates'
 
 const EXECUTOR_BASE_PATH = '/wework/executor/v1'
 const executorEventReconnectors = new Set<() => void>()
@@ -278,7 +279,11 @@ function connectDshExecutorEventStream(
       reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
       if (event.event === 'executor.stream.cursor') return
       try {
-        listener(event)
+        if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
+          deliverRuntimeTransport('event', event.event, event, () => listener(event))
+        } else {
+          listener(event)
+        }
       } catch (error) {
         console.error('[Wework] Executor event listener failed', {
           event: event.event,

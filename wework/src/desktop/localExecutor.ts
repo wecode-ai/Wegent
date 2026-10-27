@@ -8,6 +8,7 @@ import {
 } from '@/api/dsh/executorTransport'
 import { resolveLocalCodexProxyUrl } from './systemProxy'
 import { createModelLoadingTrace, traceModelLoading } from '@/lib/model-loading-diagnostics'
+import { gateRuntimeResponse } from '@/e2e/runtime-transport-gates'
 
 export type UnlistenFn = () => void
 
@@ -607,7 +608,11 @@ export function requestLocalExecutor<T = unknown>(
     method === 'runtime.tasks.transcript' && params.transcriptProtocolVersion === undefined
       ? readRuntimeTranscript<T>(params, query => requestDshExecutor(method, query))
       : requestDshExecutor<T>(method, params)
-  return request.catch((cause: unknown) => {
+  const delivery =
+    import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
+      ? request.then(result => gateRuntimeResponse(method, params, result))
+      : request
+  return delivery.catch((cause: unknown) => {
     if (isExecutorTransportFailure(cause)) {
       bundledPluginUpdateEpoch += 1
       bundledPluginUpdateTasks.clear()
