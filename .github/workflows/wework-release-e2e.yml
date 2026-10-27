@@ -10,6 +10,7 @@ on:
       - .github/scripts/test-wework-shared-release.sh
       - executor/src/bin/wework-launcher.rs
       - executor/src/bin/wework_launcher/**
+      - executor/Cargo.toml
       - executor/tests/wework_launcher.rs
       - executor/tests/wework_launcher/**
       - wework/electron/src/host/windows-app-update-service*
@@ -27,6 +28,8 @@ on:
       - wework/electron/scripts/windows-*
       - wework/electron/scripts/build-release*
       - wework/electron/scripts/package-app.mjs
+      - wework/electron/scripts/prepare-package-assets.mjs
+      - wework/electron/scripts/copy-static.mjs
       - wework/electron/scripts/after-sign.cjs
       - wework/electron/electron-builder.config.cjs
       - wework/electron/scripts/stage-process-explorer*
@@ -182,7 +185,7 @@ jobs:
         run: |
           $destination = Join-Path $env:GITHUB_WORKSPACE 'wework/test-results/windows-legacy-installers/0.5.10'
           New-Item -ItemType Directory -Force $destination | Out-Null
-          gh release download wework-v0.5.10 --repo wecode-ai/Wegent --pattern '*windows*x64*setup.exe' --dir $destination
+          gh release download wework-v0.5.10 --repo wecode-ai/Wegent --pattern 'WeWork_0.5.10_windows_x64-setup.exe' --dir $destination
           if ($LASTEXITCODE -ne 0) { throw 'Could not download the actual 0.5.10 Windows installer' }
           $installers = @(Get-ChildItem -LiteralPath $destination -Filter '*.exe' -File)
           if ($installers.Count -ne 1) { throw 'Expected one real historical installer' }

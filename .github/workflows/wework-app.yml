@@ -505,7 +505,7 @@ jobs:
           foreach ($version in $versions) {
             $destination = Join-Path $env:GITHUB_WORKSPACE "wework/test-results/windows-legacy-installers/$version"
             New-Item -ItemType Directory -Force $destination | Out-Null
-            gh release download "wework-v$version" --pattern '*windows*x64*setup.exe' --dir $destination
+            gh release download "wework-v$version" --pattern "WeWork_${version}_windows_x64-setup.exe" --dir $destination
             if ($LASTEXITCODE -ne 0) { throw "Could not download the real $version Windows installer" }
             $installers = @(Get-ChildItem -LiteralPath $destination -Filter '*.exe' -File)
             if ($installers.Count -ne 1) { throw "Expected one historical installer for $version" }
