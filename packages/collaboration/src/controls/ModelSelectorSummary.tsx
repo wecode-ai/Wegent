@@ -85,7 +85,7 @@ export function ModelSelectorSummary({
         {hasSelection && (
           <span
             data-testid="model-selection-mode"
-            className="max-w-full rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-text-muted [overflow-wrap:anywhere]"
+            className="max-w-full rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-text-secondary [overflow-wrap:anywhere]"
           >
             {presetLabel ?? t("workbench.model_fixed", "固定模型")}
           </span>
@@ -93,7 +93,7 @@ export function ModelSelectorSummary({
         <span className="flex max-w-full items-center gap-1 text-base font-medium text-text-primary">
           <span
             data-testid="model-simple-name"
-            className="min-w-0 [overflow-wrap:anywhere]"
+            className="min-w-0 text-balance [overflow-wrap:anywhere]"
           >
             {modelName}
           </span>

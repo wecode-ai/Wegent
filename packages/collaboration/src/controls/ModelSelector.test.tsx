@@ -153,7 +153,7 @@ describe("model controls without a desktop host", () => {
         (model) => model.modelId === "gpt-6.1-sol",
       )!;
       function Harness() {
-        const [model, setModel] = useState(initialModel);
+        const [model, setModel] = useState<UnifiedModel | null>(initialModel);
         const [options, setOptions] = useState<ModelOptions>({
           reasoning: "medium",
         });
@@ -173,6 +173,7 @@ describe("model controls without a desktop host", () => {
               models={models}
               selectedModel={model}
               selectedModelOptions={options}
+              disabled={false}
               onSelectModel={setModel}
               onSelectModelAndOptions={(nextModel, nextOptions) => {
                 setModel(nextModel);

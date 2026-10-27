@@ -129,6 +129,7 @@ export function createDesktopScenario({ captureScreenshot }) {
       const errors = []
       try {
         await control.command('navigate', 'body', { value: '/settings/appearance' })
+        await control.command('waitFor', '[data-testid="appearance-mode-light"]', { visible: true })
         await control.command('click', '[data-testid="appearance-mode-light"]')
         await control.command('navigate', 'body', { value: '/' })
         await ensureModelOptionVisible(control, 'model-option-preset-deepseek', selector, null)
@@ -213,7 +214,9 @@ export function createDesktopScenario({ captureScreenshot }) {
         })
         await control.command('press', 'body', { key: 'Escape' })
         await control.command('navigate', 'body', { value: '/settings/general' })
+        await control.command('waitFor', '[data-testid="general-settings-page"]', { visible: true })
         await control.command('navigate', 'body', { value: '/' })
+        await control.command('waitFor', selector, { visible: true })
         await control.command('click', selector)
         await control.command('waitFor', '[data-testid="model-selection-mode"]', {
           text: '固定模型',
@@ -233,8 +236,12 @@ export function createDesktopScenario({ captureScreenshot }) {
 
         // Exercise longer English copy and the dark palette in a constrained desktop window.
         await control.command('navigate', 'body', { value: '/settings/general' })
+        await control.command('waitFor', '[data-testid="general-language-en-button"]', {
+          visible: true,
+        })
         await control.command('click', '[data-testid="general-language-en-button"]')
         await control.command('navigate', 'body', { value: '/settings/appearance' })
+        await control.command('waitFor', '[data-testid="appearance-mode-dark"]', { visible: true })
         await control.command('click', '[data-testid="appearance-mode-dark"]')
         await control.command('setMainWindowSize', 'body', {
           value: JSON.stringify({ width: 1040, height: 720 }),
