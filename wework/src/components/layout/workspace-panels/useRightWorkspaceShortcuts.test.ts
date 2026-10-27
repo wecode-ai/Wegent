@@ -131,6 +131,20 @@ describe('right workspace shortcuts', () => {
     expect(options.onSelectChat).not.toHaveBeenCalled()
   })
 
+  test('reserves Shift Option Command R for collapsing read conversations', () => {
+    const { options } = renderShortcuts()
+    expect(
+      fireEvent.keyDown(window, {
+        key: '‰',
+        code: 'KeyR',
+        metaKey: true,
+        altKey: true,
+        shiftKey: true,
+      })
+    ).toBe(true)
+    expect(options.onNavigate).not.toHaveBeenCalled()
+  })
+
   test('handles shortcuts only in the active conversation and removes the listener', () => {
     const active = renderShortcuts()
     const inactive = renderShortcuts({ active: false })

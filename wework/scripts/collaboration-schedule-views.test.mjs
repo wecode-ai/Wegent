@@ -57,12 +57,12 @@ function calendarControl(today, unavailableDates = new Set()) {
 }
 
 const cases = [
-  ['2026-10-25', '2026-10-26', '2026-11-02', 0],
-  ['2026-10-26', '2026-11-02', '2026-11-09', 1],
-  ['2026-05-18', '2026-05-25', '2026-06-01', 0],
-  ['2026-08-31', '2026-09-07', '2026-09-14', 1],
-  ['2026-12-28', '2027-01-04', '2027-01-11', 1],
-  ['2024-02-26', '2024-03-04', '2024-03-11', 1],
+  ['2026-10-25', '2026-10-19', '2026-10-26', 0],
+  ['2026-10-26', '2026-10-26', '2026-11-02', 0],
+  ['2026-05-18', '2026-05-18', '2026-05-25', 0],
+  ['2026-08-31', '2026-08-24', '2026-08-31', 0],
+  ['2026-12-28', '2026-12-28', '2027-01-04', 0],
+  ['2024-02-26', '2024-02-26', '2024-03-04', 0],
 ]
 
 test.each(cases)(
@@ -98,9 +98,20 @@ test.each(cases)(
   }
 )
 
+test('navigates once when both drag dates are only visible together in the next month', async () => {
+  const control = calendarControl(localDate('2026-10-26'))
+  const keys = { initialStart: '2026-11-02', calendarStart: '2026-11-09' }
+
+  await ensureCalendarScheduleDatesVisible({ control, scoped, keys, timeoutMs: TIMEOUT_MS })
+
+  assert.equal(control.calls.filter(({ selector }) => selector === NEXT_MONTH).length, 1)
+  assert.ok(control.visibleDates().has(keys.initialStart))
+  assert.ok(control.visibleDates().has(keys.calendarStart))
+})
+
 test('retains the current month when switching to the destination month would hide the source', async () => {
   const today = localDate('2026-05-18')
-  const keys = collaborationScheduleDates(today)
+  const keys = { initialStart: '2026-05-25', calendarStart: '2026-06-01' }
   const juneDates = new Set(calendarDays(localDate('2026-06-01'), true).map(localDateKey))
   assert.equal(juneDates.has(keys.initialStart), false)
   assert.equal(juneDates.has(keys.calendarStart), true)
@@ -132,8 +143,8 @@ test.each([
 test('uses the supplied local Monday near midnight instead of its UTC date', () => {
   const keys = collaborationScheduleDates(new Date(2026, 9, 26, 0, 30))
 
-  assert.equal(keys.initialStart, '2026-11-02')
-  assert.equal(keys.calendarStart, '2026-11-09')
+  assert.equal(keys.initialStart, '2026-10-26')
+  assert.equal(keys.calendarStart, '2026-11-02')
 })
 
 test('keeps every fixture inside the real calendar and Gantt windows throughout leap and ordinary years', async () => {
@@ -153,10 +164,10 @@ test('keeps every fixture inside the real calendar and Gantt windows throughout 
     }
     const ganttStart = startOfScheduleWeek(today, true)
     const ganttDays = new Set(
-      Array.from({ length: 42 }, (_, index) => localDateKey(addLocalDays(ganttStart, index)))
+      Array.from({ length: 28 }, (_, index) => localDateKey(addLocalDays(ganttStart, index)))
     )
-    for (const [name, key] of Object.entries(keys)) {
-      assert.ok(ganttDays.has(key), `${localDateKey(today)}: Gantt ${name}`)
+    for (const name of ['calendarStart', 'calendarEnd', 'resizedEnd', 'movedStart', 'movedEnd']) {
+      assert.ok(ganttDays.has(keys[name]), `${localDateKey(today)}: Gantt ${name}`)
     }
   }
 })
@@ -164,6 +175,17 @@ test('keeps every fixture inside the real calendar and Gantt windows throughout 
 test.each([
   {
     today: '2026-10-19T12:00:00',
+    target: '2026-10-26',
+    navigationCount: 0,
+    ranges: [
+      '2026-10-19 → 2026-10-21',
+      '2026-10-26 → 2026-10-28',
+      '2026-10-26 → 2026-10-29',
+      '2026-10-28 → 2026-10-31',
+    ],
+  },
+  {
+    today: '2026-10-26T12:00:00',
     target: '2026-11-02',
     navigationCount: 0,
     ranges: [
@@ -174,36 +196,25 @@ test.each([
     ],
   },
   {
-    today: '2026-10-26T12:00:00',
-    target: '2026-11-09',
-    navigationCount: 1,
-    ranges: [
-      '2026-11-02 → 2026-11-04',
-      '2026-11-09 → 2026-11-11',
-      '2026-11-09 → 2026-11-12',
-      '2026-11-11 → 2026-11-14',
-    ],
-  },
-  {
     today: '2026-10-05T12:00:00',
-    target: '2026-10-19',
+    target: '2026-10-12',
     navigationCount: 0,
     ranges: [
+      '2026-10-05 → 2026-10-07',
       '2026-10-12 → 2026-10-14',
-      '2026-10-19 → 2026-10-21',
-      '2026-10-19 → 2026-10-22',
-      '2026-10-21 → 2026-10-24',
+      '2026-10-12 → 2026-10-15',
+      '2026-10-14 → 2026-10-17',
     ],
   },
   {
     today: '2026-12-28T12:00:00',
-    target: '2027-01-11',
-    navigationCount: 1,
+    target: '2027-01-04',
+    navigationCount: 0,
     ranges: [
+      '2026-12-28 → 2026-12-30',
       '2027-01-04 → 2027-01-06',
-      '2027-01-11 → 2027-01-13',
-      '2027-01-11 → 2027-01-14',
-      '2027-01-13 → 2027-01-16',
+      '2027-01-04 → 2027-01-07',
+      '2027-01-06 → 2027-01-09',
     ],
   },
 ])('keeps the target date visible when scheduling from $today', async fixture => {

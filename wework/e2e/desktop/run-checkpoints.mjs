@@ -63,6 +63,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-background-sync-isolation': './scenarios/plugin-background-sync-isolation.scenario.mjs',
   'plugin-periodic-reconcile': './scenarios/plugin-periodic-reconcile.scenario.mjs',
   'codex-account-login': './scenarios/codex-account-login.scenario.mjs',
+  'runtime-input-answer-persistence': './scenarios/runtime-input-answer-persistence.scenario.mjs',
   'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
@@ -123,6 +124,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-issue-task-discovery':
     './scenarios/collaboration-issue-task-discovery.scenario.mjs',
   'collaboration-app-queue-identity': './scenarios/collaboration-app-queue-identity.scenario.mjs',
+  'collaboration-runtime-reconciliation':
+    './scenarios/collaboration-runtime-reconciliation.scenario.mjs',
   'collaboration-first-use': './scenarios/collaboration-first-use.scenario.mjs',
   'collaboration-group-onboarding': './scenarios/collaboration-group-onboarding.scenario.mjs',
   'collaboration-local-agent-dispatch':
@@ -165,6 +168,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-issue-comment-notification':
     './scenarios/collaboration-issue-comment-notification.scenario.mjs',
   'collaboration-issue-mcp-comments': './scenarios/collaboration-issue-mcp-comments.scenario.mjs',
+  'collaboration-issue-attachment-preview':
+    './scenarios/collaboration-issue-attachment-preview.scenario.mjs',
   'collaboration-issue-archive': './scenarios/collaboration-issue-archive.scenario.mjs',
   'collaboration-board-sorting': './scenarios/collaboration-board-sorting.scenario.mjs',
   'collaboration-board-move-recovery': './scenarios/collaboration-board-move-recovery.scenario.mjs',
@@ -199,6 +204,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'goal-state-sync',
   'model-settings',
   'codex-native-catalog',
+  'runtime-input-answer-persistence',
   'reply-predictions',
   'reply-prediction-auth',
   'collaboration-worktree-policy',
@@ -245,6 +251,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-deliveries',
   'collaboration-issue-task-discovery',
   'collaboration-app-queue-identity',
+  'collaboration-runtime-reconciliation',
   'collaboration-first-use',
   'collaboration-group-onboarding',
   'collaboration-local-agent-dispatch',
@@ -277,6 +284,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-issue-comment-attachments',
   'collaboration-issue-comment-notification',
   'collaboration-issue-mcp-comments',
+  'collaboration-issue-attachment-preview',
   'collaboration-issue-archive',
   'collaboration-board-sorting',
   'collaboration-board-move-recovery',
@@ -331,6 +339,13 @@ const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-worktree-archive-restore',
 ])
 const COMPOSITE_CHECKPOINTS = DESKTOP_CHECKPOINT_GROUPS
+// These checkpoints materialize packaged runtimes or repeatedly reload the full
+// renderer. Run them alone so Chromium's network service stays stable on the
+// four-vCPU desktop E2E runners.
+const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
+  'release-package-startup',
+  'collaboration-issue-task-discovery',
+])
 const DEFAULT_DESKTOP_CHECKPOINTS = DESKTOP_CHECKPOINTS.filter(
   checkpoint => !COMPOSITE_CHECKPOINTS.has(checkpoint)
 )
@@ -727,6 +742,7 @@ async function runParallelCheckpoints(checkpoints) {
       workerCount,
       resourceFor: checkpoint =>
         process.platform === 'darwin' ? CHECKPOINT_RESOURCES.get(checkpoint) : [],
+      exclusiveFor: checkpoint => RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint),
       run: async checkpoint => {
         const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
         delete env.WEWORK_E2E_CONTROL_SERVER_PORT

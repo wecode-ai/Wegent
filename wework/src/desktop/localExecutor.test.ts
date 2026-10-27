@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createLocalAppServices, createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
 import { getLocalRuntimeSourceIdentity } from '@/lib/local-runtime-sidebar-identity'
 import { updateRuntimeWorkProject } from '@/lib/runtime-project-update'
@@ -15,6 +15,7 @@ import {
   saveLocalProxyUrl,
 } from '@/features/model-settings/localProxySettings'
 import {
+  awaitLocalExecutorRequestHoldForE2E,
   connectLocalExecutorToBackend,
   disconnectLocalExecutorFromBackend,
   ensureBundledPluginInstalled,
@@ -22,11 +23,14 @@ import {
   resumeBundledPluginUpdates,
   ensureLocalExecutorAvailable,
   ensureLocalExecutorStarted,
-  getInitializedBundledPluginMarketplace,
   getBundledPluginUpdateState,
+  getInitializedBundledPluginMarketplace,
+  getLocalExecutorRequestHoldSnapshotForE2E,
   getKnownLocalExecutorDeviceId,
   getLocalExecutorStatus,
+  holdLocalExecutorRequestsForE2E,
   readLocalExecutorLog,
+  releaseLocalExecutorRequestHoldForE2E,
   requestLocalExecutor,
   resetLocalExecutorStateForTests,
   subscribeLocalExecutorEvents,
@@ -994,5 +998,55 @@ describe('localExecutor', () => {
     })
     unlisten()
     expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  describe('E2E request ordering holds', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+      resetLocalExecutorStateForTests()
+    })
+
+    test('keeps an accepted executor response pending until the gate opens', async () => {
+      vi.stubEnv('VITE_WEWORK_E2E', 'true')
+      requestDshExecutorMock.mockResolvedValue({ accepted: true })
+      holdLocalExecutorRequestsForE2E('runtime.tasks.send')
+      const request = requestLocalExecutor('runtime.tasks.send', { taskId: 'task-1' })
+      await expect(awaitLocalExecutorRequestHoldForE2E()).resolves.toBe(1)
+      expect(getLocalExecutorRequestHoldSnapshotForE2E()).toMatchObject({
+        completedCount: 0,
+        heldCount: 1,
+        phase: 'after-response',
+        released: false,
+      })
+
+      let resolved = false
+      void request.then(() => {
+        resolved = true
+      })
+      await Promise.resolve()
+      expect(resolved).toBe(false)
+
+      expect(releaseLocalExecutorRequestHoldForE2E()).toBe(true)
+      await expect(request).resolves.toEqual({ accepted: true })
+      expect(getLocalExecutorRequestHoldSnapshotForE2E()).toMatchObject({
+        completedCount: 1,
+        released: true,
+      })
+    })
+
+    test('can hold a stale executor request before dispatch', async () => {
+      vi.stubEnv('VITE_WEWORK_E2E', 'true')
+      requestDshExecutorMock.mockResolvedValue({ accepted: false })
+      holdLocalExecutorRequestsForE2E('runtime.tasks.send', 'before-dispatch')
+      const request = requestLocalExecutor('runtime.tasks.send', { taskId: 'task-1' })
+      await expect(awaitLocalExecutorRequestHoldForE2E()).resolves.toBe(1)
+      expect(requestDshExecutorMock).not.toHaveBeenCalled()
+
+      releaseLocalExecutorRequestHoldForE2E()
+      await expect(request).resolves.toEqual({ accepted: false })
+      expect(requestDshExecutorMock).toHaveBeenCalledExactlyOnceWith('runtime.tasks.send', {
+        taskId: 'task-1',
+      })
+    })
   })
 })

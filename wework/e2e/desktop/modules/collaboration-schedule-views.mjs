@@ -13,21 +13,18 @@ function addDays(value, days) {
   return next
 }
 
-function nextMonday(value) {
-  const today = new Date(value)
-  today.setHours(12, 0, 0, 0)
-  const daysUntilMonday = (8 - today.getDay()) % 7 || 7
-  return addDays(today, daysUntilMonday)
-}
-
 export function collaborationScheduleDates(today = new Date()) {
-  const initialStart = nextMonday(today)
+  const anchor = new Date(today)
+  anchor.setHours(12, 0, 0, 0)
+  const firstOfMonth = new Date(anchor.getFullYear(), anchor.getMonth(), 1, 12)
+  const gridEnd = addDays(firstOfMonth, 41 - ((firstOfMonth.getDay() + 6) % 7))
+  const currentMonday = addDays(anchor, -((anchor.getDay() + 6) % 7))
+  // Keep both calendar ranges visible; Gantt starts at the current week.
+  const initialStart = addDays(currentMonday, addDays(currentMonday, 9) > gridEnd ? -7 : 0)
   const initialEnd = addDays(initialStart, 2)
   const calendarStart = addDays(initialStart, 7)
   const calendarEnd = addDays(calendarStart, 2)
   const resizedEnd = addDays(calendarEnd, 1)
-  const movedStart = calendarEnd
-  const movedEnd = addDays(resizedEnd, 2)
   return Object.fromEntries(
     Object.entries({
       initialStart,
@@ -35,8 +32,8 @@ export function collaborationScheduleDates(today = new Date()) {
       calendarStart,
       calendarEnd,
       resizedEnd,
-      movedStart,
-      movedEnd,
+      movedStart: calendarEnd,
+      movedEnd: addDays(resizedEnd, 2),
     }).map(([key, value]) => [key, dateKey(value)])
   )
 }

@@ -94,3 +94,29 @@ test('serializes checkpoints that overlap on any declared resource', async () =>
 
   assert.deepEqual(overlaps, [])
 })
+
+test('runs resource-exclusive checkpoints alone before parallel work', async () => {
+  const started = []
+  let exclusiveActive = false
+  const startedDuringExclusive = []
+
+  await runWithCheckpointResources({
+    checkpoints: ['independent-a', 'release-package-startup', 'independent-b'],
+    workerCount: 2,
+    resourceFor: () => null,
+    exclusiveFor: checkpoint => checkpoint === 'release-package-startup',
+    run: async checkpoint => {
+      if (checkpoint === 'release-package-startup') {
+        exclusiveActive = true
+      } else if (exclusiveActive) {
+        startedDuringExclusive.push(checkpoint)
+      }
+      started.push(checkpoint)
+      await new Promise(resolve => setTimeout(resolve, 10))
+      if (checkpoint === 'release-package-startup') exclusiveActive = false
+    },
+  })
+
+  assert.equal(started[0], 'release-package-startup')
+  assert.deepEqual(startedDuringExclusive, [])
+})
