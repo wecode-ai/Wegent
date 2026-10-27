@@ -1,7 +1,6 @@
-import { useMemo, type ReactNode } from 'react'
+import { useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
 import type { ToolBlock } from '@wegent/chat-core/runtime-conversation'
-import type { RuntimeTaskAddress } from '@/types/api'
-import type { RuntimeMcpAppsApi } from '@/api/mcpApps'
+import type { McpAppConversationServices } from '@/api/mcpApps'
 import { McpAppsProvider, McpAppSlot } from '@/features/mcp-apps/McpAppsProvider'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ToolInteractionServicesProvider } from '@wegent/collaboration/conversation'
@@ -35,12 +34,6 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   webp: 'image/webp',
 }
 
-export interface DesktopMcpAppServices {
-  address: RuntimeTaskAddress
-  api: RuntimeMcpAppsApi
-  sendMessage: (message: string) => Promise<boolean>
-}
-
 const services = {
   openProxySettings: () => navigateTo('/settings/personal/proxy'),
   onOutputAction: (action: 'copy' | 'open_file') =>
@@ -53,7 +46,7 @@ export function DesktopToolServices({
 }: {
   children: ReactNode
   imageTarget?: ToolImageTarget | null
-  mcpApp?: DesktopMcpAppServices
+  mcpApp?: McpAppConversationServices
 }) {
   const { t } = useTranslation('common')
   const markdown = useDesktopMarkdownServices()
@@ -92,25 +85,45 @@ export function DesktopToolServices({
       },
     }
   }, [deviceId, workspacePath, readWorkspaceFileChunk, mcpApp])
+  const sendMessage = mcpApp?.sendMessage
+  const messageAdmission = useRef<McpAppConversationServices | undefined>(undefined)
+  useLayoutEffect(() => {
+    messageAdmission.current = mcpApp
+    return () => {
+      messageAdmission.current = undefined
+    }
+  }, [mcpApp])
   const content = mcpApp ? (
     <McpAppsProvider
-      key={`${mcpApp.address.deviceId}:${mcpApp.address.taskId}`}
+      key={`${mcpApp.address.deviceId}:${mcpApp.address.taskId}:${Boolean(sendMessage)}`}
       address={mcpApp.address}
       api={mcpApp.api}
-      onMessage={async message => {
-        const confirmation = await import('@/api/dsh/desktopHost').then(({ invokeDesktopHost }) =>
-          invokeDesktopHost<{ response: number }>('dialog.message', {
-            type: 'question',
-            message,
-            buttons: [t('mcp_apps.cancel'), t('mcp_apps.send')],
-            defaultId: 0,
-            cancelId: 0,
-          })
-        )
-        if (confirmation.response !== 1) throw new Error('User declined the app message')
-        const accepted = await mcpApp.sendMessage(message)
-        if (!accepted) throw new Error('The conversation could not accept the app message')
-      }}
+      onMessage={
+        sendMessage
+          ? async message => {
+              const confirmation = await import('@/api/dsh/desktopHost').then(
+                ({ invokeDesktopHost }) =>
+                  invokeDesktopHost<{ response: number }>('dialog.message', {
+                    type: 'question',
+                    message,
+                    buttons: [t('mcp_apps.cancel'), t('mcp_apps.send')],
+                    defaultId: 0,
+                    cancelId: 0,
+                  })
+              )
+              if (confirmation.response !== 1) throw new Error('User declined the app message')
+              const current = messageAdmission.current
+              if (
+                !current?.sendMessage ||
+                current.address.deviceId !== mcpApp.address.deviceId ||
+                current.address.taskId !== mcpApp.address.taskId
+              )
+                throw new Error('MCP App message admission is no longer available')
+              const accepted = await current.sendMessage(message)
+              if (!accepted) throw new Error('The conversation could not accept the app message')
+            }
+          : undefined
+      }
     >
       {children}
     </McpAppsProvider>

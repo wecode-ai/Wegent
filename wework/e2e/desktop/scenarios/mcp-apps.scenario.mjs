@@ -65,7 +65,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         text: completion,
         timeoutMs: modelResponseTimeoutMs,
       })
-      await control.command('waitFor', '[data-testid="mcp-app-frame"]', {
+      await control.command('waitFor', '[data-testid="mcp-app-frame"][data-ready="true"]', {
         timeoutMs: modelResponseTimeoutMs,
       })
       const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
@@ -165,7 +165,9 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         )
       }
       await control.command('click', '[data-testid="mcp-app-close"]')
-      await control.command('waitFor', '[data-testid="mcp-app-frame"]', { visible: false })
+      await control.command('waitFor', '[data-testid="mcp-app-frame"]', {
+        visible: false,
+      })
       await assert.rejects(fetch(frameUrl))
       for (const [tool, expected] of [
         ['show_legacy', 'Legacy 1'],
@@ -189,7 +191,10 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
           await control.command('waitFor', scope + ' [data-testid="mcp-app-retry"]')
           await control.command('click', scope + ' [data-testid="mcp-app-retry"]')
         }
-        await control.command('waitFor', scope + ' [data-testid="mcp-app-frame"]')
+        await control.command(
+          'waitFor',
+          scope + ' [data-testid="mcp-app-frame"][data-ready="true"]'
+        )
         frameUrl = await control.command('getAttribute', scope + ' [data-testid="mcp-app-frame"]', {
           value: 'src',
         })
@@ -204,7 +209,10 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       }
       const original = '[data-mcp-call-id="' + callId + '"]'
       await control.command('click', original + ' [data-testid="mcp-app-expand"]')
-      await control.command('waitFor', original + ' [data-testid="mcp-app-frame"]')
+      await control.command(
+        'waitFor',
+        original + ' [data-testid="mcp-app-frame"][data-ready="true"]'
+      )
       frameUrl = await control.command(
         'getAttribute',
         original + ' [data-testid="mcp-app-frame"]',

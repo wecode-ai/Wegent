@@ -49,6 +49,7 @@ export function McpAppHost({
   const [height, setHeight] = useState(400)
   const frame = useRef<HTMLIFrameElement>(null)
   const [document, setDocument] = useState<{ id: string; url: string }>()
+  const [initializedDocument, setInitializedDocument] = useState<string>()
   const bridge = useRef<AppBridge>(null)
   const teardownSent = useRef(false)
   const initialized = useRef(false)
@@ -301,6 +302,8 @@ export function McpAppHost({
       void closeApp()
     }
     app.oninitialized = () => {
+      if (!active) return
+      setInitializedDocument(document.id)
       initialized.current = true
       void synchronizeToolData().catch(error => {
         if (active) setFailure(error.message)
@@ -436,6 +439,7 @@ export function McpAppHost({
         <iframe
           ref={frame}
           data-testid="mcp-app-frame"
+          data-ready={document && initializedDocument === document.id ? 'true' : undefined}
           title={title}
           sandbox="allow-scripts allow-same-origin allow-forms"
           referrerPolicy="no-referrer"

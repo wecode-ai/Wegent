@@ -1,3 +1,4 @@
+import type { McpAppConversationServices } from '@/api/mcpApps'
 import {
   ScrollableMessageArea as SharedScrollableMessageArea,
   type ScrollableMessageAreaProps,
@@ -11,7 +12,7 @@ import type {
   RuntimeConversationTurn,
   WorkbenchMessage,
 } from '@wegent/chat-core/runtime-conversation'
-import { DesktopToolServices, type DesktopMcpAppServices } from './DesktopToolServices'
+import { DesktopToolServices } from './DesktopToolServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { ConversationFindBar } from './ConversationFindBar'
@@ -25,7 +26,7 @@ type SearchableMessageAreaProps = Omit<
   ScrollableMessageAreaProps,
   DesktopConversationPresentationProp
 > & {
-  mcpApp?: DesktopMcpAppServices
+  mcpApp?: McpAppConversationServices
   workspacePath?: string
   imageTarget?: { deviceId: string; workspacePath: string } | null
   virtualize?: boolean

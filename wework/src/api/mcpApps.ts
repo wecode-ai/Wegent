@@ -23,3 +23,9 @@ export interface McpAppRequest {
 export interface RuntimeMcpAppsApi {
   requestMcpApp: <T = unknown>(data: McpAppRequest) => Promise<T>
 }
+
+export interface McpAppConversationServices {
+  address: RuntimeTaskAddress
+  api: RuntimeMcpAppsApi
+  sendMessage?: (message: string) => Promise<boolean>
+}

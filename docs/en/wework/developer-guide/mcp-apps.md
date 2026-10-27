@@ -16,7 +16,7 @@ The host also accepts `ui/resourceUri`, `openai/outputTemplate`, and resource re
 
 After the initialization handshake, apps receive tool arguments and results. The host preserves `content`, `structuredContent`, and `_meta` separately and does not add result metadata to model context.
 
-Apps can call their source server's tools, read resources, send conversation messages, update model context, and request inline, fullscreen, or picture-in-picture presentation. Sending a conversation message requires confirmation. Non-read-only and destructive tool calls require separate approval. App-only tools remain callable by apps; model-only tools are excluded.
+Apps can call their source server's tools, read resources, send conversation messages, update model context, and request inline, fullscreen, or picture-in-picture presentation. Read-only Issue execution views omit app conversation messaging; replies still originate from the Issue. Other conversation messages require confirmation. Non-read-only and destructive tool calls require separate approval. App-only tools remain callable by apps; model-only tools are excluded.
 
 State-preserving DOM moves keep app browsing contexts alive when virtualized tool rows leave the viewport. Closing an app or leaving its task releases the bridge and temporary document. Model context is stored by source invocation and included in later messages as untrusted app data.
 

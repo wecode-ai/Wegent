@@ -1,3 +1,4 @@
+import { createMcpAppConversationServices } from '@/features/mcp-apps/conversationServices'
 import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
 import { BackgroundTerminalsSummary } from './BackgroundTerminalsSummary'
 import { conversationTerminals } from './backgroundTerminals'
@@ -5242,16 +5243,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   onClick={focusComposerFromConversationClick}
                 >
                   <ScrollableMessageArea
-                    mcpApp={
-                      currentRuntimeTask && services?.runtimeWorkApi?.requestMcpApp
-                        ? {
-                            address: currentRuntimeTask,
-                            api: { requestMcpApp: services.runtimeWorkApi.requestMcpApp },
-                            sendMessage: message =>
-                              sendRuntimePaneMessage({ address: currentRuntimeTask, message }),
-                          }
-                        : undefined
-                    }
+                    mcpApp={createMcpAppConversationServices({
+                      address: currentRuntimeTask,
+                      api: services?.runtimeWorkApi,
+                      readOnly: issueExecutionReadOnly,
+                      sendMessage: sendRuntimePaneMessage,
+                    })}
                     searchActive={paneActive && paneVisible && workbenchVisible}
                     workspacePath={composerWorkspaceTarget?.path}
                     imageTarget={remoteImageTarget}
