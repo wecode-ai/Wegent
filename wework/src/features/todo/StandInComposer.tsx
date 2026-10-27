@@ -204,6 +204,7 @@ export function StandInComposer({
         <div className="min-w-0">
           <ModelSelector
             models={models.models}
+            getModelOptionId={models.getModelOptionId}
             selectedModel={models.selectedModel}
             selectedModelOptions={draft.modelOptions ?? {}}
             disabled={disabled || models.fixed}
