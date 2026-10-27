@@ -148,3 +148,11 @@ test('requires bounded approved string properties', () => {
 
   assert.throws(() => validateRegistry(registry), /maxLength must be a positive integer/)
 })
+
+test('allows bounded stand-in execution duration while rejecting arbitrary numeric fields', () => {
+  const registry = structuredClone(validRegistry)
+  registry.routes[0].publicProperties.push({ name: 'duration_ms', type: 'number' })
+  assert.doesNotThrow(() => validateRegistry(registry))
+  registry.routes[0].publicProperties.push({ name: 'plugin_id', type: 'number' })
+  assert.throws(() => validateRegistry(registry), /must be an approved enum or string/)
+})
