@@ -72,9 +72,8 @@ export function createSubscriptionConfigRegression() {
       )
     },
     attachServer(server) {
-      server.on('upgrade', (request, socket) => {
-        if (!request.url?.startsWith('/backend-api/codex/responses')) return
-        socket.once('error', error => {
+      server.on('upgrade', (_request, socket) => {
+        socket.on('error', error => {
           socket.destroy()
           if (error.code !== 'ECONNRESET') throw error
         })

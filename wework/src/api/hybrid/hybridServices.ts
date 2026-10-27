@@ -1845,7 +1845,11 @@ export function createHybridWorkbenchServices(
     userApi: cloudServices.userApi,
     cloudBackgroundApi: {
       listTeams: cloudServices.teamApi.listTeams,
-      listDevices: requestOptions => listCloudDevices(requestOptions?.signal),
+      async listDevices(requestOptions) {
+        const devices = await listCloudDevices(requestOptions?.signal)
+        // The refresh merges these aliases into the native record before publishing devices.
+        return [...currentAppDeviceRegistrations(), ...devices]
+      },
       listRuntimeWork: requestOptions => listCloudRuntimeWork(requestOptions?.signal),
     },
     getLocalRuntimeSidebarIdentity,

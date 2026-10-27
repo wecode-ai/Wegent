@@ -252,6 +252,9 @@ rotated runtime tokens only while backend, socket, and session credentials match
 the original connection; switched or disconnected sessions reject old tasks.
 Goal restoration preserves the
 known turn and rejects a different stale streaming history.
+Background device refreshes retain app registration aliases that match the current
+native runtime identity, so cloud comment addresses and native completion events
+share one lifecycle. Registrations for older runtimes remain excluded.
 Long history hydration polls use `performanceSnapshot` with `collectMemory: false`
 to avoid forced GC on every poll; final memory assertions retain full sampling.
 Timeout diagnostics include the last snapshot. Permission modes use dedicated
@@ -263,9 +266,9 @@ other platforms retain OS write-denial checks. All platforms still verify explic
 authorized writes, native approval denial of private reads, and no private data
 disclosure. The network probe declares a text response type so PowerShell does not
 enumerate response bytes.
-After the subscription model fixture rejects a WebSocket upgrade with HTTP 426,
-it handles that connection's `ECONNRESET` and closes it; other socket errors still
-fail. Node regressions cover expected resets and unexpected errors, preventing
+The subscription model fixture rejects every upgrade path with HTTP 426 and
+handles `ECONNRESET` throughout the socket lifetime; other socket errors still
+fail. Node regressions cover different paths, repeated resets, and unexpected errors, preventing
 an unhandled socket error from crashing cleanup after scenario assertions pass.
 
 Long scenarios are split into independent checkpoints as well as balanced shards:
