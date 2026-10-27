@@ -1994,7 +1994,7 @@ provider_native_step="$(
     "$platform_e2e_workflow" \
     "Run Provider-native E2E tests"
 )"
-if ! grep -Fq -- '--shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}' \
+if ! grep -Fq -- '--shard=${{ matrix.providerShardIndex }}/${{ matrix.shardTotal }}' \
   <<<"$provider_native_step" ||
   ! grep -Fq -- '--workers=1' <<<"$provider_native_step"; then
   printf 'Provider-native E2E must preserve serial execution while sharing all platform shards\n' >&2

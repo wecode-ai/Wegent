@@ -13,6 +13,32 @@ import test from "node:test";
 
 const runner = resolve(".github/scripts/run-attachment-replica-e2e.sh");
 
+test("platform sharding preserves four runners and every provider shard", () => {
+  const result = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['e2e-tests']['strategy']['matrix'])",
+      ".github/workflows/e2e-tests.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const matrix = JSON.parse(result.stdout);
+  assert.deepEqual(Object.keys(matrix), ["include"]);
+  assert.deepEqual(
+    matrix.include.map((row) => row.shardIndex).sort(),
+    [1, 2, 3, 4],
+  );
+  assert.deepEqual(
+    matrix.include.map((row) => row.providerShardIndex).sort(),
+    [1, 2, 3, 4],
+  );
+  assert(matrix.include.every((row) => row.shardTotal === 4));
+});
+
 for (const [segments, failFirst] of [
   ["plugin-lifecycle,plugin-composer-network-isolation", false],
   ["plugin-lifecycle,plugin-composer-network-isolation", true],

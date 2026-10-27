@@ -490,8 +490,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shardIndex: [1, 2, 3, 4]
-        shardTotal: [4]
+        # Run 40558717377: provider shard 1 took 120s while shard 3 was empty.
+        # Exchange those logical shards without changing users or runner count.
+        include:
+          - shardIndex: 1
+            shardTotal: 4
+            providerShardIndex: 3
+          - shardIndex: 2
+            shardTotal: 4
+            providerShardIndex: 2
+          - shardIndex: 3
+            shardTotal: 4
+            providerShardIndex: 1
+          - shardIndex: 4
+            shardTotal: 4
+            providerShardIndex: 4
 
     services:
       mysql:
@@ -1137,7 +1150,7 @@ jobs:
           node ./node_modules/@playwright/test/cli.js test \
             --project=provider-native-chromium \
             --workers=1 \
-            --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} \
+            --shard=${{ matrix.providerShardIndex }}/${{ matrix.shardTotal }} \
             --no-deps
 
       - name: Stop Backend index worker

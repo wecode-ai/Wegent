@@ -631,3 +631,5 @@ pnpm --filter wecode-ai-assistant test -- src/__tests__/utils/test_example.test.
 该分配参考成功运行 [40548056927](https://github.com/wecode-ai/Wegent/actions/runs/40548056927) 和 [40547828678](https://github.com/wecode-ai/Wegent/actions/runs/40547828678)：shard 1 的知识索引步骤耗时 149–164 秒，复制步骤耗时 20–26 秒，媒体测试耗时 24–26 秒，S3 测试约 6 秒。移走 shard 1 的额外步骤，并在现有较轻分片承载附件测试；不增加机器，不以增加并行 job 缩短墙钟时间。后续按实际测试步骤耗时与累计 runner 时间复核分配，不计排队时间。
 
 平台 E2E 的普通标签事件不运行测试分类，仅 `ci:all` 标签触发完整回归。桌面 Plugins 的选中场景在一个 job 内依次运行，保留每个场景的独立初始化与失败结果。macOS 共享 job 显示为 `Wework Desktop macOS E2E`：Inspector 按受影响路径自动运行，memory 步骤仍仅对带 `ci:all` 的 PR 执行；定时运行和手动运行不会自动执行 memory 步骤。
+
+首次集成运行 [40558717377](https://github.com/wecode-ai/Wegent/actions/runs/40558717377) 中，五个测试 job 的累计 runner 执行时间为 44 分 20 秒，两次七个 job 的基线分别为 48 分 18 秒与 51 分 53 秒，均从 job 首个步骤开始计时、排除排队。该轮 Provider-native 的逻辑分片 1 用时 120 秒，逻辑分片 3 基本为空，因此将它们分别交给物理 shard 3 与 shard 1；其他 Provider-native 分片不变，普通浏览器分片和各机器的用户身份也不变。矩阵契约检查保证仍只有四个物理分片，所有四个 Provider-native 逻辑分片恰好执行一次。
