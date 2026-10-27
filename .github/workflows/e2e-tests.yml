@@ -199,7 +199,7 @@ jobs:
       - name: Resolve Backend Rust E2E runtime
         id: runtime
         env:
-          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**') }}
+          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**') }}
         run: |
           echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-backend-rs-e2e:v1-$SOURCE_DIGEST" \
             >> "$GITHUB_OUTPUT"
@@ -252,10 +252,13 @@ jobs:
           cargo build \
             --release \
             --manifest-path backend-rs/Cargo.toml \
-            --bin wegent-backend-rs
+            --bin wegent-backend-rs \
+            --example attachment_s3_e2e
           mkdir -p .ci-artifacts
           cp "$CARGO_TARGET_DIR/release/wegent-backend-rs" \
             .ci-artifacts/wegent-backend-rs
+          cp "$CARGO_TARGET_DIR/release/examples/attachment_s3_e2e" \
+            .ci-artifacts/attachment-s3-e2e
           chmod 0755 .ci-artifacts/wegent-backend-rs
 
       - name: Publish content-addressed Backend Rust E2E image
@@ -266,9 +269,12 @@ jobs:
           mkdir -p .ci-artifacts/backend-rs-image
           cp .ci-artifacts/wegent-backend-rs \
             .ci-artifacts/backend-rs-image/wegent-backend-rs
+          cp .ci-artifacts/attachment-s3-e2e \
+            .ci-artifacts/backend-rs-image/attachment-s3-e2e
           printf '%s\n' \
             'FROM scratch' \
             'COPY wegent-backend-rs /app/wegent-backend-rs' \
+            'COPY attachment-s3-e2e /app/attachment-s3-e2e' \
             'ENTRYPOINT ["/app/wegent-backend-rs"]' \
             > .ci-artifacts/backend-rs-image/Dockerfile
           docker build \
@@ -288,6 +294,9 @@ jobs:
           docker cp \
             "$container_id:/app/wegent-backend-rs" \
             .ci-artifacts/wegent-backend-rs
+          docker cp \
+            "$container_id:/app/attachment-s3-e2e" \
+            .ci-artifacts/attachment-s3-e2e
           chmod 0755 .ci-artifacts/wegent-backend-rs
 
       - name: Save Backend Rust Cargo sources
@@ -303,7 +312,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: backend-rs-e2e-runtime
-          path: .ci-artifacts/wegent-backend-rs
+          path: |
+            .ci-artifacts/wegent-backend-rs
+            .ci-artifacts/attachment-s3-e2e
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -484,7 +495,7 @@ jobs:
       E2E_MINIO_ROOT_USER: wegent-e2e
       E2E_MINIO_ROOT_PASSWORD: wegent-e2e-secret
       E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/attachment-s3-upload
-      WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-backend-rs
+      WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/attachment-s3-e2e
       PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/backend
     steps:
       - name: Checkout code

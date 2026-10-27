@@ -41,19 +41,6 @@ pub async fn build() -> Result<AppState> {
         }
     }
     let attachment_http = attachments::minio_client::build_client()?;
-    let attachment_upload: Arc<dyn attachments::upload::AttachmentUploadBackend> =
-        match config::env_or_dotenv("ATTACHMENT_STORAGE_BACKEND")
-            .unwrap_or_else(|| "mysql".to_owned())
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "minio" | "s3" => Arc::new(attachments::upload::S3StorageBackend::new(
-                attachment_http.clone(),
-                attachments::minio_client::MinioConfig::from_env()
-                    .context("S3 attachment storage requires endpoint and credentials")?,
-            )),
-            _ => Arc::new(attachments::upload::MySqlStorageBackend),
-        };
     let decision_http = crate::decisions::provider::build_client()?;
     let url_metadata_http =
         crate::url_metadata::build_client().context("failed to build the url-metadata client")?;
@@ -111,7 +98,7 @@ pub async fn build() -> Result<AppState> {
         user_git_info_mask: Arc::new(crate::user_profile::NoGitInfoMasking),
         media_policy: Arc::new(crate::media_policy::DefaultMediaPolicy),
         external_media: Arc::new(crate::attachments::external_media::NoExternalMediaRelay),
-        attachment_upload,
+        attachment_upload: Arc::new(crate::attachments::upload::MySqlStorageBackend),
         external_playback: Arc::new(crate::attachments::external_media::NoExternalPlaybackResolver),
         document_download_policy: Arc::new(
             crate::knowledge_download_policy::DefaultDocumentDownloadPolicy,

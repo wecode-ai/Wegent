@@ -4,7 +4,7 @@
 
 """Upload through the production Rust handler to real MySQL, Redis and MinIO.
 
-The dedicated CI job supplies a built Backend binary and disposable services.
+The dedicated CI job supplies the real S3 application assembly and services.
 No object-store, HTTP, persistence or upload implementation is replaced. A real
 MinIO user policy denies the second part by its SHA256 to exercise rollback.
 """
