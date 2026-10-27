@@ -151,8 +151,8 @@ mod tests {
             Duration::from_secs(5)
         );
         assert_eq!(
-            configured_timeout(&form, Some("15000")),
-            Duration::from_secs(15)
+            configured_timeout(&form, Some("30000")),
+            Duration::from_secs(30)
         );
         assert_eq!(
             configured_timeout(&json!({}), Some("5000")),

@@ -73,8 +73,8 @@ async function verifyMcpElicitationInFullAccess(control) {
   const countdown = await control.command('getText', '[data-testid="request-user-input-deadline"]')
   assert.match(
     countdown,
-    /0:(?:0\d|1[0-5])/,
-    'A new MCP form must use the configured fifteen-second deadline'
+    /0:(?:[0-2]\d|30)/,
+    'A new MCP form must use the configured thirty-second deadline'
   )
   const formSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
@@ -375,7 +375,7 @@ async function verifyElicitationTimeout(control, taskId, evidencePath, scenario,
   assert.ok(remainingSeconds > 0 && remainingSeconds <= durationMs / 1000)
   assert.match(
     await control.command('getText', '[data-testid="request-user-input-deadline"]'),
-    isUrl ? /0:0[0-5]/ : /0:(?:0\d|1[0-5])/
+    isUrl ? /0:0[0-5]/ : /0:(?:[0-2]\d|30)/
   )
   assert.equal(original.interactionKind === 'mcp_url', isUrl)
   const requests = (await readElicitationEvidence(evidencePath)).filter(

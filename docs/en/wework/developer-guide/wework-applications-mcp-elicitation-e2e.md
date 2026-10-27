@@ -234,13 +234,14 @@ Run this scenario after `permission-modes` confirms Full access and before switc
 ## Real Timeout Verification
 
 `permission-modes` sets `WEGENT_CODEX_MCP_URL_TIMEOUT_MS=5000` and
-`WEGENT_CODEX_MCP_FORM_TIMEOUT_MS=15000` for its isolated application and Executor.
+`WEGENT_CODEX_MCP_FORM_TIMEOUT_MS=30000` for its isolated application and Executor.
 URL authorization uses a real five-second timer; concurrent and ordinary forms
-each use 15 seconds, totaling about 35 seconds of fixed waits. Forms must survive
-pending-state reload checks before expiry. In original CI Job `122319941018`, the
-pending-panel screenshot preceded answer completion by over seven seconds; the
-ordinary-first case also spent over eight seconds between two pending-state
-screenshots. A blanket five-second deadline would invalidate those checks.
+each use 30 seconds, totaling about 65 seconds of fixed waits. Forms must survive
+the ordinary answer, two pending-card reloads, and state assertions before expiry.
+Fixture evidence from CI Job `122373305638` shows that a 15-second configuration
+cancelled the MCP request at 15004ms in `ordinary_first`, before its expected
+acceptance. Forms therefore need a longer interaction window than the URL scenario
+that only waits for expiry.
 Other checkpoints do not automatically set this
 configuration. With no valid override, production defaults remain ten minutes
 for URLs and five minutes for forms. Ordinary execution approval timeouts are
