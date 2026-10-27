@@ -4655,6 +4655,24 @@ async fn codex_app_server_restart_requires_confirmation_for_active_turns() {
 }
 
 #[tokio::test]
+async fn codex_model_discovery_waits_for_app_server_restart() {
+    let (handler, root) = isolated_runtime_work_handler("catalog-restart-serialization");
+    let restart_guard = codex_app_server_restart_gate().lock().await;
+    {
+        let discovery = handler.list_codex_models(json!({"includeHidden": true}));
+        tokio::pin!(discovery);
+        let waiting = tokio::time::timeout(Duration::from_millis(100), &mut discovery).await;
+        assert!(
+            waiting.is_err(),
+            "model discovery bypassed the restart gate"
+        );
+    }
+
+    drop(restart_guard);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn codex_instructions_write_rejects_non_string_payload() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
 
@@ -5832,9 +5850,8 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
 
 #[tokio::test]
 async fn create_task_keeps_board_comment_session_persistent_across_store_reload() {
-    let index_path = temp_runtime_work_index_path("create-board-comment-task");
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let (handler, root) = isolated_runtime_work_handler("create-board-comment-task");
+    let index_path = handler.store.index_path().to_path_buf();
 
     handler
         .handle_runtime_rpc(json!({
@@ -5870,7 +5887,7 @@ async fn create_task_keeps_board_comment_session_persistent_across_store_reload(
         })
     );
 
-    let _ = fs::remove_file(index_path);
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
