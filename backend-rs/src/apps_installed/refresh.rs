@@ -305,6 +305,41 @@ where
         .map_err(RefreshError::Database)
 }
 
+/// Persist the discovery outcome on a stored connection without touching the
+/// stored grant.
+pub(crate) async fn write_discovery_state<M>(
+    mysql: &M,
+    row: &KindRow,
+    discovered_at: Option<&str>,
+    last_error: Option<&str>,
+) -> Result<(), RefreshError>
+where
+    M: Mysql,
+{
+    let mut document = row.kinds_json.0.to_value();
+    let spec = document
+        .get_mut("spec")
+        .and_then(Value::as_object_mut)
+        .ok_or(RefreshError::Unavailable)?;
+    if let Some(discovered_at) = discovered_at {
+        spec.insert(
+            "toolsDiscoveredAt".to_string(),
+            Value::String(discovered_at.to_string()),
+        );
+    }
+    spec.insert(
+        "lastError".to_string(),
+        match last_error {
+            Some(message) => json!({
+                "message": message.chars().take(500).collect::<String>(),
+                "at": Utc::now().to_rfc3339(),
+            }),
+            None => Value::Null,
+        },
+    );
+    write_json(mysql, row.kinds_id, &document).await
+}
+
 /// `db.refresh(connection.row)` after the commit.
 async fn reload<M>(mysql: &M, slug: &str, user_id: i64) -> Result<ConnectorConnection, RefreshError>
 where

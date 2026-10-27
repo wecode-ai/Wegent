@@ -27,7 +27,13 @@ struct Claims {
     token_use: Option<String>,
 }
 
-struct InstalledAppsUser(UserRow);
+pub(crate) struct InstalledAppsUser(UserRow);
+
+impl InstalledAppsUser {
+    pub(crate) fn into_row(self) -> UserRow {
+        self.0
+    }
+}
 
 impl brz_http_server::Authenticator<InstalledAppsUser> for AppAuthenticator {
     async fn authenticate<'a>(

@@ -105,10 +105,8 @@ async def disconnect_connector(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post(
-    "/{slug}/connection/refresh",
-    response_model=ConnectorConnectionResponse,
-)
+# The Rust `apps_installed::refresh_endpoint` handler owns this route; the
+# function stays for the retained HTTP contract test.
 async def refresh_connector_connection(
     slug: str,
     db: Session = Depends(get_db),

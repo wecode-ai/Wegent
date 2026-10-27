@@ -713,10 +713,13 @@ def test_expired_oauth_connector_remains_visible_but_not_callable(
         "app.services.connector_oauth.httpx.AsyncClient",
         lambda **_kwargs: Client(),
     )
-    refresh_response = test_client.post(
-        f"/api/connector-apps/{app.slug}/connection/refresh",
-        headers=_admin_headers(test_token),
-    )
+    from tests.retained_python_handlers import component_client
+
+    with component_client(test_client, ("connector_connection_refresh",)) as client:
+        refresh_response = client.post(
+            f"/api/connector-apps/{app.slug}/connection/refresh",
+            headers=_admin_headers(test_token),
+        )
 
     assert refresh_response.status_code == 200
     assert refresh_response.json()["status"] == "connected"

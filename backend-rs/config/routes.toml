@@ -560,6 +560,13 @@ path = "/api/auth/wework/refresh"
 methods = ["POST"]
 path = "/api/connector-runtime/token"
 
+# `POST /api/connector-apps/{slug}/connection/refresh` — renew an expired grant
+# and probe the upstream (`app/api/endpoints/connector_apps.py`). The Python
+# function is retained only for its HTTP contract test.
+[[routes]]
+methods = ["POST"]
+path = "/api/connector-apps/:slug/connection/refresh"
+
 # `GET /api/internal/health` — internal chat-storage health probe
 # (`app/api/endpoints/internal/chat_storage.py`).
 #[[routes]]
