@@ -45,7 +45,8 @@ export function reduceRuntimeTaskLifecycle(
         snapshotRunning !== null && expectedRunning !== null && snapshotRunning !== expectedRunning
       const snapshotConfirmsAutonomousTurn = isRuntimeTaskConfirmedActive(event.task)
       const snapshotRevivesSettledTaskWithoutIntent =
-        Boolean(state.task && isRuntimeTaskAuthoritativeCompletion(state.task)) &&
+        (Boolean(state.task && isRuntimeTaskAuthoritativeCompletion(state.task)) ||
+          (state.executionPhase === 'idle' && state.expectedExecutorRunning === false)) &&
         isRuntimeTaskConfirmedActive(event.task) &&
         state.goalStatus !== null &&
         state.goalStatus !== 'active' &&
@@ -234,11 +235,12 @@ export function reduceRuntimeTaskLifecycle(
       }
       return {
         ...state,
+        executionPhase: state.goalStatus === 'complete' ? 'idle' : state.executionPhase,
         turnPhase: 'idle',
         turnOutcome: event.outcome ?? state.turnOutcome,
         activeTurnId: null,
         latestTurnId: event.turnId ?? state.activeTurnId ?? state.latestTurnId,
-        expectedExecutorRunning: null,
+        expectedExecutorRunning: state.goalStatus === 'complete' ? false : null,
       }
     }
 
