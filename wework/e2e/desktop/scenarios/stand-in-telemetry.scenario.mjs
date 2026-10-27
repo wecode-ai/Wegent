@@ -97,6 +97,20 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await rpc('runtime.stand_in.telemetry.configure', { userId: OFFLINE_USER, enabled: false })
       console.log('[stand-in-telemetry] Background execution, reload persistence and ACK verified')
 
+      // Standalone checkpoints decline initial consent; opt in through the real preference.
+      const toggle = '[data-testid="general-telemetry-toggle"]'
+      await control.command('click', '[data-testid="settings-button"]')
+      await control.command('click', '[data-testid="settings-menu-button"]')
+      await control.command('waitFor', toggle)
+      assert.equal(await control.command('getAttribute', toggle, { value: 'aria-checked' }), 'false')
+      await control.command('click', toggle)
+      await waitForBoardValue(
+        () => control.command('getAttribute', toggle, { value: 'aria-checked' }),
+        'true',
+        'Telemetry consent must be persisted before public delivery',
+        uiTimeoutMs
+      )
+      await control.command('click', '[data-testid="settings-back-button"]')
       await rpc('runtime.stand_in.telemetry.configure', { userId: USER, enabled: true })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
