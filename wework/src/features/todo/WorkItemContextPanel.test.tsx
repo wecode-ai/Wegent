@@ -136,6 +136,7 @@ describe('WorkItemContextPanel', () => {
     render(
       <WorkItemContextPanel
         api={api}
+        services={{}}
         project={project}
         item={item}
         currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
@@ -171,6 +172,7 @@ describe('WorkItemContextPanel', () => {
     render(
       <WorkItemContextPanel
         api={api}
+        services={{}}
         project={project}
         item={item}
         currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
@@ -192,6 +194,7 @@ describe('WorkItemContextPanel', () => {
     render(
       <WorkItemContextPanel
         api={api}
+        services={{}}
         project={project}
         item={unreadItem}
         currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
