@@ -3558,6 +3558,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         composerSelector,
         control,
         executorLogPath,
+        nativeCompletionRace: true,
       })
 
       phase = 'goal-restart-recovery'
