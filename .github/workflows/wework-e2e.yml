@@ -135,7 +135,7 @@ jobs:
         id: runtime
         env:
           EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'shared/assets/**') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \
@@ -922,7 +922,7 @@ jobs:
           setup-uv: "false"
 
       - name: Set up real object storage for plugin sync recovery E2E
-        if: contains(matrix.segments, 'plugin-write-coordination')
+        if: contains(matrix.segments, 'plugin-write-coordination') || contains(matrix.segments, 'plugin-runtime-route-refresh') || contains(matrix.segments, 'plugin-background-sync-isolation') || contains(matrix.segments, 'plugin-periodic-reconcile')
         uses: ./.github/actions/setup-minio-e2e
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}

@@ -157,7 +157,7 @@ export async function verifyPluginWriteCoordination({
     assert.equal(result.sync.success, false, 'Deferred acknowledgement must be explicit')
     assert.ok(
       result.sync.errors.some(
-        error => error.code === 'plugin_write_busy' && error.stage === 'global_ack'
+        error => error.code === 'plugin_write_busy' && error.stage === 'plugin_ack'
       ),
       'The committed response omitted the acknowledgement coordination error'
     )

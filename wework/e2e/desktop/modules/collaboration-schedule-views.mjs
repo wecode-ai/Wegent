@@ -38,6 +38,24 @@ export function collaborationScheduleDates(today = new Date()) {
   )
 }
 
+export async function ensureCalendarScheduleDatesVisible({ control, scoped, keys, timeoutMs }) {
+  const calendar = scoped('[data-testid="collaboration-calendar"]')
+  const selectors = [keys.initialStart, keys.calendarStart].map(
+    key => `${calendar} [data-testid="collaboration-calendar-day-${key}"]`
+  )
+  let hasAllDates = true
+  for (const selector of selectors) {
+    if (Number(await control.command('getElementCount', selector)) === 0) hasAllDates = false
+  }
+  // Keep both dates in one grid; blindly opening the target month can hide the source.
+  if (!hasAllDates) {
+    await control.command('click', `${calendar} [data-testid="collaboration-schedule-next"]`)
+  }
+  for (const selector of selectors) {
+    await control.command('waitFor', selector, { visible: true, timeoutMs })
+  }
+}
+
 async function waitForAttributeIncludes(
   control,
   selector,
@@ -97,13 +115,7 @@ export async function verifyCollaborationScheduleViews({
     visible: true,
     timeoutMs,
   })
-  const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
-  for (const key of [keys.initialStart, keys.calendarStart]) {
-    await control.command('waitFor', scoped(`[data-testid="collaboration-calendar-day-${key}"]`), {
-      visible: true,
-      timeoutMs,
-    })
-  }
+  await ensureCalendarScheduleDatesVisible({ control, scoped, keys, timeoutMs })
   await control.command('select', scoped('[data-testid="collaboration-calendar-status-filter"]'), {
     value: 'inbox',
   })
@@ -132,6 +144,7 @@ export async function verifyCollaborationScheduleViews({
     }
   )
 
+  const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
   const calendarBar = scoped('[data-testid^="collaboration-calendar-issue-"]')
   await control.command('waitFor', calendarBar, {
     text: issueTitle,

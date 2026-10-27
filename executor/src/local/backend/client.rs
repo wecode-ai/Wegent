@@ -125,7 +125,13 @@ where
         self.transport.disconnect().await
     }
 
-    pub async fn register_device(&self, timeout: Duration) -> Result<bool, String> {
+    /// Register this device and return the backend-assigned record route id.
+    ///
+    /// The route id uniquely identifies the persisted Device record for the
+    /// current Runtime registration, even when historical records share this
+    /// device's submitted id. `Ok(None)` means the backend rejected the
+    /// registration.
+    pub async fn register_device(&self, timeout: Duration) -> Result<Option<String>, String> {
         if self.config.device_id.is_empty() || self.config.runtime_instance_id.is_empty() {
             return Err(
                 "persistent device and Runtime identities are required for registration".to_owned(),
@@ -135,7 +141,17 @@ where
             .transport
             .call(REGISTER_EVENT, self.registration_payload(), timeout)
             .await?;
-        Ok(ack_success(&response))
+        if !ack_success(&response) {
+            return Ok(None);
+        }
+        let route_id = ack_payload(&response)
+            .and_then(|payload| payload.get("device_route_id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_default();
+        Ok(Some(route_id))
     }
 
     pub async fn send_heartbeat(&self, timeout: Duration) -> Result<bool, String> {
@@ -473,4 +489,43 @@ fn numeric_backend_id(value: &str) -> Result<Value, String> {
         .parse::<i64>()
         .map(|number| json!(number))
         .map_err(|_| format!("backend task identity is not numeric: {trimmed}"))
+}
+
+/// Ask the backend to reconcile one device's account plugins.
+///
+/// This is the low-frequency fallback for missed change notifications: the
+/// backend pushes only the actual plugin drift to the device. The device
+/// address should be the backend-assigned record route id so the request
+/// reaches this exact Runtime registration even when historical Device
+/// records share its name.
+pub(super) async fn reconcile_account_plugins(
+    backend_url: &str,
+    auth_token: &str,
+    device_id: &str,
+) -> Result<(), String> {
+    let base = backend_url.trim().trim_end_matches('/');
+    let token = auth_token.trim();
+    let device_id = device_id.trim();
+    if base.is_empty() || token.is_empty() || device_id.is_empty() {
+        return Ok(());
+    }
+    let mut url = url::Url::parse(&format!("{base}/api/plugins/installed/sync-device"))
+        .map_err(|error| format!("invalid backend url: {error}"))?;
+    url.query_pairs_mut()
+        .append_pair("device_id", device_id)
+        .append_pair("reconcile", "true");
+    let response = crate::agents::backend_url::backend_http_client()?
+        .post(url)
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(130))
+        .send()
+        .await
+        .map_err(|error| format!("plugin reconcile request failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "plugin reconcile failed with HTTP {}",
+            response.status()
+        ));
+    }
+    Ok(())
 }
