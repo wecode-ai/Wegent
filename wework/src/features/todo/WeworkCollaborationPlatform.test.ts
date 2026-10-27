@@ -1568,20 +1568,20 @@ describe('Wework collaboration workspace API', () => {
     })
   })
 
-  it.each(['active', 'archived', 'foreign', 'unlinked'] as const)(
+  it.each(['active', 'archived', 'foreign', 'unlinked', 'local'] as const)(
     'checks %s linked task availability through the shared project drawer',
     async status => {
       const project = {
         id: `availability-${status}`,
         name: 'Availability',
-        project_store: 'backend',
+        project_store: status === 'local' ? 'local' : 'backend',
       }
       const issue = { id: 'ISSUE-AVAILABILITY', title: 'Availability', sequence_number: 1 }
       const binding = {
         id: 'binding',
         projectId: project.id,
         issueId: issue.id,
-        taskUserId: status === 'foreign' ? 2 : 1,
+        taskUserId: status === 'local' ? 0 : status === 'foreign' ? 2 : 1,
         deviceId: 'device',
         taskId: 'task',
         taskTitle: 'Personal task',
@@ -1641,7 +1641,7 @@ describe('Wework collaboration workspace API', () => {
       await act(async () => {
         editor.props.onOpenTaskConversation?.(toWeworkIssueTaskBinding(binding))
       })
-      if (status === 'active') {
+      if (status === 'active' || status === 'local') {
         await waitFor(() => expect(detail().props.conversation).not.toBeNull())
         expect(readTask).toHaveBeenCalledWith('device', 'task')
       } else {

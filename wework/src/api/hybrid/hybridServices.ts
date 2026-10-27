@@ -986,9 +986,10 @@ export function createHybridWorkbenchServices(
   }
 
   const standInApiForDevice = async (deviceId: string) => {
-    const identity = await getLocalRuntimeSidebarIdentity()
     const api =
-      deviceId === identity?.deviceId ? localServices.standInApi : cloudServices.standInApi
+      (await runtimeApiForDevice(deviceId)) === localServices.runtimeWorkApi
+        ? localServices.standInApi
+        : cloudServices.standInApi
     if (!api) throw new Error('Executor settings are unavailable')
     return api
   }

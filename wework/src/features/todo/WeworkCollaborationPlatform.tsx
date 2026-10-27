@@ -607,6 +607,7 @@ export function WeworkSharedProject({
       }) as unknown as CloudProject,
     [project]
   )
+  const taskOwnerUserId = project.project_store === 'local' ? 0 : userId
   const deviceNamesById = useMemo(
     () => ({
       ...getWorkbenchDeviceNamesById(devices ?? []),
@@ -856,7 +857,7 @@ export function WeworkSharedProject({
         )
         const availableBinding = await requireIssueTaskAvailable(
           latestBinding,
-          userId,
+          taskOwnerUserId,
           services.standInApi,
           key => t(key)
         )
@@ -885,7 +886,7 @@ export function WeworkSharedProject({
       scopedApi.taskBindings,
       services.standInApi,
       t,
-      userId,
+      taskOwnerUserId,
     ]
   )
 
@@ -1123,7 +1124,11 @@ export function WeworkSharedProject({
                   projectChatAgentApi={detailServices?.projectChatAgentApi}
                   projectChatClient={detailServices?.projectChatClient}
                   selfManagedExecution={project.project_store === 'local'}
-                  currentUserId={editorProject.current_user_id ?? userId}
+                  currentUserId={
+                    project.project_store === 'local'
+                      ? taskOwnerUserId
+                      : (editorProject.current_user_id ?? userId)
+                  }
                   currentAssignment={
                     assignments
                       .filter(assignment => assignment.status === 'active')
