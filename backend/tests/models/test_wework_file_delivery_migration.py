@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The retired prompt revision must preserve data and existing version history."""
+"""Withdrawing the prompt revision must never rewrite Ghost or version data."""
 
 import os
 from pathlib import Path
@@ -14,6 +14,7 @@ from sqlalchemy.engine import Connection
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from alembic.util import CommandError
 
 REVISION = "a9c4e7b2d610"
 PREDECESSOR = "f3a7c9e1b2d4"
@@ -65,25 +66,13 @@ def storage() -> Iterator[tuple[Connection, sa.Table]]:
     engine.dispose()
 
 
-def test_retired_revision_preserves_the_published_version_chain(
+def test_withdrawn_revision_is_absent_from_the_version_chain(
     scripts: ScriptDirectory,
 ) -> None:
-    retired = scripts.get_revision(REVISION)
-    assert retired is not None
-    assert retired.down_revision == PREDECESSOR
-    assert scripts.get_heads() == [REVISION]
-    assert retired.module.__doc__.startswith("Retain the retired Wework prompt")
-
-
-@pytest.mark.parametrize("direction", ["upgrade", "downgrade"])
-def test_retired_revision_has_no_database_operations(
-    scripts: ScriptDirectory, direction: str
-) -> None:
-    # The body must not even obtain a connection: no SELECT, DML, or DDL.
-    module = scripts.get_revision(REVISION).module
-    assert "op" not in vars(module)
-    assert "sa" not in vars(module)
-    getattr(module, direction)()
+    assert scripts.get_heads() == [PREDECESSOR]
+    assert not list(Path(scripts.versions).glob(f"*{REVISION}*"))
+    with pytest.raises(CommandError, match=REVISION):
+        scripts.get_revision(REVISION)
 
 
 def _payload(prompt_kind: str) -> dict[str, Any]:
@@ -118,12 +107,14 @@ def _advance(
         connection, opts={"version_table": VERSION_TABLE, "fn": migrations}
     )
     context.run_migrations()
-    assert context.get_current_revision() == (REVISION if target == "head" else target)
+    assert context.get_current_revision() == (
+        PREDECESSOR if target == "head" else target
+    )
 
 
 @pytest.mark.parametrize("starting_revision", [PREDECESSOR, REVISION])
 @pytest.mark.parametrize("prompt_kind", ["legacy", "migrated", "custom", "fresh"])
-def test_upgrade_and_rollback_only_advance_version_tracking(
+def test_upgrade_and_rollback_preserve_prompts_and_reject_withdrawn_version(
     scripts: ScriptDirectory,
     storage: tuple[Connection, sa.Table],
     starting_revision: str,
@@ -144,7 +135,8 @@ def test_upgrade_and_rollback_only_advance_version_tracking(
     context = MigrationContext.configure(
         connection, opts={"version_table": VERSION_TABLE}
     )
-    context.stamp(scripts, starting_revision)
+    # Model already-recorded versions without stamping an unknown revision.
+    connection.execute(context._version.insert().values(version_num=starting_revision))
     before = dict(connection.execute(sa.select(kinds)).mappings().one())
     statements: list[str] = []
 
@@ -159,10 +151,15 @@ def test_upgrade_and_rollback_only_advance_version_tracking(
             ("head", "upgrade"),
         ]:
 
-            _advance(connection, scripts, target, direction)
+            if starting_revision == REVISION:
+                with pytest.raises(CommandError, match=REVISION):
+                    _advance(connection, scripts, target, direction)
+            else:
+                _advance(connection, scripts, target, direction)
     finally:
         sa.event.remove(connection, "before_cursor_execute", capture)
     assert dict(connection.execute(sa.select(kinds)).mappings().one()) == before
+    assert context.get_current_revision() == starting_revision
     assert statements
     assert all(VERSION_TABLE.upper() in statement for statement in statements)
     assert not any("KINDS" in statement for statement in statements)

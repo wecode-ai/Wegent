@@ -7,7 +7,7 @@ import {
   startOfScheduleWeek,
 } from '../../packages/collaboration/src/project-schedule/model'
 import {
-  scheduleStartDate,
+  collaborationScheduleDates,
   verifyCollaborationScheduleViews,
 } from '../e2e/desktop/modules/collaboration-schedule-views.mjs'
 
@@ -25,7 +25,7 @@ function addDays(date, count) {
 
 test('October 26 schedules its complete calendar drag inside the displayed month', () => {
   const today = new Date(2026, 9, 26, 12)
-  const start = scheduleStartDate(today)
+  const start = new Date(collaborationScheduleDates(today).initialStart + 'T12:00:00')
   const days = new Set(calendarDays(today, true).map(key))
 
   assert.equal(key(start), '2026-9-26')
@@ -40,7 +40,7 @@ test('calendar fixtures fit real calendar and Gantt windows across month and lea
       today.getFullYear() === year;
       today = addDays(today, 1)
     ) {
-      const start = scheduleStartDate(today)
+      const start = new Date(collaborationScheduleDates(today).initialStart + 'T12:00:00')
       const days = new Set(calendarDays(today, true).map(key))
       const label = today.toDateString()
       assert.ok(days.has(key(start)), `Initial range starts outside the calendar: ${label}`)
@@ -83,19 +83,29 @@ const yearEndSchedule = {
 }
 
 test.each([
-  { ...monthEndSchedule, today: '2026-10-19T12:00:00' },
+  {
+    today: '2026-10-19T12:00:00',
+    target: '2026-10-26',
+    navigationCount: 0,
+    ranges: [
+      '2026-10-19 → 2026-10-21',
+      '2026-10-26 → 2026-10-28',
+      '2026-10-26 → 2026-10-29',
+      '2026-10-28 → 2026-10-31',
+    ],
+  },
   monthEndSchedule,
   // A restored calendar can start one month behind the task date.
   { ...monthEndSchedule, navigationCount: 1, displayedMonthOffset: -1 },
   {
     today: '2026-10-05T12:00:00',
-    target: '2026-10-19',
+    target: '2026-10-12',
     navigationCount: 0,
     ranges: [
+      '2026-10-05 → 2026-10-07',
       '2026-10-12 → 2026-10-14',
-      '2026-10-19 → 2026-10-21',
-      '2026-10-19 → 2026-10-22',
-      '2026-10-21 → 2026-10-24',
+      '2026-10-12 → 2026-10-15',
+      '2026-10-14 → 2026-10-17',
     ],
   },
   yearEndSchedule,

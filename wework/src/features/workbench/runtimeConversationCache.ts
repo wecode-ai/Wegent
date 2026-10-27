@@ -52,6 +52,7 @@ import {
   goalSnapshotVersionsByConversation,
   hydrationByConversation,
   interruptedGuidanceIdsByConversation,
+  markRuntimeConversationArchived,
   metadataByConversation,
   MAX_RUNTIME_SUBAGENT_STATUSES,
   notifyRuntimeConversation,
@@ -64,6 +65,7 @@ import {
   threadIdsByConversation,
   supersededTurnIdsByConversation,
   turnContainsClientUserMessage,
+  unmarkRuntimeConversationArchived as unmarkArchivedConversationKey,
   type RuntimeConversationMetadata,
 } from './runtimeConversationCacheStore'
 export {
@@ -922,6 +924,15 @@ export function evictRuntimeConversation(address: RuntimeTaskAddress) {
     pendingConversationOperations.delete(operation)
   }
   evictRuntimeConversationKey(key)
+}
+
+export function archiveRuntimeConversation(address: RuntimeTaskAddress) {
+  markRuntimeConversationArchived(runtimeConversationKey(address))
+  evictRuntimeConversation(address)
+}
+
+export function unmarkRuntimeConversationArchived(address: RuntimeTaskAddress) {
+  unmarkArchivedConversationKey(runtimeConversationKey(address))
 }
 
 export function clearRuntimeConversationCacheForTests() {

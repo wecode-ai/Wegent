@@ -37,6 +37,12 @@ trap cleanup EXIT
 mkdir -p "$TMP_DIR/bin"
 touch "$CALL_LOG"
 
+# Read repository history, but keep synthetic fixture objects in the test directory.
+REPOSITORY_OBJECTS=$(git -C "$PROJECT_ROOT" rev-parse --path-format=absolute --git-path objects)
+mkdir -p "$TMP_DIR/git-objects"
+export GIT_OBJECT_DIRECTORY="$TMP_DIR/git-objects"
+export GIT_ALTERNATE_OBJECT_DIRECTORIES="$REPOSITORY_OBJECTS"
+
 create_stub() {
     local name="$1"
     local path="$TMP_DIR/bin/$name"
@@ -45,8 +51,8 @@ create_stub() {
 printf '%s %s\n' "$(basename "$0")" "$*" >> "$CALL_LOG"
 if [ "$(basename "$0")" = "pnpm" ]; then
     case "$*" in
-        '--filter wework typecheck')
-            if [ "${PUSH_GATE_TEST_REQUIRE_STATIC_ISOLATION:-0}" = "1" ]; then
+        '--filter wework typecheck'|'--filter wework lint'|'--filter wework run lint:task-lifecycle')
+            if [ "$*" = "--filter wework typecheck" ] && [ "${PUSH_GATE_TEST_REQUIRE_STATIC_ISOLATION:-0}" = "1" ]; then
                 rm -f "$CALL_LOG.wework-typecheck-complete"
                 sleep 1
                 touch "$CALL_LOG.wework-typecheck-complete"
@@ -54,6 +60,8 @@ if [ "$(basename "$0")" = "pnpm" ]; then
                     exit 7
                 fi
             fi
+            sleep 0.2
+            printf 'completed pnpm %s\n' "$*" >> "$CALL_LOG"
             ;;
         '--filter wework exec vitest '*)
             if [ "${PUSH_GATE_TEST_REQUIRE_STATIC_ISOLATION:-0}" = "1" ] &&
@@ -119,6 +127,26 @@ export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-Wegent Push Gate Test}"
 export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-push-gate-test@localhost}"
 export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
 export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
+
+assert_renderer_tests_follow_static_checks() {
+    local test_line
+    local check
+    local completed_line
+    local lint_check='--filter wework run lint:task-lifecycle'
+    if grep -q '^pnpm --filter wework lint$' "$CALL_LOG"; then
+        lint_check='--filter wework lint'
+    fi
+    test_line=$(awk '/^pnpm --filter wework exec vitest / { print NR; exit }' "$CALL_LOG")
+    for check in '--filter wework typecheck' "$lint_check"; do
+        completed_line=$(awk -v event="completed pnpm $check" '$0 == event { print NR; exit }' "$CALL_LOG")
+        if [ -z "$completed_line" ] || [ -z "$test_line" ] ||
+            [ "$completed_line" -ge "$test_line" ]; then
+            echo "Expected Wework renderer tests to start after static checks complete: $check"
+            cat "$CALL_LOG"
+            exit 1
+        fi
+    done
+}
 
 # This historical range changes only backend Python files. It exercises the
 # Python module branch without pulling frontend or executor checks into the
@@ -280,14 +308,7 @@ if ! grep -qE 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST
     exit 1
 fi
 
-STATIC_CHECK_LINE=$(grep -n 'Running static checks before unit tests' "$WEWORK_TEST_OUT" | cut -d: -f1)
-UNIT_TEST_LINE=$(grep -n 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST_OUT" | cut -d: -f1)
-if [ -z "$STATIC_CHECK_LINE" ] || [ -z "$UNIT_TEST_LINE" ] ||
-    [ "$STATIC_CHECK_LINE" -ge "$UNIT_TEST_LINE" ]; then
-    echo "Expected Wework static checks to be reported before unit tests."
-    cat "$WEWORK_TEST_OUT"
-    exit 1
-fi
+assert_renderer_tests_follow_static_checks
 
 : > "$CALL_LOG"
 rm -f "$CALL_LOG.wework-typecheck-complete"
@@ -344,6 +365,8 @@ if ! grep -qE 'Running full renderer unit tests in 2 shards with 1 worker each' 
     cat "$WEWORK_FULL_TEST_OUT"
     exit 1
 fi
+
+assert_renderer_tests_follow_static_checks
 
 : > "$CALL_LOG"
 
@@ -525,6 +548,8 @@ if ! grep -qE '^pnpm --dir wework/electron test --maxWorkers 2$' "$CALL_LOG"; th
     cat "$CALL_LOG"
     exit 1
 fi
+
+assert_renderer_tests_follow_static_checks
 
 : > "$CALL_LOG"
 

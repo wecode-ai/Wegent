@@ -31,6 +31,13 @@ function createTransport(): {
 }
 
 describe("createSharedWorkspaceHttpApi", () => {
+  it.each(['renamed', null])('serializes atomic tag change target %s without losing null', target => {
+    expect(workspaceHttpRequestBody({
+      version: 2,
+      tagChange: { source: 'old', target },
+    })).toEqual({ version: 2, tag_change: { source: 'old', target } })
+  })
+
   it("loads devices without fetching the agent resource catalog", async () => {
     const { transport, get } = createTransport();
     get.mockResolvedValue({
@@ -83,6 +90,27 @@ describe("createSharedWorkspaceHttpApi", () => {
 
     expect(remove).toHaveBeenCalledWith(
       "/teams/12?force=true&confirm_name=review-agent",
+    );
+  });
+
+  it("invalidates the lightweight resource catalog after deleting an Agent", async () => {
+    const { transport, get } = createTransport();
+    get
+      .mockResolvedValueOnce({
+        agents: [{ id: 12, team_id: 12, name: "Review", status: "unchecked" }],
+      })
+      .mockResolvedValueOnce({ agents: [] });
+    const api = createSharedWorkspaceHttpApi(transport);
+    const resources = await api.resources.list();
+    await api.resources.list();
+    expect(get).toHaveBeenCalledOnce();
+
+    await api.resources.removeAgent?.(resources.agents[0]);
+
+    await expect(api.resources.list()).resolves.toMatchObject({ agents: [] });
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenLastCalledWith(
+      "/v1/resources?include_readiness=false",
     );
   });
 
@@ -211,6 +239,7 @@ describe("createSharedWorkspaceHttpApi", () => {
     await expect(api.resources.list()).resolves.toMatchObject({
       execution_environments: [{ device_id: 22, owner_type: "user" }],
     });
+    expect(get).toHaveBeenCalledWith("/v1/resources?include_readiness=false");
     await expect(
       api.workspaces.addMember("workspace/1", { userId: 8 }),
     ).resolves.toMatchObject({ user_id: 8, user_name: "王芳" });
@@ -370,6 +399,19 @@ describe("createSharedWorkspaceHttpApi", () => {
         weworkCloudModelNamespace: "default",
         weworkCloudModelResourceUserId: "0",
       },
+    });
+  });
+
+  it("keeps board view documents opaque while converting their request field", () => {
+    const boardViews = {
+      schema_version: 1,
+      views: [],
+      futureField: { keepCase: true },
+      sorts: { "Lane-ABC": ["created-asc"] },
+    };
+    expect(workspaceHttpRequestBody({ boardViews, version: 2 })).toEqual({
+      board_views: boardViews,
+      version: 2,
     });
   });
 

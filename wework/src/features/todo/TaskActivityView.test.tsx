@@ -317,7 +317,11 @@ describe('TaskActivityView', () => {
         bottom: 400,
         height: 400,
       } as DOMRect)
-      const project = { id: '11', name: 'Wework', location } as never
+      const project = {
+        id: '11',
+        name: 'Wework',
+        project_store: location === 'local' ? 'local' : 'backend',
+      } as never
       const task = {
         id: 'WEG-1',
         title: 'Inspect changes',
@@ -786,7 +790,7 @@ describe('TaskActivityView', () => {
           {
             id: '11',
             name: 'Wework',
-            location: 'local',
+            project_store: 'local',
           } as never
         }
         task={
@@ -2133,7 +2137,7 @@ describe('TaskActivityView', () => {
         <TaskActivityView
           client={humanAssignmentClient(messages)}
           currentUserId={1}
-          project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+          project={{ id: '11', name: 'Cloud', project_store: 'backend' } as never}
           task={{ id: 'WEG-1', title: 'CPU', status: 'in_progress', version: 1 } as never}
           issueTimeline
           linear
@@ -2183,7 +2187,13 @@ describe('TaskActivityView', () => {
         <TaskActivityView
           client={client}
           currentUserId={1}
-          project={{ id: '11', name: 'Wework', location } as never}
+          project={
+            {
+              id: '11',
+              name: 'Wework',
+              project_store: location === 'local' ? 'local' : 'backend',
+            } as never
+          }
           task={
             {
               id: 'WEG-1',
@@ -2265,7 +2275,7 @@ describe('TaskActivityView', () => {
         <TaskActivityView
           client={client}
           currentUserId={1}
-          project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+          project={{ id: '11', name: 'Cloud', project_store: 'backend' } as never}
           task={{ id: 'WEG-1', title: 'CPU', status: 'in_progress', version: 1 } as never}
           issueTimeline
           linear
@@ -2362,7 +2372,7 @@ describe('TaskActivityView', () => {
           <TaskActivityView
             client={client}
             currentUserId={1}
-            project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+            project={{ id: '11', name: 'Cloud', project_store: 'backend' } as never}
             task={{ id: 'WEG-1', title: 'Image comment', status: 'inbox', version: 1 } as never}
             issueTimeline
             linear
@@ -2437,7 +2447,7 @@ describe('TaskActivityView', () => {
         <TaskActivityView
           client={client}
           currentUserId={1}
-          project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+          project={{ id: '11', name: 'Cloud', project_store: 'backend' } as never}
           task={{ id: 'WEG-1', title: 'Image comment', status: 'inbox', version: 1 } as never}
           issueTimeline
           linear
@@ -2527,7 +2537,7 @@ describe('TaskActivityView', () => {
         <TaskActivityView
           client={client}
           currentUserId={1}
-          project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+          project={{ id: '11', name: 'Cloud', project_store: 'backend' } as never}
           task={{ id: 'WEG-1', title: 'Image comment', status: 'inbox', version: 1 } as never}
           issueTimeline
           linear
@@ -2600,7 +2610,7 @@ describe('TaskActivityView', () => {
         <TaskActivityView
           client={client}
           currentUserId={1}
-          project={{ id: '11', name: 'Local', location: 'local' } as never}
+          project={{ id: '11', name: 'Local', project_store: 'local' } as never}
           task={
             {
               id: 'WEG-1',
@@ -3534,7 +3544,7 @@ describe('TaskActivityView', () => {
     render(
       <TaskActivityView
         currentUserId={1}
-        project={{ id: '11', name: 'Wework', location: 'local' } as never}
+        project={{ id: '11', name: 'Wework', project_store: 'local' } as never}
         task={
           {
             ...completedTask,
@@ -5103,7 +5113,7 @@ it('starts a cloud issue comment through the project service when the assigned a
     <TaskActivityView
       client={client}
       currentUserId={2}
-      project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+      project={{ id: '11', name: 'Cloud', project_store: 'backend' } as never}
       task={
         {
           id: 'WEG-1',

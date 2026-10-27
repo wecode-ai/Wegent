@@ -753,6 +753,22 @@ describe("ProjectAgentConfiguration", () => {
     );
   });
 
+  it("offers owned catalog Agents without requiring a global execution preflight", async () => {
+    const { api } = createApi({
+      agents: [],
+      workspaceAgents: [],
+      resourceAgents: [
+        { ...workspaceAgent, owner_type: "user", status: "unchecked" },
+      ],
+    });
+    await render(api);
+    await click("project-agent-add");
+
+    expect(element("project-agent-wegent-team").textContent).toContain(
+      workspaceAgent.name,
+    );
+  });
+
   it("shows configured Skill and MCP counts for executable Agents", async () => {
     const { api } = createApi({
       agents: [

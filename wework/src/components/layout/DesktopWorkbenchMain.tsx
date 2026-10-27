@@ -3074,6 +3074,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       attachments: paneSession.attachments,
       uploadingFiles: paneSession.uploadingFiles,
       errors: paneSession.attachmentErrors,
+      dismissAttachmentError: paneSession.dismissAttachmentError,
       handleFileSelect: paneSession.handleFileSelect,
       removeAttachment: paneSession.removeAttachment,
       modelSelectorOpenSignal,
@@ -3096,6 +3097,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [
       modelSelectorOpenSignal,
       paneSession.attachmentErrors,
+      paneSession.dismissAttachmentError,
       paneSession.attachments,
       paneSession.handleFileSelect,
       paneSession.removeAttachment,
@@ -5925,9 +5927,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   <WorkItemContextPanel
                     key={`${boundCloudProject.id}:${boundCloudItem.id}:${boundCloudItem.version}:${currentProjectSpaceRuntimeTask.deviceId}:${currentProjectSpaceRuntimeTask.taskId}`}
                     api={boundProjectSpaceApi}
+                    services={services}
                     project={boundCloudProject}
                     item={boundCloudItem}
                     currentTask={currentProjectSpaceRuntimeTask}
+                    currentUserId={state.user?.id}
+                    localProjects={state.projects}
                     deviceNamesById={getWorkbenchDeviceNamesById(state.devices)}
                     onOpenBoard={openBoundProjectSpaceTask}
                     onOpenTask={openRuntimeTask}

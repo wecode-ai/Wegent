@@ -13,17 +13,29 @@ function addDays(value, days) {
   return next
 }
 
-export function scheduleStartDate(now = new Date()) {
-  const today = new Date(now)
-  today.setHours(12, 0, 0, 0)
-  const monday = addDays(today, -((today.getDay() + 6) % 7))
-  const first = new Date(today.getFullYear(), today.getMonth(), 1, 12)
-  const leadingDays = (first.getDay() + 6) % 7
-  const calendarEnd = addDays(first, 41 - leadingDays)
-  // Keep the complete seven-day drag inside the month grid and the Gantt window.
-  return [7, 0, -7]
-    .map(offset => addDays(monday, offset))
-    .find(start => addDays(start, 9) <= calendarEnd)
+export function collaborationScheduleDates(today = new Date()) {
+  const anchor = new Date(today)
+  anchor.setHours(12, 0, 0, 0)
+  const firstOfMonth = new Date(anchor.getFullYear(), anchor.getMonth(), 1, 12)
+  const gridEnd = addDays(firstOfMonth, 41 - ((firstOfMonth.getDay() + 6) % 7))
+  const currentMonday = addDays(anchor, -((anchor.getDay() + 6) % 7))
+  // Keep both calendar ranges visible; Gantt starts at the current week.
+  const initialStart = addDays(currentMonday, addDays(currentMonday, 9) > gridEnd ? -7 : 0)
+  const initialEnd = addDays(initialStart, 2)
+  const calendarStart = addDays(initialStart, 7)
+  const calendarEnd = addDays(calendarStart, 2)
+  const resizedEnd = addDays(calendarEnd, 1)
+  return Object.fromEntries(
+    Object.entries({
+      initialStart,
+      initialEnd,
+      calendarStart,
+      calendarEnd,
+      resizedEnd,
+      movedStart: calendarEnd,
+      movedEnd: addDays(resizedEnd, 2),
+    }).map(([key, value]) => [key, dateKey(value)])
+  )
 }
 
 async function waitForAttributeIncludes(
@@ -54,24 +66,7 @@ export async function verifyCollaborationScheduleViews({
   await control.command('setMainWindowSize', 'body', {
     value: JSON.stringify({ width: 1440, height: 900 }),
   })
-  const initialStart = scheduleStartDate()
-  const initialEnd = addDays(initialStart, 2)
-  const calendarStart = addDays(initialStart, 7)
-  const calendarEnd = addDays(calendarStart, 2)
-  const resizedEnd = addDays(calendarEnd, 1)
-  const movedStart = calendarEnd
-  const movedEnd = addDays(resizedEnd, 2)
-  const keys = Object.fromEntries(
-    Object.entries({
-      initialStart,
-      initialEnd,
-      calendarStart,
-      calendarEnd,
-      resizedEnd,
-      movedStart,
-      movedEnd,
-    }).map(([key, value]) => [key, dateKey(value)])
-  )
+  const keys = collaborationScheduleDates()
 
   await control.command('click', scoped('[aria-label="时间范围"]'))
   await control.command('waitFor', '[data-testid="cloud-todo-detail-start-date"]', {
@@ -103,7 +98,10 @@ export async function verifyCollaborationScheduleViews({
     timeoutMs,
   })
   const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
-  // Future schedule dates can fall outside the current month's six-week grid.
+  await control.command('waitFor', scoped('[data-testid^="collaboration-calendar-day-"]'), {
+    visible: true,
+    timeoutMs,
+  })
   if (Number(await control.command('getElementCount', calendarTarget)) === 0) {
     await control.command('click', scoped('[data-testid="collaboration-schedule-next"]'))
   }

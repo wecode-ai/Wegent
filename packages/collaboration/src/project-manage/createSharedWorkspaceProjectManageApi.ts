@@ -13,7 +13,7 @@ import type { ProjectManageApi } from './types'
 
 export interface SharedProjectManageWorkspaceApi {
   projects: Pick<SharedWorkspaceApi['projects'], 'get' | 'update'>
-  issues: Pick<SharedWorkspaceApi['issues'], 'getBoardSnapshot' | 'update'>
+  issues: Pick<SharedWorkspaceApi['issues'], 'getBoardSnapshot'>
   members: SharedWorkspaceApi['members']
 }
 
@@ -43,14 +43,10 @@ export function createSharedWorkspaceProjectManageApi(
         capabilityDescription: values.capability_description,
       }),
     removeMember: (projectId, userId) => api.members.remove(projectId, userId),
-    updateItem: (itemId, values) =>
-      api.issues.update(itemId, {
-        version: values.version,
-        tags: values.tags,
-      }),
     updateProject: (projectId, values) =>
       api.projects.update(projectId, {
         version: values.version,
+        tagChange: values.tag_change,
         tags: values.tags,
         visibility: values.visibility,
         publicAccess: values.public_access,
@@ -58,6 +54,7 @@ export function createSharedWorkspaceProjectManageApi(
         defaultIssueSecurity: values.default_issue_security,
         providerConfig: values.provider_config,
         boardConfig: values.board_config,
+        boardViews: values.board_views,
         cardDisplay: values.card_display,
       }),
   }

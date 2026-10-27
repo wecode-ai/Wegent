@@ -956,6 +956,37 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
   })
 
+  test('settles a completed Goal before stale running history can recover its final turn', () => {
+    const store = new RuntimeTaskLifecycleStore('goal-completion-before-turn')
+    const runningWork = runtimeWork(
+      task({ running: true, goalStatus: 'active', goalExecutionStatus: 'running' })
+    )
+    store.syncRuntimeWork(runningWork)
+    store.turnStarted(address, 'goal-turn')
+    store.goalStatusReceived(address, 'complete')
+
+    store.turnSettled(address, 'goal-turn', 'succeeded')
+
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+    store.syncRuntimeWork(runningWork)
+    store.syncTranscript(
+      address,
+      transcript({
+        running: true,
+        turns: [{ id: 'goal-turn', items: [], status: 'streaming' }],
+      })
+    )
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+    expect(store.getTask(address)?.derived.canSend).toBe(true)
+
+    store.sendRequested(address)
+    store.sendAccepted(address)
+    store.turnStarted(address, 'continuation-turn')
+    store.goalStatusReceived(address, 'complete')
+    expect(store.getTask(address)?.derived.isBusy).toBe(true)
+    expect(store.getTask(address)?.turn.id).toBe('continuation-turn')
+  })
+
   test('settles a live turn when its active Goal is explicitly paused', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
@@ -1980,6 +2011,56 @@ describe('RuntimeTaskLifecycleStore', () => {
     const snapshot = store.getTask(address)
     expect(snapshot?.execution.phase).toBe('idle')
     expect(snapshot?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
+  test('keeps a stopped Goal idle when history still contains a streaming turn', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const stoppedTask = task({
+      running: false,
+      goalStatus: 'active',
+      goalExecutionStatus: 'needsAttention',
+      status: 'failed',
+      completedAt: 1_786_676_400_000,
+    })
+    store.syncRuntimeWork(runtimeWork(stoppedTask))
+
+    store.syncTranscript(
+      address,
+      transcript({
+        running: true,
+        turns: [{ id: 'stopped-turn', status: 'streaming', items: [] }],
+      })
+    )
+
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(store.getTask(address)?.derived.isThinking).toBe(false)
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'running',
+          goalStatus: 'active',
+          goalExecutionStatus: 'running',
+          completedAt: null,
+        })
+      )
+    )
+    store.turnStarted(address, 'resumed-turn')
+    expect(store.getTask(address)?.derived.isRunning).toBe(true)
+    expect(store.getTask(address)?.turn.id).toBe('resumed-turn')
+    store.syncTranscript(
+      address,
+      transcript({
+        running: true,
+        turns: [{ id: 'stopped-turn', status: 'streaming', items: [] }],
+      })
+    )
+    expect(store.getTask(address)?.turn.id).toBe('resumed-turn')
+    store.turnSettled(address, 'resumed-turn', 'succeeded')
+    expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
   })
 
   test('preserves a known Goal status when a later executor snapshot omits it', () => {

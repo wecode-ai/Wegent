@@ -297,12 +297,13 @@ test('settings skip the board snapshot, retry the real candidate catalog, and re
     await page.getByTestId('project-agent-candidates-retry').click()
     const catalogResponse = await recovered
     expect(catalogResponse.ok()).toBe(true)
+    expect(new URL(catalogResponse.url()).searchParams.get('include_readiness')).toBe('false')
     expect((await catalogResponse.json()).agents).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           team_id: candidate.id,
           name: candidate.name,
-          status: 'available',
+          status: 'unchecked',
         }),
       ])
     )

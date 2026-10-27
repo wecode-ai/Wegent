@@ -11,6 +11,10 @@ import { assertConversationTextOrder } from './conversation-navigation.mjs'
 
 import { ensureTaskRowVisible } from './memory-tool-flows.mjs'
 import { findRuntimeWorkTask, waitForForkTaskRow } from './runtime-task-evidence.mjs'
+import {
+  verifyActiveConversationSurvivesCollapse,
+  verifyCollapseReadConversations,
+} from './read-conversation-flows.mjs'
 
 import {
   ACTIVE_WORKBENCH_SELECTOR,
@@ -65,7 +69,7 @@ import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './wor
 
 const PRIORITY_FILTER_SHORTCUT = process.platform === 'win32' ? 'Control+Alt+U' : 'Meta+Alt+U'
 
-async function verifyPriorityFilter({ composerSelector, control }) {
+async function verifyPriorityFilter({ composerSelector, control, projectRowSelector }) {
   let requestInputResponseReleased = false
   control.setScenario('request_user_input')
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -116,6 +120,11 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     await control.command('press', 'body', { key: 'Escape' })
     await captureVerificationScreenshot(control, 'priority-filter-01-background-task.png')
 
+    await verifyActiveConversationSurvivesCollapse({
+      control,
+      taskId: requestInputTaskId,
+      state: 'running',
+    })
     await control.command('click', '[data-testid="runtime-task-view-menu-button"]')
     await control.command('click', '[data-testid="runtime-task-view-priority"]')
     await control.command('waitFor', '[data-testid="runtime-priority-section"]', {
@@ -154,6 +163,23 @@ async function verifyPriorityFilter({ composerSelector, control }) {
       'Timed out releasing the priority-filter request-user-input response'
     )
     requestInputResponseReleased = true
+    await control.command('click', `[data-testid="${requestInputTaskRowTestId}"]`)
+    await control.command('waitFor', '[data-testid="request-user-input-card"]', {
+      text: REQUEST_USER_INPUT_QUESTION,
+      visible: true,
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', composerSelector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+    await verifyActiveConversationSurvivesCollapse({
+      control,
+      taskId: requestInputTaskId,
+      state: 'waiting',
+    })
+    await control.command('click', '[data-testid="runtime-task-view-menu-button"]')
+    await control.command('click', '[data-testid="runtime-task-view-priority"]')
+    await control.command('waitFor', '[data-testid="runtime-priority-section"]')
     await control.command('click', `[data-testid="${requestInputTaskRowTestId}"]`)
     await control.command('waitFor', '[data-testid="request-user-input-card"]', {
       text: REQUEST_USER_INPUT_QUESTION,
@@ -216,6 +242,14 @@ async function verifyPriorityFilter({ composerSelector, control }) {
       'The priority shortcut did not restore the regular sidebar'
     )
     await captureVerificationScreenshot(control, 'priority-filter-05-shortcut-restored-sidebar.png')
+    await verifyCollapseReadConversations({
+      composerSelector,
+      control,
+      expandGroupSelector: projectRowSelector
+        ? `${projectRowSelector} [data-testid="project-item-button"]`
+        : '[data-testid="runtime-chat-section-toggle"]',
+      taskId: requestInputTaskId,
+    })
   } finally {
     if (!requestInputResponseReleased) {
       try {

@@ -20,13 +20,16 @@ use crate::{config::device::DeviceConfig, protocol::ExecutionRequest};
 
 use super::personal_marketplace_lock::acquire_personal_marketplace_lock;
 
+mod activation_revision;
 mod manifest_migration;
+mod plugin_skills;
 mod plugin_sync_protocol;
 mod runtime_recovery;
 mod runtime_skill_config;
 mod shared_packages;
 mod support;
 
+use plugin_skills::scan_plugin_skills;
 pub use runtime_recovery::PluginRuntimeRecoveryReport;
 use support::*;
 
@@ -888,6 +891,7 @@ impl GlobalCapabilityStore {
         &self,
         spec: &PluginSyncSpec,
         store_path: &Path,
+        previous_states: &Value,
     ) -> Result<(), CapabilitySyncError> {
         let marketplace_dir = self.codex_marketplace_dir(&spec.marketplace);
         let marketplace_link = marketplace_dir
@@ -939,6 +943,12 @@ impl GlobalCapabilityStore {
             value(marketplace_dir.display().to_string());
         document["plugins"][&spec.key]["enabled"] = value(spec.enabled);
         runtime_skill_config::relocate_plugin_skill_config(&mut document, spec, store_path)?;
+        runtime_skill_config::apply_plugin_skill_states(
+            &mut document,
+            spec,
+            store_path,
+            previous_states,
+        )?;
         let next_content = document.to_string();
         if next_content != content {
             replace_codex_config(&config_path, &next_content)?;
@@ -1322,7 +1332,6 @@ where
         let _sync_guard = self.sync_lock.lock().await;
         let _activation = crate::services::capability_activation::activate().await;
         let queued_ms = started.elapsed().as_millis();
-        let _changed = shared_packages::ActivationRevision;
         let _publication_lock = self.store.lock_shared_manifest()?;
         let plugins_only = payload.get("scope").and_then(Value::as_str) == Some("plugins");
         if plugins_only
@@ -1347,6 +1356,11 @@ where
             .into_iter()
             .map(|value| PluginSyncSpec::from_value(&value))
             .collect::<Result<Vec<_>, _>>()?;
+        let mut activation = activation_revision::ActivationRevision::begin(
+            &self.store,
+            &plugin_specs,
+            &skill_specs,
+        )?;
         let mut manifest = {
             let _binding = self.plugin_sync_binding.lock_active()?;
             if plugin_specs.is_empty() || self.store.shared_packages {
@@ -1393,17 +1407,26 @@ where
             .iter()
             .chain(plugin_results.iter())
             .all(|result| result.get("status").and_then(Value::as_str) != Some("failed"));
+        drop(_binding);
+        let changes = activation.finish_with_skill_reload().await?;
         crate::logging::log_executor_event(
             "capability_sync_completed",
             &[
                 ("queue_ms", queued_ms.to_string()),
                 ("total_ms", started.elapsed().as_millis().to_string()),
                 ("plugin_count", plugin_specs.len().to_string()),
+                ("changed", changes.changed.to_string()),
+                ("requires_restart", changes.requires_restart.to_string()),
+                ("detection_ms", changes.detection_ms.to_string()),
+                ("changed_plugins", changes.plugins.join(",")),
+                ("changed_skills", changes.skills.join(",")),
             ],
         );
 
         Ok(json!({
             "success": success,
+            "changed": changes.changed,
+            "requires_restart": changes.requires_restart,
             "scope": if plugins_only { "plugins" } else { "all" },
             "skills": skill_results,
             "plugins": plugin_results,

@@ -82,6 +82,9 @@ export interface CollaborationProject {
   task_provider: string;
   provider_config: Record<string, unknown>;
   execution_environment?: CollaborationExecutionEnvironmentConfig;
+  board_views?:
+    | import("./project-board/projectBoardViews").ProjectBoardViews
+    | null;
   board_config?: {
     group_by: "status" | "priority" | "assignee" | "tag";
     processing_start_status_id: string | null;
@@ -279,7 +282,8 @@ export interface CollaborationOwnedAgent extends CollaborationAgent {
   owner_type: "user" | "workspace";
   owner_id: string;
   owner_name: string;
-  status: "available" | "unavailable";
+  /** Catalog reads do not promise execution readiness; launch revalidates it. */
+  status: "available" | "unavailable" | "unchecked";
   execution_environment_ids: string[];
   project_binding_input?: Record<string, unknown>;
 }

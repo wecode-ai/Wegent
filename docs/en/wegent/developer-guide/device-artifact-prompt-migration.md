@@ -2,7 +2,7 @@
 sidebar_position: 39
 ---
 
-# Device artifact rules: withdrawn data migration and retained revision history
+# Device artifact instructions: withdrawn migration and revision compatibility
 
 The automatic prompt update for the public `Ghost/default/wegent-wework` is withdrawn. Artifact delivery does not require rewriting production Ghost configuration or restoring administrator settings through a migration.
 
@@ -25,32 +25,31 @@ A resumed execution may refresh its credentials through a new verified native bi
 
 Upgrade Backend and executors together. Older declarations without a binding fail explicitly and must be regenerated and declared in a new upgraded execution turn. Their stored root is never accepted as authorization, and no data migration backfills bindings.
 
-## Why retain a no-op revision
+## No migration revision retained
 
-An earlier PR version published `a9c4e7b2d610`. Local or test databases may already have executed it or been stamped to it during fresh initialization. Deleting that revision would cause `Can't locate revision identified by 'a9c4e7b2d610'` in those environments.
+This feature removes `a9c4e7b2d610`, including its no-op replacement. The migration chain currently ends at `f3a7c9e1b2d4`; the feature adds no Alembic node and does not automatically update version records.
 
-Keep the revision ID and predecessor `f3a7c9e1b2d4`, but make both `upgrade()` and `downgrade()` no-ops. Neither obtains a connection, reads or writes application tables, nor executes DDL. Crossing the node only updates Alembic's version tracking. The original automatic data migration is not retained.
+| Existing state                          | Behavior after updating the code                                                                                                   |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| At the predecessor revision             | The existing version remains recognizable; legacy Ghosts are unchanged.                                                            |
+| Already recorded at `a9c4e7b2d610`      | Alembic explicitly rejects the missing revision; deployment requires a separate compatibility plan first.                          |
+| An earlier migration changed the prompt | Business configuration is not automatically restored. Version compatibility and configuration restoration are separate operations. |
+| An administrator customized the Ghost   | Configuration remains unchanged.                                                                                                   |
 
-| Existing state | Behavior after this update |
-| --- | --- |
-| Still on the predecessor | Crossing the no-op node advances version tracking without changing the legacy Ghost. |
-| Already recorded at `a9c4e7b2d610` | History remains resolvable; no stamp, reset, or version-record deletion is required. |
-| Prompt changed by an earlier migration | The current prompt is preserved, not automatically reversed or restored. |
-| Administrator-customized Ghost | Configuration remains unchanged. |
+## Deployment boundary for environments at the withdrawn version
 
-## Inspection and rollback boundaries
-
-The environment owner can inspect revisions using an approved connection. Never put credentials in commands or logs:
+The environment owner must first inspect its version and migration implementation using the currently deployed code that still recognizes the revision and an approved connection. Never put connection passwords in commands or logs:
 
 ```bash
 cd backend
 uv run alembic current
 uv run alembic heads
-uv run alembic history -r f3a7c9e1b2d4:a9c4e7b2d610
 ```
 
-These commands inspect revision state; they do not replace prompts. This code fix does not connect to or modify production and does not require a production upgrade, downgrade, or stamp.
+If the environment records `a9c4e7b2d610`, do not deploy code that deletes the node and then run migrations. Plan and approve its version compatibility steps first. Commit `aaa7da6f973605fbd6913fcddf5f41270ca57725` contains the no-op implementation. **Only after verifying that the code in use contains that no-op implementation** does downgrading to `f3a7c9e1b2d4` change version tracking alone, without modifying Ghosts. The earlier automatic data migration does not have this rollback boundary; do not execute its downgrade directly.
 
-Before reverting to older code that lacks this revision, plan version compatibility separately. Do not delete `alembic_version` or blindly stamp head. The retained no-op downgrade only changes version tracking; **it does not undo prompts changed by earlier PR code**. Restoring business configuration requires separate approval and comparison with a controlled backup.
+This PR performs none of those environment operations and adds no automatic stamping, revision remapping, or configuration replacement. Do not delete the version table or blindly `stamp head`. This repair does not connect to or modify production databases.
 
-Isolated database regressions cover upgrades and downgrades from the predecessor and already-recorded revision, preserving legacy, migrated, customized, and fresh configuration. Web E2E uses a legacy Ghost prompt with Claude Code and Codex to verify runtime instructions, real declarations, immediate cards, and downloads without modifying public built-in resources.
+Neither deleting the revision nor resolving version compatibility restores Ghosts changed by the earlier migration. Restoring business configuration requires separate authorization and a controlled, individually verified backup.
+
+Regression tests use connection-local temporary tables to cover the recognizable predecessor, explicit rejection of an already-recorded withdrawn revision without altering its version record, and preservation of legacy, previously migrated, customized, and fresh prompts. Web E2E verifies runtime injection, real declaration, immediate cards, and downloads with legacy Ghost instructions for Claude Code and Codex without rewriting public built-in resources.

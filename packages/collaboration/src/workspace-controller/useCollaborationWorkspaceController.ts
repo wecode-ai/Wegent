@@ -128,6 +128,7 @@ export interface CollaborationWorkspaceControllerCommands {
   updateIssue(
     issueId: string,
     input: WorkspaceIssueUpdateInput,
+    /** The caller owns error presentation when true; position conflicts still reload. */
     options?: { throwOnError?: boolean },
   ): Promise<CollaborationIssue | null>;
   assignIssue(
@@ -1408,7 +1409,9 @@ export function createCollaborationWorkspaceControllerCommands({
         });
         return issue;
       } catch (error) {
-        if (!input.position || !(await reportPositionConflict(issueId, error)))
+        const conflictReported =
+          input.position && (await reportPositionConflict(issueId, error));
+        if (!conflictReported && !options?.throwOnError)
           reportError(messages.saveFailed);
         if (options?.throwOnError) throw error;
         return null;

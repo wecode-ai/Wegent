@@ -13,6 +13,7 @@ test('terminal native input runs alone before ordinary checkpoints regain parall
     checkpoints,
     workerCount: 3,
     resourceFor: () => [],
+    exclusiveFor: checkpoint => checkpoint === 'background-terminals',
     run: checkpoint =>
       new Promise(resolve => {
         started.push(checkpoint)
@@ -50,7 +51,7 @@ test('multiple exclusive checkpoints never overlap with each other or shared res
   assert.deepEqual(completed, ['exclusive-a', 'exclusive-b', 'ordinary-a', 'ordinary-b'])
 })
 
-test('exclusive checkpoint failures propagate without retaining the runner lease', async () => {
+test('exclusive checkpoint failures propagate before ordinary work starts', async () => {
   const completed = []
   const failure = new Error('Native keyboard verification failed')
   await assert.rejects(
@@ -58,6 +59,7 @@ test('exclusive checkpoint failures propagate without retaining the runner lease
       checkpoints: ['background-terminals', 'ordinary'],
       workerCount: 2,
       resourceFor: () => [],
+      exclusiveFor: checkpoint => checkpoint === 'background-terminals',
       run: async checkpoint => {
         if (checkpoint === 'background-terminals') throw failure
         completed.push(checkpoint)
@@ -66,5 +68,12 @@ test('exclusive checkpoint failures propagate without retaining the runner lease
     error => error === failure
   )
   await tick()
+  assert.deepEqual(completed, [])
+  await runWithCheckpointResources({
+    checkpoints: ['ordinary'],
+    workerCount: 1,
+    resourceFor: () => [],
+    run: async checkpoint => completed.push(checkpoint),
+  })
   assert.deepEqual(completed, ['ordinary'])
 })

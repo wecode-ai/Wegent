@@ -98,17 +98,15 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   )
   await access(join(oldRoot, 'skills', retiredSkill, 'SKILL.md'))
   setPhase('plugin-parallel-installs-are-targeted')
-  const parallelFixtures = []
-  // Prepare catalog rows serially; the installs below exercise concurrent device sync.
-  for (const suffix of ['alpha', 'beta']) {
-    parallelFixtures.push(
-      await env.publishPluginRelease({
+  const parallelFixtures = await Promise.all(
+    ['alpha', 'beta'].map(suffix =>
+      env.publishPluginRelease({
         slug: `${pluginKey}-${suffix}`,
         version: oldVersion,
         skills: { [sharedSkill]: `Parallel install ${suffix}` },
       })
     )
-  }
+  )
   const parallelInstalls = await Promise.all(
     parallelFixtures.map(fixture =>
       request(`/plugins/marketplace/${fixture.pluginId}/install?device_id=${deviceId}`, 'POST')
