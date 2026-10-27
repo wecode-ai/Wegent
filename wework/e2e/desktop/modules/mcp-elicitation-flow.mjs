@@ -1,5 +1,6 @@
 import {
-  MCP_ELICITATION_TIMEOUT_MS,
+  MCP_URL_TIMEOUT_MS,
+  MCP_FORM_TIMEOUT_MS,
   readElicitationEvidence,
   readPendingElicitation,
   readMatchingElicitation,
@@ -70,7 +71,11 @@ async function verifyMcpElicitationInFullAccess(control) {
     assert.ok(formText.includes(expectedText), `The MCP elicitation form omitted ${expectedText}`)
   }
   const countdown = await control.command('getText', '[data-testid="request-user-input-deadline"]')
-  assert.match(countdown, /0:0[0-5]/, 'A new MCP form must use the configured five-second deadline')
+  assert.match(
+    countdown,
+    /0:(?:0\d|1[0-5])/,
+    'A new MCP form must use the configured fifteen-second deadline'
+  )
   const formSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
     formSnapshot.testIds.includes('request-user-input-option-__codex_approval-0'),
@@ -352,8 +357,8 @@ async function assertExpiredElicitation(control, taskId, original, round) {
 }
 
 async function verifyElicitationTimeout(control, taskId, evidencePath, scenario, round) {
-  const durationMs = MCP_ELICITATION_TIMEOUT_MS
   const isUrl = scenario === 'url_timeout'
+  const durationMs = isUrl ? MCP_URL_TIMEOUT_MS : MCP_FORM_TIMEOUT_MS
   await sendPromptUntilScenarioRequest(
     control,
     ACTIVE_COMPOSER_SELECTOR,
@@ -370,7 +375,7 @@ async function verifyElicitationTimeout(control, taskId, evidencePath, scenario,
   assert.ok(remainingSeconds > 0 && remainingSeconds <= durationMs / 1000)
   assert.match(
     await control.command('getText', '[data-testid="request-user-input-deadline"]'),
-    /0:0[0-5]/
+    isUrl ? /0:0[0-5]/ : /0:(?:0\d|1[0-5])/
   )
   assert.equal(original.interactionKind === 'mcp_url', isUrl)
   const requests = (await readElicitationEvidence(evidencePath)).filter(

@@ -18,12 +18,12 @@ fn now_ms() -> u64 {
 }
 
 pub(super) fn timeout_for(params: &Value) -> Duration {
-    configured_timeout(
-        params,
-        std::env::var("WEGENT_CODEX_MCP_ELICITATION_TIMEOUT_MS")
-            .ok()
-            .as_deref(),
-    )
+    let variable = if params["mode"] == "url" {
+        "WEGENT_CODEX_MCP_URL_TIMEOUT_MS"
+    } else {
+        "WEGENT_CODEX_MCP_FORM_TIMEOUT_MS"
+    };
+    configured_timeout(params, std::env::var(variable).ok().as_deref())
 }
 
 fn configured_timeout(params: &Value, override_ms: Option<&str>) -> Duration {
@@ -143,12 +143,14 @@ mod tests {
             assert_eq!(configured_timeout(&url, invalid), Duration::from_secs(600));
             assert_eq!(configured_timeout(&form, invalid), Duration::from_secs(300));
         }
-        for params in [url, form] {
-            assert_eq!(
-                configured_timeout(&params, Some("5000")),
-                Duration::from_secs(5)
-            );
-        }
+        assert_eq!(
+            configured_timeout(&url, Some("5000")),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            configured_timeout(&form, Some("15000")),
+            Duration::from_secs(15)
+        );
         assert_eq!(
             configured_timeout(&json!({}), Some("5000")),
             Duration::from_secs(300)
