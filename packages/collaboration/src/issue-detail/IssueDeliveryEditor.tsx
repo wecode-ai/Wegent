@@ -9,7 +9,7 @@ import { deliveryMessages } from './deliveryMessages'
 type DeliveryPort = SharedIssueDetailPort['deliveries']
 
 export function IssueDeliveryEditor({
-  delivery,
+  delivery: initialDelivery,
   issueTitle,
   api,
   translate: t,
@@ -23,6 +23,8 @@ export function IssueDeliveryEditor({
   onCancel(): void
   onSaved(delivery: SharedIssueDetailDeliveryDetail): void
 }) {
+  // Parent refreshes must not advance the baseline of an unsaved edit.
+  const [delivery] = useState(initialDelivery)
   const [title, setTitle] = useState(delivery.title || issueTitle)
   const [markdown, setMarkdown] = useState(delivery.markdown)
   const [messages, setMessages] = useState<unknown[]>(() =>

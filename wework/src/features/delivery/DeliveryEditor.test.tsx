@@ -50,9 +50,9 @@ function setup(
   }
   const onSaved = vi.fn()
   const onCancel = vi.fn()
-  render(
+  const editor = (current: SharedIssueDetailDeliveryDetail) => (
     <IssueDeliveryEditor
-      delivery={delivery}
+      delivery={current}
       issueTitle="Issue title"
       api={api}
       translate={createCollaborationTranslator('zh-CN')}
@@ -60,7 +60,14 @@ function setup(
       onCancel={onCancel}
     />
   )
-  return { api, onSaved, onCancel, user: userEvent.setup() }
+  const view = render(editor(delivery))
+  return {
+    api,
+    onSaved,
+    onCancel,
+    user: userEvent.setup(),
+    refresh: (current: SharedIssueDetailDeliveryDetail) => view.rerender(editor(current)),
+  }
 }
 
 describe('delivered artifact editing', () => {
@@ -109,6 +116,30 @@ describe('delivered artifact editing', () => {
     await user.click(screen.getByTestId('delivery-edit-reload'))
     await waitFor(() => expect(api.get).toHaveBeenCalledWith(delivery.id))
     expect(onSaved).toHaveBeenCalledWith(delivery)
+  })
+
+  it('keeps the edit baseline when a late save refreshes the selected delivery', async () => {
+    const { api, onSaved, refresh, user } = setup(
+      vi.fn().mockRejectedValue(Object.assign(new Error('conflict'), { status: 409 }))
+    )
+    fireEvent.change(screen.getByTestId('delivery-edit-notes'), {
+      target: { value: 'Unsaved draft' },
+    })
+    refresh({ ...delivery, version: 4, assets: [], markdown: 'New server notes' })
+    await user.click(screen.getByTestId('delivery-edit-save'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('交付物已被更新')
+    expect(api.update).toHaveBeenCalledWith(
+      delivery.id,
+      expect.objectContaining({
+        version: 3,
+        markdown: 'Unsaved draft',
+        retained_asset_ids: ['asset-1'],
+      })
+    )
+    expect(screen.getByTestId('delivery-edit-asset-asset-1')).toBeChecked()
+    expect(screen.getByTestId('delivery-edit-notes')).toHaveValue('Unsaved draft')
+    expect(onSaved).not.toHaveBeenCalled()
   })
 
   it('keeps existing chat when the source is unavailable and cancels without writing', async () => {
