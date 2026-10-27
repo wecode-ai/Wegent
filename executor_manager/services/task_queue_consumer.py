@@ -251,51 +251,57 @@ class TaskQueueConsumer:
             )
             return
 
-        self.queue_service.clear_pending(task_id)
-
         # Max retries exceeded - mark as FAILED
         logger.error(
             f"[TaskQueueConsumer] Task {task_id}/{subtask_id} failed after "
             f"{retry_count} retries: {error_msg}"
         )
 
+        if not (task_id and subtask_id):
+            # Nothing to report to the backend; do not keep the stale record.
+            self.queue_service.clear_pending(task_id)
+            return
+
         # Callback to update task status to FAILED via callback API
-        if task_id and subtask_id:
-            import asyncio
+        import asyncio
 
-            from executor_manager.clients.callback_client import get_callback_client
+        from executor_manager.clients.callback_client import get_callback_client
 
+        try:
+            callback_client = get_callback_client()
+            error_message = f"Task failed after {retry_count} retries: {error_msg}"
+
+            # Run async callback in sync context
+            loop = asyncio.new_event_loop()
             try:
-                callback_client = get_callback_client()
-                error_message = f"Task failed after {retry_count} retries: {error_msg}"
-
-                # Run async callback in sync context
-                loop = asyncio.new_event_loop()
-                try:
-                    success = loop.run_until_complete(
-                        callback_client.send_error(
-                            task_id=task_id,
-                            subtask_id=subtask_id,
-                            error_message=error_message,
-                            error_code="task_queue_failure",
-                        )
+                success = loop.run_until_complete(
+                    callback_client.send_error(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        error_message=error_message,
+                        error_code="task_queue_failure",
                     )
-                finally:
-                    loop.close()
-
-                if success:
-                    logger.info(
-                        f"[TaskQueueConsumer] Task {task_id}/{subtask_id} marked as FAILED"
-                    )
-                else:
-                    logger.warning(
-                        f"[TaskQueueConsumer] Failed to update task {task_id}/{subtask_id} status"
-                    )
-            except Exception as e:
-                logger.error(
-                    f"[TaskQueueConsumer] Error updating task {task_id}/{subtask_id} "
-                    f"status: {e}"
                 )
+            finally:
+                loop.close()
+
+            if success:
+                # The failure is now terminal; stop tracking the dispatch.
+                self.queue_service.clear_pending(task_id)
+                logger.info(
+                    f"[TaskQueueConsumer] Task {task_id}/{subtask_id} marked as FAILED"
+                )
+            else:
+                # Keep the pending record so the queue monitor retries the
+                # failure report instead of leaving the subtask RUNNING.
+                logger.warning(
+                    f"[TaskQueueConsumer] Failed to update task {task_id}/{subtask_id} status"
+                )
+        except Exception as e:
+            logger.error(
+                f"[TaskQueueConsumer] Error updating task {task_id}/{subtask_id} "
+                f"status: {e}"
+            )
 
     def _has_capacity(self) -> bool:
         """Check if current executor count is below MAX_CONCURRENT_TASKS.

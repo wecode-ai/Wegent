@@ -1574,6 +1574,30 @@ async def get_task_heartbeat_status(task_id: str):
     }
 
 
+@api_router.get("/tasks/{task_id}/dispatch-state")
+async def get_task_dispatch_state(task_id: str):
+    """Report whether the task still has a pending queue record.
+
+    The backend uses this to avoid failing a RUNNING subtask that is merely
+    waiting behind queue backpressure and has no executor yet. ``pending=null``
+    means the state is unknown and callers must not treat it as "not queued".
+    """
+    from executor_manager.common.redis_factory import RedisClientFactory
+    from executor_manager.services.task_queue_service import PENDING_KEY_TEMPLATE
+
+    try:
+        client = RedisClientFactory.get_sync_client()
+        if client is None:
+            return {"task_id": task_id, "pending": None}
+        pending = bool(client.exists(PENDING_KEY_TEMPLATE.format(task_id=task_id)))
+        return {"task_id": task_id, "pending": pending}
+    except Exception as exc:
+        logger.warning(
+            "[TaskAPI] Failed to read dispatch state for task %s: %s", task_id, exc
+        )
+        return {"task_id": task_id, "pending": None}
+
+
 # =============================================================================
 # Workspace Archive/Restore APIs
 # =============================================================================

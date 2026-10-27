@@ -1686,6 +1686,21 @@ class SandboxManager(metaclass=SingletonMeta):
                 sandbox.sandbox_id,
             )
             return
+
+        # Archiving can take minutes; a new execution may have renewed the
+        # sandbox in the meantime. Re-read the record before deleting it.
+        refreshed = self._repository.load_sandbox(task_id_str)
+        if refreshed is None:
+            self._repository.remove_from_active_set(task_id_str)
+            return
+        idle_seconds = time.time() - (refreshed.last_activity_at or 0)
+        if idle_seconds < self._config.timeout.redis_ttl:
+            logger.info(
+                "[SandboxManager] Sandbox %s became active during archiving; "
+                "skipping termination",
+                task_id_str,
+            )
+            return
         await self.terminate_sandbox(task_id_str)
 
     async def _archive_before_terminate(self, sandbox: Sandbox) -> bool:
@@ -1698,16 +1713,7 @@ class SandboxManager(metaclass=SingletonMeta):
         """
         idle_seconds = time.time() - (sandbox.last_activity_at or 0)
         grace_seconds = self._config.timeout.redis_ttl * 3
-        try:
-            archived = await self._request_workspace_archive(sandbox)
-        except Exception as exc:
-            logger.warning(
-                "[SandboxManager] Workspace archive request failed for sandbox "
-                "%s: %s",
-                sandbox.sandbox_id,
-                exc,
-            )
-            archived = False
+        archived = await self._archive_sandbox_before_cleanup(sandbox)
 
         if archived:
             logger.info(
@@ -1723,30 +1729,16 @@ class SandboxManager(metaclass=SingletonMeta):
                 idle_seconds,
             )
             return True
-        return False
 
-    async def _request_workspace_archive(self, sandbox: Sandbox) -> bool:
-        """Ask the backend to archive this sandbox's workspace."""
-        url = (
-            f"{TASK_API_DOMAIN.rstrip('/')}/api/internal/workspace-archives/"
-            f"{sandbox.sandbox_id}/archive-sandbox"
+        # Keep the Redis session hash alive for the whole retry window;
+        # otherwise it expires before the force-delete threshold and GC loses
+        # the container name needed to retry the archive or delete the Pod.
+        session_ttl = self._config.timeout.session_hash_ttl
+        self._repository.extend_session_hash_ttl(
+            sandbox.sandbox_id,
+            int(grace_seconds + session_ttl),
         )
-        payload = {
-            "executor_name": sandbox.container_name,
-            "executor_namespace": sandbox.executor_namespace or "",
-        }
-        archive_timeout = float(os.getenv("SANDBOX_GC_ARCHIVE_TIMEOUT", "120"))
-        async with httpx.AsyncClient(timeout=archive_timeout) as client:
-            response = await client.post(url, json=payload)
-        if response.status_code >= 400:
-            logger.warning(
-                "[SandboxManager] Archive endpoint returned %s for sandbox %s: %s",
-                response.status_code,
-                sandbox.sandbox_id,
-                response.text[:200],
-            )
-            return False
-        return True
+        return False
 
     async def _collect_expired_sandboxes(self) -> None:
         """Terminate expired sandboxes.

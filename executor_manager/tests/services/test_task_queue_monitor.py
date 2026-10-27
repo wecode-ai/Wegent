@@ -77,9 +77,7 @@ async def test_sweep_skips_task_still_waiting_in_queue(redis_client):
     redis_client.scan_iter.return_value = ["wegent:task_queue:pending:13869"]
     redis_client.get.return_value = _pending(age_seconds=900, dequeued=False)
     redis_client.llen.return_value = 1
-    redis_client.lrange.return_value = [
-        json.dumps({"task_id": 13869, "metadata": {"task_id": 13869}})
-    ]
+    redis_client.lrange.return_value = [json.dumps({"metadata": {"task_id": 13869}})]
     callback = MagicMock()
     callback.send_error = AsyncMock(return_value=True)
 
@@ -92,6 +90,23 @@ async def test_sweep_skips_task_still_waiting_in_queue(redis_client):
     assert stalled == []
     callback.send_error.assert_not_awaited()
     redis_client.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sweep_measures_from_dequeue_not_enqueue(redis_client):
+    """Time spent waiting behind backpressure does not count as a stall."""
+    redis_client.scan_iter.return_value = ["wegent:task_queue:pending:13869"]
+    redis_client.get.return_value = _pending(age_seconds=900, dequeued=False)
+    payload = json.loads(redis_client.get.return_value)
+    payload["dequeued_at"] = time.time() - 60
+    redis_client.get.return_value = json.dumps(payload)
+    callback = MagicMock()
+    callback.send_error = AsyncMock(return_value=True)
+
+    stalled = await _monitor(redis_client).sweep()
+
+    assert stalled == []
+    callback.send_error.assert_not_awaited()
 
 
 @pytest.mark.asyncio

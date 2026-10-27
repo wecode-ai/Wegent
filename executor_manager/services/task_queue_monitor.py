@@ -20,6 +20,7 @@ from executor_manager.services.task_queue_service import (
     TaskQueueService,
 )
 from shared.logger import setup_logger
+from shared.models.openai_converter import get_metadata_field
 
 logger = setup_logger(__name__)
 
@@ -59,7 +60,10 @@ class TaskQueueMonitor:
             payload = self._load(client, key)
             if payload is None:
                 continue
-            if now - float(payload.get("enqueued_at") or now) < self._stall_timeout:
+            # Measure from dequeue once a consumer picked the task up, so time
+            # spent waiting behind backpressure does not count against it.
+            reference = payload.get("dequeued_at") or payload.get("enqueued_at") or now
+            if now - float(reference) < self._stall_timeout:
                 continue
             if self._still_queued(client, payload, queued_cache):
                 continue
@@ -108,13 +112,13 @@ class TaskQueueMonitor:
     @staticmethod
     def _queued_task_ids(client, queue_key: str) -> Optional[Set[str]]:
         """Snapshot the task ids currently waiting in one queue."""
-        if not client.llen(queue_key):
-            return set()
         try:
+            if not client.llen(queue_key):
+                return set()
             task_ids: Set[str] = set()
             for raw in client.lrange(queue_key, 0, -1):
                 try:
-                    task_id = (json.loads(raw) or {}).get("task_id")
+                    task_id = get_metadata_field(json.loads(raw) or {}, "task_id")
                 except json.JSONDecodeError:
                     continue
                 if task_id is not None:

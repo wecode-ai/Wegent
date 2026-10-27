@@ -27,6 +27,7 @@ from app.services.execution.emitters import (
     WebSocketResultEmitter,
 )
 from app.services.execution.executor_health import (
+    executor_dispatch_pending,
     executor_heartbeat_alive,
     executor_pod_missing,
 )
@@ -138,6 +139,11 @@ class StalledSubtaskSweeper:
         executor_name = candidate.executor_name
         if not executor_name:
             if (now - candidate.updated_at) < self._heartbeat_timeout:
+                return None
+            # A subtask without an executor may still be waiting in the queue
+            # behind backpressure. Only fail when the manager confirms it is
+            # no longer queued; an unknown answer also keeps it alive.
+            if await executor_dispatch_pending(candidate.task_id) is not False:
                 return None
             return (EXECUTOR_NOT_STARTED_ERROR, "executor_not_started")
         if (

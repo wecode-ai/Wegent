@@ -5,6 +5,7 @@
 """Unit tests for SandboxManager service."""
 
 import asyncio
+import copy
 import json
 import time
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -2168,7 +2169,7 @@ class TestSandboxManager:
         )
         mocker.patch.object(
             manager,
-            "_request_workspace_archive",
+            "_archive_sandbox_before_cleanup",
             new_callable=AsyncMock,
             return_value=False,
         )
@@ -2200,7 +2201,7 @@ class TestSandboxManager:
         )
         mocker.patch.object(
             manager,
-            "_request_workspace_archive",
+            "_archive_sandbox_before_cleanup",
             new_callable=AsyncMock,
             return_value=False,
         )
@@ -2216,7 +2217,43 @@ class TestSandboxManager:
         mock_terminate.assert_called_once_with("12345")
 
     @pytest.mark.asyncio
-    async def test_request_workspace_archive_posts_internal_endpoint(
+    async def test_collect_expired_sandboxes_skips_sandbox_renewed_while_archiving(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        sample_sandbox,
+        mocker,
+    ):
+        """A task that becomes active during archiving must not be terminated."""
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.zrangebyscore.return_value = ["12345"]
+        sample_sandbox.last_activity_at = time.time() - 25 * 3600
+        renewed = copy.copy(sample_sandbox)
+        renewed.last_activity_at = time.time()
+        mocker.patch.object(
+            manager._repository,
+            "load_sandbox",
+            side_effect=[sample_sandbox, renewed],
+        )
+        mocker.patch.object(
+            manager,
+            "_archive_sandbox_before_cleanup",
+            new_callable=AsyncMock,
+            return_value=True,
+        )
+        mock_terminate = mocker.patch.object(
+            manager,
+            "terminate_sandbox",
+            new_callable=AsyncMock,
+            return_value=(True, "Terminated"),
+        )
+
+        await manager._collect_expired_sandboxes()
+
+        mock_terminate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_archive_before_cleanup_posts_internal_endpoint(
         self,
         sandbox_manager_with_mock_redis,
         sample_sandbox,
@@ -2237,7 +2274,7 @@ class TestSandboxManager:
             return_value=client,
         )
 
-        assert await manager._request_workspace_archive(sample_sandbox) is True
+        assert await manager._archive_sandbox_before_cleanup(sample_sandbox) is True
 
         url = client.post.await_args.args[0]
         assert url.endswith("/api/internal/workspace-archives/12345/archive-sandbox")

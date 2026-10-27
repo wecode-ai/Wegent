@@ -90,3 +90,37 @@ async def executor_heartbeat_alive(task_id: int) -> Optional[bool]:
 
     alive = payload.get("alive") if isinstance(payload, dict) else None
     return alive if isinstance(alive, bool) else None
+
+
+@trace_async("execution.executor_dispatch_pending", "execution.schedule")
+async def executor_dispatch_pending(task_id: int) -> Optional[bool]:
+    """Return whether the task is still pending in the executor queue.
+
+    ``None`` means the manager could not answer; callers must not turn that
+    into "not queued" because a queued task would then be failed while it is
+    only waiting behind backpressure.
+    """
+    url = (
+        f"{settings.EXECUTOR_MANAGER_URL.rstrip('/')}"
+        f"/executor-manager/tasks/{task_id}/dispatch-state"
+    )
+    try:
+        async with traced_async_client(timeout=3.0) as client:
+            response = await client.get(url)
+        if response.status_code != 200:
+            return None
+        payload = response.json()
+    except Exception as exc:
+        logger.warning(
+            "[executor_health] dispatch state probe failed task_id=%s error=%s",
+            task_id,
+            exc,
+        )
+        add_span_event(
+            "execution.executor_dispatch_pending.check_failed",
+            {"task_id": str(task_id), "error": str(exc)},
+        )
+        return None
+
+    pending = payload.get("pending") if isinstance(payload, dict) else None
+    return pending if isinstance(pending, bool) else None

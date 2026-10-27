@@ -235,9 +235,43 @@ async def test_classify_fails_running_subtask_without_executor():
     sweeper = StalledSubtaskSweeper(
         silent_timeout_seconds=900, heartbeat_timeout_seconds=1800
     )
-    reason = await sweeper.classify(_candidate(executor_name=""), now=NOW)
+    with patch(
+        "app.services.execution.stalled_tasks.executor_dispatch_pending",
+        AsyncMock(return_value=False),
+    ):
+        reason = await sweeper.classify(_candidate(executor_name=""), now=NOW)
 
     assert reason == (EXECUTOR_NOT_STARTED_ERROR, "executor_not_started")
+
+
+@pytest.mark.asyncio
+async def test_classify_keeps_subtask_that_is_still_queued():
+    """A RUNNING subtask waiting behind backpressure is not a failure."""
+    sweeper = StalledSubtaskSweeper(
+        silent_timeout_seconds=900, heartbeat_timeout_seconds=1800
+    )
+    with patch(
+        "app.services.execution.stalled_tasks.executor_dispatch_pending",
+        AsyncMock(return_value=True),
+    ):
+        reason = await sweeper.classify(_candidate(executor_name=""), now=NOW)
+
+    assert reason is None
+
+
+@pytest.mark.asyncio
+async def test_classify_keeps_subtask_when_dispatch_state_is_unknown():
+    """An unreachable queue probe must not fail a potentially queued task."""
+    sweeper = StalledSubtaskSweeper(
+        silent_timeout_seconds=900, heartbeat_timeout_seconds=1800
+    )
+    with patch(
+        "app.services.execution.stalled_tasks.executor_dispatch_pending",
+        AsyncMock(return_value=None),
+    ):
+        reason = await sweeper.classify(_candidate(executor_name=""), now=NOW)
+
+    assert reason is None
 
 
 @pytest.mark.asyncio
