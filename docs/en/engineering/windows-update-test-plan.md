@@ -66,3 +66,12 @@ Publish immutable complete artifacts before the v2 feed. Publish the legacy Wind
 The current user must be able to write the installation root. Validated download ZIPs are removed after staging. Installed versions retain the previous working release. Older version directories are not automatically deleted because other sessions may still use them; safe collection needs a separate ownership protocol. Insufficient disk space fails the update while retaining active.
 
 The macOS development host can run native transaction tests, real HTTP download tests, release-script tests, and isolated Electron smoke checks. Record Windows E2E and signed historical migration results from their actual CI runs; configuration alone is not a passing result.
+
+## Verification record (2026-10-27)
+
+- Electron: 150 files and 1,244 tests passed. Four separately selected macOS icon packaging checks passed. Three native icon checks remain unavailable because this host lacks Xcode `actool`.
+- Native launcher: 34 real filesystem/process tests passed; four subprocess fixtures are explicitly invoked by those tests. Existing Executor library coverage passed 2,310 tests. Full Clippy and Rust formatting checks passed.
+- Release/build: 24 files and 160 tests passed. Main-process type checking, changed-file lint/format checks, workflow YAML, and Bash syntax checks passed.
+- Broad renderer tests exposed two assertions tied to the removed inline publisher. Both now exercise the actual publisher planner; the complete affected file passed all 10 tests after correction.
+- An isolated real Electron workbench completed actual startup stages, runtime/renderer readiness, splash closure, and About version verification. Real Electron checks also covered progress, slow startup, failure recovery UI, and diagnostic copying.
+- Windows execution, real NSIS reinstalls, and signed historical migration remain unexecuted. The initial push was rejected by local pre-push checks; configured CI is not a passing result.
