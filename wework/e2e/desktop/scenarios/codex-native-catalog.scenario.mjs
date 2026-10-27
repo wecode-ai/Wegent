@@ -86,25 +86,13 @@ export function createDesktopScenario(options) {
           assert.equal(Number(await control.command('getElementCount', `${selector}:disabled`)), 0)
         }
       }
-      const openCatalogEditor = async () => {
-        await control.command('waitFor', `${EDIT}:not(:disabled)`, { timeoutMs: UI_TIMEOUT_MS })
-        await control.command('clickWhenEnabled', EDIT)
-        await control.command('waitFor', DIALOG, { timeoutMs: UI_TIMEOUT_MS })
-      }
-      try {
-        await openCatalogEditor()
-      } catch (error) {
-        // Chromium's network service can crash under parallel load and break the
-        // renderer's requests, so reopen the editor once on a fresh window.
-        await control.command('reloadMainWindow', 'body')
-        await control.command('navigate', 'body', { value: '/settings/personal/models' })
-        await control.command('clickWhenEnabled', '[data-testid="codex-models-details-toggle"]')
-        await control.command(
-          'clickWhenEnabled',
-          '[data-testid="codex-model-provider-toggle-openai"]'
-        )
-        await openCatalogEditor()
-      }
+      await control.command('waitFor', `${EDIT}:not(:disabled)`, {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await control.command('clickWhenEnabled', EDIT, { timeoutMs: UI_TIMEOUT_MS })
+      // Waiting on the dialog instead of retrying keeps a real regression
+      // visible; the evidence directory holds app.log for renderer failures.
+      await control.command('waitFor', DIALOG, { timeoutMs: UI_TIMEOUT_MS })
       await control.command('fill', '[data-testid="local-model-context-window-input"]', {
         value: '300001',
       })
