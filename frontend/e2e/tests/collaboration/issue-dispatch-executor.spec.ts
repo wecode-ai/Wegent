@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test'
+import type { DeviceInfo, DeviceListResponse } from '../../../src/apis/devices'
 import {
   configureIssueDispatchModelScenario,
   createCollaborationGroup,
@@ -23,6 +24,8 @@ import {
 } from '../../utils/provider-native-test-support'
 
 const suiteSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+const DEVICE_ID = process.env.E2E_DEVICE_ID || 'e2e-claudecode-device'
+
 interface CollaborationIssue {
   id: string
   status: string
@@ -44,8 +47,9 @@ interface CollaborationExecution {
   runtimeDeviceId: string | null
 }
 
-function expectCanonicalAppRoute(execution: CollaborationExecution): void {
+function expectCanonicalAppRoute(execution: CollaborationExecution, device: DeviceInfo): void {
   expect(execution.executionDeviceId).toMatch(/^app-record-\d+$/)
+  expect(execution.executionDeviceId).toBe(device.execution_target_id)
   expect(execution.runtimeDeviceId).toBe(execution.executionDeviceId)
 }
 
@@ -53,9 +57,20 @@ test.describe.configure({ mode: 'serial' })
 
 test.describe('Collaboration group Executor coordination', () => {
   let model: IssueDispatchMockModel | undefined
+  let appDevice: DeviceInfo
 
   test.beforeAll(async ({ request }) => {
     model = await createIssueDispatchMockModel(request, suiteSuffix)
+    const response = await request.get(`${PROVIDER_NATIVE_API_URL}/api/devices`, {
+      headers: authHeaders(model.token),
+    })
+    expect(response.status(), await response.text()).toBe(200)
+    const devices = (await response.json()) as DeviceListResponse
+    const device = devices.items.find(item => item.device_id === DEVICE_ID)
+    expect(device, `Configured Executor device ${DEVICE_ID} must be registered`).toBeDefined()
+    expect(device).toMatchObject({ device_type: 'app', status: 'online' })
+    expect(device!.execution_target_id).toMatch(/^app-record-\d+$/)
+    appDevice = device!
   })
 
   test.afterAll(async ({ request }) => {
@@ -123,7 +138,7 @@ test.describe('Collaboration group Executor coordination', () => {
       expect(executions[0].backendTaskId).toBeNull()
       expect(executions[0].runtimeTaskId).toMatch(/^codex-queue-\d+$/)
       expect(executions[0].executionEnvironment).toBe('local')
-      expectCanonicalAppRoute(executions[0])
+      expectCanonicalAppRoute(executions[0], appDevice)
 
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')
       expect(completed.execution_state).not.toBe('failed')
@@ -324,7 +339,7 @@ test.describe('Collaboration group Executor coordination', () => {
       expect(executions[0].backendTaskId).toBeNull()
       expect(executions[0].runtimeTaskId).toMatch(/^codex-queue-\d+$/)
       expect(executions[0].executionEnvironment).toBe('local')
-      expectCanonicalAppRoute(executions[0])
+      expectCanonicalAppRoute(executions[0], appDevice)
       expect(executions[0].status).toBe('completed')
 
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')

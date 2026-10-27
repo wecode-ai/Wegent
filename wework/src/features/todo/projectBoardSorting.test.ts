@@ -33,8 +33,10 @@ const extensions = { getSearchText: (item: StandardCloudBoardItem) => item.id }
 function setup(storageKey = 'test:board-sort:project-a') {
   const onMove = vi.fn()
   const options = {
+    tagLimitError: 'Cannot have more than 20 tags',
     createColumns: () => [pending, completed],
     defaultGroupBy: 'status' as const,
+    viewScope: 'project-a:default',
     focusStorageKey: null,
     personalGroupStorageKey: null,
     personalSortStorageKey: storageKey,
@@ -54,6 +56,42 @@ function setup(storageKey = 'test:board-sort:project-a') {
 
 describe('project board sorting', () => {
   beforeEach(() => localStorage.clear())
+
+  it('rejects adding tag 21 without a command or success feedback and permits replacement', async () => {
+    const first = setup()
+    const target: ProjectBoardColumn = {
+      ...pending,
+      type: 'tag',
+      groupValue: 'new',
+      key: 'tag-new',
+    }
+    const source: ProjectBoardColumn = { ...target, groupValue: 'tag-0', key: 'tag-0' }
+    const tags = Array.from({ length: 19 }, (_, index) => `tag-${index}`)
+    const item = { ...items[0], tags }
+    const options = {
+      ...first.options,
+      items: [item],
+      createColumns: () => [pending, source, target],
+    }
+    first.rerender(options)
+    await act(async () => first.result.current.moveItem(item.id, target, null, pending))
+    expect(first.onMove).toHaveBeenCalledOnce()
+    expect(first.onMove.mock.calls[0][3].tags).toEqual([...tags, 'new'])
+    expect(first.result.current.lastMove).toMatchObject({ columnKey: target.key })
+    first.onMove.mockClear()
+    const full = { ...item, tags: [...tags, 'twentieth'] }
+    first.rerender({ ...options, items: [full] })
+    await act(async () => first.result.current.moveItem(item.id, target, null, pending))
+    expect(first.onMove).not.toHaveBeenCalled()
+    expect(first.result.current.lastMove).toBeNull()
+    expect(first.result.current.moveError).toBe(options.tagLimitError)
+    expect(full.tags).toEqual([...tags, 'twentieth'])
+    await act(async () => first.result.current.moveItem(item.id, target, null, source))
+    expect(first.onMove).toHaveBeenCalledOnce()
+    expect(first.onMove.mock.calls[0][3].tags).toEqual([...tags.slice(1), 'twentieth', 'new'])
+    expect(first.result.current.moveError).toBeNull()
+    expect(first.result.current.lastMove).toMatchObject({ columnKey: target.key })
+  })
 
   it('defaults to priority and restores personal manual order after remounting', () => {
     const first = setup()
@@ -121,9 +159,9 @@ describe('project board sorting', () => {
 
   it('keeps automatic order on same-column drops and allows moves to other columns', () => {
     const { result, onMove } = setup()
-    act(() => result.current.moveItem('2', pending, '0'))
+    act(() => result.current.moveItem('2', pending, '0', pending))
     expect(onMove).not.toHaveBeenCalled()
-    act(() => result.current.moveItem('2', completed, null))
+    act(() => result.current.moveItem('2', completed, null, pending))
     expect(onMove).toHaveBeenCalledWith(
       items[2],
       completed,
@@ -135,7 +173,7 @@ describe('project board sorting', () => {
     )
     onMove.mockClear()
     act(() => result.current.state.selectColumnSort(completed.key, []))
-    act(() => result.current.moveItem('2', completed, 'completed-0'))
+    act(() => result.current.moveItem('2', completed, 'completed-0', pending))
     expect(onMove).toHaveBeenCalledWith(
       items[2],
       completed,
@@ -147,7 +185,7 @@ describe('project board sorting', () => {
     expect(result.current.state.getColumnSort(pending.key)).toEqual(['priority-desc'])
     onMove.mockClear()
     act(() => result.current.state.selectColumnSort(pending.key, []))
-    act(() => result.current.moveItem('2', pending, '0'))
+    act(() => result.current.moveItem('2', pending, '0', pending))
     expect(onMove).toHaveBeenCalledWith(
       items[2],
       pending,
@@ -157,5 +195,24 @@ describe('project board sorting', () => {
         position: { beforeItemId: '0' },
       })
     )
+  })
+
+  it('announces a move only after persistence and keeps failed or canceled moves unhighlighted', async () => {
+    const { result, onMove, options, rerender } = setup()
+    onMove
+      .mockRejectedValueOnce(new Error('Conflict'))
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+    await act(async () => result.current.moveItem('2', completed, null, pending))
+    expect(result.current.lastMove).toBeNull()
+    expect(result.current.moveError).toBe('Conflict')
+    rerender({ ...options, viewScope: 'project-b:default' })
+    expect(result.current.moveError).toBeNull()
+    rerender(options)
+    await act(async () => result.current.moveItem('2', completed, null, pending))
+    expect(result.current.lastMove).toBeNull()
+    await act(async () => result.current.moveItem('2', completed, null, pending))
+    expect(result.current.lastMove).toMatchObject({ itemId: '2', columnKey: 'completed' })
+    expect(result.current.moveError).toBeNull()
   })
 })

@@ -153,6 +153,7 @@ use stand_in_approval::stand_in_mcp_approval_overrides;
 mod overload_recovery;
 #[path = "codex/plugin_skills.rs"]
 mod plugin_skills;
+mod startup;
 #[path = "codex/thread_action.rs"]
 mod thread_action;
 
@@ -169,6 +170,8 @@ use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX
 use plugin_skills::PluginSkillResolver;
 mod github_cli;
 mod local_connector_auth;
+mod skill_config;
+pub(crate) use skill_config::reload_skill_configuration;
 
 mod notification;
 pub use notification::CodexNotification;
@@ -291,6 +294,9 @@ pub struct CodexAppServerTurn {
 #[path = "codex/interaction.rs"]
 mod interaction;
 
+#[path = "codex/connection_mcp.rs"]
+mod connection_mcp;
+
 pub use interaction::CodexRequestUserInputReceiver;
 use interaction::{interaction_value_key, InteractionAnswerRouter};
 
@@ -338,6 +344,10 @@ impl CodexAppServerClient {
         let Some(home) = super::instance_home::request_home(request) else {
             return Ok(self.clone());
         };
+        self.for_home(home)
+    }
+
+    pub(crate) fn for_home(&self, home: PathBuf) -> Result<Self, String> {
         if !home.is_absolute() {
             return Err("Named Agent Home identity is incomplete".to_owned());
         }
@@ -1758,6 +1768,21 @@ fn codex_thread_plan(
     }
 }
 
+fn temporary_thread_error(
+    request: &ExecutionRequest,
+    direct_thread_id: Option<&str>,
+    error: String,
+) -> String {
+    if request.uses_ephemeral_codex_thread()
+        && direct_thread_id.is_some_and(|id| error.contains(&format!("thread not found: {id}")))
+    {
+        return format!(
+            "Temporary chat session has expired. Open a new temporary chat to continue. ({error})"
+        );
+    }
+    error
+}
+
 fn thread_id_to_activate_before_start(thread_plan: &CodexThreadPlan) -> Option<&str> {
     match &thread_plan.start {
         CodexThreadStart::Direct(thread_id) => Some(thread_id),
@@ -2024,26 +2049,18 @@ async fn run_codex_app_server_turn_on_shared_client(
             let turn_input = turn_input(&request.prompt);
             turn_fields.push(("input_items", turn_input.len().to_string()));
             log_executor_event("codex shared turn request started", &turn_fields);
-            let turn_start_response = match timeout_at(
+            let turn_start_response = startup::wait_for_shared_startup(
+                client,
+                &thread_id,
                 startup_deadline,
+                startup_timeout_seconds,
+                &mut cancellation,
                 client.request(
                     "turn/start",
                     turn_start_params(&thread_id, request, &launch_config, turn_input),
                 ),
             )
-            .await
-            {
-                Ok(Ok(response)) => response,
-                Ok(Err(error)) => return Err(error),
-                Err(_) => {
-                    return Err(recover_stalled_shared_turn(
-                        client,
-                        &thread_id,
-                        startup_timeout_seconds,
-                    )
-                    .await);
-                }
-            };
+            .await?;
             turn_start_response_id(&turn_start_response)
         };
         if let Some(turn_id) = active_turn_id.as_ref() {
@@ -2120,10 +2137,11 @@ async fn run_codex_app_server_turn_on_shared_client(
             duration_ms,
         })
     }
-    .await;
+    .await
+    .map_err(|error| temporary_thread_error(&prepared.request, direct_thread_id.as_deref(), error));
 
     if let Some(thread_id) = subscribed_thread_id {
-        let retain_subscription = result.is_ok() && !prepared.request.ephemeral;
+        let retain_subscription = result.is_ok() && !prepared.request.uses_ephemeral_codex_thread();
         client
             .finish_thread_activity(&thread_id, retain_subscription)
             .await;
@@ -2496,12 +2514,17 @@ async fn read_shared_turn_notifications(
             match timeout_at(startup_deadline, receive_notification).await {
                 Ok(received) => received?,
                 Err(_) => {
-                    return Err(recover_stalled_shared_turn(
+                    startup::recover_stalled_shared_turn(
                         client,
                         thread_id,
                         startup_timeout_seconds,
                     )
-                    .await);
+                    .await?;
+                    // Keep listening and retry recovery if this becomes the
+                    // only active turn. Goal startup may still lack a turn ID.
+                    startup_deadline =
+                        Instant::now() + Duration::from_secs(startup_timeout_seconds);
+                    continue;
                 }
             }
         } else if let Some(deadline) = goal_continuation_deadline {
@@ -2706,30 +2729,15 @@ async fn read_shared_turn_notifications(
                                 .map(|response| (response, true))
                         }
                     };
-                    let start = timeout_at(startup_deadline, continuation);
-                    let response = if let Some(cancel_rx) = options.cancellation.as_mut() {
-                        tokio::select! {
-                            biased;
-                            _ = cancel_rx => {
-                                let _ = interrupt_shared_turn(client, thread_id, "").await;
-                                return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
-                            }
-                            response = start => response,
-                        }
-                    } else {
-                        start.await
-                    };
-                    let (response, restarted) = match response {
-                        Ok(response) => response?,
-                        Err(_) => {
-                            return Err(recover_stalled_shared_turn(
-                                client,
-                                thread_id,
-                                startup_timeout_seconds,
-                            )
-                            .await)
-                        }
-                    };
+                    let (response, restarted) = startup::wait_for_shared_startup(
+                        client,
+                        thread_id,
+                        startup_deadline,
+                        startup_timeout_seconds,
+                        &mut options.cancellation,
+                        continuation,
+                    )
+                    .await?;
                     if restoring_goal {
                         overload_recovery::sync_goal_snapshot(
                             state,
@@ -2958,31 +2966,6 @@ fn should_wait_for_goal_continuation(
     goal_was_active_at_turn_start
         && matches!(outcome, ExecutionOutcome::Completed { .. })
         && state.goal_is_active()
-}
-
-async fn recover_stalled_shared_turn(
-    client: &CodexAppServerClient,
-    thread_id: &str,
-    timeout_seconds: u64,
-) -> String {
-    let restarted = client.restart_stalled_turn_process(thread_id).await;
-    log_executor_event(
-        "codex shared turn startup stalled",
-        &[
-            ("thread_id", thread_id.to_owned()),
-            ("timeout_seconds", timeout_seconds.to_string()),
-            ("app_server_restarted", restarted.to_string()),
-        ],
-    );
-    if restarted {
-        format!(
-            "codex app-server turn made no model or tool progress for {timeout_seconds}s; the shared app-server was restarted"
-        )
-    } else {
-        format!(
-            "codex app-server turn made no model or tool progress for {timeout_seconds}s; restart was skipped to preserve other active turns"
-        )
-    }
 }
 
 fn codex_notification_has_initial_progress(message: &Value, state: &CodexRunState) -> bool {
@@ -4489,6 +4472,7 @@ fn configured_codex_provider(
         routing_model_id: None,
         codex_request_mode: Default::default(),
         max_output_tokens: None,
+        model_context_window: None,
     })
 }
 
@@ -6112,7 +6096,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
         codex_runtime_approval_policy(request),
     );
     insert_codex_runtime_permissions(&mut params, request);
-    if request.ephemeral {
+    if request.uses_ephemeral_codex_thread() {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
     if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false) {
@@ -6147,7 +6131,7 @@ fn thread_fork_params(
         codex_runtime_approval_policy(request),
     );
     insert_codex_runtime_permissions(&mut params, request);
-    if request.ephemeral {
+    if request.uses_ephemeral_codex_thread() {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
     Value::Object(params)

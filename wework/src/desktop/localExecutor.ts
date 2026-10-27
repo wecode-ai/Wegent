@@ -8,6 +8,7 @@ import {
 } from '@/api/dsh/executorTransport'
 import { resolveLocalCodexProxyUrl } from './systemProxy'
 import { createModelLoadingTrace, traceModelLoading } from '@/lib/model-loading-diagnostics'
+import { gateRuntimeResponse } from '@/e2e/runtime-transport-gates'
 
 export type UnlistenFn = () => void
 
@@ -29,6 +30,7 @@ export interface LocalExecutorStatus {
   running: boolean
   ready?: boolean
   deviceId?: string
+  deviceRouteId?: string
   runtimeInstanceId?: string
   codexInitializeElapsedMs?: number
   version?: string
@@ -221,13 +223,86 @@ let nextLocalExecutorRequestFailure: {
   resolve: () => void
 } | null = null
 
+type LocalExecutorRequestHold = {
+  method: string
+  phase: 'before-dispatch' | 'after-response'
+  heldCount: number
+  completedCount: number
+  enteredWaiters: Array<() => void>
+  releaseWaiters: Array<() => void>
+  released: boolean
+}
+
+let localExecutorRequestHold: LocalExecutorRequestHold | null = null
+
+function isLocalExecutorE2EMode(): boolean {
+  return import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
+}
+
 export function failNextLocalExecutorRequestForE2E(method: string, message: string): Promise<void> {
-  if (import.meta.env.MODE !== 'e2e' && import.meta.env.VITE_WEWORK_E2E !== 'true') {
+  if (!isLocalExecutorE2EMode()) {
     throw new Error('Local executor request failure injection is only available in E2E mode')
   }
   return new Promise(resolve => {
     nextLocalExecutorRequestFailure = { method, message, resolve }
   })
+}
+
+/**
+ * Holds E2E requests either before dispatch or after the real executor replied.
+ * The caller observes the response only after the ordering gate opens.
+ */
+export function holdLocalExecutorRequestsForE2E(
+  method: string,
+  phase: LocalExecutorRequestHold['phase'] = 'after-response'
+): void {
+  if (!isLocalExecutorE2EMode()) {
+    throw new Error('Local executor request holds are only available in E2E mode')
+  }
+  localExecutorRequestHold = {
+    method,
+    phase,
+    heldCount: 0,
+    completedCount: 0,
+    enteredWaiters: [],
+    releaseWaiters: [],
+    released: false,
+  }
+}
+
+export function awaitLocalExecutorRequestHoldForE2E(): Promise<number> {
+  const hold = localExecutorRequestHold
+  if (!hold) return Promise.resolve(0)
+  if (hold.heldCount > 0 || hold.released) return Promise.resolve(hold.heldCount)
+  return new Promise(resolve => {
+    hold.enteredWaiters.push(() => resolve(hold.heldCount))
+  })
+}
+
+export function releaseLocalExecutorRequestHoldForE2E(): boolean {
+  const hold = localExecutorRequestHold
+  if (!hold || hold.released) return false
+  hold.released = true
+  for (const release of hold.releaseWaiters.splice(0)) release()
+  return true
+}
+
+export function getLocalExecutorRequestHoldSnapshotForE2E(): {
+  method: string
+  phase: LocalExecutorRequestHold['phase']
+  heldCount: number
+  completedCount: number
+  released: boolean
+} | null {
+  const hold = localExecutorRequestHold
+  if (!hold) return null
+  return {
+    method: hold.method,
+    phase: hold.phase,
+    heldCount: hold.heldCount,
+    completedCount: hold.completedCount,
+    released: hold.released,
+  }
 }
 
 function isExecutorHealthy(status: LocalExecutorStatus): boolean {
@@ -378,6 +453,7 @@ export function getInitializedBundledPluginMarketplace(): BundledPluginMarketpla
   return initializedBundledPluginMarketplace
 }
 
+/** Stable Executor-home identity used by local state and caches. */
 export function getKnownLocalExecutorDeviceId(): string | null {
   return (
     initializedLocalExecutorStatus?.deviceId?.trim() ||
@@ -414,6 +490,7 @@ export function ensureLocalExecutorAvailable(
           running: true,
           ready: true,
           deviceId: description.device_id,
+          deviceRouteId: description.device_route_id?.trim() || undefined,
           runtimeInstanceId: description.runtime_instance_id,
           version: description.version,
         }
@@ -530,6 +607,8 @@ export function resetLocalExecutorStateForTests(): void {
   reconciledBundledPluginMarketplaceKey = ''
   reconcilingBundledPluginMarketplaceKey = ''
   reconcileBundledPluginMarketplacePromise = null
+  localExecutorRequestHold = null
+  nextLocalExecutorRequestFailure = null
 }
 
 export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {
@@ -594,37 +673,62 @@ export function requestLocalExecutor<T = unknown>(
   method: string,
   params: Record<string, unknown> = {}
 ): Promise<T> {
-  if (nextLocalExecutorRequestFailure?.method === method) {
-    const failure = nextLocalExecutorRequestFailure
-    nextLocalExecutorRequestFailure = null
-    failure.resolve()
-    return Promise.reject(new Error(failure.message))
-  }
-  const request =
-    method === 'runtime.tasks.transcript' && params.transcriptProtocolVersion === undefined
-      ? readRuntimeTranscript<T>(params, query => requestDshExecutor(method, query))
-      : requestDshExecutor<T>(method, params)
-  return request.catch((cause: unknown) => {
-    if (isExecutorTransportFailure(cause)) {
-      bundledPluginUpdateEpoch += 1
-      bundledPluginUpdateTasks.clear()
-      bundledPluginUpdates.clear()
-      markLocalExecutorUnavailable(cause)
-      initializedBundledPluginMarketplace = null
-      initializeBundledPluginMarketplacePromise = null
-      reconciledBundledPluginMarketplaceKey = ''
+  const dispatch = (): Promise<T> => {
+    if (nextLocalExecutorRequestFailure?.method === method) {
+      const failure = nextLocalExecutorRequestFailure
+      nextLocalExecutorRequestFailure = null
+      failure.resolve()
+      return Promise.reject(new Error(failure.message))
     }
-    console.error(
-      '[local-ipc] request failed',
-      JSON.stringify({
-        method,
-        paramsKeys: Object.keys(params ?? {}),
-        error: String(cause),
-        message: (cause as { message?: unknown } | null)?.message ?? null,
-        stack: (cause as { stack?: unknown } | null)?.stack ?? null,
+    const request =
+      method === 'runtime.tasks.transcript' && params.transcriptProtocolVersion === undefined
+        ? readRuntimeTranscript<T>(params, query => requestDshExecutor(method, query))
+        : requestDshExecutor<T>(method, params)
+    const delivery = isLocalExecutorE2EMode()
+      ? request.then(result => gateRuntimeResponse(method, params, result))
+      : request
+    return delivery.catch((cause: unknown) => {
+      if (isExecutorTransportFailure(cause)) {
+        bundledPluginUpdateEpoch += 1
+        bundledPluginUpdateTasks.clear()
+        bundledPluginUpdates.clear()
+        markLocalExecutorUnavailable(cause)
+        initializedBundledPluginMarketplace = null
+        initializeBundledPluginMarketplacePromise = null
+        reconciledBundledPluginMarketplaceKey = ''
+      }
+      console.error(
+        '[local-ipc] request failed',
+        JSON.stringify({
+          method,
+          paramsKeys: Object.keys(params ?? {}),
+          error: String(cause),
+          message: (cause as { message?: unknown } | null)?.message ?? null,
+          stack: (cause as { stack?: unknown } | null)?.stack ?? null,
+        })
+      )
+      throw cause
+    })
+  }
+  const hold = localExecutorRequestHold
+  if (!hold || hold.method !== method || hold.released) return dispatch()
+  const enterHold = () => {
+    hold.heldCount += 1
+    for (const notify of hold.enteredWaiters.splice(0)) notify()
+    if (hold.released) return Promise.resolve()
+    return new Promise<void>(resolve => hold.releaseWaiters.push(resolve))
+  }
+  if (hold.phase === 'before-dispatch') {
+    return enterHold()
+      .then(dispatch)
+      .finally(() => {
+        hold.completedCount += 1
       })
-    )
-    throw cause
+  }
+  return dispatch().then(async value => {
+    await enterHold()
+    hold.completedCount += 1
+    return value
   })
 }
 

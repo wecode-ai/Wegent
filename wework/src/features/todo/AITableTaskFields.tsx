@@ -135,7 +135,7 @@ function FieldEditor({
           data-testid={`aitable-detail-edit-${field.id}`}
           value={draft}
           onChange={event => setDraft(event.target.value)}
-          className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-focus"
+          className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm outline-none keyboard:focus:border-focus"
         >
           <option value="">—</option>
           {options.map(option => (
@@ -160,7 +160,7 @@ function FieldEditor({
           value={draft}
           onChange={event => setDraft(event.target.value)}
           rows={expanded ? 8 : 2}
-          className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm leading-6 outline-none focus:border-focus"
+          className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm leading-6 outline-none keyboard:focus:border-focus"
         />
       )}
       <div className="flex justify-end gap-2">

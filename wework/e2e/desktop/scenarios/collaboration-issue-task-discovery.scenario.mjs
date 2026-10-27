@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { verifyIssueTranscriptTransfer } from '../modules/issue-transcript-transfer.mjs'
+import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
@@ -28,14 +30,17 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
   workspacePath,
   captureScreenshot,
+  codexSqliteHome,
 }) {
   let cloud
+  let proxy
   let environment
   let workspace
   let currentApp
   let localProjectCreated = false
   const fixtures = []
   const modelRequests = []
+  const appEnvironment = {}
   const request = async (path, values, method = values ? 'POST' : 'GET') => {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
       method,
@@ -46,13 +51,15 @@ export function createDesktopScenario({
     assert.equal(response.ok, true, `${path}: ${JSON.stringify(body)}`)
     return body
   }
+  async function addWorkspaceEnvironment(device) {
+    await request(`/api/v1/workspaces/${workspace.id}/execution-environments`, {
+      device_id: device.id,
+    })
+  }
   async function prepareIssue(device, label, owner) {
     let project = await request('/api/v1/cloud-projects', {
       name: label,
       workspace_id: workspace.id,
-    })
-    await request(`/api/v1/workspaces/${workspace.id}/execution-environments`, {
-      device_id: device.id,
     })
     await request(`/api/v1/cloud-projects/${project.id}/execution-environments`, {
       device_id: device.id,
@@ -137,6 +144,7 @@ export function createDesktopScenario({
     )
     await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
     await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+    return bindings[0]
   }
   async function runLocalTask(control) {
     await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
@@ -195,10 +203,39 @@ export function createDesktopScenario({
       workbenchReadyTimeoutMs
     )
   }
+  async function openIssueWorkspace(control) {
+    await ensureExperimentalFeaturesEnabled(control)
+    await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+      visible: true,
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+      visible: true,
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+    await selectCollaborationDomain(control, CONTENT, 'cloud')
+    await control.command(
+      'waitFor',
+      scoped(
+        `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
+      ),
+      { timeoutMs: workbenchReadyTimeoutMs }
+    )
+    await control.command(
+      'click',
+      scoped(
+        `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
+      )
+    )
+  }
   return {
     requiresCloudEnvironment: true,
+    appEnvironment,
     async prepareCloud(value) {
       cloud = value
+      proxy = await new TransportFaultProxy(cloud.backendUrl).start()
+      appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = proxy.url
       await request('/api/admin/setup-complete', {})
       workspace = await request('/api/v1/workspaces', { name: TITLE })
     },
@@ -223,6 +260,22 @@ export function createDesktopScenario({
       console.log('[executor-identity] Registered local Executor; refreshing the cloud catalog')
       await waitForCurrentRegistration(control)
       await runLocalTask(control)
+      // Large-history transport needs one unambiguous device; identity conflicts are tested below.
+      const owner = await request('/api/users/me')
+      await addWorkspaceEnvironment(localApp)
+      const history = await prepareIssue(localApp, `${TITLE} large history`, owner)
+      await openIssueWorkspace(control)
+      const binding = await runAssistance(control, history)
+      await verifyIssueTranscriptTransfer({
+        control,
+        request,
+        fixture: history,
+        binding,
+        codexSqliteHome,
+        timeoutMs: workbenchReadyTimeoutMs,
+        scope: scoped,
+        proxy,
+      })
       console.log(
         '[executor-identity] Local task completed; registering a conflicting installation'
       )
@@ -235,7 +288,7 @@ export function createDesktopScenario({
       const otherApp = await environment.waitForDeviceType(OTHER_APP_ID, 'app')
       assert.notEqual(otherApp.runtime_instance_id, localApp.runtime_instance_id)
       assert.match(otherApp.execution_target_id, /^app-record-\d+$/)
-      const owner = await request('/api/users/me')
+      await addWorkspaceEnvironment(otherApp)
       const local = await prepareIssue(localApp, `${TITLE} local`, owner)
       const other = await prepareIssue(otherApp, `${TITLE} other`, owner)
       console.log(
@@ -246,25 +299,7 @@ export function createDesktopScenario({
       console.log(
         '[executor-identity] Local task completed with duplicate addresses; checking Issue assistance'
       )
-      await ensureExperimentalFeaturesEnabled(control)
-      await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
-      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await selectCollaborationDomain(control, CONTENT, 'cloud')
-      await control.command(
-        'waitFor',
-        scoped(
-          `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
-        ),
-        { timeoutMs: workbenchReadyTimeoutMs }
-      )
-      await control.command(
-        'click',
-        scoped(
-          `[data-testid="collaboration-workspace-tree-${workspace.id}"] .collaboration-workspace-identity`
-        )
-      )
+      await openIssueWorkspace(control)
       await runAssistance(control, local)
       await runAssistance(control, other)
     },
@@ -280,7 +315,11 @@ export function createDesktopScenario({
           executionTarget: device.execution_target_id,
         })),
         modelRequestCount: modelRequests.length,
+        transportRequests: proxy?.requests,
       }
+    },
+    async cleanup() {
+      await proxy?.stop()
     },
   }
 }

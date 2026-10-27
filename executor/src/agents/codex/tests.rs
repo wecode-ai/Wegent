@@ -61,11 +61,16 @@ fn stand_in_confirmation_overrides_server_and_per_tool_auto_approval() {
 #[test]
 fn stand_in_confirmation_covers_mcp_servers_in_default_and_named_homes() {
     let _environment = environment::LaunchEnvironment::new();
-    for team_id in [0, 12] {
+    for (team_id, origin_type) in [
+        (0, "dingtalk_work"),
+        (12, "dingtalk_work"),
+        (0, "connection_work"),
+        (12, "connection_work"),
+    ] {
         let request: ExecutionRequest = serde_json::from_value(json!({
             "user_name":"synthetic", "team_namespace":"default", "team_name":"review",
             "team_id":team_id, "bot":[{"id":31,"shell_type":"Codex"}],
-            "origin":{"type":"dingtalk_work","initiatedBy":"stand_in","askBeforeAct":true,"userId":7,"deviceId":"mac","standInId":"default","workId":"work"}
+            "origin":{"type":origin_type,"initiatedBy":"stand_in","askBeforeAct":true,"userId":7,"deviceId":"mac","standInId":"default","workId":"work"}
         }))
         .unwrap();
         let home =
@@ -83,6 +88,18 @@ approval_mode = "approve"
         )
         .unwrap();
         let config = build_codex_launch_config(&request).unwrap();
+        let current_home =
+            crate::agents::instance_home::request_home(&request).unwrap_or_else(wework_codex_home);
+        assert_eq!(
+            home, current_home,
+            "The launch must use the same isolated Home as its fixture"
+        );
+        assert!(
+            fs::read_to_string(home.join("config.toml"))
+                .unwrap()
+                .contains("home_only"),
+            "The synthetic MCP fixture was overwritten during launch configuration"
+        );
         assert!(config
             .config_overrides
             .contains(&"mcp_servers.home_only.default_tools_approval_mode=\"writes\"".into()));
@@ -3786,6 +3803,59 @@ fn codex_thread_plan_trims_and_prioritizes_direct_thread() {
     }
     assert!(plan.fork_requested);
     assert!(plan.resume_requested);
+}
+
+#[test]
+fn temporary_tasks_persist_native_history_without_changing_auxiliary_threads() {
+    let launch = CodexLaunchConfig::default();
+    let mut request = ExecutionRequest {
+        ephemeral: true,
+        ..ExecutionRequest::default()
+    };
+    assert_eq!(thread_start_params(&request, &launch)["ephemeral"], true);
+    assert_eq!(
+        thread_fork_params("source", None, &request, &launch)["ephemeral"],
+        true
+    );
+
+    request.persist_runtime_thread();
+    assert!(request.ephemeral, "the task must remain hidden");
+    assert!(thread_start_params(&request, &launch)
+        .get("ephemeral")
+        .is_none());
+    assert!(thread_fork_params("source", None, &request, &launch)
+        .get("ephemeral")
+        .is_none());
+
+    request.use_ephemeral_codex_thread();
+    assert!(request.uses_ephemeral_codex_thread());
+    assert!(request.extra.get("persist_runtime_thread").is_none());
+    assert_eq!(thread_start_params(&request, &launch)["ephemeral"], true);
+    assert_eq!(
+        thread_fork_params("source", None, &request, &launch)["ephemeral"],
+        true
+    );
+}
+
+#[test]
+fn missing_legacy_temporary_threads_explain_how_to_continue() {
+    let mut request = ExecutionRequest {
+        ephemeral: true,
+        ..ExecutionRequest::default()
+    };
+    let original = "thread not found: old-thread".to_owned();
+    let error = temporary_thread_error(&request, Some("old-thread"), original.clone());
+    assert!(error.contains("Open a new temporary chat"));
+    assert!(error.contains(&original));
+    assert_eq!(
+        temporary_thread_error(&request, Some("another-thread"), original.clone()),
+        original
+    );
+    request.persist_runtime_thread();
+    assert_eq!(
+        temporary_thread_error(&request, Some("old-thread"), original.clone()),
+        original
+    );
 }
 
 #[test]

@@ -794,7 +794,7 @@ export function ProjectExecutionEnvironments({
             }}
           >
             <summary
-              className="flex min-h-11 cursor-pointer list-none items-center gap-3 py-4 [&::-webkit-details-marker]:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+              className="flex min-h-11 cursor-pointer list-none items-center gap-3 py-4 [&::-webkit-details-marker]:hidden focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
               data-testid={`${testIdPrefix}-preparation-toggle`}
             >
               <ChevronRight

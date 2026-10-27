@@ -6,6 +6,7 @@ import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/Work
 import { StandInOverviewPage } from './StandInOverviewPage'
 import { StandInSettingsPage } from './StandInSettingsPage'
 import { StandInPopover } from './StandInPopover'
+import { standInReturnLocation } from './standInReturnLocation'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
 import { createWeworkPlatformApi, withoutDefaultWorkItemProject } from './weworkPlatformApi'
 // eslint-disable-next-line react-refresh/only-export-components
@@ -447,13 +448,17 @@ export function WeworkSharedProject({
     }
   }, [project])
   const hasFullWorkspaceAccess = 'access_role' in workspace
+  const workspaceAccessRef = useRef(hasFullWorkspaceAccess)
+  useLayoutEffect(() => {
+    workspaceAccessRef.current = hasFullWorkspaceAccess
+  }, [hasFullWorkspaceAccess])
   const scopedApi = useMemo<SharedWorkspaceApi>(
     () => ({
       ...api,
       projects: {
         ...api.projects,
         list: async () => {
-          if (hasFullWorkspaceAccess) return api.projects.list(workspace.id)
+          if (workspaceAccessRef.current) return api.projects.list(workspace.id)
           const accessibleProjects = await api.projects.list()
           return accessibleProjects.filter(candidate => String(candidate.id) === String(project.id))
         },
@@ -483,7 +488,7 @@ export function WeworkSharedProject({
         },
       },
     }),
-    [api, hasFullWorkspaceAccess, project.id, project.project_store, workspace.id]
+    [api, project.id, project.project_store, workspace.id]
   )
   const standInWorkspaceApi = useMemo(
     () => ({
@@ -1166,7 +1171,6 @@ export function WeworkSharedProject({
             </IssueConversationDrawers>
           )}
           renderBoardIssueCard={({
-            column,
             display,
             focused,
             issue,
@@ -1206,7 +1210,6 @@ export function WeworkSharedProject({
             return (
               <div className="w-full" data-testid={collaborationTestIds.issue(issue.id)}>
                 <CloudTodoBoardCard
-                  columnKey={column.key}
                   item={
                     {
                       ...issue,
@@ -1404,7 +1407,8 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       }))
     setPersonalSettingsTarget(null)
     pendingNavigationProjectIdRef.current = String(project.id)
-    setLocation(returnLocation)
+    if (!returnLocation.workspaceId) resolvedWorkspaceProjectRef.current = null
+    setLocation(standInReturnLocation(project, returnLocation))
     props.onActiveProjectChange?.({
       ...project,
       location: project.project_store === 'local' ? 'local' : 'cloud',

@@ -222,6 +222,8 @@ Wework 通过设备级 RPC `runtime.worktrees.settings.get/update`、`runtime.wo
 
 在打包 Wework App 的 `local-first` 模式下，选择、拖拽或粘贴已有本地文件时，附件的 `local_path` 直接引用源文件，不创建附件副本。会话后续读取的是该路径上的文件；源文件移动或删除后，读取可能失败。移除附件不会删除源文件。截图、粘贴正文等没有源路径的内容仍保存到 `$WEGENT_EXECUTOR_HOME/workspace/attachments/draft`。本机执行通过 executor IPC 传递本地 `attachments`；云端或远程执行仍在发送前上传附件，使用 Backend `attachmentIds`，并移除请求中的本机路径。
 
+本地引用和临时附件不设固定文件总大小上限。无源路径的内容以有界分块写入本机，保留大小、偏移和文件完整性校验，磁盘写入失败会直接报错。云端上传限制由云端附件接口负责。附件错误按输入作用域隔离，可单独关闭；关闭错误不清空草稿或有效附件。重选同名文件会清除旧错误，先前请求的延迟失败不能覆盖新请求状态。
+
 ```mermaid
 flowchart LR
   Source[已有本地文件] --> Path[引用源路径]

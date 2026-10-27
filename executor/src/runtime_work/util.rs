@@ -255,7 +255,10 @@ pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Va
     if runtime_handle["origin"]["initiatedBy"] == "stand_in"
         || runtime_handle["origin"]["initiatedBy"] == "stand_in_identity"
         || runtime_handle["origin"]["type"] == "issue_dispatch"
-        || runtime_handle["origin"]["type"] == "dingtalk_work"
+        || matches!(
+            runtime_handle["origin"]["type"].as_str(),
+            Some("dingtalk_work" | "connection_work")
+        )
     {
         let mut origin = runtime_handle["origin"].clone();
         if request
@@ -288,7 +291,10 @@ pub(crate) enum ExternalWorkKind {
 
 pub(crate) fn external_work_kind(request: &ExecutionRequest) -> Option<ExternalWorkKind> {
     let origin = request.extra.get("origin")?;
-    if origin["type"] == "dingtalk_work" {
+    if matches!(
+        origin["type"].as_str(),
+        Some("dingtalk_work" | "connection_work")
+    ) {
         Some(ExternalWorkKind::Message)
     } else if origin["type"] == "issue_dispatch" {
         Some(ExternalWorkKind::Project)

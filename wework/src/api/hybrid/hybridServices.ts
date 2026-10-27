@@ -159,10 +159,6 @@ function stringField(record: Record<string, unknown>, key: string): string | und
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
-  return models
-}
-
 function cloudExecutableModels(models: UnifiedModel[]): UnifiedModel[] {
   return models.filter(supportsCloudExecution)
 }
@@ -1681,7 +1677,7 @@ export function createHybridWorkbenchServices(
           return { data: [] }
         })
         return {
-          data: mergeModelCatalogs(annotateLocalModels(localModels.data), cloudModels.getModels()),
+          data: mergeModelCatalogs(localModels.data, cloudModels.getModels()),
         }
       },
     },
@@ -1727,8 +1723,24 @@ export function createHybridWorkbenchServices(
       async retrySource(userId, deviceId, source) {
         return (await standInApiForDevice(deviceId)).retrySource(userId, deviceId, source)
       },
-      async searchDingTalk(deviceId, kind, query, cursor) {
-        return (await standInApiForDevice(deviceId)).searchDingTalk(deviceId, kind, query, cursor)
+      async connectionProviders(deviceId) {
+        return (await standInApiForDevice(deviceId)).connectionProviders(deviceId)
+      },
+      async installConnectionDependencies(deviceId, providerId, aliases) {
+        return (await standInApiForDevice(deviceId)).installConnectionDependencies(
+          deviceId,
+          providerId,
+          aliases
+        )
+      },
+      async searchConnectionResources(deviceId, providerId, kind, query, cursor) {
+        return (await standInApiForDevice(deviceId)).searchConnectionResources(
+          deviceId,
+          providerId,
+          kind,
+          query,
+          cursor
+        )
       },
       async conversation(userId, deviceId, message, roleId, options) {
         return (await standInApiForDevice(deviceId)).conversation(

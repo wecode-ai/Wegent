@@ -46,6 +46,7 @@ function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
       getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'device' }),
       modelApi: { listModels: async () => ({ data: [] }) },
       standInApi: {
+        connectionProviders: vi.fn(async () => ({ items: [] })),
         catalog: async () => ({ models: [] }),
         personalGet: vi.fn(async () => settings),
         memories: vi.fn(async () => []),
@@ -336,10 +337,12 @@ it('preserves the mounted conversation when settings refresh fails', async () =>
   const settings = await api.personalGet(7, 'device')
   render(<StandInOverviewPage {...props} />)
   const conversation = await screen.findByTestId('identity-conversation')
-  vi.mocked(api.personalGet).mockRejectedValueOnce(new Error('settings unavailable'))
+  await screen.findByTestId('stand-in-overview-role-default')
+  vi.mocked(api.personalGet).mockRejectedValue(new Error('settings unavailable'))
   act(() => publishPersonalStandIn(settings))
   expect(await screen.findByRole('alert')).toHaveTextContent('settings unavailable')
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+  vi.mocked(api.personalGet).mockResolvedValue(settings)
   await userEvent.click(screen.getByTestId('stand-in-overview-inline-retry'))
   await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)

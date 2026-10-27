@@ -85,8 +85,13 @@ const cloudBlock = workflow
   .split(/\n  [\w-]+:\n/)[0];
 assert.match(
   cloudBlock,
-  /if: \(contains\(matrix.segments, 'plugin-write-coordination'\) \|\| contains\(matrix.segments, 'plugin-operation-boundaries'\)\)\n\s+uses: \.\/\.github\/actions\/setup-minio-e2e/,
-  "Cloud plugin write coordination and operation boundaries must use real object storage",
+  /if: contains\(matrix.segments, 'plugin-write-coordination'\)[^\n]*\n\s+uses: \.\/\.github\/actions\/setup-minio-e2e/,
+  "Cloud plugin write coordination must use real object storage for sync recovery",
+);
+assert.match(
+  cloudBlock,
+  /if: [^\n]*contains\(matrix.segments, 'plugin-operation-boundaries'\)[^\n]*\n\s+uses: \.\/\.github\/actions\/setup-minio-e2e/,
+  "Cloud plugin operation boundaries must use real object storage",
 );
 for (const job of [
   "wework-desktop-core-e2e",

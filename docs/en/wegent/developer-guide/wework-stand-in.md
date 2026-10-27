@@ -20,6 +20,16 @@ A role can cover all participating collaboration projects, including future proj
 
 One personal document owns stand-in configurations and versions. Legacy project configurations migrate transactionally into roles preserving project scopes, assignment cutoffs and original project-agent authority. Project-addressed RPCs are projections over this document, with no duplicate project persistence.
 
+## Model catalog and execution references
+
+Stand-ins and ordinary tasks share the model picker, classification, sorting, and option rules. Cloud models use their original `UnifiedModel` catalog objects directly, without a round trip through execution models or changes to catalog names, labels, or `config.ui`. Native Executor catalogs require only one display adaptation and reuse the common Codex catalog helpers for provider metadata.
+
+Display models and `RunnerModelIdentity` are stored separately. Display models serve the UI; execution references contain only the actual runtime, provider, model ID, and the cloud resource name, type, namespace, and owner. Saving submits only the execution reference, not model configurations or credentials. The `public` resource type means a public resource, not a public-network endpoint. Intranet, public-network, and overseas labels come from the original catalog; unmarked models are not automatically labeled public-network.
+
+Desktop and mobile use the same complete model identity comparison, distinguishing same-name providers, namespaces, and owners. Option identifiers are independent of display names and preserve existing identifiers. Changing the device or runtime invalidates old catalog requests; unavailable saved models retain the recovery entry.
+
+The existing CI `stand-in-profile` checkpoint group includes the original `stand-in-profile-settings` scenario and the new `stand-in-model-catalog` scenario. The latter compares ordinary and stand-in labels for real Backend intranet, public-network, and unmarked models sharing an upstream model ID, then validates persisted execution references. The runner and CI catalog validator share checkpoint-group expansion so registered scenarios cannot be left outside CI.
+
 ## Multiple stand-ins handling work
 
 Each enabled stand-in independently checks its connected sources, tags, handling policy, and enable-time cutoff. Every eligible stand-in handles the work. Tagged matches do not suppress unrestricted stand-ins. Scheduling, priority ordering, and AI role selection have been removed; matching does not invoke a model.
@@ -77,6 +87,10 @@ Drop one work card onto another to merge its messages. Expand work and drag a me
 Moves use one SQLite transaction on the selected Executor. Records must belong to the same user and role. Missing records, duplicate selections, and work being dispatched reject the whole operation. Empty original work no longer occupies the work list; its record and execution history remain. Messages retain their original work identity and completed dispatch state. Merge, split, and undo never replay completed external effects.
 
 ## External-source execution and automatic review
+
+Manual tasks carrying collaboration Issue context use the same source permission configuration as stand-in tasks. When injecting named `[permissions]` profiles, the Executor must also set `default_permissions` to the profile selected for the task: project write access for automatic handling, or read access when asking before acting. Before model requests, ChatGPT subscription authentication refreshes global settings and managed policy, then merges retained session configuration. A permission selection passed only to `thread/start` does not make the reloaded configuration valid. These settings are passed as thread configuration and never written to the global configuration file.
+
+Failure notifications prefer the actual task or current-turn error. Missing model text does not generate success copy, and retries reuse the original task. CI's `stand-in-notifications` scenario covers real model transport failure, inline retry, and manual Issue tasks and stand-in configuration reloads using a synthetic subscription account. Electron, the Executor, and Codex remain real.
 
 Messages, collaboration Issues, webpages, attachments, and tool results are task material, never permission grants or trusted user authorization. The Executor pins the original source across follow-ups. Personal collaboration tasks retain the existing cross-project access contract; dispatch and manager roles continue using their original server-side authorization without deriving extra authority or restrictions from source text.
 

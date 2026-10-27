@@ -20,7 +20,7 @@ import { RUNTIME_RETRY_CONTINUATION_PROMPT } from '@/components/layout/runtimeRe
 import { runtimeTaskBindingAddress } from '@/features/todo/runtimeTaskBindingAddress'
 import { modelSelectionFromRuntimeHandle } from '@/features/workbench/runtimeContextUsage'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
-import type { WorkbenchMessage } from '@/types/workbench'
+import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import {
   useComposerCatalogBinding,
   type ComposerCatalogBinding,
@@ -100,6 +100,11 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onRequestUserInputSubmit,
     onRequestUserInputIgnore,
     scrollOrigin,
+    hasMoreBefore,
+    loadingMoreBefore,
+    onLoadMoreBefore,
+    transcriptError,
+    onRetryTranscript,
   }: {
     messages: Array<{
       id: string
@@ -119,8 +124,30 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     }) => void
     onRequestUserInputIgnore?: (payload: { kind: string; request_id: string }) => void
     scrollOrigin?: 'top' | 'bottom'
+    hasMoreBefore?: boolean
+    loadingMoreBefore?: boolean
+    onLoadMoreBefore?: () => void
+    transcriptError?: string | null
+    onRetryTranscript?: () => void
   }) => (
     <div data-testid="mock-message-list" data-scroll-origin={scrollOrigin}>
+      {messages.map(message => (
+        <span key={message.id}>{message.content}</span>
+      ))}
+      {hasMoreBefore && (
+        <button
+          data-testid="mock-load-older"
+          disabled={loadingMoreBefore}
+          onClick={onLoadMoreBefore}
+        >
+          Older messages
+        </button>
+      )}
+      {transcriptError && (
+        <button data-testid="mock-retry-history" onClick={onRetryTranscript}>
+          {transcriptError}
+        </button>
+      )}
       {messages.flatMap(message =>
         (message.attachments ?? []).map(messageAttachment => (
           <span key={messageAttachment.id} data-testid="sent-message-attachment">
@@ -566,6 +593,109 @@ describe('TemporaryChatPanel', () => {
     expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-context-tokens', '700')
   })
 
+  it('loads earlier pages, keeps messages on failure and retries the same cursor', async () => {
+    const olderTurn: RuntimeConversationTurn = {
+      id: 'older-turn',
+      status: 'done',
+      items: [
+        {
+          id: 'older',
+          type: 'user_message',
+          message: {
+            id: 'older',
+            role: 'user',
+            content: 'Earlier question',
+            status: 'done',
+            createdAt: '',
+          },
+        },
+      ],
+    }
+    mocks.conversationMessages = [
+      {
+        id: 'latest',
+        role: 'assistant',
+        content: 'Latest reply',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    mocks.loadRuntimeTranscriptForPane
+      .mockResolvedValueOnce({ messages: [], turns: [], beforeCursor: 'older-page' })
+      .mockRejectedValueOnce(new Error('Transfer interrupted'))
+      .mockImplementationOnce(async () => {
+        const transcript = { messages: [], turns: [olderTurn], beforeCursor: null }
+        // The shared loader publishes canonical turns before resolving the page.
+        mocks.conversationMessages = [
+          ...transcript.turns.flatMap(turn =>
+            turn.items.flatMap(item => (item.type === 'user_message' ? [item.message] : []))
+          ),
+          ...mocks.conversationMessages,
+        ]
+        return transcript
+      })
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="paged-history"
+        sendEphemeral={false}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('mock-load-older'))
+    expect(await screen.findByTestId('mock-retry-history')).toHaveTextContent(
+      'Transfer interrupted'
+    )
+    expect(screen.getByText('Latest reply')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('mock-retry-history'))
+    expect(await screen.findByText('Earlier question')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-load-older')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mock-retry-history')).not.toBeInTheDocument()
+    expect(mocks.loadRuntimeTranscriptForPane).toHaveBeenLastCalledWith(address, {
+      limit: 5,
+      beforeCursor: 'older-page',
+    })
+    expect(mocks.loadRuntimeTranscriptForPane.mock.calls.slice(1)).toEqual([
+      [address, { limit: 5, beforeCursor: 'older-page' }],
+      [address, { limit: 5, beforeCursor: 'older-page' }],
+    ])
+  })
+
+  it('retains cached messages and retries an initial load failure without a page cursor', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'cached',
+        role: 'assistant',
+        content: 'Cached reply',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    mocks.loadRuntimeTranscriptForPane
+      .mockRejectedValueOnce(new Error('Initial transfer interrupted'))
+      .mockResolvedValueOnce({ messages: [], turns: [], beforeCursor: 'older-page' })
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="cached-history"
+        sendEphemeral={false}
+      />
+    )
+    expect(await screen.findByTestId('mock-retry-history')).toHaveTextContent(
+      'Initial transfer interrupted'
+    )
+    expect(screen.getByText('Cached reply')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-load-older')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('mock-retry-history'))
+    expect(await screen.findByTestId('mock-load-older')).toBeInTheDocument()
+    expect(screen.getByText('Cached reply')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-retry-history')).not.toBeInTheDocument()
+    expect(mocks.loadRuntimeTranscriptForPane.mock.calls).toEqual([[address], [address]])
+  })
+
   it('shows a history error instead of an empty conversation and retries the bound address', async () => {
     const address = {
       deviceId: 'admin-cloud',
@@ -807,6 +937,7 @@ describe('TemporaryChatPanel', () => {
         }),
       })
     )
+    expect(mocks.loadRuntimeTranscriptForPane).not.toHaveBeenCalled()
   })
 
   it('notifies the parent with the resolved task address instead of its optimistic route', async () => {

@@ -11,6 +11,7 @@ import { navigateTo } from '@/lib/navigation'
 import * as localPlugins from '@/api/local/codexPlugins'
 import * as localExecutor from '@/desktop/localExecutor'
 import * as runtimeEnvironment from '@/lib/runtime-environment'
+import { ensureLocalExecutorAvailable, requestLocalExecutor } from '@/desktop/localExecutor'
 import '@/i18n'
 import { PluginManagementWorkspace } from './PluginManagementWorkspace'
 import type { InstalledPluginItem } from './PluginManagementRows'
@@ -18,6 +19,12 @@ import type { PluginMarketplaceItem } from '@/types/api'
 
 vi.mock('@/lib/navigation', () => ({
   navigateTo: vi.fn(),
+}))
+
+vi.mock('@/desktop/localExecutor', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/desktop/localExecutor')>()),
+  ensureLocalExecutorAvailable: vi.fn(),
+  requestLocalExecutor: vi.fn(),
 }))
 
 function cachedInstalledPlugin(): InstalledPluginItem {
@@ -73,15 +80,70 @@ function cachedInstalledPlugin(): InstalledPluginItem {
   }
 }
 
+function seedCloudInstalledPlugin() {
+  const installed = cachedInstalledPlugin().raw
+  installed.spec.pluginId = 901
+  installed.spec.releaseId = 6
+  installed.status.devices = [
+    {
+      deviceId: 'device-1',
+      desiredReleaseId: 6,
+      actualReleaseId: 6,
+      state: 'installed',
+      attemptCount: 0,
+      updatedAt: '2026-10-25T00:00:00Z',
+    },
+  ]
+  const key = pluginMarketplaceCacheKey('/api', 'cloud-token')
+  setPluginMarketplaceCache({
+    cacheKey: key,
+    marketplaceItems: [],
+    installedPlugins: [installed],
+    marketplaces: [],
+    selectedMarketplaceKey: '',
+    deviceId: 'device-1',
+    fetchedAt: Date.now(),
+  })
+  const api = localPlugins.createLocalCodexPluginApi()
+  vi.spyOn(localPlugins, 'createLocalCodexPluginApi').mockReturnValue({
+    ...api,
+    listInstalledPlugins: vi.fn().mockResolvedValue({ items: [installed], deviceId: 'device-1' }),
+  })
+  return { key, installed }
+}
+
 describe('PluginManagementWorkspace cache', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     clearPluginMarketplaceCache()
     vi.mocked(navigateTo).mockReset()
+    vi.mocked(ensureLocalExecutorAvailable).mockReset().mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'device-1',
+      deviceRouteId: 'app-record-70',
+    })
+    vi.mocked(requestLocalExecutor)
+      .mockReset()
+      .mockImplementation(async method => {
+        if (method === 'executor.plugins.device_route') {
+          const status = await vi.mocked(ensureLocalExecutorAvailable).getMockImplementation()?.({
+            refresh: true,
+          })
+          return { device_id: status?.deviceId, device_route_id: status?.deviceRouteId }
+        }
+        return undefined
+      })
     window.localStorage.clear()
   })
 
   test('shows cold local inventory while cloud is pending without reading any marketplace', async () => {
+    vi.mocked(ensureLocalExecutorAvailable).mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'resolved-device',
+      deviceRouteId: 'app-record-70',
+    })
     const api = localPlugins.createLocalCodexPluginApi()
     const readState = vi.fn()
     const listInstalledPlugins = vi.fn().mockResolvedValue({
@@ -105,7 +167,11 @@ describe('PluginManagementWorkspace cache', () => {
     expect(listInstalledPlugins).toHaveBeenCalledWith()
     expect(readState).not.toHaveBeenCalled()
     expect(fetch).toHaveBeenCalledTimes(1)
-    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('device_id=resolved-device')
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('device_id=app-record-70')
+    expect(requestLocalExecutor).toHaveBeenCalledWith(
+      'executor.plugins.device_route',
+      expect.objectContaining({ auth_token: 'cloud-token', device_id: 'resolved-device' })
+    )
     expect(String(vi.mocked(fetch).mock.calls[0][0])).not.toContain('marketplace')
   })
 
@@ -251,6 +317,12 @@ describe('PluginManagementWorkspace cache', () => {
   test('does not display or request cached membership from another known device', async () => {
     vi.spyOn(runtimeEnvironment, 'isDesktopRuntime').mockReturnValue(true)
     vi.spyOn(localExecutor, 'getKnownLocalExecutorDeviceId').mockReturnValue('new-device')
+    vi.mocked(ensureLocalExecutorAvailable).mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'new-device',
+      deviceRouteId: 'new-runtime-record',
+    })
     const api = localPlugins.createLocalCodexPluginApi()
     vi.spyOn(localPlugins, 'createLocalCodexPluginApi').mockReturnValue({
       ...api,
@@ -275,7 +347,7 @@ describe('PluginManagementWorkspace cache', () => {
     expect(screen.queryByText('Cached Plugin')).not.toBeInTheDocument()
     expect(screen.getByText('正在加载插件')).toBeInTheDocument()
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
-    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('device_id=new-device')
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('device_id=new-runtime-record')
     act(() => {
       setPluginMarketplaceCache({
         cacheKey: pluginMarketplaceCacheKey('/api', 'cloud-token'),
@@ -319,6 +391,210 @@ describe('PluginManagementWorkspace cache', () => {
     expect(screen.getByTestId('plugin-management-installed-list')).toBeInTheDocument()
 
     await waitFor(() => expect(fetch).toHaveBeenCalled())
+  })
+
+  test('refreshes the registered Runtime route for every enabled update and keeps stable inventory identity', async () => {
+    const { key, installed } = seedCloudInstalledPlugin()
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method !== 'PUT') return new Promise<Response>(() => {})
+      const request = JSON.parse(String(init.body)) as { enabled: boolean }
+      return Promise.resolve(
+        Response.json({
+          ...installed,
+          spec: { ...installed.spec, enabled: request.enabled },
+          status: {
+            state: request.enabled ? 'enabled' : 'disabled',
+            devices: installed.status.devices?.map(device => ({
+              ...device,
+              deviceId: new URL(String(input), 'https://wegent.test').searchParams.get('device_id'),
+            })),
+          },
+        })
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    expect(String(fetchMock.mock.calls[0][0])).toContain('device_id=app-record-70')
+
+    for (const [route, enabled] of [
+      ['app-record-71', false],
+      ['app-record-72', true],
+    ] as const) {
+      vi.mocked(ensureLocalExecutorAvailable).mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'device-1',
+        deviceRouteId: route,
+      })
+      await userEvent.click(screen.getByTestId('installed-plugin-toggle-cached-1'))
+      await waitFor(() =>
+        expect(getPluginMarketplaceCache(key)?.installedPlugins[0].spec.enabled).toBe(enabled)
+      )
+      const update = fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT').at(-1)!
+      expect(String(update[0])).toBe(`/api/plugins/installed/cached-1?device_id=${route}`)
+      expect(JSON.parse(String(update[1]?.body))).toEqual({ enabled })
+      expect(screen.getByTestId('installed-plugin-toggle-cached-1')).toHaveAttribute(
+        'aria-checked',
+        String(enabled)
+      )
+      expect(getPluginMarketplaceCache(key)?.deviceId).toBe('device-1')
+      expect(getPluginMarketplaceCache(key)?.installedPlugins[0].status.devices?.[0].deviceId).toBe(
+        'device-1'
+      )
+    }
+    expect(requestLocalExecutor).toHaveBeenCalledTimes(3)
+    expect(requestLocalExecutor).toHaveBeenLastCalledWith(
+      'executor.plugins.device_route',
+      expect.objectContaining({ auth_token: 'cloud-token', device_id: 'device-1' })
+    )
+  })
+
+  test('omits the old account route after switching tokens on the same Backend before Runtime configuration', async () => {
+    const { installed } = seedCloudInstalledPlugin()
+    vi.mocked(requestLocalExecutor).mockImplementation(async (method, params) => {
+      if (method !== 'executor.plugins.device_route') return undefined
+      if (params?.auth_token !== 'cloud-token')
+        throw new Error('Runtime still belongs to previous account')
+      return { device_id: 'device-1', device_route_id: 'app-record-70' }
+    })
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'PUT')
+        return Response.json({ ...installed, spec: { ...installed.spec, enabled: false } })
+      return Response.json({ items: [installed] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { rerender } = render(
+      <PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />
+    )
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/plugins/installed?device_id=app-record-70',
+        expect.anything()
+      )
+    )
+    fetchMock.mockClear()
+
+    rerender(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="other-account" />)
+    const toggle = await screen.findByTestId('installed-plugin-toggle-cached-1')
+    await userEvent.click(toggle)
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/plugins/installed/cached-1',
+        expect.objectContaining({ method: 'PUT', body: JSON.stringify({ enabled: false }) })
+      )
+    )
+    expect(fetchMock.mock.calls.every(([input]) => !String(input).includes('device_id='))).toBe(
+      true
+    )
+    expect(requestLocalExecutor).toHaveBeenLastCalledWith(
+      'executor.plugins.device_route',
+      expect.objectContaining({ auth_token: 'other-account', device_id: 'device-1' })
+    )
+    expect(
+      fetchMock.mock.calls.every(
+        ([, init]) => new Headers(init?.headers).get('Authorization') === 'Bearer other-account'
+      )
+    ).toBe(true)
+  })
+
+  test('saves account enabled preference without device targeting when Runtime IPC is unavailable', async () => {
+    const { key, installed } = seedCloudInstalledPlugin()
+    vi.mocked(ensureLocalExecutorAvailable).mockRejectedValue(new Error('Runtime IPC unavailable'))
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method !== 'PUT') return new Promise<Response>(() => {})
+      return Promise.resolve(
+        Response.json({
+          ...installed,
+          spec: { ...installed.spec, enabled: false },
+          status: { ...installed.status, state: 'disabled' },
+        })
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+
+    await userEvent.click(screen.getByTestId('installed-plugin-toggle-cached-1'))
+
+    await waitFor(() =>
+      expect(getPluginMarketplaceCache(key)?.installedPlugins[0].spec.enabled).toBe(false)
+    )
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/plugins/installed/cached-1',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ enabled: false }) })
+    )
+    expect(screen.getByTestId('installed-plugin-toggle-cached-1')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
+    expect(getPluginMarketplaceCache(key)?.deviceId).toBe('device-1')
+  })
+
+  test('rolls back the enabled toggle when the account preference HTTP request fails', async () => {
+    const { key } = seedCloudInstalledPlugin()
+    vi.mocked(ensureLocalExecutorAvailable).mockRejectedValue(new Error('Runtime IPC unavailable'))
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method !== 'PUT') return new Promise<Response>(() => {})
+      return Promise.resolve(Response.json({ detail: 'Preference rejected' }, { status: 500 }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(screen.getByTestId('installed-plugin-toggle-cached-1'))
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/plugins/installed/cached-1',
+        expect.objectContaining({ method: 'PUT' })
+      )
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('installed-plugin-toggle-cached-1')).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    )
+    expect(getPluginMarketplaceCache(key)?.installedPlugins[0].spec.enabled).toBe(true)
+  })
+
+  test('maps only the current registered record to stable inventory identity when historical device records coexist', async () => {
+    const { key, installed } = seedCloudInstalledPlugin()
+    const currentDevice = installed.status.devices![0]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({
+          items: [
+            {
+              ...installed,
+              status: {
+                ...installed.status,
+                devices: [
+                  { ...currentDevice, deviceId: 'app-record-69', actualReleaseId: 5 },
+                  { ...currentDevice, deviceId: 'app-record-70' },
+                ],
+              },
+            },
+          ],
+        })
+      )
+    )
+    render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await waitFor(() =>
+      expect(getPluginMarketplaceCache(key)?.installedPluginsFetchedAt).toBeTypeOf('number')
+    )
+
+    const snapshot = getPluginMarketplaceCache(key)!
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('device_id=app-record-70')
+    expect(snapshot.deviceId).toBe('device-1')
+    expect(snapshot.installedPlugins[0].status.devices).toEqual([
+      expect.objectContaining({ deviceId: 'app-record-69', actualReleaseId: 5 }),
+      expect.objectContaining({ deviceId: 'device-1', actualReleaseId: 6 }),
+    ])
+    expect(screen.getByText('Cached Plugin')).toBeInTheDocument()
   })
 
   test('opens marketplace plugin detail instead of a separate management detail page', async () => {

@@ -25,6 +25,7 @@ from app.models.delivery import (
     loop_unset_datetime_for_connection,
 )
 from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -42,8 +43,12 @@ from app.schemas.project_chat import (
     ProjectChatWorkspaceBinding,
     ProjectChatWorkspaceBindingView,
 )
-from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.cloud_projects.access import (
+    CloudProjectAccess,
+    require_cloud_project_role,
+)
 from app.services.collaboration_permissions import (
+    ACTION_ROLES,
     project_agent_visible,
     require_project_agent_visibility,
 )
@@ -495,12 +500,24 @@ class ProjectChatService:
         include_archived: bool = False,
     ) -> list[ProjectChatAgentView]:
         access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
-        if include_archived:
-            require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
+        return self.list_agents_for_access(
+            db, access, user_id=user_id, include_archived=include_archived
+        )
+
+    def list_agents_for_access(
+        self,
+        db: Session,
+        access: CloudProjectAccess,
+        *,
+        user_id: int,
+        include_archived: bool = False,
+    ) -> list[ProjectChatAgentView]:
+        if include_archived and not has_permission(access.role, BaseRole.Maintainer):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         rows = (
             db.query(ProjectChatAgent)
             .filter(
-                ProjectChatAgent.cloud_project_id == project_id,
+                ProjectChatAgent.cloud_project_id == access.project.id,
                 ProjectChatAgent.status.in_(
                     ["active", "archived"] if include_archived else ["active"]
                 ),
@@ -510,7 +527,9 @@ class ProjectChatService:
             .all()
         )
         return [
-            self.agent_to_view(row, db=db, viewer_user_id=user_id)
+            self.agent_to_view(
+                row, db=db, viewer_user_id=user_id, project_access=access
+            )
             for row in rows
             if project_agent_visible(row, user_id)
         ]
@@ -1224,6 +1243,7 @@ class ProjectChatService:
         event_name: str,
         payload: dict,
         owner_user_id: int | None = None,
+        accepted_terminal: bool = False,
     ) -> tuple[ProjectChatMessageView, str] | None:
         identities = [device_id]
         if owner_user_id is not None and record_id_from_route(device_id):
@@ -1237,24 +1257,66 @@ class ProjectChatService:
             identities = device_identity_ids(device)
         data = payload.get("data")
         data = data if isinstance(data, dict) else {}
+        turn_id = self._runtime_turn_id(payload)
         if event_name == "response.completed":
             from app.services.project_chat.execution_snapshot import (
+                can_restore_reconciled_completion,
                 completed_activity_for_turn,
+                runtime_event_sequence,
             )
 
             completed = completed_activity_for_turn(
                 db,
                 device_ids=identities,
                 task_id=runtime_task_id,
-                turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
+                turn_id=turn_id,
             )
+            if completed is None:
+                from app.services.loop_item_executions.service import (
+                    loop_item_execution_service,
+                )
+
+                completed = loop_item_execution_service.reconciled_activity_for_runtime(
+                    db,
+                    runtime_device_id=device_id,
+                    runtime_task_id=runtime_task_id,
+                    turn_id=turn_id,
+                    owner_user_id=owner_user_id,
+                )
             if completed is not None:
+                execution = self._execution_for_completed_activity(db, completed)
+                if (
+                    execution is not None
+                    and not accepted_terminal
+                    and not can_restore_reconciled_completion(
+                        db,
+                        execution=execution,
+                        event_name=event_name,
+                        payload=payload,
+                        activity=completed,
+                    )
+                ):
+                    return None
                 # History reports outcomes without text. A delayed final event
                 # must still save its full content without replaying workflow.
                 content = self._project_chat_final_text(data, payload)
                 if content is not None:
                     completed.content = content
+                    if turn_id:
+                        completed.metadata_json = {
+                            **dict(completed.metadata_json or {}),
+                            "runtime_turn_id": turn_id,
+                        }
                     self._index_activity_change_requests(db, completed)
+                    sequence = runtime_event_sequence(payload)
+                    if (
+                        execution is not None
+                        and sequence is not None
+                        and sequence > execution.last_event_seq
+                    ):
+                        execution.last_event_seq = sequence
+                elif execution is not None and not accepted_terminal:
+                    return None
                 self._commit(db)
                 db.refresh(completed)
                 return self.to_view(completed, db=db), "snapshot"
@@ -1364,6 +1426,25 @@ class ProjectChatService:
         self._commit(db)
         db.refresh(row)
         return self.to_view(row, db=db), "snapshot"
+
+    @staticmethod
+    def _execution_for_completed_activity(
+        db: Session, activity: ProjectChatMessage
+    ) -> LoopItemExecution | None:
+        raw_execution_id = (activity.metadata_json or {}).get("execution_id")
+        if isinstance(raw_execution_id, bool) or raw_execution_id is None:
+            return None
+        try:
+            execution_id = int(raw_execution_id)
+        except (TypeError, ValueError):
+            return None
+        return (
+            db.query(LoopItemExecution)
+            .filter(LoopItemExecution.id == execution_id)
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
 
     @staticmethod
     def _project_automation_activity_is_terminal(
@@ -1610,6 +1691,12 @@ class ProjectChatService:
             if normalized in PROJECT_CHAT_FAILED_STATUSES:
                 return "failed"
         return None
+
+    @staticmethod
+    def _runtime_turn_id(payload: dict) -> str | None:
+        """Return the Runtime turn identity attached to an event."""
+        value = payload.get("subtaskId") or payload.get("subtask_id")
+        return value if isinstance(value, str) and value else None
 
     @staticmethod
     def _project_chat_final_text(data: dict, payload: dict) -> str | None:
@@ -2374,6 +2461,7 @@ class ProjectChatService:
         db: Session | None = None,
         *,
         viewer_user_id: int | None = None,
+        project_access: CloudProjectAccess | None = None,
     ) -> ProjectChatAgentView:
         config = bot_config(row)
         can_edit = (
@@ -2417,9 +2505,14 @@ class ProjectChatService:
                 collaboration_permission_service,
             )
 
-            can_use = collaboration_permission_service.check(
-                db, viewer_user_id, "execute", row.cloud_project_id
-            ).allowed
+            if project_access is not None:
+                if project_access.project.id != row.cloud_project_id:
+                    raise ValueError("Agent must belong to the authorized project")
+                can_use = has_permission(project_access.role, ACTION_ROLES["execute"])
+            else:
+                can_use = collaboration_permission_service.check(
+                    db, viewer_user_id, "execute", row.cloud_project_id
+                ).allowed
             if row.status == "active":
                 try:
                     collaboration_permission_service.require_project_agent(

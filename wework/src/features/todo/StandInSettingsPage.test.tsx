@@ -46,6 +46,7 @@ function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
     userId: 7,
     services: {
       standInApi: {
+        connectionProviders: vi.fn(async () => ({ items: [] })),
         personalGet,
         personalSave,
         personalAgents: vi.fn(async () => [{ id: 42, name: 'Personal reviewer' }]),
@@ -62,6 +63,106 @@ function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
 const userSetup = () => userEvent.setup({ delay: null })
 
 describe('Personal stand-in settings', () => {
+  it('uses the project store in both project-agent scope labels', async () => {
+    const role = newStandInRole('mac', 'review')
+    role.agentId = 'reviewer'
+    role.agentProject = { id: 'one', store: 'cloud' }
+    role.collaboration = {
+      ...role.collaboration,
+      enabled: true,
+      allProjects: false,
+      projects: [role.agentProject],
+    }
+    const { props } = fixture({ roles: [role] })
+    props.projects.push({
+      id: 'one',
+      name: 'Cloud project',
+      project_store: 'backend',
+    } as CollaborationProject)
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} />)
+    expect(await screen.findByTestId('stand-in-project-agent-scope')).toHaveTextContent(
+      'Cloud project'
+    )
+    await user.click(screen.getByTestId('stand-in-connections-open'))
+    await user.click(screen.getByTestId('stand-in-connection-project-cloud-one'))
+    expect(screen.getByTestId('stand-in-connections')).toHaveTextContent('Cloud project')
+    expect(screen.getByTestId('stand-in-connections')).not.toHaveTextContent('First project')
+  })
+
+  it('keeps project names visible on another device without offering local projects to connect', async () => {
+    const role = newStandInRole('remote', 'review')
+    role.collaboration = {
+      ...role.collaboration,
+      enabled: true,
+      allProjects: false,
+      projects: [
+        { id: 'one', store: 'local' },
+        { id: 'one', store: 'cloud' },
+      ],
+    }
+    const { props } = fixture({ executionDeviceId: 'remote', roles: [role] })
+    props.projects.push({
+      id: 'one',
+      name: 'Cloud project',
+      project_store: 'backend',
+    } as CollaborationProject)
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} initialDeviceId="remote" />)
+    await user.click(await screen.findByTestId('stand-in-connections-open'))
+    expect(screen.getByTestId('stand-in-connection-project-local-one')).toHaveTextContent(
+      'First project'
+    )
+    expect(screen.getByTestId('stand-in-connection-project-cloud-one')).toHaveTextContent(
+      'Cloud project'
+    )
+    await user.click(screen.getByTestId('stand-in-connection-project-local-one'))
+    expect(screen.getByRole('checkbox', { name: 'First project' })).toBeChecked()
+    expect(screen.queryByRole('checkbox', { name: 'Second project' })).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Cloud project' })).toBeChecked()
+    await user.click(screen.getByRole('checkbox', { name: 'First project' }))
+    expect(screen.queryByRole('checkbox', { name: 'First project' })).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-connections-back'))
+    expect(screen.queryByTestId('stand-in-connection-project-local-one')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-connection-project-cloud-one')).toHaveTextContent(
+      'Cloud project'
+    )
+  })
+
+  it('keeps remote all-project scope without offering projects owned by this computer', async () => {
+    const role = newStandInRole('remote', 'review')
+    role.collaboration.enabled = true
+    role.collaboration.allProjects = false
+    const { props, personalSave } = fixture({ executionDeviceId: 'remote', roles: [role] })
+    props.projects.push({
+      id: 'cloud',
+      name: 'Cloud project',
+      project_store: 'backend',
+    } as CollaborationProject)
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} initialDeviceId="remote" />)
+    await user.click(await screen.findByTestId('stand-in-connections-open'))
+    await user.click(screen.getByTestId('stand-in-add-connection'))
+    await user.click(screen.getByTestId('stand-in-add-projects-connection'))
+    expect(screen.queryByRole('checkbox', { name: 'First project' })).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-all-projects'))
+    expect(screen.getByRole('checkbox', { name: 'Cloud project' })).toBeChecked()
+    expect(screen.queryByRole('checkbox', { name: 'First project' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: 'Second project' })).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-save'))
+    expect(personalSave).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        roles: [
+          expect.objectContaining({
+            collaboration: expect.objectContaining({ allProjects: true, projects: [] }),
+          }),
+        ],
+      }),
+      'remote'
+    )
+  })
+
   it('returns the created role to its parent after the first save', async () => {
     const { props, personalSave } = fixture({ roles: [] })
     const user = userSetup()

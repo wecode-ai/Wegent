@@ -5,7 +5,12 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { fetchJson } from '../modules/shared.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
-import { createCatalogContextVerification } from './codex-catalog-context.mjs'
+import { createCodexProtocolGate } from '../modules/codex-protocol-gate.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
+import {
+  createCatalogContextVerification,
+  waitForCatalogRestart,
+} from './codex-catalog-context.mjs'
 
 const MODEL_ID = 'gpt-5.5'
 const EDIT = `[data-testid="codex-catalog-edit-openai-${MODEL_ID}"]`
@@ -14,6 +19,7 @@ const RESTORE = `[data-testid="codex-catalog-restore-openai-${MODEL_ID}"]`
 
 export function createDesktopScenario(options) {
   const context = createCatalogContextVerification({ ...options, modelId: MODEL_ID })
+  const discoveryGate = createCodexProtocolGate(options)
   let bundledModels
   let overridePath
 
@@ -43,6 +49,7 @@ export function createDesktopScenario(options) {
         'capabilities',
         'model-catalog-overrides.json'
       )
+      await discoveryGate.prepareApp({ appEnvironment })
     },
     async verify(control) {
       const origin = await control.command('getLocationOrigin', 'body')
@@ -84,7 +91,13 @@ export function createDesktopScenario(options) {
       await control.command('fill', '[data-testid="local-model-context-window-input"]', {
         value: '300001',
       })
+      const executorLogPath = join(options.resultDir, 'executor.log')
+      const saveLogOffset = (await readFile(executorLogPath, 'utf8')).length
       await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
+      await waitForCatalogRestart(control, executorLogPath, saveLogOffset)
+      await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
+        visible: false,
+      })
       await control.command('waitFor', ROW, { text: '已自定义' })
       const persisted = JSON.parse(await readFile(overridePath, 'utf8'))
       assert.deepEqual(persisted, [
@@ -100,6 +113,36 @@ export function createDesktopScenario(options) {
         context_window: 300001,
         max_context_window: 300001,
       })
+      const concurrentEntry = {
+        ...saved.effective,
+        display_name: 'WEWORK_E2E_CONCURRENT_CATALOG',
+        context_window: 300003,
+        max_context_window: 300003,
+      }
+      await requestExecutor(
+        control,
+        'runtime.codex.catalog.overrides.write',
+        { slug: MODEL_ID, entry: concurrentEntry },
+        options.uiTimeoutMs
+      )
+      await discoveryGate.verifyOverlap(control)
+      const refreshed = (await readCatalog()).find(entry => entry.slug === MODEL_ID)
+      assert.deepEqual(
+        refreshed.effective,
+        concurrentEntry,
+        'The concurrent idle restart lost the new Catalog'
+      )
+      const discovered = await requestExecutor(
+        control,
+        'runtime.codex.models.list',
+        { includeHidden: true },
+        options.uiTimeoutMs
+      )
+      assert.equal(
+        discovered.data.find(model => model.id === MODEL_ID)?.displayName,
+        concurrentEntry.display_name,
+        'The restarted real Codex did not discover the updated Catalog'
+      )
       await control.command('navigate', 'body', { value: '/' })
       await control.command('navigate', 'body', { value: '/settings/personal/models' })
       await control.command('clickWhenEnabled', '[data-testid="codex-models-details-toggle"]')
@@ -108,7 +151,9 @@ export function createDesktopScenario(options) {
         '[data-testid="codex-model-provider-toggle-openai"]'
       )
       await control.command('waitFor', ROW, { text: '已自定义' })
+      const restoreLogOffset = (await readFile(executorLogPath, 'utf8')).length
       await control.command('clickWhenEnabled', RESTORE)
+      await waitForCatalogRestart(control, executorLogPath, restoreLogOffset)
       await waitForSnapshot(
         control,
         snapshot =>
@@ -121,6 +166,7 @@ export function createDesktopScenario(options) {
       assert.equal(restored.overridden, false)
       assert.deepEqual(JSON.parse(await readFile(overridePath, 'utf8')), [])
       await context.verify(control, baseline.display_name)
+      await context.verifyActiveRestartProtection(control)
     },
   }
 }

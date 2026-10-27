@@ -59,7 +59,7 @@ export function ProjectAgentPicker({
   return (
     <div className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 px-5 pb-4 pt-1">
-        <label className="flex h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-background px-3 text-text-muted focus-within:ring-2 focus-within:ring-focus/20 md:h-9">
+        <label className="flex h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-background px-3 text-text-muted keyboard:focus-within:ring-2 keyboard:focus-within:ring-focus/20 md:h-9">
           <Search aria-hidden="true" className="h-4 w-4 shrink-0" />
           <input
             ref={searchRef}
@@ -161,7 +161,7 @@ export function ProjectAgentPicker({
               return (
                 <label
                   key={id}
-                  className={`flex min-h-16 items-center gap-3 rounded-lg px-3 py-2.5 ${added || busy ? 'cursor-default' : 'cursor-pointer hover:bg-muted/60'} ${checked ? 'bg-muted' : ''} focus-within:ring-2 focus-within:ring-inset focus-within:ring-focus/20`}
+                  className={`flex min-h-16 items-center gap-3 rounded-lg px-3 py-2.5 ${added || busy ? 'cursor-default' : 'cursor-pointer hover:bg-muted/60'} ${checked ? 'bg-muted' : ''} keyboard:focus-within:ring-2 keyboard:focus-within:ring-inset keyboard:focus-within:ring-focus/20`}
                 >
                   <span
                     aria-hidden="true"

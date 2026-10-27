@@ -130,6 +130,10 @@ export function mapWorkspaceDeliveryDto(
   const markdown = row.markdown;
   return {
     id: String(row.id),
+    createdByUserId:
+      row.created_by_user_id == null && row.createdByUserId == null
+        ? null
+        : Number(row.created_by_user_id ?? row.createdByUserId),
     issueId: String(row.loop_item_id ?? row.issueId ?? ""),
     status: row.status === "delivered" ? "delivered" : "draft",
     ...(markdown === undefined ? {} : { markdown: String(markdown) }),
@@ -401,9 +405,11 @@ export function mapCollaborationOwnedAgentDto(
     owner_id: String(row.owner_id ?? row.ownerId ?? ""),
     owner_name: String(row.owner_name ?? row.ownerName ?? ""),
     status:
-      (row.status ?? "unavailable") === "available"
-        ? "available"
-        : "unavailable",
+      row.status === "unchecked"
+        ? "unchecked"
+        : row.status === "available"
+          ? "available"
+          : "unavailable",
     execution_environment_ids: Array.isArray(
       row.execution_environment_ids ?? row.executionEnvironmentIds,
     )

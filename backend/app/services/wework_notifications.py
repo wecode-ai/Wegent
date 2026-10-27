@@ -6,7 +6,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import event
+from sqlalchemy import event, or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -33,6 +33,25 @@ from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
 _PENDING = "wework_notification_ids"
+
+
+@trace_sync()
+def mark_issue_notifications_read(db: Session, *, item_id: str, user_id: int) -> None:
+    """Consume the reader's Issue notifications in the Issue read transaction."""
+    db.query(WeworkNotification).filter(
+        WeworkNotification.user_id == user_id,
+        WeworkNotification.is_read.is_(False),
+        or_(
+            WeworkNotification.payload["itemId"].as_string() == item_id,
+            WeworkNotification.payload["issueId"].as_string() == item_id,
+        ),
+    ).update(
+        {
+            "is_read": True,
+            "read_status_changed_at": datetime.now(timezone.utc).replace(tzinfo=None),
+        },
+        synchronize_session=False,
+    )
 
 
 def _delivery_channels(db: Session, *, user_id: int, kind: str) -> dict[str, bool]:
@@ -275,7 +294,26 @@ async def _deliver_notification_payload(
     if not channels["im"]:
         return
     try:
-        sessions = await im_session_service.list_user_sessions(db, user_id=user_id)
+        sessions = [
+            session
+            for session in await im_session_service.list_user_sessions(
+                db, user_id=user_id
+            )
+            if session.user_id == user_id
+        ]
+        eligible_sessions = im_notification_dispatcher.notification_sessions(
+            db, sessions
+        )
+        if not eligible_sessions:
+            if sessions:
+                logger.info(
+                    "Wework IM delivery skipped: connected channels lack a "
+                    "notification card: id=%s user_id=%s",
+                    notification_id,
+                    user_id,
+                )
+            return
+        sessions = eligible_sessions
         payload = (
             notification["payload"]
             if isinstance(notification.get("payload"), dict)
@@ -288,8 +326,6 @@ async def _deliver_notification_payload(
             payload=payload,
         )
         for session in sessions:
-            if session.user_id != user_id:
-                continue
             result = await im_notification_dispatcher.send_notification(
                 db,
                 session,

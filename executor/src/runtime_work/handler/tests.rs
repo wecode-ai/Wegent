@@ -5,6 +5,26 @@
 use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_selection_changed};
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
+
+#[test]
+fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
+    for method in [
+        "runtime.connections.mcp",
+        "runtime.connections.cli",
+        "runtime.connections.host",
+        "runtime.connections.catalog",
+        "runtime.connections.resources",
+        "runtime.connections.dependencies.inventory",
+    ] {
+        assert!(
+            !should_resume_persisted_turns_before_rpc(method),
+            "{method}"
+        );
+    }
+    assert!(should_resume_persisted_turns_before_rpc(
+        "runtime.tasks.start"
+    ));
+}
 use crate::runtime_work::codex_transcript_page::CodexTranscriptNavigationTurn;
 
 #[path = "native_history_test_support.rs"]
@@ -16,6 +36,9 @@ mod native_timeline_tests;
 
 #[path = "runtime_rpc_tests.rs"]
 mod runtime_rpc_tests;
+
+#[path = "text_generation_tests.rs"]
+mod text_generation_tests;
 
 #[path = "local_history_tests.rs"]
 mod local_history_tests;
@@ -4635,6 +4658,24 @@ async fn codex_app_server_restart_requires_confirmation_for_active_turns() {
 }
 
 #[tokio::test]
+async fn codex_model_discovery_waits_for_app_server_restart() {
+    let (handler, root) = isolated_runtime_work_handler("catalog-restart-serialization");
+    let restart_guard = codex_app_server_restart_gate().lock().await;
+    {
+        let discovery = handler.list_codex_models(json!({"includeHidden": true}));
+        tokio::pin!(discovery);
+        let waiting = tokio::time::timeout(Duration::from_millis(100), &mut discovery).await;
+        assert!(
+            waiting.is_err(),
+            "model discovery bypassed the restart gate"
+        );
+    }
+
+    drop(restart_guard);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn codex_instructions_write_rejects_non_string_payload() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
 
@@ -5812,9 +5853,8 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
 
 #[tokio::test]
 async fn create_task_keeps_board_comment_session_persistent_across_store_reload() {
-    let index_path = temp_runtime_work_index_path("create-board-comment-task");
-    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let (handler, root) = isolated_runtime_work_handler("create-board-comment-task");
+    let index_path = handler.store.index_path().to_path_buf();
 
     handler
         .handle_runtime_rpc(json!({
@@ -5850,7 +5890,7 @@ async fn create_task_keeps_board_comment_session_persistent_across_store_reload(
         })
     );
 
-    let _ = fs::remove_file(index_path);
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

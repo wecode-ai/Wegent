@@ -3,6 +3,12 @@ import {
   reconcilePluginInstallation,
 } from '@/features/plugins/pluginInstallTelemetry'
 import { beginOperation, type OperationAttempt } from '@/telemetry/operationBus'
+import { getToken } from '@/api/auth'
+import { getRuntimeConfig } from '@/config/runtime'
+import {
+  createLocalDevicePluginApi,
+  resolveLocalPluginDeviceRouteId,
+} from '@/features/plugins/pluginDeviceApi'
 import { usePluginRefreshReconciliation } from './hooks/usePluginRefreshReconciliation'
 import { useInstalledPluginDetail } from './hooks/useInstalledPluginDetail'
 import { useOpenAiPluginCatalog } from '@/features/plugins/useOpenAiPluginCatalog'
@@ -62,7 +68,10 @@ import { getErrorMessage } from '@/lib/error-message'
 import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { navigateTo } from '@/lib/navigation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
-import { ensureLocalExecutorStarted, getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
+import {
+  ensureLocalExecutorAvailable,
+  getKnownLocalExecutorDeviceId,
+} from '@/desktop/localExecutor'
 import {
   refreshLocalExecutorCloudConnectionStatus,
   useLocalExecutorCloudConnectionStatus,
@@ -399,10 +408,16 @@ export function PluginsWorkspace({
     subPath: '',
   })
   const [isAddingMarket, setIsAddingMarket] = useState(false)
-  const pluginApi = useMemo(
-    () => createDefaultPluginApi(cloudApiBaseUrl, cloudToken),
-    [cloudApiBaseUrl, cloudToken]
-  )
+  const pluginApi = useMemo(() => {
+    const profile = {
+      apiBaseUrl: cloudApiBaseUrl || getRuntimeConfig().apiBaseUrl,
+      token: cloudToken === undefined ? getToken() : cloudToken,
+    }
+    return createLocalDevicePluginApi(
+      createDefaultPluginApi(profile.apiBaseUrl, cloudToken),
+      deviceId => resolveLocalPluginDeviceRouteId(deviceId, profile)
+    )
+  }, [cloudApiBaseUrl, cloudToken])
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const marketplaceCacheKeyValue = useMemo(
     () => pluginMarketplaceCacheKey(cloudApiBaseUrl, cloudToken),
@@ -1946,14 +1961,10 @@ export function PluginsWorkspace({
     const connected = await refreshLocalExecutorCloudConnectionStatus(cloudApiBaseUrl)
     if (!connected) return { connected: false, deviceId: '' }
 
-    const knownDeviceId =
-      currentDeviceIdRef.current.trim() || getKnownLocalExecutorDeviceId()?.trim() || ''
-    if (knownDeviceId) {
-      return { connected: true, deviceId: rememberCurrentDeviceId(knownDeviceId) }
-    }
-
     try {
-      const executor = await ensureLocalExecutorStarted()
+      // Registration can replace a cached record route after reconnecting.
+      // Refresh at the plugin operation boundary; retain stable inventory identity.
+      const executor = await ensureLocalExecutorAvailable({ refresh: true })
       return {
         connected: true,
         deviceId: rememberCurrentDeviceId(executor.deviceId ?? ''),
@@ -2045,21 +2056,26 @@ export function PluginsWorkspace({
           .updateMarketplacePlugin(item.installedPluginId, item.latestReleaseId, targetDeviceId)
           .then(plugin => {
             const device = currentDeviceInstallation(plugin, targetDeviceId)
-            commitPluginInventoryInstallation(marketplaceCacheKeyValue, targetDeviceId, plugin)
-            setPluginMarketplaceState(previous => ({
-              ...previous,
-              items: previous.items.map(candidate =>
-                candidate.id === item.id
-                  ? {
-                      ...candidate,
-                      currentDeviceInstallation: device,
-                      updateAvailable:
-                        device?.actualReleaseId !== item.latestReleaseId ||
-                        device?.state !== 'installed',
-                    }
-                  : candidate
-              ),
-            }))
+            const marketplaceItems = (
+              getPluginMarketplaceCache(marketplaceCacheKeyValue)?.marketplaceItems ??
+              pluginMarketplaceStateRef.current.items
+            ).map(candidate =>
+              candidate.id === item.id
+                ? {
+                    ...candidate,
+                    currentDeviceInstallation: device,
+                    updateAvailable:
+                      device?.actualReleaseId !== item.latestReleaseId ||
+                      device?.state !== 'installed',
+                  }
+                : candidate
+            )
+            commitPluginInventoryInstallation(
+              marketplaceCacheKeyValue,
+              targetDeviceId,
+              plugin,
+              marketplaceItems
+            )
           })
           .catch((error: unknown) => {
             const message = getErrorMessage(error, 'Unknown error')
@@ -5643,6 +5659,7 @@ export function PluginsWorkspace({
           marketplaceCategorySections={marketplaceCategorySections}
           visibleSearchResultLimit={visibleSearchResultLimit}
           isLoggedIn={Boolean(cloudToken && currentDeviceId)}
+          isReconciling={isReconcilingPlugins}
           installingMarketplacePluginIds={installingMarketplacePluginIds}
           uninstallingPluginIds={uninstallingPluginIds}
           allowPendingRetry={deviceAutoSyncSettled || !deviceCloudConnected}
@@ -5663,6 +5680,7 @@ export function PluginsWorkspace({
         <CategoryBrowseDialog
           section={browsingCategorySection}
           isLoggedIn={Boolean(cloudToken && currentDeviceId)}
+          isReconciling={isReconcilingPlugins}
           installingMarketplacePluginIds={installingMarketplacePluginIds}
           uninstallingPluginIds={uninstallingPluginIds}
           allowPendingRetry={deviceAutoSyncSettled || !deviceCloudConnected}

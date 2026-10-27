@@ -452,17 +452,16 @@ impl LegacyProjection {
                     rollback_from: None,
                 };
             }
-            "agent_reasoning" | "agent_reasoning_raw_content" => {
+            "agent_reasoning" | "agent_reasoning_raw_content"
                 if payload
                     .get("text")
                     .and_then(Value::as_str)
-                    .is_some_and(|text| !text.is_empty())
-                {
-                    let index = self.current();
-                    if !self.turns[index].last_reasoning {
-                        let id = self.next_id();
-                        self.push(id, true);
-                    }
+                    .is_some_and(|text| !text.is_empty()) =>
+            {
+                let index = self.current();
+                if !self.turns[index].last_reasoning {
+                    let id = self.next_id();
+                    self.push(id, true);
                 }
             }
             "context_compacted" => {

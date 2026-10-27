@@ -6,13 +6,24 @@ import type {
 } from '@wegent/collaboration'
 import type { RuntimeTaskSummary } from '@/types/api'
 
+export interface ConnectionProviderDescriptor {
+  id: string
+  displayName: string
+  resourceKinds: string[]
+  resourceLabels?: Record<string, string>
+  locales?: Record<string, { displayName?: string; resourceLabels?: Record<string, string> }>
+  authTarget?: { pluginKey: string; connectorSlug: string }
+  availability: { status: string; code?: string }
+  dependencies: Array<{ alias: string; status: string }>
+}
+
 export interface StandInInboxMessage {
   id: string
   recordId: string
   text: string
   senderId: string
   at: string
-  source: StandInDingTalkConnection
+  source: StandInSourceConnection
 }
 
 export interface StandInInboxWork {
@@ -20,7 +31,7 @@ export interface StandInInboxWork {
   taskId: string
   roleId: string
   title: string
-  source: StandInDingTalkConnection
+  source: StandInSourceConnection
   status: 'pending' | 'needs_grouping' | 'sending' | 'sent' | 'failed'
   updatedAt: string
   messageCount: number
@@ -30,14 +41,14 @@ export interface StandInInboxWork {
 }
 
 export interface StandInSourceError {
-  source: StandInDingTalkConnection
+  source: StandInSourceConnection
   error: { code: string; message: string }
 }
 import {
   publishPersonalStandIn,
   type PersonalStandInAgent,
   type PersonalStandInSettings,
-  type StandInDingTalkConnection,
+  type StandInSourceConnection,
 } from './personalStandIn'
 
 export interface StandInProposal {
@@ -53,6 +64,7 @@ export type StandInMemoryScope =
   | { kind: 'role'; roleId: string }
   | { kind: 'project'; id: string; store: 'local' | 'cloud' }
   | { kind: 'dingtalk'; id: string; profile: string; conversationKind: 'group' | 'direct' }
+  | { kind: 'connection'; providerId: string; id: string; profile: string; resourceKind: string }
 
 export interface StandInMemory {
   id: string
@@ -72,6 +84,12 @@ export type StandInProjectSettings = WorkspaceStandInSettings & {
   userId: number
 }
 export interface StandInExecutorApi {
+  connectionProviders(deviceId: string): Promise<{ items: ConnectionProviderDescriptor[] }>
+  installConnectionDependencies(
+    deviceId: string,
+    providerId: string,
+    aliases: string[]
+  ): Promise<unknown>
   organizeWork(
     userId: number,
     deviceId: string,
@@ -103,14 +121,15 @@ export interface StandInExecutorApi {
     messageId: string,
     targetWorkId?: string
   ): Promise<StandInInboxWork>
-  retrySource(userId: number, deviceId: string, source: StandInDingTalkConnection): Promise<void>
-  searchDingTalk(
+  retrySource(userId: number, deviceId: string, source: StandInSourceConnection): Promise<void>
+  searchConnectionResources(
     deviceId: string,
-    kind: 'group' | 'direct',
+    providerId: string,
+    kind: string,
     query: string,
     cursor?: string
   ): Promise<{
-    items: Pick<StandInDingTalkConnection, 'id' | 'name' | 'kind' | 'profile'>[]
+    items: Pick<StandInSourceConnection, 'id' | 'name' | 'kind' | 'profile' | 'providerId'>[]
     hasMore?: boolean
     nextCursor?: string
   }>
@@ -178,6 +197,9 @@ export interface StandInExecutorApi {
 
 export function createStandInExecutorApi(request: Request): StandInExecutorApi {
   return {
+    connectionProviders: deviceId => request('runtime.connections.catalog', {}, deviceId),
+    installConnectionDependencies: (deviceId, providerId, aliases) =>
+      request('runtime.connections.dependencies.install', { providerId, aliases }, deviceId),
     memories: async (userId, deviceId) =>
       (
         await request<{ items: StandInMemory[] }>(
@@ -210,8 +232,8 @@ export function createStandInExecutorApi(request: Request): StandInExecutorApi {
       ),
     retrySource: (userId, deviceId, source) =>
       request('runtime.stand_in.source.retry', { userId, source }, deviceId),
-    searchDingTalk: (deviceId, kind, query, cursor) =>
-      request('runtime.stand_in.dingtalk.search', { kind, query, cursor }, deviceId),
+    searchConnectionResources: (deviceId, providerId, kind, query, cursor) =>
+      request('runtime.connections.resources', { providerId, kind, query, cursor }, deviceId),
     conversation: (userId, deviceId, message, roleId, options) =>
       request('runtime.stand_in.conversation', { userId, message, roleId, options }, deviceId),
     proposal: (userId, deviceId, roleId) =>

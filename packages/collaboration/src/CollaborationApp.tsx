@@ -1,8 +1,11 @@
-import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { bulkIssueStatus } from './platform/bulkIssueStatus'
+import { runnerEnvironmentError } from './execution-environment/runnerEnvironmentError'
+import { BrowserTaskDrafts } from './issue-detail/BrowserTaskDrafts'
+import { saveProjectBoardViews } from './project-board/saveProjectBoardViews'
 import { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -60,7 +63,6 @@ import {
   createProjectAiTeamSections,
   ProjectCollaborationGroups,
   ProjectAutomaticProcessing,
-  ProjectBoardSettingsDialog,
   ProjectExecutionEnvironments,
   ProjectSettingsShell,
 } from "./project-manage";
@@ -154,7 +156,6 @@ export function CollaborationApp({
   );
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [createIssueOpen, setCreateIssueOpen] = useState(false);
-  const [boardSettingsOpen, setBoardSettingsOpen] = useState(false);
   const [settingsSectionId, setSettingsSectionId] =
     useState<ProjectSettingsSectionId>(
       host.location.projectSettingsSection ?? "project",
@@ -209,7 +210,7 @@ export function CollaborationApp({
     useIssueAssignmentsByIssueId({
       assignmentsApi: api.assignments,
       issues,
-      enabled: project !== null,
+      enabled: project !== null && host.location.view === "table",
     });
   const environmentReadiness = useProjectExecutionEnvironmentReadiness({
     api,
@@ -670,22 +671,8 @@ export function CollaborationApp({
               slots={{
                 board: (
                   <div className="relative flex min-h-0 min-w-0 flex-1">
-                    {issues.length === 0 ? (
-                      <div
-                        data-testid={collaborationTestIds.board}
-                        className="relative flex min-h-0 flex-1"
-                      >
-                        <div className="absolute left-6 top-4 z-10">
-                          {host.renderBoardToolbarAction?.(project)}
-                        </div>
-                        <button
-                          className="absolute right-4 top-4 z-10 flex h-8 items-center rounded-lg px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
-                          data-testid="collaboration-board-settings"
-                          onClick={() => setBoardSettingsOpen(true)}
-                          type="button"
-                        >
-                          {translate("todo.board_settings", "看板设置")}
-                        </button>
+                    <ProjectBoardAdapter
+                      emptyState={
                         <div
                           className="collaboration-empty-project"
                           data-testid="collaboration-empty-project"
@@ -730,160 +717,145 @@ export function CollaborationApp({
                             </div>
                           </div>
                         </div>
-                      </div>
-                    ) : (
-                      <ProjectBoardAdapter
-                        toolbarAction={host.renderBoardToolbarAction?.(project)}
-                        onMarkRead={(issue) =>
-                          void commands.markIssueRead(issue)
-                        }
-                        runtime={api.runtime}
-                        previewDisabled={Boolean(selectedIssue)}
-                        translate={translate}
-                        agents={agents ?? []}
-                        boardError={error}
-                        project={project}
-                        issues={issues}
-                        members={members ?? []}
-                        statuses={projectStatuses(project, messages, translate)}
-                        taskBindings={taskBindings}
-                        labels={{
-                          noIssues: messages.noIssues,
-                          noPriority: translate(
-                            "todo.priority_none",
-                            "无优先级",
-                          ),
-                          search: messages.searchIssues,
-                          groupBy: messages.groupBy,
-                          groupStatus: messages.groupStatus,
-                          groupPriority: messages.groupPriority,
-                          groupAssignee: messages.groupAssignee,
-                          groupTag: messages.groupTag,
-                          unassigned: messages.unassigned,
-                          noTag: messages.noTag,
-                        }}
-                        onOpen={(issue) =>
-                          host.navigate({
-                            projectId: project.id,
-                            issueId: issue.id,
-                            view: "board",
-                          })
-                        }
-                        onMove={async (issue, mutation) => {
-                          await executeStandardCloudBoardMutation({
-                            item: issue,
-                            mutation,
-                            commands: {
-                              update: async (target, input) => {
-                                const updated = await commands.updateIssue(
-                                  target.id,
-                                  {
-                                    version: target.version,
-                                    position: input.position,
-                                    ...(input.status !== undefined
-                                      ? { status: input.status }
-                                      : {}),
-                                    ...(input.priority !== undefined
-                                      ? {
-                                          priority:
-                                            input.priority as CollaborationIssue["priority"],
-                                        }
-                                      : {}),
-                                    ...(input.tags !== undefined
-                                      ? { tags: input.tags }
-                                      : {}),
-                                    ...(input.assignee_user_id !== undefined
-                                      ? {
-                                          assigneeUserId:
-                                            input.assignee_user_id,
-                                        }
-                                      : {}),
-                                    ...(input.assignee_agent_id !== undefined
-                                      ? {
-                                          assigneeAgentId:
-                                            input.assignee_agent_id,
-                                        }
-                                      : {}),
-                                    ...(input.assignee_team_id !== undefined
-                                      ? {
-                                          assigneeTeamId:
-                                            input.assignee_team_id,
-                                        }
-                                      : {}),
-                                  },
-                                  { throwOnError: true },
-                                );
-                                if (!updated)
-                                  throw new Error(messages.saveFailed);
-                                return updated;
-                              },
-                              assign: async (target, assignment) => {
-                                const updated = await commands.assignIssue(
-                                  String(project.id),
-                                  target.id,
-                                  {
-                                    version: target.version,
-                                    ...assignment,
-                                  },
-                                );
-                                if (!updated)
-                                  throw new Error(messages.saveFailed);
-                                return updated;
-                              },
-                              refreshOrder: async (target) => {
-                                await commands.loadProjectSnapshot(
-                                  target.cloud_project_id,
-                                  { invalidate: true, throwOnError: true },
-                                );
-                              },
+                      }
+                      toolbarAction={host.renderBoardToolbarAction?.(project)}
+                      onMarkRead={(issue) => void commands.markIssueRead(issue)}
+                      runtime={api.runtime}
+                      previewDisabled={Boolean(selectedIssue)}
+                      translate={translate}
+                      agents={agents ?? []}
+                      boardError={error}
+                      project={project}
+                      issues={issues}
+                      members={members ?? []}
+                      statuses={projectStatuses(project, messages, translate)}
+                      taskBindings={taskBindings}
+                      labels={{
+                        noIssues: messages.noIssues,
+                        noPriority: translate("todo.priority_none", "无优先级"),
+                        search: messages.searchIssues,
+                        groupBy: messages.groupBy,
+                        groupStatus: messages.groupStatus,
+                        groupPriority: messages.groupPriority,
+                        groupAssignee: messages.groupAssignee,
+                        groupTag: messages.groupTag,
+                        unassigned: messages.unassigned,
+                        noTag: messages.noTag,
+                      }}
+                      onOpen={(issue) =>
+                        host.navigate({
+                          projectId: project.id,
+                          issueId: issue.id,
+                          view: "board",
+                        })
+                      }
+                      onMove={async (issue, mutation) => {
+                        await executeStandardCloudBoardMutation({
+                          item: issue,
+                          mutation,
+                          commands: {
+                            update: async (target, input) => {
+                              const updated = await commands.updateIssue(
+                                target.id,
+                                {
+                                  version: target.version,
+                                  position: input.position,
+                                  ...(input.status !== undefined
+                                    ? { status: input.status }
+                                    : {}),
+                                  ...(input.priority !== undefined
+                                    ? {
+                                        priority:
+                                          input.priority as CollaborationIssue["priority"],
+                                      }
+                                    : {}),
+                                  ...(input.tags !== undefined
+                                    ? { tags: input.tags }
+                                    : {}),
+                                  ...(input.assignee_user_id !== undefined
+                                    ? {
+                                        assigneeUserId: input.assignee_user_id,
+                                      }
+                                    : {}),
+                                  ...(input.assignee_agent_id !== undefined
+                                    ? {
+                                        assigneeAgentId:
+                                          input.assignee_agent_id,
+                                      }
+                                    : {}),
+                                  ...(input.assignee_team_id !== undefined
+                                    ? {
+                                        assigneeTeamId: input.assignee_team_id,
+                                      }
+                                    : {}),
+                                },
+                                { throwOnError: true },
+                              );
+                              if (!updated)
+                                throw new Error(messages.saveFailed);
+                              return updated;
                             },
-                          }).catch(() => {
-                            // The workspace commands already report save and load failures.
-                          });
-                        }}
-                        onCreateIssue={requestIssueCreate}
-                        onOpenBoardSettings={() => setBoardSettingsOpen(true)}
-                        onDeleteIssue={
-                          issueArchiveAvailable
-                            ? requestIssueArchive
-                            : undefined
-                        }
-                        onArchiveCompleted={
-                          issueArchiveAvailable
-                            ? (completedIssues) => {
-                                if (completedIssues.length === 0) return;
-                                setArchiveIssueError(null);
-                                setArchiveIssueTargets(completedIssues);
-                              }
-                            : undefined
-                        }
-                        onOpenArchive={
-                          issueArchiveAvailable ? openArchiveDrawer : undefined
-                        }
-                        onGroupByChange={(groupBy) =>
-                          commands.changeProjectGroup({
-                            project,
-                            groupBy,
-                            defaultStatuses: projectStatuses(
-                              project,
-                              messages,
-                              translate,
-                            ),
-                          })
-                        }
-                        renderIssueCard={
-                          renderBoardIssueCard
-                            ? (context) =>
-                                renderBoardIssueCard({
-                                  ...context,
-                                  onMarkRead: async () => {
-                                    await commands.markIssueRead(context.issue);
-                                  },
-                                })
-                            : undefined
-                        }
-                      />
-                    )}
+                            assign: async (target, assignment) => {
+                              const updated = await commands.assignIssue(
+                                String(project.id),
+                                target.id,
+                                {
+                                  version: target.version,
+                                  ...assignment,
+                                },
+                              );
+                              if (!updated)
+                                throw new Error(messages.saveFailed);
+                              return updated;
+                            },
+                            refreshOrder: async (target) => {
+                              await commands.loadProjectSnapshot(
+                                target.cloud_project_id,
+                                { invalidate: true, throwOnError: true },
+                              );
+                            },
+                          },
+                        });
+                      }}
+                      onCreateIssue={requestIssueCreate}
+                      onDeleteIssue={
+                        issueArchiveAvailable ? requestIssueArchive : undefined
+                      }
+                      onArchiveCompleted={
+                        issueArchiveAvailable
+                          ? (completedIssues) => {
+                              if (completedIssues.length === 0) return;
+                              setArchiveIssueError(null);
+                              setArchiveIssueTargets(completedIssues);
+                            }
+                          : undefined
+                      }
+                      onOpenArchive={
+                        issueArchiveAvailable ? openArchiveDrawer : undefined
+                      }
+                      onSaveViews={async (boardViews, settings) => {
+                        await saveProjectBoardViews({
+                          api: api.projects,
+                          projectId: project.id,
+                          version: project.version,
+                          config: boardViews,
+                          settings,
+                          accept: commands.replaceProject,
+                          translate,
+                        });
+                      }}
+                      renderIssueCard={
+                        renderBoardIssueCard
+                          ? (context) =>
+                              renderBoardIssueCard({
+                                ...context,
+                                onMarkRead: async () => {
+                                  await commands.markIssueRead(context.issue);
+                                },
+                              })
+                          : undefined
+                      }
+                    />
                   </div>
                 ),
                 table: (
@@ -950,25 +922,24 @@ export function CollaborationApp({
                             }
                           : undefined
                       }
-                      onBulkStatusChange={async (selectedIssues, status) => {
-                        const results = await Promise.allSettled(
-                          selectedIssues.map((issue) =>
+                      batchFailedLabel={translate(
+                        'todo.batch_status_failed',
+                        '部分任务更新失败，请查看以下原因并重试。'
+                      )}
+                      onBulkStatusChange={(selectedIssues, status) =>
+                        bulkIssueStatus(
+                          selectedIssues,
+                          issue =>
                             commands.updateIssue(
                               issue.id,
-                              {
-                                version: issue.version,
-                                status,
-                              },
-                              { throwOnError: true },
+                              { version: issue.version, status },
+                              { throwOnError: true }
                             ),
-                          ),
-                        );
-                        if (
-                          results.some((result) => result.status === "rejected")
-                        ) {
-                          throw new Error(messages.saveFailed);
-                        }
-                      }}
+                          error =>
+                            runnerEnvironmentError(error, translate) ??
+                            (error instanceof Error ? error.message : messages.saveFailed)
+                        )
+                      }
                       statusName={(status) =>
                         projectStatuses(project, messages, translate).find(
                           (candidate) => candidate.id === status,
@@ -1188,23 +1159,6 @@ export function CollaborationApp({
               onError={() => commands.reportError(messages.saveFailed)}
             />
           )}
-          {boardSettingsOpen && project ? (
-            <ProjectBoardSettingsDialog
-              title={messages.boardSettings}
-              closeLabel={messages.close}
-              onClose={() => setBoardSettingsOpen(false)}
-            >
-              <CollaborationSettings
-                api={api}
-                embedded
-                project={project}
-                onChange={commands.replaceProject}
-                onError={() => commands.reportError(messages.saveFailed)}
-                translate={translate}
-                section="board"
-              />
-            </ProjectBoardSettingsDialog>
-          ) : null}
           {selectedIssue && project ? (
             renderIssueDetail ? (
               renderIssueDetail({

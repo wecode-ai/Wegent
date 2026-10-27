@@ -269,6 +269,7 @@ export interface WorkbenchContextValue {
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setInput: (value: string) => void
     setInputForScope: (scopeKey: string, value: string) => void
+    getInputRevisionForScope: (scopeKey: string) => number
     setComposerError?: (error: string | null) => void
     setComposerErrorForScope?: (scopeKey: string, error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
@@ -279,6 +280,8 @@ export interface WorkbenchContextValue {
     addExistingAttachmentForScope: (scopeKey: string, attachment: Attachment) => void
     removeAttachment: (attachmentId: number) => Promise<void>
     removeAttachmentForScope: (scopeKey: string, attachmentId: number) => Promise<void>
+    dismissAttachmentError: (filename: string) => void
+    dismissAttachmentErrorForScope: (scopeKey: string, filename: string) => void
     resetAttachments: () => void
     resetAttachmentsForScope: (scopeKey: string) => void
     listLocalSkills: () => Promise<LocalDeviceSkill[]>

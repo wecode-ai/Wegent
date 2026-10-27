@@ -24,10 +24,10 @@ fn proposals_require_explicit_owner_confirmation_and_reject_stale_versions() {
         .resolve_stand_in_proposal(7, "mac", proposal["id"].as_str().unwrap(), true)
         .unwrap();
     assert_eq!(
-        saved["primary"]["dingtalk"][0]["policy"]["askBeforeAct"],
+        saved["primary"]["connections"][0]["policy"]["askBeforeAct"],
         true
     );
-    assert!(saved["primary"]["dingtalk"][0]["enabledAfter"].is_string());
+    assert!(saved["primary"]["connections"][0]["enabledAfter"].is_string());
     assert!(store
         .resolve_stand_in_proposal(7, "mac", proposal["id"].as_str().unwrap(), true)
         .is_err());
@@ -76,7 +76,7 @@ fn invalid_primary_sources_and_duplicate_account_scopes_are_rejected_atomically(
     assert_eq!(store.personal_stand_in(0, "mac").unwrap(), original);
     duplicate["primary"]["dingtalk"][1]["profile"] = json!("other-corp:user");
     let saved = store.save_personal_stand_in(0, "mac", duplicate).unwrap();
-    assert_eq!(saved["primary"]["dingtalk"].as_array().unwrap().len(), 2);
+    assert_eq!(saved["primary"]["connections"].as_array().unwrap().len(), 2);
 }
 
 #[test]
@@ -225,4 +225,141 @@ fn messages_arriving_during_dispatch_remain_pending_after_the_earlier_batch_fini
         .unwrap();
     assert_eq!(store.stand_in_work(7, id).unwrap()["status"], "pending");
     assert_eq!(store.stand_in_work(7, id).unwrap()["messageCount"], 2);
+}
+
+#[test]
+fn stand_in_connection_migration_preserves_checkpoints_deduplication_and_work_identity() {
+    use wegent_executor::task_runtime::personal_stand_in::{
+        stand_in_connection, DINGTALK_PROVIDER,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    let mut legacy_source = source();
+    legacy_source["enabledAfter"] = json!("2026-10-01T00:00:00Z");
+    settings["primary"] =
+        json!({"enabled":true,"prompt":"","preferences":"","dingtalk":[legacy_source]});
+    let database = rusqlite::Connection::open(&path).unwrap();
+    database.execute("INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES ('personal-stand-in:7','personal_stand_in',?1,'now','now')", rusqlite::params![settings.to_string()]).unwrap();
+    let checkpoint =
+        json!({"after":"2026-10-24T00:00:00Z","until":"2026-10-25T00:00:00Z","cursor":"next-page"});
+    store
+        .save_stand_in_source(7, &legacy_source, &checkpoint)
+        .unwrap();
+    let message = json!({"id":"message-1","text":"Review","at":"2026-10-24T01:00:00Z"});
+    let work = store
+        .ingest_stand_in_message(7, "@primary", &legacy_source, &message, None)
+        .unwrap();
+
+    let migrated = store.personal_stand_in(7, "mac").unwrap();
+    assert!(migrated["primary"].get("dingtalk").is_none());
+    let migrated_source = &migrated["primary"]["connections"][0];
+    assert_eq!(migrated_source["providerId"], DINGTALK_PROVIDER);
+    assert_eq!(
+        migrated_source["enabledAfter"],
+        legacy_source["enabledAfter"]
+    );
+    assert_eq!(migrated["version"], settings["version"]);
+    assert_eq!(
+        store.stand_in_source(7, migrated_source).unwrap()["cursor"],
+        "next-page"
+    );
+    assert_eq!(
+        store
+            .ingest_stand_in_message(7, "@primary", migrated_source, &message, None)
+            .unwrap()["id"],
+        work["id"]
+    );
+    assert!(stand_in_connection(&migrated["primary"], &legacy_source).is_some());
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), migrated);
+    drop(store);
+    assert_eq!(
+        LocalTaskStore::open(&path)
+            .unwrap()
+            .personal_stand_in(7, "mac")
+            .unwrap(),
+        migrated
+    );
+}
+
+#[test]
+fn stand_in_connections_isolate_provider_namespaces_and_reject_conflicting_formats() {
+    use wegent_executor::task_runtime::personal_stand_in::{source_namespace, DINGTALK_PROVIDER};
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let mut first = source();
+    first["providerId"] = json!(DINGTALK_PROVIDER);
+    let mut second = first.clone();
+    second["providerId"] = json!("@test/mail/inbox");
+    let message = json!({"id":"same-message","text":"Review"});
+    let a = store
+        .ingest_stand_in_message(7, "@primary", &first, &message, None)
+        .unwrap();
+    let b = store
+        .ingest_stand_in_message(7, "@primary", &second, &message, None)
+        .unwrap();
+    assert_ne!(a["id"], b["id"]);
+    let mut encoded_profile = first.clone();
+    encoded_profile["profile"] = json!(source_namespace(&second).to_string());
+    let c = store
+        .ingest_stand_in_message(7, "@primary", &encoded_profile, &message, None)
+        .unwrap();
+    assert_ne!(
+        b["id"], c["id"],
+        "A literal legacy profile cannot collide with a structured provider namespace"
+    );
+    assert!(store
+        .known_stand_in_message(7, "@primary", &second, "same-message")
+        .unwrap()
+        .is_some());
+    store
+        .save_stand_in_source(7, &first, &json!({"cursor":"a"}))
+        .unwrap();
+    store
+        .save_stand_in_source(7, &second, &json!({"cursor":"b"}))
+        .unwrap();
+    assert_eq!(store.stand_in_source(7, &first).unwrap()["cursor"], "a");
+    assert_eq!(store.stand_in_source(7, &second).unwrap()["cursor"], "b");
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["primary"] = json!({"enabled":true,"prompt":"","preferences":"","connections":[second],"dingtalk":[first]});
+    assert!(store.save_personal_stand_in(7, "mac", settings).is_err());
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap()["version"], 0);
+}
+
+#[test]
+fn stand_in_connection_memories_do_not_cross_provider_boundaries() {
+    use wegent_executor::task_runtime::personal_stand_in::{
+        connection_memory_scope, DINGTALK_PROVIDER,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let mut mail = source();
+    mail["providerId"] = json!("@test/mail/inbox");
+    let mut dingtalk = source();
+    dingtalk["providerId"] = json!(DINGTALK_PROVIDER);
+    let mut settings = store.personal_stand_in(7, "mac").unwrap();
+    settings["primary"] =
+        json!({"enabled":false,"prompt":"","preferences":"","connections":[mail,dingtalk]});
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let scope = connection_memory_scope(&mail);
+    store
+        .save_stand_in_memory(7, "mac", json!({"content":"Mail only","scope":scope}))
+        .unwrap();
+    assert_eq!(
+        store
+            .visible_stand_in_memories(7, None, Some(&scope), false)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(store
+        .visible_stand_in_memories(7, None, Some(&connection_memory_scope(&dingtalk)), false)
+        .unwrap()
+        .is_empty());
+    let mut other = scope.clone();
+    other["providerId"] = json!("@other/mail/inbox");
+    assert!(store
+        .save_stand_in_memory(7, "mac", json!({"content":"Not connected","scope":other}))
+        .is_err());
 }
