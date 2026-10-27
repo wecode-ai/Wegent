@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { verifyCollaborationScheduleViews } from '../modules/collaboration-schedule-verification.mjs'
+import { verifyCollaborationScheduleViews } from '../modules/collaboration-schedule-views.mjs'
 import {
   captureVerificationScreenshot,
   completeLocalCollaborationFolderImport,

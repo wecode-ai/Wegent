@@ -13,21 +13,18 @@ function addDays(value, days) {
   return next
 }
 
-function nextMonday(now) {
-  const today = new Date(now)
-  today.setHours(12, 0, 0, 0)
-  const daysUntilMonday = (8 - today.getDay()) % 7 || 7
-  return addDays(today, daysUntilMonday)
-}
-
-function buildScheduleKeys(now) {
-  const initialStart = nextMonday(now)
+export function collaborationScheduleDates(today = new Date()) {
+  const anchor = new Date(today)
+  anchor.setHours(12, 0, 0, 0)
+  const firstOfMonth = new Date(anchor.getFullYear(), anchor.getMonth(), 1, 12)
+  const gridEnd = addDays(firstOfMonth, 41 - ((firstOfMonth.getDay() + 6) % 7))
+  const currentMonday = addDays(anchor, -((anchor.getDay() + 6) % 7))
+  // Keep both calendar ranges visible; Gantt starts at the current week.
+  const initialStart = addDays(currentMonday, addDays(currentMonday, 9) > gridEnd ? -7 : 0)
   const initialEnd = addDays(initialStart, 2)
   const calendarStart = addDays(initialStart, 7)
   const calendarEnd = addDays(calendarStart, 2)
   const resizedEnd = addDays(calendarEnd, 1)
-  const movedStart = calendarEnd
-  const movedEnd = addDays(resizedEnd, 2)
   return Object.fromEntries(
     Object.entries({
       initialStart,
@@ -35,8 +32,8 @@ function buildScheduleKeys(now) {
       calendarStart,
       calendarEnd,
       resizedEnd,
-      movedStart,
-      movedEnd,
+      movedStart: calendarEnd,
+      movedEnd: addDays(resizedEnd, 2),
     }).map(([key, value]) => [key, dateKey(value)])
   )
 }
@@ -63,16 +60,13 @@ export async function verifyCollaborationScheduleViews({
   capture,
   control,
   issueTitle,
-  now = new Date(),
-  // Tests inject stable date keys so unrelated fake clocks cannot shift the schedule.
-  scheduleKeys,
   scoped,
   timeoutMs,
 }) {
   await control.command('setMainWindowSize', 'body', {
     value: JSON.stringify({ width: 1440, height: 900 }),
   })
-  const keys = scheduleKeys ?? buildScheduleKeys(now)
+  const keys = collaborationScheduleDates()
 
   await control.command('click', scoped('[aria-label="时间范围"]'))
   await control.command('waitFor', '[data-testid="cloud-todo-detail-start-date"]', {
@@ -104,10 +98,6 @@ export async function verifyCollaborationScheduleViews({
     timeoutMs,
   })
   const calendarTarget = scoped(`[data-testid="collaboration-calendar-day-${keys.calendarStart}"]`)
-  // Future schedule dates can fall outside the current month's six-week grid.
-  if (Number(await control.command('getElementCount', calendarTarget)) === 0) {
-    await control.command('click', scoped('[data-testid="collaboration-schedule-next"]'))
-  }
   for (const key of [keys.initialStart, keys.calendarStart]) {
     await control.command('waitFor', scoped(`[data-testid="collaboration-calendar-day-${key}"]`), {
       visible: true,

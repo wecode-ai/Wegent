@@ -140,6 +140,22 @@ describe('CloudTodoBoardCard', () => {
     )
   })
 
+  it('shows status and tags together on the actual card with project status names', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+    render(
+      <CloudTodoBoardCard
+        item={{ ...item, tags: ['frontend'], status: 'completed' }}
+        statusNames={{ completed: 'Custom done' }}
+        onClick={vi.fn()}
+        display={{ showAssignee: false, showPriority: false, showTags: true, showDate: false }}
+      />
+    )
+    const card = screen.getByTestId('cloud-todo-card-WEG-85')
+    expect(card).toContainElement(screen.getByTestId('cloud-todo-card-status-WEG-85'))
+    expect(card).toHaveTextContent('Custom done')
+    expect(card).toHaveTextContent('frontend')
+  })
+
   it('keeps cloud card details accessible when edit permission is missing', async () => {
     changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
     const onClick = vi.fn()
