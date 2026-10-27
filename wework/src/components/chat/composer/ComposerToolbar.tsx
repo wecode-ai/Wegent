@@ -118,9 +118,7 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
         }
         renderFeatureMenus={compact => (
           <>
-            <div hidden={voiceActive} className={voiceActive ? 'hidden' : 'contents'}>
-              <DshMenuActions disabled={disabled} location="composer.toolbar" />
-            </div>
+            {!voiceActive && <DshMenuActions disabled={disabled} location="composer.toolbar" />}
             <div className="contents" data-testid="composer-extension-actions">
               <DshContributionSlotSurface
                 key={props.composerScopeKey}
@@ -137,23 +135,21 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
                 slot={WEWORK_DSH_SLOTS.composerAction}
               />
             </div>
-            <div hidden={voiceActive} className={voiceActive ? 'hidden' : 'contents'}>
-              {showExecutionTools ? (
-                <>
-                  <QuickPhraseMenu
-                    disabled={disabled}
-                    projectPhrases={projectPhrases}
-                    onSelect={onQuickPhraseSelect}
-                  />
-                  <PluginPickerMenu
-                    disabled={disabled}
-                    iconOnly={compact || pluginPickerIconOnly}
-                    onListLocalApps={onListLocalApps}
-                    onInsertReference={props.onInsertPluginReference}
-                  />
-                </>
-              ) : null}
-            </div>
+            {showExecutionTools && !voiceActive ? (
+              <>
+                <QuickPhraseMenu
+                  disabled={disabled}
+                  projectPhrases={projectPhrases}
+                  onSelect={onQuickPhraseSelect}
+                />
+                <PluginPickerMenu
+                  disabled={disabled}
+                  iconOnly={compact || pluginPickerIconOnly}
+                  onListLocalApps={onListLocalApps}
+                  onInsertReference={props.onInsertPluginReference}
+                />
+              </>
+            ) : null}
           </>
         )}
       />

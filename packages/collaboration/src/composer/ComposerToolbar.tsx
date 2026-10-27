@@ -165,7 +165,7 @@ export function ComposerToolbar({
         data-composer-toolbar-group="features"
         className="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1"
       >
-        <div hidden={hideFeatureActions} className={hideFeatureActions ? 'hidden' : 'contents'}>
+        {!hideFeatureActions && (
           <AddContextMenu
             translate={t}
             disabled={disabled}
@@ -178,26 +178,28 @@ export function ComposerToolbar({
             supervisorEnabled={showExecutionTools && supervisorEnabled}
             supervisorPending={showExecutionTools && supervisorPending}
           />
-        </div>
+        )}
         {renderFeatureMenus?.(compact)}
-        <div hidden={hideFeatureActions} className={hideFeatureActions ? 'hidden' : 'contents'}>
-          {leadingContext}
-          {goalDraftActive ? (
-            <GoalDraftPill translate={t} onCancel={onCancelGoalDraft} />
-          ) : planModeActive ? (
-            <ComposerModePill
-              translate={t}
-              label={t('workbench.plan_mode', '计划模式')}
-              icon={ClipboardList}
-              testId="plan-mode-pill"
-              cancelTestId="cancel-plan-mode-button"
-              cancelLabel={t('workbench.disable_plan_mode', '关闭计划模式')}
-              disabled={disabled}
-              onCancel={onClearPlanMode}
-              title={t('workbench.collaboration_mode', '运行模式')}
-            />
-          ) : null}
-        </div>
+        {!hideFeatureActions && (
+          <>
+            {leadingContext}
+            {goalDraftActive ? (
+              <GoalDraftPill translate={t} onCancel={onCancelGoalDraft} />
+            ) : planModeActive ? (
+              <ComposerModePill
+                translate={t}
+                label={t('workbench.plan_mode', '计划模式')}
+                icon={ClipboardList}
+                testId="plan-mode-pill"
+                cancelTestId="cancel-plan-mode-button"
+                cancelLabel={t('workbench.disable_plan_mode', '关闭计划模式')}
+                disabled={disabled}
+                onCancel={onClearPlanMode}
+                title={t('workbench.collaboration_mode', '运行模式')}
+              />
+            ) : null}
+          </>
+        )}
       </div>
       <div
         data-composer-toolbar-group="actions"

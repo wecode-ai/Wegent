@@ -109,13 +109,16 @@ describe('ComposerToolbar', () => {
         'goal-draft-pill',
       ]) {
         if (visible) expect(screen.getByTestId(id)).toBeVisible()
-        else expect(screen.getByTestId(id)).not.toBeVisible()
+        else expect(screen.queryByTestId(id)).not.toBeInTheDocument()
       }
       expect(screen.getByTestId('test-voice-input')).toBeVisible()
       expect(screen.getByTestId('model-selector-button')).toBeVisible()
     }
     expectOtherActionsVisible(true)
+    fireEvent.click(screen.getByTestId('add-context-button'))
+    expect(screen.getByTestId('add-context-menu')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('test-voice-input'))
+    expect(screen.queryByTestId('add-context-menu')).not.toBeInTheDocument()
     expectOtherActionsVisible(false)
     fireEvent.click(screen.getByTestId('test-voice-input'))
     expectOtherActionsVisible(true)

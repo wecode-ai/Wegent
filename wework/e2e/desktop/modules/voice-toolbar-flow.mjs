@@ -71,6 +71,7 @@ export async function verifyVoiceToolbar({ control, resultDir, restartDesktopApp
   await restartDesktopApp()
   await control.command('waitFor', '[data-testid="new-chat-button"]')
   await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', `${VOICE} button:not(:disabled)`)
   await control.command('click', `${VOICE} button`)
   await control.command('waitFor', '[role="dialog"] button[data-modal-autofocus]')
   await control.command('click', '[role="dialog"] button[data-modal-autofocus]')
@@ -88,8 +89,17 @@ export async function verifyVoiceToolbar({ control, resultDir, restartDesktopApp
   await control.command('click', `${ACTIVE} button:first-of-type`)
   await assertToolbar(control, false)
 
-  await control.command('click', `${VOICE} button`)
-  await assertToolbar(control, true)
-  await control.command('click', `${ACTIVE} button:first-of-type`)
-  await assertToolbar(control, false)
+  for (const [trigger, menu] of [
+    ['add-context-button', 'add-context-menu'],
+    ['quick-phrase-button', 'quick-phrase-menu'],
+    ['composer-plugin-picker-button', 'composer-plugin-picker'],
+  ]) {
+    await control.command('click', `[data-testid="${trigger}"]`)
+    await control.command('waitFor', `[data-testid="${menu}"]`, { visible: true })
+    await control.command('nativePress', `${VOICE} button`, { key: 'Enter' })
+    await assertToolbar(control, true)
+    await control.command('waitFor', `[data-testid="${menu}"]`, { visible: false })
+    await control.command('click', `${ACTIVE} button:first-of-type`)
+    await assertToolbar(control, false)
+  }
 }
