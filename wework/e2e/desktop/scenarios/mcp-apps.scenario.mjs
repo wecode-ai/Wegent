@@ -158,12 +158,13 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       for (const data of [
         { callId: 'foreign', method: 'initialize' },
         { callId, method: 'tools/call', params: { name: 'model_only', arguments: {} } },
-        { callId, method: 'tools/call', params: { name: 'change_count', arguments: {} } },
       ]) {
         await assert.rejects(
           requestExecutor(control, 'runtime.mcp_apps.request', { address, ...data }, uiTimeoutMs)
         )
       }
+      await frameAction('click', '#heartbeat')
+      await waitText('Heartbeats 3')
       await control.command('click', '[data-testid="mcp-app-close"]')
       await control.command('waitFor', '[data-testid="mcp-app-frame"]', {
         visible: false,

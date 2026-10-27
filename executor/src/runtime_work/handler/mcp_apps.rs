@@ -179,12 +179,6 @@ impl RuntimeWorkRpcHandler {
                     .iter()
                     .find(|tool| tool["name"] == params["name"] && app_visible(tool))
                     .ok_or_else(|| app_error("Tool is not available to this app"))?;
-                if (tool["annotations"]["readOnlyHint"] != true
-                    || tool["annotations"]["destructiveHint"] == true)
-                    && payload["approved"] != true
-                {
-                    return Err(app_error("This tool requires user approval"));
-                }
                 self.call_codex_thread_method("mcpServer/tool/call", json!({
                     "threadId":thread_id,"server":server,"tool":tool["name"],"arguments":params["arguments"]
                 })).await.map_err(|_| app_error("MCP App tool call failed"))

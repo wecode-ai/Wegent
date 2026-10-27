@@ -6,7 +6,6 @@ import type {
   McpAppRequest,
   McpAppResult,
   McpAppResource,
-  McpAppTool,
   RuntimeMcpAppsApi,
 } from '@/api/mcpApps'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
@@ -15,7 +14,7 @@ import type { RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { appDocumentTransport } from './transport'
 import { legacyWidgetDocument } from './legacyBridge'
-import { appDisplayModes, appHostContext } from './hostContext'
+import { appDisplayModes, appHostContext, appInitialDisplayMode } from './hostContext'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 
 function record(value: unknown): Record<string, unknown> {
@@ -164,8 +163,8 @@ export function McpAppHost({
               Uint8Array.from(atob(content.blob), char => char.charCodeAt(0))
             )
       const metadata = record(content._meta)
-      const modes = appDisplayModes(descriptor)
-      if (!modes.length) throw new Error(t('mcp_apps.unsupported_display_mode'))
+      const initialMode = appInitialDisplayMode(descriptor)
+      if (!initialMode) throw new Error(t('mcp_apps.unsupported_display_mode'))
       created = await createAppDocument(
         content.mimeType === 'text/html+skybridge' ? legacyWidgetDocument(html) : html,
         metadata
@@ -174,11 +173,7 @@ export function McpAppHost({
         await created.release()
         return
       }
-      const preferred =
-        descriptor.preferredDisplayMode ?? record(metadata['openai/ui']).preferredDisplayMode
-      setMode(
-        modes.find(mode => mode === preferred) ?? (modes.includes('inline') ? 'inline' : modes[0])
-      )
+      setMode(initialMode)
       setDocument(created)
     }
     void load().catch(error => {
@@ -255,30 +250,11 @@ export function McpAppHost({
     )
     bridge.current = app
     teardownSent.current = false
-    const request = <T,>(method: string, params?: Record<string, unknown>, approved?: boolean) => {
+    const request = <T,>(method: string, params?: Record<string, unknown>) => {
       if (!active) throw new Error('MCP App has been closed')
-      return requestApp({ method, params, approved }) as Promise<T>
+      return requestApp({ method, params }) as Promise<T>
     }
-    const listTools = () => request<{ tools: McpAppTool[] }>('tools/list')
-    app.oncalltool = async params => {
-      const tool = (await listTools()).tools.find(tool => tool.name === params.name)
-      if (!tool) throw new Error('Tool is not available to this app')
-      let approved = false
-      if (tool.annotations?.readOnlyHint !== true || tool.annotations?.destructiveHint === true) {
-        const confirmation = await invokeDesktopHost<{ response: number }>('dialog.message', {
-          type: 'question',
-          title: t('mcp_apps.approval_title'),
-          message: t('mcp_apps.approval_message', { server: descriptor.server, tool: tool.name }),
-          detail: JSON.stringify(params.arguments ?? {}, null, 2),
-          buttons: [t('mcp_apps.cancel'), t('mcp_apps.allow')],
-          defaultId: 0,
-          cancelId: 0,
-        })
-        if (confirmation.response !== 1) throw new Error('User declined the MCP App tool call')
-        approved = true
-      }
-      return request<McpAppResult>('tools/call', params, approved)
-    }
+    app.oncalltool = params => request<McpAppResult>('tools/call', params)
     app.onreadresource = params => request<McpAppResource>('resources/read', params)
     app.onlistresources = params => request('resources/list', params)
     app.onlistresourcetemplates = params => request('resources/templates/list', params)

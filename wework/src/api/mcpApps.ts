@@ -18,7 +18,6 @@ export interface McpAppRequest {
   callId: string
   method?: string
   params?: Record<string, unknown>
-  approved?: boolean
 }
 export interface RuntimeMcpAppsApi {
   requestMcpApp: <T = unknown>(data: McpAppRequest) => Promise<T>

@@ -2,6 +2,7 @@ import readline from 'node:readline'
 
 const uri = 'ui://counter/app.html'
 let count = 0
+let heartbeats = 0
 let failedResource = false
 const tools = [
   {
@@ -27,9 +28,10 @@ const tools = [
   },
   {
     name: 'change_count',
-    description: 'A write requiring approval.',
+    description: 'Update the app heartbeat counter.',
     inputSchema: { type: 'object', properties: {} },
-    annotations: { readOnlyHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+    _meta: { ui: { visibility: ['app'] } },
   },
 ]
 
@@ -52,7 +54,7 @@ document.querySelector('#refresh').onclick=async()=>{ const result=await window.
 </script></body></html>`
 
 const html = `<!doctype html><html><head><meta charset="utf-8"><title>Counter App</title></head>
-<body><h1>Counter App</h1><output id="status">Loading</output><input id="draft" aria-label="App draft"><button id="refresh">Read counter</button><button id="expand">Expand</button><button id="pip">Picture in picture</button><button id="context">Update context</button>
+<body><h1>Counter App</h1><output id="status">Loading</output><input id="draft" aria-label="App draft"><button id="refresh">Read counter</button><button id="heartbeat">Send heartbeats</button><button id="expand">Expand</button><button id="pip">Picture in picture</button><button id="context">Update context</button>
 <script>
 let sequence=0; const pending=new Map();
 const request=(method,params)=>new Promise((resolve,reject)=>{const id=++sequence;pending.set(id,{resolve,reject});parent.postMessage({jsonrpc:'2.0',id,method,params},'*')});
@@ -60,6 +62,7 @@ window.addEventListener('message',event=>{if(event.source!==parent)return;const 
 if(m.method==='ui/notifications/tool-result'){document.querySelector('#status').textContent='Result '+m.params.structuredContent.count+' '+m.params._meta.privateMarker}
 if(m.method==='ui/resource-teardown')parent.postMessage({jsonrpc:'2.0',id:m.id,result:{}},'*')});
 document.querySelector('#refresh').onclick=async()=>{try{const r=await request('tools/call',{name:'read_count',arguments:{}});document.querySelector('#status').textContent='Counter '+r.structuredContent.count}catch(e){document.querySelector('#status').textContent=e.message}};
+document.querySelector('#heartbeat').onclick=async()=>{try{let r;for(let i=0;i<3;i++)r=await request('tools/call',{name:'change_count',arguments:{token:'synthetic-panel-token',state:'loading'}});document.querySelector('#status').textContent='Heartbeats '+r.structuredContent.count}catch(e){document.querySelector('#status').textContent=e.message}};
 document.querySelector('#expand').onclick=()=>request('ui/request-display-mode',{mode:'fullscreen'});
 document.querySelector('#pip').onclick=()=>request('ui/request-display-mode',{mode:'pip'});
 document.querySelector('#context').onclick=async()=>{await request('ui/update-model-context',{structuredContent:{selection:'counter-selection'}});document.querySelector('#status').textContent='Context saved'};
@@ -120,9 +123,10 @@ for await (const line of readline.createInterface({ input: process.stdin, crlfDe
         break
       }
       if (request.params.name === 'read_count') count++
+      if (request.params.name === 'change_count') heartbeats++
       result = {
         content: [{ type: 'text', text: 'Counter ready' }],
-        structuredContent: { count },
+        structuredContent: { count: request.params.name === 'change_count' ? heartbeats : count },
         _meta: {
           privateMarker: 'ui-only-marker',
           ...(request.params.name === 'show_dynamic' ? { ui: { resourceUri: uri } } : {}),

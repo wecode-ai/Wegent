@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { McpAppDescriptor } from '@/api/mcpApps'
-import { appDisplayModes, appHostContext } from './hostContext'
+import { appDisplayModes, appHostContext, appInitialDisplayMode } from './hostContext'
 
 const descriptor = (modes?: unknown) =>
   ({
@@ -20,6 +20,21 @@ describe('MCP App host context', () => {
     expect(appDisplayModes(descriptor())).toEqual(['inline', 'fullscreen', 'pip'])
     expect(appDisplayModes(descriptor(['fullscreen']))).toEqual(['fullscreen'])
     expect(appDisplayModes(descriptor(['other']))).toEqual([])
+  })
+  it('selects the same initial modes as the ChatGPT host', () => {
+    expect(appInitialDisplayMode(descriptor())).toBe('inline')
+    expect(appInitialDisplayMode(descriptor(['inline', 'fullscreen']))).toBe('fullscreen')
+    expect(appInitialDisplayMode(descriptor(['inline', 'pip']))).toBe('inline')
+    expect(appInitialDisplayMode(descriptor(['fullscreen']))).toBe('fullscreen')
+    expect(appInitialDisplayMode(descriptor(['other']))).toBeUndefined()
+    const app = descriptor(['inline', 'fullscreen'])
+    app.preferredDisplayMode = 'inline'
+    expect(appInitialDisplayMode(app)).toBe('inline')
+    app.resource.contents[0]._meta!['openai/ui'] = {
+      availableDisplayModes: ['inline', 'fullscreen'],
+      preferredDisplayMode: 'fullscreen',
+    }
+    expect(appInitialDisplayMode(app)).toBe('fullscreen')
   })
   it('projects the current desktop theme and locale alongside declared modes', () => {
     const frame = document.createElement('iframe')

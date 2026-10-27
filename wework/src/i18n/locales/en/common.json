@@ -5542,10 +5542,7 @@
   "mcp_apps": {
     "title": "MCP App",
     "unsupported_resource": "The app returned an unsupported UI resource.",
-    "approval_title": "Allow app tool call?",
-    "approval_message": "Allow {{server}} to run {{tool}}?",
     "cancel": "Cancel",
-    "allow": "Allow",
     "retry": "Retry app",
     "expand": "Expand or restore app",
     "close": "Close app",

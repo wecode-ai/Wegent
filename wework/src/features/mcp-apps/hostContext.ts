@@ -15,6 +15,16 @@ export function appDisplayModes(
   return Array.isArray(declared) ? modes.filter(mode => declared.includes(mode)) : modes
 }
 
+export function appInitialDisplayMode(descriptor: McpAppDescriptor): McpUiDisplayMode | undefined {
+  const modes = appDisplayModes(descriptor)
+  const ui = descriptor.resource.contents[0]?._meta?.['openai/ui'] as
+    | { availableDisplayModes?: unknown; preferredDisplayMode?: unknown }
+    | undefined
+  const preferred = ui?.preferredDisplayMode ?? descriptor.preferredDisplayMode
+  const fallback = ui?.availableDisplayModes == null ? 'inline' : 'fullscreen'
+  return modes.find(mode => mode === preferred) ?? modes.find(mode => mode === fallback) ?? modes[0]
+}
+
 export function appHostContext(
   frame: HTMLIFrameElement,
   mode: McpUiDisplayMode,

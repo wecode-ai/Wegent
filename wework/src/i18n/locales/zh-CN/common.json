@@ -5539,10 +5539,7 @@
   "mcp_apps": {
     "title": "MCP 应用",
     "unsupported_resource": "应用返回了不支持的界面资源。",
-    "approval_title": "允许应用调用工具？",
-    "approval_message": "允许 {{server}} 执行 {{tool}}？",
     "cancel": "取消",
-    "allow": "允许",
     "retry": "重试应用",
     "expand": "展开或还原应用",
     "close": "关闭应用",
