@@ -230,7 +230,9 @@ test.describe('Agent conversation regression', () => {
     page,
     request,
   }) => {
-    const historyToken = makeContextToken('handoff_history')
+    // The task title is derived from the first message and capped at 50
+    // characters, so the token stays short enough to remain the whole title.
+    const historyToken = makeContextToken('history')
     const continuePrompt = `Continue the older handoff task ${historyToken}`
     const continueMarker = `HANDOFF_HISTORY_OK_${historyToken}`
 
@@ -239,7 +241,7 @@ test.describe('Agent conversation regression', () => {
     // The referenced conversation is created first, so the filler history
     // pushes it past the first scan window the search used to stop at.
     await openTaskPage(page, '/chat', chatShellTeam.id, 'chat')
-    await sendMessage(page, `Remember this handoff token: ${historyToken}`)
+    await sendMessage(page, historyToken)
     const sourceTaskId = await waitForTaskId(page)
     createdTaskIds.add(sourceTaskId)
     await waitForBackendTerminal(request, sourceTaskId)
@@ -293,13 +295,17 @@ test.describe('Agent conversation regression', () => {
     await configureStreamRule(request, continuePrompt, continueMarker)
 
     const project = await seedMentionProject(request, `${TEST_PREFIX}-mention-pages`)
-    // The candidate is created first so it lands on the project's second page.
+    // The candidate is created first so it lands on the project's second page,
+    // then touched so it sorts first in the mention list. An empty query keeps
+    // the remote title search out of the way: only loading page two can
+    // surface this candidate.
     const sourceTaskId = await seedMentionTask(request, {
       title: `Project handoff ${projectToken}`,
       prompt: `Seed project conversation ${projectToken}`,
       projectId: project.id,
     })
     await seedMentionTasks(request, 55, index => `Project filler ${index}`, project.id)
+    await touchMentionTask(request, sourceTaskId, `Project handoff ${projectToken}`)
 
     const projectTaskRequests: string[] = []
     page.on('request', outgoing => {
@@ -312,7 +318,7 @@ test.describe('Agent conversation regression', () => {
     await openTaskPage(page, '/chat', chatShellTeam.id, 'chat')
     const input = page.getByTestId('message-input')
     await input.click()
-    await input.type(`@${projectToken}`)
+    await input.type('@')
 
     const option = page.getByTestId(`mention-task-option-${sourceTaskId}`)
     await expect(option).toBeVisible({ timeout: 30_000 })
@@ -354,7 +360,8 @@ test.describe('Agent conversation regression', () => {
   }) => {
     const retryToken = makeContextToken('mention_retry')
     const project = await seedMentionProject(request, `${TEST_PREFIX}-mention-retry`)
-    // The later-page candidate is created first so it lands past the first page.
+    // The later-page candidate is created first so it lands past the first
+    // page, then touched so it sorts first once page two finally loads.
     const laterPageTaskId = await seedMentionTask(request, {
       title: `Retry page two ${retryToken}`,
       prompt: `Retry page two ${retryToken}`,
@@ -363,10 +370,11 @@ test.describe('Agent conversation regression', () => {
     const firstPageTaskIds = await seedMentionTasks(
       request,
       55,
-      index => `Retry page one ${retryToken} ${index}`,
+      index => `Retry page one ${index}`,
       project.id
     )
     const newestFirstPageTaskId = firstPageTaskIds[firstPageTaskIds.length - 1]
+    await touchMentionTask(request, laterPageTaskId, `Retry page two ${retryToken}`)
 
     const isCursorPage = (url: URL) =>
       url.pathname === `/api/projects/${project.id}/tasks` && url.searchParams.has('cursor')
@@ -380,7 +388,7 @@ test.describe('Agent conversation regression', () => {
     await openTaskPage(page, '/chat', chatShellTeam.id, 'chat')
     const input = page.getByTestId('message-input')
     await input.click()
-    await input.type(`@${retryToken}`)
+    await input.type('@')
 
     // The first page lands before the later page is lost, so its candidates
     // stay selectable even though the walk stopped.
@@ -402,7 +410,7 @@ test.describe('Agent conversation regression', () => {
     await expect(page.getByTestId('mention-autocomplete')).toHaveCount(0)
     await input.fill('')
     await input.click()
-    await input.type(`@${retryToken}`)
+    await input.type('@')
     await expect(page.getByTestId(`mention-task-option-${laterPageTaskId}`)).toBeVisible({
       timeout: 30_000,
     })
@@ -1822,6 +1830,21 @@ test.describe('Agent conversation regression', () => {
       taskIds.push(await seedMentionTask(request, { title, prompt: title, projectId }))
     }
     return taskIds
+  }
+
+  // Touches a task so its `updated_at` sorts it first in the mention list
+  // without changing which project task page it belongs to.
+  async function touchMentionTask(
+    request: APIRequestContext,
+    taskId: number,
+    title: string
+  ): Promise<void> {
+    const response = await request.put(`${API_BASE_URL}/api/tasks/${taskId}`, {
+      headers: authHeaders(),
+      data: { title },
+    })
+    const body = await response.text()
+    expect(response.status(), body).toBe(200)
   }
 
   async function openTaskPage(
