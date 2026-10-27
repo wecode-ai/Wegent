@@ -1161,7 +1161,7 @@ export function SmartAppsMarketplacePage({
             </Button>
           }
         />
-      ) : loading ? (
+      ) : loading && !hasItems ? (
         <div className="flex min-h-72 items-center justify-center text-text-muted">
           <Loader2 className="mr-2 h-5 w-5 animate-spin" />
           {t('workbench.smart_apps_loading', '正在加载')}

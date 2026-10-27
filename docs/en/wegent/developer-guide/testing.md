@@ -300,6 +300,11 @@ unrelated modules do not make the summary fail.
 
 CI reliability depends on these invariants:
 
+- Refreshing Smart app cards keeps their existing model controls mounted. Show
+  the full-page loading placeholder only when there are no cards to display. A
+  successful or failed refresh after stopping one app must not unmount another
+  app’s model control. Keep the lifecycle E2E model-selection assertions intact.
+
 - The native-history stress fixture processes 520 progress messages before its
   final-answer marker, so that wait uses the existing `modelResponseTimeoutMs` budget (30 seconds
   by default). Subsequent UI interactions, including task switching, use the
