@@ -63,7 +63,8 @@ pub fn sign(
 /// of the request body (`sha256_hash(body)` for cleartext HTTP, `UNSIGNED-PAYLOAD`
 /// over TLS).
 /// `uri` must contain the already percent-encoded path and query sent on the
-/// wire. Query pairs are sorted independently; S3 object paths are not normalized.
+/// wire. Query names and values are decoded and S3-encoded before sorting;
+/// S3 object paths are not normalized.
 #[allow(clippy::too_many_arguments)]
 pub fn sign_headers(
     access_key: &str,
@@ -127,11 +128,18 @@ pub fn sign_headers(
     }
 }
 
+/// Encode decoded names and values before sorting, retaining duplicate and empty pairs.
 fn canonical_query(query: &str) -> String {
     let mut pairs: Vec<_> = query
         .split('&')
         .filter(|pair| !pair.is_empty())
         .map(|pair| pair.split_once('=').unwrap_or((pair, "")))
+        .map(|(name, value)| {
+            (
+                canonical_query_component(name),
+                canonical_query_component(value),
+            )
+        })
         .collect();
     pairs.sort_unstable();
     pairs
@@ -139,6 +147,42 @@ fn canonical_query(query: &str) -> String {
         .map(|(name, value)| format!("{name}={value}"))
         .collect::<Vec<_>>()
         .join("&")
+}
+
+/// Decode form-style query escapes once, then S3-encode bytes without UTF-8 loss.
+fn canonical_query_component(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let bytes = value.as_bytes();
+    let mut out = String::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let mut byte = match bytes[index] {
+            b'+' => b' ',
+            byte => byte,
+        };
+        if byte == b'%'
+            && let (Some(high), Some(low)) = (
+                bytes
+                    .get(index + 1)
+                    .and_then(|byte| char::from(*byte).to_digit(16)),
+                bytes
+                    .get(index + 2)
+                    .and_then(|byte| char::from(*byte).to_digit(16)),
+            )
+        {
+            byte = ((high << 4) | low) as u8;
+            index += 2;
+        }
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(byte));
+        } else {
+            out.push('%');
+            out.push(char::from(HEX[(byte >> 4) as usize]));
+            out.push(char::from(HEX[(byte & 0xF) as usize]));
+        }
+        index += 1;
+    }
+    out
 }
 
 /// minio-py `_MULTI_SPACE_REGEX.sub(" ", value).strip()`: collapse runs of
@@ -237,6 +281,7 @@ mod tests {
         }
     }
 
+    /// Encoded pairs sort by name and value, including query flags with no equals sign.
     #[test]
     fn query_pairs_sort_encoded_names_and_values_and_keep_empty_values() {
         assert_eq!(
@@ -245,6 +290,107 @@ mod tests {
         );
     }
 
+    /// Sign fixed inputs so encoding variants can be compared independently of time.
+    fn query_signature(uri: &str) -> String {
+        sign_headers(
+            "access",
+            "secret",
+            "us-east-1",
+            "PUT",
+            uri,
+            "20261026T130000Z",
+            EMPTY_BODY_SHA256,
+            &[
+                ("host", "storage.example.invalid"),
+                ("x-amz-content-sha256", EMPTY_BODY_SHA256),
+                ("x-amz-date", "20261026T130000Z"),
+            ],
+        )
+        .authorization
+    }
+
+    /// Hexadecimal escape case does not change a decoded query value.
+    #[test]
+    fn lowercase_query_escapes_have_the_canonical_signature() {
+        assert_eq!(
+            query_signature("/bucket/key?partNumber=1&uploadId=a%2fb"),
+            query_signature("/bucket/key?partNumber=1&uploadId=a%2Fb")
+        );
+    }
+
+    /// Escaped unreserved bytes must be emitted as their literal characters.
+    #[test]
+    fn escaped_unreserved_query_values_have_the_canonical_signature() {
+        assert_eq!(
+            query_signature("/bucket/key?uploadId=%61"),
+            query_signature("/bucket/key?uploadId=a")
+        );
+    }
+
+    /// Query names, like values, must be decoded before canonical encoding and sorting.
+    #[test]
+    fn escaped_query_names_have_the_canonical_signature() {
+        assert_eq!(
+            query_signature("/bucket/key?%75ploadId=a"),
+            query_signature("/bucket/key?uploadId=a")
+        );
+    }
+
+    /// Fixed canonical-request vectors independently calculated with Python hashlib/hmac.
+    #[test]
+    fn noncanonical_queries_match_fixed_canonical_signatures() {
+        for (uri, signature) in [
+            (
+                "/bucket/key?partNumber=1&uploadId=a%2fb",
+                "af9da3ceb0feb9add2d8de00981775a7475d406804e33c5bf1f4871eb83096c5",
+            ),
+            (
+                "/bucket/key?uploadId=%61",
+                "d1bf24bd6277372e134ce5d85444797bf2eb3589debb6be61ec03115e837c349",
+            ),
+            (
+                "/bucket/key?%75ploadId=a",
+                "d1bf24bd6277372e134ce5d85444797bf2eb3589debb6be61ec03115e837c349",
+            ),
+        ] {
+            assert!(query_signature(uri).ends_with(signature), "{uri}");
+        }
+    }
+
+    /// Canonical sorting follows encoding and must not drop duplicate or empty pairs.
+    #[test]
+    fn query_normalization_preserves_duplicates_and_empty_values() {
+        assert_eq!(
+            canonical_query("z=last&uploads&%74ag=b&tag=%61&tag=a&%C3%a9=%2b%2f%3d"),
+            "%C3%A9=%2B%2F%3D&tag=a&tag=a&tag=b&uploads=&z=last"
+        );
+    }
+
+    /// Decode once without losing non-UTF-8 octets or turning escaped delimiters into pairs.
+    #[test]
+    fn query_normalization_preserves_octets_and_escaped_delimiters() {
+        assert_eq!(
+            canonical_query("k=%ff%00%26%3d%25%2b%252f&space=a+b&utf8=中文"),
+            "k=%FF%00%26%3D%25%2B%252f&space=a%20b&utf8=%E4%B8%AD%E6%96%87"
+        );
+    }
+
+    /// Query canonicalization must not rewrite distinct S3 object paths.
+    #[test]
+    fn object_paths_remain_distinct_when_normalizing_query_parameters() {
+        for (original, normalized) in [
+            ("/bucket/a//b", "/bucket/a/b"),
+            ("/bucket/a/../b", "/bucket/b"),
+            ("/bucket/a%2fb", "/bucket/a%2Fb"),
+        ] {
+            assert_ne!(
+                query_signature(&format!("{original}?uploadId=%61")),
+                query_signature(&format!("{normalized}?uploadId=%61"))
+            );
+        }
+    }
+
+    /// The queryless GET must keep the independently generated MinIO SDK signature.
     #[test]
     fn queryless_signature_matches_minio_sdk() {
         let signed = sign_headers(
