@@ -34,6 +34,23 @@ from shared.telemetry.decorators import capture_trace_context, trace_background
 
 logger = logging.getLogger(__name__)
 
+_subscription_event_handlers_registered = False
+
+
+def _ensure_subscription_task_event_handlers_registered() -> None:
+    """Register in-process event handlers required by subscription executions."""
+    global _subscription_event_handlers_registered
+
+    from app.core.events import TaskCompletedEvent, get_event_bus
+    from app.services.subscription.task_completion_handler import handle_task_completed
+
+    event_bus = get_event_bus()
+    handlers = getattr(event_bus, "_handlers", {}).get(TaskCompletedEvent, [])
+    if handle_task_completed not in handlers:
+        event_bus.subscribe(TaskCompletedEvent, handle_task_completed)
+
+    _subscription_event_handlers_registered = True
+    logger.info("[subscription_tasks] Subscription TaskCompletedEvent handler ready")
 # Prometheus metrics
 SUBSCRIPTION_EXECUTIONS_TOTAL = Counter(
     "subscription_executions_total",

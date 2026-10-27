@@ -49,6 +49,22 @@ def test_subscription_task_event_handler_registration_reuses_existing_handler(
     assert event_bus.subscribe_calls == []
 
 
+def test_subscription_handler_recovers_when_bus_loses_registered_handlers(
+    monkeypatch,
+):
+    event_bus = FakeEventBus()
+    monkeypatch.setattr("app.core.events.get_event_bus", lambda: event_bus)
+    monkeypatch.setattr(
+        subscription_tasks,
+        "_subscription_event_handlers_registered",
+        True,
+    )
+
+    subscription_tasks._ensure_subscription_task_event_handlers_registered()
+
+    assert event_bus.subscribe_calls == [(TaskCompletedEvent, handle_task_completed)]
+
+
 def test_standalone_worker_initializes_subscription_completion_handler(monkeypatch):
     event_bus = FakeEventBus()
     monkeypatch.setattr(
