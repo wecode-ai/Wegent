@@ -100,6 +100,7 @@ import {
   installLocalHarnessDiagnostics,
 } from './local-harness-diagnostics'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
+import { nextConnectorSyncRevision } from '@/features/cloud-connection/connectorSyncRevision'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
 import { weworkTaskScheme } from '@/features/notifications/scheme'
@@ -2088,6 +2089,27 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'restartLocalCodexAppServerIfIdle':
       return JSON.stringify(
         await requestLocalExecutor('runtime.codex.app_server.restart', { ifIdle: true })
+      )
+    case 'configureLocalExecutorConnectors': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        apiBaseUrl: string
+        connectorToken: string
+        expiresAtMs: number
+      }
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.connectors.configure', {
+          apiBaseUrl: input.apiBaseUrl,
+          connectorToken: input.connectorToken,
+          expiresAtMs: input.expiresAtMs,
+          syncRevision: nextConnectorSyncRevision(),
+        })
+      )
+    }
+    case 'clearLocalExecutorConnectors':
+      return JSON.stringify(
+        await requestLocalExecutor('runtime.connectors.clear', {
+          syncRevision: nextConnectorSyncRevision(),
+        })
       )
     case 'setLocalRuntimeMaxConcurrentTasks':
       return JSON.stringify(
