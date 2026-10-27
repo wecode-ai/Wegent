@@ -10,6 +10,7 @@ export class RuntimeTaskMachine {
   private state: RuntimeTaskLifecycleState
   private revision = 0
   private readonly observedTurnIds = new Set<string>()
+  private readonly settledTurnIds = new Set<string>()
 
   constructor(address: RuntimeTaskAddress, unread = false) {
     this.state = {
@@ -40,6 +41,9 @@ export class RuntimeTaskMachine {
     }
     const previous = this.state
     this.state = reduceRuntimeTaskLifecycle(previous, event)
+    if (event.type === 'turn_settled' && event.turnId && this.state.turnOutcome !== null) {
+      this.settledTurnIds.add(event.turnId)
+    }
     if (this.state.latestTurnId) this.observeTurn(this.state.latestTurnId)
     const changed = this.state !== previous
     if (changed) this.revision += 1
@@ -59,8 +63,13 @@ export class RuntimeTaskMachine {
     this.observedTurnIds.add(turnId)
   }
 
+  isSettledTurn(turnId: string): boolean {
+    return this.settledTurnIds.has(turnId)
+  }
+
   mergeTurnHistory(previous: RuntimeTaskMachine): void {
     for (const turnId of previous.observedTurnIds) this.observedTurnIds.add(turnId)
+    for (const turnId of previous.settledTurnIds) this.settledTurnIds.add(turnId)
   }
 
   getState(): RuntimeTaskLifecycleState {

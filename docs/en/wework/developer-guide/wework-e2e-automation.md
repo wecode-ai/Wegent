@@ -225,6 +225,17 @@ Shards are balanced from observed CI durations; a new or
 materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures.
 Long scenarios are split into independent checkpoints as well as balanced shards:
+The Issue notification read scenario waits for the close button to disappear after
+closing a drawer before interacting with the board. Closing commits after the exit
+animation; clicking a covered card earlier can let the delayed close affect the
+new Issue. Task lifecycle regressions cover delayed running snapshots for both the
+same and a prior provider turn. A confirmed settled turn cannot restart from stale
+metadata, even when its update timestamp exceeds a second-precision completion;
+the executor can still confirm the start of a different new turn.
+Read-only board drag checks scroll the source card into view after grouping changes
+and reloads. Windows can have a narrower available viewport, so priority and tag
+columns cannot all be assumed visible. Permission and persistence assertions remain.
+
 The newly merged `stand-in-project-enable` checkpoint has no historical sample.
 It shares preparation with the stand-in configuration flows in Core shard 3,
 which now contains 15 tasks; other ordinary Core shards contain 14. The estimates

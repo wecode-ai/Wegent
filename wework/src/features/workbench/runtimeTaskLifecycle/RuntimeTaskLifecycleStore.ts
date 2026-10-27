@@ -451,6 +451,13 @@ export class RuntimeTaskLifecycleStore {
       previous.task?.completedAt != null
     )
       return false
+    if (
+      canonicalEvent.type === 'executor_snapshot_received' &&
+      canonicalEvent.task.running === true &&
+      typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
+      machine.isSettledTurn(canonicalEvent.task.runtimeHandle.lastTurnId)
+    )
+      return false
     const key = previous.key
     const wasRunning = previous.derived.isRunning || this.previousRunningTaskKeys.has(key)
     if (
