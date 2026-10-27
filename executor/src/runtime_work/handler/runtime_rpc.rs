@@ -47,16 +47,24 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                 .cloned()
                 .filter(Value::is_object)
                 .unwrap_or_else(|| json!({}));
+            let _activation = if method == "skills/config/write" {
+                Some(crate::services::capability_activation::activate().await)
+            } else {
+                None
+            };
             if method == "plugin/uninstall" {
                 if let Some(id) = params["pluginId"].as_str() {
                     super::super::connection_host::assert_dependency_unused(id)?;
                 }
             }
-            let response = self
-                .codex_app_server
-                .request(&method, params)
-                .await
-                .map_err(|error| AppIpcError::new("codex_app_server_request_failed", error))?;
+            let response = if let Some(activation) = &_activation {
+                self.codex_app_server
+                    .write_skill_configuration(params, activation)
+                    .await
+            } else {
+                self.codex_app_server.request(&method, params).await
+            }
+            .map_err(|error| AppIpcError::new("codex_app_server_request_failed", error))?;
             if matches!(
                 method.as_str(),
                 "marketplace/add" | "marketplace/remove" | "plugin/list" | "plugin/installed"

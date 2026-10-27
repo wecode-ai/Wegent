@@ -65,10 +65,8 @@ from app.schemas.installed_plugin import (
 from app.services.marketplace_submission_upload import (
     build_marketplace_submission_upload_url,
 )
-from app.services.plugin_catalog_storage import (
-    create_or_lock_plugin_release,
-    lock_catalog_plugin,
-)
+from app.services.plugin_catalog_identity import ensure_catalog_plugin
+from app.services.plugin_catalog_storage import create_or_lock_plugin_release
 from app.services.plugin_device_identity import (
     coalesce_plugin_device_rows,
     plugin_device_id,
@@ -692,11 +690,11 @@ class PluginMarketplaceService:
                 status_code=422,
                 detail="Official plugin slug must match the manifest name",
             )
-        plugin = lock_catalog_plugin(
+        plugin = ensure_catalog_plugin(
             db,
-            catalog_namespace=catalog_namespace,
-            slug=slug,
-            initial_values={
+            {
+                "catalog_namespace": catalog_namespace,
+                "slug": slug,
                 "name": parsed.name,
                 "display_name": parsed.displayName,
                 "listing_type": listing_type,

@@ -184,16 +184,8 @@ fn verify_published_package_locked(
     let digest = &hash[7..];
     let shared = root.join("shared");
     let destination = shared.join(kind.directory()).join(digest);
-    let record_path = shared
-        .join("metadata")
-        .join(format!("{}-{digest}.json", kind.directory()));
-    if record_path.is_symlink() {
-        return Err("Package records must be regular files".into());
-    }
-    let record: PackageRecord = serde_json::from_slice(&fs::read(record_path).map_err(io_error)?)
-        .map_err(|error| format!("Invalid package record: {error}"))?;
-    if record.archive_hash != hash
-        || destination.is_symlink()
+    let record = read_package_record(root, kind, hash)?;
+    if destination.is_symlink()
         || !destination.is_dir()
         || match kind {
             PackageKind::Skill => !destination.join("SKILL.md").is_file(),
@@ -206,6 +198,40 @@ fn verify_published_package_locked(
         path: destination,
         archive_hash: hash.to_owned(),
     })
+}
+
+fn read_package_record(
+    root: &Path,
+    kind: PackageKind,
+    hash: &str,
+) -> Result<PackageRecord, String> {
+    let digest = hash
+        .strip_prefix("sha256:")
+        .filter(|digest| digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or("Invalid package SHA256 digest")?;
+    let record_path = root
+        .join("shared/metadata")
+        .join(format!("{}-{digest}.json", kind.directory()));
+    if record_path.is_symlink() {
+        return Err("Package records must be regular files".into());
+    }
+    let record: PackageRecord = serde_json::from_slice(&fs::read(record_path).map_err(io_error)?)
+        .map_err(|error| format!("Invalid package record: {error}"))?;
+    if record.archive_hash != hash {
+        return Err("Published package record identity mismatch".into());
+    }
+    Ok(record)
+}
+
+/// Read the publication inventory without verifying or mutating the package.
+/// Missing legacy inventories cannot prove that bytecode was generated at runtime.
+pub(crate) fn published_plugin_bytecode_paths(
+    root: &Path,
+    hash: &str,
+) -> Result<Option<BTreeSet<PathBuf>>, String> {
+    Ok(read_package_record(root, PackageKind::Plugin, hash)?
+        .published_bytecode_paths
+        .map(|paths| paths.into_iter().collect()))
 }
 
 fn lock_package(root: &Path, kind: PackageKind, hash: &str) -> Result<FileLease, String> {

@@ -329,8 +329,12 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         let _sync_guard = self.sync_lock.lock().await;
         let _activation = crate::services::capability_activation::activate().await;
         let queued_ms = started.elapsed().as_millis();
-        let _changed = shared_packages::ActivationRevision;
         let _publication_lock = self.store.lock_shared_manifest()?;
+        let mut activation = activation_revision::ActivationRevision::begin(
+            &self.store,
+            &request.plugins,
+            &request.skills,
+        )?;
         let mut manifest;
         let mut results = Vec::new();
         let plugins_superseded;
@@ -359,7 +363,8 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                     }),
                 );
                 return Ok(
-                    json!({"success": true, "scope": payload.get("scope").and_then(Value::as_str).unwrap_or("all"),
+                    json!({"success": true, "changed": activation.finish().changed,
+                "scope": payload.get("scope").and_then(Value::as_str).unwrap_or("all"),
                 "skills": [], "plugins": results,
                 "plugin_sync": {"version": 2, "generation": request.generation, "complete": true}}),
                 );
@@ -491,6 +496,8 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 .garbage_collect_unreferenced_managed_plugins(&manifest)?;
             self.store.manifest.save_with_revision_bump(manifest)?;
         }
+        drop(_binding);
+        let changes = activation.finish_with_skill_reload().await?;
         crate::logging::log_executor_event(
             "plugin_sync_completed",
             &[
@@ -499,10 +506,17 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 ("queue_ms", queued_ms.to_string()),
                 ("total_ms", started.elapsed().as_millis().to_string()),
                 ("plugin_count", results.len().to_string()),
+                ("changed", changes.changed.to_string()),
+                ("requires_restart", changes.requires_restart.to_string()),
+                ("detection_ms", changes.detection_ms.to_string()),
+                ("changed_plugins", changes.plugins.join(",")),
+                ("changed_skills", changes.skills.join(",")),
             ],
         );
         Ok(json!({
             "success": success,
+            "changed": changes.changed,
+            "requires_restart": changes.requires_restart,
             "scope": payload.get("scope").and_then(Value::as_str).unwrap_or("all"),
             "skills": skill_results,
             "plugins": results,

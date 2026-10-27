@@ -9,10 +9,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.plugin_marketplace import Plugin, PluginRelease
-from app.services.plugin_catalog_storage import (
-    create_or_lock_plugin_release,
-    lock_catalog_plugin,
-)
+from app.services.plugin_catalog_identity import ensure_catalog_plugin
+from app.services.plugin_catalog_storage import create_or_lock_plugin_release
 
 
 @pytest.fixture
@@ -26,11 +24,14 @@ def catalog_db() -> Iterator[Session]:
 
 
 def create_plugin(db: Session, **values: Any) -> Plugin:
-    return lock_catalog_plugin(
+    return ensure_catalog_plugin(
         db,
-        catalog_namespace="enterprise",
-        slug="publication-test",
-        initial_values={"name": "publication-test", **values},
+        {
+            "catalog_namespace": "enterprise",
+            "slug": "publication-test",
+            "name": "publication-test",
+            **values,
+        },
     )
 
 
