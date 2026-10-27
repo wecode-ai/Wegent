@@ -21,7 +21,7 @@ from app.services.execution.agents.generation_context import (
 from .image_staging import stage_video_reference_images
 from .materials import (
     determine_image_mode,
-    normalize_reference_materials,
+    resolve_generation_reference_materials,
     validate_reference_materials,
 )
 from .prompt import normalize_video_prompt
@@ -60,14 +60,12 @@ class VideoGenerationService:
                 raise ValueError("duration must be a number of seconds") from exc
         model_config["videoConfig"] = video_config
 
-        images = normalize_reference_materials(
-            db, reference_images, "image", token_info.user_id
-        )
-        videos = normalize_reference_materials(
-            db, reference_videos, "video", token_info.user_id
-        )
-        audios = normalize_reference_materials(
-            db, reference_audios, "audio", token_info.user_id
+        images, videos, audios = await asyncio.to_thread(
+            resolve_generation_reference_materials,
+            token_info.user_id,
+            reference_images,
+            reference_videos,
+            reference_audios,
         )
         validate_reference_materials(model_config, images, videos, audios)
 

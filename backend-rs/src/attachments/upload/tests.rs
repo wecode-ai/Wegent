@@ -12,6 +12,225 @@ use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult, MysqlTrans
 /// raising when `put_object` fails.
 struct FailingStorageBackend;
 
+struct HostingBackend {
+    fail: bool,
+    invalid: bool,
+}
+
+#[async_trait::async_trait]
+impl AttachmentUploadBackend for HostingBackend {
+    fn external_storage_backend(&self, mime_type: &str, purpose: &str) -> Option<&str> {
+        (matches!(mime_type, "video/mp4" | "audio/mpeg")
+            && matches!(purpose, "default" | "video_reference"))
+        .then_some("media_hosting")
+    }
+
+    async fn store_external_attachment(
+        &self,
+        request: ExternalAttachmentUploadRequest<'_>,
+    ) -> Result<ExternalAttachmentStorageResult, ExternalAttachmentUploadError> {
+        assert_eq!(request.content, b"original media");
+        assert_eq!(request.user_id, 7);
+        if self.fail {
+            return Err(ExternalAttachmentUploadError::Unavailable);
+        }
+        if self.invalid {
+            return Err(ExternalAttachmentUploadError::InvalidInput(
+                "provider rejected the material".to_owned(),
+            ));
+        }
+        Ok(ExternalAttachmentStorageResult {
+            backend_type: "media_hosting".to_owned(),
+            storage_key: String::new(),
+            type_data: Map::from_iter([(
+                "provider_reference".to_owned(),
+                serde_json::json!({
+                    "media_id": "media-123", "upload_id": "upload-456"
+                }),
+            )]),
+        })
+    }
+
+    fn backend_type(&self) -> &str {
+        "unused_object_store"
+    }
+    async fn ensure_ready(&self) -> Result<(), UploadBackendError> {
+        panic!("hosted attachments must not probe the object store")
+    }
+    async fn store_object(&self, _: StoreObjectRequest<'_>) -> Result<bool, UploadBackendError> {
+        panic!("hosted attachments must not write to the object store")
+    }
+    async fn upload_image_pid(&self, _: ImageUploadRequest<'_>) -> Option<ImagePid> {
+        None
+    }
+    async fn delete_object(&self, _: &str) -> Result<bool, UploadBackendError> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn hosted_materials_persist_ready_references_without_binary_storage_or_parsing() {
+    for (filename, extension, mime_type) in [
+        ("reference.mp4", ".mp4", "video/mp4"),
+        ("reference.mp3", ".mp3", "audio/mpeg"),
+    ] {
+        for purpose in ["default", "video_reference"] {
+            let backend = HostingBackend {
+                fail: false,
+                invalid: false,
+            };
+            assert_eq!(
+                external_storage::prepare_backend(&backend, mime_type, purpose)
+                    .await
+                    .unwrap(),
+                "media_hosting"
+            );
+            let mut transaction = StatementLog::default();
+            let mut metadata = build_type_data(
+                filename,
+                extension,
+                14,
+                mime_type,
+                "media_hosting",
+                "temporary-key",
+            );
+            metadata.insert("lifecycle_owner".to_owned(), Value::from("upload-test"));
+            let outcome = store_and_parse(
+                &mut transaction,
+                &backend,
+                73,
+                7,
+                filename,
+                extension,
+                b"original media",
+                "temporary-key".to_owned(),
+                metadata,
+                purpose,
+                &mut None,
+            )
+            .await
+            .unwrap();
+            assert!(matches!(
+                outcome,
+                UploadOutcome::Parsed {
+                    context_id: 73,
+                    truncation_info: None
+                }
+            ));
+            assert_eq!(transaction.statements.len(), 1);
+            assert!(transaction.statements[0].contains("status='ready', binary_data=X''"));
+            let persisted: Value =
+                serde_json::from_str(transaction.first_parameters[0].as_ref().unwrap()).unwrap();
+            assert_eq!(
+                persisted["provider_reference"],
+                serde_json::json!({"media_id":"media-123", "upload_id":"upload-456"})
+            );
+            assert_eq!(persisted["storage_backend"], "media_hosting");
+            assert_eq!(persisted["storage_key"], "");
+            assert_eq!(persisted["is_encrypted"], false);
+            assert_eq!(persisted["encryption_version"], 0);
+            assert_eq!(persisted["mime_type"], mime_type);
+            assert_eq!(persisted["original_filename"], filename);
+            assert_eq!(persisted["lifecycle_owner"], "upload-test");
+        }
+    }
+}
+
+#[tokio::test]
+async fn hosting_failure_propagates_before_any_ready_or_binary_write() {
+    let mut transaction = StatementLog::default();
+    let result = store_and_parse(
+        &mut transaction,
+        &HostingBackend {
+            fail: true,
+            invalid: false,
+        },
+        73,
+        7,
+        "reference.mp4",
+        ".mp4",
+        b"original media",
+        "key".to_owned(),
+        Map::new(),
+        "video_reference",
+        &mut None,
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "the caller must roll back its upload transaction"
+    );
+    assert!(transaction.statements.is_empty());
+}
+
+#[tokio::test]
+async fn hosting_validation_is_rolled_back_and_keeps_the_upload_bad_request_contract() {
+    let mut transaction = StatementLog::default();
+    let mut validation_error = None;
+    let error = store_and_parse(
+        &mut transaction,
+        &HostingBackend {
+            fail: false,
+            invalid: true,
+        },
+        73,
+        7,
+        "reference.mp4",
+        ".mp4",
+        b"original media",
+        "key".to_owned(),
+        Map::new(),
+        "video_reference",
+        &mut validation_error,
+    )
+    .await
+    .err()
+    .expect("validation must abort the transaction");
+    assert!(transaction.statements.is_empty());
+    assert_eq!(
+        validation_error.as_deref(),
+        Some("provider rejected the material")
+    );
+    assert_eq!(
+        upload_dependency_error(error, validation_error).status(),
+        StatusCode::BAD_REQUEST
+    );
+    let dependency = brz_mysql::MysqlError::InvalidQuery {
+        reason: "unavailable".to_owned(),
+    };
+    assert_eq!(
+        upload_dependency_error(dependency, None).status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+}
+
+#[tokio::test]
+async fn public_default_keeps_media_in_the_configured_binary_backend() {
+    assert_eq!(
+        external_storage::prepare_backend(&MySqlStorageBackend, "video/mp4", "video_reference")
+            .await
+            .unwrap(),
+        "mysql"
+    );
+    let mut transaction = StatementLog::default();
+    let result = store_and_parse(
+        &mut transaction,
+        &FailingStorageBackend,
+        73,
+        7,
+        "reference.mp4",
+        ".mp4",
+        b"original media",
+        "key".to_owned(),
+        Map::new(),
+        "video_reference",
+        &mut None,
+    )
+    .await;
+    assert!(result.is_err());
+    assert!(transaction.statements.is_empty());
+}
+
 #[async_trait::async_trait]
 impl AttachmentUploadBackend for FailingStorageBackend {
     fn backend_type(&self) -> &str {
@@ -39,10 +258,11 @@ impl AttachmentUploadBackend for FailingStorageBackend {
 #[derive(Default)]
 struct StatementLog {
     statements: Vec<String>,
+    first_parameters: Vec<Option<String>>,
 }
 
 impl MysqlTransaction for StatementLog {
-    async fn execute<S, A>(&mut self, sql: S, _: A) -> MysqlResult<MysqlExecution>
+    async fn execute<S, A>(&mut self, sql: S, args: A) -> MysqlResult<MysqlExecution>
     where
         S: AsRef<str> + Send,
         A: MysqlArgs + Send,
@@ -53,6 +273,10 @@ impl MysqlTransaction for StatementLog {
             .collect::<Vec<_>>()
             .join(" ");
         self.statements.push(collapsed);
+        self.first_parameters.push(match args.first_route_value() {
+            Some(brz_mysql::MysqlRouteValue::String(value)) => Some(value.to_owned()),
+            _ => None,
+        });
         Ok(MysqlExecution {
             rows_affected: 0,
             last_insert_id: 0,
@@ -158,6 +382,8 @@ async fn a_failed_storage_write_aborts_before_any_column_write() {
         b"## title\n\nbody",
         "attachments/0123456789ab_20261009000000_157_1364828".to_string(),
         Map::new(),
+        "default",
+        &mut None,
     )
     .await;
 
