@@ -115,11 +115,13 @@ function projectChatControls(overrides: Partial<ProjectChatControls> = {}): Proj
 function AttachmentChatInput({
   upload,
   variant = 'desktop',
+  initialValue = '',
 }: {
   upload: (file: File) => Promise<Attachment>
   variant?: 'desktop' | 'compact'
+  initialValue?: string
 }) {
-  const [value, setValue] = useState('')
+  const [value, setValue] = useState(initialValue)
   const attachments = useComposerAttachments({
     uploadAttachment: upload,
     deleteAttachment: vi.fn(),
@@ -1744,10 +1746,12 @@ describe('ChatInput', () => {
     'dismisses an attachment failure in the %s composer without losing the draft',
     async variant => {
       const upload = vi.fn().mockRejectedValue(new Error('test disk full'))
-      render(<AttachmentChatInput upload={upload} variant={variant} />)
+      render(
+        <AttachmentChatInput upload={upload} variant={variant} initialValue="keep this draft" />
+      )
       const editor = screen.getByTestId('chat-message-input')
       await userEvent.click(editor)
-      await userEvent.keyboard('keep this draft')
+      expect(editor).toHaveValue('keep this draft')
       const input = screen.getByTestId(
         variant === 'desktop' ? 'attachment-file-input' : 'mobile-image-file-input'
       )
