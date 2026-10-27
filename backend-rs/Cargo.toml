@@ -26,6 +26,9 @@ brz-redis = { version = "=0.0.16", features = ["metrics", "slow-log"] }
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 chrono-tz = { version = "0.10", default-features = false, features = ["std"] }
+chardetng = "=1.0.0"
+csv = "=1.4.0"
+encoding_rs = "=0.8.42"
 erased-serde = "0.4"
 flate2 = { version = "1", default-features = false, features = ["zlib"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
