@@ -157,6 +157,7 @@ export const DESKTOP_CHECKPOINTS = [
   'resilience',
   'environment-panel-scroll',
   'conversation-state',
+  'workbench-control',
   'temporary-chat',
   'workspace-attachments',
   'rendering-extensions',

@@ -32,6 +32,7 @@ pub(super) fn prepare(
         crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
         crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
         crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
+        crate::workbench_control::SERVER_NAME,
     ] {
         servers.remove(name);
     }
@@ -257,6 +258,7 @@ mod tests {
         let config = json!({"mcpServers": {
             (crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME): {"type": "http", "url": "https://stale.example", "headers": {"Authorization": "old-grant"}},
             (crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME): {"type": "http", "url": "https://stale.example"},
+            (crate::workbench_control::SERVER_NAME): {"type": "http", "url": "https://stale.example", "headers": {"Authorization": "old-control-grant"}},
             "skill-tool": {"command": "keep"}
         }});
         fs::write(&path, config.to_string()).unwrap();

@@ -127,12 +127,23 @@ impl RuntimeWorkRpcHandler {
         automation: Automation,
         run: crate::runtime_work::automations::AutomationRun,
     ) {
-        let mut payload = match automation.conversation_mode {
-            ConversationMode::Independent => automation.task_payload.clone(),
-            ConversationMode::ContinueThread => automation
-                .continuation_payload
-                .clone()
-                .unwrap_or_else(|| automation.task_payload.clone()),
+        let mut payload = if automation.task_request["type"] == "wework_control" {
+            match self.control_automation_payload(&automation).await {
+                Ok(payload) => payload,
+                Err(error) => {
+                    let _ = self.automation_store.mark_failed(&run.id, error.message);
+                    self.emit_automation_runs_changed(&automation.id, &run.id);
+                    return;
+                }
+            }
+        } else {
+            match automation.conversation_mode {
+                ConversationMode::Independent => automation.task_payload.clone(),
+                ConversationMode::ContinueThread => automation
+                    .continuation_payload
+                    .clone()
+                    .unwrap_or_else(|| automation.task_payload.clone()),
+            }
         };
         let task_id = match automation.conversation_mode {
             ConversationMode::Independent => {
@@ -148,6 +159,25 @@ impl RuntimeWorkRpcHandler {
                 .or_else(|| string_field(&payload, "task_id"))
                 .unwrap_or_else(|| format!("automation-{}", automation.id)),
         };
+        if automation.task_request["type"] == "wework_control" {
+            payload["executionRequest"]["task_id"] = json!(task_id);
+            payload["executionRequest"]["new_session"] = json!(matches!(
+                automation.conversation_mode,
+                ConversationMode::Independent
+            ));
+            if matches!(automation.conversation_mode, ConversationMode::Independent) {
+                if let Some(extra) = payload["executionRequest"]["extra"].as_object_mut() {
+                    for key in [
+                        "origin",
+                        "cloudProjectId",
+                        "cloud_project_id",
+                        "automation_info",
+                    ] {
+                        extra.remove(key);
+                    }
+                }
+            }
+        }
         set_payload_string(&mut payload, "message", &automation.prompt);
         add_automation_context(&mut payload, &automation.id, &run.id, run.scheduled_for);
 
@@ -156,7 +186,10 @@ impl RuntimeWorkRpcHandler {
             ConversationMode::ContinueThread => self.send_message(payload).await,
         };
         match result {
-            Ok(response) if response.get("accepted").and_then(Value::as_bool) != Some(false) => {
+            Ok(response)
+                if response.get("accepted").and_then(Value::as_bool) != Some(false)
+                    && response.get("success").and_then(Value::as_bool) != Some(false) =>
+            {
                 let response_task_id = string_field(&response, "taskId").unwrap_or(task_id);
                 let _ = self
                     .automation_store

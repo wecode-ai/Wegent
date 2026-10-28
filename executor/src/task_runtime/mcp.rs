@@ -123,6 +123,7 @@ pub(crate) struct SpaceMcpRequestContext {
     cloud_collaboration_dispatcher: Option<CloudCollaborationRoundDispatcher>,
     event_sender: Option<tokio::sync::broadcast::Sender<Value>>,
     stand_in: Option<stand_in::StandInMcpIdentity>,
+    control: Option<crate::workbench_control::ControlContext>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -131,6 +132,7 @@ pub(crate) enum WeworkMcpSurface {
     ProjectSpace,
     Notifications,
     StandIn,
+    Control,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,6 +156,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            control: None,
         }
     }
 
@@ -166,6 +169,7 @@ impl SpaceMcpRequestContext {
             cloud_collaboration_dispatcher: None,
             event_sender: None,
             stand_in: None,
+            control: None,
         }
     }
 
@@ -175,6 +179,14 @@ impl SpaceMcpRequestContext {
             non_empty_env("WEWORK_SPACE_BACKEND_URL"),
             non_empty_env("WEWORK_SPACE_AUTH_TOKEN"),
         )
+    }
+
+    pub(crate) fn control(context: crate::workbench_control::ControlContext) -> Self {
+        Self {
+            surface: WeworkMcpSurface::Control,
+            control: Some(context),
+            ..Self::default()
+        }
     }
 
     fn grant(&self) -> Option<&SpaceContextGrant> {
@@ -190,6 +202,7 @@ impl SpaceMcpRequestContext {
             WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
             WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
             WeworkMcpSurface::StandIn => STAND_IN_MCP_SERVER_NAME,
+            WeworkMcpSurface::Control => crate::workbench_control::SERVER_NAME,
         }
     }
 
@@ -285,6 +298,31 @@ pub(crate) fn notifications_mcp_client_config(
 
 pub fn is_space_mcp_command() -> bool {
     env::args().nth(1).as_deref() == Some("space-mcp-server")
+}
+
+pub(crate) fn control_mcp_client_config(
+    request: &ExecutionRequest,
+) -> Result<Option<SpaceMcpClientConfig>, String> {
+    let Some(context) = crate::workbench_control::ControlContext::from_request(request) else {
+        return Ok(None);
+    };
+    if !crate::workbench_control::available(&context) {
+        return Ok(None);
+    }
+    let registered =
+        super::mcp_http::register_space_mcp_context(SpaceMcpRequestContext::control(context))?;
+    let base_url = registered.endpoint.url.trim_end_matches("/mcp");
+    Ok(Some(SpaceMcpClientConfig {
+        url: format!("{base_url}/control/mcp"),
+        headers: BTreeMap::from([
+            (
+                "Authorization".to_owned(),
+                format!("Bearer {}", registered.endpoint.token),
+            ),
+            ("X-Wework-Mcp-Context".to_owned(), registered.context_handle),
+        ]),
+        context_bound: true,
+    }))
 }
 
 pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String> {
@@ -571,6 +609,12 @@ pub(crate) async fn handle_request_with_context(
                 "[wework-space-mcp] stage=tool_call tool={} argument_keys={}",
                 name, argument_keys,
             ));
+            if let Some(control) = context.control.as_ref() {
+                return Some(result_response(
+                    id,
+                    crate::workbench_control::call(control, name, arguments).await,
+                ));
+            }
             Some(result_response(
                 id,
                 call_tool_with_context(runtime, name, arguments, context).await,
@@ -3522,6 +3566,9 @@ fn tools() -> Vec<Value> {
 fn visible_tools(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> Vec<Value> {
     if context.surface == WeworkMcpSurface::StandIn {
         return stand_in::tools(context);
+    }
+    if context.surface == WeworkMcpSurface::Control {
+        return crate::workbench_control::tools();
     }
     if context.surface == WeworkMcpSurface::Notifications {
         return tools()

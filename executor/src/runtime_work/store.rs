@@ -47,6 +47,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "wegentTeam",
     "turnIdsBySubtask",
     "userMessagePresentations",
+    "changeRequests",
 ];
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -510,6 +511,31 @@ impl RuntimeWorkStore {
         self.update_task_with_persistence(local_task_id, updater, true)
     }
 
+    /// Commit durable application metadata before making the update visible in memory.
+    pub fn try_update_task(
+        &self,
+        local_task_id: &str,
+        updater: impl FnOnce(&mut RuntimeTaskLink),
+    ) -> io::Result<Option<RuntimeTaskLink>> {
+        self.refresh_index_from_disk_if_changed();
+        let poisoned = || io::Error::other("Runtime index lock is poisoned");
+        let _write_guard = self.write_lock.lock().map_err(|_| poisoned())?;
+        let mut index = self.index.lock().map_err(|_| poisoned())?;
+        let mut next = index.clone();
+        let Some(task) = next.tasks.get_mut(local_task_id) else {
+            return Ok(None);
+        };
+        updater(task);
+        let updated = task.clone();
+        let payload = serialize_index(&next)?;
+        atomic_write_file(&self.index_path, &payload)?;
+        *index = next;
+        drop(index);
+        *self.last_written_payload.lock().map_err(|_| poisoned())? = Some(payload);
+        self.update_index_signature();
+        Ok(Some(updated))
+    }
+
     pub fn rekey_task(
         &self,
         local_task_id: &str,
@@ -794,7 +820,7 @@ fn temporary_index_path(index_path: &Path) -> PathBuf {
     ))
 }
 
-pub(super) fn atomic_write_file(index_path: &Path, payload: &[u8]) -> io::Result<()> {
+pub(crate) fn atomic_write_file(index_path: &Path, payload: &[u8]) -> io::Result<()> {
     let parent = index_parent(index_path);
     fs::create_dir_all(parent)
         .map_err(|error| io_error_with_context("create index parent directory", parent, error))?;

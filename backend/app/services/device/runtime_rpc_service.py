@@ -57,6 +57,7 @@ RUNTIME_MODEL_CONFIG_METHODS = frozenset(
     {
         "runtime.text.generate",
         "runtime.tasks.create",
+        "runtime.tasks.create_from_intent",
         "runtime.tasks.send",
         "runtime.tasks.rollback",
         "runtime.tasks.interrupt_and_send",
@@ -154,6 +155,9 @@ async def _enforce_remote_runtime_proxy(
         return payload
 
     proxy_url = await asyncio.to_thread(_load_remote_runtime_proxy_url, user_id)
+    if method == "runtime.tasks.create_from_intent":
+        # Target-side model compilation must apply this policy after resolving profiles.
+        next_payload["creationProxyPolicy"] = {"url": proxy_url or None}
     for model_config in model_configs:
         _set_runtime_proxy(model_config, proxy_url)
     logger.info(
@@ -252,11 +256,14 @@ class RuntimeRpcService:
                 details={"deviceId": route.logical_device_id},
             )
 
-        if method == "runtime.tasks.create":
+        if method in {"runtime.tasks.create", "runtime.tasks.create_from_intent"}:
             try:
                 payload = negotiate_runtime_task_create_payload(
                     payload,
                     route.online_info.get("runtime_features"),
+                    require_intent_compilation=(
+                        method == "runtime.tasks.create_from_intent"
+                    ),
                 )
             except RuntimeTaskCreateProtocolError as exc:
                 raise RuntimeRpcError(

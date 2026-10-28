@@ -4,6 +4,29 @@
 
 use super::*;
 
+#[tokio::test]
+async fn runtime_rpc_dispatch_retains_control_creation_routes() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let handler = RuntimeWorkRpcHandler::new("creation-routes", "unused-codex-binary");
+    let response = handler
+        .handle_runtime_rpc(json!({
+            "method":"runtime.models.sync_creation_profiles", "payload":{"profiles":[]}
+        }))
+        .await
+        .unwrap();
+    assert_eq!(response, json!({"success":true,"count":0}));
+
+    let error = handler
+        .handle_runtime_rpc(json!({
+            "method":"runtime.tasks.create_from_intent", "payload":{}
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "invalid_request");
+}
+
 #[test]
 fn runtime_rpc_dispatch_fits_a_bounded_worker_stack() {
     let _lock = crate::test_env::lock();

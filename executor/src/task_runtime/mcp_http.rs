@@ -60,10 +60,16 @@ struct RegisteredContext {
 }
 
 #[derive(Clone)]
+struct McpSession {
+    context: SpaceMcpRequestContext,
+    context_handle: String,
+}
+
+#[derive(Clone)]
 struct SpaceMcpHttpState {
     runtime: TaskRuntime,
     token: String,
-    sessions: std::sync::Arc<Mutex<HashMap<String, SpaceMcpRequestContext>>>,
+    sessions: std::sync::Arc<Mutex<HashMap<String, McpSession>>>,
     contexts: std::sync::Arc<StdMutex<HashMap<String, RegisteredContext>>>,
     collaboration_dispatcher: std::sync::Arc<StdMutex<Option<CloudCollaborationRoundDispatcher>>>,
     event_sender: std::sync::Arc<StdMutex<Option<tokio::sync::broadcast::Sender<Value>>>>,
@@ -156,11 +162,15 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         .route("/mcp", post(handle_mcp).delete(delete_mcp_session))
         .route(
             "/notifications/mcp",
-            post(handle_notifications_mcp).delete(delete_mcp_session),
+            post(handle_notifications_mcp).delete(delete_notifications_session),
+        )
+        .route(
+            "/control/mcp",
+            post(handle_control_mcp).delete(delete_control_session),
         )
         .route(
             "/stand-in/mcp",
-            post(handle_stand_in_mcp).delete(delete_mcp_session),
+            post(handle_stand_in_mcp).delete(delete_stand_in_session),
         )
         .with_state(state);
     let server_endpoint = endpoint.clone();
@@ -352,6 +362,14 @@ async fn handle_stand_in_mcp(
     handle_mcp_for_surface(state, headers, request, WeworkMcpSurface::StandIn).await
 }
 
+async fn handle_control_mcp(
+    State(state): State<SpaceMcpHttpState>,
+    headers: HeaderMap,
+    Json(request): Json<Value>,
+) -> Response {
+    handle_mcp_for_surface(state, headers, request, WeworkMcpSurface::Control).await
+}
+
 async fn handle_mcp_for_surface(
     state: SpaceMcpHttpState,
     headers: HeaderMap,
@@ -376,11 +394,13 @@ async fn handle_mcp_for_surface(
             );
         };
         let session_id = Uuid::new_v4().to_string();
-        state
-            .sessions
-            .lock()
-            .await
-            .insert(session_id.clone(), context.clone());
+        state.sessions.lock().await.insert(
+            session_id.clone(),
+            McpSession {
+                context: context.clone(),
+                context_handle: header_text(&headers, CONTEXT_HANDLE_HEADER).unwrap_or_default(),
+            },
+        );
         (session_id, context)
     } else {
         let Some(session_id) = header_text(&headers, MCP_SESSION_ID_HEADER) else {
@@ -391,7 +411,7 @@ async fn handle_mcp_for_surface(
                 StatusCode::BAD_REQUEST,
             );
         };
-        let Some(context) = state.sessions.lock().await.get(&session_id).cloned() else {
+        let Some(session) = state.sessions.lock().await.get(&session_id).cloned() else {
             return json_rpc_http_error(
                 request.get("id").cloned().unwrap_or(Value::Null),
                 -32003,
@@ -399,10 +419,21 @@ async fn handle_mcp_for_surface(
                 StatusCode::NOT_FOUND,
             );
         };
-        (session_id, context)
+        if expected_surface == WeworkMcpSurface::Control
+            && header_text(&headers, CONTEXT_HANDLE_HEADER).as_deref()
+                != Some(session.context_handle.as_str())
+        {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+        (session_id, session.context)
     };
     if context.surface() != expected_surface {
         return StatusCode::FORBIDDEN.into_response();
+    }
+    if expected_surface == WeworkMcpSurface::Control
+        && registered_context(&state, &headers, expected_surface).is_none()
+    {
+        return StatusCode::UNAUTHORIZED.into_response();
     }
     context.set_cloud_collaboration_dispatcher(
         state
@@ -428,13 +459,54 @@ async fn delete_mcp_session(
     State(state): State<SpaceMcpHttpState>,
     headers: HeaderMap,
 ) -> Response {
+    delete_session_for_surface(state, headers, WeworkMcpSurface::ProjectSpace).await
+}
+
+async fn delete_notifications_session(
+    State(state): State<SpaceMcpHttpState>,
+    headers: HeaderMap,
+) -> Response {
+    delete_session_for_surface(state, headers, WeworkMcpSurface::Notifications).await
+}
+
+async fn delete_control_session(
+    State(state): State<SpaceMcpHttpState>,
+    headers: HeaderMap,
+) -> Response {
+    delete_session_for_surface(state, headers, WeworkMcpSurface::Control).await
+}
+
+async fn delete_stand_in_session(
+    State(state): State<SpaceMcpHttpState>,
+    headers: HeaderMap,
+) -> Response {
+    delete_session_for_surface(state, headers, WeworkMcpSurface::StandIn).await
+}
+
+async fn delete_session_for_surface(
+    state: SpaceMcpHttpState,
+    headers: HeaderMap,
+    surface: WeworkMcpSurface,
+) -> Response {
     if !authorized(&headers, &state.token) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let Some(session_id) = header_text(&headers, MCP_SESSION_ID_HEADER) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    state.sessions.lock().await.remove(&session_id);
+    let mut sessions = state.sessions.lock().await;
+    let Some(session) = sessions.get(&session_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if session.context.surface() != surface
+        || (surface == WeworkMcpSurface::Control
+            && (header_text(&headers, CONTEXT_HANDLE_HEADER).as_deref()
+                != Some(session.context_handle.as_str())
+                || registered_context(&state, &headers, surface).is_none()))
+    {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    sessions.remove(&session_id);
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -490,6 +562,10 @@ fn json_rpc_http_error(id: Value, code: i64, message: &str, status: StatusCode) 
     *response.status_mut() = status;
     response
 }
+
+#[cfg(test)]
+#[path = "mcp_http_control_tests.rs"]
+mod control_tests;
 
 #[cfg(test)]
 mod tests {

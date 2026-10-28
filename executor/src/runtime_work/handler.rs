@@ -132,6 +132,8 @@ mod collection;
 mod command_items;
 mod connections;
 mod context_compaction;
+mod control;
+mod creation;
 mod fork_transfer;
 mod hooks;
 mod mcp_apps;
@@ -629,6 +631,7 @@ pub struct RuntimeWorkRpcHandler {
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
     runtime_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    creation_model_profiles: Arc<Mutex<Vec<Value>>>,
     active_collaboration_rounds: Arc<Mutex<HashSet<String>>>,
     thread_event_routing: Arc<Mutex<RuntimeThreadEventRouting>>,
     codex_notification_delivery: Arc<Mutex<()>>,
@@ -914,6 +917,7 @@ impl RuntimeWorkRpcHandler {
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
             runtime_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            creation_model_profiles: Arc::new(Mutex::new(Vec::new())),
             active_collaboration_rounds: Arc::new(Mutex::new(HashSet::new())),
             thread_event_routing: Arc::new(Mutex::new(RuntimeThreadEventRouting::default())),
             codex_notification_delivery: Arc::new(Mutex::new(())),
@@ -954,6 +958,7 @@ impl RuntimeWorkRpcHandler {
             );
         }
         handler.spawn_archived_delete_worker(archived_delete_rx);
+        crate::workbench_control::register(&handler.device_id, Arc::new(handler.clone()));
         handler
     }
 
@@ -994,6 +999,7 @@ impl RuntimeWorkRpcHandler {
         backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     ) -> Self {
         self.backend_connection = backend_connection;
+        crate::workbench_control::register(&self.device_id, Arc::new(self.clone()));
         self.start_local_stand_in_scheduler();
         self.start_connection_stand_in_scheduler();
         self.register_cloud_collaboration_dispatcher();
