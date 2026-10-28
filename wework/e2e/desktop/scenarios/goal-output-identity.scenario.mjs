@@ -32,6 +32,8 @@ export function createDesktopScenario(options) {
   const existing = createGoalStateSync(options)
   let active = false
   let stage = 0
+  let phase = 'setup'
+  const requestTrace = []
   let restartDesktopApp
   let releaseRecovered
   let releaseFollowUp
@@ -55,10 +57,16 @@ export function createDesktopScenario(options) {
       if (handleEmptyReplyPrediction(body, response)) return true
       assert.ok(JSON.stringify(body).includes(BASE), 'The native session lost its earlier history')
       const current = stage++
+      requestTrace.push({
+        stage: current,
+        phase,
+        hasFollowUp: JSON.stringify(body).includes(FOLLOW_UP),
+        timestamp: Date.now(),
+      })
       if (current === 4) {
         assert.ok(
           JSON.stringify(body).includes(FOLLOW_UP),
-          'A stopped Goal requested another model response before the follow-up'
+          `A stopped Goal requested another model response before the follow-up: ${JSON.stringify(requestTrace)}`
         )
       }
       const text = [HISTORY, INITIAL, '', RECOVERED, FINAL][current]
@@ -144,10 +152,12 @@ export function createDesktopScenario(options) {
         address = before.workbench.currentRuntimeTask
         const originalUser = goalUser(await transcript())
         assert.ok(originalUser?.turnId, 'The original Goal user needs a native turn identity')
+        phase = 'restart'
         await restartDesktopApp()
         await control.command('waitFor', `[data-testid="runtime-local-task-row-${address.taskId}"]`)
         await control.command('click', `[data-testid="runtime-local-task-row-${address.taskId}"]`)
         await waitText(RECOVERED)
+        phase = 'reopen-recovered-conversation'
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('click', `[data-testid="runtime-local-task-row-${address.taskId}"]`)
         await waitText(RECOVERED)
@@ -162,18 +172,23 @@ export function createDesktopScenario(options) {
           control,
           Object.fromEntries([BASE, HISTORY, GOAL, INITIAL, RECOVERED].map(text => [text, 1]))
         )
+        phase = 'pause-response'
         await control.command(
           'click',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="pause-response-button"]`
         )
+        phase = 'wait-for-stopped-thread'
         await waitForCompletedRuntimeTaskThread(control, address.taskId, options.uiTimeoutMs)
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
         )
+        phase = 'clear-goal'
         await rpc('runtime.tasks.goal.clear', { address })
         await control.command('waitFor', '[data-testid="goal-status-bar"]', { visible: false })
+        phase = 'send-follow-up'
         await send(FOLLOW_UP)
+        phase = 'wait-for-follow-up'
         await waitText(FINAL)
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('click', `[data-testid="runtime-local-task-row-${address.taskId}"]`)
@@ -206,7 +221,11 @@ export function createDesktopScenario(options) {
           Object.fromEntries(ordered.map(text => [text, 1]))
         )
         assertConversationTextOrder(visible, ordered)
+      } catch (error) {
+        console.error('[goal-output-identity] verification failed', { phase, requestTrace }, error)
+        throw error
       } finally {
+        phase = 'cleanup'
         releaseRecovered()
         releaseFollowUp()
         if (address) await rpc('runtime.tasks.goal.clear', { address })

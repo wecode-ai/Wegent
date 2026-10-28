@@ -23,10 +23,13 @@ flowchart TD
   Controller -->|流式与回到底部| Spring[唯一跟随弹簧]
   Controller -->|拖动期间| Pointer[滚动条指针与当前范围]
   Pointer --> Viewport
+  Pointer --> Thumb[同一帧同步滑块几何]
   Engine -->|实际生效位移| TextAnchor[文字锚点]
   TextAnchor -->|仅剩余位移| Viewport
   Spring --> Viewport
 ```
+
+拖动的每帧更新使用同一份当前几何，同时写入视口位置与滑块变换；不能等后续 `scroll` 事件才绘制滑块。短会话回归场景必须先确认内容不溢出视口，消息条数本身不能证明这一前提。
 
 实现约束：
 

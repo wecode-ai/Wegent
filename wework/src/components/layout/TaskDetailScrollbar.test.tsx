@@ -131,6 +131,17 @@ test('coalesces pointer moves into one scroll write per frame and flushes the re
   expect(writes).toHaveBeenCalledTimes(2)
 })
 
+test('paints the thumb in the frame that applies a pointer position', () => {
+  const { viewport, track, thumb } = renderConversation()
+  fireEvent.pointerDown(track, { button: 0, pointerId: 1, clientY: 200 })
+  expect(thumb.style.transform).toBe('translateY(147.75px)')
+
+  fireEvent.pointerMove(track, { buttons: 1, pointerId: 1, clientY: 300 })
+  flushFrame()
+  expect(viewport.scrollTop).toBeCloseTo(1006.0914)
+  expect(Number.parseFloat(thumb.style.transform.replace('translateY(', ''))).toBeCloseTo(247.75)
+})
+
 test('keeps the grabbed thumb point under the pointer while measured content changes', () => {
   const { viewport, track, thumb } = renderConversation()
   fireEvent.pointerDown(track, { button: 0, pointerId: 1, clientY: 200 })

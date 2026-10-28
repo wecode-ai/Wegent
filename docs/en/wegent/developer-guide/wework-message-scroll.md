@@ -23,10 +23,13 @@ flowchart TD
   Controller -->|Streaming and scroll to bottom| Spring[Single follow spring]
   Controller -->|While dragging| Pointer[Scrollbar pointer and current range]
   Pointer --> Viewport
+  Pointer --> Thumb[Update thumb geometry in the same frame]
   Engine -->|Actually applied offset| TextAnchor[Text anchor]
   TextAnchor -->|Residual displacement only| Viewport
   Spring --> Viewport
 ```
+
+Each drag frame uses current geometry to update the viewport position and thumb transform together, without waiting for a later `scroll` event to paint the thumb. Short-conversation regressions must first establish that content fits within the viewport; message count alone does not establish this prerequisite.
 
 Implementation invariants:
 

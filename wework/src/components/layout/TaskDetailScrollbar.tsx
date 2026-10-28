@@ -31,39 +31,12 @@ export function TaskDetailScrollbar({
 
   useLayoutEffect(() => cancelDragFrame, [cancelDragFrame])
 
-  const scrollFromPointer = useCallback(
-    (clientY: number, offset: number) => {
+  const update = useCallback(
+    (pointer?: { clientY: number; offset: number }) => {
       const viewport = viewportRef.current
       const track = scrollbarRef.current
       const thumb = thumbRef.current
       if (!viewport || !track || !thumb) return
-      const travel = track.clientHeight - thumb.offsetHeight
-      if (travel <= 0) return
-      const ratio = Math.max(
-        0,
-        Math.min(1, (clientY - track.getBoundingClientRect().top - offset) / travel)
-      )
-      const top = ratio * Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-      if (Math.abs(viewport.scrollTop - top) < 0.5) return
-      recordConversationScrollWrite(
-        viewport,
-        CONVERSATION_SCROLL_WRITE_SOURCE.scrollbarPointer,
-        top,
-        () => {
-          viewport.scrollTop = top
-        }
-      )
-    },
-    [scrollbarRef, viewportRef]
-  )
-
-  useLayoutEffect(() => {
-    const viewport = viewportRef.current
-    const track = scrollbarRef.current
-    const thumb = thumbRef.current
-    if (!viewport || !track || !thumb) return
-
-    const update = () => {
       const viewportHeight = viewport.clientHeight
       const contentHeight = viewport.scrollHeight
       const range = Math.max(0, contentHeight - viewportHeight)
@@ -75,29 +48,58 @@ export function TaskDetailScrollbar({
         Math.max(18, contentHeight > 0 ? (trackHeight * viewportHeight) / contentHeight : 0)
       )
       thumb.style.height = `${size}px`
-      const drag = dragRef.current
-      if (drag) scrollFromPointer(drag.clientY, drag.offset)
+      const travel = trackHeight - size
+      if (pointer && travel > 0) {
+        const ratio = Math.max(
+          0,
+          Math.min(
+            1,
+            (pointer.clientY - track.getBoundingClientRect().top - pointer.offset) / travel
+          )
+        )
+        const top = ratio * range
+        if (Math.abs(viewport.scrollTop - top) >= 0.5) {
+          recordConversationScrollWrite(
+            viewport,
+            CONVERSATION_SCROLL_WRITE_SOURCE.scrollbarPointer,
+            top,
+            () => {
+              viewport.scrollTop = top
+            }
+          )
+        }
+      }
       const position = Math.max(0, Math.min(range, viewport.scrollTop))
-      thumb.style.transform = `translateY(${range ? (position / range) * (trackHeight - size) : 0}px)`
+      thumb.style.transform = `translateY(${range ? (position / range) * travel : 0}px)`
       track.setAttribute('aria-valuemax', String(range))
       track.setAttribute('aria-valuenow', String(Math.round(position)))
-    }
-    update()
-    const observer = new ResizeObserver(update)
+    },
+    [scrollbarRef, viewportRef]
+  )
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current
+    const track = scrollbarRef.current
+    const thumb = thumbRef.current
+    if (!viewport || !track || !thumb) return
+
+    const synchronize = () => update(dragRef.current ?? undefined)
+    synchronize()
+    const observer = new ResizeObserver(synchronize)
     observer.observe(viewport)
     observer.observe(track)
     if (viewport.firstElementChild) observer.observe(viewport.firstElementChild)
-    viewport.addEventListener('scroll', update)
+    viewport.addEventListener('scroll', synchronize)
     return () => {
       observer.disconnect()
-      viewport.removeEventListener('scroll', update)
+      viewport.removeEventListener('scroll', synchronize)
     }
-  }, [scrollFromPointer, scrollbarRef, viewportRef])
+  }, [update, scrollbarRef, viewportRef])
 
   const flushPointer = () => {
     const pending = pendingPointerRef.current
     cancelDragFrame()
-    if (pending) scrollFromPointer(pending.clientY, pending.offset)
+    if (pending) update(pending)
   }
 
   return (
@@ -123,7 +125,7 @@ export function TaskDetailScrollbar({
           : thumb.offsetHeight / 2
         dragRef.current = { pointerId: event.pointerId, offset, clientY: event.clientY }
         event.currentTarget.setPointerCapture(event.pointerId)
-        scrollFromPointer(event.clientY, offset)
+        update(dragRef.current)
       }}
       onPointerMove={event => {
         const drag = dragRef.current
