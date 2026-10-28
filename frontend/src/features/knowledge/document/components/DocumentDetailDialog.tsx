@@ -158,6 +158,7 @@ export function DocumentDetailDialog({
   )
   const [isSummaryOpen, setIsSummaryOpen] = useState(contentSourceMode === 'parsed')
   const summaryManuallyToggledRef = useRef(false)
+  const renderedDocumentVersionRef = useRef<string | null>(null)
   const [openedDocumentId, setOpenedDocumentId] = useState<number | null>(
     open ? (document?.id ?? null) : null
   )
@@ -322,14 +323,26 @@ export function DocumentDetailDialog({
     refresh()
   }
 
-  const handleSourceSync = async () => {
+  const handleSourceSync = useCallback(async () => {
     if (!document) return
     // A failed request keeps the existing copy and reports the reason through
     // the shared entry, so the preview only reacts to a queued refresh.
     if (!(await syncDocument(document))) return
-    refresh()
     onDocumentSynced?.()
-  }
+  }, [document, onDocumentSynced, syncDocument])
+
+  useEffect(() => {
+    if (!open || !document) {
+      renderedDocumentVersionRef.current = null
+      return
+    }
+    const version = `${document.id}:${document.index_generation}:${document.index_status}:${document.updated_at}`
+    const previousVersion = renderedDocumentVersionRef.current
+    renderedDocumentVersionRef.current = version
+    if (previousVersion && previousVersion !== version && document.index_status === 'success') {
+      void refresh()
+    }
+  }, [document, open, refresh])
 
   const handleSourceDownload = useCallback(async () => {
     if (!allowDownload) return

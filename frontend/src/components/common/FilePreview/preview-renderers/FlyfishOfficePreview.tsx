@@ -7,9 +7,11 @@
 import FileViewer, { type ViewerOptions, type ViewerState } from '@file-viewer/react'
 import fileViewerPackage from '@file-viewer/react/package.json'
 import officePreset from '@file-viewer/preset-office'
-import { useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Spinner } from '@/components/ui/spinner'
+import { useTranslation } from '@/hooks/useTranslation'
 
-const FILE_VIEWER_ASSET_BASE = `/file-viewer/${fileViewerPackage.version}-office-v2`
+const FILE_VIEWER_ASSET_BASE = `/file-viewer/${fileViewerPackage.version}-office-pdf-v3`
 
 const OFFICE_VIEWER_OPTIONS: ViewerOptions = {
   preset: officePreset,
@@ -21,6 +23,14 @@ const OFFICE_VIEWER_OPTIONS: ViewerOptions = {
     exportHtml: false,
     theme: false,
     position: 'bottom-right',
+  },
+  pdf: {
+    assetBaseUrl: `${FILE_VIEWER_ASSET_BASE}/`,
+    workerUrl: `${FILE_VIEWER_ASSET_BASE}/vendor/pdf/pdf.worker.mjs`,
+    cMapUrl: `${FILE_VIEWER_ASSET_BASE}/vendor/pdf/cmaps/`,
+    wasmUrl: `${FILE_VIEWER_ASSET_BASE}/vendor/pdf/wasm/`,
+    standardFontDataUrl: `${FILE_VIEWER_ASSET_BASE}/vendor/pdf/standard_fonts/`,
+    cjkFontFallbackPath: `${FILE_VIEWER_ASSET_BASE}/vendor/pdf/fonts/`,
   },
   docx: {
     workerUrl: `${FILE_VIEWER_ASSET_BASE}/vendor/docx/docx.worker.js`,
@@ -37,40 +47,119 @@ const OFFICE_VIEWER_OPTIONS: ViewerOptions = {
 }
 
 interface FlyfishOfficePreviewProps {
-  blob: Blob
+  blob?: Blob
+  url?: string
   filename: string
   onError?: (error: Error) => void
+  restricted?: boolean
+  coverOnly?: boolean
 }
 
-export function FlyfishOfficePreview({ blob, filename, onError }: FlyfishOfficePreviewProps) {
+export function FlyfishOfficePreview({
+  blob,
+  url,
+  filename,
+  onError,
+  restricted = false,
+  coverOnly = false,
+}: FlyfishOfficePreviewProps) {
+  const { t } = useTranslation('common')
+  const [pdfLoading, setPdfLoading] = useState(true)
+  const onErrorRef = useRef(onError)
+  useEffect(() => {
+    onErrorRef.current = onError
+  }, [onError])
+
   const file = useMemo(
     () =>
-      blob instanceof File
-        ? blob
-        : new File([blob], filename, {
-            type: blob.type || 'application/octet-stream',
-          }),
+      !blob
+        ? undefined
+        : blob instanceof File
+          ? blob
+          : new File([blob], filename, {
+              type: blob.type || 'application/octet-stream',
+            }),
     [blob, filename]
   )
   const extension = filename.split('.').pop()?.toLowerCase()
+  const isPdf = extension === 'pdf'
   const isPresentation = extension === 'pptx'
+  useEffect(() => {
+    setPdfLoading(true)
+  }, [file, url, filename])
+  const options = useMemo<ViewerOptions>(
+    () => ({
+      ...OFFICE_VIEWER_OPTIONS,
+      toolbar: coverOnly
+        ? false
+        : restricted
+          ? {
+              download: false,
+              exportHtml: false,
+              theme: false,
+              position: 'bottom-right',
+              print: false,
+              permissions: {
+                download: false,
+                print: false,
+                'export-html': false,
+              },
+            }
+          : OFFICE_VIEWER_OPTIONS.toolbar,
+      pdf: {
+        ...OFFICE_VIEWER_OPTIONS.pdf,
+        toolbar: !coverOnly,
+        navigation: !coverOnly,
+        thumbnails: !coverOnly,
+        streaming: true,
+        rangeChunkSize: 64 * 1024,
+        withCredentials: false,
+      },
+    }),
+    [coverOnly, restricted]
+  )
 
-  const handleStateChange = (state: ViewerState) => {
-    if (!state.error || !onError) return
-    onError(state.error instanceof Error ? state.error : new Error(String(state.error)))
-  }
+  // The React viewer reloads its source when this callback changes. Keep it
+  // stable across progress updates and parent renders, including cover loads.
+  const handleStateChange = useCallback(
+    (state: ViewerState) => {
+      if (isPdf) setPdfLoading(!state.ready && !state.error)
+      if (!state.error) return
+      onErrorRef.current?.(
+        state.error instanceof Error ? state.error : new Error(String(state.error))
+      )
+    },
+    [isPdf]
+  )
 
-  return (
+  const viewer = (
     <FileViewer
-      key={`${file.name}:${file.size}:${file.lastModified}`}
+      key={file ? `${file.name}:${file.size}:${file.lastModified}` : url}
+      url={url}
       file={file}
-      filename={file.name}
+      filename={file?.name || filename}
       type={extension}
-      size={file.size}
+      size={file?.size}
       className={`h-full w-full${isPresentation ? ' overflow-auto' : ''}`}
-      options={OFFICE_VIEWER_OPTIONS}
+      options={options}
       onStateChange={handleStateChange}
       data-testid="flyfish-office-file-viewer"
     />
+  )
+
+  if (!isPdf) return viewer
+
+  return (
+    <div className="relative h-full w-full" aria-busy={pdfLoading}>
+      {viewer}
+      {pdfLoading && (
+        <div
+          className="absolute inset-0 flex items-center justify-center bg-surface/90"
+          data-testid="pdf-preview-loading"
+        >
+          <Spinner text={t('loading')} />
+        </div>
+      )}
+    </div>
   )
 }

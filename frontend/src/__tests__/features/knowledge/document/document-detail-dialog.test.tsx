@@ -16,6 +16,7 @@ const mockRefreshDetail = jest.fn()
 const mockSynchronizeExternalDocument = jest.fn()
 const mockToast = jest.fn()
 let mockDocumentSummary: DocumentSummary | null = null
+let mockFullContent = 'plain text content'
 const mockDialogContent = jest.fn(
   ({ children }: { children: React.ReactNode; className?: string }) => <div>{children}</div>
 )
@@ -97,7 +98,7 @@ jest.mock('@/features/knowledge/document/hooks/useDocumentDetail', () => ({
       summary: mockDocumentSummary,
       chunks: [],
     },
-    fullContent: 'plain text content',
+    fullContent: mockFullContent,
     loading: false,
     error: null,
     loadingMore: false,
@@ -171,6 +172,7 @@ beforeEach(() => {
   mockSynchronizeExternalDocument.mockReset()
   mockToast.mockReset()
   mockDocumentSummary = null
+  mockFullContent = 'plain text content'
   mockListKnowledgeBases.mockResolvedValue({ items: [] })
   mockListWikiConnections.mockReset()
   mockListWikiConnections.mockResolvedValue({
@@ -942,6 +944,79 @@ const syncedWikiDocument: KnowledgeDocument = {
 }
 
 describe('DocumentDetailDialog manual source sync', () => {
+  it('does not synchronize expired links until the user explicitly clicks sync', async () => {
+    mockFullContent =
+      '[expired.pdf](https://cdn.example.com/expired.pdf?Expires=1&Signature=expired)'
+    mockSynchronizeExternalDocument.mockResolvedValue(createDingtalkCopy())
+    const onDocumentSynced = jest.fn()
+
+    render(
+      <DocumentDetailDialog
+        open
+        onOpenChange={jest.fn()}
+        document={createDingtalkCopy()}
+        knowledgeBaseId={21}
+        canEdit
+        onDocumentSynced={onDocumentSynced}
+      />
+    )
+
+    await act(async () => {})
+    expect(mockSynchronizeExternalDocument).not.toHaveBeenCalled()
+    expect(onDocumentSynced).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('document-detail-sync-dingtalk-41'))
+    await waitFor(() => expect(mockSynchronizeExternalDocument).toHaveBeenCalledWith(41))
+    expect(mockSynchronizeExternalDocument).toHaveBeenCalledTimes(1)
+    expect(onDocumentSynced).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not synchronize an unexpired DingTalk resource link when the document opens', async () => {
+    mockFullContent =
+      '[current.pdf](https://cdn.example.com/current.pdf?Expires=4102444800&Signature=current)'
+
+    render(
+      <DocumentDetailDialog
+        open
+        onOpenChange={jest.fn()}
+        document={createDingtalkCopy()}
+        knowledgeBaseId={21}
+        canEdit
+        onDocumentSynced={jest.fn()}
+      />
+    )
+
+    await act(async () => {})
+    expect(mockSynchronizeExternalDocument).not.toHaveBeenCalled()
+  })
+
+  it('reloads the body after the synchronized document version changes', async () => {
+    const document = createDingtalkCopy()
+    const { rerender } = render(
+      <DocumentDetailDialog
+        open
+        onOpenChange={jest.fn()}
+        document={document}
+        knowledgeBaseId={21}
+        canEdit
+        onDocumentSynced={jest.fn()}
+      />
+    )
+
+    rerender(
+      <DocumentDetailDialog
+        open
+        onOpenChange={jest.fn()}
+        document={{ ...document, index_generation: document.index_generation + 1 }}
+        knowledgeBaseId={21}
+        canEdit
+        onDocumentSynced={jest.fn()}
+      />
+    )
+
+    await waitFor(() => expect(mockRefreshDetail).toHaveBeenCalledTimes(1))
+  })
+
   it('offers no manual sync for documents that are not DingTalk copies', () => {
     const { rerender } = render(
       <DocumentDetailDialog
@@ -969,7 +1044,7 @@ describe('DocumentDetailDialog manual source sync', () => {
     expect(screen.queryByTestId('document-detail-sync-dingtalk-26')).not.toBeInTheDocument()
   })
 
-  it('syncs the DingTalk copy and refreshes the preview and the owning list', async () => {
+  it('queues the DingTalk refresh and lets the owning list observe its progress', async () => {
     mockSynchronizeExternalDocument.mockResolvedValue(createDingtalkCopy())
     const onDocumentSynced = jest.fn()
 
@@ -987,7 +1062,7 @@ describe('DocumentDetailDialog manual source sync', () => {
     fireEvent.click(screen.getByTestId('document-detail-sync-dingtalk-41'))
 
     await waitFor(() => expect(mockSynchronizeExternalDocument).toHaveBeenCalledWith(41))
-    await waitFor(() => expect(mockRefreshDetail).toHaveBeenCalled())
+    expect(mockRefreshDetail).not.toHaveBeenCalled()
     expect(onDocumentSynced).toHaveBeenCalled()
   })
 

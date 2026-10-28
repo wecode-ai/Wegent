@@ -102,6 +102,28 @@ function isAlreadyLinked(text: string, urlStart: number, urlEnd: number): boolea
 }
 
 /**
+ * Protect link/image labels too: a URL used as display text is not a bare URL.
+ * Match balanced brackets so formatted labels and nested images stay intact.
+ */
+function linkLabelRanges(text: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = []
+  const brackets: number[] = []
+  for (let index = 0; index < text.length; index++) {
+    if (text[index] === '\\') {
+      index++
+    } else if (text[index] === '[') {
+      brackets.push(index)
+    } else if (text[index] === ']') {
+      const start = brackets.pop()
+      if (start !== undefined && text[index + 1] === '(') {
+        ranges.push({ start, end: index })
+      }
+    }
+  }
+  return ranges
+}
+
+/**
  * Pre-process markdown text to convert bare URLs to markdown link format
  *
  * @param text - The markdown text to process
@@ -115,6 +137,7 @@ export function autolinkUrls(text: string): string {
   if (!text) return text
 
   const matches: Array<{ start: number; end: number; url: string }> = []
+  const labels = linkLabelRanges(text)
 
   // Find all URL matches
   let match: RegExpExecArray | null
@@ -129,7 +152,10 @@ export function autolinkUrls(text: string): string {
     }
 
     // Skip if already linked
-    if (isAlreadyLinked(text, start, end)) {
+    if (
+      isAlreadyLinked(text, start, end) ||
+      labels.some(label => start > label.start && end <= label.end)
+    ) {
       continue
     }
 
