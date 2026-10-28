@@ -462,7 +462,17 @@ classify_wework_path() {
     wework/src/components/plugins/PluginDetailView* | \
       wework/src/components/plugins/PluginsWorkspace* | \
       wework/src/components/plugins/pluginOwnerActions.ts | \
-      wework/src/components/plugins/pluginOwnerLocalPackage.ts)
+      wework/src/components/plugins/pluginOwnerLocalPackage.ts | \
+      wework/src/components/plugins/pluginUninstall.ts | \
+      wework/src/api/local/codexPlugins.ts | \
+      wework/src/features/plugins/pluginMarketplaceCache.ts | \
+      wework/src/components/plugins/findMarketplaceItemForInstalled.ts | \
+      wework/src/components/plugins/marketplaceCatalogMerge.ts | \
+      wework/src/components/plugins/plugin-dialogs/InstallPluginDialog.tsx | \
+      wework/src/components/plugins/plugin-dialogs/UninstallPluginDialog.tsx | \
+      wework/src/components/plugins/PluginVersionSubmit* | \
+      wework/src/components/plugins/pluginVersionSubmission* | \
+      wework/src/components/plugins/hooks/usePluginVersionSubmission*)
       select_target "cloud:plugin-workspace-publication"
       ;;
   esac
@@ -482,10 +492,7 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/modules/plugin-personal-version-flow.mjs | \
       wework/e2e/desktop/modules/plugin-personal-recipient-install.mjs | \
-      wework/e2e/desktop/modules/plugin-personal-uninstall-flow.mjs | \
-      wework/src/components/plugins/PluginVersionSubmit* | \
-      wework/src/components/plugins/pluginVersionSubmission* | \
-      wework/src/components/plugins/hooks/usePluginVersionSubmission*)
+      wework/e2e/desktop/modules/plugin-personal-uninstall-flow.mjs)
       select_target "cloud:plugin-workspace-publication"
       return
       ;;

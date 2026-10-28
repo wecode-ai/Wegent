@@ -35,6 +35,7 @@ import type {
 } from '@/types/api'
 import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
+import * as pluginUninstall from './pluginUninstall'
 import * as refreshReconciliation from '@/features/plugins/pluginRefreshReconciliation'
 import { CodexAuthorizationTimeoutError } from '@/features/plugins/codexConnectorAuthorization'
 import { PLUGIN_AUTO_UPDATE_COMPLETED_EVENT } from '@/features/plugins/PluginAutoUpdateCoordinator'
@@ -6784,6 +6785,7 @@ describe('PluginsWorkspace', () => {
       const logout = vi
         .spyOn(connectorCleanup, 'logoutLocalConnectorsForPlugin')
         .mockResolvedValue(undefined)
+      const uninstallAccount = vi.spyOn(pluginUninstall, 'uninstallAccountPlugin')
       const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
       try {
         await waitFor(() =>
@@ -6823,20 +6825,31 @@ describe('PluginsWorkspace', () => {
         armPreflight = true
         await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
         await waitFor(() => expect(preflightReads).toBe(1))
+        expect(uninstallAccount).toHaveBeenCalledOnce()
+        const pendingUninstall = uninstallAccount.mock.results[0].value
 
         if (outcome === 'account-change' || outcome === 'return-account') {
           view.rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="another-account" />)
           if (outcome === 'return-account') {
             view.rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
           }
-          await act(async () => finishPreflight())
+          await act(async () => {
+            finishPreflight()
+            await expect(pendingUninstall).rejects.toThrow(
+              'Plugin uninstall cancelled after account scope changed'
+            )
+          })
           expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
         } else if (outcome === 'unavailable') {
+          await expect(pendingUninstall).rejects.toThrow('PLUGIN_UNINSTALL_PREFLIGHT_FAILED')
           expect(await screen.findByTestId('plugin-operation-notice')).toHaveTextContent(
             '暂时无法确认当前账号的插件安装状态'
           )
           expect(screen.getByTestId('plugin-detail-actions-101')).toBeEnabled()
         } else {
+          await act(async () => {
+            await expect(pendingUninstall).resolves.toBeUndefined()
+          })
           expect(await screen.findByTestId('plugin-operation-notice')).toHaveTextContent('已卸载')
           expect(
             getPluginMarketplaceCache('/api|cloud-token')?.marketplaceItems.find(
@@ -6869,8 +6882,10 @@ describe('PluginsWorkspace', () => {
         expectCodexAppServerRequestNotCalled('plugin/uninstall')
       } finally {
         finishInitialInventory()
+        finishPreflight()
         view.unmount()
         logout.mockRestore()
+        uninstallAccount.mockRestore()
       }
     }
   )
