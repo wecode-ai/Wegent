@@ -35,6 +35,19 @@ flowchart LR
 路由任务向满足当前授权、模型和 Issue 绑定的设备发送通知，并使用设备所有者的连接身份。
 `LOCAL_RUNTIME_WORK_POLL_INTERVAL` 可覆盖默认 5 秒间隔；连接恢复和通知仍触发立即领取。
 
+## 分身接单身份
+
+普通人工分配的 `human_task_binding.assignmentId` 是 Issue 分配事件 ID。
+协作轮次中的该字段是负责人分配的成员任务 ID；额外的 `issueAssignmentId`
+指向当前 Issue 分配事件。Executor 必须使用后者验证当前分配及写入接收回执，
+并在任务绑定元数据中保存为 `issue_assignment_id`，保留原有成员任务 ID 供轮次汇总使用。
+接收回执仍要求当前接收人、本人设备及本人任务绑定全部匹配。
+
+通知尚无执行任务时，手动交给分身省略分身 ID，由 Executor 选择已连接该项目的身份，
+不能假定身份名为 `default`。普通重新转派产生新的分配事件及独立分身任务。
+CI 的 `stand-in-assignment-notifications` 套件同时验证通知触发、手动接单、
+处理完成后转派回来，以及轮次任务接收回执。
+
 ## 验证场景
 
 1. 项目 Maintainer 使用其他成员加入空间的智能体，能建立绑定；全局资源详情和编辑权限保持原有边界。
