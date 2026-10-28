@@ -671,9 +671,14 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
     };
     for method in ["thread/goal/set", "thread/goal/clear"] {
         let directory = tempfile::tempdir().unwrap();
-        let client = CodexAppServerClient::new(format!("goal-recovery-gate-{method}"))
-            .for_home(directory.path().to_path_buf())
-            .unwrap();
+        // Manually driven children must not join executor-wide shutdown or reload.
+        let client = CodexAppServerClient {
+            binary: format!("goal-recovery-gate-{method}"),
+            home: Some(directory.path().to_path_buf()),
+            state: Arc::new(Mutex::new(
+                super::super::CodexAppServerSharedState::default(),
+            )),
+        };
         client.mark_thread_active("root-thread").await;
         let mut command = tokio::process::Command::new("sh");
         command
@@ -790,9 +795,14 @@ async fn overload_recovery_drains_user_resumed_turns_before_settling_changed_goa
 
     for mode in ["completed", "in_flight", "paused", "cleared"] {
         let directory = tempfile::tempdir().unwrap();
-        let client = CodexAppServerClient::new(format!("overload-drain-{mode}"))
-            .for_home(directory.path().to_path_buf())
-            .unwrap();
+        // Manually driven children must not join executor-wide shutdown or reload.
+        let client = CodexAppServerClient {
+            binary: format!("overload-drain-{mode}"),
+            home: Some(directory.path().to_path_buf()),
+            state: Arc::new(Mutex::new(
+                super::super::CodexAppServerSharedState::default(),
+            )),
+        };
         client.mark_thread_active("root-thread").await;
         let mut command = tokio::process::Command::new("sh");
         command

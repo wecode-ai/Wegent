@@ -1195,8 +1195,8 @@ class DesktopE2EServer {
     return this.commandForClient(clientId, action, selector, options)
   }
 
-  recordControlTransport(event, clientId) {
-    this.controlTransportHistory.push({ event, clientId, at: new Date().toISOString() })
+  recordControlTransport(event, clientId, details = {}) {
+    this.controlTransportHistory.push({ event, clientId, ...details, at: new Date().toISOString() })
     if (this.controlTransportHistory.length > 200) this.controlTransportHistory.shift()
   }
 
@@ -2080,7 +2080,7 @@ class DesktopE2EServer {
 
     if (request.method === 'POST' && url.pathname === '/started') {
       const started = await readRequestBody(request)
-      this.recordControlTransport('started', started.clientId)
+      this.recordControlTransport('started', started.clientId, { commandId: started.id })
       const pending = this.commandResults.get(started.id)
       if (!pending) {
         json(response, 404, { error: `Unknown command ${started.id}` })
@@ -2103,6 +2103,11 @@ class DesktopE2EServer {
 
     if (request.method === 'POST' && url.pathname === '/results') {
       const result = await readRequestBody(request)
+      this.recordControlTransport('result-received', result.clientId, {
+        commandId: result.id,
+        actionSucceeded: result.ok,
+        pending: this.commandResults.has(result.id),
+      })
       const pending = this.commandResults.get(result.id)
       if (!pending) {
         json(response, 404, { error: `Unknown command ${result.id}` })

@@ -272,8 +272,10 @@ for manual, assignment, and scheduler entry points; existing
 real desktop scenarios cover the complete execution flow.
 Long history hydration polls use `performanceSnapshot` with `collectMemory: false`
 to avoid forced GC on every poll; final memory assertions retain full sampling.
-Timeout diagnostics include the last snapshot. Permission modes use dedicated
-Core shard 11, retaining real MCP deadlines within the serial Windows shard budget.
+Timeout diagnostics include the last snapshot. After upstream #4146 bounded isolated
+E2E fixture timers, permission modes measured about three minutes and fit alongside
+the measured 25-minute Core 4. Remove the redundant shard, retaining the original ten
+Core runners, real expiry assertions, and the 40-minute step limit.
 Source project configuration no longer forces the Windows unelevated sandbox,
 which rejects split writable roots; other permission and approval settings remain.
 Windows source-project coverage therefore verifies outside writes can execute;
@@ -543,12 +545,15 @@ Restoring native model-catalog defaults temporarily unmounts model rows while re
 The scenario observes the stable page until the original row returns without its customization
 marker, then verifies native data and the persisted override file.
 The overload cancellation phase selects its fixture model independently for the new conversation.
-When a user resumes and completes a Goal during overload backoff, the executor processes queued new-turn events before applying the latest Goal snapshot. A new turn still running must deliver its own terminal event. Focused regressions cover completed, in-flight, paused, and cleared Goals, preserving the current turn identity without an extra Goal activation or turn start. Fake app-server processes use independent temporary Homes so concurrent skill configuration reloads cannot send requests to another test’s process.
+When a user resumes and completes a Goal during overload backoff, the executor processes queued new-turn events before applying the latest Goal snapshot. A new turn still running must deliver its own terminal event. Focused regressions cover completed, in-flight, paused, and cleared Goals, preserving the current turn identity without an extra Goal activation or turn start. Manually driven fake app-server processes use independent temporary Homes and private state outside the global registry, preventing concurrent skill reloads or executor-wide shutdown from interfering with another test.
 The device artifact declaration scenario uses one Node invocation to generate its file and execute the real declaration command, avoiding Unix heredoc syntax in Windows PowerShell. Only a successful declaration emits its completion marker, which the model must receive before finishing. Unique-artifact, exact-content download, and native-preview assertions remain enabled. Local command verification covers PowerShell, Unix shells, spaces and Unicode in paths, and declaration failure propagation.
-In run 40623393090, every Windows Core 4 checkpoint passed, but startup and cleanup exhausted the 40-minute step limit. Move the measured six-minute board sorting checkpoint to the existing roughly 22-minute Core 8 shard. Retain the runner count, every checkpoint, the 40-minute limit, and exclusive latency benchmark and permission shards.
+In run 40623393090, every Windows Core 4 checkpoint passed, but startup and cleanup exhausted the 40-minute step limit. Move the measured six-minute board sorting checkpoint to the existing roughly 22-minute Core 8 shard. Place permission modes in Core 4 and remove the extra shard. Retain the original ten Core runners, every checkpoint, the 40-minute limit, and exclusive latency benchmark shards.
 The stand-in settings scenario uses the existing `clickWhenEnabled` action to wait for its sidebar entry after switching collaboration tabs or reloading. A visible tab does not establish that its asynchronous page has mounted.
 Action execution and result acknowledgement are separate: an acknowledgement failure must not
-produce a fabricated failed-action result. E2E Electron logs retain loopback request paths and
+produce a fabricated failed-action result. Control stages use the existing debug-log snapshot
+capture. Result transport records client duration, event-loop lag, page visibility, and server
+receipt time; the server records whether the command is still pending when its result arrives.
+No action contents or authentication values are logged. E2E Electron logs retain loopback request paths and
 network error codes without headers or query parameters. Windows failure artifacts include
 `windows-network-diagnostics.json` with TCP state and process connection counts, excluding addresses,
 to diagnose Winsock resource exhaustion.
