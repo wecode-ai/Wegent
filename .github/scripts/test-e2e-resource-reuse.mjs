@@ -16,6 +16,62 @@ const knowledgeRunner = resolve(
   ".github/scripts/run-knowledge-provider-e2e.sh",
 );
 
+test("platform image reuse checks the registry before starting a builder", () => {
+  const result = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['prepare-platform-e2e-image']['steps'])",
+      ".github/workflows/e2e-tests.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const steps = JSON.parse(result.stdout);
+  const checkIndex = steps.findIndex((step) => step.id === "image-check");
+  const builderIndex = steps.findIndex((step) =>
+    step.uses?.startsWith("docker/setup-buildx-action@"),
+  );
+  const build = steps.find((step) =>
+    step.uses?.startsWith("docker/build-push-action@"),
+  );
+  assert(checkIndex >= 0);
+  assert(builderIndex > checkIndex);
+  assert.equal(
+    steps[builderIndex].if,
+    "steps.image-check.outputs.exists != 'true'",
+  );
+  assert.equal(build.if, steps[builderIndex].if);
+
+  for (const exists of [true, false]) {
+    const root = mkdtempSync(join(tmpdir(), "platform-image-check-"));
+    try {
+      const output = join(root, "output");
+      const image = "ghcr.io/example/platform-e2e:content-hash";
+      writeFileSync(
+        join(root, "docker"),
+        `#!${process.execPath}\nconst assert = require('node:assert/strict')\nassert.deepEqual(process.argv.slice(2), ['manifest', 'inspect', process.env.IMAGE])\nprocess.exit(${exists ? 0 : 1})\n`,
+      );
+      chmodSync(join(root, "docker"), 0o755);
+      const probe = spawnSync("bash", ["-e", "-c", steps[checkIndex].run], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${root}:${process.env.PATH}`,
+          IMAGE: image,
+          GITHUB_OUTPUT: output,
+        },
+      });
+      assert.equal(probe.status, 0, probe.stderr);
+      assert.equal(readFileSync(output, "utf8"), `exists=${exists}\n`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test("platform sharding preserves four runners and every provider shard", () => {
   const result = spawnSync(
     "ruby",
