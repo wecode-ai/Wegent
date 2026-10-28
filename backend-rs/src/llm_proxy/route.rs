@@ -173,13 +173,19 @@ fn is_protected_upstream_header(name: &str) -> bool {
 /// `POST /api/runtime-work/llm-responses-proxy/responses`.
 pub struct LlmResponsesProxyRoute {
     state: Arc<AppState>,
+    upstream_http: brz_http::Client,
 }
 
 impl LlmResponsesProxyRoute {
     /// Builds the route handler over the shared application state.
-    #[must_use]
-    pub fn new(state: Arc<AppState>) -> Self {
-        Self { state }
+    ///
+    /// # Errors
+    /// Returns an error when the dedicated upstream transport cannot be built.
+    pub fn new(state: Arc<AppState>) -> anyhow::Result<Self> {
+        Ok(Self {
+            state,
+            upstream_http: super::transport::build_http()?,
+        })
     }
 }
 
@@ -225,7 +231,15 @@ impl Handler<AppAuthenticator> for LlmResponsesProxyRoute {
         let headers = InboundHeaders {
             headers: request.headers(),
         };
-        match super::proxy_llm_responses(&self.state, &user.0, &headers, request.body()).await {
+        match super::proxy_llm_responses(
+            &self.state,
+            &self.upstream_http,
+            &user.0,
+            &headers,
+            request.body(),
+        )
+        .await
+        {
             Ok(reply) => reply.into_http_response(request.response_arena()),
             Err(error) => error.into_http_error(request.response_arena()),
         }

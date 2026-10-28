@@ -44,6 +44,7 @@ use crate::state::AppState;
 
 pub(crate) mod model_config;
 mod route;
+mod transport;
 
 pub use route::LlmResponsesProxyRoute;
 #[cfg(test)]
@@ -189,6 +190,7 @@ pub fn validate_model_api_key(value: &str, required: bool) -> Option<String> {
 /// `proxy_llm_responses`.
 async fn proxy_llm_responses(
     state: &AppState,
+    http: &brz_http::Client,
     user: &UserRow,
     headers: &InboundHeaders<'_>,
     body: &[u8],
@@ -261,7 +263,7 @@ async fn proxy_llm_responses(
     provider_headers =
         merge_headers_case_insensitive([provider_headers.as_slice(), protocol_headers.as_slice()]);
 
-    forward_upstream(state, &upstream_url, &provider_headers, &body_bytes).await
+    forward_upstream(http, &upstream_url, &provider_headers, &body_bytes).await
 }
 
 /// `resolve_model_provider_api_key`: resolve for the caller, never the owner of
@@ -349,13 +351,12 @@ async fn resolve_model_config(
 /// pooled transport with the same 600-second budget instead of constructing a
 /// client per request.
 async fn forward_upstream(
-    state: &AppState,
+    http: &brz_http::Client,
     upstream_url: &str,
     provider_headers: &[(String, String)],
     body: &[u8],
 ) -> Result<HttpResponse<ProxyStream>, FastApiError> {
-    let mut request = state
-        .attachment_http
+    let mut request = http
         .post(upstream_url)
         .map_err(|error| httpx_request_error(&error.to_string()))?;
     for (name, value) in provider_headers {
