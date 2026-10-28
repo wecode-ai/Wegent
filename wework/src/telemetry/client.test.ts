@@ -882,8 +882,49 @@ describe('durable public stand-in transport', () => {
     }
     localStorage.setItem('wework.stand-in-telemetry:public:old-account', 'pending')
     localStorage.setItem('wework.stand-in-telemetry:public:offline-device', 'pending')
+    localStorage.setItem('unrelated-preference', 'keep')
     await setTelemetryEnabled(false)
     expect(localStorage.getItem('wework.stand-in-telemetry:public:old-account')).toBeNull()
     expect(localStorage.getItem('wework.stand-in-telemetry:public:offline-device')).toBeNull()
+    expect(localStorage.getItem('unrelated-preference')).toBe('keep')
+  })
+
+  test('clears all public queues when Storage reorders keys after removal', async () => {
+    const firstQueue = 'wework.stand-in-telemetry:public:old-account'
+    const secondQueue = 'wework.stand-in-telemetry:public:offline-device'
+    const values = new Map([
+      [firstQueue, 'pending'],
+      [secondQueue, 'pending'],
+      ['unrelated-preference', 'keep'],
+    ])
+    const storage: Storage = {
+      get length() {
+        return values.size
+      },
+      clear: () => values.clear(),
+      getItem: key => values.get(key) ?? null,
+      key: index => [...values.keys()][index] ?? null,
+      setItem: (key, value) => {
+        values.set(key, value)
+      },
+      removeItem: key => {
+        if (!values.delete(key)) return
+        // Storage permits key order to change after removal.
+        const remaining = [...values.entries()].reverse()
+        values.clear()
+        for (const [remainingKey, value] of remaining) values.set(remainingKey, value)
+      },
+    }
+    vi.stubGlobal('localStorage', storage)
+    try {
+      const { setTelemetryEnabled } = await import('./client')
+      await setTelemetryEnabled(false)
+
+      expect(storage.getItem(firstQueue)).toBeNull()
+      expect(storage.getItem(secondQueue)).toBeNull()
+      expect(storage.getItem('unrelated-preference')).toBe('keep')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
