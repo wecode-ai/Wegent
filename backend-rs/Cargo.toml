@@ -63,7 +63,7 @@ brotli = { version = "8.0.4", default-features = false, features = ["std"] }
 zstd = { version = "0.13.1", features = ["arrays"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
 
 [lints.rust]
 # `deny` rather than `forbid` so `config::init_env` can relax it for the single
