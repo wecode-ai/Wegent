@@ -10,6 +10,7 @@ const root = new URL('../../', import.meta.url)
 const output = execFileSync('bash', ['.github/scripts/classify-wework-desktop-e2e.sh', '--all'], {
   cwd: root,
   encoding: 'utf8',
+  env: { ...process.env, GITHUB_OUTPUT: '/dev/stdout' },
 })
 const matrixLine = output
   .split('\n')
