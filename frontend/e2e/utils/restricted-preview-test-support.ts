@@ -29,6 +29,7 @@ function previewTrigger(page: Page, filename: string): Locator {
 }
 
 async function expectPdfRange(response: Response): Promise<void> {
+  expect(response.status()).toBe(206)
   const requestRange = response
     .request()
     .headers()
@@ -47,17 +48,21 @@ async function expectPdfRange(response: Response): Promise<void> {
 }
 
 async function verifyPdfPreview(page: Page, dialog: Locator, origin: string): Promise<void> {
-  const [range] = await Promise.all([
-    page.waitForResponse(
-      response =>
-        response.url() === `${origin}/preview.pdf` &&
-        response.status() === 206 &&
-        /^bytes=[1-9]\d*-\d+$/.test(response.request().headers().range || '')
+  // A 206 response event only means headers arrived. PDF.js can cancel that
+  // transfer, leaving no response body for Playwright to inspect.
+  const [rangeRequest] = await Promise.all([
+    page.waitForEvent(
+      'requestfinished',
+      request =>
+        request.url() === `${origin}/preview.pdf` &&
+        /^bytes=[1-9]\d*-\d+$/.test(request.headers().range || '')
     ),
     previewTrigger(page, 'preview.pdf').click(),
   ])
   // A nonzero range cannot be the application's bytes=0-15 signature probe.
-  await expectPdfRange(range)
+  const range = await rangeRequest.response()
+  expect(range, 'PDF.js must complete a real nonzero range request').not.toBeNull()
+  await expectPdfRange(range!)
   const firstPage = dialog.locator('.pdfViewer .page[data-page-number="1"]')
   await expect(firstPage.locator('canvas')).toBeVisible({ timeout: 30_000 })
   await expect(
