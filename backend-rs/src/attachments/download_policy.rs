@@ -39,7 +39,11 @@ pub(super) enum Purpose {
 /// Extensions the source-file previewer renders inline
 /// (`PREVIEWABLE_SOURCE_EXTENSIONS`). A `preview` purpose is only exempt for
 /// these, so it cannot become a generic bypass of the download policy.
-const PREVIEWABLE_SOURCE_EXTENSIONS: [&str; 6] = ["pdf", "doc", "docx", "xls", "xlsx", "pptx"];
+// Keep aligned with the web source previewer's SUPPORTED_SOURCE_PREVIEW_EXTENSIONS.
+const PREVIEWABLE_SOURCE_EXTENSIONS: [&str; 14] = [
+    "pdf", "doc", "docx", "xls", "xlsx", "pptx", "jpg", "jpeg", "png", "gif", "bmp", "webp", "tif",
+    "tiff",
+];
 
 /// `require_attachment_download_allowed`: `None` when the download may
 /// proceed, `Some(error)` when the knowledge base protects its originals.
@@ -296,7 +300,15 @@ mod tests {
         assert!(preview_exempt(Some("pdf"), Some("mp4")));
         // A non-previewable caller extension does not fall back to the document.
         assert!(!preview_exempt(Some("mp4"), Some("pdf")));
-        assert!(!preview_exempt(Some("png"), None));
+        for extension in ["jpg", "jpeg", "png", "gif", "bmp", "webp", "tif", "tiff"] {
+            assert!(preview_exempt(Some(extension), None), "{extension}");
+            assert!(preview_exempt(None, Some(extension)), "{extension}");
+            let normalized_input = format!(" .{} ", extension.to_uppercase());
+            assert!(preview_exempt(Some(&normalized_input), None));
+        }
+        for extension in ["svg", "zip", "ppt", "mp4"] {
+            assert!(!preview_exempt(Some(extension), None), "{extension}");
+        }
         assert!(!preview_exempt(Some(""), None));
         assert!(!preview_exempt(None, None));
     }
