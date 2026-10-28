@@ -172,13 +172,22 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues, posture =
   )
 
   await control.awaitTelemetryEvent('app_started')
-  if (identified) await awaitIdentityEvent(control)
   const requests = control.telemetryRequests
   const events = requests.flatMap(request => telemetryEvents(request.payload))
   assert.ok(events.length > 0, 'The telemetry request did not contain an event')
   const appStarted = events.find(event => event.event === 'app_started')
   assert.ok(appStarted, 'The first telemetry request did not include app_started')
   assert.equal(appStarted.properties?.surface, 'main')
+  if (identified) {
+    // The client-IP posture comes from the policy alone, so it separates "the
+    // fixture never reached the renderer" from "identity was not attached".
+    assert.equal(
+      appStarted.properties?.$geoip_disable,
+      false,
+      'The identified telemetry policy was not active in the renderer: app_started still reported $geoip_disable=true'
+    )
+    await awaitIdentityEvent(control)
+  }
 
   for (const event of events) {
     const allowedEvents = {

@@ -27,11 +27,16 @@ async function awaitIdentityEvent(control, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) 
   try {
     return await control.awaitTelemetryEvent('$identify', timeoutMs)
   } catch (error) {
-    const observed = [...new Set(recordedEvents(control).map(event => event.event))]
+    const events = recordedEvents(control)
+    const observed = [...new Set(events.map(event => event.event))]
+    const appStarted = events.find(event => event.event === 'app_started')
+    const posture = appStarted
+      ? `$geoip_disable=${appStarted.properties?.$geoip_disable}, $process_person_profile=${appStarted.properties?.$process_person_profile}, distinct_id=${appStarted.properties?.distinct_id}`
+      : 'no app_started event'
     throw new Error(
       `The desktop app did not send the $identify telemetry event. Observed events: ${
         observed.length > 0 ? observed.join(', ') : 'none'
-      }`,
+      }. Reported posture: ${posture}`,
       { cause: error }
     )
   }
