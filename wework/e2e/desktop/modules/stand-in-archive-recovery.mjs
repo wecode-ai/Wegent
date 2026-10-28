@@ -47,4 +47,17 @@ export async function verifyStandInArchiveRecovery(control, projectId, uiTimeout
     after.turns.length,
     'Delegating an already completed visible task must remain idempotent'
   )
+
+  assert.equal((await rpc('runtime.tasks.archive', address)).accepted, true)
+  const deleted = await rpc('runtime.archived_conversations.delete', address)
+  assert.equal(deleted.accepted, true)
+  assert.equal(deleted.deleted, true)
+  assert.equal((await rpc('runtime.tasks.get', address)).code, 'task_not_found')
+  await assert.rejects(
+    rpc('runtime.stand_in.run', params),
+    /This assignment has already been handled or is no longer active/,
+    'A deleted conversation must not be restored or acknowledged as a running task'
+  )
+  assert.equal((await rpc('runtime.tasks.get', address)).code, 'task_not_found')
+  assert.equal((await rpc('todos.bindings', { task_id: issue.id })).length, 1)
 }
