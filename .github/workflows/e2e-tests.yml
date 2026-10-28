@@ -1677,8 +1677,16 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: uv run pytest e2e_tests/ --no-cov -v
 
+      - name: Verify retired artifact revision against real MySQL
+        working-directory: ./backend
+        env:
+          WEGENT_MIGRATION_TEST_DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
+          PYTHONPATH: ${{ github.workspace }}
+        run: uv run pytest tests/models/test_wework_file_delivery_migration.py -n 0 --no-cov
+
       - name: Run Executor E2E tests
         env:
+          DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
           PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}
           E2E_BASE_URL: http://localhost:3000
           E2E_API_URL: http://localhost:8000
@@ -1713,6 +1721,7 @@ jobs:
             --env E2E_CODEX_MODEL_SERVER_URL \
             --env E2E_LOCAL_CLAUDE_MODEL_SERVER_URL \
             --env E2E_CLAUDE_EXECUTOR_IMAGE \
+            --env DATABASE_URL \
             --env E2E_DEVICE_ID \
             --env CI \
             "$PLATFORM_E2E_IMAGE" \

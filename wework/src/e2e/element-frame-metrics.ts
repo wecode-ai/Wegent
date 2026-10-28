@@ -21,6 +21,7 @@ export function createElementFrameSampler(root: HTMLElement, selector: string) {
         scrollLeft: element.scrollLeft,
         scrollTop: element.scrollTop,
         display: style.display,
+        animationName: style.animationName,
         transform: style.transform,
         reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
         trackTransform: trackStyle?.transform ?? null,

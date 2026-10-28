@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import { writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { join } from 'node:path'
 
+import { observeCommentNavigation } from '../modules/comment-navigation.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 
@@ -13,7 +16,6 @@ const COMMENT_DOCUMENT_PATH = '/comment-link-fixture'
 const COMMENT_DOCUMENT_TEXT = 'Wework comment link fixture loaded'
 const COMMENT_LATEST_DOCUMENT_TEXT = 'Wework latest comment link fixture loaded'
 const CLIENT_MESSAGE_PREFIX = 'desktop-e2e-mention'
-const FLASH_ANIMATION = 'task-detail-comment-flash'
 
 /**
  * How long arriving at the mentioned comment may take.
@@ -81,7 +83,7 @@ async function waitForApiValue(load, predicate, message, timeoutMs) {
  * from the notification also verifies that both open in the Wework browser
  * without navigating the workbench itself.
  */
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
+export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutMs }) {
   let backendUrl = ''
   let ownerToken = ''
   let owner = null
@@ -141,21 +143,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     } finally {
       socket.disconnect()
     }
-  }
-
-  async function waitForFlash(control, selector, timeoutMs) {
-    const deadline = Date.now() + timeoutMs
-    let latest = ''
-    while (Date.now() < deadline) {
-      // The surface the notification opened can still be swapping in, so a
-      // missing comment means "not yet", not "never flashed".
-      latest = await control
-        .command('getComputedStyleValue', selector, { value: 'animation-name' })
-        .catch(() => '')
-      if (latest.includes(FLASH_ANIMATION)) return latest
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-    }
-    assert.fail(`The mentioned comment never flashed: animation-name=${latest}`)
   }
 
   async function waitForBrowserPage(control, label, expectedUrl, expectedText) {
@@ -555,16 +542,27 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
         timeoutMs: uiTimeoutMs,
       })
-      const linkStartedAt = Date.now()
-      await control.command('openWeworkScheme', 'body', { value: saved.url })
-      const linkCommentMs = await waitForComment(
+      const navigation = {
         control,
-        { activeSurface, commentId: message.messageId, issueTitle: ISSUE_TITLE },
-        linkStartedAt,
-        uiTimeoutMs
-      )
-      await waitForFlash(control, commentSelectorFor(activeSurface, message.messageId), uiTimeoutMs)
-      const linkFlashMs = Date.now() - linkStartedAt
+        selector: commentSelectorFor(activeSurface, message.messageId),
+        waitForComment: startedAt =>
+          waitForComment(
+            control,
+            { activeSurface, commentId: message.messageId, issueTitle: ISSUE_TITLE },
+            startedAt,
+            uiTimeoutMs
+          ),
+        timeoutMs: uiTimeoutMs,
+      }
+      const { commentMs: linkCommentMs, flashMs: linkFlashMs } = await observeCommentNavigation({
+        ...navigation,
+        navigate: () => control.command('openWeworkScheme', 'body', { value: saved.url }),
+        recordSample: sample =>
+          writeFile(
+            join(resultDir, 'comment-notification-link-frames.json'),
+            JSON.stringify(sample)
+          ),
+      })
       assertNavigationBudget('The DingTalk link', linkCommentMs, linkFlashMs)
       await verifyCommentLinks(control, activeSurface, message.messageId)
       await captureScreenshot(control, 'comment-notification-03-comment-links.png')
@@ -614,16 +612,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       assert.ok(summary.includes(PROJECT_NAME), `The inbox row must name its board: ${summary}`)
       await captureScreenshot(control, 'comment-notification-01-inbox.png')
 
-      const inboxStartedAt = Date.now()
-      await control.command('click', `[data-testid="wework-notification-${saved.id}"]`)
-      const inboxCommentMs = await waitForComment(
-        control,
-        { activeSurface, commentId: message.messageId, issueTitle: ISSUE_TITLE },
-        inboxStartedAt,
-        uiTimeoutMs
-      )
-      await waitForFlash(control, commentSelectorFor(activeSurface, message.messageId), uiTimeoutMs)
-      const inboxFlashMs = Date.now() - inboxStartedAt
+      const { commentMs: inboxCommentMs, flashMs: inboxFlashMs } = await observeCommentNavigation({
+        ...navigation,
+        navigate: () => control.command('click', `[data-testid="wework-notification-${saved.id}"]`),
+        recordSample: sample =>
+          writeFile(
+            join(resultDir, 'comment-notification-inbox-frames.json'),
+            JSON.stringify(sample)
+          ),
+      })
       assertNavigationBudget('Opening the inbox row', inboxCommentMs, inboxFlashMs)
       await captureScreenshot(control, 'comment-notification-02-comment-flashed.png')
 
