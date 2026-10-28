@@ -1030,6 +1030,15 @@ class SubtaskStore(Protocol):
         self, db: Session, *, subtask: Subtask, **fields: Any
     ) -> Subtask: ...
 
+    def update_fields_if_status(
+        self,
+        db: Session,
+        *,
+        subtask: Subtask,
+        from_status: SubtaskStatus,
+        **fields: Any,
+    ) -> bool: ...
+
     def transition_status(
         self,
         db: Session,
