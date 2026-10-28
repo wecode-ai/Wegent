@@ -1,7 +1,7 @@
 /** @jest-environment node */
 
 import { execFile } from 'node:child_process'
-import { delimiter } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import {
   artifactDatabaseState,
@@ -12,6 +12,8 @@ jest.mock('node:child_process', () => ({ execFile: jest.fn() }))
 jest.mock('node:util', () => ({ promisify: jest.fn(() => jest.fn()) }))
 
 const execute = jest.mocked(promisify).mock.results[0].value as jest.Mock
+/** The checkout root, so the assertion also holds inside a git worktree. */
+const repoRoot = resolve(__dirname, '..', '..', '..', '..')
 const identity = {
   operation: 'inspect' as const,
   task_id: 29,
@@ -55,8 +57,8 @@ describe('artifact database process isolation', () => {
     expect(options.timeout).toBe(30_000)
     expect(options.env.UV_NO_EDITABLE).toBe('0')
     const paths = options.env.PYTHONPATH.split(delimiter)
-    expect(paths[0]).toMatch(/\/Wegent\/backend$/)
-    expect(paths[1]).toMatch(/\/Wegent$/)
+    expect(paths[0]).toBe(join(repoRoot, 'backend'))
+    expect(paths[1]).toBe(repoRoot)
     expect(paths[2]).toBe('/existing/source')
     expect(options.env.DATABASE_URL).toBe(process.env.DATABASE_URL)
     expect(JSON.parse(options.env.WEGENT_ARTIFACT_E2E_REQUEST)).toEqual(identity)
@@ -92,8 +94,8 @@ describe('artifact database process isolation', () => {
     await artifactDatabaseState(identity)
     const paths = execute.mock.calls[0][2].env.PYTHONPATH.split(delimiter)
     expect(paths).toHaveLength(2)
-    expect(paths[0]).toMatch(/\/Wegent\/backend$/)
-    expect(paths[1]).toMatch(/\/Wegent$/)
+    expect(paths[0]).toBe(join(repoRoot, 'backend'))
+    expect(paths[1]).toBe(repoRoot)
   })
 
   it('surfaces helper failures rather than returning fabricated state', async () => {
