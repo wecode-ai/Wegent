@@ -103,6 +103,11 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       await createSingleRootLocalProject(control, workspacePath, 'project-space-discovery')
       await selectE2EModel(control)
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: PROMPT })
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+        { enabled: true, timeoutMs: uiTimeoutMs }
+      )
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command(
         'waitFor',
