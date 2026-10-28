@@ -306,6 +306,10 @@ EOF
 
 assert_case "docs only" "$all_false" "docs/zh/index.md"
 
+assert_case "DingTalk HTTPS fixture changes run platform E2E" \
+  "${all_false/platform_e2e=false/platform_e2e=true}" \
+  ".github/scripts/setup-dingtalk-oauth-e2e.sh"
+
 permission_contract_expected="${all_false/backend=false/backend=true}"
 assert_case "Chinese permission contract runs backend guards" "$permission_contract_expected" \
   "docs/zh/wegent/developer-guide/collaboration-permissions.md"
