@@ -323,12 +323,15 @@ async function findRolloutPath(directory, threadId) {
 async function waitForLongHistoryHydration(control, timeoutMs) {
   const startedAt = Date.now()
   let displayItemCount = 0
+  let latestSnapshot = null
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(
       await control.command('performanceSnapshot', 'body', {
+        value: JSON.stringify({ collectMemory: false }),
         timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
       })
     )
+    latestSnapshot = snapshot
     displayItemCount = snapshot.runtimeAssistantDisplayItemCount
     if (displayItemCount >= LONG_HISTORY_ITEM_COUNT) {
       return snapshot
@@ -336,7 +339,7 @@ async function waitForLongHistoryHydration(control, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(
-    `Timed out waiting for the long running transcript to hydrate: expected=${LONG_HISTORY_ITEM_COUNT}, observed=${displayItemCount}, elapsedMs=${Date.now() - startedAt}`
+    `Timed out waiting for the long running transcript to hydrate: expected=${LONG_HISTORY_ITEM_COUNT}, observed=${displayItemCount}, elapsedMs=${Date.now() - startedAt}, snapshot=${JSON.stringify(latestSnapshot)}`
   )
 }
 
@@ -421,6 +424,48 @@ async function restorePaginatedConversation(control, { taskId, taskRowId, uiTime
     'waitFor',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`,
     { timeoutMs: uiTimeoutMs }
+  )
+}
+
+export async function verifyNativeTranscriptPageCursors(control, address) {
+  const pageRequest = { address, limit: 50 }
+  // Native history hydration and delivery keep their restoration budget on every
+  // page. Ordinary UI controls retain their separate interaction budget.
+  const nativePage = await requestExecutor(
+    control,
+    'runtime.tasks.transcript',
+    { ...pageRequest, refresh: true },
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  assert.equal(nativePage.hasMoreBefore, true, 'The fixture must exceed the native item budget')
+  assert.ok(nativePage.beforeCursor?.startsWith('wework-codex-timeline:'))
+  assert.ok(
+    nativePage.turns.every(turn => turn.items.every(item => item.id !== PAGED_ASSISTANT_ITEM)),
+    'The anchor search must require loading an older native item'
+  )
+  const cachedPage = await requestExecutor(
+    control,
+    'runtime.tasks.transcript',
+    pageRequest,
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  assert.equal(cachedPage.hasMoreBefore, true, 'The live cache hid older native items')
+  assert.equal(
+    cachedPage.beforeCursor,
+    nativePage.beforeCursor,
+    'The live cache lost the native cursor'
+  )
+  const olderPage = await requestExecutor(
+    control,
+    'runtime.tasks.transcript',
+    { ...pageRequest, beforeCursor: cachedPage.beforeCursor },
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  assert.ok(olderPage.messages.length > 0, 'The older native page was not loaded')
+  assert.notEqual(
+    olderPage.beforeCursor,
+    cachedPage.beforeCursor,
+    'Pagination returned the live cache again'
   )
 }
 
@@ -985,51 +1030,7 @@ export function createDesktopScenario({
       assert.equal(anchorSearch.totalMatches, 1)
       assert.equal(anchorSearch.matches[0].itemId, PAGED_ASSISTANT_ITEM)
       const anchorMessageId = `runtime-view:${anchorSearch.matches[0].turnId}:assistant`
-      const pageRequest = { address: pagedAddress, limit: 50 }
-      // A cold native history read includes hydration and transfer; UI controls
-      // keep their separate interaction budget and responsiveness assertions.
-      const nativePage = await requestExecutor(
-        control,
-        'runtime.tasks.transcript',
-        {
-          ...pageRequest,
-          refresh: true,
-        },
-        WORKBENCH_READY_TIMEOUT_MS
-      )
-      assert.equal(nativePage.hasMoreBefore, true, 'The fixture must exceed the native item budget')
-      assert.ok(nativePage.beforeCursor?.startsWith('wework-codex-timeline:'))
-      assert.ok(
-        nativePage.turns.every(turn => turn.items.every(item => item.id !== PAGED_ASSISTANT_ITEM)),
-        'The anchor search must require loading an older native item'
-      )
-      const cachedPage = await requestExecutor(
-        control,
-        'runtime.tasks.transcript',
-        pageRequest,
-        uiTimeoutMs
-      )
-      assert.equal(cachedPage.hasMoreBefore, true, 'The live cache hid older native items')
-      assert.equal(
-        cachedPage.beforeCursor,
-        nativePage.beforeCursor,
-        'The live cache lost the native cursor'
-      )
-      const olderPage = await requestExecutor(
-        control,
-        'runtime.tasks.transcript',
-        {
-          ...pageRequest,
-          beforeCursor: cachedPage.beforeCursor,
-        },
-        uiTimeoutMs
-      )
-      assert.ok(olderPage.messages.length > 0, 'The older native page was not loaded')
-      assert.notEqual(
-        olderPage.beforeCursor,
-        cachedPage.beforeCursor,
-        'Pagination returned the live cache again'
-      )
+      await verifyNativeTranscriptPageCursors(control, pagedAddress)
 
       const { loadOlder, originalSearchPane } = await verifyNativeItemPagination(control, {
         taskId: pagedTaskId,

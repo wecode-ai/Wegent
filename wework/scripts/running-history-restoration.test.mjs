@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
+import { once } from 'node:events'
+import { createServer } from 'node:http'
 import { afterEach, beforeEach, test, vi } from 'vitest'
 
 import {
   verifyNativeItemPagination,
+  verifyNativeTranscriptPageCursors,
   verifyRunningConversationRestoration,
 } from '../e2e/desktop/scenarios/running-conversation-history.scenario.mjs'
 import {
@@ -264,4 +267,114 @@ test('the final reload retains the previous assistant completion assertion befor
   await vi.advanceTimersByTimeAsync(restorationDelayMs + 100)
   assert.match((await run.result).error?.message ?? '', /lost the previous assistant response/)
   assert.equal(run.releaseSecondResponse.mock.calls.length, 0)
+})
+
+async function nativePageServer({ delayedPage, delayBody = false, stalled = false }) {
+  const requests = []
+  const timers = new Set()
+  const sockets = new Set()
+  const server = createServer(async (request, response) => {
+    const chunks = []
+    for await (const chunk of request) chunks.push(chunk)
+    const payload = JSON.parse(Buffer.concat(chunks).toString())
+    const { params } = payload
+    const page = params.refresh ? 'native' : params.beforeCursor ? 'older' : 'cached'
+    requests.push({ page, ...payload })
+    const body = JSON.stringify({
+      ok: true,
+      result: {
+        hasMoreBefore: true,
+        beforeCursor: `wework-codex-timeline:${page === 'older' ? 'previous' : 'latest'}`,
+        turns: [{ items: [{ id: 'recent-item' }] }],
+        messages: [{ id: `${page}-message` }],
+      },
+    })
+    response.writeHead(200, {
+      'content-type': 'application/json',
+      'content-length': Buffer.byteLength(body),
+      connection: 'close',
+    })
+    if (page !== delayedPage) return response.end(body)
+    if (delayBody) response.flushHeaders()
+    if (!stalled) timers.add(setTimeout(() => response.end(body), 250))
+  })
+  server.on('connection', socket => {
+    sockets.add(socket)
+    socket.once('close', () => sockets.delete(socket))
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  return {
+    requests,
+    control: { command: async () => `http://127.0.0.1:${server.address().port}` },
+    async close() {
+      for (const timer of timers) clearTimeout(timer)
+      for (const socket of sockets) socket.destroy()
+      await new Promise(resolve => server.close(resolve))
+    },
+  }
+}
+
+test.each([
+  ['cached response headers', { delayedPage: 'cached' }],
+  ['older response body', { delayedPage: 'older', delayBody: true }],
+])(
+  'native pagination keeps its restoration deadline through delayed %s',
+  async (_label, options) => {
+    vi.useRealTimers()
+    const server = await nativePageServer(options)
+    const nativeTimeout = AbortSignal.timeout.bind(AbortSignal)
+    // Exercise real fetch headers/body delivery at 1/100 of the production deadlines:
+    // the 250ms response exceeds the ordinary 100ms step but fits restoration's 1800ms.
+    const deadline = vi
+      .spyOn(AbortSignal, 'timeout')
+      .mockImplementation(ms => nativeTimeout(ms / 100))
+    try {
+      await verifyNativeTranscriptPageCursors(server.control, address)
+      assert.deepEqual(
+        server.requests.map(({ page }) => page),
+        ['native', 'cached', 'older']
+      )
+      assert.deepEqual(
+        server.requests.map(({ method, params }) => ({ method, params })),
+        [
+          { method: 'runtime.tasks.transcript', params: { address, limit: 50, refresh: true } },
+          { method: 'runtime.tasks.transcript', params: { address, limit: 50 } },
+          {
+            method: 'runtime.tasks.transcript',
+            params: { address, limit: 50, beforeCursor: 'wework-codex-timeline:latest' },
+          },
+        ]
+      )
+      assert.deepEqual(
+        deadline.mock.calls.map(([timeoutMs]) => timeoutMs),
+        Array(3).fill(WORKBENCH_READY_TIMEOUT_MS)
+      )
+    } finally {
+      deadline.mockRestore()
+      await server.close()
+    }
+  }
+)
+
+test('native pagination still aborts when older-page delivery never finishes', async () => {
+  vi.useRealTimers()
+  const server = await nativePageServer({ delayedPage: 'older', delayBody: true, stalled: true })
+  const nativeTimeout = AbortSignal.timeout.bind(AbortSignal)
+  const deadline = vi
+    .spyOn(AbortSignal, 'timeout')
+    .mockImplementation(ms => nativeTimeout(ms / 100))
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    await assert.rejects(
+      verifyNativeTranscriptPageCursors(server.control, address),
+      error => error.cause?.name === 'TimeoutError'
+    )
+    assert.equal(server.requests.at(-1).page, 'older')
+    assert.equal(diagnostic.mock.calls[0][1].stage, 'response-body')
+  } finally {
+    diagnostic.mockRestore()
+    deadline.mockRestore()
+    await server.close()
+  }
 })
