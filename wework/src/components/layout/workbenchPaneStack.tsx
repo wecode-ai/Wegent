@@ -560,7 +560,7 @@ function WorkbenchPaneView({
       data-focused={focused ? 'true' : 'false'}
       className={cn(
         styles.paneGroup,
-        'relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background'
+        'relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-transparent'
       )}
       onPointerDown={() => {
         if (!focused) onFocus(pane.id)

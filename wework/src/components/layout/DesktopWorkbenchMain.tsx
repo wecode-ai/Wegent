@@ -5678,6 +5678,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   connectorAuthCard={connectorAuthCard}
                   compact={presentation === 'popout'}
                   projectName={currentProject?.name}
+                  showWorkbenchBackground={hasMainBackground}
                   onOpenProjectSelector={anchorElement => {
                     setProjectMenuAnchorElement(anchorElement)
                     setProjectMenuOpenSignal(signal => signal + 1)
