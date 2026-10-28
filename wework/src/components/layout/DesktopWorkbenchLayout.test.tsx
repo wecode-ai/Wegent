@@ -10,7 +10,7 @@ import {
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useEffect, useMemo, useState } from 'react'
-import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
@@ -509,8 +509,17 @@ function createRect({
   } as DOMRect
 }
 
+const originalBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
+const ownedGeometrySpies = new Set<{ mockRestore(): void }>()
+
+function mockBoundingClientRect(element: HTMLElement = HTMLElement.prototype) {
+  const spy = vi.spyOn(element, 'getBoundingClientRect')
+  ownedGeometrySpies.add(spy)
+  return spy
+}
+
 function mockDesktopWorkbenchMainWidth(width: number) {
-  return vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+  return mockBoundingClientRect().mockImplementation(function () {
     if (this.getAttribute('data-testid') === 'desktop-workbench-pane-stack-container') {
       return createRect({ left: 0, top: 0, width, height: 720 })
     }
@@ -874,6 +883,11 @@ describe('DesktopWorkbenchLayout', () => {
     vi.resetConfig()
   })
 
+  afterEach(() => {
+    for (const spy of ownedGeometrySpies) spy.mockRestore()
+    ownedGeometrySpies.clear()
+  })
+
   function createDeferred<T>() {
     let resolve!: (value: T) => void
     let reject!: (error: unknown) => void
@@ -952,6 +966,7 @@ describe('DesktopWorkbenchLayout', () => {
   }
 
   beforeEach(async () => {
+    expect(HTMLElement.prototype.getBoundingClientRect).toBe(originalBoundingClientRect)
     await preloadDefaultDshUiTestModules()
     await installGitUiTestContributions()
     experimentalFeatures.enabled = true
@@ -3213,7 +3228,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('treats a selected runtime task with an empty transcript as a conversation', () => {
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+    mockBoundingClientRect().mockImplementation(function () {
       if (this.getAttribute('data-testid') === 'composer-toolbar') {
         return createRect({ left: 0, top: 0, width: 600, height: 32 })
       }
@@ -8193,7 +8208,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
     await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'example.com{Enter}')
 
-    vi.spyOn(getDesktopWorkbenchMainElement(), 'getBoundingClientRect').mockReturnValue(
+    mockBoundingClientRect(getDesktopWorkbenchMainElement()).mockReturnValue(
       createRect({ left: 0, top: 0, width: 1000, height: 720 })
     )
 
@@ -11831,7 +11846,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('uses the shared workbench width in the first task-switch layout', () => {
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+    mockBoundingClientRect().mockImplementation(function () {
       if (this.getAttribute('data-testid') === 'desktop-workbench-pane-stack-container') {
         return createRect({ left: 0, top: 0, width: 1024, height: 720 })
       }

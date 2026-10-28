@@ -22,6 +22,8 @@ const regressions = [
     create: createSubscriptionConfigRegression,
   },
 ]
+const upgradeRequiredResponse =
+  'HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'
 
 async function fixture(regression) {
   const server = createServer()
@@ -50,24 +52,30 @@ async function fixture(regression) {
 
 test.each(regressions)('$name rejects model WebSocket upgrades with HTTP 426', async regression => {
   const { response } = await fixture(regression)
-  assert.equal(
-    await response,
-    'HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'
-  )
+  assert.equal(await response, upgradeRequiredResponse)
 })
 
-test.each(regressions)('$name owns reset errors on a rejected upgrade socket', async regression => {
-  const { socket } = await fixture(regression)
-  const error = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })
+test.each(
+  regressions.flatMap(regression => ['ECONNRESET', 'EPIPE'].map(code => ({ ...regression, code })))
+)('$name owns expected $code errors during its HTTP 426 close', async regression => {
+  const { server, socket, response } = await fixture(regression)
+  assert.equal(await response, upgradeRequiredResponse)
+  const failures = []
+  server.on('error', error => failures.push(error))
+  const error = Object.assign(new Error('peer cancelled the rejected upgrade'), {
+    code: regression.code,
+  })
+
   assert.doesNotThrow(() => socket.emit('error', error))
   assert.equal(socket.destroyed, true)
+  assert.deepEqual(failures, [])
 })
 
 test.each(regressions)(
   '$name preserves unexpected upgrade errors as server failures',
   async regression => {
     const { server, socket } = await fixture(regression)
-    const error = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })
+    const error = Object.assign(new Error('unexpected transport failure'), { code: 'EIO' })
     let failure
     server.once('error', error => {
       failure = error
