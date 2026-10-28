@@ -1593,6 +1593,13 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
   `52px` header, and close-control styling. In narrower project workspaces,
   show the conversation alone while keeping the Issue mounted.
   Both drawer bodies and the conversation input keep scrolling available without visible scrollbar chrome.
+  New and existing task conversations offer Expand / Restore in their shared
+  header. Expansion fills the project workspace while retaining application
+  navigation. The Issue stays mounted and becomes inert; the same conversation,
+  composer, draft, runtime address and stream remain mounted. Animate the
+  conversation width with the track so its right edge stays fixed. Restore
+  returns to the previous drawer layout. Closing an expanded conversation
+  returns to the Issue and resets expansion after the exit finishes.
   Back, conversation Close, and Escape return to the Issue without resetting its
   draft or scroll position. Selecting another execution replaces the right pane;
   closing the Issue slides both panes out. Keep exiting content mounted and inert
@@ -1608,11 +1615,15 @@ focus behavior, such as revealing actions. Handwritten CSS uses the equivalent
   stateDiagram-v2
     [*] --> Issue: Track enters from right
     Issue --> Pair: Mount conversation and shift shared track left
+    Pair --> Expanded: Expand conversation to project width
+    Expanded --> Pair: Restore conversation
+    Expanded --> Returning: Back / close conversation / Escape
     Pair --> Returning: Back / close conversation / Escape
     Returning --> Issue: Track finishes; unmount conversation
     Returning --> Pair: Reopen; reverse track from current position
     Issue --> Leaving: Close Issue
     Pair --> Leaving: Close Issue
+    Expanded --> Leaving: Close Issue
     Leaving --> [*]: Track finishes; dismiss overlay
   ```
 

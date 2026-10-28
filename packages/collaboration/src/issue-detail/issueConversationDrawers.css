@@ -53,6 +53,12 @@
   transform: translateX(calc(-100% - var(--issue-drawer-gap)));
 }
 
+.issue-conversation-drawers[data-conversation-expanded="true"]:where(
+    [data-has-conversation="true"]
+  ) {
+  transform: translateX(calc(-100cqw - var(--issue-drawer-gap)));
+}
+
 .issue-conversation-drawers[data-dismissing="true"] {
   transform: translateX(100%);
 }
@@ -73,6 +79,15 @@
   background: rgb(var(--color-bg-base));
   box-shadow: -4px 0 8px -2px rgb(0 0 0 / 10%);
   pointer-events: auto;
+}
+
+.issue-drawer-conversation {
+  transition: flex-basis 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.issue-conversation-drawers[data-conversation-expanded="true"]
+  > .issue-drawer-conversation {
+  flex-basis: 100cqw;
 }
 
 .issue-drawer-surface .task-detail-workspace-panel-shell,
@@ -122,6 +137,11 @@
   }
 }
 
+.issue-drawer-viewport:has([data-conversation-expanded="true"]) {
+  left: 0;
+  width: auto;
+}
+
 @media (max-width: 767px) {
   .issue-drawer-surface .task-detail-workspace-header > button {
     min-width: 44px;
@@ -130,7 +150,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .issue-conversation-drawers {
+  .issue-conversation-drawers,
+  .issue-drawer-conversation {
     transition: none;
   }
 }

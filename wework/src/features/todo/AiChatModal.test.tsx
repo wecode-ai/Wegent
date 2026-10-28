@@ -109,6 +109,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     runtimeContext,
     allowInitialGoal,
     sendEphemeral,
+    wideComposer,
     projectWork,
     testId,
   }: {
@@ -135,6 +136,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     runtimeContext?: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
     allowInitialGoal?: boolean
     sendEphemeral?: boolean
+    wideComposer?: boolean
     projectWork?: {
       executionMode: 'current_workspace' | 'git_worktree'
       executionModeLocked?: boolean
@@ -232,6 +234,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
           data-initial-device-id={initialAddress?.deviceId ?? ''}
           data-initial-task-id={initialAddress?.taskId ?? ''}
           data-send-ephemeral={sendEphemeral === false ? 'no' : 'yes'}
+          data-wide-composer={wideComposer ? 'yes' : 'no'}
           data-cloud-project-id={runtimeContext?.cloudProjectId ?? ''}
           data-loop-item-id={runtimeContext?.origin?.loopItemId ?? ''}
           data-panel-testid={testId}
@@ -348,6 +351,7 @@ describe('AiChatModal', () => {
     )
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-has-initial-address', 'no')
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-allow-initial-goal', 'yes')
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-wide-composer', 'no')
   })
 
   it('keeps the original title as an unsent draft when a work item moves to pending', () => {

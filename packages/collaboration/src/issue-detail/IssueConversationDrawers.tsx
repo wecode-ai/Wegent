@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { collaborationTestIds } from "../testIds";
+import { IssueConversationDrawerContext } from "./issueConversationDrawerContext";
 
 interface IssueConversationDrawersProps {
   label: string;
@@ -33,12 +34,16 @@ export function IssueConversationDrawers({
   const [retainedConversation, setRetainedConversation] =
     useState(conversation);
   const [dismissing, setDismissing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const hasConversation = Boolean(conversation);
   const requestClose = () => setDismissing(true);
-  onCloseRef.current = onClose;
   if (conversation && conversation !== retainedConversation) {
     setRetainedConversation(conversation);
   }
+
+  useLayoutEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useLayoutEffect(() => {
     if (!dismissing) {
@@ -68,8 +73,10 @@ export function IssueConversationDrawers({
         if (closeCommittedRef.current) return;
         closeCommittedRef.current = true;
         onCloseRef.current();
+      } else {
+        setRetainedConversation(null);
+        setExpanded(false);
       }
-      else setRetainedConversation(null);
     };
     void finishExit();
     return () => {
@@ -166,17 +173,28 @@ export function IssueConversationDrawers({
           className="issue-conversation-drawers"
           data-testid="issue-conversation-drawers"
           data-has-conversation={hasConversation}
+          data-conversation-expanded={expanded}
           data-dismissing={dismissing}
           inert={dismissing}
         >
-          <div className="issue-drawer-surface issue-drawer-detail">
+          <div
+            className="issue-drawer-surface issue-drawer-detail"
+            inert={hasConversation && expanded}
+          >
             {children(requestClose)}
           </div>
           <div
             className="issue-drawer-surface issue-drawer-conversation"
             inert={!hasConversation}
           >
-            {conversation || retainedConversation}
+            <IssueConversationDrawerContext.Provider
+              value={{
+                expanded,
+                toggleExpanded: () => setExpanded((value) => !value),
+              }}
+            >
+              {conversation || retainedConversation}
+            </IssueConversationDrawerContext.Provider>
           </div>
         </div>
       </div>

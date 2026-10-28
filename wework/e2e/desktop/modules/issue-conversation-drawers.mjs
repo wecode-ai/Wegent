@@ -2,6 +2,50 @@ import assert from 'node:assert/strict'
 import { getSingleElementMetrics } from './conversation-layout.mjs'
 import { join, resultDir, writeFile } from './shared.mjs'
 
+export async function verifyIssueConversationExpansion(control, scope, timeoutMs) {
+  const chat = scope('[data-testid="ai-chat-modal"]')
+  const composer = `${chat} [data-testid="chat-message-input"]`
+  const toggle = scope('[data-testid="ai-chat-modal-toggle-expanded"]')
+  const workspace = await getSingleElementMetrics(
+    control,
+    scope('[data-testid="issue-drawer-workspace"]'),
+    'Project workspace'
+  )
+  const before = await getSingleElementMetrics(control, chat, 'Task conversation')
+  const draft = await control.command('getText', composer)
+  await control.command('click', toggle)
+  await control.command('waitFor', `${toggle}[aria-pressed="true"]`, {
+    stableMs: 300,
+    timeoutMs,
+  })
+  await control.command('waitFor', chat, { stableMs: 300, timeoutMs })
+  const expanded = await getSingleElementMetrics(control, chat, 'Expanded task conversation')
+  assert.ok(
+    Math.abs(expanded.left - workspace.left) <= 2,
+    'Expansion must fill the project workspace'
+  )
+  assert.ok(Math.abs(expanded.right - workspace.right) <= 2, 'Expansion must keep its right edge')
+  assert.ok(expanded.width > before.width, 'Expansion must increase the conversation width')
+  assert.equal(await control.command('getText', composer), draft, 'Expansion lost the task draft')
+  const detail = await getSingleElementMetrics(
+    control,
+    scope('.issue-drawer-detail'),
+    'Retained Issue drawer'
+  )
+  assert.ok(detail.right <= workspace.left, 'Expansion must move the Issue out of the reading area')
+
+  await control.command('click', toggle)
+  await control.command('waitFor', `${toggle}[aria-pressed="false"]`, { timeoutMs })
+  await control.command('waitFor', chat, { stableMs: 300, timeoutMs })
+  const restored = await getSingleElementMetrics(control, chat, 'Restored task conversation')
+  assert.ok(
+    Math.abs(restored.left - before.left) <= 1,
+    'Restore must return to the drawer position'
+  )
+  assert.ok(Math.abs(restored.width - before.width) <= 1, 'Restore must return to the drawer width')
+  assert.equal(await control.command('getText', composer), draft, 'Restore lost the task draft')
+}
+
 async function sampleDrawerMotion(control, scope, action, direction, timeoutMs, reduced = false) {
   await control.command(
     'startElementMetricsSampling',
@@ -208,6 +252,11 @@ export async function verifyIssueConversationDrawers(control, scope, timeoutMs) 
   const rightHeader = await getSingleElementMetrics(control, `${chat} > header`, 'Chat header')
   assert.equal(leftHeader.height, rightHeader.height, 'Drawer title bars must have equal heights')
 
+  const composer = `${chat} [data-testid="chat-message-input"]`
+  await control.command('fill', composer, { value: 'Unsent expanded task reply' })
+  await verifyIssueConversationExpansion(control, scope, timeoutMs)
+  await control.command('fill', composer, { value: '' })
+
   await sampleDrawerMotion(
     control,
     scope,
@@ -223,9 +272,16 @@ export async function verifyIssueConversationDrawers(control, scope, timeoutMs) 
 
   await control.command('click', executionBadge)
   await control.command('waitFor', chat, { timeoutMs })
+  await control.command('click', scope('[data-testid="ai-chat-modal-toggle-expanded"]'))
+  await control.command('waitFor', chat, { stableMs: 300, timeoutMs })
   await control.command('press', scope('[data-testid="ai-chat-modal-close"]'), { key: 'Escape' })
   await control.command('waitFor', chat, { visible: false, timeoutMs })
-  await control.command('waitFor', detail, { timeoutMs })
+  await control.command('waitFor', detail, { stableMs: 300, timeoutMs })
+  const afterExpandedClose = await getSingleElementMetrics(control, detailSurface, 'Restored Issue')
+  assert.ok(
+    Math.abs(afterExpandedClose.left - before.left) <= 1,
+    'Closing the expanded conversation must restore the Issue drawer'
+  )
   await control.command('setReducedMotion', 'body', { value: 'reduce' })
   await sampleDrawerMotion(
     control,
@@ -236,6 +292,7 @@ export async function verifyIssueConversationDrawers(control, scope, timeoutMs) 
     true
   )
   await control.command('waitFor', chat, { timeoutMs })
+  await verifyIssueConversationExpansion(control, scope, timeoutMs)
   await sampleDrawerMotion(
     control,
     scope,

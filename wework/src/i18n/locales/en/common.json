@@ -4322,6 +4322,8 @@
     "issue_continue_creating": "Create another",
     "expand_issue_editor": "Edit full screen",
     "collapse_issue_editor": "Collapse editor",
+    "expand_task_conversation": "Expand conversation",
+    "restore_task_conversation": "Restore conversation",
     "issue_drop_files_hint": "Drop or paste images and files",
     "issue_draft_saved": "Draft saved automatically",
     "clear_issue_draft": "Clear draft",

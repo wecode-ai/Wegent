@@ -4,7 +4,10 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
 import { createProjectOnlyNavigationRegression } from '../modules/project-only-navigation.mjs'
 import { createProjectSpacePickerRegression } from '../modules/project-space-picker.mjs'
-import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
+import {
+  verifyIssueConversationDrawers,
+  verifyIssueConversationExpansion,
+} from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
 import {
@@ -905,6 +908,7 @@ export function createDesktopScenario({
         const taskComposer = scoped(
           '[data-testid="work-item-new-task-chat-panel"] [data-testid="chat-message-input"]'
         )
+        await verifyIssueConversationExpansion(control, scoped, uiTimeoutMs)
         await control.command('press', taskComposer, { key: 'Enter' })
         await control.command(
           'waitFor',
