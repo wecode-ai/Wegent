@@ -20,6 +20,8 @@ Complete hosts, runtime caches, and prepared profiles live in release slots. Pre
 
 After confirmation, stop writers, finalize a consistent snapshot, exit, and switch. Both runtime and renderer readiness confirm health. Exit or failure to become ready within 60 seconds enters recovery without an automatic restart loop.
 
+Keep active Goal recovery journals when the executor or app-server stops. A completed previous turn does not complete its Goal; an exit notification or a closed notification stream must not finalize the Goal using that earlier outcome.
+
 Compatible rollback switches directly. Incompatible rollback after the target opened data requires confirmation before snapshot restoration and preserves newer data separately. Failure before opening mutable data can return directly to the previous release. Snapshots cover registered migration-owned stores, including task SQLite/WAL/SHM, desktop preferences, renderer storage, and transcript-sync state. Never restore repositories, cloud records, or personal credentials. Register additional migrated stores together with restore coverage.
 
 Plugin configuration changes invalidate preparation. Recheck before switching instead of repairing large installations after restart.

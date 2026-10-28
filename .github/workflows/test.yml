@@ -434,6 +434,18 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: cargo test --all-features --lib clones_and_reuses_repositories_beyond_windows_max_path
 
+      - name: Run plugin hashing and interrupted Goal platform regressions
+        if: ${{ !cancelled() }}
+        shell: bash
+        working-directory: ./executor
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
+        run: |
+          cargo test --all-features --lib local::plugin_import::hash_tests
+          cargo test --all-features --lib agents::codex::tests::stopping_
+          cargo test --all-features --lib closed_notification_stream
+          cargo test --all-features --lib stopped_active_goal_does_not_emit_a_terminal_result_or_discard_its_status
+
       - name: Set up Node for native package filesystem regressions
         if: ${{ !cancelled() }}
         uses: actions/setup-node@v4

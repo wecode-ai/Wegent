@@ -807,6 +807,8 @@ export function createDesktopScenario({
       assert.equal(anchorSearch.matches[0].itemId, PAGED_ASSISTANT_ITEM)
       const anchorMessageId = `runtime-view:${anchorSearch.matches[0].turnId}:assistant`
       const pageRequest = { address: pagedAddress, limit: 50 }
+      // A cold native history read includes hydration and transfer; UI controls
+      // keep their separate interaction budget and responsiveness assertions.
       const nativePage = await requestExecutor(
         control,
         'runtime.tasks.transcript',
@@ -814,7 +816,7 @@ export function createDesktopScenario({
           ...pageRequest,
           refresh: true,
         },
-        uiTimeoutMs
+        WORKBENCH_READY_TIMEOUT_MS
       )
       assert.equal(nativePage.hasMoreBefore, true, 'The fixture must exceed the native item budget')
       assert.ok(nativePage.beforeCursor?.startsWith('wework-codex-timeline:'))
