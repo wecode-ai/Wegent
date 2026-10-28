@@ -1,7 +1,6 @@
-import type { Logger } from 'electron-updater'
 import { RotatingLog } from '../runtime/rotating-log.js'
 
-export class AppUpdateLogger implements Logger {
+export class AppUpdateLogger {
   private readonly log: RotatingLog
 
   constructor(path: string) {

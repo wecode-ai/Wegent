@@ -567,7 +567,7 @@ pub(super) async fn load_access_context_on<Q, R>(
     grants_by_plugin_id: &HashMap<i64, Vec<ResourceMemberRow>>,
 ) -> MysqlResult<Option<AccessContext>>
 where
-    Q: PluginQuery,
+    Q: PluginQuery + crate::permissions::EntityQuery,
     R: brz_redis::Redis,
 {
     let user_namespaces = UserRepository::list_user_namespaces_on(mysql, user_id).await?;
@@ -609,7 +609,8 @@ where
             continue;
         }
         let matched = resolvers
-            .match_bindings(
+            .match_bindings_on(
+                mysql,
                 redis,
                 user_id,
                 entity_type,

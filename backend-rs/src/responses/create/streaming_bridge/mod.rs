@@ -18,14 +18,14 @@
 //! [`StatusUpdatingEmitter`] the callback path uses, and queues the SSE frames
 //! for that step.
 mod events;
+mod tools;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::time::Duration;
 
 use brz_http::Client as HttpClient;
 use brz_http_server::Bytes;
-use brz_json::adapters::python_truthy;
 use brz_mysql::MysqlService;
 use brz_redis::{Redis as _, RedisService};
 use futures_util::stream;
@@ -78,9 +78,11 @@ pub(super) fn stream(
 }
 
 use events::{Chunk, ResponseState};
+use tools::{ToolState, tool_result_chunk, tool_start_chunk, tool_update};
 
 /// The streaming bridge's lazy body state.
 struct Bridge {
+    app: std::sync::Weak<AppState>,
     http: HttpClient,
     url: String,
     body: Value,
@@ -100,6 +102,9 @@ struct Bridge {
     poll: tokio::time::Interval,
     queue: VecDeque<Bytes>,
     state: ResponseState,
+    /// `raw_chat_stream`'s per-tool lifecycle state, keyed by tool-use id and
+    /// recorded on TOOL_START (`openapi_responses.py:1458-1474`).
+    tool_states: HashMap<String, ToolState>,
     registered: bool,
     terminal: bool,
     finished: bool,
@@ -134,6 +139,7 @@ impl Bridge {
             .clone()
             .map(|redis| StatusUpdatingEmitter::new(redis, request.task_id, request.subtask_id));
         Ok(Self {
+            app: state.completion_app.get().cloned().unwrap_or_default(),
             http: HttpClient::builder()
                 .read_timeout(STREAM_TIMEOUT)
                 .build()
@@ -162,6 +168,7 @@ impl Bridge {
                 input.created_at,
                 input.previous_response_id.clone(),
             ),
+            tool_states: HashMap::new(),
             registered: false,
             terminal: false,
             finished: false,
@@ -269,14 +276,16 @@ impl Bridge {
         // source's poller has already used that slot for the reads above.
         self.poll.tick().await;
         self.registered = true;
-        let response = self
+        let request = self
             .http
             .post(&self.url)
             .map_err(|_| "Connection error.".to_string())?
             .header("content-type", "application/json")
             .header("accept", dispatch::OPENAI_ACCEPT)
             .header("authorization", dispatch::OPENAI_DUMMY_AUTHORIZATION)
-            .header("X-Request-ID", self.request_id.as_str())
+            .header("X-Request-ID", self.request_id.as_str());
+        // Same Source client identity as every other model-gateway call.
+        let response = dispatch::apply_openai_client_headers(request)
             .json(&self.body)
             .timeout(STREAM_TIMEOUT)
             .send()
@@ -352,12 +361,15 @@ impl Bridge {
                     }
                 }
                 "tool_start" => {
-                    if let Some(chunk) = tool_start_chunk(&parsed) {
+                    if let Some(chunk) = tool_start_chunk(&mut self.tool_states, &parsed) {
                         chunks.push(chunk);
                     }
                 }
+                // `EventType.TOOL`: an `mcp_call` arguments update. It never
+                // emits a client chunk and only touches a saved `mcp_call`.
+                "tool" => tool_update(&mut self.tool_states, &parsed),
                 "tool_result" => {
-                    if let Some(chunk) = tool_result_chunk(&parsed) {
+                    if let Some(chunk) = tool_result_chunk(&mut self.tool_states, &parsed) {
                         chunks.push(chunk);
                     }
                 }
@@ -460,7 +472,15 @@ impl Bridge {
         let (Some(redis), true) = (&self.redis, true) else {
             return None;
         };
+        let app = self.app.upgrade();
+        if app.is_none() {
+            tracing::error!(
+                task_id = self.task_id,
+                "Application state unavailable during streamed task completion"
+            );
+        }
         let ctx = Completion {
+            app: app.as_deref(),
             mysql: &self.mysql,
             redis,
             tables: self.tables,
@@ -502,108 +522,6 @@ impl Bridge {
                 .await;
         }
         self.registered = false;
-    }
-}
-
-/// `_normalize_protocol_type`.
-fn normalize_protocol_type(value: Option<&str>, tool_name: Option<&str>) -> &'static str {
-    match value {
-        Some("mcp" | "mcp_call") => "mcp_call",
-        Some("shell_call") => "shell_call",
-        _ if tool_name == Some("exec") => "shell_call",
-        _ => "function_call",
-    }
-}
-
-fn tool_start_chunk(event: &ExecutionEvent) -> Option<Chunk> {
-    let tool_use_id = event.tool_use_id.clone().filter(|id| !id.is_empty())?;
-    let tool_name = event.tool_name.clone().unwrap_or_default();
-    let protocol = normalize_protocol_type(
-        event.data.get("tool_protocol").and_then(Value::as_str),
-        event.tool_name.as_deref(),
-    );
-    let arguments = event.tool_input.clone().unwrap_or_else(|| json!({}));
-    match protocol {
-        "mcp_call" => Some(Chunk::McpCallAdded {
-            item_id: tool_use_id,
-            name: tool_name,
-            server_label: event
-                .data
-                .get("server_label")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        }),
-        "shell_call" => Some(Chunk::ShellCallAdded {
-            call_id: tool_use_id,
-            name: tool_name,
-            arguments,
-        }),
-        _ => Some(Chunk::FunctionCallAdded {
-            call_id: tool_use_id,
-            name: tool_name,
-            arguments: if python_truthy(&arguments) {
-                serde_json::to_string(&arguments).unwrap_or_default()
-            } else {
-                String::new()
-            },
-        }),
-    }
-}
-
-fn tool_result_chunk(event: &ExecutionEvent) -> Option<Chunk> {
-    let tool_use_id = event.tool_use_id.clone().filter(|id| !id.is_empty())?;
-    let tool_name = event.tool_name.clone().unwrap_or_default();
-    let protocol = normalize_protocol_type(
-        event.data.get("tool_protocol").and_then(Value::as_str),
-        event.tool_name.as_deref(),
-    );
-    let arguments = event.tool_input.clone().unwrap_or_else(|| json!({}));
-    let status = if event.data.get("status").and_then(Value::as_str) == Some("failed") {
-        "failed"
-    } else {
-        "completed"
-    };
-    match protocol {
-        "mcp_call" => Some(Chunk::McpCallDone {
-            item_id: tool_use_id,
-            name: tool_name,
-            server_label: event
-                .data
-                .get("server_label")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            arguments: if python_truthy(&arguments) {
-                serde_json::to_string(&arguments).unwrap_or_default()
-            } else {
-                String::new()
-            },
-            output: event.tool_output.clone(),
-            status: status.to_string(),
-            error: event.error.clone().or_else(|| {
-                event
-                    .data
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            }),
-        }),
-        "shell_call" => Some(Chunk::ShellCallDone {
-            call_id: tool_use_id,
-            name: tool_name,
-            arguments,
-            status: status.to_string(),
-        }),
-        _ => Some(Chunk::FunctionCallDone {
-            call_id: tool_use_id,
-            name: tool_name,
-            arguments: if python_truthy(&arguments) {
-                serde_json::to_string(&arguments).unwrap_or_default()
-            } else {
-                String::new()
-            },
-        }),
     }
 }
 

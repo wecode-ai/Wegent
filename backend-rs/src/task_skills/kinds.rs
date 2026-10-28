@@ -15,6 +15,7 @@
 use crate::json_compat::python_json_value;
 use crate::remote_workspace_tree::error::{ApiError, database_query_failed};
 use crate::remote_workspace_tree::kinds::{KindRecord, KindStore};
+use crate::request_sql::RequestSql;
 use brz_json::OpaqueJson;
 use serde_json::Value;
 
@@ -217,6 +218,69 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
         Ok(kinds.get_public_team(namespace, name).await?.map(kind_row))
     }
 
+    /// [`resolve_team`](Self::resolve_team) on the caller's request SQL
+    /// handle: the same cached-reader decision and the same statements, with
+    /// every cache miss and every shared-team fallback read issued on `sql`
+    /// so the reads join the request's transaction.
+    ///
+    /// The non-`default` group branch runs the same chain on `sql`: the group
+    /// Team read, the namespace visibility fallback and the membership reads
+    /// keep the source's transaction membership instead of splitting onto the
+    /// pool. Its native group-role pass stays on the pool (see
+    /// [`Self::team_share_permission_on`]).
+    pub async fn resolve_team_on(
+        &self,
+        sql: &mut dyn RequestSql,
+        user_id: i64,
+        namespace: &str,
+        name: &str,
+    ) -> Result<Option<KindRow>, brz_mysql::MysqlError> {
+        if namespace != "default" {
+            return self.group_team_on(sql, user_id, namespace, name).await;
+        }
+
+        let kinds = self.cached_kinds();
+
+        // 1. The user's own Team.
+        if user_id != 0 {
+            if let Some(team) = kinds
+                .get_personal_team_on(sql, user_id, namespace, name)
+                .await?
+            {
+                return Ok(Some(kind_row(team)));
+            }
+
+            // 2. Teams shared directly to the user (the cached list, then
+            //    the shared-id row query).
+            let shared_ids = self.shared_team_list_on(sql, user_id).await?;
+            if !shared_ids.is_empty()
+                && let Some(team) =
+                    repo::team_by_shared_ids_on(sql, &shared_ids, namespace, name).await?
+            {
+                return Ok(Some(team));
+            }
+
+            // 3. Entity-derived sharing: every other owner's active Team
+            //    with the name, newest first, each checked with
+            //    `team_share_service.check_permission`.
+            let candidates = repo::shared_team_candidates_on(sql, user_id, namespace, name).await?;
+            for candidate in &candidates {
+                if self
+                    .team_share_permission_on(sql, candidate.kinds_id, user_id)
+                    .await?
+                {
+                    return Ok(Some(candidate.clone()));
+                }
+            }
+        }
+
+        // 4. Public team (user_id = 0).
+        Ok(kinds
+            .get_public_team_on(sql, namespace, name)
+            .await?
+            .map(kind_row))
+    }
+
     /// `kindReader.get_by_name_and_namespace`'s Team branch for the
     /// configured reader (`IKindReader._get_team`,
     /// `app/services/readers/kinds.py`): personal -> shared teams ->
@@ -252,6 +316,24 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
             .map(|record| record.map(kind_row))
     }
 
+    /// [`get_by_name_and_namespace_row`](Self::get_by_name_and_namespace_row)
+    /// on the caller's request SQL handle: a cache miss runs its `kinds` read
+    /// on `sql`, and a cache hit issues no statement.
+    pub async fn get_by_name_and_namespace_row_on(
+        &self,
+        sql: &mut dyn RequestSql,
+        user_id: i64,
+        kind: &str,
+        namespace: &str,
+        name: &str,
+    ) -> MysqlResult<Option<KindRow>> {
+        self.cached_kinds()
+            .get_by_name_and_namespace_on(sql, user_id, kind, namespace, name)
+            .await
+            .map_err(kind_read_failed)
+            .map(|record| record.map(kind_row))
+    }
+
     /// The cached kind reader over the same clients: `None` keeps every read
     /// on the direct SQL path, exactly like the extension's `wrap`.
     fn cached_kinds(&self) -> KindStore<'_, M, R> {
@@ -277,6 +359,34 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
             CachedEntry::Miss => {}
         }
         let ids = repo::shared_team_ids(self.mysql, user_id).await?;
+        if let Some(redis) = self.redis {
+            let payload = shared_team_list_payload(&ids);
+            if let Err(error) = redis.set_ex(key.as_str(), CACHE_TTL_SECONDS, payload).await {
+                tracing::warn!(%error, key = %key, "[team_resolution] shared team list write failed");
+            }
+        }
+        Ok(ids)
+    }
+
+    /// [`shared_team_list`](Self::shared_team_list) on the caller's request
+    /// SQL handle: only a cache miss reads, and that read runs on `sql`.
+    async fn shared_team_list_on(
+        &self,
+        sql: &mut dyn RequestSql,
+        user_id: i64,
+    ) -> MysqlResult<Vec<i64>> {
+        let key = shared_team_list_key(user_id);
+        match cached_entry(self.redis, &key).await {
+            CachedEntry::Hit(text) => {
+                if let Ok(ids) = serde_json::from_str::<Vec<i64>>(&text) {
+                    return Ok(ids);
+                }
+            }
+            CachedEntry::Negative => return Ok(Vec::new()),
+            // A missing or undecodable list falls through to the SQL reader.
+            CachedEntry::Miss => {}
+        }
+        let ids = repo::shared_team_ids_on(sql, user_id).await?;
         if let Some(redis) = self.redis {
             let payload = shared_team_list_payload(&ids);
             if let Err(error) = redis.set_ex(key.as_str(), CACHE_TTL_SECONDS, payload).await {
@@ -320,6 +430,58 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
 
         // The native group-role pass only applies to non-default namespaces.
         if let Some(team) = repo::team_share_active_team(self.mysql, team_id).await?
+            && team.kinds_namespace != "default"
+            && let Some(erp) = self.erp
+        {
+            let role = crate::skills::skills_unified::effective_role_in_group(
+                self.mysql,
+                &crate::teams::group_membership::ErpContext {
+                    erp,
+                    redis: self.redis,
+                },
+                i32::try_from(user_id).unwrap_or(i32::MAX),
+                &team.kinds_namespace,
+            )
+            .await;
+            if let Ok(Some(role)) = role
+                && reporter_or_above(&role)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// [`team_share_permission`](Self::team_share_permission) on the caller's
+    /// request SQL handle: the member row, the entity bindings and the active
+    /// Team read all run on `sql`. The native group-role pass keeps its pool
+    /// path; it only runs for non-`default` namespaces, which the create flow
+    /// does not resolve through this entry.
+    pub(crate) async fn team_share_permission_on(
+        &self,
+        sql: &mut dyn RequestSql,
+        team_id: i64,
+        user_id: i64,
+    ) -> Result<bool, brz_mysql::MysqlError> {
+        // `UnifiedShareService.check_permission`: direct member row first.
+        if let Some(role) = repo::team_share_member_row_on(sql, team_id, user_id).await? {
+            let effective = if role.is_empty() {
+                "Reporter"
+            } else {
+                role.as_str()
+            };
+            return Ok(reporter_or_above(effective));
+        }
+
+        // `check_entity_permission`: the entity bindings, matched through
+        // the registered resolvers in first-appearance order.
+        let entity_rows = repo::team_share_entity_rows_on(sql, team_id).await?;
+        if self.entity_permission(user_id, &entity_rows).await? {
+            return Ok(true);
+        }
+
+        // The native group-role pass only applies to non-default namespaces.
+        if let Some(team) = repo::team_share_active_team_on(sql, team_id).await?
             && team.kinds_namespace != "default"
             && let Some(erp) = self.erp
         {
@@ -434,6 +596,112 @@ impl<M: Mysql, R: Redis> KindCacheStore<'_, M, R> {
             }
         }
         Ok(None)
+    }
+
+    /// [`group_team`](Self::group_team) on the caller's request SQL handle:
+    /// the group Team read, the visibility fallback, the membership read, the
+    /// active Team read and the share check all run on `sql`, so the group
+    /// branch keeps the source's transaction membership. A cache hit still
+    /// skips its SQL, exactly like the pooled path.
+    async fn group_team_on(
+        &self,
+        sql: &mut dyn RequestSql,
+        user_id: i64,
+        namespace: &str,
+        name: &str,
+    ) -> Result<Option<KindRow>, brz_mysql::MysqlError> {
+        let Some(team) = self
+            .cached_kinds()
+            .get_group_team_on(sql, namespace, name)
+            .await?
+        else {
+            return Ok(None);
+        };
+        // A public namespace grants access.
+        if self.group_is_public_on(sql, namespace).await? {
+            return Ok(Some(kind_row(team)));
+        }
+        // Any approved group membership admits the member.
+        if user_id != 0
+            && self
+                .group_member_role_on(sql, namespace, user_id)
+                .await?
+                .is_some()
+        {
+            return Ok(Some(kind_row(team)));
+        }
+        // `team_share_service.get_resource_for_use(team.id, user_id)`.
+        if user_id != 0 {
+            let Some(active) = repo::team_share_active_team_on(sql, team.id).await? else {
+                return Ok(None);
+            };
+            if active.kinds_user_id == user_id || active.kinds_user_id == 0 {
+                return Ok(Some(kind_row(team)));
+            }
+            if self.team_share_permission_on(sql, team.id, user_id).await? {
+                return Ok(Some(kind_row(team)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// [`group_is_public`](Self::group_is_public) on the caller's handle: the
+    /// cached group document decides a hit, and a miss runs the namespace
+    /// query on `sql` before writing the document back.
+    async fn group_is_public_on(
+        &self,
+        sql: &mut dyn RequestSql,
+        namespace: &str,
+    ) -> Result<bool, brz_mysql::MysqlError> {
+        let key = group_document_key(namespace);
+        match cached_entry(self.redis, &key).await {
+            CachedEntry::Hit(text) => {
+                if let Ok(document) = serde_json::from_str::<Value>(&text) {
+                    return Ok(document
+                        .get("visibility")
+                        .and_then(Value::as_str)
+                        .is_some_and(|visibility| visibility == VISIBILITY_PUBLIC));
+                }
+            }
+            CachedEntry::Negative => return Ok(false),
+            CachedEntry::Miss => {}
+        }
+        let row = repo::namespace_by_name_on(sql, namespace).await?;
+        self.cache_group_document(&key, row.as_ref()).await;
+        Ok(row.is_some_and(|row| row.namespace_visibility == VISIBILITY_PUBLIC))
+    }
+
+    /// [`group_member_role`](Self::group_member_role) on the caller's handle:
+    /// the cached role document decides a hit, and a miss runs the namespace
+    /// id and member reads on `sql`.
+    async fn group_member_role_on(
+        &self,
+        sql: &mut dyn RequestSql,
+        namespace: &str,
+        user_id: i64,
+    ) -> Result<Option<String>, brz_mysql::MysqlError> {
+        let key = group_member_role_key(namespace, user_id);
+        match cached_entry(self.redis, &key).await {
+            CachedEntry::Hit(role) => return Ok(Some(role)),
+            CachedEntry::Negative => return Ok(None),
+            CachedEntry::Miss => {}
+        }
+        let role = crate::skills::skills_unified::direct_member_role_on(
+            sql,
+            i32::try_from(user_id).unwrap_or(i32::MAX),
+            namespace,
+        )
+        .await?;
+        if let Some(redis) = self.redis {
+            let value = match role.as_deref() {
+                Some(role) if !role.is_empty() => role.to_owned(),
+                _ => NULL_MARKER.to_owned(),
+            };
+            if let Err(error) = redis.set_ex(key.as_str(), CACHE_TTL_SECONDS, value).await {
+                tracing::warn!(%error, key = %key, "[team_resolution] group member write failed");
+            }
+        }
+        Ok(role)
     }
 
     /// `groupReader.is_public`: `CachedGroupReader.get_visibility` reads the
@@ -663,237 +931,5 @@ fn python_isoformat(value: chrono::NaiveDateTime) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn timestamp(text: &str) -> chrono::NaiveDateTime {
-        chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S%.f").expect("test timestamp")
-    }
-
-    #[test]
-    fn reporter_gate_admits_reporter_and_above() {
-        for role in ["Owner", "Maintainer", "Developer", "Reporter"] {
-            assert!(reporter_or_above(role));
-        }
-        assert!(!reporter_or_above("RestrictedAnalyst"));
-    }
-
-    /// `CachedSharedTeamReader._key_idx_user_teams` with
-    /// `CACHE_VERSION = "v2"`.
-    #[test]
-    fn shared_team_list_key_matches_the_source_extension() {
-        assert_eq!(
-            shared_team_list_key(2630),
-            "shared_team:v2:idx:user_teams:2630"
-        );
-    }
-
-    /// The recorded `shared_team:v2:idx:user_teams:2630` payload:
-    /// `json.dumps([233420, ...])` keeps Python's `", "` separators, and an
-    /// empty list is the `__NULL__` negative marker.
-    #[test]
-    fn shared_team_list_payload_matches_the_recorded_document() {
-        assert_eq!(
-            shared_team_list_payload(&[
-                233420, 233480, 233502, 233506, 233510, 233514, 233521, 233488, 233561, 268349
-            ]),
-            "[233420, 233480, 233502, 233506, 233510, 233514, 233521, 233488, 233561, 268349]"
-        );
-        assert_eq!(shared_team_list_payload(&[]), "__NULL__");
-    }
-
-    /// `_get_team`'s `default`-namespace step order for a viewer without a
-    /// personal Team: the personal index probe, the shared-team list, the
-    /// shared-id hit, the share-permission candidates, and the public Team —
-    /// here with the cache client absent, so every step reads SQL.
-    #[tokio::test]
-    async fn null_team_ref_runs_the_source_step_order() {
-        let mysql = crate::sql_test_support::KindQueryCapture::default();
-        let store: KindCacheStore<'_, _> = KindCacheStore {
-            mysql: &mysql,
-            redis: None,
-            erp: None,
-            resolvers: None,
-        };
-        let team_id = store
-            .get_team_id_by_name_and_namespace(2630, "default", "wegent-chat")
-            .await
-            .expect("resolution succeeds");
-        assert_eq!(team_id, None);
-        let queries: Vec<String> = mysql.queries().into_iter().map(|query| query.sql).collect();
-        assert_eq!(queries.len(), 4, "{queries:?}");
-        assert!(
-            queries[0].contains("kinds.user_id = ? AND kinds.kind = ? AND kinds.namespace = ?"),
-            "{queries:?}"
-        );
-        assert!(queries[1].contains("FROM resource_members"), "{queries:?}");
-        assert!(
-            queries[2].contains("kinds.user_id NOT IN (0, ?)") && queries[2].contains("'Team'"),
-            "{queries:?}"
-        );
-        assert!(
-            queries[3].contains("kinds.user_id = 0 AND kinds.kind = ?"),
-            "{queries:?}"
-        );
-    }
-
-    /// A viewer that is not the task owner (`user_id == 0`) skips the
-    /// personal/shared/candidate steps and resolves only the public Team.
-    #[tokio::test]
-    async fn anonymous_viewer_resolves_only_the_public_team() {
-        let mysql = crate::sql_test_support::KindQueryCapture::default();
-        let store: KindCacheStore<'_, _> = KindCacheStore {
-            mysql: &mysql,
-            redis: None,
-            erp: None,
-            resolvers: None,
-        };
-        let team_id = store
-            .get_team_id_by_name_and_namespace(0, "default", "wegent-chat")
-            .await
-            .expect("resolution succeeds");
-        assert_eq!(team_id, None);
-        let queries = mysql.queries();
-        assert_eq!(queries.len(), 1, "{:?}", queries[0].sql);
-        assert!(
-            queries[0]
-                .sql
-                .contains("kinds.user_id = 0 AND kinds.kind = ?"),
-            "{}",
-            queries[0].sql
-        );
-    }
-
-    /// `CachedGroupReader._key_data` and
-    /// `CachedGroupMemberReader._key_idx_group_user` with
-    /// `CACHE_VERSION = "v2"`.
-    #[test]
-    fn group_cache_keys_match_the_source_extension() {
-        assert_eq!(
-            group_document_key("rcdp/community"),
-            "group:v2:data:rcdp/community"
-        );
-        assert_eq!(
-            group_member_role_key("rcdp/community", 6013),
-            "group_member:v2:idx:group_user:rcdp/community:6013"
-        );
-    }
-
-    /// A `kind:v2:data` document projects onto the SQL row shape the
-    /// resolver consumes, the CRD document included.
-    #[test]
-    fn cached_record_projects_onto_the_kind_row_shape() {
-        let record = KindRecord {
-            id: 110467,
-            user_id: 0,
-            kind: "Team".to_owned(),
-            name: "wegent-chat".to_owned(),
-            namespace: "default".to_owned(),
-            json: brz_mysql::Json(serde_json::json!({
-                "spec": {"members": [{"role": "leader"}]}
-            })),
-            is_active: 1,
-            created_at: timestamp("2026-01-19 14:16:18"),
-            updated_at: timestamp("2026-08-07 03:01:22"),
-        };
-        let row = kind_row(record);
-        assert_eq!(row.kinds_id, 110467);
-        assert_eq!(row.kinds_user_id, 0);
-        assert_eq!(row.kinds_kind, "Team");
-        assert_eq!(row.kinds_name, "wegent-chat");
-        assert_eq!(row.kinds_namespace, "default");
-        assert_eq!(
-            row.kinds_json.0.to_value(),
-            serde_json::json!({"spec": {"members": [{"role": "leader"}]}})
-        );
-        assert_eq!(row.kinds_is_active, 1);
-    }
-
-    /// `CachedGroupReader._set_data`'s payload: the `namespace` columns in
-    /// table order, Python's `", "`/`": "` separators, `ensure_ascii=True`
-    /// escaping, and `datetime.isoformat()` timestamps.
-    #[test]
-    fn namespace_document_matches_the_source_serialization() {
-        let row = repo::NamespaceRow {
-            namespace_id: 7,
-            namespace_name: "team-a".to_owned(),
-            namespace_display_name: None,
-            namespace_owner_user_id: Some(12),
-            namespace_visibility: "internal".to_owned(),
-            namespace_description: Some("desc".to_owned()),
-            namespace_level: Some("group".to_owned()),
-            namespace_is_active: Some(1),
-            namespace_created_at: Some(timestamp("2026-01-19 14:16:18")),
-            namespace_updated_at: None,
-        };
-        assert_eq!(
-            python_namespace_json(&row),
-            "{\"id\": 7, \"name\": \"team-a\", \"display_name\": null, \"owner_user_id\": 12, \
-             \"visibility\": \"internal\", \"description\": \"desc\", \"level\": \"group\", \
-             \"is_active\": true, \"created_at\": \"2026-01-19T14:16:18\", \"updated_at\": null}"
-        );
-    }
-
-    /// `datetime.isoformat()` drops zero microseconds and keeps the rest.
-    #[test]
-    fn isoformat_keeps_microseconds_only_when_present() {
-        assert_eq!(
-            python_isoformat(timestamp("2026-01-19 14:16:18")),
-            "2026-01-19T14:16:18"
-        );
-        assert_eq!(
-            python_isoformat(timestamp("2026-01-19 14:16:18.123456")),
-            "2026-01-19T14:16:18.123456"
-        );
-    }
-
-    /// `groupReader.is_public` with the cache client absent: the namespace
-    /// query answers the visibility and no membership read runs.
-    #[tokio::test]
-    async fn group_is_public_reads_the_namespace_when_the_cache_misses() {
-        let mysql = crate::sql_test_support::KindQueryCapture::default();
-        let store: KindCacheStore<'_, _> = KindCacheStore {
-            mysql: &mysql,
-            redis: None,
-            erp: None,
-            resolvers: None,
-        };
-        assert!(
-            !store
-                .group_is_public("rcdp/community")
-                .await
-                .expect("query runs")
-        );
-        let queries = mysql.queries();
-        assert_eq!(queries.len(), 1, "{queries:?}");
-        assert!(queries[0].sql.contains("FROM namespace"), "{queries:?}");
-    }
-
-    /// `groupMemberReader.is_member` with the cache client absent: the
-    /// namespace id lookup (`get_namespace_id_by_name`), which answers the
-    /// membership when the group is unknown.
-    #[tokio::test]
-    async fn group_member_role_reads_the_namespace_when_the_cache_misses() {
-        let mysql = crate::sql_test_support::KindQueryCapture::default();
-        let store: KindCacheStore<'_, _> = KindCacheStore {
-            mysql: &mysql,
-            redis: None,
-            erp: None,
-            resolvers: None,
-        };
-        assert_eq!(
-            store
-                .group_member_role("rcdp/community", 6013)
-                .await
-                .expect("query runs"),
-            None
-        );
-        let queries: Vec<String> = mysql.queries().into_iter().map(|query| query.sql).collect();
-        assert_eq!(queries.len(), 1, "{queries:?}");
-        assert!(
-            queries[0].contains("FROM namespace")
-                && queries[0].contains("namespace.name = 'rcdp/community'"),
-            "{queries:?}"
-        );
-    }
-}
+#[path = "kinds_tests.rs"]
+mod tests;

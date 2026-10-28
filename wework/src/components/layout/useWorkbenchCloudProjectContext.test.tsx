@@ -1177,6 +1177,13 @@ describe('useWorkbenchCloudProjectContext', () => {
 
   test.each([
     {
+      description: 'cloud project board tab',
+      boardTabId: 'board-cloud',
+      boardRoute: '/todo?projectStore=backend&projectId=space-cloud',
+      cloudProject: { ...project('space-cloud'), name: '我的任务' },
+      fixed: false,
+    },
+    {
       description: 'resolved project board tab',
       boardTabId: 'board-existing',
       boardRoute: '/todo?projectStore=local&projectId=space-local',
@@ -1224,9 +1231,12 @@ describe('useWorkbenchCloudProjectContext', () => {
       listLoopItems: vi.fn().mockResolvedValue({ items: [item] }),
       listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
     }
+    const cloudApi = { ...localApi }
     const services = {
+      deliveryApi: { ...localApi },
       projectSpaceApis: {
         local: localApi,
+        cloud: cloudApi,
         defaultLocation: 'local',
       },
     } as unknown as WorkbenchServices
@@ -1277,6 +1287,9 @@ describe('useWorkbenchCloudProjectContext', () => {
     )
 
     await waitFor(() => expect(result.current.boundCloudItem).toEqual(item))
+    expect(result.current.boundProjectSpaceApi).toBe(
+      cloudProject.project_store === 'local' ? localApi : cloudApi
+    )
     act(() => result.current.openBoundProjectSpaceTask())
 
     const expectedTab = {
@@ -1294,6 +1307,22 @@ describe('useWorkbenchCloudProjectContext', () => {
       expect(workspaceTabs.selectTab).toHaveBeenCalledWith(boardTab.id, expectedTab)
     }
     expect(workspaceTabs.tabs).toEqual([taskTab, boardTab])
+
+    vi.mocked(workspaceTabs.selectTab).mockClear()
+    openTab.mockClear()
+    act(() => result.current.openDelivery())
+    expect(result.current.deliveryDialogOpen).toBe(true)
+
+    act(() => result.current.finishDelivery())
+
+    expect(result.current.deliveryDialogOpen).toBe(false)
+    if (fixed) {
+      expect(workspaceTabs.selectTab).not.toHaveBeenCalled()
+      expect(openTab).toHaveBeenCalledExactlyOnceWith('board', expectedTab)
+    } else {
+      expect(openTab).not.toHaveBeenCalled()
+      expect(workspaceTabs.selectTab).toHaveBeenCalledExactlyOnceWith(boardTab.id, expectedTab)
+    }
   })
 
   test('creates and binds a board item for an existing runtime task', async () => {

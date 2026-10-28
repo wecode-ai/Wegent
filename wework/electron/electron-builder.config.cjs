@@ -31,6 +31,8 @@ module.exports = {
   beforePack: macosAppIcon.prepare,
   afterPack: require('./scripts/verify-windows-migration-lock.cjs'),
   extraMetadata: {
+    weworkDataSchema: 1,
+    weworkReadableDataSchemas: [1],
     name: identity.packageName,
     weworkUpdateBaseUrl: updateBaseUrl,
     weworkAppId: identity.identifier,
@@ -48,6 +50,10 @@ module.exports = {
   asar: true,
   asarUnpack: ['**/*.{node,dylib,so,dll}'],
   extraResources: [
+    {
+      from: `resources/wework-launcher${process.platform === 'win32' ? '.exe' : ''}`,
+      to: `wework-launcher${process.platform === 'win32' ? '.exe' : ''}`,
+    },
     ...(!onlineUpdateBuild || onlineUpdateIncludesComponents ? managedComponentResources : []),
     { from: 'resources/components.json', to: 'components.json' },
     { from: '../resources/licenses', to: 'licenses' },

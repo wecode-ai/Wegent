@@ -33,7 +33,7 @@ fn skill_identity_token_expire_minutes_from(configured: Option<&str>) -> i64 {
 }
 
 /// `create_task_token` (`app/services/auth/task_token.py`).
-pub(super) fn create_task_token(
+pub(crate) fn create_task_token(
     state: &AppState,
     task_id: i64,
     subtask_id: i64,
@@ -56,7 +56,7 @@ pub(super) fn create_task_token(
 }
 
 /// `create_skill_identity_token` (`app/services/auth/skill_identity_token.py`).
-pub(super) fn create_skill_identity_token(
+pub(crate) fn create_skill_identity_token(
     state: &AppState,
     user_id: i64,
     user_name: &str,

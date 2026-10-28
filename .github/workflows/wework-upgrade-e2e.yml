@@ -1,0 +1,65 @@
+name: Wework Upgrade E2E
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  upgrade-and-rollback:
+    name: Upgrade and rollback (${{ matrix.name }})
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:all') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
+    concurrency:
+      group: wework-upgrade-${{ github.ref }}-${{ matrix.runner }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            runner: macos-15
+          - name: macOS x64
+            runner: macos-15-intel
+          - name: Windows x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/setup-node-workspace
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8f
+      - uses: ./.github/actions/setup-sccache
+      - name: Verify policy and transaction tests
+        run: |
+          node --test wework/scripts/upgrade-policy.test.mjs wework/scripts/upgrade-evidence.test.mjs wework/scripts/portable-desktop-release.test.mjs
+          pnpm --dir wework/electron install --frozen-lockfile
+          pnpm --filter wework prepare:electron
+          pnpm --dir wework/electron test src/host/app-update-service.test.ts src/host/preferences-store.test.ts src/host/renderer-storage-store.test.ts src/runtime/core-dsh-runtime.test.ts src/runtime/release-store.test.ts src/runtime/release-snapshot.test.ts src/runtime/release-profile.test.ts src/runtime/release-preparation.test.ts scripts/physical-release-files.test.mjs
+          rustc --edition 2021 --test wework/launcher/src/main.rs -o "$RUNNER_TEMP/wework-launcher-tests.exe"
+          "$RUNNER_TEMP/wework-launcher-tests.exe"
+      - name: Verify real packaged upgrade, snapshot restore, and failed activation recovery
+        run: pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback,app-update-full
+      - name: Retain reproducible diagnostics and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-upgrade-${{ matrix.runner }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            wework/test-results/desktop-e2e/**/*.log
+            wework/test-results/desktop-e2e/**/*result.json
+            wework/test-results/desktop-e2e/**/failure-summary.json
+            wework/test-results/upgrade-fixtures-build.log
+          if-no-files-found: error
+          retention-days: 7
