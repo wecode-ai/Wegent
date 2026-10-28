@@ -8,6 +8,12 @@
   "remote_workspace": {
     "button": "View the task files",
     "unavailable": "Remote session unavailable",
+    "artifact": {
+      "device_file": "Device task file",
+      "download": "Download artifact",
+      "download_failed": "Artifact download failed",
+      "unavailable": "The execution device may be offline, or the file was moved or deleted"
+    },
     "reason_loading": "Checking remote workspace status...",
     "reason_status_check_failed": "Failed to check remote workspace status",
     "reason_not_connected": "Remote session is not connected yet",

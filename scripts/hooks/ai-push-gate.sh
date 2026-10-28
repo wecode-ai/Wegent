@@ -145,16 +145,31 @@ format_worker_count() {
     fi
 }
 
+wait_wework_renderer_shard() {
+    wait "$1"
+    local shard_exit=$?
+    cat "$2" >> "$TEMP_DIR/wework_test.log"
+    return "$shard_exit"
+}
+
 run_wework_full_renderer_tests() {
     local test_workers="$1"
     local test_timeout_ms="${WEWORK_PRE_PUSH_TEST_TIMEOUT_MS:-15000}"
     local shard_count=2
+    local shard_concurrency="${WEWORK_PRE_PUSH_RENDERER_SHARD_CONCURRENCY:-2}"
     local shard
-    local shard_exit=0
     local test_exit=0
     local shard_pids=()
     local shard_logs=()
 
+    case "$shard_concurrency" in
+        1|2) ;;
+        *)
+            echo "Invalid renderer shard concurrency: $shard_concurrency (expected 1 or 2)"
+            return 1
+            ;;
+    esac
+    echo "   Renderer shard concurrency: $shard_concurrency"
     for ((shard = 1; shard <= shard_count; shard++)); do
         shard_logs+=("$TEMP_DIR/wework_test_shard_${shard}.log")
         pnpm --filter wework exec vitest run --dir src --pool=threads \
@@ -163,16 +178,17 @@ run_wework_full_renderer_tests() {
             --shard="$shard/$shard_count" \
             > "${shard_logs[$((shard - 1))]}" 2>&1 &
         shard_pids+=("$!")
-    done
-
-    for ((shard = 1; shard <= shard_count; shard++)); do
-        wait "${shard_pids[$((shard - 1))]}"
-        shard_exit=$?
-        cat "${shard_logs[$((shard - 1))]}" >> "$TEMP_DIR/wework_test.log"
-        if [ "$shard_exit" -ne 0 ]; then
-            test_exit=1
+        if [ "$shard_concurrency" = "1" ]; then
+            wait_wework_renderer_shard "$!" "${shard_logs[$((shard - 1))]}" || test_exit=1
         fi
     done
+
+    if [ "$shard_concurrency" = "2" ]; then
+        for ((shard = 1; shard <= shard_count; shard++)); do
+            wait_wework_renderer_shard \
+                "${shard_pids[$((shard - 1))]}" "${shard_logs[$((shard - 1))]}" || test_exit=1
+        done
+    fi
 
     return "$test_exit"
 }
@@ -253,8 +269,10 @@ run_wework_unit_tests() {
     fi
 
     if [ "$WEWORK_ELECTRON_CHANGED" -eq 1 ] && [ "$ELECTRON_INSTALL_EXIT" -eq 0 ]; then
-        echo -e "   Running Electron unit tests..."
-        if ! pnpm --dir wework/electron test >> "$TEMP_DIR/wework_test.log" 2>&1; then
+        local electron_workers="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
+        echo -e "   Running Electron unit tests with $(format_worker_count "$electron_workers")..."
+        if ! pnpm --dir wework/electron test --maxWorkers "$electron_workers" \
+            >> "$TEMP_DIR/wework_test.log" 2>&1; then
             test_exit=1
         fi
     fi

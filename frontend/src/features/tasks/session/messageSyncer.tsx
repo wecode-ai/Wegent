@@ -265,6 +265,7 @@ export function useMessageSyncer({
         message_id,
         sources,
         retrieval_summary: retrievalSummary,
+        contexts,
       } = data
 
       if (!taskId) {
@@ -288,7 +289,8 @@ export function useMessageSyncer({
           message_id,
           sources || (mergedResult?.sources as UnifiedMessage['sources']),
           hasError,
-          errorMessage
+          errorMessage,
+          contexts ?? undefined
         )
       }
     },
