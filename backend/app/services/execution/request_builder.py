@@ -770,8 +770,18 @@ class TaskRequestBuilder:
 
     @staticmethod
     def _extract_persisted_sessions(subtasks: list[Any]) -> list[dict[str, Any]]:
-        sessions: list[dict[str, Any]] = []
+        """Extract the latest successful session for each bot and engine.
+
+        Subscriptions can accumulate many successful sessions while reusing one
+        task. Returning one session globally loses older sessions for other
+        bots when a newer session belongs to a different bot, so retain the
+        newest session per bot and engine identity.
+        """
+        latest_by_identity: dict[tuple[str, str], dict[str, Any]] = {}
         for subtask in reversed(subtasks):
+            status = getattr(subtask, "status", None)
+            if status is not None and status != "COMPLETED":
+                continue
             result = getattr(subtask, "result", None)
             if not isinstance(result, dict):
                 continue
@@ -779,8 +789,12 @@ class TaskRequestBuilder:
                 result.get("executor_session")
             )
             if session:
-                sessions.append(session)
-        return TaskRequestBuilder._merge_inherited_sessions(sessions)
+                identity = (
+                    str(session.get("botId") or ""),
+                    str(session.get("agent") or "").replace(" ", "").lower(),
+                )
+                latest_by_identity.setdefault(identity, session)
+        return list(latest_by_identity.values())
 
     @staticmethod
     def _normalize_executor_session(session: Any) -> dict[str, Any] | None:
