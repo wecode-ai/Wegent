@@ -28,9 +28,11 @@ classify_path() {
     .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/download-actions-artifact.sh | \
       .github/scripts/publish-wework-core-e2e-build-oci.sh | \
+      .github/scripts/resolve-backend-rs-e2e-runtime.sh | \
       .github/scripts/resolve-wework-core-e2e-build-ref.sh | \
       .github/scripts/restore-oci-runtime-binary.sh | \
-      .github/scripts/restore-wework-core-e2e-build-oci.sh)
+      .github/scripts/restore-wework-core-e2e-build-oci.sh | \
+      .github/runtime-images/backend-rs-e2e.Dockerfile)
       changed[wework_target]=true
       ;;
     .github/scripts/resolve-executor-e2e-runtime.sh)

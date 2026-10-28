@@ -31,6 +31,7 @@ const CHECKPOINT_RESOURCES = new Map([
   ['project-assignment-notification', ['macos-inspector-foreground']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'mcp-apps': './scenarios/mcp-apps.scenario.mjs',
   'notification-tab-navigation': './scenarios/notification-tab-navigation.scenario.mjs',
   'voice-input': './scenarios/voice-input.scenario.mjs',
   'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
@@ -95,7 +96,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
 
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
   'codex-invalid-launch-cwd': './scenarios/codex-invalid-launch-cwd.scenario.mjs',
-  'executor-stream-recovery': './scenarios/executor-stream-recovery.scenario.mjs',
+  'executor-stream-recovery': './scenarios/executor-retry-status.scenario.mjs',
   'model-overload-recovery': './scenarios/goal-overload-recovery.scenario.mjs',
   'transcript-sync': './scenarios/transcript-sync.scenario.mjs',
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
@@ -194,6 +195,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'mcp-apps',
   'notification-tab-navigation',
   'voice-input',
   'archived-worktree-cleanup',

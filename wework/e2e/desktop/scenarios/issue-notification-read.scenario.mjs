@@ -87,6 +87,10 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         // No manual notification refresh: the read response must update the badge immediately.
         await control.command('waitFor', BADGE, { text: String(2 - index) })
         await control.command('click', `${ACTIVE} [data-testid="cloud-todo-detail-close"]`)
+        // The board stays covered until the drawer's exit animation commits.
+        await control.command('waitFor', `${ACTIVE} [data-testid="collaboration-issue-detail"]`, {
+          visible: false,
+        })
       }
       await control.command('click', `${ACTIVE} [data-testid="cloud-todo-card-${issues[2].id}"]`)
       await control.command('waitFor', `${ACTIVE} [data-testid="cloud-task-status-event-0"]`)

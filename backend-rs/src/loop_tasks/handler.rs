@@ -13,7 +13,7 @@
 //! `list_task_bindings` first runs `LoopItemService.get`:
 //! `_get_item_row` (absent or deleted -> 404 "TODO not found") followed by
 //! `_require_item_access` (`require_cloud_project_role(Viewer)` plus
-//! `can_view_item`), then lists the binding rows newest first.
+//! `can_view_item`), then lists the caller-owned binding rows newest first.
 use chrono::NaiveDateTime;
 
 use super::http_error::HttpError;
@@ -56,7 +56,7 @@ async fn loop_item_tasks(
 
     // `list_task_bindings` rows.
     let bindings = LoopItemRepository::new(&state.mysql)
-        .list_task_bindings(item_id)
+        .list_task_bindings(item_id, user_id)
         .await
         .map_err(HttpError::internal)?;
     Ok(bindings.iter().map(binding_response).collect())

@@ -3,9 +3,10 @@ export const conversationMessages: Record<
   Record<string, string>
 > = {
   "zh-CN": {
-    'conversation.tool_activity.review_approved': 'AI 审核已通过',
-    'conversation.tool_activity.review_blocked': '操作未执行：AI 审核未通过或未完成',
-    'conversation.tool_activity.review_running': 'AI 正在审核操作…',
+    "conversation.tool_activity.review_approved": "AI 审核已通过",
+    "conversation.tool_activity.review_blocked":
+      "操作未执行：AI 审核未通过或未完成",
+    "conversation.tool_activity.review_running": "AI 正在审核操作…",
     "conversation.request_user_input.expires_in":
       "请在 {{time}} 内回复，超时后需重新发起。",
     "conversation.request_user_input.expired":
@@ -335,6 +336,7 @@ export const conversationMessages: Record<
     "conversation.tool_activity.other": "其他工具",
     "conversation.tool_activity.other_action": "调用工具",
     "conversation.tool_activity.reconnecting": "连接中断，正在重连…",
+    "conversation.tool_activity.rate_limit_wait": "模型限流，等待自动重试…",
     "conversation.tool_activity.renamed_file": "重命名 {{filename}}",
     "conversation.tool_activity.search": "搜索",
     "conversation.tool_activity.search_action": "搜索代码",
@@ -386,9 +388,10 @@ export const conversationMessages: Record<
     "conversation.file_changes.review_failed": "加载文件变更失败",
   },
   en: {
-    'conversation.tool_activity.review_approved': 'AI review approved',
-    'conversation.tool_activity.review_blocked': 'Not executed: AI review denied or incomplete',
-    'conversation.tool_activity.review_running': 'AI is reviewing the action…',
+    "conversation.tool_activity.review_approved": "AI review approved",
+    "conversation.tool_activity.review_blocked":
+      "Not executed: AI review denied or incomplete",
+    "conversation.tool_activity.review_running": "AI is reviewing the action…",
     "conversation.request_user_input.expires_in":
       "Reply within {{time}}. After expiry, request a new confirmation.",
     "conversation.request_user_input.expired":
@@ -745,6 +748,8 @@ export const conversationMessages: Record<
     "conversation.tool_activity.other_action": "Call tool",
     "conversation.tool_activity.reconnecting":
       "Connection interrupted. Reconnecting…",
+    "conversation.tool_activity.rate_limit_wait":
+      "Model rate limited. Waiting to retry…",
     "conversation.tool_activity.renamed_file": "Renamed {{filename}}",
     "conversation.tool_activity.search": "Searches",
     "conversation.tool_activity.search_action": "Search code",

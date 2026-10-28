@@ -3733,6 +3733,7 @@ export function PluginsWorkspace({
 
   useEffect(() => {
     if (!cloudMarketplaceAvailable || !cloudToken || !currentDeviceId) return
+    if (pluginMutationInFlight) return
     if (!deviceCloudConnected) return
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
@@ -3878,6 +3879,7 @@ export function PluginsWorkspace({
     pluginApi,
     pluginMarketplaceState.isLoading,
     pluginMarketplaceState.items,
+    pluginMutationInFlight,
     t,
   ])
 

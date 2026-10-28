@@ -107,6 +107,10 @@ executor_lock="${executor_lock/wework_target=false/wework_target=true}"
 assert_warmup_case "executor lock" "$executor_lock" "executor/Cargo.lock"
 backend_rs_lock="${warmup_all_false/wework_target=false/wework_target=true}"
 assert_warmup_case "Backend Rust lock" "$backend_rs_lock" "backend-rs/Cargo.lock"
+assert_warmup_case "Backend Rust OCI resolver" "$backend_rs_lock" \
+  ".github/scripts/resolve-backend-rs-e2e-runtime.sh"
+assert_warmup_case "Backend Rust OCI recipe" "$backend_rs_lock" \
+  ".github/runtime-images/backend-rs-e2e.Dockerfile"
 assert_warmup_case "Backend Rust source" "$backend_rs_lock" \
   "backend-rs/src/hybrid.rs"
 assert_warmup_case "Executor source warms desktop sidecar" "$executor_lock" \

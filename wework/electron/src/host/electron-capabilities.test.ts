@@ -52,7 +52,9 @@ const electronMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('electron', () => ({
+  protocol: { handle: vi.fn(), unhandle: vi.fn() },
   app: {
+    once: vi.fn(),
     getPath: electronMocks.appGetPath,
     getVersion: electronMocks.appGetVersion,
   },

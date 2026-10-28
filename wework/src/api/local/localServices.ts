@@ -1,4 +1,5 @@
 import { createStandInExecutorApi } from '@/api/standIn'
+import type { McpAppRequest } from '@/api/mcpApps'
 import { createLocalProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { requestRunnerSelection } from '@/lib/runner-selection'
 import {
@@ -2926,6 +2927,9 @@ export function createRuntimeWorkApiFromIpc(
         },
         localDeviceId
       )
+    },
+    async requestMcpApp<T = unknown>(data: McpAppRequest): Promise<T> {
+      return requestWithLocalDevice<T, McpAppRequest>('runtime.mcp_apps.request', data)
     },
     async cleanRuntimeBackgroundTerminals(
       address: RuntimeTaskAddress

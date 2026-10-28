@@ -1,4 +1,5 @@
 import './host/process-output-bootstrap.js'
+import { MCP_APP_SCHEME } from './host/mcp-app-documents.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
 import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
@@ -13,6 +14,7 @@ import {
   nativeImage,
   nativeTheme,
   powerMonitor,
+  protocol,
   screen,
   session,
   shell,
@@ -164,6 +166,13 @@ import { syncDockBadge } from './host/dock-badge.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import { normalizeWeworkSyncApiBaseUrl, requestWeworkSync } from './host/wework-sync-request.js'
 import { fixedWorkspaceWindowDescriptors } from './host/fixed-workspace-window-restore.js'
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: MCP_APP_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+  },
+])
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {

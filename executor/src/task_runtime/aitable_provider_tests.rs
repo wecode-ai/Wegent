@@ -30,14 +30,12 @@ fn translates_dingtalk_view_configuration_into_record_query_arguments() {
 
     assert_eq!(config.field_ids.as_deref(), Some("fld_title,fld_owner"));
     assert_eq!(
-        config.filters.as_deref(),
-        Some(
-            r#"{"operands":[{"operands":["fld_owner","user-1"],"operator":"eq"}],"operator":"and"}"#
-        )
+        serde_json::from_str::<Value>(config.filters.as_deref().unwrap()).unwrap(),
+        view["filter"]
     );
     assert_eq!(
-        config.sort.as_deref(),
-        Some(r#"[{"direction":"asc","fieldId":"fld_title"}]"#)
+        serde_json::from_str::<Value>(config.sort.as_deref().unwrap()).unwrap(),
+        view["sort"]
     );
 }
 

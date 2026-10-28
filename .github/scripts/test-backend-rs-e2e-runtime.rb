@@ -14,7 +14,8 @@ step = ->(name) { steps.find { |candidate| candidate["name"] == name }.fetch("ru
 digest = steps.find { |candidate| candidate["id"] == "runtime" }
   .fetch("env").fetch("SOURCE_DIGEST")
 
-%w[backend-rs/examples/** .github/workflows/e2e-tests.yml].each do |input|
+recipe = ".github/runtime-images/backend-rs-e2e.Dockerfile"
+%W[backend-rs/examples/** #{recipe}].each do |input|
   raise "Backend Rust runtime digest omits #{input}" unless digest.include?("'#{input}'")
 end
 %w[wework-e2e.yml ci-cache-warmup.yml].each do |name|
@@ -32,6 +33,8 @@ end
 # Execute the actual workflow steps with process-boundary fixtures. These are
 # workflow unit tests, not substitutes for the CI's real storage/desktop E2E.
 Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
+  FileUtils.mkdir_p(File.join(directory, File.dirname(recipe)))
+  FileUtils.cp(File.join(root, recipe), File.join(directory, recipe))
   bin = File.join(directory, "bin")
   FileUtils.mkdir_p(bin)
   File.write(File.join(bin, "cargo"), <<~'SH')
@@ -55,11 +58,20 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
     case "$1" in
       build)
         context="${@: -1}"
+        shift
+        while (($# > 1)); do
+          case "$1" in
+            --file) recipe="$2"; shift 2 ;;
+            --tag) shift 2 ;;
+            *) exit 1 ;;
+          esac
+        done
+        test -f "${recipe:?Docker build must use its checked-in recipe}"
         mkdir -p "$TEST_IMAGE/app"
         while read -r instruction source destination; do
           [[ "$instruction" == COPY ]] || continue
           cp "$context/$source" "$TEST_IMAGE$destination"
-        done < "$context/Dockerfile"
+        done < "$recipe"
         ;;
       push|pull) ;;
       create) echo contract-container ;;
@@ -85,15 +97,22 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
   run.call("Publish content-addressed Backend Rust E2E image", true)
   FileUtils.rm_rf(File.join(directory, ".ci-artifacts"))
   run.call("Restore content-addressed Backend Rust E2E binary", true)
-  %w[wegent-backend-rs attachment-s3-e2e].each do |artifact|
+  artifacts = %w[wegent-backend-rs attachment-s3-e2e attachment-hosting-e2e]
+  artifacts.each do |artifact|
     raise "Runtime restoration lost #{artifact}" unless File.executable?(
       File.join(directory, ".ci-artifacts", artifact))
   end
   raise "Cached container was not released" unless File.exist?(environment.fetch("TEST_CLEANUP"))
-  FileUtils.rm(environment.fetch("TEST_CLEANUP"))
-  FileUtils.rm(File.join(directory, "image/app/attachment-s3-e2e"))
-  run.call("Restore content-addressed Backend Rust E2E binary", false)
-  raise "Failed restore leaked its container" unless File.exist?(environment.fetch("TEST_CLEANUP"))
+  artifacts.each do |artifact|
+    FileUtils.rm(environment.fetch("TEST_CLEANUP"))
+    path = File.join(directory, "image/app", artifact)
+    content = File.binread(path)
+    FileUtils.rm(path)
+    run.call("Restore content-addressed Backend Rust E2E binary", false)
+    raise "Failed #{artifact} restore leaked its container" unless File.exist?(
+      environment.fetch("TEST_CLEANUP"))
+    File.binwrite(path, content)
+  end
 end
 
 puts "Backend Rust E2E artifact and shared cache-key contract tests passed"

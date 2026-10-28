@@ -134,6 +134,7 @@ mod connections;
 mod context_compaction;
 mod fork_transfer;
 mod hooks;
+mod mcp_apps;
 mod notifications;
 mod personal_stand_in;
 mod plugin_install;
@@ -1211,6 +1212,7 @@ impl RuntimeWorkRpcHandler {
                 self.handle_stand_in_assignment(payload).await?;
                 Ok(json!({"success":true}))
             }
+            "runtime.mcp_apps.request" => self.mcp_app_request(payload).await,
             "runtime.tasks.list" => self.list_tasks(&payload).await,
             "runtime.tasks.get" => self.get_task(&payload),
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
