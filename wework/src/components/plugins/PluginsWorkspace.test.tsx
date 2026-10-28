@@ -2519,6 +2519,64 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByText('Documents')).toBeInTheDocument()
   })
 
+  test('search reveals a local plugin outside the category preview without rereading catalogs', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({ marketplaceCount: 20 })
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'custom-local',
+          path: '/tmp/custom-local',
+          plugins: [
+            {
+              ...defaultCodexPlugin,
+              id: 'local-1',
+              name: 'local-docs',
+              displayName: 'Local Docs',
+            },
+          ],
+        },
+      ],
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await screen.findByTestId('plugins-marketplace-tab-custom-local')
+    await waitFor(() =>
+      expect(
+        getPluginMarketplaceCache(
+          pluginMarketplaceCacheKey('/api', 'cloud-token')
+        )?.marketplaceItems.some(item => item.name === 'local-docs')
+      ).toBe(true)
+    )
+    const localRow = 'plugin-marketplace-row-custom-local:local-1'
+    expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(4)
+    expect(screen.queryByTestId(localRow)).not.toBeInTheDocument()
+    const cloudCatalogReads = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([url]) => String(url).startsWith('/api/plugins/marketplace')).length
+    const localCatalogReads = () =>
+      vi
+        .mocked(requestLocalExecutor)
+        .mock.calls.filter(
+          ([method, args]) =>
+            method === 'codex.app_server_request' &&
+            (args as { method?: string })?.method === 'plugin/list'
+        ).length
+    const cloudReadsBeforeSearch = cloudCatalogReads()
+    const localReadsBeforeSearch = localCatalogReads()
+    expect(cloudReadsBeforeSearch).toBeGreaterThan(0)
+    expect(localReadsBeforeSearch).toBeGreaterThan(0)
+
+    fireEvent.change(screen.getByTestId('plugins-search-input'), {
+      target: { value: 'Local Docs' },
+    })
+
+    expect(await screen.findByTestId(localRow)).toHaveTextContent('Local Docs')
+    expect(cloudCatalogReads()).toBe(cloudReadsBeforeSearch)
+    expect(localCatalogReads()).toBe(localReadsBeforeSearch)
+  })
+
   test('keeps the current catalog stable while the user is still typing', async () => {
     render(<PluginsWorkspace />)
 

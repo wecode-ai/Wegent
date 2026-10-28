@@ -574,6 +574,8 @@ export async function verifyPluginScopeBoundaries({
       await control.command('waitFor', testId(`plugin-marketplace-row-${cloudMarker.pluginId}`), {
         timeoutMs,
       })
+      // Category previews only mount four rows; search the already-loaded cold catalog.
+      await control.command('fill', testId('plugins-search-input'), { value: PLUGIN_DISPLAY_NAME })
       const localCatalogRow = await waitForTestIdByText(
         control,
         'body',

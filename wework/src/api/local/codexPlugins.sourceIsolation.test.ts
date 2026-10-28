@@ -207,6 +207,7 @@ describe('local plugin source isolation', () => {
     expect(durable).not.toContain('installedSources')
     expect(durable).not.toContain('installedPartial')
     expect(durable).not.toContain('installedReadGeneration')
+    expect(JSON.parse(durable!).entries['|all|all-kinds'].state.catalogPartial).toBe(false)
   })
 
   test('publishes a fresh personal disk install over an older Codex personal cache', async () => {
@@ -588,4 +589,125 @@ describe('local plugin source isolation', () => {
     await api.listInstalledPlugins({ requireComplete: true })
     expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.partial).not.toBe(true)
   })
+
+  test.each(['personal', 'empty-personal', 'empty-config'])(
+    'keeps a completed %s disk result when a later installed read fails after waiting',
+    async source => {
+      const api = createLocalCodexPluginApi()
+      const params = { mergeAllMarketplaces: true as const }
+      await api.readState({ ...params, refresh: true })
+      if (source !== 'personal') await listLocalInstalledPluginsFromDisk()
+      if (source === 'empty-personal') empty.add('executor.plugins.personal.list')
+      if (source === 'empty-config') empty.add('executor.codex_home.config.read')
+      const original = mocks.request.getMockImplementation()!
+      let releasePersonal!: (value: typeof personal) => void
+      let rejectInstalled!: (error: Error) => void
+      mocks.request.mockImplementation((method, args) => {
+        if (method === 'executor.plugins.personal.list')
+          return new Promise(resolve => {
+            releasePersonal = resolve
+          })
+        if (method === 'codex.app_server_request' && args.method === 'plugin/installed')
+          return new Promise((_resolve, reject) => {
+            rejectInstalled = reject
+          })
+        return original(method, args)
+      })
+
+      const disk = listLocalInstalledPluginsFromDisk()
+      await vi.waitFor(() => expect(releasePersonal).toBeTypeOf('function'))
+      const installed = api.listInstalledPlugins({ refresh: true })
+      await vi.waitFor(() => expect(rejectInstalled).toBeTypeOf('function'))
+      releasePersonal(source === 'empty-personal' ? { ...personal, plugins: [] } : personal)
+      await disk
+      const expected = source === 'personal' ? ['managed-tool', 'personal-tool'] : ['managed-tool']
+      expect(
+        peekLocalCodexPluginsReadState(params)
+          ?.installedPlugins.map(plugin => plugin.spec.source.pluginKey)
+          .sort()
+      ).toEqual(expected)
+      rejectInstalled(new Error('Codex installed read failed after disk recovery'))
+
+      const result = await installed
+      expect(result.partial).toBe(true)
+      expect(result.items.map(plugin => plugin.spec.source.pluginKey).sort()).toEqual(expected)
+      expect(
+        peekLocalCodexPluginsReadState(params)
+          ?.installedPlugins.map(plugin => plugin.spec.source.pluginKey)
+          .sort()
+      ).toEqual(expected)
+      mocks.request.mockImplementation(original)
+      empty.add('plugin/installed')
+      expect(
+        (await api.listInstalledPlugins({ requireComplete: true })).items.map(
+          plugin => plugin.spec.source.pluginKey
+        )
+      ).toEqual(['managed-tool'])
+      expect(peekLocalCodexPluginsReadState(params)?.partial).not.toBe(true)
+    }
+  )
+
+  test.each([true, false])(
+    'keeps the target catalog partial=%s independent from another selection',
+    async targetPartial => {
+      const api = createLocalCodexPluginApi()
+      const target = { mergeAllMarketplaces: true as const }
+      await api.readState({ ...target, refresh: true })
+      if (targetPartial) {
+        failures.add('plugin/list')
+        expect((await api.readState({ ...target, refresh: true })).partial).toBe(true)
+      }
+      failures.clear()
+      if (!targetPartial) failures.add('plugin/list')
+      await api.readState({ marketplaceId: 'wework-personal', refresh: true })
+      await listLocalInstalledPluginsFromDisk()
+
+      const peeked = peekLocalCodexPluginsReadState(target)!
+      expect(Boolean(peeked.partial)).toBe(targetPartial)
+      expect(peeked.installedPlugins.map(plugin => plugin.spec.source.pluginKey).sort()).toEqual([
+        'managed-tool',
+        'personal-tool',
+      ])
+      expect(Boolean((await api.readState(target)).partial)).toBe(targetPartial)
+      failures.clear()
+      await api.listInstalledPlugins({ requireComplete: true })
+      expect(Boolean(peekLocalCodexPluginsReadState(target)?.partial)).toBe(targetPartial)
+      expect((await api.readState({ ...target, refresh: true })).partial).not.toBe(true)
+      expect(
+        mocks.request.mock.calls.some(([method]) => method === 'executor.plugins.personal.ensure')
+      ).toBe(false)
+    }
+  )
+
+  test.each(['current', 'legacy'])(
+    'hydrates %s catalog failures independently from inventory until a full recovery',
+    async version => {
+      const params = { mergeAllMarketplaces: true as const }
+      const api = createLocalCodexPluginApi()
+      await api.readState({ ...params, refresh: true })
+      failures.add('plugin/list')
+      expect((await api.readState({ ...params, refresh: true })).partial).toBe(true)
+      if (version === 'legacy') {
+        const key = 'wework.plugins.codexCatalog.v1'
+        const durable = JSON.parse(localStorage.getItem(key)!)
+        durable.version = 1
+        delete durable.entries['|all|all-kinds'].state.catalogPartial
+        localStorage.setItem(key, JSON.stringify(durable))
+      }
+      vi.resetModules()
+      const cold = await import('./codexPlugins')
+      try {
+        expect(cold.peekLocalCodexPluginsReadState(params)?.partial).toBe(true)
+        expect(cold.peekLocalCodexPluginsReadState(params)?.installedPlugins).toEqual([])
+        failures.clear()
+        await cold.createLocalCodexPluginApi().listInstalledPlugins({ requireComplete: true })
+        expect(cold.peekLocalCodexPluginsReadState(params)?.partial).toBe(true)
+        expect(
+          (await cold.createLocalCodexPluginApi().readState({ ...params, refresh: true })).partial
+        ).not.toBe(true)
+      } finally {
+        cold.clearLocalCodexPluginsReadStateCache()
+      }
+    }
+  )
 })

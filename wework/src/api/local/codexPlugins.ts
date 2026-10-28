@@ -378,7 +378,7 @@ let warmupReadStatePromise: Promise<LocalCodexPluginsState> | null = null
 type PersistedReadStateEntry = {
   paramsKey: string
   cachedAt: number
-  state: LocalCodexPluginsState
+  state: LocalCodexPluginsState & Pick<CachedPluginsState, 'catalogPartial'>
 }
 
 type PersistedReadStateStore = {
@@ -623,7 +623,8 @@ function toDurableReadState(state: CachedPluginsState): CachedPluginsState {
     // Persisting it here created a second seven-day source that survived uninstall.
     installedPlugins: [],
     installedSources: undefined,
-    catalogPartial: undefined,
+    // Legacy snapshots have only a combined partial flag; preserve that uncertainty.
+    catalogPartial: state.catalogPartial ?? Boolean(state.partial),
     installedPartial: undefined,
     installedReadGeneration: undefined,
   }
@@ -796,15 +797,15 @@ export function peekLocalCodexPluginsReadState(
   if (Date.now() - persisted.cachedAt > READ_STATE_DURABLE_TTL_MS) return null
   if (!readStateMatchesDevice(persisted.state, deviceId)) return null
   const session = readStateMatchesDevice(cachedState, deviceId) ? cachedState : null
+  // Catalog completeness belongs to this selection; only inventory is shared.
   cachedState = session
     ? {
         ...persisted.state,
         installedPlugins: session.installedPlugins,
         installedSources: session.installedSources,
-        catalogPartial: session.catalogPartial,
         installedPartial: session.installedPartial,
         installedReadGeneration: session.installedReadGeneration,
-        partial: session.partial,
+        partial: persisted.state.catalogPartial || session.installedPartial,
       }
     : persisted.state
   cachedStateAt = persisted.cachedAt
@@ -2245,7 +2246,7 @@ async function loadReadStateSnapshot(
     installRegistryPath: '',
     deviceId,
     installedSources,
-    catalogPartial: catalogFailed || undefined,
+    catalogPartial: catalogFailed,
     installedPartial: !installedRead || installedRead.partial || linksFailed,
     installedReadGeneration: generation,
     ...(partial ? { partial: true } : {}),
@@ -2467,7 +2468,6 @@ async function loadInstalledPluginsOnly(
 }> {
   const executorStatus = startedExecutor ?? (await ensureLocalExecutorStarted())
   const deviceId = executorStatus.deviceId?.trim() ?? ''
-  const previous = readStateMatchesDevice(cachedState, deviceId) ? cachedState : null
   const [installedResult, storeResult] = await Promise.allSettled([
     ensureBundledPluginMarketplaceRegistered().then(async () => {
       const response = await requestPluginInstalled({ shareInflight: options.shareInflight })
@@ -2477,18 +2477,8 @@ async function loadInstalledPluginsOnly(
     listWegentStorePluginsFromDisk(options.requireComplete),
   ])
   const failures = [installedResult, storeResult].filter(result => result.status === 'rejected')
-  if (
-    failures.length &&
-    (options.requireComplete || (failures.length === 2 && !previous?.installedSources))
-  ) {
+  if (failures.length && options.requireComplete) {
     throw (failures[0] as PromiseRejectedResult).reason
-  }
-  const installedSources = {
-    ...previous?.installedSources,
-    ...(installedResult.status === 'fulfilled'
-      ? { codex: installedResult.value, personal: undefined }
-      : {}),
-    ...(storeResult.status === 'fulfilled' ? { store: storeResult.value } : {}),
   }
   const bundled = getInitializedBundledPluginMarketplace()
   const personalPath =
@@ -2502,6 +2492,18 @@ async function loadInstalledPluginsOnly(
           return [] as LocalPluginCloudLink[]
         })
       : []
+  // A failed source must inherit any successful inventory published while it waited.
+  const previous = readStateMatchesDevice(cachedState, deviceId) ? cachedState : null
+  if (failures.length === 2 && !previous?.installedSources) {
+    throw (failures[0] as PromiseRejectedResult).reason
+  }
+  const installedSources = {
+    ...previous?.installedSources,
+    ...(installedResult.status === 'fulfilled'
+      ? { codex: installedResult.value, personal: undefined }
+      : {}),
+    ...(storeResult.status === 'fulfilled' ? { store: storeResult.value } : {}),
+  }
   // Composer / auth gates only need membership. Never call plugin/list here — it
   // reconciles for ~10s and stalls Codex turns on the shared app-server.
   const installedPlugins = mergeLocalInstalledWithStorePackages(

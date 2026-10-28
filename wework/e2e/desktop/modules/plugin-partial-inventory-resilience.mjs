@@ -30,6 +30,81 @@ function within(root, target) {
   return suffix && !isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith(`..${sep}`)
 }
 
+function completedRecoveryRequests(requests, recoveryStartIndex, installedId) {
+  const fresh = requests.slice(recoveryStartIndex)
+  return [
+    '/api/plugins/installed/auto-update-batch',
+    '/api/plugins/installed/sync-device',
+    `/api/plugins/installed/${installedId}/sync-device`,
+  ].map(path =>
+    fresh.find(
+      request =>
+        request.method === 'POST' &&
+        request.path === path &&
+        request.status === 200 &&
+        request.responseCompleted === true
+    )
+  )
+}
+
+export function assertRecoveredPluginInventory({
+  store,
+  installed,
+  expected,
+  requests,
+  recoveryStartIndex,
+}) {
+  assert.equal(store?.ok, true, 'The live local inventory read failed after recovery')
+  assert.equal(
+    store.result?.supportsPluginReconciliation,
+    true,
+    'The live local inventory does not support complete reconciliation'
+  )
+  assert.ok(Array.isArray(store.result.plugins), 'The live local inventory is incomplete')
+  const matches = store.result.plugins.filter(
+    plugin => plugin.installedPluginId === expected.installedId
+  )
+  assert.equal(matches.length, 1, 'The upgraded target is missing or duplicated in live inventory')
+  const [local] = matches
+  assert.equal(local.name, expected.slug)
+  assert.equal(
+    local.version,
+    expected.version,
+    'The live local inventory still has the old package'
+  )
+  assert.ok(!local.runtimeRecoveryError, 'The upgraded target still has a runtime recovery error')
+  assert.equal(Number(installed?.metadata.labels.id), expected.installedId)
+  assert.equal(installed.spec.source.pluginKey, expected.slug)
+  assert.equal(installed.spec.releaseId, expected.releaseId, 'The account release is stale')
+  assert.equal(installed.spec.version, expected.version)
+  const devices = (installed.status.devices ?? []).filter(
+    device => device.deviceId === expected.deviceId
+  )
+  assert.equal(devices.length, 1, 'The upgraded target has no unique current-device state')
+  const [device] = devices
+  assert.equal(device.state, 'installed')
+  assert.equal(device.desiredReleaseId, expected.releaseId, 'The desired device release is stale')
+  assert.equal(device.actualReleaseId, expected.releaseId, 'The actual device release is stale')
+  assert.ok(!device.errorCode, 'The upgraded device still reports a synchronization error')
+  assert.ok(
+    Number.isSafeInteger(recoveryStartIndex) && recoveryStartIndex >= 0,
+    'Recovery requires an explicit request baseline'
+  )
+  const completed = completedRecoveryRequests(requests, recoveryStartIndex, expected.installedId)
+  assert.ok(
+    completed.every(Boolean),
+    'Recovery must complete fresh automatic-update batch, device repair and target sync requests'
+  )
+  return {
+    installedId: local.installedPluginId,
+    deviceId: device.deviceId,
+    version: local.version,
+    releaseId: device.actualReleaseId,
+    completeStoreRead: true,
+    completedRequests: completed,
+  }
+}
+
 /** A real incomplete local source must never authorize cloud inventory mutations. */
 export async function verifyPluginPartialInventoryResilience({
   cloud,
@@ -448,7 +523,6 @@ export async function verifyPluginPartialInventoryResilience({
     assert.ok(report.manifestRestored)
     const restored = await executor('executor.plugins.store.list')
     assert.equal(restored.ok, true, 'The real local store did not recover')
-    const recoveryStartedAt = Date.now()
     const recoveryRequestStart = apiProxy.requests.length
     await refresh()
     report.recovery = {}
@@ -466,44 +540,28 @@ export async function verifyPluginPartialInventoryResilience({
       timeoutMs
     )
     await until(
-      () => apiProxy.requests.slice(recoveryRequestStart),
-      requests =>
-        requests.some(
-          request =>
-            request.method === 'POST' &&
-            request.path === '/api/plugins/installed/sync-device' &&
-            request.status === 200
-        ),
-      'The recovered explicit refresh did not perform real state-repair synchronization',
+      () => completedRecoveryRequests(apiProxy.requests, recoveryRequestStart, fixture.installedId),
+      requests => requests.every(Boolean),
+      'Recovery did not finish the real automatic update, state repair and target synchronization',
       timeoutMs
     )
-    report.snapshots.push(
-      await until(
-        () => snapshot(false, recoveryStartedAt),
-        Boolean,
-        'Recovery did not produce a fresh complete local catalog snapshot',
-        timeoutMs
-      )
-    )
+    // Automatic updates may clear the durable catalog, and installed-only reads
+    // intentionally update memory. Prove recovery through a new real source read.
+    const liveStore = await executor('executor.plugins.store.list')
+    report.recovery.liveInventory = assertRecoveredPluginInventory({
+      store: liveStore,
+      installed: recovered,
+      expected: {
+        installedId: fixture.installedId,
+        slug,
+        deviceId,
+        releaseId: next.releaseId,
+        version: '2.0.0',
+      },
+      requests: apiProxy.requests,
+      recoveryStartIndex: recoveryRequestStart,
+    })
     const requests = apiProxy.requests.slice(recoveryRequestStart)
-    assert.ok(
-      requests.some(
-        request =>
-          request.method === 'POST' &&
-          request.path === '/api/plugins/installed/auto-update-batch' &&
-          request.status === 200
-      ),
-      'Recovery never reached the real automatic-update batch API'
-    )
-    assert.ok(
-      requests.some(
-        request =>
-          request.method === 'POST' &&
-          request.path === `/api/plugins/installed/${fixture.installedId}/sync-device` &&
-          request.status === 200
-      ),
-      'Recovery never synchronized the upgraded fixture through the real API'
-    )
     const active = await materializedPlugin(executorHome, fixture.installedId)
     assert.ok(active, 'Recovered upgrade is absent from the active device manifest')
     const runtimeRoot = await realpath(

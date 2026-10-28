@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { assertSurfaces } from '../e2e/desktop/modules/plugin-regression-fixture.mjs'
+import { assertRecoveredPluginInventory } from '../e2e/desktop/modules/plugin-partial-inventory-resilience.mjs'
 
 const plugin = { slug: 'uninstall-e2e-restart-pending', installedId: 71 }
 
@@ -90,3 +91,199 @@ test('missing installation identity cannot silently pass an absence assertion', 
 
   assert.equal(control.calls.length, 0)
 })
+
+function recoveredInventoryFixture() {
+  const expected = {
+    installedId: 71,
+    slug: 'partial-inventory-resilience',
+    deviceId: 'current-device',
+    releaseId: 8,
+    version: '2.0.0',
+  }
+  const completed = path => ({
+    method: 'POST',
+    path,
+    status: 200,
+    responseCompleted: true,
+  })
+  return {
+    expected,
+    recoveryStartIndex: 1,
+    requests: [
+      completed('/api/plugins/installed/auto-update-batch'),
+      completed('/api/plugins/installed/auto-update-batch'),
+      completed('/api/plugins/installed/sync-device'),
+      completed('/api/plugins/installed/71/sync-device'),
+    ],
+    store: {
+      ok: true,
+      result: {
+        supportsPluginReconciliation: true,
+        plugins: [
+          { installedPluginId: 70, name: 'unrelated-retained', version: '2.0.0' },
+          {
+            installedPluginId: 71,
+            name: expected.slug,
+            version: '2.0.0',
+            runtimeRecoveryError: null,
+          },
+        ],
+      },
+    },
+    installed: {
+      metadata: { labels: { id: '71' } },
+      spec: { source: { pluginKey: expected.slug }, releaseId: 8, version: '2.0.0' },
+      status: {
+        devices: [
+          { deviceId: 'other-device', state: 'installed', desiredReleaseId: 6, actualReleaseId: 6 },
+          {
+            deviceId: expected.deviceId,
+            state: 'installed',
+            desiredReleaseId: 8,
+            actualReleaseId: 8,
+            errorCode: null,
+          },
+        ],
+      },
+    },
+  }
+}
+
+test('complete live recovery succeeds without repopulating a cleared durable catalog', () => {
+  const fixture = recoveredInventoryFixture()
+
+  const recovered = assertRecoveredPluginInventory(fixture)
+
+  assert.equal(recovered.completeStoreRead, true)
+  assert.equal(recovered.installedId, 71)
+  assert.equal(recovered.deviceId, 'current-device')
+  assert.equal(recovered.version, '2.0.0')
+  assert.equal(recovered.releaseId, 8)
+  assert.deepEqual(recovered.completedRequests, fixture.requests.slice(fixture.recoveryStartIndex))
+})
+
+for (const [name, damage, message] of [
+  [
+    'failed live source',
+    input => {
+      input.store.ok = false
+    },
+    /live local inventory read failed/,
+  ],
+  [
+    'unsupported complete source',
+    input => {
+      input.store.result.supportsPluginReconciliation = false
+    },
+    /does not support complete reconciliation/,
+  ],
+  [
+    'incomplete live source',
+    input => {
+      delete input.store.result.plugins
+    },
+    /inventory is incomplete/,
+  ],
+  [
+    'missing target among healthy plugins',
+    input => {
+      input.store.result.plugins.pop()
+    },
+    /missing or duplicated/,
+  ],
+  [
+    'duplicate target',
+    input => {
+      input.store.result.plugins.push({ ...input.store.result.plugins[1] })
+    },
+    /missing or duplicated/,
+  ],
+  [
+    'stale live package',
+    input => {
+      input.store.result.plugins[1].version = '1.0.0'
+    },
+    /old package/,
+  ],
+  [
+    'unrecovered local package',
+    input => {
+      input.store.result.plugins[1].runtimeRecoveryError = 'Package unavailable'
+    },
+    /runtime recovery error/,
+  ],
+  [
+    'stale account release',
+    input => {
+      input.installed.spec.releaseId = 6
+    },
+    /account release is stale/,
+  ],
+  [
+    'another healthy device',
+    input => {
+      input.installed.status.devices.pop()
+    },
+    /no unique current-device state/,
+  ],
+  [
+    'stale desired release',
+    input => {
+      input.installed.status.devices[1].desiredReleaseId = 6
+    },
+    /desired device release is stale/,
+  ],
+  [
+    'stale actual release',
+    input => {
+      input.installed.status.devices[1].actualReleaseId = 6
+    },
+    /actual device release is stale/,
+  ],
+  [
+    'device synchronization failure',
+    input => {
+      input.installed.status.devices[1].errorCode = 'sync_failed'
+    },
+    /synchronization error/,
+  ],
+  [
+    'only earlier successful mutations',
+    input => {
+      input.recoveryStartIndex = input.requests.length
+    },
+    /complete fresh automatic-update/,
+  ],
+  [
+    'missing request baseline',
+    input => {
+      delete input.recoveryStartIndex
+    },
+    /explicit request baseline/,
+  ],
+]) {
+  test(`recovery rejects ${name} even when other evidence is healthy`, () => {
+    const fixture = recoveredInventoryFixture()
+    damage(fixture)
+
+    assert.throws(() => assertRecoveredPluginInventory(fixture), message)
+  })
+}
+
+for (const requestIndex of [1, 2, 3]) {
+  test(`recovery rejects an unfinished mutation ${requestIndex} with HTTP 200 headers`, () => {
+    const fixture = recoveredInventoryFixture()
+    fixture.requests[requestIndex].responseCompleted = false
+
+    assert.throws(() => assertRecoveredPluginInventory(fixture), /complete fresh automatic-update/)
+  })
+
+  test(`recovery rejects failed mutation ${requestIndex} despite old successful requests`, () => {
+    const fixture = recoveredInventoryFixture()
+    fixture.requests.unshift({ ...fixture.requests[requestIndex] })
+    fixture.recoveryStartIndex += 1
+    fixture.requests[requestIndex + 1].status = 500
+
+    assert.throws(() => assertRecoveredPluginInventory(fixture), /complete fresh automatic-update/)
+  })
+}
