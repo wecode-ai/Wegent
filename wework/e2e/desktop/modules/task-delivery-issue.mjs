@@ -96,7 +96,6 @@ export function createTaskDeliveryIssueRegression({
 
       const drawer = `${CONTENT} .issue-drawer-detail`
       await control.command('waitFor', drawer, { text: issue.title })
-      await control.command('waitFor', drawer, { text: NOTES })
       assert.equal(
         Number(await control.command('getElementCount', '[data-testid="delivery-dialog"]')),
         0
@@ -112,6 +111,8 @@ export function createTaskDeliveryIssueRegression({
         delivery => !existingDeliveryIds.has(delivery.id)
       )
       assert.equal(newDeliveries.length, 1)
+      const persisted = await rpc('deliveries.get', { delivery_id: newDeliveries[0].id })
+      assert.equal(persisted.markdown, NOTES)
       const entry = `${drawer} [data-testid="todo-detail-open-delivery-${newDeliveries[0].id}"]`
       await control.command('click', entry)
       await control.command('waitFor', `${CONTENT} [data-testid="todo-detail-delivery-panel"]`, {
