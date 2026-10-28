@@ -213,6 +213,24 @@ test.describe('External DingTalk document import', () => {
         'E2E_产品说明'
       )
 
+      // index_status=success can briefly precede the body becoming readable
+      // through the detail API, which would leave the dialog without content.
+      // Wait for the restricted body at the API layer before asserting the UI.
+      await expect
+        .poll(
+          async () => {
+            const chunks = await getDocumentChunks(request, context.token, document.id)
+            return (JSON.parse(chunks) as Array<{ content?: string }>)
+              .map(chunk => chunk.content ?? '')
+              .join('\n')
+          },
+          {
+            timeout: 45_000,
+            message: 'Restricted preview body should be readable before the UI check',
+          }
+        )
+        .toContain('Restricted preview')
+
       await page.reload({ waitUntil: 'domcontentloaded' })
       await page.getByTestId(`document-row-${document.id}`).click()
       await expect(page.getByRole('heading', { name: 'Restricted preview' })).toBeVisible({

@@ -156,6 +156,30 @@ it('blocks iframe, object, and embed elements only for DingTalk documents', asyn
   expect(container.querySelector('iframe, object, embed')).toBeNull()
 })
 
+it('renders the E2E restricted-preview body with its heading, blocks, and cards together', async () => {
+  const { container } = render(
+    <DocumentContentViewer
+      {...props}
+      content={`# Restricted preview
+
+<iframe src="https://outside.example/iframe"></iframe>
+
+<object data="https://outside.example/object"></object>
+
+<embed src="https://outside.example/embed">
+
+[preview.txt](https://dingtalk-preview.invalid/preview.txt)
+
+[unavailable.txt](https://dingtalk-preview.invalid/unavailable.txt)`}
+    />
+  )
+
+  expect(await screen.findByRole('heading', { name: 'Restricted preview' })).toBeVisible()
+  expect(await screen.findAllByTestId('document-embedded-content-blocked')).toHaveLength(3)
+  expect(container.querySelector('iframe, object, embed')).toBeNull()
+  expect(await screen.findAllByTestId('document-link-preview-card')).toHaveLength(2)
+})
+
 it.each(['light', 'dark'])('uses a theme-aware document surface in %s mode', async theme => {
   mockTheme = theme
   const { container } = render(
