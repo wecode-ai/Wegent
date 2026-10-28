@@ -30,6 +30,8 @@ Native normalization produces turns/items and presentation messages in one pass.
 
 Edit/retry supersession markers filter native turns before normalization so both projections agree. Metadata reads reuse the existing startup retry only for explicit not-ready protocol errors; permanent errors still propagate to the caller.
 
+When an outcome-only Runtime snapshot completes a backend execution, the terminal transaction retains reconciliation eligibility for its bound turn. Delayed final text can fill that activity only when execution, project, task, and turn match, the execution root remains completed, and the event sequence advances. Filling text must not replay business workflow transitions. An activity with an execution binding whose execution record is missing must reject the update.
+
 Task navigation, reconnection, and lifecycle reconciliation use `synchronizeRuntimeConversation`: identical requests coalesce, competing writes within a conversation serialize, and other conversations proceed independently. Archival invalidates outstanding writes. Navigation metadata reads do not mutate transcript content.
 
 Live updates continue publishing during a history read. Their observed state is retained for the commit. Append-only tool deltas are materialized against that state before reconciliation, avoiding duplicate appends when native history already contains them. Text reconciliation uses stable item identity and preserves complete prefixes already included in native history. This contract does not claim that the upstream protocol exposes an atomic revision or watermark.

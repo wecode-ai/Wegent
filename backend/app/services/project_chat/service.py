@@ -1286,6 +1286,11 @@ class ProjectChatService:
             if completed is not None:
                 execution = self._execution_for_completed_activity(db, completed)
                 if (
+                    "execution_id" in (completed.metadata_json or {})
+                    and execution is None
+                ):
+                    return None
+                if (
                     execution is not None
                     and not accepted_terminal
                     and not can_restore_reconciled_completion(

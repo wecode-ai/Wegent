@@ -4,7 +4,6 @@ Reports contain identities and outcomes only, never conversation contents.
 They repair execution state without replaying business workflow callbacks.
 """
 
-import logging
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
@@ -26,7 +25,6 @@ from app.services.device.identity import (
 from app.services.project_chat.service import project_chat_service
 
 TERMINAL_STATUSES = {"done": "completed", "failed": "failed", "cancelled": "cancelled"}
-logger = logging.getLogger(__name__)
 
 
 def completed_activity_for_turn(
@@ -83,14 +81,6 @@ def can_restore_reconciled_completion(
     # Keep the aggregate -> activity lock order and read the concurrent winner.
     db.refresh(execution, with_for_update=True)
     if execution.status != "completed" or sequence <= execution.last_event_seq:
-        logger.info(
-            "[ProjectChat] Final content repair rejected: execution=%s "
-            "status=%s incoming_seq=%s execution_seq=%s",
-            execution.id,
-            execution.status,
-            sequence,
-            execution.last_event_seq,
-        )
         return False
     if activity is None:
         activity = completed_activity_for_turn(
@@ -99,34 +89,12 @@ def can_restore_reconciled_completion(
             task_id=execution.runtime_task_id,
             turn_id=payload.get("subtaskId") or payload.get("subtask_id"),
         )
-    eligible = activity is not None and (
+    return activity is not None and (
         str((activity.metadata_json or {}).get("execution_id")) == str(execution.id)
         and "runtime_completed_at" in (activity.metadata_json or {})
         and activity.project_id == execution.cloud_project_id
         and activity.task_id == execution.loop_item_id
     )
-    if not eligible:
-        logger.info(
-            "[ProjectChat] Final content repair has no matching snapshot: "
-            "execution=%s turn=%s activity=%s activity_execution=%s "
-            "activity_turn=%s reconciled=%s",
-            execution.id,
-            payload.get("subtaskId") or payload.get("subtask_id"),
-            activity.message_id if activity is not None else None,
-            (
-                (activity.metadata_json or {}).get("execution_id")
-                if activity is not None
-                else None
-            ),
-            (
-                (activity.metadata_json or {}).get("runtime_turn_id")
-                if activity is not None
-                else None
-            ),
-            activity is not None
-            and "runtime_completed_at" in (activity.metadata_json or {}),
-        )
-    return eligible
 
 
 def _match_turn(

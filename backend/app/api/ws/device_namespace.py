@@ -939,25 +939,6 @@ def _project_chat_runtime_event_sync(
             owner_user_id=user_id,
             allow_unsequenced_terminal=trusted_terminal_snapshot,
         )
-        if event_name == "response.completed":
-            data = payload.get("data")
-            final_text = project_chat_service._project_chat_final_text(
-                data if isinstance(data, dict) else {}, payload
-            )
-            logger.info(
-                "[ProjectChat] Final event projection: device=%s task=%s "
-                "turn=%s execution=%s matched=%s status=%s "
-                "event_seq=%s execution_seq=%s content_length=%s",
-                device_id,
-                runtime_task_id,
-                project_chat_service._runtime_turn_id(payload),
-                execution.id if execution is not None else None,
-                matched_execution is not None,
-                execution.status if execution is not None else None,
-                payload.get("eventSeq") or payload.get("event_seq"),
-                execution.last_event_seq if execution is not None else None,
-                len(final_text) if final_text is not None else None,
-            )
         if execution is not None and matched_execution is None:
             from app.services.project_chat.execution_snapshot import (
                 can_restore_reconciled_completion,
@@ -1011,16 +992,6 @@ def _project_chat_runtime_event_sync(
             accepted_terminal=matched_execution is not None
             and matched_execution.status == "completed",
         )
-        if event_name == "response.completed":
-            logger.info(
-                "[ProjectChat] Final event projection result: device=%s task=%s "
-                "message=%s content_length=%s mode=%s",
-                device_id,
-                runtime_task_id,
-                projected[0].message_id if projected is not None else None,
-                len(projected[0].content or "") if projected is not None else None,
-                projected[1] if projected is not None else None,
-            )
         if projected is None:
             return {
                 "message": None,
