@@ -3,7 +3,8 @@
   "runs": [
     "https://github.com/wecode-ai/Wegent/actions/runs/40657579676",
     "https://github.com/wecode-ai/Wegent/actions/runs/40667094596",
-    "https://github.com/wecode-ai/Wegent/actions/runs/40718345759"
+    "https://github.com/wecode-ai/Wegent/actions/runs/40718345759",
+    "https://github.com/wecode-ai/Wegent/actions/runs/40747839908"
   ],
   "seconds": {
     "application-menu": 41,
@@ -90,6 +91,7 @@
     "project-assignment-notification": 221,
     "project-automation": 116,
     "project-member-overrides": 103,
+    "project-space-tool-discovery": 68,
     "release-package-startup": 140,
     "remote-device-onboarding": 99,
     "renderer-crash-recovery": 28,
