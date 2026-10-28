@@ -7,7 +7,7 @@
 Run directly, outside pytest's service-mocking conftest. CI supplies the same
 running Backend, MySQL and Redis used by the other gateway API E2E tests.
 Only fixture rows are inserted directly; callbacks traverse the public listener,
-the Python parser/emitter, the event bus and the subscription completion handler.
+the Rust callback handler and the subscription completion handler.
 """
 
 from __future__ import annotations
@@ -56,8 +56,8 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         with Redis.from_url(os.environ["REDIS_URL"]) as redis:
             assert redis.ping(), "Real Redis is required"
         cls.client = httpx.Client(base_url=base_url, timeout=30, trust_env=False)
-        cls.python_log = Path(os.environ["E2E_PYTHON_LOG"])
-        assert cls.python_log.is_file(), "Python process log is required"
+        cls.rust_log = Path(os.environ["E2E_RUST_LOG"])
+        assert cls.rust_log.is_file(), "Rust process log is required"
         cls.evidence: list[dict] = []
 
     @classmethod
@@ -207,11 +207,24 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             self.assertEqual(after[field], expected, after)
             self.assertNotEqual(after[field], "RUNNING")
         self.assertEqual(after["version"], before["version"] + 1)
-        receipt = (
-            f"[TaskCompletionHandler] Received TaskCompletedEvent: "
-            f"task_id={self.task_id}, subtask_id={self.subtask_id}, status={expected}"
-        )
-        self.assertIn(receipt, self.python_log.read_text())
+        # Breeze flushes asynchronously; require the migrated handler's receipt
+        # for this exact callback as well as its durable database side effects.
+        deadline = time.monotonic() + 5
+        receipt_fields = {
+            f"task_id={self.task_id}",
+            f"subtask_id={self.subtask_id}",
+            f'status="{expected}"',
+        }
+        while True:
+            receipts = [
+                line
+                for line in self.rust_log.read_text().splitlines()
+                if "TaskCompletedEvent received" in line
+            ]
+            if any(receipt_fields <= set(line.split()) for line in receipts):
+                break
+            self.assertLess(time.monotonic(), deadline, receipts)
+            time.sleep(0.1)
         self.evidence.append(
             {"event_type": event_type, "before": before, "after": after}
         )
