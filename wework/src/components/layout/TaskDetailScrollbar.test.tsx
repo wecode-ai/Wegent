@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { createRef } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { TaskDetailScrollArea } from './TaskDetailScrollArea'
+import { runDesktopControlClient } from '@/e2e/automation'
 
 let contentHeight = 1600
 const resizes = new Set<() => void>()
@@ -178,6 +179,82 @@ test('keeps the grabbed thumb point under the pointer while measured content cha
   act(() => resizes.forEach(callback => callback()))
   expect(viewport.scrollTop).toBe(releasedTop)
 })
+
+test.each(['before grab', 'during drag', 'thumb drift'])(
+  'the continuous drag sampler measures the real grab point: %s',
+  async phase => {
+    const { viewport, track, thumb } = renderConversation()
+    thumb.getBoundingClientRect = () =>
+      new DOMRect(
+        392,
+        3 + Number.parseFloat(thumb.style.transform.replace('translateY(', '')),
+        8,
+        Number.parseFloat(thumb.style.height)
+      )
+    viewport.scrollTop = 600
+    fireEvent.scroll(viewport)
+    let grabOffset = 0
+    let pointerY = 0
+    thumb.addEventListener('pointerdown', event => {
+      grabOffset = event.clientY - thumb.getBoundingClientRect().top
+    })
+    track.addEventListener('pointermove', event => {
+      pointerY = event.clientY
+    })
+    let polls = 0
+    const results: Array<{ ok: boolean; value: string }> = []
+    vi.stubGlobal('fetch', (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        if (++polls > 1) return new Promise<Response>(() => {})
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: 'sample-drag',
+              action: 'sampleRapidMarkdownWindowing',
+              selector: '[data-testid="desktop-workbench-content"]',
+              value: JSON.stringify({
+                contentSelector: '[data-markdown-window-chunk]',
+                scrollbarSelector: '[data-testid="desktop-workbench-scrollbar"]',
+                framesPerRatio: 1,
+                ratios: [0.85],
+              }),
+            })
+          )
+        )
+      }
+      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+      return Promise.resolve(new Response('{}'))
+    })
+    void runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    await vi.waitFor(() => expect(frames.size).toBeGreaterThan(0))
+    // Search navigation moves the thumb after the command arrives, before its first sample.
+    if (phase === 'before grab') {
+      viewport.scrollTop = 620
+      fireEvent.scroll(viewport)
+    }
+    for (let frame = 0; frame < 3; frame++) {
+      if (phase === 'during drag' && frame === 2) {
+        contentHeight = 2400
+        act(() => resizes.forEach(callback => callback()))
+      }
+      if (phase === 'thumb drift' && frame === 2) {
+        const top = Number.parseFloat(thumb.style.transform.replace('translateY(', ''))
+        thumb.style.transform = `translateY(${top + 10}px)`
+      }
+      flushFrame()
+      await act(async () => {})
+    }
+    await vi.waitFor(() => expect(results).toHaveLength(1))
+    expect(results[0].ok).toBe(true)
+    const sample = JSON.parse(results[0].value).samples[0]
+    const expectedError = phase === 'thumb drift' ? 10 : 0
+    expect(Math.abs(thumb.getBoundingClientRect().top + grabOffset - pointerY)).toBeCloseTo(
+      expectedError
+    )
+    expect(sample.scrollbarPointerError).toBeCloseTo(expectedError)
+    expect(track.releasePointerCapture).toHaveBeenCalled()
+  }
+)
 
 test.each(['cancel', 'capture loss', 'unmount'])('stops further drag writes on %s', reason => {
   const { viewport, track, unmount } = renderConversation()

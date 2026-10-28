@@ -42,18 +42,35 @@ async function sampleScrollbarDrag(control, ratios) {
   )
   assert.equal(drag.frameCount, ratios.length * 4, 'Continuous scrollbar drag missed frames')
   assert.ok(
-    drag.samples.every(sample => sample.scrollbarRatioError <= 2),
+    drag.samples.every(
+      sample => Number.isFinite(sample.scrollbarPointerError) && sample.scrollbarPointerError <= 2
+    ),
     `The thumb drifted from the pointer during drag: ${JSON.stringify(
       drag.samples
-        .filter(sample => sample.scrollbarRatioError > 2)
-        .map(({ ratio, frame, scrollbarRatioError, scrollTop, scrollHeight, clientHeight }) => ({
-          ratio,
-          frame,
-          scrollbarRatioError,
-          scrollTop,
-          scrollHeight,
-          clientHeight,
-        }))
+        .filter(sample => sample.scrollbarPointerError > 2)
+        .map(
+          ({
+            ratio,
+            frame,
+            scrollbarPointerError,
+            scrollbarPointerY,
+            scrollbarGrabOffset,
+            scrollbarThumbTop,
+            scrollTop,
+            scrollHeight,
+            clientHeight,
+          }) => ({
+            ratio,
+            frame,
+            scrollbarPointerError,
+            scrollbarPointerY,
+            scrollbarGrabOffset,
+            scrollbarThumbTop,
+            scrollTop,
+            scrollHeight,
+            clientHeight,
+          })
+        )
     )}`
   )
   assert.ok(

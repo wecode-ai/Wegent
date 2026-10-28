@@ -704,8 +704,8 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
   )
   if (options.scrollbarSelector && (!track || !thumb))
     throw new Error('The requested scrollbar is missing')
-  const pointer = thumb ? { ...desktopControlEventOptions(thumb), buttons: 1 } : null
-  const pointerOffset = thumb ? thumb.offsetHeight / 2 : 0
+  let pointerY: number | null = null
+  let pointerOffset = 0
 
   const nextFrame = () =>
     new Promise<number>(resolve => window.requestAnimationFrame(time => resolve(time)))
@@ -780,6 +780,7 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
     }
     maxChunkHeightDelta = Math.max(maxChunkHeightDelta, frameHeightDelta)
     maxVisibleChunkHeightDelta = Math.max(maxVisibleChunkHeightDelta, frameVisibleHeightDelta)
+    const thumbBounds = thumb?.getBoundingClientRect()
     return {
       ratio,
       frame,
@@ -798,18 +799,21 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
       hasVisibleText,
       maxChunkHeightDelta: frameHeightDelta,
       maxVisibleChunkHeightDelta: frameVisibleHeightDelta,
-      scrollbarRatioError:
-        track && thumb
-          ? Math.abs(
-              thumb.getBoundingClientRect().top -
-                track.getBoundingClientRect().top -
-                ratio * (track.clientHeight - thumb.offsetHeight)
-            )
+      scrollbarPointerY: pointerY,
+      scrollbarGrabOffset: pointerOffset,
+      scrollbarThumbTop: thumbBounds?.top ?? null,
+      scrollbarPointerError:
+        thumbBounds && pointerY !== null
+          ? Math.abs(thumbBounds.top + pointerOffset - pointerY)
           : null,
     }
   }
 
   startedAt = await nextFrame()
+  // Navigation can move the thumb during that frame; grab its current physical point.
+  const pointer = thumb ? { ...desktopControlEventOptions(thumb), buttons: 1 } : null
+  pointerOffset = thumb && pointer ? pointer.clientY! - thumb.getBoundingClientRect().top : 0
+  pointerY = pointer?.clientY ?? null
   const initial = capture(startedAt, 1, 0)
   const samples: ReturnType<typeof capture>[] = []
   if (thumb && pointer) dispatchDesktopControlPointerEvent(thumb, 'pointerdown', pointer)
@@ -825,8 +829,9 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
           clientY:
             track.getBoundingClientRect().top +
             pointerOffset +
-            ratio * (track.clientHeight - thumb.offsetHeight),
+            ratio * (track.clientHeight - thumb.getBoundingClientRect().height),
         }
+        pointerY = movement.clientY
         dispatchDesktopControlPointerEvent(track, 'pointermove', movement)
       } else {
         scroller.dispatchEvent(

@@ -28,6 +28,7 @@ flowchart TD
   Controller -->|拖动期间| Pointer[滚动条指针与当前范围]
   Pointer -->|输入事件中立即写入| Viewport
   Pointer --> Thumb[同一帧同步滑块几何]
+  Thumb --> Check[按真实指针与抓取点校验]
   Viewport -->|原生 scroll 早于 rAF| Coverage[补齐虚拟行与可见 Markdown]
   Coverage --> Paint[浏览器绘制]
   Engine -->|实际生效位移| TextAnchor[文字锚点]
@@ -36,6 +37,8 @@ flowchart TD
 ```
 
 拖动输入使用同一份当前几何，立即写入视口位置与滑块变换；不能等后续 `scroll` 事件才绘制滑块，也不能另加 rAF 延迟滚动写入。浏览器在 rAF 之前派发原生 `scroll`，虚拟行与 Markdown 分块必须在绘制前补齐新视口；rAF 内才写入滚动会错过该阶段，产生一帧占位或空白。短会话回归场景必须先确认内容不溢出视口，消息条数本身不能证明这一前提。
+
+连续拖动验证在首个采样帧之后读取实际滑块位置，再派发按下事件。固定记录该事件坐标与滑块顶部之差；每帧检查 `abs(thumbTop + grabOffset - pointerY) <= 2`。搜索定位可能在首帧移动滑块，行高变化也可能改变滑块长度；旧指针起点、整数化滑块高度和预设比例都不能代替真实抓取点。
 
 实现约束：
 

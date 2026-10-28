@@ -28,6 +28,7 @@ flowchart TD
   Controller -->|While dragging| Pointer[Scrollbar pointer and current range]
   Pointer -->|Commit during the input event| Viewport
   Pointer --> Thumb[Update thumb geometry in the same frame]
+  Thumb --> Check[Check the physical pointer and grab point]
   Viewport -->|Native scroll precedes rAF| Coverage[Cover virtual rows and visible Markdown]
   Coverage --> Paint[Browser paint]
   Engine -->|Actually applied offset| TextAnchor[Text anchor]
@@ -36,6 +37,8 @@ flowchart TD
 ```
 
 Drag input uses current geometry to update the viewport position and thumb transform immediately. Do not wait for a later `scroll` event to paint the thumb or defer the scroll write to another rAF. Browsers dispatch native `scroll` before rAF; virtual rows and Markdown chunks must cover the new viewport before paint. Writing the scroll position inside rAF misses that phase and can expose placeholders or blank content for one frame. Short-conversation regressions must first establish that content fits within the viewport; message count alone does not establish this prerequisite.
+
+Continuous-drag verification reads the current thumb after the initial sampling frame, immediately before pointerdown. Preserve the difference between that event coordinate and the thumb top; each frame checks `abs(thumbTop + grabOffset - pointerY) <= 2`. Search navigation can move the thumb during the first frame, and row measurement can change its length during dragging. Stale pointer coordinates, rounded thumb heights and nominal ratios cannot substitute for the physical grab point.
 
 Implementation invariants:
 
