@@ -6015,7 +6015,14 @@ describe('PluginsWorkspace', () => {
     }
   )
 
-  test.each(['current', 'absent', 'unavailable', 'account-change', 'return-account'] as const)(
+  test.each([
+    'current',
+    'delayed-inventory',
+    'absent',
+    'unavailable',
+    'account-change',
+    'return-account',
+  ] as const)(
     'uninstalls a failed cloud account row without a local installed summary: %s',
     async outcome => {
       window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
@@ -6056,8 +6063,19 @@ describe('PluginsWorkspace', () => {
       const preflightGate = new Promise<void>(resolve => {
         finishPreflight = resolve
       })
+      let finishInitialInventory!: () => void
+      const initialInventoryGate = new Promise<void>(resolve => {
+        finishInitialInventory = resolve
+      })
       vi.mocked(fetch).mockImplementation(async (input, init) => {
         const path = new URL(String(input), 'http://localhost')
+        if (
+          outcome === 'delayed-inventory' &&
+          path.pathname === '/api/plugins/installed' &&
+          path.searchParams.has('device_id')
+        ) {
+          await initialInventoryGate
+        }
         if (armPreflight && path.pathname === '/api/plugins/installed' && !path.search) {
           armPreflight = false
           preflightReads += 1
@@ -6130,19 +6148,34 @@ describe('PluginsWorkspace', () => {
         await waitFor(() =>
           expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('重试安装')
         )
-        expect(screen.queryByTestId('plugins-installed-strip-item-101')).not.toBeInTheDocument()
-        expect(
-          getPluginMarketplaceCache('/api|cloud-token')?.installedPlugins.some(
-            plugin => plugin.spec.pluginId === 101
-          )
-        ).toBe(false)
-        await waitFor(() =>
+        if (outcome === 'delayed-inventory') {
+          // The retry action can paint before the device-scoped inventory is applied.
+          expect(getPluginMarketplaceCache('/api|cloud-token')?.deviceId).toBe('')
           expect(
-            getPluginMarketplaceCache('/api|cloud-token')?.marketplaceItems.find(
-              item => item.id === 75
+            getPluginMarketplaceCache('/api|cloud-token')?.installedPlugins.find(
+              plugin => plugin.spec.pluginId === 101
             )
-          ).toEqual(expect.objectContaining({ installed: true, installedPluginId: 76 }))
-        )
+          ).toEqual(
+            expect.objectContaining({ metadata: expect.objectContaining({ labels: { id: 75 } }) })
+          )
+          expect(screen.getByTestId('plugins-installed-strip-item-75')).toBeInTheDocument()
+          await act(async () => finishInitialInventory())
+        }
+        await waitFor(() => {
+          const inventory = getPluginMarketplaceCache('/api|cloud-token')
+          expect(inventory?.deviceId).toBe('current-device')
+          expect(inventory?.installedPlugins.some(plugin => plugin.spec.pluginId === 101)).toBe(
+            false
+          )
+          expect(inventory?.installedPlugins.find(plugin => plugin.spec.pluginId === 75)).toEqual(
+            expect.objectContaining({ metadata: expect.objectContaining({ labels: { id: 76 } }) })
+          )
+          expect(inventory?.marketplaceItems.find(item => item.id === 75)).toEqual(
+            expect.objectContaining({ installed: true, installedPluginId: 76 })
+          )
+          expect(screen.queryByTestId('plugins-installed-strip-item-75')).not.toBeInTheDocument()
+          expect(screen.getByTestId('plugins-installed-strip-item-76')).toBeInTheDocument()
+        })
         await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
         await userEvent.click(await screen.findByTestId('plugin-detail-actions-101'))
         await userEvent.click(screen.getByTestId('plugin-detail-uninstall-101'))
@@ -6179,7 +6212,7 @@ describe('PluginsWorkspace', () => {
         }
         const deletes = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'DELETE')
         expect(deletes).toEqual(
-          outcome === 'current'
+          outcome === 'current' || outcome === 'delayed-inventory'
             ? [['/api/plugins/installed/208', expect.objectContaining({ method: 'DELETE' })]]
             : []
         )
@@ -6194,6 +6227,7 @@ describe('PluginsWorkspace', () => {
         )
         expectCodexAppServerRequestNotCalled('plugin/uninstall')
       } finally {
+        finishInitialInventory()
         view.unmount()
         logout.mockRestore()
       }

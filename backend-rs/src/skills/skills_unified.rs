@@ -29,10 +29,14 @@ use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult};
 use crate::auth::UserRow;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
+use group_members::namespace_id_by_name;
+pub(crate) use group_members::{direct_member_role, direct_member_role_on};
+
 use crate::teams::group_membership::{
     DirectoryMembership, ErpContext, effective_roles, user_group_memberships,
 };
 
+mod group_members;
 mod params;
 
 pub use params::UnifiedParams;
@@ -249,18 +253,23 @@ fn extract_skill_id(input: Option<&SkillDisplayInput>) -> Option<i32> {
 }
 
 /// Escape one string literal for an inline `IN` list.
+///
+/// Iterate Unicode scalar values, not bytes: pushing each byte as `char`
+/// reinterprets UTF-8 continuation bytes as Latin-1 code points, so a
+/// non-ASCII group name (for example `微博运营部`) would be sent as mojibake
+/// and never match the stored `namespace.name`.
 fn quote_literal(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('\'');
-    for byte in value.bytes() {
-        match byte {
-            b'\'' => out.push_str("\\'"),
-            b'\\' => out.push_str("\\\\"),
-            b'\0' => out.push_str("\\0"),
-            b'\n' => out.push_str("\\n"),
-            b'\r' => out.push_str("\\r"),
-            0x1a => out.push_str("\\Z"),
-            other => out.push(other as char),
+    for character in value.chars() {
+        match character {
+            '\'' => out.push_str("\\'"),
+            '\\' => out.push_str("\\\\"),
+            '\0' => out.push_str("\\0"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\u{1a}' => out.push_str("\\Z"),
+            other => out.push(other),
         }
     }
     out.push('\'');
@@ -513,78 +522,6 @@ fn highest_role(roles: &[String]) -> Option<String> {
             _ => 999,
         })
         .cloned()
-}
-
-/// `namespace` full projection constant (`db.query(Namespace)`).
-const NAMESPACE_COLUMNS: &str = "namespace.id AS namespace_id, \
-     namespace.name AS namespace_name, namespace.display_name AS namespace_display_name, \
-     namespace.owner_user_id AS namespace_owner_user_id, \
-     namespace.visibility AS namespace_visibility, \
-     namespace.description AS namespace_description, \
-     namespace.level AS namespace_level, namespace.is_active AS namespace_is_active, \
-     namespace.created_at AS namespace_created_at, \
-     namespace.updated_at AS namespace_updated_at";
-
-/// `get_namespace_id_by_name` (full `Namespace` projection, `LIMIT 1`).
-async fn namespace_id_by_name<M>(mysql: &M, group_name: &str) -> MysqlResult<Option<i64>>
-where
-    M: Mysql,
-{
-    #[derive(Debug, FromMysqlRow)]
-    struct Row {
-        namespace_id: i64,
-    }
-    let row: Option<Row> = mysql
-        .fetch_optional(
-            &format!(
-                "SELECT {NAMESPACE_COLUMNS} \
-                 FROM namespace \
-                 WHERE namespace.name = {} AND namespace.is_active = 1 \
-                 LIMIT 1",
-                quote_literal(group_name)
-            ),
-            (),
-        )
-        .await?;
-    Ok(row.map(|row| row.namespace_id))
-}
-
-/// `get_group_member` (full `ResourceMember` projection, `LIMIT 1`). Shared
-/// with the task-skills group-member cache fallback.
-pub(crate) async fn direct_member_role<M>(
-    mysql: &M,
-    user_id: i32,
-    group_name: &str,
-) -> MysqlResult<Option<String>>
-where
-    M: Mysql,
-{
-    let Some(namespace_id) = namespace_id_by_name(mysql, group_name).await? else {
-        return Ok(None);
-    };
-    #[derive(Debug, FromMysqlRow)]
-    struct Row {
-        #[mysql(rename = "resource_members_role")]
-        role: Option<String>,
-    }
-    let row: Option<Row> = mysql
-        .fetch_optional(
-            &format!(
-                "SELECT {} \
-                 FROM resource_members \
-                 WHERE resource_members.resource_type = 'Namespace' \
-                 AND resource_members.resource_id = {namespace_id} \
-                 AND resource_members.entity_type = 'user' \
-                 AND resource_members.entity_id = '{}' \
-                 AND resource_members.status = 'approved' \
-                 LIMIT 1",
-                crate::teams::teams_repository::MEMBER_COLUMNS,
-                user_id
-            ),
-            (),
-        )
-        .await?;
-    Ok(row.and_then(|row| row.role))
 }
 
 /// `resolve_entity_roles_for_resource` row fetch: the namespace's approved

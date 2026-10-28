@@ -11,7 +11,7 @@
 //! `{model, stream, input, instructions, tools, background, metadata,
 //! model_config}` — `metadata` carries 70 keys (`task_id`, `subtask_id`, `user`,
 //! `team_id`, `bot`, `knowledge_base_ids`, `callback_url`, `collaboration_model`,
-//! …) and `model_config` 17 (`api_key`, `base_url`, `model_id`, `model`,
+//! …) and `model_config` 18 (`api_key`, `base_url`, `model_id`, `model`,
 //! `default_headers`, `protocol`, `context_window`, `think_config`, …).
 //!
 //! The envelope (field names and order) is modeled here; the per-field values
@@ -20,13 +20,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-/// `AsyncOpenAI(api_key="dummy")`'s bearer header
-/// (`chat_shell_client.py:44`, `dispatcher.py:675`): the SDK sends a fixed
-/// placeholder credential, which the recorded dependency request carries.
-pub(crate) const OPENAI_DUMMY_AUTHORIZATION: &str = "Bearer dummy";
-
-/// The OpenAI client's `Accept` header for the JSON/SSE create requests.
-pub(crate) const OPENAI_ACCEPT: &str = "application/json";
+pub(crate) use super::openai_client::{
+    OPENAI_ACCEPT, OPENAI_DUMMY_AUTHORIZATION, apply_openai_client_headers,
+};
 
 /// The `/v1/responses` request body. Keys serialize in this order, matching the
 /// recorded body.
@@ -36,8 +32,11 @@ pub struct DispatchPayload {
     pub stream: bool,
     pub input: String,
     pub instructions: String,
+    /// `tools=tools if tools else None`: the source passes an empty tool set
+    /// as `None`, which the OpenAI client serializes as JSON `null` rather
+    /// than an empty array, so the key stays present with a null value.
     #[serde(default)]
-    pub tools: Vec<Value>,
+    pub tools: Option<Vec<Value>>,
     /// The executor-manager dispatch sends `background: true`; the chat-shell
     /// SSE dispatch does not include the key at all, so it stays absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -55,7 +54,7 @@ impl DispatchPayload {
             stream: false,
             input: String::new(),
             instructions: String::new(),
-            tools: Vec::new(),
+            tools: None,
             background: None,
             metadata: Map::new(),
             model_config: Map::new(),
@@ -160,6 +159,7 @@ pub const MODEL_CONFIG_KEY_ORDER: &[&str] = &[
     "videoConfig",
     "think_config",
     "temperature",
+    "supports_developer_role",
     "modelCapabilities",
     "model_name",
     "model_namespace",
@@ -169,7 +169,7 @@ pub const MODEL_CONFIG_KEY_ORDER: &[&str] = &[
 /// The execution request the converter consumes
 /// (`shared/models/execution.py:ExecutionRequest`). Defaults match the source
 /// dataclass.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct ExecutionRequest {
     pub task_id: i64,
@@ -365,7 +365,11 @@ pub fn assemble(request: &ExecutionRequest, stream: bool, background: bool) -> D
         other => other.to_string(),
     };
 
-    let tools: Vec<Value> = request.mcp_servers.iter().map(mcp_tool).collect();
+    let tools = if request.mcp_servers.is_empty() {
+        None
+    } else {
+        Some(request.mcp_servers.iter().map(mcp_tool).collect())
+    };
 
     let mut metadata = Map::new();
     metadata.insert("task_id".into(), serde_json::json!(request.task_id));
@@ -649,7 +653,7 @@ mod tests {
             stream: false,
             input: "prompt".to_string(),
             instructions: "system".to_string(),
-            tools: vec![json!({"type": "mcp"})],
+            tools: Some(vec![json!({"type": "mcp"})]),
             background: Some(true),
             metadata: Map::new(),
             model_config: Map::new(),
@@ -746,14 +750,58 @@ mod tests {
         let payload = assemble(&request, false, true);
         assert_eq!(
             payload.tools,
-            vec![json!({
+            Some(vec![json!({
                 "type": "mcp",
                 "server_label": "srv",
                 "server_url": "http://x",
                 "server_type": "sse",
                 "require_approval": "never",
-            })]
+            })])
         );
+    }
+
+    #[test]
+    fn request_mcp_tool_carries_the_mapping_key_and_auth_only() {
+        // `openai_converter.py:130-155`: the tool label is the entry's `name`
+        // (the Ghost mapping key, per `_build_mcp_servers`), `auth` becomes
+        // `server_auth`, and non-tool fields such as `timeout` stay out.
+        let request = ExecutionRequest {
+            mcp_servers: vec![json!({
+                "name": "market-cmapi00074002",
+                "url": "https://dashscope.example/api/v1/mcps/market-cmapi00074002/mcp",
+                "type": "streamable-http",
+                "auth": {"Authorization": "Bearer example-token"},
+                "timeout": 60,
+            })],
+            ..ExecutionRequest::default()
+        };
+        let payload = assemble(&request, false, true);
+        assert_eq!(
+            payload.tools,
+            Some(vec![json!({
+                "type": "mcp",
+                "server_label": "market-cmapi00074002",
+                "server_url": "https://dashscope.example/api/v1/mcps/market-cmapi00074002/mcp",
+                "server_type": "streamable-http",
+                "require_approval": "never",
+                "server_auth": {"Authorization": "Bearer example-token"},
+            })])
+        );
+    }
+
+    /// An empty tool set serializes as JSON `null` — the shape the source's
+    /// `tools=tools if tools else None` produces — and not as `[]`.
+    #[test]
+    fn an_empty_tool_set_serializes_as_null() {
+        let request = ExecutionRequest::default();
+        let payload = assemble(&request, false, true);
+        assert_eq!(payload.tools, None);
+        let value = serde_json::to_value(&payload).expect("serialize");
+        assert!(
+            value.get("tools").is_some(),
+            "the key stays present: {value}"
+        );
+        assert_eq!(value["tools"], Value::Null);
     }
 
     #[test]
@@ -762,8 +810,9 @@ mod tests {
         assert_eq!(METADATA_KEY_ORDER.len(), 72);
         assert_eq!(METADATA_KEY_ORDER[0], "task_id");
         assert_eq!(METADATA_KEY_ORDER[71], "collaboration_model");
-        assert_eq!(MODEL_CONFIG_KEY_ORDER.len(), 17);
+        assert_eq!(MODEL_CONFIG_KEY_ORDER.len(), 18);
         assert_eq!(MODEL_CONFIG_KEY_ORDER[0], "api_key");
-        assert_eq!(MODEL_CONFIG_KEY_ORDER[16], "reasoning");
+        assert_eq!(MODEL_CONFIG_KEY_ORDER[13], "supports_developer_role");
+        assert_eq!(MODEL_CONFIG_KEY_ORDER[17], "reasoning");
     }
 }

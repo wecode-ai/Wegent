@@ -5,15 +5,16 @@ window.__ModuleLoader__.load({
   factory: () => ({
     inject: ['slots', 'wework'],
     apply(ctx) {
-      const title = ctx.wework.localization.translate(
-        { en: 'Export conversation', 'zh-CN': '导出会话' },
-        'Export conversation'
-      )
+      const localizeTitle = () =>
+        ctx.wework.localization.translate(
+          { en: 'Export conversation', 'zh-CN': '导出会话' },
+          'Export conversation'
+        )
       ctx.wework.commands.register(
         ctx,
         {
           id: 'conversation-export.open',
-          title,
+          title: localizeTitle(),
           description: ctx.wework.localization.translate(
             {
               en: 'Export the complete conversation as Markdown or HTML.',
@@ -36,6 +37,7 @@ window.__ModuleLoader__.load({
           command: 'conversation-export.open',
           group: 'export',
           order: 100,
+          title: localizeTitle,
         })
       }
       ctx.slots.inject('wework.shell.overlay', () =>

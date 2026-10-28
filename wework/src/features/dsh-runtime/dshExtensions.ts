@@ -137,6 +137,7 @@ export type {
   WeworkContextExpression,
   WeworkKeybindingContribution,
   WeworkMenuContribution,
+  WeworkMenuTitle,
   WeworkResolvedMenuContribution,
   WeworkResolvedComposerReferenceContribution,
   WeworkTelemetrySink,

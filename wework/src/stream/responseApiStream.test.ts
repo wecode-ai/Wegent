@@ -64,6 +64,29 @@ describe('emitResponseApiEvent', () => {
     )
   })
 
+  test('maps a recovered turn to the canonical completed turn identity', () => {
+    const onChatRecovered = vi.fn()
+
+    emitResponseApiEvent(
+      { onChatRecovered },
+      'response.recovered',
+      {
+        taskId: 'task-1',
+        subtaskId: 'failed-turn',
+        deviceId: 'device-1',
+        data: { turnId: 'failed-turn' },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onChatRecovered).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: 'failed-turn',
+      deviceId: 'device-1',
+      turnId: 'failed-turn',
+    })
+  })
+
   test('preserves the Codex turn identifier on runtime goal updates', () => {
     const onRuntimeGoalUpdated = vi.fn()
 

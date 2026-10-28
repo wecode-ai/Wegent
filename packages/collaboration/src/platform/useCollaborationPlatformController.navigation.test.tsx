@@ -252,3 +252,22 @@ it.each([
     }
   }
 )
+
+it.each(['agents', 'members', 'collaboration-participants', 'collaboration-groups'] as const)(
+  'keeps the %s settings shell independent of participant requests',
+  async workspaceView => {
+    const api = apiFor(cloudWorkspace, [])
+    Object.assign(api.workspaces!, {
+      get: vi.fn(async () => cloudWorkspace),
+      listMembers: vi.fn(() => new Promise(() => {})),
+      listAgents: vi.fn(() => new Promise(() => {})),
+      listCollaborationGroups: vi.fn(() => new Promise(() => {})),
+    })
+    await render([api], { ...location, projectId: null, workspaceView })
+    expect(currentState().loading).toBe(false)
+    expect(currentState().workspace?.id).toBe('cloud')
+    expect(api.workspaces!.listMembers).not.toHaveBeenCalled()
+    expect(api.workspaces!.listAgents).not.toHaveBeenCalled()
+    expect(api.workspaces!.listCollaborationGroups).not.toHaveBeenCalled()
+  }
+)

@@ -209,6 +209,14 @@ impl ArchiveStorage {
         http: &HttpClient,
         storage_key: &str,
     ) -> anyhow::Result<bool> {
+        Ok(self.archive_size(http, storage_key).await?.is_some())
+    }
+
+    pub(crate) async fn archive_size(
+        &self,
+        http: &HttpClient,
+        storage_key: &str,
+    ) -> anyhow::Result<Option<u64>> {
         self.ensure_ready(http).await?;
         let uri = format!("/{}/{}", self.bucket, encode_object_path(storage_key));
         let url = self.url(&uri);
@@ -232,12 +240,41 @@ impl ArchiveStorage {
             .await?;
         let status = response.status().as_u16();
         if (200..300).contains(&status) {
-            Ok(true)
+            Ok(Some(
+                response
+                    .headers()
+                    .get("content-length")
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0),
+            ))
         } else if status == 404 {
-            Ok(false)
+            Ok(None)
         } else {
             anyhow::bail!("unexpected archive stat status {status}")
         }
+    }
+
+    pub(crate) async fn generate_upload_url(
+        &self,
+        http: &HttpClient,
+        task_id: i64,
+    ) -> anyhow::Result<(String, String)> {
+        self.ensure_ready(http).await?;
+        let key = format!("workspace-archives/{task_id}/archive.tar.gz");
+        let uri = format!("/{}/{}", self.bucket, encode_object_path(&key));
+        let url = super::s3_presign::presign(
+            self.scheme(),
+            self.host(),
+            "PUT",
+            &uri,
+            &self.access_key,
+            &self.secret_key,
+            &self.region,
+            &s3_signing::amz_timestamp_now(),
+            3600,
+        );
+        Ok((url, key))
     }
 
     /// `generate_download_url`: a presigned `GET` URL for the object, valid
