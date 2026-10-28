@@ -32,7 +32,10 @@ from app.schemas.subscription import (
 )
 from app.services.subscription import subscription_service
 from app.services.subscription.follow_service import subscription_follow_service
-from app.services.subscription.helpers import validate_subscription_for_read
+from app.services.subscription.helpers import (
+    preview_belongs_to_user,
+    validate_subscription_for_read,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -531,7 +534,7 @@ def confirm_subscription_preview(
         )
 
     # Validate user matches preview
-    if preview_data.get("user_id") != current_user.id:
+    if not preview_belongs_to_user(preview_data, current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to confirm this preview",
