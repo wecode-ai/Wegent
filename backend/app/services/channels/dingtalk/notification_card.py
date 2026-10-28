@@ -6,7 +6,9 @@
 
 import json
 from collections.abc import Sequence
+from urllib.parse import unquote, urlencode, urlsplit
 
+from app.core.config import settings
 from app.schemas.dingtalk_card import BUILTIN_NOTIFICATION_CARD_TEMPLATE_ID
 from app.schemas.wework_navigation import validate_wework_url
 from app.services.channels.dingtalk.markdown import escape_markdown
@@ -87,10 +89,7 @@ def _custom_card_param_map(
         None,
     )
     secondary = next((link for link in links if link.url.startswith("wework://")), None)
-    try:
-        secondary_url = validate_wework_url(secondary.url) if secondary else ""
-    except ValueError:
-        secondary_url = ""
+    secondary_url = _wework_handoff_url(secondary.url) if secondary else ""
     detail = _card_detail(push.detail)
     return {
         "kindLabel": kind_label,
@@ -107,6 +106,26 @@ def _custom_card_param_map(
         "secondaryLabel": secondary.label if secondary_url else "",
         "secondaryUrl": secondary_url,
     }
+
+
+def _wework_handoff_url(destination: str) -> str:
+    """Expose a validated Wework destination through the platform handoff page."""
+
+    try:
+        url = urlsplit(validate_wework_url(destination))
+        if url.netloc != "boards":
+            return ""
+        parts = [unquote(part, errors="strict") for part in url.path.split("/")[1:]]
+    except ValueError:
+        return ""
+    if not parts or not parts[0]:
+        return ""
+    params = {"projectId": parts[0]}
+    if len(parts) >= 3:
+        params["itemId"] = parts[2]
+    if len(parts) == 5:
+        params["commentId"] = parts[4]
+    return f"{settings.FRONTEND_URL.rstrip('/')}/open-wework?{urlencode(params)}"
 
 
 def _presentation(push: PushNotification) -> tuple[str, str]:
@@ -159,11 +178,22 @@ def _body(push: PushNotification) -> str:
 
 
 def _buttons(links: Sequence[NotificationLink]) -> list[dict[str, str]]:
-    return [
-        {
-            "text": link.label,
-            "url": link.url,
-            "color": BUTTON_COLORS[min(index, len(BUTTON_COLORS) - 1)],
-        }
-        for index, link in enumerate(links)
-    ]
+    buttons: list[dict[str, str]] = []
+    for link in links:
+        url = _card_link_url(link.url)
+        if not url:
+            continue
+        buttons.append(
+            {
+                "text": link.label,
+                "url": url,
+                "color": BUTTON_COLORS[min(len(buttons), len(BUTTON_COLORS) - 1)],
+            }
+        )
+    return buttons
+
+
+def _card_link_url(url: str) -> str:
+    """Send Wework card actions through the platform handoff page."""
+
+    return _wework_handoff_url(url) if url.startswith("wework://") else url

@@ -7,8 +7,15 @@ export interface WeworkHandoffDestination {
   webPath: string
 }
 
+export interface WeworkLaunchUrls {
+  primary: string
+  fallback?: string
+}
+
 const ALLOWED_PARAMS = new Set(['projectId', 'itemId', 'commentId'])
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
+const MOBILE_USER_AGENT = /Android|iPhone|iPad|iPod|Mobile/i
+const ANDROID_USER_AGENT = /Android/i
 
 function validSegment(value: string | null): value is string {
   return (
@@ -40,4 +47,19 @@ export function parseWeworkHandoff(params: URLSearchParams): WeworkHandoffDestin
     weworkUrl: `wework://boards/${projectId}${itemPath}${commentPath}`,
     webPath: `${projectPath}${itemPath}`,
   }
+}
+
+export function isMobileUserAgent(userAgent: string): boolean {
+  return MOBILE_USER_AGENT.test(userAgent)
+}
+
+export function weworkLaunchUrls(weworkUrl: string, userAgent: string): WeworkLaunchUrls {
+  if (!isMobileUserAgent(userAgent)) return { primary: weworkUrl }
+
+  const legacyMobileUrl = weworkUrl.replace(/^wework:\/\//, 'wegent://')
+  if (legacyMobileUrl === weworkUrl) return { primary: weworkUrl }
+
+  return ANDROID_USER_AGENT.test(userAgent)
+    ? { primary: legacyMobileUrl, fallback: weworkUrl }
+    : { primary: weworkUrl, fallback: legacyMobileUrl }
 }

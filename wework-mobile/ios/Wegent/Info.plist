@@ -28,6 +28,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>wework</string>
+				<string>wegent</string>
 				<string>io.wecode.wework</string>
 			</array>
 		</dict>

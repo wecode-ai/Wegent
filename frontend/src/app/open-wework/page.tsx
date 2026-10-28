@@ -4,16 +4,74 @@
 
 'use client'
 
-import { Suspense } from 'react'
+import { Suspense, useEffect, useRef, type MouseEvent } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
-import { parseWeworkHandoff } from './handoff'
+import { isMobileUserAgent, parseWeworkHandoff, weworkLaunchUrls } from './handoff'
+
+const MOBILE_FALLBACK_DELAY_MS = 1200
+const DESKTOP_AUTO_LAUNCH_DELAY_MS = 50
 
 function WeworkHandoffContent() {
   const { t } = useTranslation('wework-open')
   const searchParams = useSearchParams()
   const destination = parseWeworkHandoff(new URLSearchParams(searchParams.toString()))
+  const fallbackTimerRef = useRef<number | null>(null)
+  const autoLaunchStartedRef = useRef(false)
+  const weworkUrl = destination?.weworkUrl
+
+  useEffect(() => {
+    if (!weworkUrl || autoLaunchStartedRef.current) return
+    if (isMobileUserAgent(navigator.userAgent)) return
+
+    autoLaunchStartedRef.current = true
+    const timer = window.setTimeout(() => {
+      try {
+        window.location.replace(weworkUrl)
+      } catch {
+        // Keep the explicit action visible when the browser blocks the scheme.
+      }
+    }, DESKTOP_AUTO_LAUNCH_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [weworkUrl])
+
+  useEffect(
+    () => () => {
+      if (fallbackTimerRef.current !== null) {
+        window.clearTimeout(fallbackTimerRef.current)
+      }
+    },
+    []
+  )
+
+  const openWework = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault()
+    if (!weworkUrl) return
+
+    const launch = weworkLaunchUrls(weworkUrl, navigator.userAgent)
+    try {
+      window.location.href = launch.primary
+    } catch {
+      // The visible button and the fallback timer remain available.
+    }
+    if (!launch.fallback) return
+
+    if (fallbackTimerRef.current !== null) {
+      window.clearTimeout(fallbackTimerRef.current)
+    }
+    const fallback = launch.fallback
+    fallbackTimerRef.current = window.setTimeout(() => {
+      fallbackTimerRef.current = null
+      if (document.visibilityState === 'visible') {
+        try {
+          window.location.href = fallback
+        } catch {
+          // Leave the recipient on the handoff page with the web action.
+        }
+      }
+    }, MOBILE_FALLBACK_DELAY_MS)
+  }
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-base px-4 py-10">
@@ -28,7 +86,7 @@ function WeworkHandoffContent() {
         {destination && (
           <div className="mt-8 flex flex-col gap-3">
             <Button asChild variant="primary" size="lg" className="min-h-11 w-full">
-              <a href={destination.weworkUrl} data-testid="open-wework-button">
+              <a href={destination.weworkUrl} onClick={openWework} data-testid="open-wework-button">
                 {t('open_wework')}
               </a>
             </Button>

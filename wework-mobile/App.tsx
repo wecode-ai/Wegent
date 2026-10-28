@@ -1,6 +1,6 @@
 import type { GlassColorScheme } from 'expo-glass-effect'
 import { StatusBar } from 'expo-status-bar'
-import { NavigationContainer } from '@react-navigation/native'
+import { NavigationContainer, type LinkingOptions } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import { useMemo, useState } from 'react'
 import { StyleSheet, useColorScheme } from 'react-native'
@@ -25,6 +25,17 @@ type RuntimeStackParamList = {
 }
 
 const RuntimeStack = createNativeStackNavigator<RuntimeStackParamList>()
+
+const linking: LinkingOptions<RuntimeStackParamList> = {
+  prefixes: ['wework://', 'wegent://', 'io.wecode.wework://'],
+  config: {
+    screens: {
+      // Board links do not have a Mobile screen yet. Opening the conversation
+      // list still lands the recipient inside Wework instead of a blank app.
+      conversationList: '*',
+    },
+  },
+}
 
 export default function App() {
   const auth = useWegentAuth()
@@ -97,7 +108,7 @@ function RuntimeApplication({
   )
   return (
     <>
-      <NavigationContainer>
+      <NavigationContainer linking={linking}>
         <RuntimeStack.Navigator screenOptions={{ headerShown: false }}>
           <RuntimeStack.Screen name="conversationList" options={{ animation: 'none' }}>
             {({ navigation }) => (

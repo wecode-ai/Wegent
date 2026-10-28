@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { parseWeworkHandoff } from '@/app/open-wework/handoff'
+import { isMobileUserAgent, parseWeworkHandoff, weworkLaunchUrls } from '@/app/open-wework/handoff'
 
 describe('parseWeworkHandoff', () => {
   it('constructs fixed Wework and web routes for an issue comment', () => {
@@ -49,5 +49,33 @@ describe('parseWeworkHandoff', () => {
       weworkUrl: 'wework://boards/12/issues/wework%3A%2F%2Ftasks%2Fdevice%2Ftask',
       webPath: '/collaboration/12/issues/wework%3A%2F%2Ftasks%2Fdevice%2Ftask',
     })
+  })
+
+  it('uses the mobile Wework scheme with a desktop fallback on phones', () => {
+    const weworkUrl = 'wework://boards/12/issues/ISSUE-1'
+
+    expect(
+      weworkLaunchUrls(
+        weworkUrl,
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15'
+      )
+    ).toEqual({
+      primary: weworkUrl,
+      fallback: 'wegent://boards/12/issues/ISSUE-1',
+    })
+    expect(
+      weworkLaunchUrls(weworkUrl, 'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36')
+    ).toEqual({
+      primary: 'wegent://boards/12/issues/ISSUE-1',
+      fallback: weworkUrl,
+    })
+    expect(weworkLaunchUrls(weworkUrl, 'Mozilla/5.0 (Macintosh)')).toEqual({
+      primary: weworkUrl,
+    })
+  })
+
+  it('detects phone and tablet user agents only', () => {
+    expect(isMobileUserAgent('Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)')).toBe(true)
+    expect(isMobileUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')).toBe(false)
   })
 })
