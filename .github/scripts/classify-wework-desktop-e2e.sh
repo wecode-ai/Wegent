@@ -28,6 +28,7 @@ core_segments=(
   stand-in-cli
   stand-in-plugin-bridge
   stand-in-action-confirmation
+  telemetry-identity
   stand-in-list-confirmation
   stand-in-profile
   stand-in-telemetry
@@ -236,7 +237,7 @@ core_shards=(
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference,collaboration-app-queue-identity
   conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome
   split-workbench
-  collaboration-shared-core,runtime-input-answer-persistence,permission-modes
+  collaboration-shared-core,runtime-input-answer-persistence,permission-modes,telemetry-identity
 )
 
 core_shards[1]+=',mcp-apps'

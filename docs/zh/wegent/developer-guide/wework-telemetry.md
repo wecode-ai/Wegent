@@ -32,6 +32,8 @@ PostHog 在发送前会再次按事件级白名单删除 SDK 自动附加的 URL
 
 策略只覆盖身份与客户端 IP 两类数据：事件目录、属性白名单和脱敏逻辑对所有发行版一致，聊天、提示词、模型回复、代码、文件内容、文件路径、终端输出和屏幕截图在任何发行版中都不得上报。发行版策略开启 person profile 后，还必须在 PostHog 项目里把 Person 显示名指到对应的 person 属性，否则列表仍显示 distinct id。
 
+桌面 E2E 用同一个构建验证两种姿态。`telemetry-consent` 检查点保持公共匿名策略：事件不带账户身份、`$geoip_disable` 为 `true`、任何事件都不会创建 person profile。`telemetry-identity` 检查点通过 `WEWORK_E2E_TELEMETRY_POLICY=identified` 启用 `src/e2e/telemetry-policy-fixture.ts` 的发行版策略夹具，断言 `$identify` 以用户名作为 distinct id 并写入 `username` person 属性、身份建立后的产品事件沿用该 distinct id、`$geoip_disable` 为 `false` 且允许创建 person profile，同时真实请求体不含账户邮箱。该夹具只在 `VITE_WEWORK_E2E=true` 的构建里生效；生产构建会静态消除对应分支。
+
 ## 事件目录
 
 事件只记录有产品决策价值的功能采用、漏斗结果和可靠性结果，不记录普通按钮点击。

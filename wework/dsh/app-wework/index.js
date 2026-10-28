@@ -258,6 +258,11 @@ export function runtimeConfigScript(environment = process.env, windowLabel = 'ma
       'WEWORK_E2E_SEED_LOCAL_MODELS',
       'VITE_WEWORK_E2E_SEED_LOCAL_MODELS'
     ),
+    // Desktop E2E builds can drive the identified telemetry policy so the
+    // distribution-installed identity path runs end to end; production builds
+    // ignore this value because the policy module compiles the fixture out.
+    telemetryPolicy:
+      environment.WEWORK_E2E_TELEMETRY_POLICY === 'identified' ? 'identified' : undefined,
     transcriptPageSize: environmentPositiveInteger(
       environment,
       'WEWORK_E2E_TRANSCRIPT_PAGE_SIZE',

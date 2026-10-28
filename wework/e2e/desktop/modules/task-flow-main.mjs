@@ -125,6 +125,7 @@ import {
   verifyTelemetryPreference,
   verifyTelemetryRemainsDisabled,
 } from './preferences-automation-flows.mjs'
+import { verifyIdentifiedTelemetryIdentity } from './telemetry-identity.mjs'
 
 import {
   verifyFollowUpSendRejectionNotice,
@@ -241,6 +242,7 @@ import {
   UNSENT_FIRST_TASK_DRAFT,
   UNSENT_SECOND_TASK_DRAFT,
   VERIFIES_INITIAL_TELEMETRY_CONSENT,
+  INITIAL_TELEMETRY_POSTURE,
   VIEW_IMAGE_ONLY,
   WINDOW_LIFECYCLE_COMPLETION_TEXT,
   WORKTREE_STATUS_ONLY,
@@ -1379,6 +1381,11 @@ async function main() {
       WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY || CLOUD_FEATURES_ONLY ? 'true' : 'false',
       WEWORK_E2E_POSTHOG_HOST: control.url,
       WEWORK_E2E_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
+      // The telemetry-identity checkpoint is the only place that runs with a
+      // distribution-installed policy; every other checkpoint keeps the public
+      // anonymous posture so its assertions stay meaningful.
+      WEWORK_E2E_TELEMETRY_POLICY:
+        DESKTOP_SEGMENT === 'telemetry-identity' ? 'identified' : 'anonymous',
       WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
       WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
       WEWORK_E2E_SAVE_DIALOG_PATH: join(resultDir, 'conversation-export-e2e.zip'),
@@ -1583,14 +1590,18 @@ async function main() {
       'The Electron desktop controller did not connect from its local renderer origin'
     )
     if (VERIFIES_INITIAL_TELEMETRY_CONSENT) {
-      await verifyInitialTelemetryConsent(control, [
-        workspacePath,
-        homePath,
-        cloudEnvironment?.authToken,
-        desktopScenario?.authToken,
-        MODEL_API_KEY,
-        'desktop-e2e@wework.local',
-      ])
+      await verifyInitialTelemetryConsent(
+        control,
+        [
+          workspacePath,
+          homePath,
+          cloudEnvironment?.authToken,
+          desktopScenario?.authToken,
+          MODEL_API_KEY,
+          'desktop-e2e@wework.local',
+        ],
+        INITIAL_TELEMETRY_POSTURE
+      )
     } else {
       await declineInitialTelemetryConsent(control)
     }
@@ -2373,6 +2384,16 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         console.log(`Wework desktop telemetry checkpoint passed. Evidence: ${resultDir}`)
         return
       }
+    }
+
+    // Runs only as its own segment: the identified policy fixture is chosen
+    // when the app launches, so it cannot share a run with the anonymous
+    // telemetry-consent checkpoint.
+    if (DESKTOP_SEGMENT === 'telemetry-identity') {
+      phase = 'telemetry-identity'
+      await verifyIdentifiedTelemetryIdentity(control)
+      console.log(`Wework desktop telemetry-identity checkpoint passed. Evidence: ${resultDir}`)
+      return
     }
 
     if (shouldRunDesktopCheckpoint('fork-provider-preservation')) {

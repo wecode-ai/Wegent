@@ -150,7 +150,8 @@ function verifyTelemetryRemainsDisabled(control) {
   )
 }
 
-async function verifyInitialTelemetryConsent(control, sensitiveValues) {
+async function verifyInitialTelemetryConsent(control, sensitiveValues, posture = 'anonymous') {
+  const identified = posture === 'identified'
   const overlaySelector = '[data-testid="telemetry-consent-overlay"]'
   await control.command('waitFor', overlaySelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -170,6 +171,7 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues) {
   )
 
   await control.awaitTelemetryEvent('app_started')
+  if (identified) await control.awaitTelemetryEvent('$identify')
   const requests = control.telemetryRequests
   const events = requests.flatMap(request => telemetryEvents(request.payload))
   assert.ok(events.length > 0, 'The telemetry request did not contain an event')
@@ -178,18 +180,17 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues) {
   assert.equal(appStarted.properties?.surface, 'main')
 
   for (const event of events) {
+    const allowedEvents = {
+      app_started: true,
+      app_startup_attempted: true,
+      app_startup_failed: true,
+      app_startup_succeeded: true,
+      feature_opened: true,
+      telemetry_preference_changed: true,
+      ...(identified ? { $identify: true } : {}),
+    }
     assert.equal(
-      Object.prototype.hasOwnProperty.call(
-        {
-          app_started: true,
-          app_startup_attempted: true,
-          app_startup_failed: true,
-          app_startup_succeeded: true,
-          feature_opened: true,
-          telemetry_preference_changed: true,
-        },
-        event.event
-      ),
+      Object.prototype.hasOwnProperty.call(allowedEvents, event.event),
       true,
       `The initial telemetry request contained an unexpected event: ${event.event}`
     )
@@ -207,10 +208,21 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues) {
           'Telemetry sent an unexpected PostHog project key'
         )
       } else if (propertyName === '$process_person_profile') {
+        // Events captured before the signed-in account is attached legitimately
+        // report no person profile, so the identified posture only pins the
+        // anonymous case here; the checkpoint asserts attribution afterwards.
+        if (!identified) {
+          assert.equal(
+            event.properties[propertyName],
+            false,
+            'Telemetry attempted to create or update a PostHog person profile'
+          )
+        }
+      } else if (propertyName === '$geoip_disable') {
         assert.equal(
           event.properties[propertyName],
-          false,
-          'Telemetry attempted to create or update a PostHog person profile'
+          !identified,
+          'Telemetry reported a client-IP posture that does not match the policy'
         )
       } else {
         assert.equal(
@@ -220,8 +232,20 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues) {
         )
       }
     }
-    assert.equal(event.$set, undefined, 'Telemetry sent person profile properties')
-    assert.equal(event.$set_once, undefined, 'Telemetry sent persistent person properties')
+    // Person properties belong to `$identify` alone; everything else must stay
+    // free of them under either posture.
+    if (!identified || event.event !== '$identify') {
+      assert.equal(
+        event.$set,
+        undefined,
+        'Telemetry sent person profile properties on a product event'
+      )
+      assert.equal(
+        event.$set_once,
+        undefined,
+        'Telemetry sent persistent person properties on a product event'
+      )
+    }
   }
 
   for (const sensitiveValue of sensitiveValues.filter(Boolean)) {

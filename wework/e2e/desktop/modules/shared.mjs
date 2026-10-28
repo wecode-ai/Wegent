@@ -29,7 +29,10 @@ import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
-import { shouldAcceptInitialTelemetryConsent } from './telemetry-consent.mjs'
+import {
+  initialTelemetryPosture,
+  shouldAcceptInitialTelemetryConsent,
+} from './telemetry-consent.mjs'
 import { waitForFolderPathReady, waitForFolderPickerInitialized } from './workspace-flows.mjs'
 
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
@@ -633,6 +636,7 @@ const RUNS_PLUGIN_E2E =
   PLUGINS_ONLY || (SELECTED_DESKTOP_SEGMENT && PLUGIN_SEGMENTS.includes(SELECTED_DESKTOP_SEGMENT))
 const VERIFIES_INITIAL_TELEMETRY_CONSENT =
   shouldAcceptInitialTelemetryConsent(SELECTED_DESKTOP_SEGMENT)
+const INITIAL_TELEMETRY_POSTURE = initialTelemetryPosture(SELECTED_DESKTOP_SEGMENT)
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..', '..')
@@ -1948,6 +1952,7 @@ export {
   SELECTED_DESKTOP_SEGMENT,
   RUNS_PLUGIN_E2E,
   VERIFIES_INITIAL_TELEMETRY_CONSENT,
+  INITIAL_TELEMETRY_POSTURE,
   scriptDir,
   weworkDir,
   repoDir,

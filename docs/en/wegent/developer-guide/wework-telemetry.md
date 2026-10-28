@@ -32,6 +32,8 @@ Public Wework ships the anonymous policy only: no person profiles, no client IP,
 
 The policy covers identity and client IP only: the event catalog, property allowlist, and scrubbing logic are identical for every distribution, and chats, prompts, model responses, code, file contents, file paths, terminal output, and screenshots must never be reported by any distribution. When a distribution enables person profiles it must also point the PostHog project's person display name at the person property it sets, otherwise the list still shows the distinct id.
 
+Desktop E2E verifies both postures from one build. The `telemetry-consent` checkpoint keeps the public anonymous policy: no account identity, `$geoip_disable` stays `true`, and no event may create a person profile. The `telemetry-identity` checkpoint sets `WEWORK_E2E_TELEMETRY_POLICY=identified` to run the distribution policy fixture in `src/e2e/telemetry-policy-fixture.ts`, then asserts that `$identify` reports the username as its distinct id with a `username` person property, that product events after identification reuse that distinct id, that `$geoip_disable` is `false` and person profiles are allowed, and that no request body carries the account email. The fixture only exists when `VITE_WEWORK_E2E=true`; production builds statically remove that branch.
+
 ## Event Catalog
 
 Events cover feature adoption, funnel outcomes, and reliability outcomes that support product decisions. Ordinary button clicks are not tracked.

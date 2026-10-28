@@ -61,6 +61,7 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-home-preload',
   'priority-filter',
   'telemetry-consent',
+  'telemetry-identity',
   'external-content-import',
   'send-key-preference',
   'reply-predictions',
