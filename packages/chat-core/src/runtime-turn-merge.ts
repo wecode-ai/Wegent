@@ -246,10 +246,9 @@ export function mergeRuntimeConversationItems(
       item.type === "user_message" ? [[item.message.id, item] as const] : [],
     ),
   );
-  const reconciledLocalItems =
-    hasNativePositions
-      ? localItems
-      : removeEquivalentAssistantTextItems(localItems, snapshotItems);
+  const reconciledLocalItems = hasNativePositions
+    ? localItems
+    : removeEquivalentAssistantTextItems(localItems, snapshotItems);
   const canonicalLocalItems = reconciledLocalItems.filter(
     (item) =>
       item.type !== "user_message" ||
