@@ -321,11 +321,12 @@ test.describe('Pipeline native session archive and continuation', () => {
             await runtimeProcess(request, target, SESSION_FILES, { ...params, action: 'verify' })
           }
 
+          // Keep the native request active until the running-archive assertion finishes.
           await postJson(request, `${MOCK}/stream-rules`, {
             matchText: followup,
             responseContent: `RESUME_OK_${prefix}`,
             chunkDelayMs: 0,
-            doneDelayMs: 30_000,
+            holdResponse: true,
           })
           await postJson(
             request,
@@ -366,6 +367,10 @@ test.describe('Pipeline native session archive and continuation', () => {
           })
           expect(runningBackup.status()).toBe(500)
           expect((await runningBackup.json()).detail).toContain('Agent is running')
+          const released = await postJson(request, `${MOCK}/stream-rules/release`, {
+            matchText: followup,
+          })
+          expect(released.released).toBeGreaterThan(0)
           await completed(request, taskId!, headers)
           const after = await snapshot()
           expect(after.markers).toEqual(before.markers)
