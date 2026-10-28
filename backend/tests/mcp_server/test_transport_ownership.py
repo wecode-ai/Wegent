@@ -38,8 +38,6 @@ def test_registered_transport_methods_follow_effective_mount(
         expected = set(MCP_TRANSPORT_METHODS)
         if effective.mount_path == "/api/mcp/interactive-form-question":
             expected.remove("POST")
-        elif effective.mount_path == "/api/mcp/subscription":
-            expected.difference_update({"GET", "POST"})
         assert set(effective.transport_methods) == expected
         transport = next(
             route

@@ -647,6 +647,31 @@ impl TaskRuntime {
     ) -> Result<IssueComment, TaskRuntimeError> {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
+            TaskProviderKind::Local => {
+                self.get_task(project_id, task_id).await?;
+                if body.trim().is_empty() {
+                    return Err(TaskRuntimeError::Invalid("Comment body is required".into()));
+                }
+                let comment = self.create_comment(LocalCommentCreate {
+                    project_id: project_id.to_owned(),
+                    task_id: task_id.to_owned(),
+                    client_message_id: None,
+                    sender_type: "system".into(),
+                    sender_id: "wework_space".into(),
+                    sender_name: "Wework".into(),
+                    content: body.to_owned(),
+                    metadata: serde_json::json!({"activity_type": "mcp_comment"}),
+                    reply_to_message_id: None,
+                })?;
+                Ok(IssueComment {
+                    id: comment.message_id,
+                    body: comment.content,
+                    author: comment.sender_name,
+                    web_url: None,
+                    created_at: comment.created_at,
+                    updated_at: comment.updated_at,
+                })
+            }
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
                 self.issue_provider
                     .add_comment(&project, provider, task_id, body)

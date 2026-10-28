@@ -488,12 +488,13 @@ path = "/api/v1/responses/:response_id"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/mcp/knowledge/sse"
-[[routes]]
-methods = ["GET"]
-path = "/api/mcp/subscription/sse"
-[[routes]]
-methods = ["POST"]
-path = "/api/mcp/subscription/sse"
+# Subscription tools remain Python-owned until preview and creation are migrated.
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/mcp/subscription/sse"
+#[[routes]]
+#methods = ["POST"]
+#path = "/api/mcp/subscription/sse"
 # `GET`/`POST /api/mcp/connectors/sse` — the dynamic connector MCP surface
 # (`mcp::connectors`). The source kept it in `app/mcp_server/connectors_app.py`
 # even though the endpoint is new with the generic OAuth server, so it moves to

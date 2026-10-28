@@ -1344,7 +1344,7 @@ def test_mounted_decorator_tool_servers_expose_request_context():
 @pytest.mark.parametrize(
     ("spec_name", "expected_methods"),
     [
-        ("subscription", {"DELETE", "OPTIONS"}),
+        ("subscription", {"GET", "HEAD", "POST", "DELETE", "OPTIONS"}),
         ("interactive_form_question", {"GET", "HEAD", "DELETE", "OPTIONS"}),
         ("system", {"GET", "HEAD", "POST", "DELETE", "OPTIONS"}),
     ],
