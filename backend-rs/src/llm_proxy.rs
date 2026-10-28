@@ -306,7 +306,7 @@ fn model_credentials_unavailable() -> FastApiError {
 }
 
 /// `resolve_llm_proxy_model_config`.
-async fn resolve_model_config(
+pub(crate) async fn resolve_model_config(
     state: &AppState,
     user: &UserRow,
     model_name: &str,

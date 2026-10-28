@@ -1058,3 +1058,12 @@ path = "/api/v1/loop-items/:item_id/assignments/:assignment_id/receipt"
 [[routes]]
 methods = ["PATCH"]
 path = "/api/v1/deliveries/:delivery_id"
+
+# Responses creation and executor callback migration.
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/responses"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/internal/callback"

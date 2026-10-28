@@ -114,12 +114,13 @@ async fn handle_callback(
 
     if let Some(status) = terminal_status {
         let ctx = completion::Completion {
+            app: Some(state),
             mysql: &state.mysql,
             redis,
             tables: tables(state),
             executor_manager: &state.executor_manager,
         };
-        let (final_result, user_id) = completion::complete_terminal(
+        let (final_result, user_id, auto_advance) = completion::complete_terminal_with_advance(
             &ctx,
             request.task_id,
             request.subtask_id,
@@ -131,7 +132,10 @@ async fn handle_callback(
             request.executor_namespace.as_deref(),
         )
         .await;
-        let advance = if status == "COMPLETED" {
+        // `_update_task_status_sync` only schedules the next turn when
+        // `get_auto_advance_info` produced an intent; every other completion,
+        // including a non-pipeline team, stops after persisting its status.
+        let advance = if auto_advance {
             state
                 .task_store
                 .advance_pipeline_stage(&state.mysql, request.task_id, request.subtask_id)
@@ -143,18 +147,14 @@ async fn handle_callback(
         } else {
             None
         };
-        let current_status = pipeline::task_status(state, request.task_id).await?;
         let result = final_result
             .or_else(|| event.result.clone())
             .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
         event.result = Some(result.clone());
-        // `WebSocketResultEmitter.emit`'s DONE branch: `chat:done` then
-        // `task:status`.
-        if let Err(error) =
-            emitter::emit_done_frames(redis, &event, user_id, &result, current_status.as_deref())
-                .await
-        {
-            tracing::warn!(%error, "callback done frames failed");
+        // `WebSocketResultEmitter.emit`'s terminal branch: the event's frame
+        // (`chat:done` / `chat:error` / `chat:cancelled`) then `task:status`.
+        if let Err(error) = emitter::emit_terminal_frames(redis, &event, user_id, &result).await {
+            tracing::warn!(%error, "callback terminal frames failed");
         }
         if let Some(advance) = advance {
             pipeline::dispatch_next(state, advance).await?;
