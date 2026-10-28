@@ -398,20 +398,24 @@ async function reloadWorkbench(control) {
   )
 }
 
-async function restorePaginatedConversation(control, { taskId, taskRowId, uiTimeoutMs }) {
-  await reloadWorkbench(control)
-  await control.command('waitFor', `[data-testid="${taskRowId}"]`, { timeoutMs: uiTimeoutMs })
-  await control.command('click', `[data-testid="${taskRowId}"]`)
+async function waitForRestoredConversation(control, taskId) {
   // Restoring the deliberately delayed native transcript precedes ordinary UI interactions.
-  const restored = await waitForTranscriptState(
+  return waitForTranscriptState(
     control,
     snapshot =>
       snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
       snapshot.pane?.currentRuntimeTask?.taskId === taskId &&
       snapshot.pane?.transcript?.loading === false,
-    'The paginated conversation did not finish restoration',
+    'The conversation did not finish restoration',
     WORKBENCH_READY_TIMEOUT_MS
   )
+}
+
+async function restorePaginatedConversation(control, { taskId, taskRowId, uiTimeoutMs }) {
+  await reloadWorkbench(control)
+  await control.command('waitFor', `[data-testid="${taskRowId}"]`, { timeoutMs: uiTimeoutMs })
+  await control.command('click', `[data-testid="${taskRowId}"]`)
+  const restored = await waitForRestoredConversation(control, taskId)
   assert.equal(restored.pane.transcript.hasMoreBefore, true)
   await control.command(
     'waitFor',
@@ -445,6 +449,43 @@ export async function verifyNativeItemPagination(control, { taskId, taskRowId, u
     await control.command('getWorkbenchDebugSnapshot', 'body')
   ).pane
   return { loadOlder, originalSearchPane }
+}
+
+export async function verifyRunningConversationRestoration(
+  control,
+  { taskRowId, projectKey, address, uiTimeoutMs, captureScreenshot, releaseSecondResponse }
+) {
+  await control.command('click', `[data-testid="${taskRowId}"]`)
+  await reloadWorkbench(control)
+  await control.command('waitFor', `[data-testid="${taskRowId}"]`, { timeoutMs: uiTimeoutMs })
+  await assertMovedProject(control, projectKey, address, uiTimeoutMs)
+  await waitForRestoredConversation(control, address.taskId)
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: SECOND_PROMPT,
+    timeoutMs: uiTimeoutMs,
+  })
+  await captureScreenshot(
+    control,
+    'running-conversation-history-01-reloaded-while-running.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  const transcriptText = await control.command(
+    'getText',
+    [
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    ].join(', ')
+  )
+  assert.ok(
+    transcriptText.includes(FIRST_COMPLETION),
+    'Reloading a running conversation lost the previous assistant response'
+  )
+  releaseSecondResponse()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: SECOND_COMPLETION,
+    timeoutMs: uiTimeoutMs,
+  })
+  await assertMovedProject(control, projectKey, address, uiTimeoutMs)
 }
 
 async function verifyMoveToProject(control, { taskId, executorHome, timeoutMs }) {
@@ -1099,41 +1140,14 @@ export function createDesktopScenario({
         text: PAGED_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', taskRow)
-
-      await reloadWorkbench(control)
-      await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
-        timeoutMs: uiTimeoutMs,
+      await verifyRunningConversationRestoration(control, {
+        taskRowId: taskRowTestId,
+        projectKey: moved.projectKey,
+        address: moved.address,
+        uiTimeoutMs,
+        captureScreenshot,
+        releaseSecondResponse: releaseSecondResponseResolve,
       })
-      await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
-      await control.command('waitFor', '[data-testid="message-user"]', {
-        text: SECOND_PROMPT,
-        timeoutMs: uiTimeoutMs,
-      })
-      await captureScreenshot(
-        control,
-        'running-conversation-history-01-reloaded-while-running.png',
-        ACTIVE_WORKBENCH_SELECTOR
-      )
-
-      const transcriptText = await control.command(
-        'getText',
-        [
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-        ].join(', ')
-      )
-      assert.ok(
-        transcriptText.includes(FIRST_COMPLETION),
-        'Reloading a running conversation lost the previous assistant response'
-      )
-
-      releaseSecondResponseResolve()
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: SECOND_COMPLETION,
-        timeoutMs: uiTimeoutMs,
-      })
-      await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
       active = false
     },
 

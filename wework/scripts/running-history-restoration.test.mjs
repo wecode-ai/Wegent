@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test, vi } from 'vitest'
 
-import { verifyNativeItemPagination } from '../e2e/desktop/scenarios/running-conversation-history.scenario.mjs'
+import {
+  verifyNativeItemPagination,
+  verifyRunningConversationRestoration,
+} from '../e2e/desktop/scenarios/running-conversation-history.scenario.mjs'
 import {
   DEFAULT_STEP_TIMEOUT_MS,
   WORKBENCH_READY_TIMEOUT_MS,
@@ -10,6 +13,8 @@ import {
 const taskId = 'paged-task'
 const taskRowId = `runtime-local-task-row-${taskId}`
 const restorationDelayMs = 16_000
+const projectKey = 'moved-project'
+const address = { taskId, deviceId: 'device-a', workspacePath: '/workspace', threadId: 'thread-a' }
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -20,12 +25,14 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-function pagination({
+function restoration({
   restoredTaskId = taskId,
   restoredPaneTaskId = restoredTaskId,
   loading = false,
   hasMoreBefore = true,
   items = 1250,
+  running = false,
+  previousCompletion = true,
 } = {}) {
   let currentTaskId
   let paneTaskId
@@ -33,6 +40,13 @@ function pagination({
   let pages = 0
   let reloads = 0
   const commands = []
+  const captureScreenshot = vi.fn(async () => {})
+  const releaseSecondResponse = vi.fn()
+  const assertRestored = () => {
+    assert.equal(currentTaskId, taskId, 'Conversation UI was used for another task')
+    assert.equal(paneTaskId, taskId, 'Conversation UI was used before its pane switched tasks')
+    assert.equal(transcript.loading, false, 'Conversation UI was used before restoration')
+  }
   const control = {
     readyCount: 0,
     async awaitReadyAfter(previousCount) {
@@ -62,9 +76,7 @@ function pagination({
         }, restorationDelayMs)
       }
       if (selector.includes('load-older-runtime-transcript-button')) {
-        assert.equal(currentTaskId, taskId, 'Older-page UI was used for another task')
-        assert.equal(paneTaskId, taskId, 'Older-page UI was used before its pane switched tasks')
-        assert.equal(transcript.loading, false, 'Older-page UI was used before restoration')
+        assertRestored()
         assert.equal(hasMoreBefore, true)
         if (action === 'click') {
           assert.equal(transcript.loadingMoreBefore, false)
@@ -75,10 +87,27 @@ function pagination({
           }, 200)
         }
       }
+      if (action === 'waitFor' && selector.includes('message-user')) {
+        assertRestored()
+        assert.equal(options.text, 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND')
+      }
+      if (action === 'waitFor' && selector.includes('message-assistant')) {
+        assertRestored()
+        assert.equal(releaseSecondResponse.mock.calls.length, 1)
+        assert.equal(options.text, 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_SECOND_COMPLETE')
+      }
+      if (action === 'getText') {
+        assertRestored()
+        assert.equal(captureScreenshot.mock.calls.length, 1)
+        assert.equal(releaseSecondResponse.mock.calls.length, 0)
+        return previousCompletion ? 'WEWORK_DESKTOP_E2E_RUNNING_HISTORY_FIRST_COMPLETE' : ''
+      }
       if (action === 'getWorkbenchDebugSnapshot') {
         return JSON.stringify({
           workbench: {
-            currentRuntimeTask: { taskId: currentTaskId },
+            currentRuntimeTask: { ...address, taskId: currentTaskId },
+            activeTaskProjectKey: currentTaskId === taskId ? projectKey : 'another-project',
+            activeTask: { threadId: address.threadId },
             isBootstrapping: false,
             runtimeWorkSummary: { totalTasks: 2 },
           },
@@ -97,11 +126,21 @@ function pagination({
     },
   }
   let settled = false
-  const result = verifyNativeItemPagination(control, {
-    taskId,
-    taskRowId,
-    uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  const pending = running
+    ? verifyRunningConversationRestoration(control, {
+        taskRowId,
+        projectKey,
+        address,
+        uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        captureScreenshot,
+        releaseSecondResponse,
+      })
+    : verifyNativeItemPagination(control, {
+        taskId,
+        taskRowId,
+        uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+  const result = pending
     .then(
       value => ({ value }),
       error => ({ error })
@@ -115,11 +154,19 @@ function pagination({
         command.action === 'waitFor' &&
         command.selector.includes('load-older-runtime-transcript-button')
     )
-  return { commands, result, olderWaits, settled: () => settled, reloads: () => reloads }
+  return {
+    commands,
+    result,
+    olderWaits,
+    captureScreenshot,
+    releaseSecondResponse,
+    settled: () => settled,
+    reloads: () => reloads,
+  }
 }
 
 test('both reloads await their target transcript before starting ordinary pagination UI', async () => {
-  const run = pagination()
+  const run = restoration()
   await vi.advanceTimersByTimeAsync(DEFAULT_STEP_TIMEOUT_MS + 1)
   assert.equal(run.settled(), false)
   assert.equal(run.olderWaits().length, 0)
@@ -156,22 +203,65 @@ test.each([
   ['a pane that still belongs to another task', { restoredPaneTaskId: 'another-restored-task' }],
   ['a target transcript that stays loading', { loading: true }],
 ])('retains the restoration deadline for %s', async (_description, options) => {
-  const run = pagination(options)
+  const run = restoration(options)
   await vi.advanceTimersByTimeAsync(WORKBENCH_READY_TIMEOUT_MS)
   assert.match((await run.result).error?.message ?? '', /did not finish restoration/)
   assert.equal(run.olderWaits().length, 0)
 })
 
 test('rejects a restored page that no longer offers native pagination', async () => {
-  const run = pagination({ hasMoreBefore: false })
+  const run = restoration({ hasMoreBefore: false })
   await vi.advanceTimersByTimeAsync(restorationDelayMs + 100)
   assert.equal((await run.result).error?.code, 'ERR_ASSERTION')
   assert.equal(run.olderWaits().length, 0)
 })
 
 test('still requires all 1250 native items after the two older-page reads', async () => {
-  const run = pagination({ items: 1249 })
+  const run = restoration({ items: 1249 })
   await vi.advanceTimersByTimeAsync(restorationDelayMs + 1000)
   assert.match((await run.result).error?.message ?? '', /did not restore the middle/)
   assert.equal(run.reloads(), 1)
+})
+
+test('the final running conversation reload waits for its transcript without delaying reload itself', async () => {
+  const run = restoration({ running: true, hasMoreBefore: false })
+  await vi.advanceTimersByTimeAsync(DEFAULT_STEP_TIMEOUT_MS + 1)
+  assert.deepEqual(
+    run.commands.slice(0, 2).map(({ action, at }) => [action, at]),
+    [
+      ['click', 0],
+      ['reloadMainWindow', 0],
+    ]
+  )
+  assert.equal(run.settled(), false)
+  assert.equal(run.commands.filter(command => command.selector.includes('message-user')).length, 0)
+  assert.equal(run.captureScreenshot.mock.calls.length, 0)
+  assert.equal(run.releaseSecondResponse.mock.calls.length, 0)
+
+  await vi.advanceTimersByTimeAsync(restorationDelayMs)
+  assert.equal((await run.result).error, undefined)
+  assert.equal(run.captureScreenshot.mock.calls.length, 1)
+  assert.equal(run.releaseSecondResponse.mock.calls.length, 1)
+  for (const { action, options } of run.commands) {
+    if (action === 'waitFor') assert.equal(options.timeoutMs, DEFAULT_STEP_TIMEOUT_MS)
+  }
+  assert.equal(vi.getTimerCount(), 0)
+})
+
+test.each([
+  ['another pane', { restoredPaneTaskId: 'another-task' }],
+  ['an unfinished native read', { loading: true }],
+])('the final reload still fails with %s', async (_description, options) => {
+  const run = restoration({ ...options, running: true })
+  await vi.advanceTimersByTimeAsync(WORKBENCH_READY_TIMEOUT_MS + restorationDelayMs)
+  assert.match((await run.result).error?.message ?? '', /did not finish restoration/)
+  assert.equal(run.commands.filter(command => command.selector.includes('message-user')).length, 0)
+  assert.equal(run.releaseSecondResponse.mock.calls.length, 0)
+})
+
+test('the final reload retains the previous assistant completion assertion before releasing the model', async () => {
+  const run = restoration({ running: true, previousCompletion: false })
+  await vi.advanceTimersByTimeAsync(restorationDelayMs + 100)
+  assert.match((await run.result).error?.message ?? '', /lost the previous assistant response/)
+  assert.equal(run.releaseSecondResponse.mock.calls.length, 0)
 })
