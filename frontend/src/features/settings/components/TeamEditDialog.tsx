@@ -50,6 +50,7 @@ import {
 import { createTeam, updateTeam } from '../services/teams'
 import TeamEditDrawer from './TeamEditDrawer'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useWritableGroups } from '@/hooks/useWritableGroups'
 import { shellApis, UnifiedShell } from '@/apis/shells'
 import { BotEditRef } from './BotEdit'
 import { useTeamContext } from '@/contexts/TeamContext'
@@ -189,6 +190,20 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     fixedCreateTargetLabel,
   } = props
 
+  const isEditing = editingTeamId !== null && editingTeamId > 0
+  const groupsLoadedByParent = writableGroups.length > 0
+  // A fixed creation target renders no scope selector, so group choices are unused.
+  const usesFixedCreateTarget = Boolean(fixedCreateTargetLabel) && !isEditing
+  const {
+    groups: loadedWritableGroups,
+    error: loadedWritableGroupsError,
+    loading: loadedWritableGroupsLoading,
+    reload: reloadWritableGroups,
+  } = useWritableGroups(open && !groupsLoadedByParent && !usesFixedCreateTarget)
+  const availableWritableGroups = groupsLoadedByParent ? writableGroups : loadedWritableGroups
+  const availableWritableGroupsError = groupsLoadedByParent ? null : loadedWritableGroupsError
+  const availableWritableGroupsLoading = !groupsLoadedByParent && loadedWritableGroupsLoading
+
   const { t } = useTranslation()
   const { invalidateTeams } = useTeamContext({ enabled: false })
 
@@ -197,7 +212,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     editingTeamId === 0 ? null : teams.find(t => t.id === editingTeamId) || null
 
   const formTeam = editingTeam ?? (editingTeamId === 0 ? initialTeam : null) ?? null
-  const isEditing = editingTeamId !== null && editingTeamId > 0
 
   // Form state
   const [name, setName] = useState('')
@@ -221,6 +235,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [creatingPublishTarget, setCreatingPublishTarget] = useState<CapabilityPublishTarget>(
     createTarget.scope === 'group' ? 'team' : 'personal'
   )
+  const [creatingGroupNames, setCreatingGroupNames] = useState<string[]>([])
   const [editingPublishTarget, setEditingPublishTarget] =
     useState<CapabilityPublishTarget>('personal')
   const [editingGroupNames, setEditingGroupNames] = useState<string[]>([])
@@ -240,14 +255,23 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     () =>
       isEditing
         ? editingGroupNames
-        : createTarget.groupNames?.length
-          ? createTarget.groupNames
-          : createTarget.groupName
-            ? [createTarget.groupName]
-            : groupName
-              ? [groupName]
-              : [],
-    [createTarget.groupName, createTarget.groupNames, editingGroupNames, groupName, isEditing]
+        : creatingGroupNames.length > 0
+          ? creatingGroupNames
+          : createTarget.groupNames?.length
+            ? createTarget.groupNames
+            : createTarget.groupName
+              ? [createTarget.groupName]
+              : groupName
+                ? [groupName]
+                : [],
+    [
+      createTarget.groupName,
+      createTarget.groupNames,
+      creatingGroupNames,
+      editingGroupNames,
+      groupName,
+      isEditing,
+    ]
   )
   const publishGroupName = publishGroupNames[0]
 
@@ -649,6 +673,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         setTechnicalNameUnlocked(true)
         setIdentityConfirmVisible(false)
         setIdentityConfirmation('')
+        setCreatingGroupNames([])
         setCreatingPublishTarget(
           publishAfterCreate
             ? 'marketplace'
@@ -1364,8 +1389,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             ? nextGroupNames
             : editingGroupNames.length > 0
               ? editingGroupNames
-              : writableGroups[0]?.name
-                ? [writableGroups[0].name]
+              : availableWritableGroups[0]?.name
+                ? [availableWritableGroups[0].name]
                 : []
         )
       }
@@ -1373,22 +1398,25 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     }
     setCreatingPublishTarget(target)
     if (target === 'team') {
+      const resolvedGroupNames =
+        nextGroupNames.length > 0
+          ? nextGroupNames
+          : availableWritableGroups[0]?.name
+            ? [availableWritableGroups[0].name]
+            : []
+      setCreatingGroupNames(resolvedGroupNames)
       onCreateOptionsChange?.(
         {
           scope: 'group',
-          groupName: nextGroupNames[0] || writableGroups[0]?.name,
-          groupNames:
-            nextGroupNames.length > 0
-              ? nextGroupNames
-              : writableGroups[0]?.name
-                ? [writableGroups[0].name]
-                : [],
+          groupName: resolvedGroupNames[0] || availableWritableGroups[0]?.name,
+          groupNames: resolvedGroupNames,
         },
         false,
         marketplaceTags
       )
       return
     }
+    setCreatingGroupNames([])
     onCreateOptionsChange?.({ scope: 'personal' }, target === 'marketplace', marketplaceTags)
   }
 
@@ -1594,7 +1622,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             )}
 
             <div data-testid="team-save-publish-section">
-              {fixedCreateTargetLabel && !isEditing ? (
+              {usesFixedCreateTarget ? (
                 <div
                   className="rounded-lg border border-border bg-surface px-4 py-3"
                   data-testid="team-fixed-create-target"
@@ -1611,13 +1639,16 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 <div data-testid="team-publish-scope-section">
                   <CapabilityScopeSelector
                     value={publishTarget}
-                    groups={writableGroups}
+                    groups={availableWritableGroups}
                     groupName={publishGroupName}
                     groupNames={publishGroupNames}
                     onChange={handlePublishTargetChange}
                     existingResource={isEditing}
                     multipleGroups
                     compact={useSimpleEditor}
+                    groupsError={availableWritableGroupsError}
+                    groupsLoading={availableWritableGroupsLoading}
+                    onRetryGroups={reloadWritableGroups}
                   />
                 </div>
               )}

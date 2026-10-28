@@ -7,6 +7,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 
 import { botApis } from '@/apis/bots'
+import { listGroups } from '@/apis/groups'
 import { modelApis } from '@/apis/models'
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { shellApis } from '@/apis/shells'
@@ -149,6 +150,10 @@ jest.mock('@/apis/bots', () => {
     },
   }
 })
+
+jest.mock('@/apis/groups', () => ({
+  listGroups: jest.fn(),
+}))
 
 jest.mock('@/apis/models', () => ({
   modelApis: {
@@ -1085,6 +1090,176 @@ describe('Simple TeamEditDialog', () => {
       expect(mockedSyncAgentBindings).toHaveBeenCalledWith(1, {
         group_names: ['engineering'],
       })
+    })
+  })
+
+  it('loads writable groups when no group list is provided', async () => {
+    const team = makeTeam()
+    ;(listGroups as jest.Mock).mockResolvedValueOnce({
+      total: 2,
+      items: [
+        {
+          id: 7,
+          name: 'engineering',
+          display_name: 'Engineering',
+          my_role: 'Developer',
+        },
+        {
+          id: 8,
+          name: 'readers',
+          display_name: 'Readers',
+          my_role: 'Reporter',
+        },
+      ],
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('capability-scope-team'))
+    expect(await screen.findByTestId('capability-scope-group-engineering')).toBeInTheDocument()
+    expect(screen.queryByTestId('capability-scope-group-readers')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('capability-scope-group-engineering'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        10,
+        expect.objectContaining({
+          target_group_names: ['engineering'],
+        })
+      )
+    })
+  })
+
+  it('keeps a selected creation group without a parent callback', async () => {
+    const writableGroups = [
+      {
+        id: 7,
+        name: 'engineering',
+        display_name: 'Engineering',
+        my_role: 'Developer',
+      } as Group,
+    ]
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+        writableGroups={writableGroups}
+      />
+    )
+
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'New group agent' },
+    })
+    fireEvent.click(screen.getByTestId('capability-scope-team'))
+    fireEvent.click(screen.getByTestId('capability-scope-group-engineering'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedCreateBot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target_group_names: ['engineering'],
+        })
+      )
+    })
+  })
+
+  it('skips writable group loading when the create target is fixed', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+        fixedCreateTargetLabel="Engineering"
+      />
+    )
+
+    expect(await screen.findByTestId('team-fixed-create-target')).toBeInTheDocument()
+    expect(listGroups).not.toHaveBeenCalled()
+  })
+
+  it('resets a stale creation group when the dialog reopens for another target', async () => {
+    const writableGroups = [
+      {
+        id: 7,
+        name: 'engineering',
+        display_name: 'Engineering',
+        my_role: 'Developer',
+      } as Group,
+      {
+        id: 8,
+        name: 'research',
+        display_name: 'Research',
+        my_role: 'Developer',
+      } as Group,
+    ]
+
+    const renderDialog = (open: boolean, createTarget?: { scope: 'group'; groupName: string }) => (
+      <TeamEditDialog
+        open={open}
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+        writableGroups={writableGroups}
+        createTarget={
+          createTarget
+            ? {
+                scope: 'group',
+                groupName: createTarget.groupName,
+                groupNames: [createTarget.groupName],
+              }
+            : undefined
+        }
+      />
+    )
+
+    const { rerender } = render(renderDialog(true))
+
+    fireEvent.click(await screen.findByTestId('capability-scope-team'))
+    fireEvent.click(screen.getByTestId('capability-scope-group-engineering'))
+
+    rerender(renderDialog(false))
+    rerender(renderDialog(true, { scope: 'group', groupName: 'research' }))
+
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'Reopened agent' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedCreateBot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target_group_names: ['research'],
+        })
+      )
     })
   })
 

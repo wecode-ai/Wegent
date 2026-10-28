@@ -22,6 +22,40 @@ interface CapabilityScopeSelectorProps {
   existingResource?: boolean
   multipleGroups?: boolean
   compact?: boolean
+  groupsError?: Error | null
+  groupsLoading?: boolean
+  onRetryGroups?: () => void
+}
+
+interface GroupsLoadErrorProps {
+  message: string
+  retryLabel: string
+  loading: boolean
+  onRetry?: () => void
+}
+
+function GroupsLoadError({ message, retryLabel, loading, onRetry }: GroupsLoadErrorProps) {
+  return (
+    <div
+      className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+      role="alert"
+      data-testid="capability-scope-groups-error"
+    >
+      <span>{message}</span>
+      {onRetry && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={loading}
+          onClick={onRetry}
+          data-testid="capability-scope-groups-retry"
+        >
+          {retryLabel}
+        </Button>
+      )}
+    </div>
+  )
 }
 
 export function CapabilityScopeSelector({
@@ -33,6 +67,9 @@ export function CapabilityScopeSelector({
   existingResource = false,
   multipleGroups = false,
   compact = false,
+  groupsError = null,
+  groupsLoading = false,
+  onRetryGroups,
 }: CapabilityScopeSelectorProps) {
   const { t } = useTranslation('resource-library')
   const selectedGroupNames = groupNames || (groupName ? [groupName] : [])
@@ -121,6 +158,14 @@ export function CapabilityScopeSelector({
               {t('sources.selected_groups', { count: selectedGroupNames.length })}
             </span>
           </div>
+          {groupsError && (
+            <GroupsLoadError
+              message={t('messages.groups_load_failed')}
+              retryLabel={t('actions.retry')}
+              loading={groupsLoading}
+              onRetry={onRetryGroups}
+            />
+          )}
           <div
             className="max-h-52 overflow-y-auto rounded-md border border-border bg-base"
             data-testid="capability-scope-groups"
@@ -149,23 +194,33 @@ export function CapabilityScopeSelector({
         </div>
       )}
       {value === 'team' && !multipleGroups && (
-        <label className="block space-y-2 text-sm font-medium" htmlFor="capability-scope-group">
-          <span>{t('new_capability.group')}</span>
-          <select
-            id="capability-scope-group"
-            value={groupName || ''}
-            onChange={event => onChange('team', event.target.value)}
-            className="h-11 w-full rounded-md border border-border bg-base px-3 font-normal"
-            data-testid="capability-scope-group"
-          >
-            <option value="">{t('new_capability.select_group')}</option>
-            {groups.map(group => (
-              <option key={group.id} value={group.name}>
-                {group.display_name || group.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="space-y-2">
+          {groupsError && (
+            <GroupsLoadError
+              message={t('messages.groups_load_failed')}
+              retryLabel={t('actions.retry')}
+              loading={groupsLoading}
+              onRetry={onRetryGroups}
+            />
+          )}
+          <label className="block space-y-2 text-sm font-medium" htmlFor="capability-scope-group">
+            <span>{t('new_capability.group')}</span>
+            <select
+              id="capability-scope-group"
+              value={groupName || ''}
+              onChange={event => onChange('team', event.target.value)}
+              className="h-11 w-full rounded-md border border-border bg-base px-3 font-normal"
+              data-testid="capability-scope-group"
+            >
+              <option value="">{t('new_capability.select_group')}</option>
+              {groups.map(group => (
+                <option key={group.id} value={group.name}>
+                  {group.display_name || group.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       )}
     </section>
   )
