@@ -15,6 +15,7 @@ import {
 } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import {
+  activeTranscriptSelector,
   assertConversationTextOccurrences,
   assertConversationTextOrder,
 } from '../modules/conversation-navigation.mjs'
@@ -27,6 +28,35 @@ const HISTORY = 'The original answer must keep its place.'
 const INITIAL = 'The goal answer before restart must stay attached to its user.'
 const RECOVERED = 'The recovered output must appear as a new live turn.'
 const FINAL = 'The ordinary follow-up must also keep its own answer.'
+
+async function captureIdentityFailure(control, resultDir, evidence) {
+  const transcriptSelector = '[data-testid="desktop-chat-scroll-content"]'
+  const commands = {
+    activeWorkspaceCount: ['getElementCount', '[data-workspace-tab-content][aria-hidden="false"]'],
+    focusedPaneCount: [
+      'getElementCount',
+      `${ACTIVE_WORKBENCH_SELECTOR}[data-active-workbench-pane="true"]`,
+    ],
+    activeTranscriptCount: ['getElementCount', activeTranscriptSelector()],
+    activeTranscriptText: ['getText', activeTranscriptSelector()],
+    allTranscriptText: ['getText', transcriptSelector],
+    viewportMetrics: ['getElementMetrics', '[data-testid="desktop-chat-scroll"]'],
+    rowMetrics: ['getElementMetrics', `${transcriptSelector} [data-message-row][data-index]`],
+    workbench: ['getWorkbenchDebugSnapshot', 'body'],
+  }
+  const diagnostics = { ...evidence }
+  for (const [key, args] of Object.entries(commands)) {
+    try {
+      diagnostics[key] = await control.command(...args)
+    } catch (error) {
+      diagnostics[key] = { error: String(error) }
+    }
+  }
+  await writeFile(
+    join(resultDir, 'output-identity-failure.json'),
+    JSON.stringify(diagnostics, null, 2)
+  )
+}
 
 export function createDesktopScenario(options) {
   const existing = createGoalStateSync(options)
@@ -107,6 +137,7 @@ export function createDesktopScenario(options) {
       )
       active = true
       let address
+      let recoveredTranscript
       const rpc = async (method, params) => {
         const origin = await control.command('getLocationOrigin', 'body')
         const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
@@ -162,6 +193,7 @@ export function createDesktopScenario(options) {
         await control.command('click', `[data-testid="runtime-local-task-row-${address.taskId}"]`)
         await waitText(RECOVERED)
         const during = await transcript()
+        recoveredTranscript = during
         assert.equal(
           goalUser(during)?.turnId,
           originalUser.turnId,
@@ -223,6 +255,15 @@ export function createDesktopScenario(options) {
         assertConversationTextOrder(visible, ordered)
       } catch (error) {
         console.error('[goal-output-identity] verification failed', { phase, requestTrace }, error)
+        try {
+          await captureIdentityFailure(control, options.resultDir, {
+            phase,
+            requestTrace,
+            recoveredTranscript,
+          })
+        } catch (diagnosticError) {
+          console.error('[goal-output-identity] failed to retain diagnostics', diagnosticError)
+        }
         throw error
       } finally {
         phase = 'cleanup'
