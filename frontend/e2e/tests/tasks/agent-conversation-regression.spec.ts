@@ -12,6 +12,7 @@ import { APIRequestContext, Page, expect, test, type Route } from '@playwright/t
 import { ADMIN_USER } from '../../config/test-users'
 import { ApiClient, createApiClient } from '../../utils/api-client'
 import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
+import { settleMentionTasks } from '../../utils/mention-task-fixtures'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -308,7 +309,15 @@ test.describe('Agent conversation regression', () => {
       prompt: `Seed project conversation ${projectToken}`,
       projectId: project.id,
     })
-    await seedMentionTasks(request, 55, index => `Project filler ${index}`, project.id)
+    const fillerTaskIds = await seedMentionTasks(
+      request,
+      55,
+      index => `Project filler ${index}`,
+      project.id
+    )
+    await settleMentionTasks([sourceTaskId, ...fillerTaskIds], taskId =>
+      waitForBackendTerminal(request, taskId)
+    )
     await touchMentionTask(request, sourceTaskId, `Project handoff ${projectToken}`)
 
     const projectTaskRequests: string[] = []
@@ -378,6 +387,9 @@ test.describe('Agent conversation regression', () => {
       project.id
     )
     const newestFirstPageTaskId = firstPageTaskIds[firstPageTaskIds.length - 1]
+    await settleMentionTasks([laterPageTaskId, ...firstPageTaskIds], taskId =>
+      waitForBackendTerminal(request, taskId)
+    )
     await touchMentionTask(request, laterPageTaskId, `Retry page two ${retryToken}`)
 
     const isCursorPage = (url: URL) =>
@@ -1796,8 +1808,8 @@ test.describe('Agent conversation regression', () => {
     return { id: project.id! }
   }
 
-  // Creates one real conversation record without running a model turn. The
-  // task still carries a CRD title, which is what the mention search reads.
+  // The real create API also dispatches the first model turn. Project fixtures
+  // must settle those executions before touching their mention sort order.
   async function seedMentionTask(
     request: APIRequestContext,
     input: { title: string; prompt: string; projectId?: number }

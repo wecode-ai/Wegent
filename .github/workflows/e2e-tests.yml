@@ -1054,7 +1054,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Run knowledge Python gateway API E2E
+      - name: Run knowledge and team Python gateway API E2E
         if: matrix.shardIndex == 1
         working-directory: ./backend
         env:
@@ -1084,8 +1084,10 @@ jobs:
           test "$E2E_TEST_SHA" = "$E2E_EXPECTED_SHA"
           uv run --no-sync python tests/e2e/knowledge_python_gateway.py \
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
+          uv run --no-sync python tests/e2e/team_detail_gateway.py \
+            2>&1 | tee "$E2E_REPORT_DIR/team-detail.log"
 
-      - name: Upload knowledge Python gateway API E2E report
+      - name: Upload Python gateway API E2E reports
         if: always() && matrix.shardIndex == 1
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

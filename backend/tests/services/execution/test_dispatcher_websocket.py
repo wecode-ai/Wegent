@@ -10,7 +10,11 @@ import pytest
 
 from app.services.execution.device_socketio import publish_device_execution
 from app.services.execution.dispatcher import ExecutionDispatcher
-from app.services.execution.router import CommunicationMode, ExecutionTarget
+from app.services.execution.router import (
+    CommunicationMode,
+    ExecutionRouter,
+    ExecutionTarget,
+)
 from shared.models import ExecutionRequest
 from shared.models.execution import (
     GIT_AUTH_TRANSPORT_DEVICE_LOCAL,
@@ -84,6 +88,40 @@ def test_worker_device_dispatch_uses_cross_process_message(
     assert message["room"] == "device:9:device-1"
     assert message["data"] == [{"task_id": 1}]
     assert message["host_id"]
+
+
+def test_app_device_routes_to_record_scoped_socket_room(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A desktop App alias must target the room joined at registration."""
+    from app.models.kind import Kind
+    from app.schemas.device import DeviceType
+
+    device = Kind(
+        id=58,
+        user_id=9,
+        kind="Device",
+        name="e2e-platform-device-1",
+        namespace="default",
+        json={"spec": {"deviceType": DeviceType.APP.value}},
+    )
+    monkeypatch.setattr(
+        "app.services.device_service.device_service.get_device_by_device_id",
+        lambda _db, **_kwargs: device,
+    )
+    monkeypatch.setattr(
+        "app.db.session.SessionLocal",
+        lambda: MagicMock(
+            **{
+                "__enter__": lambda self: self,
+                "__exit__": lambda *_args: None,
+            }
+        ),
+    )
+
+    target = ExecutionRouter().route(MagicMock(user={"id": 9}), device_id=device.name)
+
+    assert target.room == "device:9:app-record-58"
 
 
 @pytest.mark.asyncio

@@ -176,11 +176,24 @@ class ExecutionRouter:
 
         # Priority 2: device_id specified, use WebSocket mode
         if device_id:
+            from app.db.session import SessionLocal
+            from app.services.device.identity import device_connection_route_id
+            from app.services.device_service import device_service
+
+            route_device_id = device_id
+            if user_id is not None:
+                with SessionLocal() as db:
+                    device = device_service.get_device_by_device_id(
+                        db, user_id=user_id, device_id=device_id
+                    )
+                    if device is not None:
+                        route_device_id = device_connection_route_id(device)
+
             return ExecutionTarget(
                 mode=CommunicationMode.WEBSOCKET,
                 namespace="/local-executor",
                 event="task:execute",
-                room=f"device:{user_id}:{device_id}",
+                room=f"device:{user_id}:{route_device_id}",
             )
 
         shell_type = self._get_shell_type(request)
