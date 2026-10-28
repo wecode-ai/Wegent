@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DocumentLinkResource } from '../utils/documentLinkResource'
 import {
   loadBoundedRemoteFile,
+  prepareRemotePdf,
   probeRemoteVideo,
   RemoteFileError,
   type RemoteFileErrorCode,
@@ -59,8 +60,15 @@ export function useDocumentLinkPreview(resource: DocumentLinkResource | null) {
       }
       try {
         if (resource.kindHint === 'pdf') {
+          const result = await prepareRemotePdf(resource.url, controller.signal, resource.filename)
           if (sequence === sequenceRef.current) {
-            setState({ status: 'ready', mimeType: 'application/pdf' })
+            setState({
+              status: 'ready',
+              blob: result.blob,
+              mimeType: result.mimeType,
+              size: result.size,
+              supportsRange: result.supportsRange,
+            })
           }
           return
         }

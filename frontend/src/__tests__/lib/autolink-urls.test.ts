@@ -26,6 +26,7 @@ describe('autolinkUrls', () => {
     '![https://example.com/image.jpeg](https://example.com/image.jpeg)',
     '[**https://example.com/docs**](https://example.com/target)',
     '[Label \\] https://example.com/docs](https://example.com/target)',
+    '[Open `]` https://example.com/file.pdf](https://example.com/target)',
     '[![https://example.com/image.jpeg](https://example.com/image.jpeg)](https://example.com)',
   ])('does not autolink a URL inside an existing link or image label: %s', source => {
     expect(autolinkUrls(source)).toBe(source)

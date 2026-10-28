@@ -93,7 +93,7 @@ export function getDocumentLinkKind(value: string): DocumentLinkPreviewKind {
   if (extension === 'pdf') return 'pdf'
   if (['docx', 'xlsx', 'pptx'].includes(extension)) return 'office'
   if (extension === 'mp4') return 'video'
-  if (['jpg', 'jpeg', 'png', 'webp'].includes(extension)) return 'image'
+  if (['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(extension)) return 'image'
   if (['md', 'markdown', 'txt'].includes(extension)) return 'text'
   return 'unknown'
 }

@@ -80,10 +80,11 @@ function assertFileSignature(
     if (kind === 'image') {
       const isJpeg = startsWith(bytes, [0xff, 0xd8, 0xff])
       const isPng = startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      const isGif = startsWith(bytes, [0x47, 0x49, 0x46, 0x38])
       const isWebp =
         startsWith(bytes, [0x52, 0x49, 0x46, 0x46]) &&
         startsWith(bytes.subarray(8), [0x57, 0x45, 0x42, 0x50])
-      return isJpeg || isPng || isWebp
+      return isJpeg || isPng || isGif || isWebp
     }
     return !bytes.includes(0)
   })()
@@ -99,6 +100,9 @@ function readUint24LE(bytes: Uint8Array, offset: number): number {
 
 function readImageDimensions(bytes: Uint8Array): { width: number; height: number } | null {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  if (startsWith(bytes, [0x47, 0x49, 0x46, 0x38]) && bytes.length >= 10) {
+    return { width: view.getUint16(6, true), height: view.getUint16(8, true) }
+  }
   if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47]) && bytes.length >= 24) {
     return { width: view.getUint32(16), height: view.getUint32(20) }
   }
@@ -385,6 +389,108 @@ export async function loadBoundedRemoteFile(
   } finally {
     timedSignal.cleanup()
   }
+}
+
+export interface PreparedRemotePdf {
+  blob?: Blob
+  mimeType: string
+  size: number
+  supportsRange: boolean
+}
+
+async function readResponsePrefix(response: Response, maxBytes: number): Promise<Uint8Array> {
+  if (!response.body) throw new RemoteFileError('network-or-cors', 'Remote file has no body')
+  const reader = response.body.getReader()
+  const bytes = new Uint8Array(maxBytes)
+  let size = 0
+  try {
+    while (size < maxBytes) {
+      const { done, value } = await reader.read()
+      if (done) break
+      const length = Math.min(value.byteLength, maxBytes - size)
+      bytes.set(value.subarray(0, length), size)
+      size += length
+      if (length < value.byteLength) {
+        await reader.cancel()
+        break
+      }
+    }
+    if (size === maxBytes) await reader.cancel()
+  } finally {
+    reader.releaseLock()
+  }
+  return bytes.subarray(0, size)
+}
+
+/**
+ * Validate a PDF without buffering a range-capable file in browser memory.
+ * Origins that ignore Range fall back to the normal bounded-file loader.
+ */
+export async function prepareRemotePdf(
+  url: string,
+  signal: AbortSignal,
+  filename = new URL(url).pathname.split('/').pop() || 'file.pdf'
+): Promise<PreparedRemotePdf> {
+  const timedSignal = createTimedSignal(signal)
+  let useBoundedFallback = false
+  try {
+    const response = await fetch(url, {
+      mode: 'cors',
+      credentials: 'omit',
+      redirect: 'error',
+      referrerPolicy: 'no-referrer',
+      headers: { Range: 'bytes=0-' },
+      signal: timedSignal.signal,
+    })
+    assertResponse(response)
+
+    if (response.status !== 206) {
+      const declaredSize = Number(response.headers.get('content-length') || 0)
+      await response.body?.cancel()
+      if (declaredSize > MAX_BYTES.pdf) {
+        throw new RemoteFileError('too-large', 'Remote file exceeds the preview limit')
+      }
+      useBoundedFallback = true
+    } else {
+      const range = response.headers.get('content-range')
+      const match = range?.match(/^bytes\s+0-(\d+)\/(\d+)$/i)
+      let end = match ? Number(match[1]) : 0
+      const size = match ? Number(match[2]) : Number(response.headers.get('content-length') || 0)
+      const mimeType = response.headers.get('content-type')?.split(';')[0].trim() || ''
+      const prefix = await readResponsePrefix(response, 16)
+      if (!match) end = prefix.length - 1
+      if (!Number.isSafeInteger(end) || end < 4) {
+        throw new RemoteFileError('network-or-cors', 'Remote PDF range response is invalid')
+      }
+      assertFileSignature('pdf', prefix, mimeType)
+
+      // Content-Range is not always exposed by CORS. Since the request asks
+      // for bytes 0 through EOF, its exposed Content-Length is also a safe
+      // total. The body is still cancelled after the signature prefix.
+      if (!Number.isSafeInteger(size) || size <= end) {
+        throw new RemoteFileError('network-or-cors', 'Remote PDF size could not be verified')
+      }
+      return {
+        mimeType: mimeType || 'application/pdf',
+        size,
+        supportsRange: true,
+      }
+    }
+  } catch (error) {
+    if (timedSignal.didTimeout()) {
+      throw new RemoteFileError('timeout', 'Remote PDF request timed out')
+    }
+    if (signal.aborted || error instanceof RemoteFileError) throw error
+    throw new RemoteFileError('network-or-cors', 'Remote PDF could not be read')
+  } finally {
+    timedSignal.cleanup()
+  }
+
+  if (!useBoundedFallback) {
+    throw new RemoteFileError('network-or-cors', 'Remote PDF could not be verified')
+  }
+  const result = await loadBoundedRemoteFile(url, 'pdf', signal, filename)
+  return { ...result, supportsRange: false }
 }
 
 export async function probeRemoteVideo(

@@ -30,6 +30,11 @@ jest.mock('@/features/knowledge/document/utils/boundedRemoteFile', () => ({
     mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     size: 6,
   }),
+  prepareRemotePdf: jest.fn().mockResolvedValue({
+    mimeType: 'application/pdf',
+    size: 36 * 1024 * 1024,
+    supportsRange: true,
+  }),
   probeRemoteVideo: jest.fn().mockResolvedValue({ size: 1024, supportsRange: true }),
   RemoteFileError: class RemoteFileError extends Error {},
 }))

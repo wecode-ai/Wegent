@@ -1045,7 +1045,11 @@ describe('DocumentDetailDialog manual source sync', () => {
   })
 
   it('queues the DingTalk refresh and lets the owning list observe its progress', async () => {
-    mockSynchronizeExternalDocument.mockResolvedValue(createDingtalkCopy())
+    const synchronizedDocument = createDingtalkCopy({
+      index_generation: 2,
+      index_status: 'queued',
+    })
+    mockSynchronizeExternalDocument.mockResolvedValue(synchronizedDocument)
     const onDocumentSynced = jest.fn()
 
     render(
@@ -1063,7 +1067,7 @@ describe('DocumentDetailDialog manual source sync', () => {
 
     await waitFor(() => expect(mockSynchronizeExternalDocument).toHaveBeenCalledWith(41))
     expect(mockRefreshDetail).not.toHaveBeenCalled()
-    expect(onDocumentSynced).toHaveBeenCalled()
+    expect(onDocumentSynced).toHaveBeenCalledWith(synchronizedDocument)
   })
 
   it('disables the entry and reports progress while the sync request runs', async () => {

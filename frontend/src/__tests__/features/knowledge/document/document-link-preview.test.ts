@@ -5,6 +5,7 @@
 import {
   loadBoundedRemoteFile,
   MAX_NON_RANGE_VIDEO_BYTES,
+  prepareRemotePdf,
   probeRemoteVideo,
 } from '@/features/knowledge/document/utils/boundedRemoteFile'
 import { resolveDocumentLinkPolicy } from '@/features/knowledge/document/utils/documentLinkPolicy'
@@ -39,14 +40,14 @@ function videoResponse(status: number, headers: Record<string, string>) {
   }
 }
 
-function fileResponse(bytes: Uint8Array, headers: Record<string, string>) {
+function fileResponse(bytes: Uint8Array, headers: Record<string, string>, status = 200) {
   let delivered = false
   const cancel = jest.fn().mockResolvedValue(undefined)
   const releaseLock = jest.fn()
   return {
     response: {
       ok: true,
-      status: 200,
+      status,
       headers: {
         get: (name: string) => headers[name.toLowerCase()] ?? null,
       },
@@ -101,6 +102,7 @@ describe('DingTalk document link preview policy', () => {
   it('recognizes supported resources and rejects unsafe transport', () => {
     expect(getDocumentLinkKind('https://cdn.example.com/file.pdf?token=1')).toBe('pdf')
     expect(getDocumentLinkKind('https://cdn.example.com/video.mp4')).toBe('video')
+    expect(getDocumentLinkKind('https://cdn.example.com/animation.gif')).toBe('image')
     expect(getDocumentLinkKind('files/%E6%96%87%E6%A1%A3.PDF')).toBe('pdf')
     expect(isDocumentFileLink('https://cdn.example.com/animation.gif')).toBe(true)
     expect(isDocumentFileLink('../files/report.docx#section')).toBe(true)
@@ -203,5 +205,149 @@ describe('bounded remote file loading', () => {
         'file.pdf'
       )
     ).rejects.toMatchObject({ code: 'unsupported-type' })
+  })
+
+  it('accepts a GIF whose signature and dimensions fit the image budget', async () => {
+    const gif = new Uint8Array(10)
+    gif.set([0x47, 0x49, 0x46, 0x38, 0x39, 0x61])
+    const view = new DataView(gif.buffer)
+    view.setUint16(6, 320, true)
+    view.setUint16(8, 240, true)
+    const { response } = fileResponse(gif, {
+      'content-type': 'image/gif',
+      'content-length': String(gif.length),
+    })
+    global.fetch = jest.fn().mockResolvedValue(response)
+
+    await expect(
+      loadBoundedRemoteFile(
+        'https://cdn.example.com/animation.gif',
+        'image',
+        new AbortController().signal,
+        'animation.gif'
+      )
+    ).resolves.toMatchObject({ mimeType: 'image/gif', size: gif.length })
+  })
+})
+
+describe('remote PDF preparation', () => {
+  const originalFetch = global.fetch
+  const pdfPrefix = Uint8Array.from('%PDF-1.7', character => character.charCodeAt(0))
+
+  afterEach(() => {
+    global.fetch = originalFetch
+    jest.restoreAllMocks()
+  })
+
+  it('streams a large PDF directly after a bounded range and signature check', async () => {
+    const size = 36 * 1024 * 1024
+    const { response } = fileResponse(
+      pdfPrefix,
+      {
+        'content-type': 'application/pdf',
+        'content-length': String(pdfPrefix.length),
+        'content-range': `bytes 0-${pdfPrefix.length - 1}/${size}`,
+      },
+      206
+    )
+    global.fetch = jest.fn().mockResolvedValue(response)
+
+    await expect(
+      prepareRemotePdf(
+        'https://cdn.example.com/large.pdf',
+        new AbortController().signal,
+        'large.pdf'
+      )
+    ).resolves.toEqual({ mimeType: 'application/pdf', size, supportsRange: true })
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://cdn.example.com/large.pdf',
+      expect.objectContaining({ headers: { Range: 'bytes=0-' } })
+    )
+  })
+
+  it('buffers a small PDF only when the origin ignores Range', async () => {
+    const first = fileResponse(pdfPrefix, {
+      'content-type': 'application/pdf',
+      'content-length': String(pdfPrefix.length),
+    })
+    const second = fileResponse(pdfPrefix, {
+      'content-type': 'application/pdf',
+      'content-length': String(pdfPrefix.length),
+    })
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(first.response)
+      .mockResolvedValueOnce(second.response)
+
+    await expect(
+      prepareRemotePdf(
+        'https://cdn.example.com/small.pdf',
+        new AbortController().signal,
+        'small.pdf'
+      )
+    ).resolves.toMatchObject({
+      mimeType: 'application/pdf',
+      size: pdfPrefix.length,
+      supportsRange: false,
+    })
+  })
+
+  it('uses exposed Content-Length when CORS hides Content-Range', async () => {
+    const size = 36 * 1024 * 1024
+    const range = fileResponse(
+      pdfPrefix,
+      {
+        'content-type': 'application/pdf',
+        'content-length': String(size),
+      },
+      206
+    )
+    global.fetch = jest.fn().mockResolvedValue(range.response)
+
+    await expect(
+      prepareRemotePdf(
+        'https://cdn.example.com/large.pdf',
+        new AbortController().signal,
+        'large.pdf'
+      )
+    ).resolves.toEqual({ mimeType: 'application/pdf', size, supportsRange: true })
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a range response whose total size cannot be verified', async () => {
+    const range = fileResponse(
+      pdfPrefix,
+      {
+        'content-type': 'application/pdf',
+      },
+      206
+    )
+    global.fetch = jest.fn().mockResolvedValue(range.response)
+
+    await expect(
+      prepareRemotePdf(
+        'https://cdn.example.com/unknown-size.pdf',
+        new AbortController().signal,
+        'unknown-size.pdf'
+      )
+    ).rejects.toMatchObject({ code: 'network-or-cors' })
+  })
+
+  it('rejects an oversized PDF when the origin ignores Range without buffering it', async () => {
+    const { response, cancel } = fileResponse(pdfPrefix, {
+      'content-type': 'application/pdf',
+      'content-length': String(20 * 1024 * 1024 + 1),
+    })
+    global.fetch = jest.fn().mockResolvedValue(response)
+
+    await expect(
+      prepareRemotePdf(
+        'https://cdn.example.com/large-no-range.pdf',
+        new AbortController().signal,
+        'large-no-range.pdf'
+      )
+    ).rejects.toMatchObject({ code: 'too-large' })
+    expect(cancel).toHaveBeenCalled()
+    expect(global.fetch).toHaveBeenCalledTimes(1)
   })
 })

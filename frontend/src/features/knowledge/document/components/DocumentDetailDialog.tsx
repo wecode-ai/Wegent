@@ -118,7 +118,7 @@ interface DocumentDetailDialogProps {
    * Passing it opts this preview into the manual sync entry; surfaces without
    * a document list (for example the chat preview) omit it.
    */
-  onDocumentSynced?: () => void
+  onDocumentSynced?: (document: KnowledgeDocument) => void
 }
 
 export function DocumentDetailDialog({
@@ -327,8 +327,9 @@ export function DocumentDetailDialog({
     if (!document) return
     // A failed request keeps the existing copy and reports the reason through
     // the shared entry, so the preview only reacts to a queued refresh.
-    if (!(await syncDocument(document))) return
-    onDocumentSynced?.()
+    const synchronizedDocument = await syncDocument(document)
+    if (!synchronizedDocument) return
+    onDocumentSynced?.(synchronizedDocument)
   }, [document, onDocumentSynced, syncDocument])
 
   useEffect(() => {

@@ -9,7 +9,11 @@ import { FileText, Film, ImageIcon, Play, Presentation, ShieldCheck } from 'luci
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Spinner } from '@/components/ui/spinner'
-import { loadBoundedRemoteFile, probeRemoteVideo } from '../utils/boundedRemoteFile'
+import {
+  loadBoundedRemoteFile,
+  prepareRemotePdf,
+  probeRemoteVideo,
+} from '../utils/boundedRemoteFile'
 import type { DocumentLinkResource as Resource } from '../utils/documentLinkResource'
 
 const FlyfishOfficePreview = dynamic(
@@ -89,7 +93,8 @@ function DocumentLinkCover({ resource, onOpen }: Omit<DocumentLinkResourceProps,
   const [coverFailed, setCoverFailed] = useState(false)
   const [videoCoverEnabled, setVideoCoverEnabled] = useState(false)
   const [boundedCover, setBoundedCover] = useState<{
-    blob: Blob
+    blob?: Blob
+    remoteUrl?: string
     objectUrl?: string
     text?: string
   } | null>(null)
@@ -131,19 +136,33 @@ function DocumentLinkCover({ resource, onOpen }: Omit<DocumentLinkResourceProps,
   }, [nearViewport, resource.kindHint, resource.url])
 
   useEffect(() => {
-    if (!nearViewport || !['office', 'image', 'text'].includes(resource.kindHint)) return
+    if (!nearViewport || !['pdf', 'office', 'image', 'text'].includes(resource.kindHint)) return
     const controller = new AbortController()
     let objectUrl: string | undefined
-    void loadBoundedRemoteFile(
-      resource.url,
-      resource.kindHint as 'office' | 'image' | 'text',
-      controller.signal,
-      resource.filename
-    )
+    const loadCover =
+      resource.kindHint === 'pdf'
+        ? prepareRemotePdf(resource.url, controller.signal, resource.filename)
+        : loadBoundedRemoteFile(
+            resource.url,
+            resource.kindHint as 'office' | 'image' | 'text',
+            controller.signal,
+            resource.filename
+          )
+    void loadCover
       .then(async result => {
-        objectUrl = resource.kindHint === 'image' ? URL.createObjectURL(result.blob) : undefined
-        const text = resource.kindHint === 'text' ? await result.blob.text() : undefined
-        if (!controller.signal.aborted) setBoundedCover({ blob: result.blob, objectUrl, text })
+        objectUrl =
+          resource.kindHint === 'image' && result.blob
+            ? URL.createObjectURL(result.blob)
+            : undefined
+        const text = resource.kindHint === 'text' ? await result.blob?.text() : undefined
+        if (!controller.signal.aborted) {
+          setBoundedCover({
+            blob: result.blob,
+            remoteUrl: resource.kindHint === 'pdf' && !result.blob ? resource.url : undefined,
+            objectUrl,
+            text,
+          })
+        }
       })
       .catch(() => {
         if (!controller.signal.aborted) setCoverFailed(true)
@@ -185,10 +204,11 @@ function DocumentLinkCover({ resource, onOpen }: Omit<DocumentLinkResourceProps,
             resource.kindHint === 'video' ? 'aspect-[3/4]' : 'h-72 sm:h-96'
           }`}
         >
-          {nearViewport && resource.kindHint === 'pdf' && !coverFailed && (
+          {nearViewport && resource.kindHint === 'pdf' && boundedCover && !coverFailed && (
             <div className="pointer-events-none h-full select-none" aria-hidden="true">
               <FlyfishOfficePreview
-                url={resource.url}
+                blob={boundedCover.blob}
+                url={boundedCover.remoteUrl}
                 filename={resource.filename}
                 restricted
                 coverOnly
@@ -253,7 +273,7 @@ function DocumentLinkCover({ resource, onOpen }: Omit<DocumentLinkResourceProps,
           )}
           {(!nearViewport ||
             coverFailed ||
-            (['office', 'image', 'text'].includes(resource.kindHint) && !boundedCover)) && (
+            (['pdf', 'office', 'image', 'text'].includes(resource.kindHint) && !boundedCover)) && (
             <div className="flex h-full items-center justify-center gap-2 text-sm text-text-muted">
               <Icon className="h-8 w-8" aria-hidden="true" />
               {coverFailed

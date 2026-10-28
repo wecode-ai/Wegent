@@ -99,7 +99,8 @@ export function DocumentLinkPreview({ resource, onOpenChange }: DocumentLinkPrev
     if (resource.kindHint === 'pdf') {
       return (
         <FlyfishOfficePreview
-          url={resource.url}
+          blob={state.blob}
+          url={state.blob ? undefined : resource.url}
           filename={resource.filename}
           restricted
           onError={() => fail('preview-failed')}

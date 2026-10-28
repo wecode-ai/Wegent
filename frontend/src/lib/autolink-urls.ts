@@ -111,6 +111,22 @@ function linkLabelRanges(text: string): Array<{ start: number; end: number }> {
   for (let index = 0; index < text.length; index++) {
     if (text[index] === '\\') {
       index++
+    } else if (text[index] === '`') {
+      let runLength = 1
+      while (text[index + runLength] === '`') runLength++
+      let closingIndex = -1
+      for (let cursor = index + runLength; cursor < text.length; ) {
+        const candidate = text.indexOf('`', cursor)
+        if (candidate === -1) break
+        let candidateLength = 1
+        while (text[candidate + candidateLength] === '`') candidateLength++
+        if (candidateLength === runLength) {
+          closingIndex = candidate
+          break
+        }
+        cursor = candidate + candidateLength
+      }
+      if (closingIndex !== -1) index = closingIndex + runLength - 1
     } else if (text[index] === '[') {
       brackets.push(index)
     } else if (text[index] === ']') {
