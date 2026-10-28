@@ -335,15 +335,31 @@ async function waitForLongHistoryHydration(control, timeoutMs) {
   throw new Error('Timed out waiting for the long running transcript to hydrate')
 }
 
-async function waitForTranscriptState(control, predicate, description, timeoutMs) {
+async function waitForTranscriptState(control, predicate, description, timeoutMs, recordSample) {
   const startedAt = Date.now()
   let latest = null
   while (Date.now() - startedAt < timeoutMs) {
     latest = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    if (predicate(latest)) return latest
+    const matched = predicate(latest)
+    await recordSample?.({ matched, snapshot: latest })
+    if (matched) return latest
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(`${description}: ${JSON.stringify(latest?.pane?.transcript ?? null)}`)
+}
+
+function transcriptRaceRecorder(resultDir) {
+  const path = join(resultDir, 'running-conversation-history-race.jsonl')
+  return async (stage, details = {}) => {
+    await appendFile(
+      path,
+      `${JSON.stringify({
+        recordedAt: new Date().toISOString(),
+        stage,
+        ...details,
+      })}\n`
+    )
+  }
 }
 
 async function reloadWorkbench(control) {
@@ -440,6 +456,7 @@ export function createDesktopScenario({
   captureScreenshot,
   codexSqliteHome,
   executorHome,
+  resultDir,
   uiTimeoutMs,
   workspacePath,
 }) {
@@ -529,6 +546,7 @@ export function createDesktopScenario({
 
     async verify(control) {
       active = true
+      const recordTranscriptRace = transcriptRaceRecorder(resultDir)
       await createSingleRootLocalProject(control, workspacePath, 'running-conversation-history')
       await selectE2EModel(control)
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -567,26 +585,54 @@ export function createDesktopScenario({
           snapshot.workbench?.currentRuntimeTask?.taskId === switchTaskId &&
           snapshot.pane?.transcript?.loading === false,
         'The task-switch fixture did not settle before the transcript race',
-        uiTimeoutMs
+        uiTimeoutMs,
+        ({ matched, snapshot }) =>
+          recordTranscriptRace('task-switch-fixture-sample', {
+            matched,
+            taskId: snapshot.workbench?.currentRuntimeTask?.taskId ?? null,
+            transcript: snapshot.pane?.transcript ?? null,
+          })
       )
 
+      await recordTranscriptRace('source-task-click-before')
+      const sourceClickStartedAt = performance.now()
       await control.command('click', taskRow)
+      await recordTranscriptRace('source-task-click-returned', {
+        clickDurationMs: performance.now() - sourceClickStartedAt,
+      })
       await waitForTranscriptState(
         control,
         snapshot =>
           snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
           snapshot.pane?.transcript?.loading === true,
         'The source transcript request did not remain in flight',
-        uiTimeoutMs
+        uiTimeoutMs,
+        ({ matched, snapshot }) =>
+          recordTranscriptRace('source-task-in-flight-sample', {
+            matched,
+            taskId: snapshot.workbench?.currentRuntimeTask?.taskId ?? null,
+            transcript: snapshot.pane?.transcript ?? null,
+          })
       )
+      await recordTranscriptRace('cached-task-click-before')
+      const cachedClickStartedAt = performance.now()
       await control.command('click', switchTaskRow)
+      await recordTranscriptRace('cached-task-click-returned', {
+        clickDurationMs: performance.now() - cachedClickStartedAt,
+      })
       await waitForTranscriptState(
         control,
         snapshot =>
           snapshot.workbench?.currentRuntimeTask?.taskId === switchTaskId &&
           snapshot.pane?.transcript?.loading === false,
         'Returning to the cached task retained another task transcript loading state',
-        uiTimeoutMs
+        uiTimeoutMs,
+        ({ matched, snapshot }) =>
+          recordTranscriptRace('cached-task-settled-sample', {
+            matched,
+            taskId: snapshot.workbench?.currentRuntimeTask?.taskId ?? null,
+            transcript: snapshot.pane?.transcript ?? null,
+          })
       )
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: SWITCH_COMPLETION,
