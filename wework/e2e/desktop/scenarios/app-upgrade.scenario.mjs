@@ -115,6 +115,8 @@ export async function createDesktopScenario(options) {
                 to: pair.to.version,
                 fromSha256: pair.from.sha256,
                 toSha256: pair.to.sha256,
+                fromSourceSha: pair.from.sourceSha,
+                toSourceSha: pair.to.sourceSha,
                 runId: String(process.env.GITHUB_RUN_ID || 1),
                 evidenceSha256: 'a'.repeat(64),
                 upgrade: 'passed',
@@ -527,6 +529,8 @@ export async function createDesktopScenario(options) {
         channel,
         source: pair.from.sha256,
         target: pair.to.sha256,
+        fromSourceSha: pair.from.sourceSha,
+        toSourceSha: pair.to.sourceSha,
         upgrade: 'passed',
         rollback: ['app-rollback', 'app-rollback-recovery'].includes(checkpoint)
           ? 'passed'

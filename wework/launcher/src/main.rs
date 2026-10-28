@@ -5,10 +5,118 @@ use std::{
     ffi::{OsStr, OsString},
     fs, io,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn kill(pid: i32, signal: i32) -> i32;
+}
+
+#[cfg(unix)]
+fn signal(pid: u32, value: i32) -> io::Result<()> {
+    // ESRCH means the process exited before the signal; permission errors are fatal.
+    if unsafe { kill(pid as i32, value) } != 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(3) {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn process_table() -> io::Result<Vec<(u32, u32, String)>> {
+    let output = Command::new("ps")
+        .args(["-axo", "pid=,ppid=,stat="])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(
+            "Cannot inspect the supervised process tree",
+        ));
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| {
+            let values: Vec<_> = line.split_whitespace().collect();
+            let invalid = || io::Error::other("Invalid process table entry");
+            Ok((
+                values
+                    .first()
+                    .ok_or_else(invalid)?
+                    .parse()
+                    .map_err(|_| invalid())?,
+                values
+                    .get(1)
+                    .ok_or_else(invalid)?
+                    .parse()
+                    .map_err(|_| invalid())?,
+                values.get(2).ok_or_else(invalid)?.to_string(),
+            ))
+        })
+        .collect()
+}
+
+fn terminate_runtime_tree(child: &mut Child) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let status = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .creation_flags(0x08000000)
+            .status()?;
+        if !status.success() {
+            return Err(io::Error::other("Cannot stop the supervised process tree"));
+        }
+    }
+    #[cfg(unix)]
+    {
+        #[cfg(target_os = "macos")]
+        const STOP: i32 = 17;
+        #[cfg(not(target_os = "macos"))]
+        const STOP: i32 = 19;
+        let mut pids = vec![child.id()];
+        signal(child.id(), STOP)?;
+        // Runtimes own separate process groups. Follow parent identities and freeze
+        // every discovered writer before stopping it, so no new children can escape.
+        loop {
+            let table = process_table()?;
+            let added: Vec<_> = table
+                .iter()
+                .filter_map(|(pid, parent, _)| {
+                    (pids.contains(parent) && !pids.contains(pid)).then_some(*pid)
+                })
+                .collect();
+            if added.is_empty() {
+                break;
+            }
+            for pid in added {
+                signal(pid, STOP)?;
+                pids.push(pid);
+            }
+        }
+        for pid in pids.iter().rev() {
+            signal(*pid, 9)?;
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let live = process_table()?
+                .iter()
+                .any(|(pid, _, state)| pids.contains(pid) && !state.starts_with('Z'));
+            if !live {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::other("Supervised writers are still running"));
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+    child.wait()?;
+    Ok(())
+}
 
 fn recover(root: &Path, bridge: &OsStr, forwarded: &[OsString], token: &str) -> io::Result<()> {
     fs::write(root.join("failed"), token)?;
@@ -109,8 +217,7 @@ fn launch(root: &Path, bridge: &OsStr, forwarded: &[OsString]) -> io::Result<()>
         let exited = child.try_wait()?.is_some();
         if exited || started.elapsed() >= Duration::from_secs(60) {
             if !exited {
-                child.kill()?;
-                child.wait()?;
+                terminate_runtime_tree(&mut child)?;
             }
             // Data restoration belongs to the latest healthy shell.
             return recover(&root, &bridge, &forwarded, &token);
@@ -191,5 +298,66 @@ mod tests {
             assert!(release_id(id).is_err());
         }
         assert!(release_id("0.5.14-beta.1-1234").is_ok());
+    }
+
+    #[test]
+    fn stops_writers_including_descendants_with_independent_process_groups() {
+        let root = fixture();
+        let mut command = Command::new(env::current_exe().unwrap());
+        command
+            .args(["--ignored", "--exact", "tests::runtime_tree_fixture"])
+            .env("WEWORK_LAUNCHER_TREE_TEST_ROOT", &root)
+            .env("WEWORK_LAUNCHER_TREE_TEST_ROLE", "root");
+        let mut child = command.spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !root.join("leaf-writes").exists() {
+            assert!(Instant::now() < deadline, "Descendant did not start");
+            thread::sleep(Duration::from_millis(20));
+        }
+        terminate_runtime_tree(&mut child).unwrap();
+        let paths: Vec<_> = ["root", "branch", "leaf"]
+            .iter()
+            .map(|role| root.join(format!("{role}-writes")))
+            .collect();
+        let stopped: Vec<_> = paths.iter().map(|path| read(path).unwrap()).collect();
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            stopped,
+            paths
+                .iter()
+                .map(|path| read(path).unwrap())
+                .collect::<Vec<_>>()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "Subprocess fixture invoked by the process tree test"]
+    fn runtime_tree_fixture() {
+        let root = PathBuf::from(env::var_os("WEWORK_LAUNCHER_TREE_TEST_ROOT").unwrap());
+        let role = env::var("WEWORK_LAUNCHER_TREE_TEST_ROLE").unwrap();
+        if role != "leaf" {
+            let mut command = Command::new(env::current_exe().unwrap());
+            command
+                .args(["--ignored", "--exact", "tests::runtime_tree_fixture"])
+                .env(
+                    "WEWORK_LAUNCHER_TREE_TEST_ROLE",
+                    if role == "root" { "branch" } else { "leaf" },
+                );
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                command.process_group(0);
+            }
+            command.spawn().unwrap();
+        }
+        // Bound fixture lifetime even if the parent assertion fails.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut count = 0;
+        while Instant::now() < deadline {
+            fs::write(root.join(format!("{role}-writes")), count.to_string()).unwrap();
+            count += 1;
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 }

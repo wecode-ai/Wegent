@@ -3,8 +3,13 @@ import { test } from 'node:test'
 import { verifiedUpgradeEdge, mergeUpgradePolicy, upgradeSource } from './lib/upgrade-evidence.mjs'
 
 function input() {
-  const from = { version: '1.0.0', sha256: 'a'.repeat(64) }
-  const to = { version: '1.1.0', sha256: 'b'.repeat(64), minSourceVersion: '1.0.0' }
+  const from = { version: '1.0.0', sha256: 'a'.repeat(64), sourceSha: '1'.repeat(40) }
+  const to = {
+    version: '1.1.0',
+    sha256: 'b'.repeat(64),
+    sourceSha: '2'.repeat(40),
+    minSourceVersion: '1.0.0',
+  }
   const evidence = {
     schemaVersion: 1,
     kind: 'release',
@@ -12,6 +17,8 @@ function input() {
     runId: '123',
     source: from.sha256,
     target: to.sha256,
+    fromSourceSha: from.sourceSha,
+    toSourceSha: to.sourceSha,
     fromVersion: from.version,
     toVersion: to.version,
     platform: 'windows',
@@ -42,6 +49,8 @@ test('only exact artifacts and a successful rollback grant a release edge', () =
     { source: 'c'.repeat(64) },
     { runId: '124' },
     { suiteVersion: 2 },
+    { fromSourceSha: 'f'.repeat(40) },
+    { toSourceSha: undefined },
   ]) {
     const value = input()
     Object.assign(value.evidence, change)
@@ -58,6 +67,7 @@ test('a new baseline with no incoming edges does not invent historical compatibi
     version: '1.1.0',
     minSourceVersion: '1.1.0',
     sha256: 'b'.repeat(64),
+    sourceSha: '2'.repeat(40),
     url: 'https://example.com/1.1.0.tar.gz',
     bytes: 1,
     dataSchema: 1,
@@ -86,6 +96,7 @@ test('a Beta source can reach Stable only through a separately verified Stable e
     version,
     minSourceVersion: '1.0.0-beta.1',
     sha256,
+    sourceSha: sha256.slice(0, 40),
     url: `https://example.com/${version}.tar.gz`,
     bytes: 1,
     dataSchema: 1,
@@ -99,6 +110,8 @@ test('a Beta source can reach Stable only through a separately verified Stable e
     to: source.version,
     fromSha256: older.sha256,
     toSha256: source.sha256,
+    fromSourceSha: older.sourceSha,
+    toSourceSha: source.sourceSha,
     runId: '12',
     evidenceSha256: 'e'.repeat(64),
     upgrade: 'passed',
@@ -121,6 +134,8 @@ test('a Beta source can reach Stable only through a separately verified Stable e
     to: target.version,
     fromSha256: source.sha256,
     toSha256: target.sha256,
+    fromSourceSha: source.sourceSha,
+    toSourceSha: target.sourceSha,
   }
   const stable = mergeUpgradePolicy(
     null,

@@ -55,6 +55,7 @@ async function routeRelease(): Promise<boolean> {
   delete process.env.WEWORK_RELEASE_SUPERVISED
   const bridge = await optionalText(join(root, 'bridge'))
   if (!supervisedId && bridge && resolve(bridge) !== resolve(process.execPath)) {
+    if (!existsSync(bridge)) throw new Error('The healthy Wework recovery executable is missing')
     // An old installed entry only forwards. Recovery must use the latest healthy
     // release, which understands snapshots created by that release's updater.
     void app

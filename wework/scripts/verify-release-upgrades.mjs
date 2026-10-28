@@ -119,7 +119,11 @@ try {
       await mkdir(sourceRoot)
       await extract({ file: archive, cwd: sourceRoot, strict: true })
       const descriptor = JSON.parse(await readFile(join(sourceRoot, 'wework-release.json'), 'utf8'))
-      if (descriptor.version !== sourceVersion || descriptor.fixture)
+      if (
+        descriptor.version !== sourceVersion ||
+        descriptor.fixture ||
+        descriptor.sourceSha !== source.sourceSha
+      )
         throw new Error('Source release identity is invalid')
       const sourceResources = resolve(sourceRoot, descriptor.resources)
       const pair = {

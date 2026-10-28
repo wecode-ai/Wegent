@@ -1,5 +1,6 @@
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.([1-9]\d*))?$/
 const HASH = /^[a-f0-9]{64}$/
+const REVISION = /^[a-f0-9]{40,64}$/
 
 export function compareVersions(left, right) {
   const parts = value => {
@@ -33,6 +34,7 @@ export function validateUpgradeCatalog(input) {
       versions.has(release.version) ||
       typeof release.revoked !== 'boolean' ||
       !HASH.test(release.sha256) ||
+      !REVISION.test(release.sourceSha) ||
       !Number.isSafeInteger(release.bytes) ||
       release.bytes <= 0 ||
       !Number.isSafeInteger(release.dataSchema) ||
@@ -65,6 +67,8 @@ export function validateUpgradeCatalog(input) {
       typeof edge.revoked !== 'boolean' ||
       edge.fromSha256 !== from.sha256 ||
       edge.toSha256 !== to.sha256 ||
+      edge.fromSourceSha !== from.sourceSha ||
+      edge.toSourceSha !== to.sourceSha ||
       !/^[0-9]+$/.test(edge.runId) ||
       !HASH.test(edge.evidenceSha256) ||
       edge.upgrade !== 'passed' ||

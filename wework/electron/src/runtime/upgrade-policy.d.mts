@@ -3,6 +3,7 @@ export interface UpgradeRelease {
   minSourceVersion: string
   url: string
   sha256: string
+  sourceSha: string
   bytes: number
   dataSchema: number
   readableDataSchemas: number[]
@@ -14,6 +15,8 @@ export interface UpgradeEdge {
   to: string
   fromSha256: string
   toSha256: string
+  fromSourceSha: string
+  toSourceSha: string
   runId: string
   evidenceSha256: string
   upgrade: 'passed'

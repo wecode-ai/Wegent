@@ -124,6 +124,7 @@ E2E tests use real backend requests. Do not skip, silently fail, or replace a fa
 - Register every new scenario with the shared desktop checkpoint runner and CI. Each checkpoint establishes its own fixtures and cleanup. Only model services may be mocked; package download, extraction, launcher, storage, executor, and Electron integration must be real. Deterministic fault injection must exercise the production transaction rather than fabricate a result.
 - Changes to updating, rollback, migration, packaging, or release gates require focused packaged-Electron upgrade and rollback E2E. Do not replace these with unit tests, skips, weakened assertions, or retries. Preserve full failure diagnostics without credentials or session files.
 - Candidate edge configuration is authored; verified edge records are generated only by successful CI runs. Bind records to both package hashes, source revisions, scenario suite version, and CI evidence. Package changes invalidate previous verification. Publish immutable artifacts before atomically promoting the catalog, and retain every intermediate artifact referenced by an active path.
+- Match edge `fromSourceSha`/`toSourceSha` to the delivered package `sourceSha` values and record them in E2E evidence. Diagnostic log failures must not block preparation or hide its original error. Before timeout recovery restores data, the native launcher must stop the complete runtime process tree, including writers in independent process groups.
 
 ## Real desktop verification
 

@@ -26,6 +26,10 @@ export function verifiedUpgradeEdge({
     !/^[1-9]\d*$/.test(String(runId)) ||
     evidence.source !== from.sha256 ||
     evidence.target !== to.sha256 ||
+    !/^[a-f0-9]{40,64}$/.test(from.sourceSha) ||
+    !/^[a-f0-9]{40,64}$/.test(to.sourceSha) ||
+    evidence.fromSourceSha !== from.sourceSha ||
+    evidence.toSourceSha !== to.sourceSha ||
     evidence.fromVersion !== from.version ||
     evidence.toVersion !== to.version ||
     evidence.platform !== platform ||
@@ -43,6 +47,8 @@ export function verifiedUpgradeEdge({
     to: to.version,
     fromSha256: from.sha256,
     toSha256: to.sha256,
+    fromSourceSha: from.sourceSha,
+    toSourceSha: to.sourceSha,
     runId: String(runId),
     evidenceSha256: createHash('sha256').update(evidenceBytes).digest('hex'),
     upgrade: 'passed',

@@ -122,6 +122,7 @@ export function reduceRuntimeTaskLifecycle(
         task: event.task,
         executionPhase,
         turnPhase,
+        turnOutcome: restoredTurnId ? null : state.turnOutcome,
         activeTurnId,
         latestTurnId:
           typeof event.task.runtimeHandle?.lastTurnId === 'string'

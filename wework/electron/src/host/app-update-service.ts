@@ -202,10 +202,15 @@ export class AppUpdateService {
       const manifest = JSON.parse(await readFile(join(host, 'wework-release.json'), 'utf8')) as {
         schemaVersion: number
         version: string
+        sourceSha: string
         executable: string
         resources: string
       }
-      if (manifest.schemaVersion !== 1 || manifest.version !== pending.version)
+      if (
+        manifest.schemaVersion !== 1 ||
+        manifest.version !== pending.version ||
+        manifest.sourceSha !== pending.sourceSha
+      )
         throw new Error('Downloaded host release identity mismatch')
       const release: DesktopRelease = {
         schemaVersion: 1,

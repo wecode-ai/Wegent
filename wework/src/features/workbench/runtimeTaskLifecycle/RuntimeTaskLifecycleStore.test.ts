@@ -1036,6 +1036,47 @@ describe('RuntimeTaskLifecycleStore', () => {
     }
   )
 
+  test('a delayed settled-turn snapshot cannot revive a turn during a rejected send', () => {
+    const store = new RuntimeTaskLifecycleStore('settled-turn-rejected-send')
+    const running = task({
+      running: true,
+      status: 'running',
+      turnStatus: 'inProgress',
+      threadStatus: 'active',
+      runtimeHandle: { lastTurnId: 'old-turn' },
+    })
+    store.syncRuntimeWork(runtimeWork(running))
+    store.turnStarted(address, 'old-turn')
+    store.turnSettled(address, 'old-turn', 'succeeded')
+    store.executorSettled(address)
+    store.sendRequested(address)
+    store.syncRuntimeWork(runtimeWork({ ...running, updatedAt: 2000 }))
+    expect(store.getTask(address)?.turn.id).toBeNull()
+    store.sendRejected(address)
+    expect(store.getTask(address)?.derived.isBusy).toBe(false)
+    expect(store.getTask(address)?.derived.canSend).toBe(true)
+  })
+
+  test('restoring another active turn clears the previous turn outcome', () => {
+    const store = new RuntimeTaskLifecycleStore('restored-turn-outcome')
+    store.turnStarted(address, 'old-turn')
+    store.turnSettled(address, 'old-turn', 'failed')
+    store.executorSettled(address)
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'running',
+          turnStatus: 'inProgress',
+          threadStatus: 'active',
+          runtimeHandle: { lastTurnId: 'new-turn' },
+        })
+      )
+    )
+    expect(store.getTask(address)?.turn.id).toBe('new-turn')
+    expect(store.getTask(address)?.turn.outcome).toBeNull()
+  })
+
   test('settles a live turn when its active Goal is explicitly paused', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))

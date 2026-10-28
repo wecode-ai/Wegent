@@ -8,6 +8,7 @@ export function catalogFixture() {
     minSourceVersion: i === 2 ? '1.1.0' : '0.9.0',
     url: `https://example.com/${version}.zip`,
     sha256: String(i + 1).repeat(64),
+    sourceSha: String(i + 1).repeat(40),
     bytes: 100,
     dataSchema: 1,
     readableDataSchemas: [1],
@@ -27,6 +28,8 @@ export function catalogFixture() {
       to: releases[b].version,
       fromSha256: releases[a].sha256,
       toSha256: releases[b].sha256,
+      fromSourceSha: releases[a].sourceSha,
+      toSourceSha: releases[b].sourceSha,
       runId: '123',
       evidenceSha256: 'a'.repeat(64),
       upgrade: 'passed',
@@ -78,6 +81,24 @@ test('changed package hashes and missing rollback evidence invalidate verificati
 test('prefers a verified direct path over two hops', () => {
   const catalog = catalogFixture()
   catalog.releases[2].minSourceVersion = '1.0.0'
-  catalog.edges.push({ ...catalog.edges[1], from: '1.0.0', fromSha256: catalog.releases[0].sha256 })
+  catalog.edges.push({
+    ...catalog.edges[1],
+    from: '1.0.0',
+    fromSha256: catalog.releases[0].sha256,
+    fromSourceSha: catalog.releases[0].sourceSha,
+  })
   assert.deepEqual(planUpgrade(catalog, '1.0.0').path, ['1.2.0'])
+})
+
+test('missing or mismatched source revisions invalidate release and edge evidence', () => {
+  for (const sourceSha of [undefined, 'not-a-revision']) {
+    const catalog = catalogFixture()
+    catalog.releases[0].sourceSha = sourceSha
+    assert.throws(() => validateUpgradeCatalog(catalog), /upgrade release/)
+  }
+  for (const field of ['fromSourceSha', 'toSourceSha']) {
+    const catalog = catalogFixture()
+    catalog.edges[0][field] = 'f'.repeat(40)
+    assert.throws(() => validateUpgradeCatalog(catalog), /unverified/)
+  }
 })

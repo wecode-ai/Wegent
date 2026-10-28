@@ -14,25 +14,29 @@ export interface ReleasePreparationRequest {
   sourceProfile: string
 }
 
-async function preparationStep<T>(
-  log: RotatingLog,
+export async function preparationStep<T>(
+  log: Pick<RotatingLog, 'write'>,
   release: DesktopRelease,
   stage: string,
   run: () => Promise<T>
 ): Promise<T> {
   const startedAt = performance.now()
   const write = (phase: string) =>
-    log.write(
-      'supervisor',
-      JSON.stringify({
-        event: 'release-preparation-stage',
-        releaseId: release.id,
-        version: release.version,
-        stage,
-        phase,
-        elapsedMs: Math.round(performance.now() - startedAt),
+    log
+      .write(
+        'supervisor',
+        JSON.stringify({
+          event: 'release-preparation-stage',
+          releaseId: release.id,
+          version: release.version,
+          stage,
+          phase,
+          elapsedMs: Math.round(performance.now() - startedAt),
+        })
+      )
+      .catch(error => {
+        console.error('[release-preparation-log]', error)
       })
-    )
   await write('started')
   try {
     const result = await run()
