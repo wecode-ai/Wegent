@@ -261,9 +261,10 @@ class Settings(BaseSettings):
     # it per interval under a distributed lock.
     TASK_STALLED_SWEEP_INTERVAL_SECONDS: int = 300
     TASK_STALLED_TIMEOUT_SECONDS: int = 900
-    # Ignore ancient RUNNING rows left behind by retired deployments; failing
-    # them would only emit stale completion events.
-    TASK_STALLED_MAX_AGE_DAYS: int = 7
+    # Only look at subtasks created in this window. The column is indexed, so
+    # the sweep stays a bounded range scan instead of walking every RUNNING row;
+    # it also ignores ancient rows left behind by retired deployments.
+    TASK_STALLED_MAX_AGE_HOURS: int = 24
     TASK_STALLED_HEARTBEAT_TIMEOUT_SECONDS: int = 1800
     TASK_STALLED_HEARTBEAT_CHECK_ENABLED: bool = False
     TASK_STALLED_SCAN_LIMIT: int = 50

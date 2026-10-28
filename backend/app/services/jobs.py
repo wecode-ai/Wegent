@@ -155,7 +155,7 @@ async def stalled_task_worker(stop_event: asyncio.Event):
                             db,
                             silent_timeout_seconds=settings.TASK_STALLED_TIMEOUT_SECONDS,
                             max_age_seconds=(
-                                settings.TASK_STALLED_MAX_AGE_DAYS * 24 * 3600
+                                settings.TASK_STALLED_MAX_AGE_HOURS * 3600
                             ),
                             heartbeat_timeout_seconds=(
                                 settings.TASK_STALLED_HEARTBEAT_TIMEOUT_SECONDS

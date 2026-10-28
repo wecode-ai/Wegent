@@ -82,7 +82,9 @@ def list_stalled_candidates(
             Subtask.role == SubtaskRole.ASSISTANT,
             Subtask.status == SubtaskStatus.RUNNING,
             Subtask.updated_at <= cutoff,
-            Subtask.updated_at >= max_age_cutoff,
+            # created_at is indexed, so a bounded recent window keeps this a
+            # range scan instead of filtering every RUNNING row.
+            Subtask.created_at >= max_age_cutoff,
             TaskResource.is_active != TaskResource.STATE_DELETED,
         )
         .order_by(Subtask.updated_at.asc(), Subtask.id.asc())

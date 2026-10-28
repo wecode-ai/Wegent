@@ -45,6 +45,7 @@ def _subtask(
     status: SubtaskStatus,
     role: SubtaskRole = SubtaskRole.ASSISTANT,
     updated_at: datetime = NOW - timedelta(minutes=30),
+    created_at: datetime | None = None,
     executor_name: str = "wegent-task-example-abc",
 ) -> Subtask:
     return Subtask(
@@ -59,7 +60,7 @@ def _subtask(
         bot_ids=[1],
         executor_namespace="default",
         executor_name=executor_name,
-        created_at=updated_at,
+        created_at=created_at or updated_at,
         updated_at=updated_at,
     )
 
@@ -94,12 +95,21 @@ def test_list_stalled_candidates_filters_running_and_old(test_db):
             updated_at=NOW - timedelta(days=30),
         )
     )
+    test_db.add(
+        _subtask(
+            205,
+            102,
+            status=SubtaskStatus.RUNNING,
+            created_at=NOW - timedelta(days=2),
+            updated_at=NOW - timedelta(minutes=30),
+        )
+    )
     test_db.commit()
 
     rows = list_stalled_candidates(
         test_db,
         cutoff=NOW - timedelta(minutes=15),
-        max_age_cutoff=NOW - timedelta(days=7),
+        max_age_cutoff=NOW - timedelta(hours=24),
         limit=10,
     )
 
@@ -328,7 +338,7 @@ async def test_sweep_fails_stalled_candidates():
         failed = await sweep_stalled_subtasks(
             session,
             silent_timeout_seconds=900,
-            max_age_seconds=7 * 24 * 3600,
+            max_age_seconds=24 * 3600,
             heartbeat_timeout_seconds=1800,
             limit=10,
             now=NOW,
