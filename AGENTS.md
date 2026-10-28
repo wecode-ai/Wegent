@@ -110,7 +110,9 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 
 ## Testing and verification
 
-Prioritize fast, iterative development. Run E2E tests and `ai:verify` only when the user explicitly requests them. This execution policy overrides automatic E2E and real-Electron verification requirements in scoped guides; those guides still define how to verify when requested.
+Prioritize fast, iterative development. Run E2E tests and `ai:verify` only when the user explicitly requests them, except for changes to desktop updating, rollback, upgrade data migration, or their packaging and release gates: those changes require focused real packaged-Electron upgrade and rollback E2E verification. This execution policy overrides other automatic E2E and real-Electron verification requirements in scoped guides; those guides still define how to verify when requested.
+
+Desktop update eligibility must come from exact, CI-verified source-to-target package pairs. A target's minimum source version is a constraint, never proof of compatibility. Preserve required intermediate packages, and never promote an upgrade edge without successful upgrade and rollback evidence bound to the delivered package hashes. See `wework/AGENTS.md` for the maintenance contract.
 
 Run focused tests before committing; run broader tests when risk warrants it. E2E tests may mock only model services; every other component and integration must be real. Never weaken assertions, skip scenarios, or tolerate failures to obtain a pass; fix failures instead.
 Use focused unit/component tests for local presentation or component state changes. Add or extend real E2E coverage for new cross-boundary features or changes to core flows, permissions, persistence, or critical state; the local E2E execution policy above still applies.

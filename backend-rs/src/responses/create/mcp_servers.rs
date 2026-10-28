@@ -34,6 +34,53 @@ pub(super) fn ghost_mcp_servers(merged: &MergedGhostCapabilities) -> Vec<Value> 
         .collect()
 }
 
+/// `_build_mcp_servers`' bot half (`request_builder.py:2471-2501`): the Ghost
+/// mapping key is the server name, and only the transport fields are copied
+/// (`url`, `type`, `headers`→`auth`, the stdio `command`/`args`/`env`, and the
+/// timeout aliases). A config-level `name` never overrides the key here —
+/// unlike the metadata `{name, **config}` shape of [`ghost_mcp_servers`] —
+/// because the request-level list feeds `openai_converter.py:130-155`'s
+/// `server.get("name")` label.
+pub(super) fn request_mcp_servers(merged: &MergedGhostCapabilities) -> Vec<Value> {
+    merged
+        .mcp_servers
+        .iter()
+        .filter_map(|(name, config)| {
+            let config = config.as_object()?;
+            let mut entry = Map::new();
+            entry.insert("name".into(), Value::String(name.clone()));
+            entry.insert(
+                "url".into(),
+                config
+                    .get("url")
+                    .cloned()
+                    .unwrap_or_else(|| Value::String(String::new())),
+            );
+            entry.insert(
+                "type".into(),
+                config
+                    .get("type")
+                    .cloned()
+                    .unwrap_or_else(|| Value::String("streamable-http".into())),
+            );
+            if let Some(headers) = config.get("headers") {
+                entry.insert("auth".into(), headers.clone());
+            }
+            for key in ["command", "args", "env"] {
+                if let Some(value) = config.get(key) {
+                    entry.insert(key.into(), value.clone());
+                }
+            }
+            for key in ["timeout", "timeoutSeconds", "timeout_seconds"] {
+                if let Some(value) = config.get(key) {
+                    entry.insert(key.into(), value.clone());
+                }
+            }
+            Some(Value::Object(entry))
+        })
+        .collect()
+}
+
 /// `_load_system_mcp_servers`: the deployment's `CHAT_MCP_SERVERS` JSON, in the
 /// chat_shell list form (`{"name", "url", "type", "auth"?}`).
 ///
@@ -141,6 +188,65 @@ mod tests {
                 "headers": {"Authorization": "Bearer example-token"},
             })
         );
+    }
+
+    #[test]
+    fn request_mcp_servers_keep_the_mapping_key_as_the_name() {
+        // Recorded Ghost (batch 5): the mapping key `market-cmapi00074002`
+        // carries a config-level `name` and extra keys. The request-level list
+        // (tools labels) keeps the key and copies only the transport fields;
+        // the metadata shape keeps the config name instead.
+        let mut merged = MergedGhostCapabilities::default();
+        merged.mcp_servers.insert(
+            "market-cmapi00074002".to_string(),
+            json!({
+                "name": "AliyunBailianMCP_market-cmapi00074002",
+                "url": "https://dashscope.example/api/v1/mcps/market-cmapi00074002/mcp",
+                "type": "streamable-http",
+                "baseUrl": "https://dashscope.example/api/v1/mcps/market-cmapi00074002/mcp",
+                "headers": {"Authorization": "Bearer example-token"},
+                "isActive": true,
+                "description": "示例",
+            }),
+        );
+        merged.mcp_servers.insert(
+            "tqt-qwen-weather".to_string(),
+            json!({
+                "url": "http://mcp.example.invalid/tqt-qwen-weather",
+                "type": "streamable-http",
+                "headers": {"Authorization": "Bearer weather-token"},
+                "timeout": 60,
+            }),
+        );
+
+        let request_servers = request_mcp_servers(&merged);
+        assert_eq!(request_servers.len(), 2);
+        assert_eq!(
+            request_servers[0],
+            json!({
+                "name": "market-cmapi00074002",
+                "url": "https://dashscope.example/api/v1/mcps/market-cmapi00074002/mcp",
+                "type": "streamable-http",
+                "auth": {"Authorization": "Bearer example-token"},
+            })
+        );
+        assert_eq!(
+            request_servers[1],
+            json!({
+                "name": "tqt-qwen-weather",
+                "url": "http://mcp.example.invalid/tqt-qwen-weather",
+                "type": "streamable-http",
+                "auth": {"Authorization": "Bearer weather-token"},
+                "timeout": 60,
+            })
+        );
+
+        let metadata_servers = ghost_mcp_servers(&merged);
+        assert_eq!(
+            metadata_servers[0]["name"],
+            json!("AliyunBailianMCP_market-cmapi00074002")
+        );
+        assert_eq!(metadata_servers[0]["baseUrl"], request_servers[0]["url"]);
     }
 
     #[test]

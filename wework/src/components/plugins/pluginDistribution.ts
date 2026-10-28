@@ -7,6 +7,13 @@ import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 
 export type PluginDistribution = 'official' | 'workspace' | 'personal' | 'public' | 'external'
 
+export function isOfficialMarketplacePlugin(plugin: PluginMarketplaceItem): boolean {
+  const distribution = marketplacePluginDistribution(plugin)
+  return (
+    distribution === 'official' || (distribution === 'public' && plugin.sourceProvider === 'wegent')
+  )
+}
+
 export function marketplaceItemMarketplaceId(plugin: PluginMarketplaceItem): string | null {
   const marketplaceId = plugin.manifest?.marketplaceId
   return typeof marketplaceId === 'string' && marketplaceId.trim() ? marketplaceId.trim() : null

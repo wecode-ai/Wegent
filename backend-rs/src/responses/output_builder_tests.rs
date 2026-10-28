@@ -7,6 +7,8 @@
 //! These exercise the recorded subtask result documents end to end through
 //! the typed builders, including the tool item shapes and id numbering.
 
+use brz_http_server::{EphemeralBytesArena, IntoHttpError, ResponseBody, StatusCode};
+
 use super::output_builder::*;
 use super::python_json::python_json_dumps;
 use super::responses_repository::{SubtaskRow, TaskRow};
@@ -19,7 +21,7 @@ fn chain_subtask(result: Value) -> SubtaskRow {
         task_id: 100_000_000_000_001,
         role: "ASSISTANT".to_string(),
         status: "COMPLETED".to_string(),
-        result: Some(brz_mysql::Json(result.into())),
+        result: Some(brz_mysql::Json(result)),
     }
 }
 
@@ -81,6 +83,202 @@ fn messages_chain_without_assistant_text_falls_back_to_value() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["id"], "msg_100000000000004");
     assert_eq!(items[0]["content"][0]["text"], "the value");
+}
+
+#[test]
+fn mixed_chain_content_decodes_and_falls_back_to_accumulated_text() {
+    // Recorded shape (20261027113033 case b72465e5): the assistant chain
+    // `content` mixes an empty string, a reasoning-only block (text under
+    // `reasoning`) and the final text as a bare string. The source's
+    // `_extract_text_content` skips every non-block item, so the chain yields
+    // no message and the fallback builds `msg_{id}` from the accumulated
+    // content plus `result.reasoning_content`.
+    let result = serde_json::json!({
+        "value": "the value",
+        "reasoning_content": "why",
+        "blocks": [
+            {"id": "b1", "type": "thinking", "status": "done", "content": "why"},
+            {"id": "b2", "type": "text", "status": "done", "content": "the value"}
+        ],
+        "messages_chain": [{
+            "role": "assistant",
+            "content": [
+                "",
+                {"type": "reasoning", "extras": {"index": 0}, "reasoning": "why"},
+                "the value"
+            ],
+            "model_info": {"model": "m", "provider": "p"}
+        }]
+    });
+    let items: Vec<Value> = build_output_items_for_subtask(
+        &chain_subtask(result),
+        &test_config(),
+        "accumulated",
+        Some("completed"),
+    )
+    .expect("builds")
+    .iter()
+    .map(|item| serde_json::to_value(item).expect("serializable"))
+    .collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], "msg_100000000000004");
+    assert_eq!(items[0]["status"], "completed");
+    assert_eq!(items[0]["content"][0]["type"], "reasoning");
+    assert_eq!(items[0]["content"][0]["text"], "why");
+    assert_eq!(items[0]["content"][1]["type"], "output_text");
+    assert_eq!(items[0]["content"][1]["text"], "accumulated");
+}
+
+#[test]
+fn absent_result_renders_accumulated_content() {
+    // `result = subtask.result if isinstance(subtask.result, dict) else {}`:
+    // a NULL result still renders the current turn's accumulated content.
+    let subtask = SubtaskRow {
+        id: 100_000_000_000_004,
+        user_id: 301,
+        task_id: 100_000_000_000_001,
+        role: "ASSISTANT".to_string(),
+        status: "COMPLETED".to_string(),
+        result: None,
+    };
+    let items: Vec<Value> =
+        build_output_items_for_subtask(&subtask, &test_config(), "accumulated", Some("completed"))
+            .expect("builds")
+            .iter()
+            .map(|item| serde_json::to_value(item).expect("serializable"))
+            .collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], "msg_100000000000004");
+    assert_eq!(items[0]["content"].as_array().unwrap().len(), 1);
+    assert_eq!(items[0]["content"][0]["type"], "output_text");
+    assert_eq!(items[0]["content"][0]["text"], "accumulated");
+}
+
+#[test]
+fn non_object_result_document_renders_accumulated_content() {
+    // A stored non-object column is not a dict, so the source uses `{}`; the
+    // raw carrier keeps this distinct from a NULL column and from an object.
+    let subtask = SubtaskRow {
+        id: 100_000_000_000_004,
+        user_id: 301,
+        task_id: 100_000_000_000_001,
+        role: "ASSISTANT".to_string(),
+        status: "COMPLETED".to_string(),
+        result: Some(brz_mysql::Json(serde_json::json!("stored text"))),
+    };
+    let items: Vec<Value> =
+        build_output_items_for_subtask(&subtask, &test_config(), "accumulated", Some("completed"))
+            .expect("builds")
+            .iter()
+            .map(|item| serde_json::to_value(item).expect("serializable"))
+            .collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], "msg_100000000000004");
+    assert_eq!(items[0]["content"][0]["text"], "accumulated");
+}
+
+#[test]
+fn non_iterable_tool_calls_raise_instead_of_rendering_the_override() {
+    // `for tool_call in msg.get("tool_calls") or []` (`:533`): a truthy
+    // non-iterable raises in the source, so the present object must take the
+    // source's error path instead of degrading to the accumulated content.
+    let result = serde_json::json!({
+        "value": "kept",
+        "messages_chain": [{"role": "assistant", "content": "ok", "tool_calls": 7}]
+    });
+    let error = build_output_items_for_subtask(
+        &chain_subtask(result),
+        &test_config(),
+        "accumulated",
+        Some("completed"),
+    )
+    .expect_err("the source raises on a non-iterable tool_calls");
+    let response = error.into_http_error(&EphemeralBytesArena::new(512));
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let ResponseBody::Arena(body) = response.body() else {
+        panic!("expected JSON error")
+    };
+    assert_eq!(
+        serde_json::from_slice::<Value>(body.as_ref()).unwrap(),
+        serde_json::json!({"detail": "Internal server error"})
+    );
+}
+
+#[test]
+fn non_assistant_entries_are_ignored_before_tool_calls_validation() {
+    // `if msg.get("role") != "assistant": continue` (`:527-529`) runs before
+    // the `tool_calls` loop, so a non-assistant entry with a non-iterable
+    // value is skipped and the fallback still renders the plain value.
+    let result = serde_json::json!({
+        "value": "kept",
+        "messages_chain": [{"role": "user", "tool_calls": 7, "content": "hi"}]
+    });
+    let items = serialized_items(&chain_subtask(result));
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], "msg_100000000000004");
+    assert_eq!(items[0]["content"][0]["text"], "kept");
+}
+
+#[test]
+fn truthy_non_object_function_raises_like_the_source() {
+    // `function = tool_call.get("function") or {}` then `function.get(...)`:
+    // a truthy non-object has no `.get` and raises.
+    let result = serde_json::json!({
+        "value": "kept",
+        "messages_chain": [{
+            "role": "assistant",
+            "content": "ok",
+            "tool_calls": [{"id": "call_a", "function": "nope"}]
+        }]
+    });
+    let error = build_output_items_for_subtask(
+        &chain_subtask(result),
+        &test_config(),
+        "accumulated",
+        Some("completed"),
+    )
+    .expect_err("the source raises on a truthy non-object function");
+    let response = error.into_http_error(&EphemeralBytesArena::new(512));
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[test]
+fn a_mistyped_field_does_not_erase_the_source_valid_fields() {
+    // `{"blocks": [{"type": 5}]}`: the source skips the unusable block and
+    // still renders the plain `value`, and a valid block beside it still
+    // renders its own text.
+    let fallback = serialized_items(&chain_subtask(
+        serde_json::json!({"value": "kept", "blocks": [{"type": 5}]}),
+    ));
+    assert_eq!(fallback.len(), 1);
+    assert_eq!(fallback[0]["id"], "msg_100000000000004");
+    assert_eq!(fallback[0]["content"][0]["text"], "kept");
+
+    let mixed = serialized_items(&chain_subtask(serde_json::json!({
+        "value": "kept",
+        "blocks": [{"type": 5}, {"type": "text", "content": "from blocks"}]
+    })));
+    assert_eq!(mixed.len(), 1);
+    assert_eq!(mixed[0]["id"], "msg_100000000000004_0");
+    assert_eq!(mixed[0]["content"][0]["text"], "from blocks");
+}
+
+#[test]
+fn non_object_chain_items_are_skipped() {
+    // The source skips chain entries that are not objects and block items
+    // that are not objects instead of failing the whole result decode.
+    let result = serde_json::json!({
+        "value": "",
+        "messages_chain": [
+            "not-a-message",
+            {"role": "assistant", "content": ["", 42, "text"], "model_info": {}},
+            null
+        ],
+        "blocks": ["not-a-block", {"type": "text", "content": "from blocks"}]
+    });
+    let items = serialized_items(&chain_subtask(result));
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["content"][0]["text"], "from blocks");
 }
 
 #[test]
@@ -244,7 +442,7 @@ fn chain_reasoning_only_entry_falls_back_to_bare_id_message() {
         task_id: 100_000_000_000_003,
         role: "ASSISTANT".to_string(),
         status: "COMPLETED".to_string(),
-        result: Some(brz_mysql::Json(result.into())),
+        result: Some(brz_mysql::Json(result)),
     };
     let items = serialized_items(&subtask);
     assert_eq!(items.len(), 1);
@@ -374,7 +572,7 @@ fn subtask(role: &str, status: &str, result: Option<Value>) -> SubtaskRow {
         task_id: 100_000_000_000_011,
         role: role.to_string(),
         status: status.to_string(),
-        result: result.map(|result| brz_mysql::Json(result.into())),
+        result: result.map(brz_mysql::Json),
     }
 }
 

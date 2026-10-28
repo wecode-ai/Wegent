@@ -5,6 +5,34 @@
 use super::*;
 
 #[test]
+fn runtime_rpc_dispatch_fits_a_bounded_worker_stack() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let handler = runtime
+        .block_on(async { RuntimeWorkRpcHandler::new("bounded-stack", "unused-codex-binary") });
+    std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(move || {
+            runtime.block_on(async {
+                let error = handler
+                    .dispatch("runtime.stand_in.run", json!({}))
+                    .await
+                    .unwrap_err();
+                assert_eq!(error.code, "bad_request");
+                assert_eq!(error.message, "projectId is required");
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn remote_app_server_rpc_rejects_methods_outside_plugin_allowlist() {
     let _lock = crate::test_env::lock();
     let root = tempfile::tempdir().unwrap();

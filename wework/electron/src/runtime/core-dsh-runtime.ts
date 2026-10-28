@@ -91,6 +91,7 @@ interface ProfileStamp extends RuntimeIdentity {
   managedUiPlugins: boolean
   corePluginsFingerprint: string
   managedBundles: readonly string[]
+  managedDependencyNames: readonly string[]
 }
 
 export interface BundledDshRuntime {
@@ -305,6 +306,8 @@ async function prepareProfile(options: {
       ? [...CORE_BUNDLES, ...(options.runtime.internalUiBundles ?? [])]
       : [...CORE_HOST_BUNDLES]
   ).filter(name => !OPTIONAL_CORE_BUNDLES.has(name) || !disabled.has(name))
+  const managedDependencies = managedCoreDependencies(options.runtime, options.managedUiPlugins)
+  const managedDependencyNames = Object.keys(managedDependencies)
   const expectedStamp: ProfileStamp = {
     managedPluginCopyVersion: 1,
     dshVersion: options.runtime.version,
@@ -313,16 +316,20 @@ async function prepareProfile(options: {
     managedUiPlugins: options.managedUiPlugins,
     corePluginsFingerprint: options.corePluginsFingerprint,
     managedBundles,
+    managedDependencyNames,
   }
-  const managedDependencies = managedCoreDependencies(options.runtime, options.managedUiPlugins)
-  const managedDependencyNames = Object.keys(managedDependencies)
+  const previousStamp = objectRecord(await readJsonFile(join(profileRoot, PROFILE_STAMP)))
+  const previouslyManaged = [
+    ...stringArray(previousStamp.managedDependencyNames),
+    ...stringArray(previousStamp.managedBundles),
+  ].filter(name => !managedDependencyNames.includes(name) && !managedBundles.includes(name))
   const currentManifest = await readJsonFile(join(profileRoot, 'package.json'))
   const currentManifestRoot = objectRecord(currentManifest)
   const currentDependencies = stringRecord(currentManifestRoot.dependencies)
   const currentProfile = objectRecord(objectRecord(currentManifestRoot.dsh).profile)
   const currentBundles = stringArray(currentProfile.bundles)
   const removedDependencies = new Set<string>(
-    REMOVED_CORE_DEPENDENCIES.filter(
+    [...REMOVED_CORE_DEPENDENCIES, ...previouslyManaged].filter(
       name => Object.hasOwn(currentDependencies, name) || currentBundles.includes(name)
     )
   )
@@ -354,7 +361,7 @@ async function prepareProfile(options: {
     profileRoot,
     currentDependencies,
     currentBundles,
-    new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES])
+    new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES, ...previouslyManaged])
   )
   if (
     currentManifest &&
@@ -651,7 +658,9 @@ async function stampMatches(path: string, expected: ProfileStamp): Promise<boole
       current.sourceFingerprint === expected.sourceFingerprint &&
       current.managedUiPlugins === expected.managedUiPlugins &&
       current.corePluginsFingerprint === expected.corePluginsFingerprint &&
-      JSON.stringify(current.managedBundles) === JSON.stringify(expected.managedBundles)
+      JSON.stringify(current.managedBundles) === JSON.stringify(expected.managedBundles) &&
+      JSON.stringify(current.managedDependencyNames) ===
+        JSON.stringify(expected.managedDependencyNames)
     )
   } catch {
     return false

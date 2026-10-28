@@ -1,3 +1,5 @@
+import { gateRuntimeResponse } from '@/e2e/runtime-transport-gates'
+
 export interface DesktopHostErrorPayload {
   code: string
   message: string
@@ -63,7 +65,12 @@ export async function invokeDesktopHost<Result>(
       body.error?.details
     )
   }
-  return body.result as Result
+  const result = body.result as Result
+  // E2E barriers delay delivery only after the real Electron operation completes.
+  if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
+    return gateRuntimeResponse(capability, params, result)
+  }
+  return result
 }
 
 export function subscribeDesktopHostEvents(
