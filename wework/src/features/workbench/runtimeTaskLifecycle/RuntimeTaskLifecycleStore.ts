@@ -452,7 +452,8 @@ export class RuntimeTaskLifecycleStore {
         (machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId) &&
           (previous.turn.active
             ? previous.task?.completedAt != null
-            : previous.turn.outcome !== null)))
+            : previous.turn.outcome !== null &&
+              !isRuntimeTaskConfirmedActive(canonicalEvent.task))))
     ) {
       logRuntimeTaskCreateStage('lifecycle-snapshot-skipped', {
         taskId: canonicalAddress.taskId,
