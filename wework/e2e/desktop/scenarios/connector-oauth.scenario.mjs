@@ -54,17 +54,18 @@ function isResumeRequest(body) {
 }
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
-  let cloud
+  let backend
+  let cloudEnvironment
   let provider
   let connectorAppId = 0
   const modelRequests = []
   let replySequence = 0
 
   async function api(path, { method = 'GET', body } = {}) {
-    const response = await fetch(`${cloud.backendUrl}${path}`, {
+    const response = await fetch(`${backend.backendUrl}${path}`, {
       method,
       headers: {
-        Authorization: `Bearer ${cloud.authToken}`,
+        Authorization: `Bearer ${backend.authToken}`,
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -78,7 +79,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     requiresCloudEnvironment: true,
 
     async prepareCloud(environment) {
-      cloud = environment
+      backend = environment
       provider = await startConnectorOAuthProvider()
       await api('/api/admin/setup-complete', { method: 'POST' })
       const app = await api('/api/admin/connector-apps', {
@@ -95,6 +96,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         },
       })
       connectorAppId = app.id
+    },
+
+    setCloudEnvironment(environment) {
+      cloudEnvironment = environment
     },
 
     async handleHttp(request, response, url) {
@@ -128,7 +133,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('setAppPreferences', 'body', {
         value: JSON.stringify({ replyPredictionsEnabled: false }),
       })
-      await cloud.waitForConnectedAppDevice()
+      await cloudEnvironment.waitForConnectedAppDevice()
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
         timeoutMs: workbenchReadyTimeoutMs,
       })
