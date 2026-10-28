@@ -4030,6 +4030,54 @@ mod tests {
     }
 
     #[test]
+    fn discovered_tools_include_project_space_workflows_and_boundaries() {
+        let discovered = tools();
+        for (name, requirements) in [
+            (
+                "get_current_context",
+                vec![
+                    "get_board_item",
+                    "list_board_item_comments",
+                    "list_item_attachments",
+                    "read_item_attachment",
+                    "bound:false",
+                    "list_spaces",
+                    "list_board_items",
+                    "search_board_items",
+                    "dispatched agents must stay within their assigned scope",
+                ],
+            ),
+            (
+                "submit_workflow_plan",
+                vec![
+                    "get_board_item",
+                    "get_assignment_candidates",
+                    "exactly one concurrent batch",
+                    "instead of Codex subagents or doing member work yourself",
+                    "End the manager turn",
+                ],
+            ),
+            (
+                "update_issue_status",
+                vec!["Only the manager", "do not duplicate"],
+            ),
+            (
+                "list_spaces",
+                vec!["accessible to the current user", "never by substituting"],
+            ),
+        ] {
+            let description = discovered
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .and_then(|tool| tool["description"].as_str())
+                .expect("discoverable tool description");
+            for requirement in requirements {
+                assert!(description.contains(requirement), "{name}: {requirement}");
+            }
+        }
+    }
+
+    #[test]
     fn exposes_task_search_tool() {
         let search = tools()
             .into_iter()

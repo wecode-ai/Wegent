@@ -4189,13 +4189,18 @@ fn thread_launch_params_always_include_space_routing() {
         let instructions = params["developerInstructions"]
             .as_str()
             .expect("developer instructions should be a string");
-        assert!(instructions.contains("Wework 项目空间 routing:"));
+        assert_eq!(
+            instructions
+                .matches(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS)
+                .count(),
+            1
+        );
         assert!(instructions.contains("get_current_context"));
-        assert!(instructions.contains("list_item_attachments"));
-        assert!(instructions.contains("read_item_attachment"));
-        assert!(instructions.contains("MCP resource listing"));
-        assert!(instructions.contains("list_board_items"));
-        assert!(instructions.contains("get_assignment_candidates"));
+        assert!(instructions.contains("list_spaces"));
+        assert!(instructions.contains("discover deferred tools"));
+        assert!(instructions.contains("Follow the discovered tool instructions"));
+        assert!(instructions.contains("Never use MCP resources, browser, Shell, `curl`"));
+        assert!(instructions.contains("bypass these tools or their access errors"));
     }
 }
 
