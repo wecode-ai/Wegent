@@ -126,12 +126,34 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
             assert tools
             if name == "interactive-form-question":
                 assert {tool["name"] for tool in tools} == {"interactive_form_question"}
-            removed = client.post(
+            api_response = client.post(
                 f"/api{path}",
                 headers=MCP_HEADERS,
                 json={"jsonrpc": "2.0", "id": 31, "method": "tools/list"},
             )
-            assert removed.status_code == 405
+            if name == "subscription":
+                assert api_response.status_code == 200
+                assert api_response.json()["result"]["tools"] == tools
+                for tool in tools:
+                    arguments = {
+                        "display_name": "Authentication regression",
+                        "trigger_type": "one_time",
+                        "prompt_template": "Reminder",
+                    }
+                    if tool["name"] == "create_subscription":
+                        arguments["preview_id"] = "unused-unauthenticated-preview"
+                    result = _rpc(
+                        client,
+                        request_id=32,
+                        path=f"/api{path}",
+                        method="tools/call",
+                        params={"name": tool["name"], "arguments": arguments},
+                    )
+                    assert json.loads(result["result"]["content"][0]["text"]) == {
+                        "error": "Authentication required"
+                    }
+            else:
+                assert api_response.status_code == 405
 
         listed = _rpc(
             client,

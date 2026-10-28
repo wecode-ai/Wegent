@@ -194,6 +194,7 @@ export async function verifyBoardFieldDrag(control, { scoped, request, project, 
     }
     await reloadMainWindow(control, 'The cross-column field mutation did not reload')
     await openProjectBoard(control, scoped, project)
+    await control.command('scrollIntoView', scoped(card(move.target, moving.id)))
     await control.command('waitFor', scoped(card(move.target, moving.id)), { visible: true })
     await control.command('waitFor', scoped(card(move.source, moving.id)), { visible: false })
     console.log(

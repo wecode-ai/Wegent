@@ -74,6 +74,7 @@ export interface RuntimeTaskStreamHandlers {
     turnId: string,
     outcome: "succeeded" | "failed" | "cancelled",
   ) => void;
+  onAssistantRecovered?: (turnId: string) => void;
   onContextUsageUpdated?: (usage: RuntimeContextUsage) => void;
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void;
   onRuntimeTaskTitleUpdated?: (payload: RuntimeTaskTitleUpdatedPayload) => void;
@@ -105,6 +106,7 @@ export interface RuntimeConversationStreamHandlers {
     turnId: string,
     outcome: "succeeded" | "failed" | "cancelled",
   ) => void;
+  onAssistantRecovered?: (address: RuntimeTaskAddress, turnId: string) => void;
   onContextUsageUpdated?: (
     address: RuntimeTaskAddress,
     usage: RuntimeContextUsage,
@@ -212,6 +214,10 @@ export function createRuntimeConversationStreamHandlers(
           activeTurnIds.delete(turnId);
           handlers.onAssistantSettled?.(address, turnId, outcome);
         },
+        onAssistantRecovered: (turnId) => {
+          activeTurnIds.delete(turnId);
+          handlers.onAssistantRecovered?.(address, turnId);
+        },
         onContextUsageUpdated: (usage) =>
           handlers.onContextUsageUpdated?.(address, usage),
         onSubagentActivity: (payload) =>
@@ -257,6 +263,8 @@ export function createRuntimeConversationStreamHandlers(
       forward(payload, (entry) => entry.onChatDone?.(payload)),
     onChatError: (payload) =>
       forward(payload, (entry) => entry.onChatError?.(payload)),
+    onChatRecovered: (payload) =>
+      forward(payload, (entry) => entry.onChatRecovered?.(payload)),
     onBlockCreated: (payload) =>
       forward(payload, (entry) => entry.onBlockCreated?.(payload)),
     onBlockUpdated: (payload) =>
@@ -325,6 +333,12 @@ export function createRuntimeTaskStreamHandlers(
     rememberSettledAssistantTurn(terminalTurnId);
     rememberSettledAssistantTurn(lifecycleTurnId);
     handlers.onAssistantSettled?.(lifecycleTurnId, outcome);
+  };
+  const recoverAssistantTurn = (turnId: string) => {
+    unsettledAssistantTurnIds.delete(turnId);
+    firstTokenSent.delete(turnId);
+    rememberSettledAssistantTurn(turnId);
+    handlers.onAssistantRecovered?.(turnId);
   };
 
   const streamHandlers: ChatStreamHandlers = {
@@ -582,6 +596,26 @@ export function createRuntimeTaskStreamHandlers(
         cancelled ? "cancelled" : "failed",
       );
       streamedFileChanges.delete(identity.subtaskId);
+    },
+    onChatRecovered: (payload) => {
+      if (!isRuntimeTaskStreamPayload(address, payload)) {
+        warnAndDropMismatchedRuntimeTerminalEvent(
+          "chat:recovered",
+          address,
+          payload,
+        );
+        return;
+      }
+      const identity = runtimeStreamTaskSubtaskIdentity(payload);
+      if (!identity) {
+        warnAndDropRuntimeStreamEvent("chat:recovered", address, payload);
+        return;
+      }
+      recoverAssistantTurn(identity.subtaskId);
+      handlers.onMessageAction({
+        type: "assistant_done",
+        subtaskId: identity.subtaskId,
+      });
     },
     onBlockCreated: (payload) => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return;

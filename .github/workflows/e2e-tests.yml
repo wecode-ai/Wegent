@@ -183,7 +183,8 @@ jobs:
     name: Build Backend Rust E2E Runtime
     needs: changes
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
-    runs-on: ubuntu-latest
+    # Match the Noble containers consuming these dynamically linked binaries.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -521,14 +522,6 @@ jobs:
           --health-timeout=5s
           --health-retries=15
 
-      etcd:
-        image: quay.io/coreos/etcd:v3.5.16
-        env:
-          ETCD_ADVERTISE_CLIENT_URLS: http://etcd:2379
-          ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
-          ETCD_DATA_DIR: /etcd
-
-      # Start storage before Milvus: the runner pulls and starts services sequentially.
       minio:
         image: bitnamilegacy/minio:2025.7.23-debian-12-r0
         env:
@@ -539,21 +532,6 @@ jobs:
           --health-interval=2s
           --health-timeout=5s
           --health-start-period=5s
-          --health-retries=30
-
-      milvus:
-        image: milvusdb/milvus:v2.5.4
-        command: milvus run standalone
-        env:
-          ETCD_ENDPOINTS: etcd:2379
-          MINIO_ADDRESS: minio:9000
-          MINIO_ACCESS_KEY_ID: wegent-e2e
-          MINIO_SECRET_ACCESS_KEY: wegent-e2e-secret
-        options: >-
-          --health-cmd="curl -f http://localhost:9091/healthz"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-start-period=30s
           --health-retries=30
 
       qdrant:
@@ -984,7 +962,7 @@ jobs:
           uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
           uv run --no-sync python tests/e2e/dingtalk_notification_card_context.py
 
-      - name: Run subscription callback Python gateway E2E
+      - name: Run subscription callback Rust gateway E2E
         if: matrix.shardIndex == 1
         working-directory: ./backend
         env:
@@ -997,7 +975,7 @@ jobs:
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
           E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/subscription-callback-gateway
           E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          E2E_PYTHON_LOG: ${{ github.workspace }}/backend/backend.log
+          E2E_RUST_LOG: ${{ github.workspace }}/logs/backend/rust/info.log
           PYTHONPATH: ..:.
         run: |
           set -o pipefail
@@ -1091,6 +1069,7 @@ jobs:
           retention-days: 14
 
       - name: Run knowledge remote index E2E
+        id: knowledge_e2e
         if: matrix.shardIndex == 4
         working-directory: ./backend
         env:
@@ -1107,10 +1086,19 @@ jobs:
           E2E_KNOWLEDGE_RUNTIME_LOG: ../knowledge_runtime/ci.log
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_BOOTSTRAP_ADMIN_USER: admin
+          E2E_DOCKER_NETWORK: ${{ job.container.network }}
+          E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/knowledge-provider-e2e
           PYTHONPATH: ..:.
-        run: |
-          uv run --no-sync python tests/e2e/knowledge_remote_index.py
-          uv run --no-sync python tests/e2e/knowledge_milvus_e2e.py
+        run: ../.github/scripts/run-knowledge-provider-e2e.sh
+
+      - name: Upload knowledge provider lifecycle diagnostics
+        if: always() && matrix.shardIndex == 4 && steps.knowledge_e2e.outcome != 'skipped' && steps.knowledge_e2e.outcome != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: knowledge-provider-lifecycle-e2e
+          path: .ci-artifacts/knowledge-provider-e2e/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Run DingTalk OAuth import and authorization E2E
         if: matrix.shardIndex == 1

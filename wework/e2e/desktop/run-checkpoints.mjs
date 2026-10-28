@@ -84,6 +84,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'local-harness': './scenarios/local-terminal.scenario.mjs',
   'harness-app-development': './scenarios/harness-apps.scenario.mjs',
   'harness-app-lifecycle': './scenarios/harness-apps.scenario.mjs',
+  'harness-app-models': './scenarios/harness-apps.scenario.mjs',
 
   'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',
   'browser-toolbar-actions': './scenarios/embedded-browser-toolbar-actions.scenario.mjs',
@@ -151,7 +152,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'stand-in-mcp': './scenarios/stand-in-mcp.scenario.mjs',
   'stand-in-cli': './scenarios/stand-in-cli.scenario.mjs',
   'stand-in-plugin-bridge': './scenarios/stand-in-plugin-bridge.scenario.mjs',
-  'stand-in-assignment-notifications': './scenarios/stand-in-assignment-notifications.scenario.mjs',
+  'stand-in-assignment-notifications': './scenarios/stand-in-assignment-suite.scenario.mjs',
   'stand-in-personal-task': './scenarios/stand-in-personal-task.scenario.mjs',
   'stand-in': './scenarios/stand-in.scenario.mjs',
   'stand-in-cloud': './scenarios/stand-in-cloud.scenario.mjs',
@@ -259,6 +260,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'local-harness',
   'harness-app-development',
   'harness-app-lifecycle',
+  'harness-app-models',
 
   'offline-local-project-space',
   'cloud-context-resilience',

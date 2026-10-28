@@ -17,6 +17,11 @@ use std::sync::Arc;
 
 /// Application-wide state retained for the process lifetime.
 pub struct AppState {
+    /// Weak access for response streams that outlive their request borrow.
+    pub(crate) completion_app: std::sync::OnceLock<std::sync::Weak<AppState>>,
+    /// Explicit Rust task ownership; initialized after deployment-specific injection.
+    pub background_jobs: crate::background_jobs::BackgroundJobsClient,
+    pub video_extensions: Arc<dyn crate::background_jobs::video::VideoExtensions>,
     pub entity_resolvers: crate::permissions::EntityResolvers,
     /// Default-resource Task/Workspace storage, selected by the application.
     pub seed_tasks: Arc<dyn crate::new_user_resources::tasks::TaskResources>,

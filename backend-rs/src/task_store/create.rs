@@ -18,6 +18,7 @@ use crate::task_store_create::TaskStoreCreate;
 impl<M: Mysql> TaskStoreCreate for DefaultTaskStore<M> {
     async fn rename_and_update_task_json(
         &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
         task_id: i64,
         _owner_user_id: i64,
         name: &str,
@@ -25,7 +26,8 @@ impl<M: Mysql> TaskStoreCreate for DefaultTaskStore<M> {
         updated_at: &str,
     ) -> MysqlResult<u64> {
         crate::task_store_create::update_task_name_and_json(
-            &self.mysql,
+            sql,
+            crate::request_sql::RouteKey::None,
             TASKS_TABLE,
             task_id,
             name,
@@ -37,11 +39,12 @@ impl<M: Mysql> TaskStoreCreate for DefaultTaskStore<M> {
 
     async fn create_task_shell_with_workspace(
         &self,
-        mysql: &brz_mysql::MysqlService,
+        sql: &mut dyn crate::request_sql::RequestSql,
         request: &crate::task_store_create::CreateTaskShellRequest<'_>,
     ) -> MysqlResult<(i64, i64)> {
         crate::task_store_create::create_task_shell_with_workspace(
-            mysql,
+            sql,
+            crate::request_sql::RouteKey::None,
             TASKS_TABLE,
             "sa_savepoint_1",
             None,
@@ -50,19 +53,34 @@ impl<M: Mysql> TaskStoreCreate for DefaultTaskStore<M> {
         .await
     }
 
-    async fn create_user_and_assistant_subtasks_with_executor_reference(
+    async fn resolve_task_executor_on(
         &self,
-        mysql: &brz_mysql::MysqlService,
+        sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+    ) -> MysqlResult<crate::task_store_executor_reference::AssistantExecutor> {
+        crate::task_store_executor_reference::resolve_executor_reference_on(
+            sql,
+            TASKS_TABLE,
+            SUBTASKS_TABLE,
+            task_id,
+        )
+        .await
+    }
+
+    async fn create_subtasks_with_executor(
+        &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
         savepoint: &str,
         request: &crate::task_store_create::CreateSubtasksRequest<'_>,
+        executor: &crate::task_store_executor_reference::AssistantExecutor,
     ) -> MysqlResult<crate::task_store_executor_reference::SubtaskPairInsert> {
-        crate::task_store_executor_reference::create_subtask_pair_with_executor_reference(
-            mysql,
-            TASKS_TABLE,
+        crate::task_store_executor_reference::create_subtask_pair_with_resolved_executor(
+            sql,
             SUBTASKS_TABLE,
             savepoint,
             false,
             request,
+            executor,
         )
         .await
     }
@@ -84,7 +102,17 @@ impl<M: Mysql> TaskStoreCreate for DefaultTaskStore<M> {
         .await
     }
 
-    async fn max_subtask_message_id(&self, task_id: i64) -> MysqlResult<Option<i64>> {
-        crate::task_store_create::max_subtask_message_id(&self.mysql, SUBTASKS_TABLE, task_id).await
+    async fn max_subtask_message_id(
+        &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+    ) -> MysqlResult<Option<i64>> {
+        crate::task_store_create::max_subtask_message_id(
+            sql,
+            crate::request_sql::RouteKey::Task(task_id as u64),
+            SUBTASKS_TABLE,
+            task_id,
+        )
+        .await
     }
 }

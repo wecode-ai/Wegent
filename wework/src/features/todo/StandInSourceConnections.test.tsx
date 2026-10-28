@@ -87,3 +87,59 @@ it.each(['resolve', 'reject'] as const)(
     )
   }
 )
+
+vi.mock('@/components/plugins/LocalConnectorAuthDialog', () => ({
+  LocalConnectorAuthDialog: ({
+    target,
+  }: {
+    target: { pluginKey: string; connectorSlug: string }
+  }) => (
+    <div data-testid="source-auth-dialog">
+      {target.pluginKey}:{target.connectorSlug}
+    </div>
+  ),
+}))
+
+it.each([
+  { code: 'connector_auth_required', localDeviceId: 'device', canAuthorize: true },
+  { code: 'connector_auth_required', localDeviceId: 'other-device', canAuthorize: false },
+  { code: 'permission_denied', localDeviceId: 'device', canAuthorize: false },
+])(
+  'keeps authorization recovery separate from translated errors: $code / $localDeviceId',
+  async ({ code, localDeviceId, canAuthorize }) => {
+    const searchConnectionResources = vi
+      .fn()
+      .mockRejectedValue({ code, message: 'Authorize the account' })
+    const user = userEvent.setup()
+    render(
+      <StandInSourceConnections
+        provider={{
+          id: 'example',
+          displayName: 'Example',
+          resourceKinds: ['group'],
+          dependencies: [],
+          availability: { status: 'ready' },
+          authTarget: { pluginKey: 'example-plugin', connectorSlug: 'work-account' },
+        }}
+        role={newStandInRole('device', 'default')}
+        api={{ searchConnectionResources } as unknown as StandInExecutorApi}
+        deviceId="device"
+        localDeviceId={localDeviceId}
+        disabled={false}
+        onChange={vi.fn()}
+      />
+    )
+    await user.click(screen.getByTestId('stand-in-connection-example-add'))
+    await user.type(screen.getByTestId('stand-in-connection-example-query'), 'group')
+    await user.click(screen.getByTestId('stand-in-connection-example-search'))
+    expect(await screen.findByRole('alert')).not.toHaveTextContent('Authorize the account')
+    if (canAuthorize) {
+      await user.click(screen.getByTestId('stand-in-connection-example-connect'))
+      expect(screen.getByTestId('source-auth-dialog')).toHaveTextContent(
+        'example-plugin:work-account'
+      )
+    } else {
+      expect(screen.queryByTestId('stand-in-connection-example-connect')).not.toBeInTheDocument()
+    }
+  }
+)
