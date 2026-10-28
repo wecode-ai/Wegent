@@ -9,6 +9,7 @@ export const HOST_CAPABILITIES = [
   'app.getVersion',
   'app.quit',
   'app.relaunch',
+  'auth.openConnectorAuthorization',
   'appUpdate.check',
   'appUpdate.download',
   'appUpdate.downloadProgress',

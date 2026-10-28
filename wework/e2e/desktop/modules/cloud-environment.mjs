@@ -407,6 +407,8 @@ class RealCloudEnvironment {
       INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
       BACKEND_INTERNAL_URL: this.backendUrl,
       WEGENT_BACKEND_PUBLIC_URL: this.backendUrl,
+      // Connector consent must redirect back to the gateway this run started.
+      CONNECTOR_OAUTH_REDIRECT_URI: `${this.backendUrl}/api/connector-apps/oauth/callback`,
       GIT_TOKEN_AES_KEY: '12345678901234567890123456789012',
       GIT_TOKEN_AES_IV: '1234567890123456',
       FRONTEND_URL: this.modelServerUrl,

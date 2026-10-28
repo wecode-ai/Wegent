@@ -57,6 +57,10 @@ import type { SecureValueStore } from './secure-value-store.js'
 import type { BrowserAnnotationController } from './browser-annotation-controller.js'
 import { RotatingLog } from '../runtime/rotating-log.js'
 import { registerMicrophoneDiagnostics } from './microphone-diagnostics.js'
+import {
+  isConnectorAuthorizationUrl,
+  openConnectorAuthorizationWindow,
+} from './connector-authorization-window.js'
 import { readMacosMicrophoneChecks } from './macos-microphone-diagnostics.js'
 import type { WeworkSyncRequest } from './wework-sync-request.js'
 import type { ApplicationMenu, ApplicationMenuCapabilityState } from './application-menu.js'
@@ -1053,6 +1057,21 @@ export function createElectronCapabilityRouter(
   router.register('shell.openPath', async params => {
     const error = await shell.openPath(stringParam(params, 'path'))
     if (error) throw new HostCapabilityError('open_path_failed', error)
+  })
+  // Administrator-published connectors authorize inside the app, so the user
+  // keeps their place in the workbench and the flow stays observable.
+  router.register('auth.openConnectorAuthorization', async params => {
+    const url = stringParam(params, 'url')
+    if (!isConnectorAuthorizationUrl(url)) {
+      throw new HostCapabilityError(
+        'invalid_authorization_url',
+        'Connector authorization must use https or a loopback http origin'
+      )
+    }
+    await openConnectorAuthorizationWindow({
+      url,
+      parent: requiredWindow(window),
+    })
   })
   router.register('shell.showItemInFolder', params =>
     shell.showItemInFolder(stringParam(params, 'path'))
