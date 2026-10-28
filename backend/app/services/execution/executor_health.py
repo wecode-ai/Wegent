@@ -66,7 +66,7 @@ async def executor_heartbeat_alive(task_id: int) -> Optional[bool]:
         f"/executor-manager/tasks/{task_id}/heartbeat"
     )
     try:
-        async with traced_async_client(timeout=3.0) as client:
+        async with traced_async_client(timeout=3.0, trust_env=False) as client:
             response = await client.get(url)
         if response.status_code != 200:
             logger.debug(
@@ -105,7 +105,7 @@ async def executor_dispatch_pending(task_id: int) -> Optional[bool]:
         f"/executor-manager/tasks/{task_id}/dispatch-state"
     )
     try:
-        async with traced_async_client(timeout=3.0) as client:
+        async with traced_async_client(timeout=3.0, trust_env=False) as client:
             response = await client.get(url)
         if response.status_code != 200:
             return None

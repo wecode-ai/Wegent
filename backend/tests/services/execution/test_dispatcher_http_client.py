@@ -40,10 +40,11 @@ async def test_background_dispatch_closes_client_without_replaying(outcome) -> N
         return httpx.Response(outcome, json={"id": "queued-response", "output": []})
 
     def build_client(**kwargs) -> AsyncOpenAI:
-        client = AsyncOpenAI(
-            **kwargs,
-            http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        # Replace the dispatcher's proxy-free client with a mock transport.
+        kwargs["http_client"] = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
         )
+        client = AsyncOpenAI(**kwargs)
         clients.append(client)
         return client
 

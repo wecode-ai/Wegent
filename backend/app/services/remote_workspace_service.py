@@ -373,7 +373,7 @@ class RemoteWorkspaceService:
             sandbox_url,
         )
         try:
-            with httpx.Client(timeout=self.request_timeout) as client:
+            with httpx.Client(timeout=self.request_timeout, trust_env=False) as client:
                 response = client.get(sandbox_url)
         except Exception as exc:
             logger.warning(
@@ -459,7 +459,7 @@ class RemoteWorkspaceService:
             address_url,
         )
         try:
-            with httpx.Client(timeout=self.request_timeout) as client:
+            with httpx.Client(timeout=self.request_timeout, trust_env=False) as client:
                 params = {"executor_name": executor_name}
                 if executor_namespace is not None:
                     params["executor_namespace"] = executor_namespace
@@ -554,7 +554,7 @@ class RemoteWorkspaceService:
         )
 
         try:
-            with httpx.Client(timeout=self.request_timeout) as client:
+            with httpx.Client(timeout=self.request_timeout, trust_env=False) as client:
                 response = client.post(
                     list_dir_url,
                     content=json.dumps({"path": path, "depth": 1}),
@@ -641,7 +641,9 @@ class RemoteWorkspaceService:
         )
 
         try:
-            with httpx.Client(timeout=REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS) as client:
+            with httpx.Client(
+                timeout=REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS, trust_env=False
+            ) as client:
                 response = client.get(
                     file_url,
                     params={"path": path},
@@ -702,7 +704,7 @@ class RemoteWorkspaceService:
             params["executor_name"] = executor_name
 
         try:
-            with httpx.Client(timeout=self.request_timeout) as client:
+            with httpx.Client(timeout=self.request_timeout, trust_env=False) as client:
                 response = client.get(
                     list_dir_url,
                     params=params,
@@ -778,7 +780,9 @@ class RemoteWorkspaceService:
             params["executor_name"] = executor_name
 
         try:
-            with httpx.Client(timeout=REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS) as client:
+            with httpx.Client(
+                timeout=REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS, trust_env=False
+            ) as client:
                 response = client.get(
                     file_url,
                     params=params,
