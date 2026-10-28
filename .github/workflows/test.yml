@@ -207,6 +207,13 @@ jobs:
           cargo test --locked --lib tasks_search::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/tasks-search-mysql.log
 
+      - name: Verify assignment index schema compatibility with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib loop_tasks::assignment_index::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignment-index-mysql.log
+
       - name: Verify Responses HTTP E2E with large JSON and long conversations
         working-directory: backend-rs
         env:
