@@ -8,7 +8,7 @@
  * - real local executor registered as a Wework app device for device WebSocket tasks
  */
 
-import { APIRequestContext, Page, expect, test } from '@playwright/test'
+import { APIRequestContext, Page, expect, test, type Route } from '@playwright/test'
 import { ADMIN_USER } from '../../config/test-users'
 import { ApiClient, createApiClient } from '../../utils/api-client'
 import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
@@ -70,6 +70,12 @@ type InteractiveToolResponse = {
   nameIncludes: string
   input: Record<string, unknown>
   text?: string
+}
+
+// Fail the transport only: no payload is fabricated, and every other request
+// in the flow still reaches the real Backend.
+async function loseRealResponse(route: Route): Promise<void> {
+  await route.abort('failed')
 }
 
 test.describe.configure({ mode: 'serial', timeout: 180_000 })
@@ -216,6 +222,202 @@ test.describe('Agent conversation regression', () => {
       timeout: RESPONSE_TIMEOUT_MS,
     })
     await expect(conversation).not.toContainText('<referenced_conversations')
+  })
+
+  test('handoff mention finds a conversation beyond the first search window', async ({
+    page,
+    request,
+  }) => {
+    // The title written by the chat flow is not the raw first message, so the
+    // fixture sets the title explicitly after the turn finishes. The task keeps
+    // its real conversation and stays outside the sidebar's recent page.
+    const historyToken = makeContextToken('history')
+    const continuePrompt = `Continue the older handoff task ${historyToken}`
+    const continueMarker = `HANDOFF_HISTORY_OK_${historyToken}`
+
+    await configureStreamRule(request, continuePrompt, continueMarker)
+
+    // The referenced conversation is created first, so the filler history
+    // pushes it past the first scan window the search used to stop at.
+    await openTaskPage(page, '/chat', chatShellTeam.id, 'chat')
+    await sendMessage(page, historyToken)
+    const sourceTaskId = await waitForTaskId(page)
+    createdTaskIds.add(sourceTaskId)
+    await waitForBackendTerminal(request, sourceTaskId)
+    await touchMentionTask(request, sourceTaskId, historyToken)
+
+    await seedMentionTasks(request, 205, index => `Filler conversation ${index}`)
+
+    await openTaskPage(page, '/chat', chatShellTeam.id, 'chat')
+    const input = page.getByTestId('message-input')
+    await input.click()
+    // The menu opens on the `@` keystroke; typing the whole query in one burst
+    // outruns the state commit and the menu never appears.
+    await input.type('@')
+    await expect(page.getByTestId('mention-autocomplete')).toBeVisible({ timeout: 10_000 })
+    await input.type(historyToken)
+
+    const option = page.getByTestId(`mention-task-option-${sourceTaskId}`)
+    await expect(option).toBeVisible({ timeout: 30_000 })
+    await option.click()
+    await expect(page.getByTestId(`input-conversation-reference-${sourceTaskId}`)).toBeVisible({
+      timeout: 10_000,
+    })
+
+    await input.fill(continuePrompt)
+    await page.getByTestId('send-button').click()
+
+    const targetTaskId = await waitForTaskId(page)
+    createdTaskIds.add(targetTaskId)
+    await waitForBackendTerminal(request, targetTaskId)
+
+    const handoffRequest = await waitForCapturedModelRequest(
+      request,
+      capture =>
+        capture.url.includes('/chat/completions') &&
+        extractText(capture.body).includes(historyToken) &&
+        extractText(capture.body).includes(continuePrompt),
+      'model request carrying the older handoff conversation'
+    )
+    const handoffText = extractText(handoffRequest.body)
+    expect(handoffText).toContain('<referenced_conversations focus="current">')
+    expect(handoffText).toContain(`task_id="${sourceTaskId}"`)
+
+    await expect(page.getByTestId('messages-container')).toContainText(continueMarker, {
+      timeout: RESPONSE_TIMEOUT_MS,
+    })
+  })
+
+  test('handoff mention reaches a project conversation from a later project page', async ({
+    page,
+    request,
+  }) => {
+    const projectToken = makeContextToken('handoff_project_page')
+    const continuePrompt = `Continue the project handoff task ${projectToken}`
+    const continueMarker = `HANDOFF_PROJECT_OK_${projectToken}`
+
+    await configureStreamRule(request, continuePrompt, continueMarker)
+
+    const project = await seedMentionProject(request, `${TEST_PREFIX}-mention-pages`)
+    // The candidate is created first so it lands on the project's second page,
+    // then touched so it sorts first in the mention list. An empty query keeps
+    // the remote title search out of the way: only loading page two can
+    // surface this candidate.
+    const sourceTaskId = await seedMentionTask(request, {
+      title: `Project handoff ${projectToken}`,
+      prompt: `Seed project conversation ${projectToken}`,
+      projectId: project.id,
+    })
+    await seedMentionTasks(request, 55, index => `Project filler ${index}`, project.id)
+    await touchMentionTask(request, sourceTaskId, `Project handoff ${projectToken}`)
+
+    const projectTaskRequests: string[] = []
+    page.on('request', outgoing => {
+      const url = new URL(outgoing.url())
+      if (url.pathname === `/api/projects/${project.id}/tasks`) {
+        projectTaskRequests.push(outgoing.url())
+      }
+    })
+
+    await openTaskPage(page, '/chat', chatShellTeam.id, 'chat')
+    const input = page.getByTestId('message-input')
+    await input.click()
+    await input.type('@')
+
+    const option = page.getByTestId(`mention-task-option-${sourceTaskId}`)
+    await expect(option).toBeVisible({ timeout: 30_000 })
+    await expect
+      .poll(() => projectTaskRequests.some(url => new URL(url).searchParams.has('cursor')), {
+        message: 'mention candidates should walk project task pages past the first page',
+        timeout: 30_000,
+      })
+      .toBe(true)
+    await option.click()
+
+    await input.fill(continuePrompt)
+    await page.getByTestId('send-button').click()
+
+    const targetTaskId = await waitForTaskId(page)
+    createdTaskIds.add(targetTaskId)
+    await waitForBackendTerminal(request, targetTaskId)
+
+    const handoffRequest = await waitForCapturedModelRequest(
+      request,
+      capture =>
+        capture.url.includes('/chat/completions') &&
+        extractText(capture.body).includes(projectToken) &&
+        extractText(capture.body).includes(continuePrompt),
+      'model request carrying the project page handoff conversation'
+    )
+    const handoffText = extractText(handoffRequest.body)
+    expect(handoffText).toContain('<referenced_conversations focus="current">')
+    expect(handoffText).toContain(`task_id="${sourceTaskId}"`)
+
+    await expect(page.getByTestId('messages-container')).toContainText(continueMarker, {
+      timeout: RESPONSE_TIMEOUT_MS,
+    })
+  })
+
+  test('mention candidates survive a lost project page and reload when the menu reopens', async ({
+    page,
+    request,
+  }) => {
+    const retryToken = makeContextToken('mention_retry')
+    const project = await seedMentionProject(request, `${TEST_PREFIX}-mention-retry`)
+    // The later-page candidate is created first so it lands past the first
+    // page, then touched so it sorts first once page two finally loads.
+    const laterPageTaskId = await seedMentionTask(request, {
+      title: `Retry page two ${retryToken}`,
+      prompt: `Retry page two ${retryToken}`,
+      projectId: project.id,
+    })
+    const firstPageTaskIds = await seedMentionTasks(
+      request,
+      55,
+      index => `Retry page one ${index}`,
+      project.id
+    )
+    const newestFirstPageTaskId = firstPageTaskIds[firstPageTaskIds.length - 1]
+    await touchMentionTask(request, laterPageTaskId, `Retry page two ${retryToken}`)
+
+    const isCursorPage = (url: URL) =>
+      url.pathname === `/api/projects/${project.id}/tasks` && url.searchParams.has('cursor')
+    let lostCursorPage = false
+    const loseCursorPage = async (route: Route) => {
+      lostCursorPage = true
+      await loseRealResponse(route)
+    }
+    await page.route(isCursorPage, loseCursorPage)
+
+    await openTaskPage(page, '/chat', chatShellTeam.id, 'chat')
+    const input = page.getByTestId('message-input')
+    await input.click()
+    await input.type('@')
+
+    // The first page lands before the later page is lost, so its candidates
+    // stay selectable even though the walk stopped.
+    const firstPageOption = page.getByTestId(`mention-task-option-${newestFirstPageTaskId}`)
+    await expect(firstPageOption).toBeVisible({ timeout: 30_000 })
+    await expect
+      .poll(() => lostCursorPage, {
+        message: 'the later project page should have been requested and lost',
+        timeout: 30_000,
+      })
+      .toBe(true)
+    await expect(firstPageOption).toBeVisible()
+    await expect(page.getByTestId(`mention-task-option-${laterPageTaskId}`)).toHaveCount(0)
+
+    await page.unroute(isCursorPage, loseCursorPage)
+
+    // Reopening the menu retries the failed page instead of keeping the error.
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('mention-autocomplete')).toHaveCount(0)
+    await input.fill('')
+    await input.click()
+    await input.type('@')
+    await expect(page.getByTestId(`mention-task-option-${laterPageTaskId}`)).toBeVisible({
+      timeout: 30_000,
+    })
   })
 
   test('saved ClaudeCode agent executes once with inherited base capabilities', async ({
@@ -1570,6 +1772,83 @@ test.describe('Agent conversation regression', () => {
           .catch(() => null)
       )
     )
+  }
+
+  // Seeds a real project through the product API so mention pagination runs
+  // against the Backend, not a fixture.
+  async function seedMentionProject(
+    request: APIRequestContext,
+    name: string
+  ): Promise<{ id: number }> {
+    const response = await request.post(`${API_BASE_URL}/api/projects`, {
+      headers: authHeaders(),
+      data: {
+        name,
+        description: 'E2E project for handoff mention pagination',
+        client_origin: 'frontend',
+      },
+    })
+    const body = await response.text()
+    expect(response.status(), body).toBe(201)
+    const project = JSON.parse(body) as { id?: number }
+    expect(project.id, 'Project creation should return an id').toBeTruthy()
+    createdProjectIds.add(project.id!)
+    return { id: project.id! }
+  }
+
+  // Creates one real conversation record without running a model turn. The
+  // task still carries a CRD title, which is what the mention search reads.
+  async function seedMentionTask(
+    request: APIRequestContext,
+    input: { title: string; prompt: string; projectId?: number }
+  ): Promise<number> {
+    const response = await request.post(`${API_BASE_URL}/api/tasks/create`, {
+      headers: authHeaders(),
+      data: {
+        title: input.title,
+        prompt: input.prompt,
+        team_id: chatShellTeam.id,
+        task_type: 'chat',
+        client_origin: 'frontend',
+        ...(input.projectId ? { project_id: input.projectId } : {}),
+      },
+    })
+    const body = await response.text()
+    expect(response.status(), body).toBe(201)
+    const task = JSON.parse(body) as { id?: number }
+    expect(task.id, 'Seeded task should have an id').toBeTruthy()
+    createdTaskIds.add(task.id!)
+    return task.id!
+  }
+
+  // Creates the history sequentially so creation order stays predictable.
+  async function seedMentionTasks(
+    request: APIRequestContext,
+    count: number,
+    titleFor: (index: number) => string,
+    projectId?: number
+  ): Promise<number[]> {
+    const taskIds: number[] = []
+    for (let index = 0; index < count; index += 1) {
+      const title = titleFor(index)
+      taskIds.push(await seedMentionTask(request, { title, prompt: title, projectId }))
+    }
+    return taskIds
+  }
+
+  // Touches a task so its `updated_at` sorts it first in the mention list
+  // without changing which project task page it belongs to.
+  async function touchMentionTask(
+    request: APIRequestContext,
+    taskId: number,
+    title: string
+  ): Promise<void> {
+    const response = await request.put(`${API_BASE_URL}/api/tasks/${taskId}`, {
+      headers: authHeaders(),
+      data: { title },
+    })
+    const body = await response.text()
+    expect(response.status(), body).toBe(200)
   }
 
   async function openTaskPage(

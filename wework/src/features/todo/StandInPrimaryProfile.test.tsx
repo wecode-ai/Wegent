@@ -118,6 +118,7 @@ it('persists real project and model selections and protects unsaved changes when
       primary: expect.objectContaining({
         workspace: expect.objectContaining({ workspacePath: '/repo' }),
         model: expect.objectContaining({ model_id: 'profile-model' }),
+        modelOptions: expect.objectContaining({ modelSelection: 'model' }),
       }),
     })
   )

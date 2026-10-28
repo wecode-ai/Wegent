@@ -132,8 +132,17 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
       WEGENT_TEST_MYSQL_ADDRESS: 127.0.0.1:3306
     services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
       mysql:
-        image: mysql:8.0
+        image: mysql:8.0.25
         env:
           MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
         ports:
@@ -191,6 +200,26 @@ jobs:
           cargo test --locked --lib attachments_task_all::auth::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/attachment-auth-mysql.log
 
+      - name: Verify handoff title search with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib tasks_search::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/tasks-search-mysql.log
+
+      - name: Verify Responses HTTP E2E with large JSON and long conversations
+        working-directory: backend-rs
+        env:
+          DATABASE_URL: mysql://root@127.0.0.1:3306/mysql
+          REDIS_URL: redis://127.0.0.1:6379/0
+          WEGENT_BACKEND_RS_ENV_FILE: /dev/null
+          RATE_LIMIT_GET_RESPONSE: 120/minute
+          EXECUTOR_MANAGER_URL: http://127.0.0.1:1
+          SECRET_KEY: responses-fixture-signing-key
+        run: |
+          set -o pipefail
+          cargo test --locked --test responses_large_json -- --ignored --test-threads=1 --nocapture 2>&1 | tee ../.ci-artifacts/backend-rs-tests/responses-mysql.log
+
       - name: Upload Rust backend test evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -245,6 +274,21 @@ jobs:
           PLUGIN_AUTH_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
           PLUGIN_AUTH_REDIS_TEST_URL: redis://127.0.0.1:6379/15
         run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py integration_checks/test_plugin_write_races_mysql.py integration_checks/test_plugin_connection_requests_mysql.py integration_checks/test_plugin_policy_bootstrap_mysql.py -n 0
+
+      - name: Verify MCP OAuth refresh and authorization races with InnoDB and Redis
+        working-directory: backend
+        env:
+          MCP_OAUTH_TEST_MYSQL_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
+          MCP_OAUTH_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+        run: uv run pytest integration_checks/test_user_mcp_oauth_mysql.py -n 0 --junitxml=reports/mcp-oauth-mysql.xml
+
+      - name: Upload MCP OAuth concurrency results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-oauth-mysql-results
+          path: backend/reports/mcp-oauth-mysql.xml
+          if-no-files-found: error
 
       - name: Verify namespace grants with MySQL connection collations
         working-directory: backend

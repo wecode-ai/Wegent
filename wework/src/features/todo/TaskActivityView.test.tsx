@@ -579,6 +579,38 @@ describe('TaskActivityView', () => {
     await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledExactlyOnceWith(task.id, 2))
   })
 
+  it('acknowledges notifications on a visible visit to an already-read Issue', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 400,
+      height: 400,
+    } as DOMRect)
+    const task = {
+      id: 'WEG-1',
+      version: 1,
+      is_unread: false,
+      content_revision: 1,
+      activity_read_sequence: 0,
+    } as never
+    markLoopItemRead.mockResolvedValue(task)
+    const view = (requestKey: string) => (
+      <TaskActivityView
+        project={{ id: '11', name: 'Wework' } as never}
+        task={task}
+        issueTimeline
+        linear
+        focusedCommentRequestKey={requestKey}
+      />
+    )
+    const rendered = render(view('first-open'))
+    await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledExactlyOnceWith(task.id, 0))
+    rendered.rerender(view('first-open'))
+    expect(markLoopItemRead).toHaveBeenCalledOnce()
+    rendered.rerender(view('second-open'))
+    await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledTimes(2))
+    expect(markLoopItemRead).toHaveBeenLastCalledWith(task.id, 0)
+  })
+
   it('keeps failed reads retryable and clears the read error after a successful scroll retry', async () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       top: 0,
@@ -1682,6 +1714,15 @@ describe('TaskActivityView', () => {
   }, 10_000)
 
   it('persists the visible Issue activity cursor without reading offscreen comments', async () => {
+    const frames = new Map<number, FrameRequestCallback>()
+    let nextFrame = 0
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+      frames.set(++nextFrame, callback)
+      return nextFrame
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => {
+      frames.delete(id)
+    })
     const task = {
       id: 'WEG-1',
       title: 'Unread activities',
@@ -1731,7 +1772,15 @@ describe('TaskActivityView', () => {
         linear
       />
     )
-    await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledWith(task.id, 2))
+    await screen.findByText('Activity 2')
+    expect(markLoopItemRead).not.toHaveBeenCalled()
+    expect(frames.size).toBeGreaterThan(0)
+    await act(async () => {
+      const pending = [...frames.values()]
+      frames.clear()
+      for (const callback of pending) callback(performance.now())
+    })
+    expect(markLoopItemRead).toHaveBeenCalledWith(task.id, 2)
     expect(markLoopItemRead).not.toHaveBeenCalledWith(task.id, 3)
     expect(onTaskRead).toHaveBeenCalledWith(updated)
     expect(onTaskUpdated).not.toHaveBeenCalled()

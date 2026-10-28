@@ -533,6 +533,18 @@ function writeResponsesToolCalls(
 ): void {
   const responseId = `resp_${Date.now()}`
   const output = toolCalls.map((toolCall, index) => {
+    const codeTool = modelToolDefinitions(request).find(
+      tool => tool.namespace === 'functions' && tool.name === 'exec'
+    )
+    if (toolCall.toolName === 'exec_command' && codeTool) {
+      return {
+        type: 'custom_tool_call',
+        call_id: `call_${Date.now()}_${index}`,
+        namespace: codeTool.namespace,
+        name: codeTool.name,
+        input: `text(await tools.exec_command(${JSON.stringify(toolCall.arguments)}))`,
+      }
+    }
     const tool = resolveResponsesTool(request, toolCall.toolName)
     return {
       type: 'function_call',
@@ -582,6 +594,20 @@ function writeResponsesToolCalls(
  * Create the mock HTTP server
  */
 const server = http.createServer((req, res) => {
+  const pathname = req.url?.split('?')[0]
+  if (
+    pathname &&
+    [
+      '/health',
+      '/captured-requests',
+      '/clear-requests',
+      '/stream-rules',
+      '/tool-scenarios',
+    ].includes(pathname)
+  ) {
+    // Control requests can outlive an idle pooled socket while the browser drives a scenario.
+    res.setHeader('Connection', 'close')
+  }
   let body = ''
 
   req.on('data', chunk => {

@@ -12,11 +12,15 @@ where
     pub(super) fn connection_closed_handler(&self) -> ConnectionClosedHandler {
         let connection_status = Arc::clone(&self.connection_status);
         let connection_epoch = Arc::clone(&self.connection_epoch);
+        let device_route_id = Arc::clone(&self.device_route_id);
         Arc::new(move || {
             {
                 let mut epoch = connection_epoch.lock().expect("connection epoch lock");
                 *epoch = epoch.wrapping_add(1);
                 connection_status.store(false, Ordering::Release);
+                if let Ok(mut route_id) = device_route_id.lock() {
+                    *route_id = None;
+                }
             }
             write_executor_log_line("local backend connection closed; reconnect requested");
         })
@@ -119,6 +123,9 @@ where
             let command_handler = Arc::clone(&command_handler);
             Box::pin(async move {
                 if let Some(command_key) = payload.get("command_key").and_then(Value::as_str) {
+                    if command_key == "task_artifact" {
+                        return Some(json!(crate::artifact_workspace::command(payload).await));
+                    }
                     if command_key == "environment_prepare" {
                         let args = payload
                             .get("args")

@@ -211,35 +211,43 @@ fn docker_executor_mode_plans_http_without_stdio_sidecar() {
     );
 }
 
-#[tokio::test]
-async fn upgrade_flag_runs_update_check_without_starting_runtime() {
-    let current_version = get_version();
-    let (registry_url, _server) = registry_server(&current_version).await;
-    let config_path = unique_home("upgrade").join("device-config.json");
-    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
-    std::fs::write(
-        &config_path,
-        json!({
-            "mode": "local",
-            "device_id": "upgrade-device",
-            "update": {
-                "registry": registry_url,
-                "registry_token": "registry-token"
-            }
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let args = CliArgs::parse_from([
-        "wegent-executor",
-        "--upgrade",
-        "--yes",
-        "--config",
-        config_path.to_str().unwrap(),
-    ])
-    .unwrap();
+#[test]
+fn upgrade_flag_runs_update_check_without_starting_runtime() {
+    let _lock = env_lock();
+    let home = tempfile::tempdir().unwrap();
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", home.path().to_str().unwrap());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let current_version = get_version();
+        let (registry_url, _server) = registry_server(&current_version).await;
+        let config_path = home.path().join("device-config.json");
+        std::fs::write(
+            &config_path,
+            json!({
+                "mode": "local",
+                "device_id": "upgrade-device",
+                "update": {
+                    "registry": registry_url,
+                    "registry_token": "registry-token"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let args = CliArgs::parse_from([
+            "wegent-executor",
+            "--upgrade",
+            "--yes",
+            "--config",
+            config_path.to_str().unwrap(),
+        ])
+        .unwrap();
 
-    run(args).await.unwrap();
+        run(args).await.unwrap();
+    });
 }
 
 async fn registry_server(version: &str) -> (String, tokio::task::JoinHandle<()>) {

@@ -215,7 +215,7 @@ impl RuntimeWorkRpcHandler {
             .filter_map(|message| message["recordId"].as_str().map(str::to_owned))
             .collect::<Vec<_>>();
         let client_id = dingtalk_client_id(work_id, &ids);
-        let origin = json!({"type":"connection_work","initiatedBy":"stand_in","userId":user,"standInId":role["id"],"roleName":role["name"],"deviceId":self.device_id,"workId":work_id,"askBeforeAct":ask,"manual":manual});
+        let origin = json!({"type":"connection_work","initiatedBy":"stand_in","userId":user,"standInId":role["id"],"roleName":role["name"],"deviceId":self.device_id,"workId":work_id,"askBeforeAct":ask,"manual":manual,"sourceProvider":crate::task_runtime::personal_stand_in::source_provider(&pending[0]["source"])});
         let reply_instructions = if crate::task_runtime::personal_stand_in::source_provider(
             &work["source"],
         ) == crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
@@ -228,9 +228,18 @@ impl RuntimeWorkRpcHandler {
         let mut config = role.clone();
         config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":ask});
         let prepared=self.prepare_stand_in_execution(json!({"taskId":task_id,"title":work["title"],"message":prompt,"origin":origin,"clientUserMessageId":client_id,"queueIfBusy":true}),&config).await;
+        let mut dispatch_properties =
+            crate::task_runtime::stand_in_telemetry::origin_properties(&origin);
+        dispatch_properties["action"] = json!("dispatch");
         let mut payload = match prepared {
             Ok(payload) => payload,
             Err(error) => {
+                self.record_stand_in_result(
+                    user,
+                    "dispatch",
+                    dispatch_properties.clone(),
+                    Some(&error),
+                );
                 store
                     .update_stand_in_dispatch(user, work_id, &ids, "failed", Some(&error.message))
                     .map_err(settings_error)?;
@@ -260,6 +269,7 @@ impl RuntimeWorkRpcHandler {
         });
         match result {
             Ok(_) => {
+                self.record_stand_in_result(user, "dispatch", dispatch_properties, None);
                 store
                     .update_stand_in_dispatch(user, work_id, &ids, "sent", None)
                     .map_err(settings_error)?;

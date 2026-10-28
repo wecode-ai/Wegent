@@ -99,6 +99,7 @@ function Probe() {
     projects,
     projectTaskPages,
     loadProjectTasks,
+    loadAllProjectTasks,
     refreshProjects,
     addTaskToProject,
     removeTaskFromProject,
@@ -121,6 +122,7 @@ function Probe() {
       <button onClick={() => setProjectSectionCollapsed(true)}>collapse section</button>
       <button onClick={() => void loadProjectTasks(1)}>load first</button>
       <button onClick={() => void loadProjectTasks(1, true)}>load more</button>
+      <button onClick={() => void loadAllProjectTasks(1)}>load all</button>
       <button onClick={() => void loadProjectTasks(2)}>load other group</button>
       <button onClick={() => void refreshProjects()}>refresh</button>
       <button onClick={() => void addTaskToProject(2, 201)}>move</button>
@@ -281,6 +283,60 @@ describe('ProjectContext task pagination', () => {
     expect(currentProjects()[0].task_count).toBe(50)
     fireEvent.click(screen.getByText('load more'))
     expect(api.getProjectTasks).toHaveBeenCalledTimes(2)
+  })
+
+  test('loads every project task page for mention candidates', async () => {
+    const firstPageTasks = Array.from({ length: 50 }, (_, index) => task(index + 1))
+    const secondPageTasks = Array.from({ length: 50 }, (_, index) => task(index + 51))
+    const finalPageTasks = [task(101)]
+    api.getProjectTasks
+      .mockResolvedValueOnce(taskPage(101, firstPageTasks, 'after-first'))
+      .mockResolvedValueOnce(taskPage(101, secondPageTasks, 'after-second'))
+      .mockResolvedValueOnce(taskPage(101, finalPageTasks))
+    renderProvider()
+    await waitFor(() => expect(currentProjects()).toHaveLength(2))
+
+    fireEvent.click(screen.getByText('load all'))
+    await waitFor(() => expect(currentProjects()[0].tasks).toHaveLength(101))
+    expect(api.getProjectTasks.mock.calls).toEqual([
+      [1, 50, undefined],
+      [1, 50, 'after-first'],
+      [1, 50, 'after-second'],
+    ])
+    expect(currentPage()).toMatchObject({
+      loaded: true,
+      loading: false,
+      hasMore: false,
+      nextCursor: null,
+    })
+  })
+
+  test('retries a failed all-pages load only when invoked again', async () => {
+    api.getProjectTasks
+      .mockResolvedValueOnce(taskPage(101, [task(1)], 'after-first'))
+      .mockRejectedValueOnce(new Error('second page failed'))
+    renderProvider()
+    await waitFor(() => expect(currentProjects()).toHaveLength(2))
+
+    fireEvent.click(screen.getByText('load all'))
+    await waitFor(() => expect(currentPage().error).toBe('second page failed'))
+    expect(api.getProjectTasks).toHaveBeenCalledTimes(2)
+    expect(currentProjects()[0].tasks).toEqual([task(1)])
+
+    api.getProjectTasks.mockResolvedValueOnce(taskPage(101, [task(51)]))
+    fireEvent.click(screen.getByText('load all'))
+    await waitFor(() => expect(currentProjects()[0].tasks).toEqual([task(1), task(51)]))
+    expect(api.getProjectTasks.mock.calls).toEqual([
+      [1, 50, undefined],
+      [1, 50, 'after-first'],
+      [1, 50, 'after-first'],
+    ])
+    expect(currentPage()).toMatchObject({
+      loaded: true,
+      loading: false,
+      hasMore: false,
+      nextCursor: null,
+    })
   })
 
   test('blocks overlapping requests and retries the same cursor without discarding its first page', async () => {

@@ -97,10 +97,10 @@ it('limits manual message moves to this role and sends the durable record ID', a
   expect(organizeWork).not.toHaveBeenCalled()
   await user.click(screen.getByTestId('stand-in-activity-task-target'))
   await screen.findByTestId('stand-in-organization-done')
-  expect(organizeWork).toHaveBeenCalledWith(7, 'device', 'work', ['record'], 'target')
+  expect(organizeWork).toHaveBeenCalledWith(7, 'device', 'work', ['record'], 'target', 'move')
   await user.click(screen.getByTestId('stand-in-organization-undo'))
   await waitFor(() =>
-    expect(organizeWork).toHaveBeenLastCalledWith(7, 'device', 'target', ['record'], 'work')
+    expect(organizeWork).toHaveBeenLastCalledWith(7, 'device', 'target', ['record'], 'work', 'undo')
   )
 })
 
@@ -134,7 +134,8 @@ it('merges complete work through a direct drop in one atomic request', async () 
       'device',
       'work',
       ['record', 'second'],
-      'target'
+      'target',
+      'merge'
     )
   )
 })
@@ -166,7 +167,14 @@ it('splits a message directly with an accessible button and offers undo', async 
   await user.click(screen.getByTestId('stand-in-work-split'))
   await user.click(await screen.findByTestId('stand-in-message-split-message'))
   await screen.findByTestId('stand-in-organization-done')
-  expect(organizeWork).toHaveBeenCalledExactlyOnceWith(7, 'device', 'work', ['record'], undefined)
+  expect(organizeWork).toHaveBeenCalledExactlyOnceWith(
+    7,
+    'device',
+    'work',
+    ['record'],
+    undefined,
+    'split'
+  )
 })
 
 it('supports an empty original association after its last message moves elsewhere', () => {

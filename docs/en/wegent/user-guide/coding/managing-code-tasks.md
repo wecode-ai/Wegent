@@ -189,6 +189,20 @@ graph LR
 | **FAILED**    | Execution failed    | Can retry                   |
 | **CANCELLED** | Was cancelled       | Can recreate                |
 
+### Wework Model Rate-limit Waiting
+
+When the local model proxy receives HTTP 429 or Codex reports a model rate limit and retries automatically, the conversation immediately shows “Model rate limited. Waiting to retry…”. Desktop and mobile sidebars replace the running spinner with a waiting clock and the label “Rate limited, waiting to retry”. The current response is waiting for the model service, not finished or frozen.
+
+You can still stop the response. Follow-up messages keep their existing queue behavior and are not sent early because of the waiting display. The indicator clears when model output resumes; an exhausted retry becomes a failure. Ordinary network reconnection is not labeled as rate limiting, and rate limiting does not offer network proxy configuration.
+
+The UI does not invent a countdown when the model protocol provides no precise retry time.
+
+Subagent model rate limits also appear in their owning task. When multiple subagents are waiting, the indicator remains until all of them stop waiting; progress from the parent task does not clear it early.
+
+Concurrent model requests in the same thread have independent wait lifetimes; one recovering request does not clear another request's wait. Proxy waits and native Codex retries are also tracked independently, retaining the rate-limit indicator while any request remains rate limited.
+
+If a retry error omits its thread identity, progress from the current root conversation clears that wait. Subagent progress does not clear the root wait or affect other model requests.
+
 ### Stopping a Task
 
 If you need to stop a running task:
@@ -218,6 +232,8 @@ While a Wework task is running, you can choose among three send modes:
 After entering a message, use the down arrow on the right side of the send button to open the menu. The clock means wait for the current response, the turning arrow means guide the current response, and the lightning bolt means interrupt and send immediately. Interrupting does not roll back file changes or other tool side effects that already occurred. Regular queued messages remain queued.
 
 The queue sends messages serially from top to bottom. A turn-terminal event alone does not trigger delivery; Wework sends the first queued message only after the local Executor task snapshot confirms that execution is idle. After submission, it also waits for that message's new turn to confirm that it started before allowing another queued message to send, preventing concurrent submissions. When several messages are queued, drag the handle on the left of a message to reorder the list with live feedback. Stopping the current response also pauses the queue instead of immediately sending the next message. Selecting **Continue sending** restores the guidance state and sends the first queued message immediately.
+
+Authoritative conversation history from the Executor can also confirm idle execution. Running snapshots from an already completed older turn cannot overwrite a later turn's state, mark an idle task as running again, or block queued messages. A new turn still requires an actual send, runtime event, or Executor-confirmed state.
 
 If you submit new composer text while the queue is paused, Wework asks how to handle the existing queue:
 

@@ -19,6 +19,7 @@ import {
 import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from "../markdown/MarkdownServices";
 import type { AttachmentImageServices } from "../issue-detail/AttachmentImageView";
 import { useConversationTranslation } from "./ConversationTranslation";
+import { useToolInteractionServices } from "./ToolInteractionServices";
 import { AssistantThinkingIndicator } from "./AssistantThinkingIndicator";
 import { ToolBlocksDisplay } from "./blocks/ToolBlocksDisplay";
 import { getFileEditDurationsBySourceBlock } from "./blocks/fileEditDurations";
@@ -123,6 +124,7 @@ export function AssistantMessage({
   onFork?: () => Promise<void> | void;
 }) {
   const { t } = useConversationTranslation();
+  const interactions = useToolInteractionServices();
   const isCancelled = isCancelledAssistantMessage(message);
   const stoppedElapsedDuration =
     isCancelled && message.stoppedNotice !== false
@@ -441,6 +443,13 @@ export function AssistantMessage({
             orderedRuntimeTimeline
           ) : (
             processingTimeline
+          )}
+          {displayBlocks.map((block) =>
+            block.type === "tool" && block.mcpServer ? (
+              <Fragment key={`mcp-app:${block.id}`}>
+                {interactions.renderMcpApp?.(block)}
+              </Fragment>
+            ) : null,
           )}
           {shouldShowThinking && !hasVisibleContent && (
             <AssistantThinkingIndicator content={activeThinkingContent} />

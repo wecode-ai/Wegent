@@ -95,15 +95,30 @@ fn search_user_content_by_client_id(link: &RuntimeTaskLink) -> HashMap<String, S
 }
 
 fn cached_search_messages(link: &RuntimeTaskLink) -> Vec<Value> {
-    let mut messages = cached_messages(link);
-    append_unique_transcript_messages(&mut messages, completed_transcript_messages(link));
+    let mut messages = if link.ephemeral {
+        cached_temporary_transcript_messages(link)
+    } else {
+        let mut messages = cached_messages(link);
+        append_unique_transcript_messages(&mut messages, completed_transcript_messages(link));
+        messages
+    };
     normalize_overload_recovery_messages(&mut messages, &link.runtime_handle);
     remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
     let mut presentations = user_message_presentations(link);
-    for presentation in &mut presentations {
-        presentation["ensureVisible"] = json!(false);
+    if !link.ephemeral {
+        for presentation in &mut presentations {
+            presentation["ensureVisible"] = json!(false);
+        }
     }
-    attach_user_message_presentations_for_page(&mut messages, presentations, &[], &[], true, true);
+    let page_messages = messages.clone();
+    attach_user_message_presentations_for_page(
+        &mut messages,
+        presentations,
+        &page_messages,
+        &[],
+        true,
+        true,
+    );
     messages
 }
 

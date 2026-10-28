@@ -4,10 +4,53 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.models.plugin_marketplace import PluginDeviceInstallation
 from app.schemas.device import DeviceType
-from app.services.device.runtime_route import resolve_runtime_route_identity
+from app.services.device.identity import device_identity_ids, device_kind_type
+from app.services.device.runtime_route import (
+    resolve_runtime_route_identity,
+    runtime_device_route_id,
+)
 from app.services.plugin_write_coordination import acquire_plugin_write_lock
+
+
+def resolve_plugin_runtime_device_id(
+    db: Session, *, user_id: int, device_id: str
+) -> str | None:
+    """Resolve an owned plugin target, including registered cloud socket aliases."""
+    device_id = device_id.strip()
+    devices = (
+        db.query(Kind)
+        .filter_by(user_id=user_id, kind="Device", namespace="default", is_active=True)
+        .all()
+    )
+    cloud_matches = [
+        device
+        for device in devices
+        if device_kind_type(device) == DeviceType.CLOUD
+        and runtime_device_route_id(device) == device_id
+    ]
+    if not cloud_matches:
+        identity = resolve_runtime_route_identity(
+            db, user_id=user_id, submitted_device_id=device_id
+        )
+        return identity.logical_device_id if identity is not None else None
+    matches = {
+        device.id for device in devices if device_id in device_identity_ids(device)
+    } | {device.id for device in cloud_matches}
+    if len(matches) != 1:
+        return None
+    identity = resolve_runtime_route_identity(
+        db, user_id=user_id, submitted_device_id=cloud_matches[0].name
+    )
+    if (
+        identity is None
+        or identity.device_type != DeviceType.CLOUD
+        or identity.runtime_device_id != device_id
+    ):
+        return None
+    return identity.logical_device_id
 
 
 def plugin_device_id(db: Session, user_id: int, device_id: str) -> str:

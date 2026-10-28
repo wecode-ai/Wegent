@@ -77,7 +77,7 @@ fn execute_blocking(
     }
 }
 
-fn resolve_workspace_directory(path: Option<&str>) -> Result<PathBuf, String> {
+pub(crate) fn resolve_workspace_directory(path: Option<&str>) -> Result<PathBuf, String> {
     let path = path.ok_or_else(|| "Workspace path is required".to_owned())?;
     let root =
         fs::canonicalize(path).map_err(|error| format!("Invalid workspace path: {error}"))?;
@@ -202,7 +202,7 @@ fn sha256_revision(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
-fn read_file_chunk(root: &Path, args: &[String]) -> Result<Value, String> {
+pub(crate) fn read_file_chunk(root: &Path, args: &[String]) -> Result<Value, String> {
     if args.len() != 2 || args[0].trim().is_empty() {
         return Err("File name and offset are required".to_owned());
     }
@@ -233,7 +233,7 @@ fn read_file_chunk(root: &Path, args: &[String]) -> Result<Value, String> {
     }))
 }
 
-fn resolve_workspace_file(root: &Path, name: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve_workspace_file(root: &Path, name: &str) -> Result<PathBuf, String> {
     let target = fs::canonicalize(root.join(name))
         .map_err(|error| format!("Failed to resolve workspace file: {error}"))?;
     if !target.starts_with(root) {

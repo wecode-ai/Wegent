@@ -107,6 +107,44 @@ async fn execute_command(
     device_id: &str,
     request: DeviceCommandRequest,
 ) -> Result<DeviceCommandResponse, FastApiError> {
+    execute_owned_command(state, user_id, device_id, request, false).await
+}
+
+/// Internal artifact delivery is a bounded, read-only owner operation. It does
+/// not enable the public remote-control command API for App devices.
+/// The Rust-owned artifact APIs use this internally; the public command route
+/// keeps its existing configured implementation and ownership.
+pub(crate) async fn task_artifact(
+    state: &AppState,
+    user_id: i64,
+    device_id: &str,
+    query: Value,
+) -> Result<DeviceCommandResponse, FastApiError> {
+    execute_owned_command(
+        state,
+        user_id,
+        device_id,
+        DeviceCommandRequest {
+            command_key: "task_artifact".to_owned(),
+            path: None,
+            args: vec![serde_json::to_string(&query).map_err(|_| unhandled())?],
+            cwd: None,
+            env: vec![],
+            timeout_seconds: 60,
+            max_output_bytes: 2 * 1024 * 1024,
+        },
+        true,
+    )
+    .await
+}
+
+async fn execute_owned_command(
+    state: &AppState,
+    user_id: i64,
+    device_id: &str,
+    request: DeviceCommandRequest,
+    artifact_read: bool,
+) -> Result<DeviceCommandResponse, FastApiError> {
     // `device_service.get_device_by_device_id`.
     let device = resolve_owned_device_alias(&state.mysql, user_id, device_id)
         .await
@@ -137,9 +175,16 @@ async fn execute_command(
         )));
     };
 
-    let dispatch_device_id =
-        resolve_dispatch_device_id(state, user_id, device_id, &request, &device, device_type)
-            .await?;
+    let dispatch_device_id = resolve_dispatch_device_id(
+        state,
+        user_id,
+        device_id,
+        &request,
+        &device,
+        device_type,
+        artifact_read,
+    )
+    .await?;
 
     let online = read_online_state::<Value>(state, user_id, &dispatch_device_id).await?;
     let Some(online) = online.filter(python_truthy) else {
@@ -221,6 +266,7 @@ async fn resolve_dispatch_device_id(
     request: &DeviceCommandRequest,
     device: &DeviceKindRow,
     device_type: Option<DeviceType>,
+    artifact_read: bool,
 ) -> Result<String, FastApiError> {
     let Some(device_type) = device_type else {
         return Err(device_command_error(
@@ -229,7 +275,9 @@ async fn resolve_dispatch_device_id(
     };
 
     // `not allow_app_device and not remote_control_is_enabled(device_type)`.
-    if device_type == DeviceType::App {
+    if device_type == DeviceType::App
+        && !app_artifact_read_allowed(artifact_read, &request.command_key)
+    {
         return Err(device_command_error(REMOTE_CONTROL_DISABLED_MESSAGE));
     }
 
@@ -241,7 +289,7 @@ async fn resolve_dispatch_device_id(
 
     match device_type {
         DeviceType::Local => Ok(device_id.to_string()),
-        DeviceType::App => unreachable!("app devices are rejected above"),
+        DeviceType::App => Ok(crate::device_identity::record_route_id(device)),
         DeviceType::Cloud | DeviceType::Remote => {
             if !remote_command_allowed(&request.command_key, device_type.value()) {
                 return Err(unsupported_command_key(&request.command_key, device_type));
@@ -266,6 +314,10 @@ async fn resolve_dispatch_device_id(
             Ok(dispatch_device_id)
         }
     }
+}
+
+fn app_artifact_read_allowed(artifact_read: bool, command_key: &str) -> bool {
+    artifact_read && command_key == "task_artifact"
 }
 
 /// The `sio.call` round trip for one command: register the callback waiter,
@@ -472,6 +524,24 @@ fn mysql_failure(error: MysqlError, context: &'static str) -> FastApiError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn artifact_reads_do_not_enable_app_remote_control_or_other_commands() {
+        assert!(!super::app_artifact_read_allowed(
+            false,
+            "workspace_read_file_chunk"
+        ));
+        assert!(!super::app_artifact_read_allowed(true, "pwd"));
+        assert!(!super::app_artifact_read_allowed(
+            true,
+            "environment_prepare"
+        ));
+        assert!(!super::app_artifact_read_allowed(
+            true,
+            "workspace_read_file_chunk"
+        ));
+        assert!(!super::app_artifact_read_allowed(false, "task_artifact"));
+        assert!(super::app_artifact_read_allowed(true, "task_artifact"));
+    }
     use super::*;
     use serde_json::json;
 

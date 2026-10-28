@@ -1,4 +1,5 @@
 import { IssueDeliveryContent } from "./issue-detail/IssueDeliveryContent";
+import { IssueDeliveryEditor } from "./issue-detail/IssueDeliveryEditor";
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
 import { persistIssueDetailFields } from "./issue-detail/persistIssueDetailFields";
 import * as Popover from "@radix-ui/react-popover";
@@ -187,6 +188,7 @@ export interface SharedIssueDetailExtensions {
     item: SharedEditorIssue;
     project: SharedEditorProject;
   }): ReactNode;
+  renderAssignmentReceipts?(item: SharedEditorIssue): ReactNode;
   renderAssignmentHistory?(context: {
     anchor: HTMLElement | null;
     entries: NonNullable<SharedEditorIssue["assignment_history"]>;
@@ -807,6 +809,9 @@ export function TodoEditor(props: TodoEditorProps) {
   );
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
+  const [editingDelivery, setEditingDelivery] = useState<{ id: string } | null>(
+    null,
+  );
   const [selectedDelivery, setSelectedDelivery] =
     useState<DeliveryDetail | null>(null);
   const [tasks, setTasks] = useState<LoopItemTaskBinding[]>(
@@ -846,6 +851,23 @@ export function TodoEditor(props: TodoEditorProps) {
     Record<string, boolean>
   >({});
   const [saving, setSaving] = useState(false);
+  const persistedIssueRef = useRef<CloudLoopItem | null>(null);
+  useEffect(() => {
+    const persisted = persistedIssueRef.current;
+    if (!item || !persisted || saving || item.id !== persisted.id) return;
+    if (item.version < persisted.version) {
+      console.warn(
+        "[Collaboration] Issue detail source trails a successful save",
+        {
+          issueId: item.id,
+          sourceVersion: item.version,
+          persistedVersion: persisted.version,
+          sourceAssignee: issueAssigneeTarget(item),
+          persistedAssignee: issueAssigneeTarget(persisted),
+        },
+      );
+    }
+  }, [item, saving]);
   const [saveError, setSaveError] = useState<string | null>(null);
   const workspaceAgents = useIssueAssigneeResources(
     editorPort,
@@ -986,7 +1008,8 @@ export function TodoEditor(props: TodoEditorProps) {
         const current = existing.find(
           (delivery) => delivery.id === currentDeliveryIdRef.current,
         );
-        return current
+        return current &&
+          !nextDeliveries.some((delivery) => delivery.id === current.id)
           ? [
               current,
               ...nextDeliveries.filter(
@@ -1118,6 +1141,7 @@ export function TodoEditor(props: TodoEditorProps) {
     selectedDeliveryRequestIdRef.current += 1;
     attachmentsRequestIdRef.current += 1;
     setDeliveries([]);
+    setEditingDelivery(null);
     setSelectedDelivery(null);
     setTasks(initialTaskBindingsRef.current ?? []);
     setAttachments([]);
@@ -1606,8 +1630,7 @@ export function TodoEditor(props: TodoEditorProps) {
           assigneeTarget,
           notifyAssignee,
         );
-        setAssigneeTarget(issueAssigneeTarget(updated));
-        props.onUpdated(updated);
+        acceptSavedIssue(updated);
         return;
       }
       const sourceDueDate = (
@@ -1662,8 +1685,7 @@ export function TodoEditor(props: TodoEditorProps) {
           assign: persistAssignee,
         },
       );
-      setAssigneeTarget(issueAssigneeTarget(updated));
-      props.onUpdated(updated);
+      acceptSavedIssue(updated);
       if (readFirst) {
         setEditingContent(false);
         setDescriptionExpanded(false);
@@ -1685,6 +1707,12 @@ export function TodoEditor(props: TodoEditorProps) {
     } finally {
       setSaving(false);
     }
+  }
+
+  function acceptSavedIssue(updated: CloudLoopItem) {
+    persistedIssueRef.current = updated;
+    setAssigneeTarget(issueAssigneeTarget(updated));
+    if (props.mode === "edit") props.onUpdated(updated);
   }
 
   function cancelContentEditing() {
@@ -1982,7 +2010,10 @@ export function TodoEditor(props: TodoEditorProps) {
           <button
             type="button"
             data-testid="todo-detail-delivery-back"
-            onClick={() => setSelectedDelivery(null)}
+            onClick={() => {
+              setSelectedDelivery(null);
+              setEditingDelivery(null);
+            }}
             className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary hover:bg-hover"
           >
             <ArrowLeft className="h-3.5 w-3.5" /> {t("todo.back", "返回")}
@@ -2002,8 +2033,52 @@ export function TodoEditor(props: TodoEditorProps) {
           <p className="font-mono text-xs text-text-muted">
             {item.id} · {t("todo.delivered", "已交付")}
           </p>
-          <h2 className="mt-2 text-heading-md font-semibold">{item.title}</h2>
-          <IssueDeliveryContent delivery={selectedDelivery} translate={t} />
+          <div className="mt-2 flex items-center gap-2">
+            <h2 className="min-w-0 flex-1 text-heading-md font-semibold">
+              {selectedDelivery.title || item.title}
+            </h2>
+            {editable &&
+              editorPort.deliveries.update &&
+              editingDelivery?.id !== selectedDelivery.id && (
+                <button
+                  type="button"
+                  data-testid="delivery-edit"
+                  onClick={() =>
+                    setEditingDelivery({ id: selectedDelivery.id })
+                  }
+                  className="h-7 rounded-md px-2 text-sm hover:bg-hover"
+                >
+                  {t("delivery.edit")}
+                </button>
+              )}
+          </div>
+          {editingDelivery?.id === selectedDelivery.id ? (
+            <IssueDeliveryEditor
+              key={selectedDelivery.id}
+              delivery={selectedDelivery}
+              issueTitle={item.title}
+              api={editorPort.deliveries}
+              translate={t}
+              onCancel={() => setEditingDelivery(null)}
+              onSaved={(updated) => {
+                if (loadedEditItemIdRef.current !== updated.loop_item_id)
+                  return;
+                setSelectedDelivery((current) =>
+                  current?.id === updated.id ? updated : current,
+                );
+                setDeliveries((current) =>
+                  current.map((delivery) =>
+                    delivery.id === updated.id ? updated : delivery,
+                  ),
+                );
+                setEditingDelivery((current) =>
+                  current === editingDelivery ? null : current,
+                );
+              }}
+            />
+          ) : (
+            <IssueDeliveryContent delivery={selectedDelivery} translate={t} />
+          )}
         </div>
       </aside>
     );
@@ -2094,7 +2169,26 @@ export function TodoEditor(props: TodoEditorProps) {
       value={assigneeTarget}
       onChange={setAssigneeTarget}
       disabled={!canAssign || saving}
-      className={overlayControlClass}
+      className="relative inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default"
+      triggerContent={
+        <>
+          {assigneeTarget.startsWith("group:") ? (
+            <UsersRound aria-hidden="true" size={15} />
+          ) : assigneeTarget.startsWith("agent:") ||
+            assigneeTarget.startsWith("team:") ? (
+            <Bot aria-hidden="true" size={15} />
+          ) : (
+            <CircleUserRound aria-hidden="true" size={15} />
+          )}
+          <strong className={workspacePanel ? undefined : "font-normal"}>
+            {assigneeName ?? t("todo.unassigned", "未指派")}
+          </strong>
+          {item && !assigneeChanged
+            ? extensions?.renderAssignmentReceipts?.(item)
+            : null}
+          {canAssign ? <ChevronDown aria-hidden="true" size={13} /> : null}
+        </>
+      }
       searchPlaceholder={t("todo.search_assignee", "搜索负责人")}
       emptyLabel={t("todo.no_matching_assignee", "没有匹配的负责人")}
       actions={
@@ -2264,7 +2358,6 @@ export function TodoEditor(props: TodoEditorProps) {
       {statusLabel}
     </>
   );
-  const assigneeDisplayName = assigneeName ?? t("todo.unassigned", "未指派");
   const issueSecurityLabel =
     item?.security_level === "related"
       ? t("todo.issue_security_related", "仅相关人员可见")
@@ -2375,18 +2468,6 @@ export function TodoEditor(props: TodoEditorProps) {
       {priorityChip}
       {showAssignee ? (
         <span className={cn(propChipClass, !assigneeName && "text-text-muted")}>
-          {assigneeGroup ? (
-            <UsersRound className="h-3.5 w-3.5 text-text-muted" />
-          ) : assigneeAgent || assigneeTeam ? (
-            <Bot className="h-3.5 w-3.5 text-violet-600" />
-          ) : (
-            <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
-          )}
-          <span className="text-text-muted">
-            {t("todo.assignee", "负责人")}
-          </span>
-          {assigneeName ?? t("todo.unassigned", "未指派")}
-          <ChevronDown className="h-3 w-3 text-text-muted" />
           {assigneeSelect}
         </span>
       ) : null}
@@ -2907,18 +2988,6 @@ export function TodoEditor(props: TodoEditorProps) {
                 <div className="task-detail-meta-line">
                   {showAssignee ? (
                     <span className="task-detail-meta-item relative cursor-pointer">
-                      {assigneeGroup ? (
-                        <UsersRound className="h-3.5 w-3.5" />
-                      ) : assigneeAgent || assigneeTeam ? (
-                        <Bot className="h-3.5 w-3.5 text-violet-600" />
-                      ) : (
-                        <CircleUserRound className="h-3.5 w-3.5" />
-                      )}
-                      {t("todo.assignee", "负责人")}
-                      <span className="text-text-primary">
-                        {assigneeName ?? t("todo.unassigned", "未指派")}
-                      </span>
-                      <ChevronDown className="h-3 w-3" />
                       {assigneeSelect}
                       {item?.assignment_history?.length ? (
                         <button
@@ -3187,34 +3256,12 @@ export function TodoEditor(props: TodoEditorProps) {
                         </span>
                       </Tooltip>
                       {showAssignee ? (
-                        <Tooltip
-                          label={t(
-                            "todo.assignee_help",
-                            "负责人：{{value}}。负责推进并跟进这个 Issue。",
-                            { value: assigneeDisplayName },
-                          )}
-                          side="bottom"
-                          align="start"
+                        <span
+                          className="task-detail-state-assignee"
+                          data-testid="cloud-todo-state-assignee"
                         >
-                          <span
-                            className="task-detail-state-assignee"
-                            data-testid="cloud-todo-state-assignee"
-                          >
-                            {assigneeTarget.startsWith("group:") ? (
-                              <UsersRound aria-hidden="true" size={15} />
-                            ) : assigneeTarget.startsWith("agent:") ||
-                              assigneeTarget.startsWith("team:") ? (
-                              <Bot aria-hidden="true" size={15} />
-                            ) : (
-                              <CircleUserRound aria-hidden="true" size={15} />
-                            )}
-                            <strong>{assigneeDisplayName}</strong>
-                            {canAssign ? (
-                              <ChevronDown aria-hidden="true" size={13} />
-                            ) : null}
-                            {assigneeSelect}
-                          </span>
-                        </Tooltip>
+                          {assigneeSelect}
+                        </span>
                       ) : null}
                       {assigneeSaveButton}
                       {scheduleRangeControl("task-detail-state-due relative")}

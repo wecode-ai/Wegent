@@ -98,7 +98,7 @@ sequenceDiagram
 
 评论入队先检查当前用户、Issue 与智能体的使用授权；Runtime 配置、模型和环境绑定由队列消费者准备，失败属于执行记录。待准备意图不授予设备使用权，准备和领取都必须重新校验当前资源授权。`test_queued_comment_execution.py` 覆盖只读成员、私有定义和已撤销资源的入队拒绝，以及入队后撤权、配置失败、人工审批、离线领取和未领取会话的提前回复；这些测试使用隔离数据库和合成执行状态，不代表真实 Runtime 联调。
 
-从 Issue 创建的个人任务以原项目和 Issue 作为默认上下文，可以通过 `wework_space` 显式指定当前用户有权限访问的任意项目和 Issue，按实际权限读取、修改、指派或评论。会话起点不构成额外的访问边界，服务端继续校验目标项目和 Issue 的权限；访问其他项目或 Issue 不改变原会话或交付物绑定。Issue 会话统一使用协作上下文，不按私人任务或分身任务增加写入限制；用户任务及已配置职责所需的回写、改派和交付无需因共享 Issue 写入而另行确认。原生工具审批和服务端实际权限校验继续生效。`wework/src/features/todo/workItemRuntimeContext.test.ts` 保护该上下文契约。协作执行成员仍限定在派发 Issue 和执行类工具内；协作管理者保留项目内管理权限。`executor/src/task_runtime/mcp/issue_access_tests.rs` 覆盖同项目和跨项目的本地读写、云端读写与评论、服务端读写拒绝及默认上下文保持，角色边界由同模块现有契约测试保护。
+从 Issue 创建的个人任务以原项目和 Issue 作为默认上下文，可以通过 `wework_space` 显式指定当前用户有权限访问的任意项目和 Issue，按实际权限读取、修改、指派或评论。会话起点不构成额外的访问边界，服务端继续校验目标项目和 Issue 的权限；访问其他项目或 Issue 不改变原会话或交付物绑定。Issue 会话统一使用协作上下文，不按私人任务或分身任务增加写入限制；用户任务及已配置职责所需的回写、改派和交付无需因共享 Issue 写入而另行确认。内置协作 MCP `wework_space` 的服务器与单工具策略均免于工具审批，包括分身自动模式与操作前确认模式；外部工具仍遵守原生审批，协作工具继续执行服务端实际权限校验与派发角色边界。`stand-in-personal-task` 桌面检查点同时断言协作读取、评论和指派完成后没有 AI 审核记录。`wework/src/features/todo/workItemRuntimeContext.test.ts` 保护该上下文契约。协作执行成员仍限定在派发 Issue 和执行类工具内；协作管理者保留项目内管理权限。`executor/src/task_runtime/mcp/issue_access_tests.rs` 覆盖同项目和跨项目的本地读写、云端读写与评论、服务端读写拒绝及默认上下文保持，角色边界由同模块现有契约测试保护。
 
 个人分身连接插件继续使用现有外部来源内容约束和操作确认机制。新的 `connection_work` 与历史 `dingtalk_work` 均不能从来源内容取得额外权限；项目限定智能体仍只能接收所属项目工作。连接记忆按用户、Provider、账号和资源精确隔离，钉钉迁移保留原记忆范围及去重身份。`stand_in_identity_contract` 覆盖迁移和 Provider 隔离；Codex 确认契约同时覆盖两种工作来源以及默认和命名 Home。
 
@@ -107,6 +107,8 @@ sequenceDiagram
 没有 MCP 的插件可通过通用 CLI 读取传输复用已有 `localAuth.tool`。可执行工具、Connector、固定命令和允许参数均来自精确依赖及已安装 Wework 适配插件的读取声明；调用者不能传入命令或增加参数，也不执行 Shell 或 Skill 文本。钉钉采集已使用该路径，专用读取 RPC 已删除；回复继续沿用原来源绑定及确认策略。通用 CLI 契约测试与 `stand-in-cli` CI checkpoint 覆盖写入拒绝、参数注入和旧入口删除。
 
 ## 界面入口
+
+Issue 关联的个人 Runtime 任务仅向任务所有者返回，变更请求关联也必须验证任务所有者。看板快照、分页关联任务和单 Issue 关联任务列表均按当前用户过滤；项目管理员身份不授予读取其他人个人任务的权限。仅有手动关联记录时，对话详情与搜索也必须验证所有者，不能以 Issue 可读权限替代个人任务权限。正式派发执行和协作成员活动继续使用各自的持久化执行授权。`test_project_board_snapshot_queries.py`、`test_runtime_session_device_identity.py` 和 Rust 关联任务查询测试保护这些边界。打开已归档任务前读取 Runtime 的明确归档状态，提示用户先恢复任务。
 
 看板批量排序的 HTTP 与 MCP 入口共同遵守 CP07、CP13、CP14：Viewer 不能排序，其他成员只能提交和接收其可见的 Issue。可见卡片的重排只交换它们在全局同级顺序中的位置，保留不可见成员的位置；普通成员提交不可见或不存在的请求目标时，在写入前统一返回 404。项目管理员仍按既有规则查看全部 Issue。`test_loop_item_reorder_permissions.py` 覆盖角色、默认安全级别、同状态和跨状态排序，以及拒绝请求不改变持久化状态。
 
@@ -193,3 +195,9 @@ sequenceDiagram
 复现后端全量：`cd backend && uv run pytest tests/ -n 4 -q --assert=plain --tb=line --show-capture=no`。权限专项见 `.github/workflows/test.yml`；共享组件使用 `pnpm --filter @wegent/collaboration test`。MySQL 用例仅连接独立临时测试容器。
 
 本次未运行 E2E 或 `ai:verify`，未部署。真实开发库曾受自动迁移影响，事实及恢复边界见上文。
+
+分配接收回执遵循 CP07、CP13、CP14 和 CP15：沿用项目及 Issue 读取权限，只允许当前分配的接收人确认本人已读；分身回执还需验证接收人所属设备上的当次任务绑定。回执只记录接收事实，不授予编辑、执行或资源权限。云端保存前在事务中重新检查活动分配，本地在同一 SQLite 事务中校验；转派后的旧请求不能确认新分配。定向回执测试和 CI 的 `stand-in-notifications`、`stand-in-cloud` checkpoint 覆盖身份、持久化及详情展示。
+
+回执的高频读取复用 `loop_items` 中 `resource_type='assignment_index'` 的当前分配索引节点，以及现有的 `(parent_id, resource_type, sort_order)` 索引，再按分配事件主键读取回执。指派与撤销在事件事务内维护索引，所属 Issue 的行锁串行化转派与确认。存量 Issue 首次访问时在同一锁内一次性整理历史，随后不再重放动态；标记节点区分“尚未初始化”与“当前没有分配”。本地同样复用 `loop_items`，使用 `resource_type='issue_receipt'` 的小记录保存回执，按确定性主键定位；仅存量 Issue 首次读取时提取已有历史，后续不解析或重写 Issue metadata。不新增表、列、索引或数据库迁移。
+
+补报失败采用 5 秒起步、最长 1 小时的指数退避，调度状态在本地持久保存，重启不会重置等待时间。401、403、404、408、429 和服务器或网络失败均可在恢复后继续补报；成功及失效分配（409）完成出队。待发送记录最多保留 30 天，避免已删除 Issue 或永久无效绑定无限重试。分身确认前必须解析为当前有效、属于接收人的设备，停用设备的历史绑定不能用于确认。

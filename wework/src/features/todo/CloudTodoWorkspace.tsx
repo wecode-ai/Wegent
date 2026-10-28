@@ -1,4 +1,5 @@
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
+import { requireIssueTaskAvailable } from './issueTaskAvailability'
 import { issueDraftFromText, RuntimeConfigurationProvider } from '@wegent/collaboration'
 import {
   BoardViewNavigation,
@@ -19,6 +20,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -405,7 +407,13 @@ function ProjectChangeRequestAutoRepairObserver({
 }
 type SelectedTaskBinding = Pick<
   LoopItemTaskBinding,
-  'id' | 'device_id' | 'task_id' | 'task_title' | 'modelSelection' | 'executionContext'
+  | 'id'
+  | 'task_user_id'
+  | 'device_id'
+  | 'task_id'
+  | 'task_title'
+  | 'modelSelection'
+  | 'executionContext'
 > & {
   work_item_id: string
 }
@@ -946,11 +954,6 @@ export function CloudTodoWorkspace({
     advanceTaskPanelSession()
     setTaskComposerRequest(request)
   }
-  const openTaskBinding = (binding: SelectedTaskBinding) => {
-    advanceTaskPanelSession()
-    setTaskComposerRequest(null)
-    setSelectedTaskBinding(binding)
-  }
   const [aitableFields, setAitableFields] = useState<AITableField[]>([])
   const [aitableGroupFieldId, setAitableGroupFieldId] = useState('')
   const [localProjectFilter, setLocalProjectFilter] = useState('all')
@@ -967,32 +970,6 @@ export function CloudTodoWorkspace({
   const focusedItemRequestRef = useRef<string | null>(null)
   const boardSnapshotSignatureRef = useRef<string | null>(null)
   const boardLiveSubscriptionActiveRef = useRef(false)
-  const resetProjectViewState = useCallback(() => {
-    setProjectView('board')
-    setBoardParentId(null)
-    setNativeGroupFilter('')
-    setNativeBoardQuery('')
-    setProjectSearchOpen(false)
-    setProjectSearchQuery('')
-    setProjectSearchFilters(emptyTaskSearchFilters)
-  }, [])
-
-  useEffect(() => {
-    if (activeProjectKey === undefined) return
-    const locallyRequestedProject = locallyRequestedProjectRef.current
-    const locallyRequestedProjectKey =
-      locallyRequestedProject === undefined
-        ? undefined
-        : locallyRequestedProject
-          ? projectSpaceKey(locallyRequestedProject)
-          : null
-    if (locallyRequestedProjectKey === activeProjectKey) {
-      locallyRequestedProjectRef.current = undefined
-      return
-    }
-    resetProjectViewState()
-  }, [activeProjectKey, resetProjectViewState])
-
   const [localProjectsLoading, setLocalProjectsLoading] = useState(Boolean(projectSpaceApis.local))
   const [localProjectsError, setLocalProjectsError] = useState<string | null>(null)
   const [localProjectsRefreshNonce, setLocalProjectsRefreshNonce] = useState(0)
@@ -1082,6 +1059,30 @@ export function CloudTodoWorkspace({
         project.id === selectedProjectRef?.projectId &&
         project.project_store === selectedProjectRef.projectStore
     ) ?? null
+  const taskOwnerUserId = selectedProject?.current_user_id ?? user.id
+  const openTaskBinding = async (binding: SelectedTaskBinding) => {
+    advanceTaskPanelSession()
+    const session = taskPanelSessionIdRef.current
+    try {
+      await requireIssueTaskAvailable(
+        { taskUserId: binding.task_user_id, deviceId: binding.device_id, taskId: binding.task_id },
+        taskOwnerUserId,
+        services.standInApi,
+        key => t(key)
+      )
+      if (taskPanelSessionIdRef.current !== session) return
+    } catch (cause) {
+      if (taskPanelSessionIdRef.current === session) {
+        setTaskDispatchError(
+          cause instanceof Error ? cause.message : t('todo.linked_task_unavailable')
+        )
+      }
+      return
+    }
+    setTaskDispatchError(null)
+    setTaskComposerRequest(null)
+    setSelectedTaskBinding(binding)
+  }
   const selectedProjectForViewAccess =
     selectedProject &&
     selectedProject.project_store === 'backend' &&
@@ -1090,7 +1091,9 @@ export function CloudTodoWorkspace({
       ? { ...selectedProject, access_role: 'Owner' as const }
       : selectedProject
   const selectedProjectForBoardLoadRef = useRef(selectedProject)
-  selectedProjectForBoardLoadRef.current = selectedProject
+  useLayoutEffect(() => {
+    selectedProjectForBoardLoadRef.current = selectedProject
+  }, [selectedProject])
   const localProjectOptions = useMemo(() => {
     const runtimeProjectOrder = new Map(
       (runtimeWork?.projects ?? []).flatMap((entry, index) =>
@@ -1241,8 +1244,11 @@ export function CloudTodoWorkspace({
       (selectedProject?.location === 'cloud'
         ? cloudWorkspace.state.taskBindings.map(toWeworkIssueTaskBinding)
         : [])
+    const ownBindings = bindings.filter(
+      binding => String(binding.task_user_id) === String(taskOwnerUserId)
+    )
     const visibleBindings = isMyTasksBoard
-      ? bindings.filter(binding =>
+      ? ownBindings.filter(binding =>
           runtimeTaskKeys.has(
             runtimeConversationKey({
               deviceId: binding.device_id,
@@ -1250,7 +1256,7 @@ export function CloudTodoWorkspace({
             })
           )
         )
-      : bindings
+      : ownBindings
     const byItem: Record<string, LoopItemTaskBinding[]> = {}
     for (const binding of visibleBindings) {
       if (!binding.loop_item_id) continue
@@ -1265,6 +1271,7 @@ export function CloudTodoWorkspace({
     runtimeTaskKeys,
     selectedProject?.location,
     selectedProjectKey,
+    taskOwnerUserId,
   ])
   const taskExecutionStatesByBindingId = useMemo(() => {
     const states: Record<string, SharedIssueDetailTaskExecutionState> = {}
@@ -1531,7 +1538,9 @@ export function CloudTodoWorkspace({
     if (!usesSharedCloudBoard || boardRefreshNonce === 0 || !selectedProjectId) {
       return
     }
-    void cloudWorkspace.commands.loadProject(String(selectedProjectId), false)
+    void cloudWorkspace.commands.loadProject(String(selectedProjectId), false, {
+      invalidate: true,
+    })
   }, [boardRefreshNonce, cloudWorkspace.commands, selectedProjectId, usesSharedCloudBoard])
   useEffect(() => {
     if (
@@ -2012,6 +2021,32 @@ export function CloudTodoWorkspace({
     setQuery: setNativeBoardQuery,
     setQuickCreateStatus,
   } = boardState
+  const resetProjectViewState = useCallback(() => {
+    setProjectView('board')
+    setBoardParentId(null)
+    setNativeGroupFilter('')
+    setNativeBoardQuery('')
+    setProjectSearchOpen(false)
+    setProjectSearchQuery('')
+    setProjectSearchFilters(emptyTaskSearchFilters)
+  }, [setNativeBoardQuery, setNativeGroupFilter])
+
+  useEffect(() => {
+    if (activeProjectKey === undefined) return
+    const locallyRequestedProject = locallyRequestedProjectRef.current
+    const locallyRequestedProjectKey =
+      locallyRequestedProject === undefined
+        ? undefined
+        : locallyRequestedProject
+          ? projectSpaceKey(locallyRequestedProject)
+          : null
+    if (locallyRequestedProjectKey === activeProjectKey) {
+      locallyRequestedProjectRef.current = undefined
+      return
+    }
+    resetProjectViewState()
+  }, [activeProjectKey, resetProjectViewState])
+
   const boardLayerCount = boardItems.filter(
     item => item.parent_id === boardParentId && matchesBoardView(item, savedViews.view)
   ).length
@@ -5362,6 +5397,7 @@ export function CloudTodoWorkspace({
               (selectedItemProject?.location === 'cloud' ? cloudWorkspaceApi : selectedItemApi) ? (
                 <TodoEditor
                   key={selectedItem.id}
+                  getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
                   mode="edit"
                   presentation="workspace-panel"
                   readFirst
@@ -5569,6 +5605,7 @@ export function CloudTodoWorkspace({
                     } else {
                       setSelectedTaskBinding({
                         id: -Date.now(),
+                        task_user_id: selectedItemProject?.current_user_id ?? user.id,
                         device_id: address.deviceId,
                         task_id: address.taskId,
                         task_title: null,

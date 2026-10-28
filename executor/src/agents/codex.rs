@@ -68,8 +68,8 @@ const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
 const CODEX_APPLY_PATCH_FREEFORM_OVERRIDE: &str = "features.apply_patch_freeform=true";
 const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
     "suppress_unstable_features_warning=true";
-const CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
-    "features.tool_call_mcp_elicitation=false";
+const CODEX_ENABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
+    "features.tool_call_mcp_elicitation=true";
 const CODEX_ENABLE_UPDATE_PLAN_OVERRIDE: &str = "tools.update_plan.enabled=true";
 const CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE: &str =
     "features.default_mode_request_user_input=true";
@@ -293,6 +293,9 @@ pub struct CodexAppServerTurn {
 
 #[path = "codex/interaction.rs"]
 mod interaction;
+
+#[path = "codex/mcp_apps.rs"]
+mod mcp_apps;
 
 #[path = "codex/connection_mcp.rs"]
 mod connection_mcp;
@@ -866,6 +869,7 @@ impl CodexAppServerClient {
             let Some((oldest_thread_id, oldest_generation)) = state
                 .idle_thread_generations
                 .iter()
+                .filter(|(thread, _)| !state.has_mcp_app_lease(thread))
                 .min_by_key(|(_, generation)| **generation)
                 .map(|(thread_id, generation)| (thread_id.clone(), *generation))
             else {
@@ -934,7 +938,8 @@ impl CodexAppServerClient {
         let _lifecycle_guard = lifecycle_gate.lock().await;
         {
             let state = self.state.lock().await;
-            if state.active_threads.contains_key(thread_id)
+            if state.has_mcp_app_lease(thread_id)
+                || state.active_threads.contains_key(thread_id)
                 || state.thread_generations.get(thread_id) != Some(&generation)
             {
                 return Ok(false);
@@ -1260,6 +1265,7 @@ struct CodexAppServerSharedState {
     executor_shutdown_requested: bool,
     next_id: u64,
     active_threads: HashMap<String, usize>,
+    mcp_app_leases: HashMap<(String, String), Instant>,
     thread_generations: HashMap<String, u64>,
     idle_thread_generations: HashMap<String, u64>,
     next_thread_generation: u64,
@@ -1292,6 +1298,7 @@ impl Default for CodexAppServerSharedState {
             executor_shutdown_requested: false,
             next_id: 1,
             active_threads: HashMap::new(),
+            mcp_app_leases: HashMap::new(),
             thread_generations: HashMap::new(),
             idle_thread_generations: HashMap::new(),
             next_thread_generation: 1,
@@ -1768,6 +1775,21 @@ fn codex_thread_plan(
     }
 }
 
+fn temporary_thread_error(
+    request: &ExecutionRequest,
+    direct_thread_id: Option<&str>,
+    error: String,
+) -> String {
+    if request.uses_ephemeral_codex_thread()
+        && direct_thread_id.is_some_and(|id| error.contains(&format!("thread not found: {id}")))
+    {
+        return format!(
+            "Temporary chat session has expired. Open a new temporary chat to continue. ({error})"
+        );
+    }
+    error
+}
+
 fn thread_id_to_activate_before_start(thread_plan: &CodexThreadPlan) -> Option<&str> {
     match &thread_plan.start {
         CodexThreadStart::Direct(thread_id) => Some(thread_id),
@@ -1972,6 +1994,10 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
+        let _retry_subscription = local_model_proxy::retry_notifications::subscribe(
+            &thread_id,
+            notifications.as_ref(),
+        );
         let mut notification_rx = match early_notification_rx {
             Some(notification_rx) => notification_rx,
             None => {
@@ -2122,10 +2148,11 @@ async fn run_codex_app_server_turn_on_shared_client(
             duration_ms,
         })
     }
-    .await;
+    .await
+    .map_err(|error| temporary_thread_error(&prepared.request, direct_thread_id.as_deref(), error));
 
     if let Some(thread_id) = subscribed_thread_id {
-        let retain_subscription = result.is_ok() && !prepared.request.ephemeral;
+        let retain_subscription = result.is_ok() && !prepared.request.uses_ephemeral_codex_thread();
         client
             .finish_thread_activity(&thread_id, retain_subscription)
             .await;
@@ -2322,6 +2349,8 @@ pub async fn run_codex_app_server_turn_with_cancel(
         };
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
+        let _retry_subscription =
+            local_model_proxy::retry_notifications::subscribe(&thread_id, notifications.as_ref());
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
         }
@@ -3522,6 +3551,8 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
         local_connector_auth::INSTRUCTIONS,
         github_cli::INSTRUCTIONS,
+        external_work::SOURCE_CONTENT_INSTRUCTIONS,
+        crate::artifact_cli::AGENT_INSTRUCTIONS,
     ]
     .into_iter()
     .filter(|instructions| !instructions.is_empty())
@@ -3687,6 +3718,11 @@ fn initialize_params() -> Value {
         },
         "capabilities": {
             "experimentalApi": true,
+            "extensions": {
+                "io.modelcontextprotocol/ui": {
+                    "mimeTypes": ["text/html;profile=mcp-app", "text/html+skybridge"]
+                }
+            },
         }
     })
 }
@@ -4019,7 +4055,9 @@ fn build_codex_launch_config_with_route_scope(
         )?;
     launch_config.config_overrides.extend(request_mcp_overrides);
     launch_config.env.extend(request_mcp_environment);
-    if crate::runtime_work::stand_in_requires_confirmation(request) {
+    if crate::runtime_work::stand_in_requires_confirmation(request)
+        && !external_work::applies(request)
+    {
         let approvals = stand_in_mcp_approval_overrides(
             request,
             &codex_home,
@@ -4041,10 +4079,10 @@ fn build_codex_launch_config_with_route_scope(
 fn build_codex_launch_config_for_prepared_request(
     prepared: &PreparedCodexExecutionRequest,
 ) -> Result<CodexLaunchConfig, String> {
-    cleanup_generated_files_on_error(
-        &prepared.generated_files,
-        build_codex_launch_config(&prepared.request),
-    )
+    let config =
+        crate::artifact_workspace::bind(&prepared.request, prepared.request.cwd().map(Path::new))
+            .and_then(|()| build_codex_launch_config(&prepared.request));
+    cleanup_generated_files_on_error(&prepared.generated_files, config)
 }
 
 fn cleanup_generated_files_on_error<T>(
@@ -4228,7 +4266,9 @@ fn codex_streaming_patch_config_overrides() -> Vec<String> {
 
 fn codex_runtime_default_config_overrides() -> Vec<String> {
     let mut overrides = codex_streaming_patch_config_overrides();
-    overrides.push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
+    // Native request_user_input has one waiter per turn. Keep MCP approvals on
+    // their separately correlated elicitation channel so they cannot replace it.
+    overrides.push(CODEX_ENABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
     overrides.push(CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned());
     overrides.push(CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE.to_owned());
     overrides.push(format!(
@@ -6080,7 +6120,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
         codex_runtime_approval_policy(request),
     );
     insert_codex_runtime_permissions(&mut params, request);
-    if request.ephemeral {
+    if request.uses_ephemeral_codex_thread() {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
     if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false) {
@@ -6115,7 +6155,7 @@ fn thread_fork_params(
         codex_runtime_approval_policy(request),
     );
     insert_codex_runtime_permissions(&mut params, request);
-    if request.ephemeral {
+    if request.uses_ephemeral_codex_thread() {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
     Value::Object(params)
@@ -6212,10 +6252,6 @@ fn insert_codex_developer_instructions(
             &request.system_prompt,
         )
     };
-    if request.extra.get("enable_tools").and_then(Value::as_bool) != Some(false) {
-        instructions.push_str("\n\n");
-        instructions.push_str(external_work::SOURCE_CONTENT_INSTRUCTIONS);
-    }
     if crate::runtime_work::stand_in_requires_confirmation(request) {
         instructions.push_str("\n\nWework stand-in action confirmation:\nWework collects one-time execution approval through native tool approval controls in the work list and conversation input area. Prepare the exact action and invoke its tool so Wework can display that approval. Do not ask the user to type yes, confirm, or equivalent in chat before invoking the tool, and do not replace native approval with a prose question. A chat reply never grants execution permission. For a genuine business ambiguity, use request_user_input with explicit choices. Explain proposed replies in plain language without exposing internal policy field names. Keep all existing tool approval requirements in force.");
     }
