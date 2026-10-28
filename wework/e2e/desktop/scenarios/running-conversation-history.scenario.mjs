@@ -7,6 +7,7 @@ import { gunzipSync } from 'node:zlib'
 import { DatabaseSync } from 'node:sqlite'
 
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
 import {
   LEGACY_PROMPT,
   LEGACY_ATTACHMENT_PREVIEW,
@@ -594,6 +595,13 @@ export function createDesktopScenario({
           })
       )
 
+      const gates = runtimeTransportGates(control)
+      await gates.arm({
+        id: 'source-task-transcript',
+        kind: 'response',
+        name: 'runtime.tasks.transcript',
+        where: [{ path: 'params.taskId', equals: taskId }],
+      })
       await recordTranscriptRace('source-task-click-before')
       const sourceClickStartedAt = performance.now()
       await control.command('click', taskRow)
@@ -634,6 +642,36 @@ export function createDesktopScenario({
             transcript: snapshot.pane?.transcript ?? null,
           })
       )
+      const heldSourceTranscript = await gates.wait(
+        'source-task-transcript',
+        undefined,
+        uiTimeoutMs
+      )
+      assert.equal(
+        heldSourceTranscript.value.params.taskId,
+        taskId,
+        'The held transcript did not belong to the source task'
+      )
+      assert.equal(
+        heldSourceTranscript.deliveries,
+        0,
+        'The source transcript reached the renderer before the task switch'
+      )
+      await gates.save(resultDir, 'running-conversation-history-held-source.json', [
+        'source-task-transcript',
+      ])
+      await gates.release('source-task-transcript')
+      await waitForTranscriptState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === switchTaskId &&
+          snapshot.pane?.transcript?.loading === false,
+        'The released source transcript replaced the cached task state',
+        uiTimeoutMs
+      )
+      await gates.save(resultDir, 'running-conversation-history-released-source.json', [
+        'source-task-transcript',
+      ])
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: SWITCH_COMPLETION,
         timeoutMs: uiTimeoutMs,
