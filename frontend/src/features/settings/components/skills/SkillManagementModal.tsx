@@ -33,7 +33,9 @@ import {
   updatePublicSkillFromGit,
   addSkillToMyDefault,
   removeSkillFromMyDefault,
+  getSkill,
 } from '@/apis/skills'
+import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import SkillUploadModal from './SkillUploadModal'
 import { SkillReferenceConflictDialog } from './SkillReferenceConflictDialog'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
@@ -76,7 +78,10 @@ export default function SkillManagementModal({
   const [uploadModalOpen, setUploadModalOpen] = useState(false)
   const [editingSkill, setEditingSkill] = useState<UnifiedSkill | null>(null)
   const [createTarget, setCreateTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
-  const [publishAfterCreate, setPublishAfterCreate] = useState(false)
+  const [createOptions, setCreateOptions] = useState<{
+    publishAfterCreate: boolean
+    marketplaceTags: string[]
+  }>({ publishAfterCreate: false, marketplaceTags: [] })
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
   const [skillToDelete, setSkillToDelete] = useState<UnifiedSkill | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -134,14 +139,17 @@ export default function SkillManagementModal({
   const handleCreateSkill = () => {
     setEditingSkill(null)
     setCreateTarget({ scope: 'personal' })
-    setPublishAfterCreate(false)
+    setCreateOptions({ publishAfterCreate: false, marketplaceTags: [] })
     setUploadModalOpen(true)
   }
 
-  const handleCreateOptionsChange = useCallback((target: ResourceCreateTarget, publish = false) => {
-    setCreateTarget(target)
-    setPublishAfterCreate(publish)
-  }, [])
+  const handleCreateOptionsChange = useCallback(
+    (target: ResourceCreateTarget, publish = false, marketplaceTags: string[] = []) => {
+      setCreateTarget(target)
+      setCreateOptions({ publishAfterCreate: publish, marketplaceTags })
+    },
+    []
+  )
 
   const handleEditSkill = (skill: UnifiedSkill) => {
     setEditingSkill(skill)
@@ -347,13 +355,41 @@ export default function SkillManagementModal({
     }
   }
 
-  const handleModalClose = (saved: boolean) => {
+  const handleModalClose = async (saved: boolean, skillId?: number) => {
+    const shouldPublish = !editingSkill && createOptions.publishAfterCreate && Boolean(skillId)
     setUploadModalOpen(false)
     setEditingSkill(null)
     if (saved) {
-      loadSkills()
+      await loadSkills()
       onSkillsChange?.()
+      if (shouldPublish && skillId) {
+        try {
+          const skill = await getSkill(skillId)
+          await resourceLibraryApi.createListing({
+            resource_type: 'skill',
+            source_id: skillId,
+            display_name: skill.spec.displayName || skill.metadata.name,
+            description: skill.spec.description || null,
+            icon: null,
+            tags: createOptions.marketplaceTags,
+            version: skill.spec.version || '1.0.0',
+            manifest_options: {},
+          })
+          toast({ title: t('resource-library:messages.publish_success') })
+        } catch (publishError) {
+          toast({
+            variant: 'destructive',
+            title: t('resource-library:messages.publish_failed'),
+            description:
+              publishError instanceof Error
+                ? publishError.message
+                : t('common:common.unknown_error'),
+          })
+        }
+      }
     }
+    setCreateTarget({ scope: 'personal' })
+    setCreateOptions({ publishAfterCreate: false, marketplaceTags: [] })
   }
 
   return (
@@ -587,7 +623,7 @@ export default function SkillManagementModal({
           namespace={uploadNamespace}
           isPublic={scope === 'public'}
           createTarget={createTarget}
-          publishAfterCreate={publishAfterCreate}
+          publishAfterCreate={createOptions.publishAfterCreate}
           writableGroups={writableGroups}
           writableGroupsError={writableGroupsError}
           writableGroupsLoading={writableGroupsLoading}

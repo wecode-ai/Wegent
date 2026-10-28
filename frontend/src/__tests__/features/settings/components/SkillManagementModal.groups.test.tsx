@@ -5,6 +5,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { listGroups } from '@/apis/groups'
+import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { fetchUnifiedSkillsList } from '@/apis/skills'
 import SkillManagementModal from '@/features/settings/components/skills/SkillManagementModal'
 
@@ -14,6 +15,13 @@ const mockT = (key: string) => key
 jest.mock('@/apis/skills', () => ({
   fetchUnifiedSkillsList: jest.fn(),
   fetchPublicSkillsList: jest.fn(),
+  getSkill: jest.fn(),
+}))
+
+jest.mock('@/apis/resourceLibrary', () => ({
+  resourceLibraryApi: {
+    createListing: jest.fn(),
+  },
 }))
 
 jest.mock('@/apis/groups', () => ({
@@ -48,12 +56,14 @@ jest.mock('@/features/settings/components/skills/SkillUploadModal', () => ({
     writableGroupsError,
     onCreateOptionsChange,
     onRetryWritableGroups,
+    onClose,
   }: {
     writableGroups: Array<{ name: string }>
     createTarget: { scope: string; groupName?: string; groupNames?: string[] }
     publishAfterCreate?: boolean
     namespace?: string
     writableGroupsError: Error | null
+    onClose: (saved: boolean, skillId?: number) => void
     onCreateOptionsChange: (
       target: { scope: string; groupName?: string; groupNames?: string[] },
       publishAfterCreate: boolean,
@@ -87,9 +97,12 @@ jest.mock('@/features/settings/components/skills/SkillUploadModal', () => ({
       <button
         type="button"
         data-testid="select-marketplace"
-        onClick={() => onCreateOptionsChange({ scope: 'personal' }, true, [])}
+        onClick={() => onCreateOptionsChange({ scope: 'personal' }, true, ['ai'])}
       >
         select-marketplace
+      </button>
+      <button type="button" data-testid="save-skill" onClick={() => onClose(true, 42)}>
+        save-skill
       </button>
       <button type="button" data-testid="retry-writable-groups" onClick={onRetryWritableGroups}>
         retry-groups
@@ -102,6 +115,7 @@ describe('SkillManagementModal group publishing', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     ;(fetchUnifiedSkillsList as jest.Mock).mockResolvedValue([])
+    ;(resourceLibraryApi.createListing as jest.Mock).mockResolvedValue({ id: 1 })
     ;(listGroups as jest.Mock).mockResolvedValue({
       total: 2,
       items: [
@@ -168,5 +182,51 @@ describe('SkillManagementModal group publishing', () => {
     fireEvent.click(screen.getByTestId('select-marketplace'))
 
     expect(screen.getByTestId('publish-after-create')).toHaveTextContent('true')
+  })
+
+  it('publishes the saved skill with the marketplace tags', async () => {
+    ;(jest.requireMock('@/apis/skills').getSkill as jest.Mock).mockResolvedValue({
+      metadata: { name: 'demo-skill' },
+      spec: { displayName: 'Demo Skill', description: 'Demo', version: '1.2.0' },
+    })
+
+    render(<SkillManagementModal open onClose={jest.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /common:skills\.upload_skill/ }))
+    fireEvent.click(screen.getByTestId('select-marketplace'))
+    fireEvent.click(screen.getByTestId('save-skill'))
+
+    await waitFor(() => {
+      expect(resourceLibraryApi.createListing).toHaveBeenCalledWith({
+        resource_type: 'skill',
+        source_id: 42,
+        display_name: 'Demo Skill',
+        description: 'Demo',
+        icon: null,
+        tags: ['ai'],
+        version: '1.2.0',
+        manifest_options: {},
+      })
+    })
+  })
+
+  it('reports a failed publication after saving the skill', async () => {
+    ;(jest.requireMock('@/apis/skills').getSkill as jest.Mock).mockResolvedValue({
+      metadata: { name: 'demo-skill' },
+      spec: { displayName: 'Demo Skill' },
+    })
+    ;(resourceLibraryApi.createListing as jest.Mock).mockRejectedValue(new Error('publish boom'))
+
+    render(<SkillManagementModal open onClose={jest.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /common:skills\.upload_skill/ }))
+    fireEvent.click(screen.getByTestId('select-marketplace'))
+    fireEvent.click(screen.getByTestId('save-skill'))
+
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({ variant: 'destructive', description: 'publish boom' })
+      )
+    })
   })
 })
