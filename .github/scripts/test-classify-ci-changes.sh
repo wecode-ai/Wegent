@@ -451,6 +451,24 @@ assert_case "Wework artifact scripts run Wework E2E" "$wework_e2e_expected" \
 assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
   "docker/wework-e2e/desktop.Dockerfile"
 
+normalize_desktop_checkpoint_order() {
+  node -e '
+    const fs = require("node:fs")
+    const lines = fs.readFileSync(0, "utf8").trimEnd().split("\n")
+    process.stdout.write(lines.map(line => {
+      const boundary = line.indexOf("=")
+      if (!line.slice(0, boundary).endsWith("_e2e_matrix")) return line
+      const matrix = JSON.parse(line.slice(boundary + 1))
+      for (const entry of matrix.include) {
+        if (typeof entry.segments === "string") {
+          entry.segments = entry.segments.split(",").sort().join(",")
+        }
+      }
+      return line.slice(0, boundary + 1) + JSON.stringify(matrix)
+    }).join("\n"))
+  '
+}
+
 assert_desktop_case() {
   local name="$1"
   local expected="$2"
@@ -468,12 +486,33 @@ wework_desktop_other_e2e='
   fi
   local output
   output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$@")"
+  # Every checkpoint owns its prerequisites; order within one shard is not coverage.
   if [[ "$output" != "$expected" ]]; then
+    local normalized_output normalized_expected
+    normalized_output="$(printf '%s' "$output" | normalize_desktop_checkpoint_order)"
+    normalized_expected="$(printf '%s' "$expected" | normalize_desktop_checkpoint_order)"
+    if [[ "$normalized_output" == "$normalized_expected" ]]; then return; fi
     printf 'Desktop case "%s" failed.\nExpected:\n%s\nActual:\n%s\n' \
       "$name" "$expected" "$output" >&2
     exit 1
   fi
 }
+
+assert_desktop_comparison_preserves_coverage() {
+  local expected reordered moved missing duplicated
+  expected='wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","segments":"a,b"},{"id":"core-2","segments":"c"}]}'
+  reordered="${expected/a,b/b,a}"
+  moved='wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","segments":"a"},{"id":"core-2","segments":"b,c"}]}'
+  missing="${expected/a,b/a}"
+  duplicated="${expected/a,b/a,a,b}"
+  expected="$(printf '%s' "$expected" | normalize_desktop_checkpoint_order)"
+  [[ "$expected" == "$(printf '%s' "$reordered" | normalize_desktop_checkpoint_order)" ]]
+  [[ "$expected" != "$(printf '%s' "$moved" | normalize_desktop_checkpoint_order)" ]]
+  [[ "$expected" != "$(printf '%s' "$missing" | normalize_desktop_checkpoint_order)" ]]
+  [[ "$expected" != "$(printf '%s' "$duplicated" | normalize_desktop_checkpoint_order)" ]]
+}
+
+assert_desktop_comparison_preserves_coverage
 
 assert_desktop_case "Issue navigation source changes retain existing coverage and select notification reads" \
   'wework_desktop_e2e=true
