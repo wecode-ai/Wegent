@@ -6,10 +6,18 @@ const plugin = { slug: 'uninstall-e2e-restart-pending', installedId: 71 }
 
 function controlFixture({ present, managerIds }) {
   const calls = []
+  const pickerButton = '[data-testid="composer-plugin-picker-button"]'
+  let pickerExpanded = false
   return {
     calls,
-    async command(action, selector) {
+    async command(action, selector, options) {
       calls.push({ action, selector })
+      if (action === 'getAttribute') {
+        assert.equal(selector, pickerButton)
+        assert.equal(options?.value, 'aria-expanded')
+        return String(pickerExpanded)
+      }
+      if (action === 'click' && selector === pickerButton) pickerExpanded = !pickerExpanded
       if (action === 'getComposerPluginInventoryDiagnostics') {
         const plugins = present ? [{ pluginKey: plugin.slug }] : []
         return JSON.stringify({
