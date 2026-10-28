@@ -188,42 +188,6 @@ pub struct OwnedTaskPage {
     pub ids: Vec<i64>,
 }
 
-/// `task_store.list_personal_task_candidates` for the single-table store: the
-/// keyset-paged candidate rows for one owner, read from the `tasks` table.
-pub async fn personal_task_candidates<M: brz_mysql::Mysql>(
-    mysql: &M,
-    user_id: i64,
-    limit: i64,
-    cursor: Option<(chrono::NaiveDateTime, i64)>,
-    client_origin: Option<&str>,
-) -> brz_mysql::MysqlResult<Vec<MysqlRow>> {
-    use crate::task_store_statements::{
-        StatementArg, TASKS_TABLE, personal_task_candidates_statement,
-    };
-    // Argument order follows the predicate order: `user_id`, the optional
-    // origin, the optional keyset (`created_at` twice, then `id`), `limit`.
-    let mut args: Vec<StatementArg> = vec![StatementArg::Int(user_id)];
-    if let Some(origin) = client_origin {
-        args.push(StatementArg::Str(origin.to_string()));
-    }
-    if let Some((created_at, id)) = cursor {
-        args.push(StatementArg::DateTime(created_at));
-        args.push(StatementArg::DateTime(created_at));
-        args.push(StatementArg::Int(id));
-    }
-    args.push(StatementArg::Int(limit));
-    mysql
-        .fetch_all(
-            personal_task_candidates_statement(
-                TASKS_TABLE,
-                client_origin.is_some(),
-                cursor.is_some(),
-            ),
-            args,
-        )
-        .await
-}
-
 /// `task_store.list_owned_task_ids`: the distinct count plus one page of the
 /// owner's task ids.
 pub async fn owned_task_id_page<M: brz_mysql::Mysql>(
@@ -385,3 +349,22 @@ pub async fn ordered_subtasks_by_task<M: brz_mysql::Mysql>(
 #[cfg(test)]
 #[path = "task_store_listing_tests.rs"]
 mod tests;
+
+/// [`ordered_subtasks_by_task`] on the caller's request transaction.
+pub async fn ordered_subtasks_by_task_on(
+    sql: &mut dyn crate::request_sql::RequestSql,
+    table: &str,
+    task_id: i64,
+) -> brz_mysql::MysqlResult<SubtaskListing> {
+    let rows = sql
+        .fetch_all_rows(
+            crate::request_sql::RouteKey::Task(task_id as u64),
+            &crate::task_store_statements::subtasks_by_message_ordered_statement(table),
+            vec![crate::task_store_statements::StatementArg::Int(task_id)],
+        )
+        .await?;
+    Ok(SubtaskListing {
+        rows,
+        contexts: None,
+    })
+}

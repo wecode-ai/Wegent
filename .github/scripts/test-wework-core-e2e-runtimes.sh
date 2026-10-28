@@ -12,6 +12,7 @@ ruby -ryaml -e '
   artifact = step.fetch("env").fetch("EXECUTOR_ARTIFACT")
   workflow = YAML.safe_load(File.read(ARGV[1]))
   producer = workflow.fetch("jobs").fetch("build-backend-rs-e2e-runtime")
+  raise "Backend Rust binaries must target the Noble consumer GLIBC" unless producer.fetch("runs-on") == "ubuntu-24.04"
   consumer_workflow = YAML.safe_load(File.read(ARGV[2]))
   consumer = consumer_workflow.fetch("jobs").fetch("build-wework-desktop-core-e2e")
   warmup = YAML.safe_load(File.read(ARGV[3]))
@@ -96,7 +97,7 @@ backend_image="$(
   SOURCE_DIGEST=source-digest GITHUB_REPOSITORY_OWNER=WECODE-AI \
     bash "$script_dir/resolve-backend-rs-e2e-runtime.sh"
 )"
-test "$backend_image" = "ghcr.io/wecode-ai/wegent-backend-rs-e2e:v2-source-digest"
+test "$backend_image" = "ghcr.io/wecode-ai/wegent-backend-rs-e2e:v3-noble-source-digest"
 ruby -ryaml -e '
   action = YAML.safe_load(File.read(ARGV[0]))
   step = action.fetch("runs").fetch("steps").find { |s| s["env"]&.key?("EXECUTOR_IMAGE") }

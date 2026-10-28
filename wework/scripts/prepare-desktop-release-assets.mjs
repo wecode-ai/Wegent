@@ -10,6 +10,7 @@ import { create } from 'tar'
 
 import { hashComponentPath } from './lib/component-content-hash.mjs'
 import { componentReleaseScope } from './desktop-component-release.mjs'
+import { portableDesktopRelease } from './lib/portable-desktop-release.mjs'
 
 const weworkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const installerRoot = join(weworkRoot, 'electron', 'release-installer')
@@ -89,6 +90,17 @@ if (platform === 'macos') {
   throw new Error(`Unsupported desktop release platform: ${platform}`)
 }
 await prepareComponentAssets()
+if (platform === 'macos' || platform === 'windows') {
+  const appRoot =
+    platform === 'macos'
+      ? join(installerRoot, arch === 'arm64' ? 'mac-arm64' : 'mac', 'WeWork.app')
+      : join(installerRoot, 'win-unpacked')
+  const release = await portableDesktopRelease({ appRoot, version, platform, arch, output })
+  await writeFile(
+    join(output, `release-${platform}-${arch}.json`),
+    JSON.stringify(release, null, 2) + '\n'
+  )
+}
 
 async function prepareComponentAssets() {
   const packaged = JSON.parse(

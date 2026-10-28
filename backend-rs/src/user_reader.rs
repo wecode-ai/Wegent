@@ -17,6 +17,8 @@
 use async_trait::async_trait;
 
 use crate::auth::UserRow;
+use crate::request_sql::{RequestSql, RouteKey};
+use crate::sql_support::StatementArg;
 
 /// The `users` model a `userReader` lookup returns: `UserReader.get_by_id`
 /// and `get_by_name` hand back the complete mapped `User`, so the record
@@ -83,6 +85,26 @@ pub trait UserByIdReader: Send + Sync {
     /// recorded exchange for replay.
     async fn get_entity_by_id(&self, user_id: i64) -> anyhow::Result<Option<UserRecord>>;
 
+    /// `userReader.get_by_id(db, user_id)` where `db` is the request's own
+    /// session.
+    ///
+    /// This is the same deployment read path as [`Self::get_by_id`] (a cache
+    /// hit still hits the cache), but every SQL read it issues after a cache
+    /// miss runs on `sql`, the caller's request transaction, so the read keeps
+    /// the source's transaction membership.
+    async fn get_by_id_on(
+        &self,
+        sql: &mut dyn RequestSql,
+        user_id: i64,
+    ) -> anyhow::Result<Option<UserRecord>>;
+
+    /// `userReader.get_by_name(db, user_name)`; see [`Self::get_by_id_on`].
+    async fn get_by_name_on(
+        &self,
+        sql: &mut dyn RequestSql,
+        user_name: &str,
+    ) -> anyhow::Result<Option<UserRecord>>;
+
     /// Drop any cached copy of the committed `users` row
     /// (`CachedUserReader.on_change`, driven by the source's SQLAlchemy
     /// `after_update` event on the `User` model). The public SQL reader keeps
@@ -130,6 +152,41 @@ impl UserByIdReader for PublicUserReader {
             .await?;
         Ok(row.map(UserRecord::from))
     }
+
+    async fn get_by_id_on(
+        &self,
+        sql: &mut dyn RequestSql,
+        user_id: i64,
+    ) -> anyhow::Result<Option<UserRecord>> {
+        fetch_user_on(sql, USER_BY_ID_QUERY, StatementArg::Int(user_id)).await
+    }
+
+    async fn get_by_name_on(
+        &self,
+        sql: &mut dyn RequestSql,
+        user_name: &str,
+    ) -> anyhow::Result<Option<UserRecord>> {
+        fetch_user_on(
+            sql,
+            USER_BY_NAME_QUERY,
+            StatementArg::Str(user_name.to_string()),
+        )
+        .await
+    }
+}
+
+/// One `users` lookup on the caller's request transaction: the same statement
+/// and bound value the pooled reader issues, so the read keeps its recorded
+/// shape.
+async fn fetch_user_on(
+    sql: &mut dyn RequestSql,
+    statement: &str,
+    argument: StatementArg,
+) -> anyhow::Result<Option<UserRecord>> {
+    let row = sql
+        .fetch_optional_row(RouteKey::None, statement, vec![argument])
+        .await?;
+    Ok(row.as_ref().map(UserRecord::from_mysql_row).transpose()?)
 }
 
 impl From<UserRow> for UserRecord {
@@ -301,5 +358,80 @@ mod tests {
         }
         assert_eq!(USER_BY_NAME_QUERY.matches('?').count(), 1);
         assert!(USER_BY_NAME_QUERY.contains("WHERE users.user_name = ? LIMIT 1"));
+    }
+
+    /// Records the statements issued through the request handle.
+    #[derive(Default)]
+    struct RecordingSql {
+        calls: std::sync::Mutex<Vec<(crate::request_sql::RouteKey, String, usize)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl RequestSql for RecordingSql {
+        async fn execute_statement(
+            &mut self,
+            _: crate::request_sql::RouteKey,
+            _: &str,
+            _: crate::request_sql::StatementArgs,
+        ) -> brz_mysql::MysqlResult<brz_mysql::MysqlExecution> {
+            panic!("the reader must not write")
+        }
+
+        async fn fetch_optional_row(
+            &mut self,
+            route: crate::request_sql::RouteKey,
+            sql: &str,
+            arguments: crate::request_sql::StatementArgs,
+        ) -> brz_mysql::MysqlResult<Option<brz_mysql::MysqlRow>> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((route, sql.to_string(), arguments.len()));
+            Ok(None)
+        }
+
+        async fn fetch_all_rows(
+            &mut self,
+            _: crate::request_sql::RouteKey,
+            _: &str,
+            _: crate::request_sql::StatementArgs,
+        ) -> brz_mysql::MysqlResult<Vec<brz_mysql::MysqlRow>> {
+            panic!("the reader reads at most one row")
+        }
+    }
+
+    /// `userReader.get_by_*(db, ...)` with the request's session: the public
+    /// reader issues its recorded statements on that handle, binding the id
+    /// and the name exactly like the pooled reads.
+    #[tokio::test]
+    async fn the_public_reader_reads_on_the_caller_transaction() {
+        let mysql = brz_mysql::MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test")
+            .expect("lazy pool");
+        let reader = PublicUserReader::new(mysql);
+        let mut sql = RecordingSql::default();
+        assert!(reader.get_by_id_on(&mut sql, 509).await.unwrap().is_none());
+        assert!(
+            reader
+                .get_by_name_on(&mut sql, "yingeng")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let calls = sql.calls.lock().unwrap().clone();
+        assert_eq!(
+            calls,
+            vec![
+                (
+                    crate::request_sql::RouteKey::None,
+                    USER_BY_ID_QUERY.to_string(),
+                    1
+                ),
+                (
+                    crate::request_sql::RouteKey::None,
+                    USER_BY_NAME_QUERY.to_string(),
+                    1
+                ),
+            ]
+        );
     }
 }

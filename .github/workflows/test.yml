@@ -207,6 +207,20 @@ jobs:
           cargo test --locked --lib tasks_search::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/tasks-search-mysql.log
 
+      - name: Verify assignment index schema compatibility with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib loop_tasks::assignment_index::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignment-index-mysql.log
+
+      - name: Verify batched project roster permission compatibility with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib cloud_projects::members::roster_mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-roster-mysql.log
+
       - name: Verify Responses HTTP E2E with large JSON and long conversations
         working-directory: backend-rs
         env:
@@ -444,7 +458,9 @@ jobs:
         working-directory: ./executor
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
-        run: cargo test --all-features --lib worktree_metadata_can_exceed_the_windows_max_path_limit
+        run: |
+          cargo test --all-features --lib worktree_metadata_can_exceed_the_windows_max_path_limit
+          cargo test --all-features --lib deferred_worktree_rebases_project_roots_using_path_identity
 
       - name: Run native clone platform regressions
         if: ${{ !cancelled() }}
@@ -453,6 +469,19 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: cargo test --all-features --lib clones_and_reuses_repositories_beyond_windows_max_path
+
+      - name: Run bounded executor and interrupted Goal platform regressions
+        if: ${{ !cancelled() }}
+        shell: bash
+        working-directory: ./executor
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
+        run: |
+          cargo test --all-features --lib local::plugin_import::hash_tests
+          cargo test --all-features --lib runtime_rpc_dispatch_fits_a_bounded_worker_stack
+          cargo test --all-features --lib agents::codex::tests::stopping_
+          cargo test --all-features --lib closed_notification_stream
+          cargo test --all-features --lib stopped_active_goal_does_not_emit_a_terminal_result_or_discard_its_status
 
       - name: Set up Node for native package filesystem regressions
         if: ${{ !cancelled() }}
