@@ -4,13 +4,12 @@ use super::stand_in_workspace::apply_stand_in_workspace;
 use super::*;
 
 pub(super) fn settings_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcError {
-    let code = if matches!(
-        error,
-        crate::task_runtime::TaskRuntimeError::VersionConflict
-    ) {
-        "version_conflict"
-    } else {
-        "stand_in_settings"
+    let code = match &error {
+        crate::task_runtime::TaskRuntimeError::VersionConflict => "version_conflict",
+        crate::task_runtime::TaskRuntimeError::StandInProjectConnections => {
+            "stand_in_project_connections"
+        }
+        _ => "stand_in_settings",
     };
     AppIpcError::new(code, error.to_string())
 }

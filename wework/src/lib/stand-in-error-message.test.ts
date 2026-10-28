@@ -56,3 +56,15 @@ describe('stand-in error localization', () => {
     expect(getStandInErrorMessage({ message: '请选择一个项目' })).toBe('请选择一个项目')
   })
 })
+
+it('preserves project-scoped agent connection guidance through repeated UI resolution', async () => {
+  await i18n.changeLanguage('zh-CN')
+  const error = {
+    code: 'stand_in_project_connections',
+    message: 'invalid task data: Project-scoped agents can only receive work from their project',
+  }
+  const message = getStandInErrorMessage(error)
+  expect(message).toBe('该智能体只能接收所属项目的工作。请先移除其他来源连接，或改选个人智能体。')
+  expect(getStandInErrorMessage(new Error(message))).toBe(message)
+  expect(getStandInErrorMessage(error.message)).toBe(message)
+})

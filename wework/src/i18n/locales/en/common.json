@@ -5598,7 +5598,8 @@
       "stand_in_grouping_failed": "Stand-in could not organize the work. Try again.",
       "work_busy": "This work is being processed. Try again later.",
       "failed": "The stand-in action failed. Try again later. If it persists, check the execution device logs.",
-      "device_offline": "The execution device is offline. Connect it and try again."
+      "device_offline": "The execution device is offline. Connect it and try again.",
+      "stand_in_project_connections": "This agent can only receive work from its own project. Remove other source connections or select a personal agent."
     }
   },
   "workbench_error": {

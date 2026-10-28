@@ -700,3 +700,41 @@ describe('Personal stand-in settings', () => {
     await waitFor(() => expect(personalGet).toHaveBeenCalledTimes(2))
   })
 })
+
+it('shows actionable connection guidance and preserves the rejected project-agent draft', async () => {
+  const role = newStandInRole('mac', 'review')
+  role.connections = [
+    {
+      providerId: 'example',
+      id: 'group',
+      name: 'Work group',
+      kind: 'group',
+      profile: 'work',
+      policy: { automatic: true, askBeforeAct: true },
+    },
+  ]
+  const { props, personalSave } = fixture({ roles: [role] })
+  props.api = {
+    agents: {
+      list: vi.fn(async (id: string) =>
+        id === 'one'
+          ? [{ id: 'reviewer', name: 'Project reviewer', runtime: 'codex', status: 'active' }]
+          : []
+      ),
+    },
+  } as unknown as SharedWorkspaceApi
+  personalSave.mockRejectedValueOnce({
+    code: 'stand_in_project_connections',
+    message: 'invalid task data: Project-scoped agents can only receive work from their project',
+  })
+  const user = userSetup()
+  render(<StandInSettingsPage {...props} />)
+  const option = await screen.findByRole('option', { name: 'Project reviewer · First project' })
+  await user.selectOptions(screen.getByTestId('stand-in-agent'), option)
+  await user.click(screen.getByTestId('stand-in-save'))
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '该智能体只能接收所属项目的工作。请先移除其他来源连接，或改选个人智能体。'
+  )
+  expect(screen.getByTestId('stand-in-project-agent-scope')).toHaveTextContent('First project')
+  expect(personalSave.mock.calls[0][1].roles[0].connections).toEqual(role.connections)
+})

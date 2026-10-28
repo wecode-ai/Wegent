@@ -5595,7 +5595,8 @@
       "stand_in_grouping_failed": "分身未能整理工作归属，请重试。",
       "work_busy": "该工作正在处理中，请稍后重试。",
       "failed": "分身操作失败，请稍后重试；如仍失败，请查看执行设备日志。",
-      "device_offline": "执行设备离线，请连接设备后重试。"
+      "device_offline": "执行设备离线，请连接设备后重试。",
+      "stand_in_project_connections": "该智能体只能接收所属项目的工作。请先移除其他来源连接，或改选个人智能体。"
     }
   },
   "workbench_error": {

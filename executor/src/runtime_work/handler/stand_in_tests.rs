@@ -867,3 +867,28 @@ async fn personal_settings_project_view_retains_the_requested_storage_kind() {
     assert_eq!(cloud["projectStore"], "cloud");
     assert_eq!(cloud["projectId"], "future-project");
 }
+
+#[test]
+fn project_scoped_agent_connections_return_actionable_settings_code_without_saving() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let initial = store.personal_stand_in(7, "mac").unwrap();
+    let saved = store.save_personal_stand_in(7, "mac", initial).unwrap();
+    let mut draft = saved.clone();
+    draft["roles"][0]["agentId"] = json!("project-agent");
+    draft["roles"][0]["agentProject"] = json!({"id":"project","store":"cloud"});
+    draft["roles"][0]["connections"] = json!([{
+        "providerId":"example","id":"group","kind":"group","profile":"work","name":"Group",
+        "policy":{"automatic":true,"askBeforeAct":true}
+    }]);
+    let error = handler
+        .personal_stand_in_settings(json!({"userId":7,"settings":draft}), true)
+        .unwrap_err();
+    assert_eq!(error.code, "stand_in_project_connections");
+    assert!(error
+        .message
+        .contains("only receive work from their project"));
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), saved);
+}

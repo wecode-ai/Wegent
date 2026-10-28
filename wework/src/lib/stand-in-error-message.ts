@@ -3,6 +3,8 @@ import { getErrorMessage } from './error-message'
 
 // Persisted task failures and older Executors may contain only the original message.
 const LEGACY_ERROR_CODES: Record<string, string> = {
+  'invalid task data: Project-scoped agents can only receive work from their project':
+    'stand_in_project_connections',
   'Issue assignment event identity is missing': 'invalid_assignment',
   'Connect this Executor to your cloud account': 'cloud_unavailable',
   "Stand-in can only handle the connected user's assignments": 'permission_denied',
