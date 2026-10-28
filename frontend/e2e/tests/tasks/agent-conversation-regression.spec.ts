@@ -9,9 +9,14 @@
  */
 
 import { APIRequestContext, Page, expect, test, type Route } from '@playwright/test'
+import type { ProjectTask } from '../../../src/types/api'
 import { ADMIN_USER } from '../../config/test-users'
 import { ApiClient, createApiClient } from '../../utils/api-client'
 import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
+import {
+  prepareProjectMentionTasks,
+  type VisibleMentionTask,
+} from '../../utils/handoff-mention-fixture'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -300,16 +305,26 @@ test.describe('Agent conversation regression', () => {
 
     const project = await seedMentionProject(request, `${TEST_PREFIX}-mention-pages`)
     // The candidate is created first so it lands on the project's second page,
-    // then touched so it sorts first in the mention list. An empty query keeps
-    // the remote title search out of the way: only loading page two can
-    // surface this candidate.
+    // then settled and touched so it sorts first in the mention list. An empty
+    // query keeps remote title search out of the way: only loading page two
+    // can surface this candidate.
     const sourceTaskId = await seedMentionTask(request, {
       title: `Project handoff ${projectToken}`,
       prompt: `Seed project conversation ${projectToken}`,
       projectId: project.id,
     })
-    await seedMentionTasks(request, 55, index => `Project filler ${index}`, project.id)
-    await touchMentionTask(request, sourceTaskId, `Project handoff ${projectToken}`)
+    const fillerTaskIds = await seedMentionTasks(
+      request,
+      55,
+      index => `Project filler ${index}`,
+      project.id
+    )
+    await prepareProjectMentionFixtures(
+      request,
+      project.id,
+      [sourceTaskId, ...fillerTaskIds],
+      [{ taskId: sourceTaskId, title: `Project handoff ${projectToken}` }]
+    )
 
     const projectTaskRequests: string[] = []
     page.on('request', outgoing => {
@@ -365,7 +380,7 @@ test.describe('Agent conversation regression', () => {
     const retryToken = makeContextToken('mention_retry')
     const project = await seedMentionProject(request, `${TEST_PREFIX}-mention-retry`)
     // The later-page candidate is created first so it lands past the first
-    // page, then touched so it sorts first once page two finally loads.
+    // page, then settled and touched so it stays in the menu once page two loads.
     const laterPageTaskId = await seedMentionTask(request, {
       title: `Retry page two ${retryToken}`,
       prompt: `Retry page two ${retryToken}`,
@@ -378,7 +393,15 @@ test.describe('Agent conversation regression', () => {
       project.id
     )
     const newestFirstPageTaskId = firstPageTaskIds[firstPageTaskIds.length - 1]
-    await touchMentionTask(request, laterPageTaskId, `Retry page two ${retryToken}`)
+    await prepareProjectMentionFixtures(
+      request,
+      project.id,
+      [laterPageTaskId, ...firstPageTaskIds],
+      [
+        { taskId: newestFirstPageTaskId, title: `Retry page one ${firstPageTaskIds.length - 1}` },
+        { taskId: laterPageTaskId, title: `Retry page two ${retryToken}` },
+      ]
+    )
 
     const isCursorPage = (url: URL) =>
       url.pathname === `/api/projects/${project.id}/tasks` && url.searchParams.has('cursor')
@@ -1796,8 +1819,8 @@ test.describe('Agent conversation regression', () => {
     return { id: project.id! }
   }
 
-  // Creates one real conversation record without running a model turn. The
-  // task still carries a CRD title, which is what the mention search reads.
+  // Creates a real chat task and dispatches its model turn asynchronously.
+  // Project fixtures must settle every turn before establishing menu ordering.
   async function seedMentionTask(
     request: APIRequestContext,
     input: { title: string; prompt: string; projectId?: number }
@@ -1836,8 +1859,29 @@ test.describe('Agent conversation regression', () => {
     return taskIds
   }
 
-  // Touches a task so its `updated_at` sorts it first in the mention list
-  // without changing which project task page it belongs to.
+  async function prepareProjectMentionFixtures(
+    request: APIRequestContext,
+    projectId: number,
+    taskIds: number[],
+    visibleTasks: VisibleMentionTask[]
+  ): Promise<void> {
+    await prepareProjectMentionTasks({
+      taskIds,
+      visibleTasks,
+      waitForCompleted: taskId => waitForBackendTerminal(request, taskId),
+      touchTask: task => touchMentionTask(request, task.taskId, task.title),
+      readProjectTasks: async () => {
+        const response = await request.get(`${API_BASE_URL}/api/projects/${projectId}`, {
+          headers: authHeaders(),
+        })
+        const body = await response.text()
+        expect(response.status(), body).toBe(200)
+        return (JSON.parse(body) as { tasks: ProjectTask[] }).tasks
+      },
+    })
+  }
+
+  // Advances updated_at without changing the creation-based project task page.
   async function touchMentionTask(
     request: APIRequestContext,
     taskId: number,
