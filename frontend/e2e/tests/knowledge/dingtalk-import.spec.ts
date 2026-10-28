@@ -231,7 +231,13 @@ test.describe('External DingTalk document import', () => {
         .filter({ hasText: 'preview.txt' })
       await availableCard.getByTestId('document-link-preview-trigger').click()
       await expect(page.getByTestId('document-link-preview-dialog')).toBeVisible()
-      await expect(page.getByText('DINGTALK-RESTRICTED-PREVIEW-CONTENT')).toBeVisible()
+      // The loaded card cover shows the same text; scope the assertion to the
+      // dialog so strict mode does not match both elements.
+      await expect(
+        page
+          .getByTestId('document-link-preview-dialog')
+          .getByText('DINGTALK-RESTRICTED-PREVIEW-CONTENT')
+      ).toBeVisible()
       expect(page.url()).toBe(originalUrl)
       expect(page.context().pages()).toHaveLength(originalPageCount)
       await page

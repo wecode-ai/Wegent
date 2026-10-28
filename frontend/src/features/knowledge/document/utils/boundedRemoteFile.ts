@@ -5,7 +5,7 @@
 import type { DocumentLinkPreviewKind } from './documentLinkResource'
 
 const MIB = 1024 * 1024
-export const MAX_NON_RANGE_VIDEO_BYTES = 20 * MIB
+export const MAX_NON_RANGE_VIDEO_BYTES = 100 * MIB
 const REMOTE_FILE_TIMEOUT_MS = 20_000
 const MAX_IMAGE_PIXELS = 12_000_000
 const MAX_OFFICE_ENTRIES = 1_000
@@ -15,7 +15,7 @@ const MAX_OFFICE_COMPRESSION_RATIO = 100
 const MAX_TEXT_LINES = 5_000
 
 const MAX_BYTES: Record<Exclude<DocumentLinkPreviewKind, 'video' | 'unknown'>, number> = {
-  pdf: 20 * MIB,
+  pdf: 100 * MIB,
   office: 10 * MIB,
   image: 8 * MIB,
   text: 512 * 1024,
@@ -401,7 +401,6 @@ export interface PreparedRemotePdf {
   mimeType: string
   size?: number
   supportsRange: boolean
-  validation?: 'range-only'
 }
 
 const PDF_RANGE_PREFIX_BYTES = 16
@@ -469,65 +468,64 @@ export async function prepareRemotePdf(
       const declaredFragmentSize = response.headers.get('content-length')
       const mimeType = response.headers.get('content-type')?.split(';')[0].trim() || ''
       if (!match) {
+        // CORS can hide Content-Range while the fragment length still proves
+        // the origin honored the bounded request; that alone cannot verify
+        // the total size, so fall back to the bounded loader below instead
+        // of letting the viewer stream an unbounded URL.
         if (Number(declaredFragmentSize) !== PDF_RANGE_PREFIX_BYTES) {
           await response.body?.cancel()
           throw new RemoteFileError('network-or-cors', 'Remote PDF range response is invalid')
         }
-        const prefix = await readExactRangeBody(response, PDF_RANGE_PREFIX_BYTES)
+        await response.body?.cancel()
+        useBoundedFallback = true
+      } else {
+        const start = Number(match[1])
+        const end = Number(match[2])
+        const size = Number(match[3])
+        if (
+          !Number.isSafeInteger(start) ||
+          !Number.isSafeInteger(end) ||
+          !Number.isSafeInteger(size) ||
+          start !== 0 ||
+          end < start ||
+          end >= PDF_RANGE_PREFIX_BYTES ||
+          size <= end
+        ) {
+          await response.body?.cancel()
+          throw new RemoteFileError('network-or-cors', 'Remote PDF range response is invalid')
+        }
+        if (size < 5) {
+          await response.body?.cancel()
+          throw new RemoteFileError('unsupported-type', 'Remote PDF is shorter than its signature')
+        }
+        const expectedBytes = end + 1
+        if (declaredFragmentSize !== null && Number(declaredFragmentSize) !== expectedBytes) {
+          await response.body?.cancel()
+          throw new RemoteFileError('network-or-cors', 'Remote PDF range length is inconsistent')
+        }
+        if (expectedBytes !== Math.min(PDF_RANGE_PREFIX_BYTES, size)) {
+          await response.body?.cancel()
+          throw new RemoteFileError('network-or-cors', 'Remote PDF range response was incomplete')
+        }
+        const prefix = await readExactRangeBody(response, expectedBytes)
         assertFileSignature('pdf', prefix, mimeType)
+
+        if (size === expectedBytes) {
+          const boundedBytes = new Uint8Array(prefix.byteLength)
+          boundedBytes.set(prefix)
+          return {
+            blob: new Blob([boundedBytes.buffer], { type: mimeType || 'application/pdf' }),
+            mimeType: mimeType || 'application/pdf',
+            size,
+            supportsRange: false,
+          }
+        }
         return {
           validatedUrl: url,
           mimeType: mimeType || 'application/pdf',
-          supportsRange: true,
-          validation: 'range-only',
-        }
-      }
-      const start = match ? Number(match[1]) : Number.NaN
-      const end = match ? Number(match[2]) : Number.NaN
-      const size = match ? Number(match[3]) : Number.NaN
-      if (
-        !Number.isSafeInteger(start) ||
-        !Number.isSafeInteger(end) ||
-        !Number.isSafeInteger(size) ||
-        start !== 0 ||
-        end < start ||
-        end >= PDF_RANGE_PREFIX_BYTES ||
-        size <= end
-      ) {
-        await response.body?.cancel()
-        throw new RemoteFileError('network-or-cors', 'Remote PDF range response is invalid')
-      }
-      if (size < 5) {
-        await response.body?.cancel()
-        throw new RemoteFileError('unsupported-type', 'Remote PDF is shorter than its signature')
-      }
-      const expectedBytes = end + 1
-      if (declaredFragmentSize !== null && Number(declaredFragmentSize) !== expectedBytes) {
-        await response.body?.cancel()
-        throw new RemoteFileError('network-or-cors', 'Remote PDF range length is inconsistent')
-      }
-      if (expectedBytes !== Math.min(PDF_RANGE_PREFIX_BYTES, size)) {
-        await response.body?.cancel()
-        throw new RemoteFileError('network-or-cors', 'Remote PDF range response was incomplete')
-      }
-      const prefix = await readExactRangeBody(response, expectedBytes)
-      assertFileSignature('pdf', prefix, mimeType)
-
-      if (size === expectedBytes) {
-        const boundedBytes = new Uint8Array(prefix.byteLength)
-        boundedBytes.set(prefix)
-        return {
-          blob: new Blob([boundedBytes.buffer], { type: mimeType || 'application/pdf' }),
-          mimeType: mimeType || 'application/pdf',
           size,
-          supportsRange: false,
+          supportsRange: true,
         }
-      }
-      return {
-        validatedUrl: url,
-        mimeType: mimeType || 'application/pdf',
-        size,
-        supportsRange: true,
       }
     }
   } catch (error) {
