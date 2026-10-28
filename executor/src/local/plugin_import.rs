@@ -1934,11 +1934,15 @@ fn package_plugin_directory(
     package_result
 }
 
+#[cfg(test)]
+#[path = "plugin_import_hash_tests.rs"]
+mod hash_tests;
+
 fn sha256_file(path: &Path) -> Result<String, String> {
     let mut file = fs::File::open(path)
         .map_err(|error| format!("Failed to open plugin package for verification: {error}"))?;
     let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
         let bytes_read = file
             .read(&mut buffer)

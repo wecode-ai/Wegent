@@ -15,7 +15,7 @@ import {
 import { basename, dirname, join, resolve } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import type { ComponentDownloadProgress } from '../host/app-update-progress.js'
-import { cloudFetch } from '../host/cloud-http.js'
+import { cloudFetch } from '../host/lazy-cloud-fetch.js'
 import { copyManagedPlugin } from './managed-plugin-files.js'
 import { pipeline } from 'node:stream/promises'
 import { publishImmutableDirectory } from './immutable-directory.js'

@@ -12,6 +12,7 @@ import { APIRequestContext, Page, expect, test, type Route } from '@playwright/t
 import { ADMIN_USER } from '../../config/test-users'
 import { ApiClient, createApiClient } from '../../utils/api-client'
 import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
+import { settleMentionTasks } from '../../utils/mention-task-fixtures'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -1814,7 +1815,8 @@ test.describe('Agent conversation regression', () => {
     return { id: project.id! }
   }
 
-  // Creates a real conversation whose first model turn is dispatched asynchronously.
+  // The real create API also dispatches the first model turn. Project fixtures
+  // must settle those executions before touching their mention sort order.
   async function seedMentionTask(
     request: APIRequestContext,
     input: { title: string; prompt: string; projectId?: number }
@@ -1862,9 +1864,9 @@ test.describe('Agent conversation regression', () => {
   ): Promise<void> {
     let latestUpdatedSecond = 0
     if (project) {
-      for (const fixtureId of [taskId, ...project.taskIds]) {
-        await waitForBackendTerminal(request, fixtureId)
-      }
+      await settleMentionTasks([taskId, ...project.taskIds], fixtureId =>
+        waitForBackendTerminal(request, fixtureId)
+      )
       const response = await request.get(
         `${API_BASE_URL}/api/projects/${project.id}/tasks?limit=100`,
         { headers: authHeaders() }
