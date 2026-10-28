@@ -8,6 +8,7 @@ const IDENTIFIED_TELEMETRY_EMAIL = 'desktop-e2e@wework.local'
 // Route changes emit `feature_opened`, so opening settings produces a product
 // event strictly after the account identity was attached.
 const SETTINGS_BUTTON_SELECTOR = '[data-testid="settings-button"]'
+const SETTINGS_MENU_SELECTOR = '[data-testid="settings-menu-button"]'
 
 function recordedEvents(control) {
   return control.telemetryRequests.flatMap(request => telemetryEvents(request.payload))
@@ -54,6 +55,7 @@ async function verifyIdentifiedTelemetryIdentity(control) {
   )
 
   await control.command('click', SETTINGS_BUTTON_SELECTOR)
+  await control.command('click', SETTINGS_MENU_SELECTOR)
   const attributed = await awaitAttributedEvent(control, 'feature_opened')
   assert.equal(
     attributed.properties?.$geoip_disable,
