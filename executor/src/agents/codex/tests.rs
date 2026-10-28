@@ -5104,12 +5104,15 @@ fn source_collaboration_approval_exemption_survives_start_resume_fork_and_turn()
     let _environment = environment::LaunchEnvironment::new();
     for kind in ["connection_work", "dingtalk_work", "issue_dispatch"] {
         for ask in [false, true] {
-            let request = serde_json::from_value(json!({
+            let mut value = json!({
                 "task_id":"source-collaboration-review",
                 "origin":{"type":kind,"initiatedBy":"stand_in","askBeforeAct":ask,
                     "cloudProjectId":"project-1","loopItemId":"issue-1"}
-            }))
-            .unwrap();
+            });
+            if kind == "issue_dispatch" {
+                value["origin"]["dispatchRole"] = json!("executor");
+            }
+            let request = serde_json::from_value(value).unwrap();
             let launch = build_codex_launch_config(&request).unwrap();
             let key = "mcp_servers.wework_space.default_tools_approval_mode";
             assert_eq!(
@@ -5223,7 +5226,7 @@ fn codex_thread_exposes_project_space_to_issue_automation_executor() {
 }
 
 #[test]
-fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
+fn codex_thread_discovers_project_space_without_a_project_binding() {
     let _environment = environment::LaunchEnvironment::new();
     let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let request = ExecutionRequest::default();
@@ -5233,8 +5236,18 @@ fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
     let params = thread_start_params(&request, &launch_config);
     let config = params["config"].as_object().expect("thread config");
 
-    assert!(!config.contains_key("mcp_servers.wework_space.enabled"));
-    assert!(!config.contains_key("mcp_servers.wework_space.url"));
+    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
+    assert_eq!(config["mcp_servers.wework_space.url"], endpoint.url);
+    assert_eq!(
+        config["mcp_servers.wework_space.default_tools_approval_mode"],
+        "approve"
+    );
+    assert!(
+        !config["mcp_servers.wework_space.http_headers.X-Wework-Mcp-Context"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
     assert!(!config.contains_key("mcp_servers.wework_space.command"));
     assert!(!config.contains_key("mcp_servers.wework_space.args"));
     assert!(launch_config
@@ -5263,7 +5276,7 @@ fn codex_thread_exposes_notifications_without_project_context() {
     let params = thread_start_params(&request, &launch_config);
     let config = params["config"].as_object().expect("thread config");
 
-    assert!(!config.contains_key("mcp_servers.wework_space.enabled"));
+    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
     assert_eq!(config["mcp_servers.wework_notifications.enabled"], true);
     assert_eq!(
         config["mcp_servers.wework_notifications.url"],
@@ -5289,6 +5302,29 @@ fn codex_thread_exposes_notifications_without_project_context() {
     let serialized = serde_json::to_string(&mcp_config).expect("serialized MCP config");
     assert!(!serialized.contains("https://wework.example.com"));
     assert!(!serialized.contains("runtime-token"));
+}
+
+#[test]
+fn project_space_routing_keeps_detailed_workflows_out_of_initial_context() {
+    let instructions = codex_thread_developer_instructions("", "");
+    assert!(instructions.contains(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS));
+    assert!(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS.len() < 600);
+    assert!(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS.contains("deferred tools"));
+    assert!(!WEWORK_SPACE_DEVELOPER_INSTRUCTIONS.contains("submit_workflow_plan"));
+    assert!(!WEWORK_SPACE_DEVELOPER_INSTRUCTIONS.contains("list_item_attachments"));
+}
+
+#[test]
+fn codex_rejects_incomplete_dispatch_instead_of_exposing_personal_tools() {
+    let _environment = environment::LaunchEnvironment::new();
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "origin".into(),
+        json!({
+            "type":"issue_dispatch", "dispatchRole":"executor", "cloudProjectId":"space-1"
+        }),
+    );
+    assert!(build_codex_launch_config(&request).is_err());
 }
 
 #[test]

@@ -122,12 +122,9 @@ pub(crate) const WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework �
 - Never enter passwords, authentication codes, payment details, or other secrets unless the user explicitly authorizes that exact action in the current conversation.
 - Do not use computer use for Wework built-in browser tasks; use the `browser_*` tools instead."#;
 pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空间 routing:
-- "项目空间" and "project space" refer to Wework project spaces. For project-space boards, tasks, files, comments, deliveries, tables, or assignment requests, use the available `wework_space` MCP tools.
-- `wework_space` is a fixed capability connected by the Wework Executor. Do not call MCP resource listing, a browser, Shell, `curl`, or parse `wegent://` URLs to determine whether it is available.
-- For the current bound Issue, call `get_current_context` first. Read its description with `get_board_item` and its discussion with `list_board_item_comments`, including PR links and feedback posted in comments. Use `add_board_item_comment` to write to the same visible Issue activity. Read attachments with `list_item_attachments`, then `read_item_attachment`.
-- Use `list_board_items` to list a project's tasks and `search_board_items` for text or structured task searches. Use the matching project-space tool for reads and writes instead of querying local files, executor logs, or backend storage directly.
-- For a manager-bound Issue, call `get_board_item` and `get_assignment_candidates` to inspect the Issue and eligible group members, then call `submit_workflow_plan` once for the current concurrent batch. The Executor starts every selected member as an independent task with that member's configured runtime; never use Codex subagents or execute member work yourself. A fresh manager task will be started after the batch finishes. Only the manager may update the parent Issue status through the project-space tool.
-- Manager and member runs are automatically recorded in the Issue activity. When the manager calls `update_issue_status`, its `comment` field is optional and is the only extra status explanation to publish. Do not duplicate the same result with `add_board_item_comment`.
+- Use `wework_space` MCP tools for Wework project spaces and Issues; discover deferred tools before reporting them unavailable.
+- For the current Issue, start with `get_current_context`; without a binding, use `list_spaces` and explicit target IDs. Follow the discovered tool instructions.
+- Never use MCP resources, browser, Shell, `curl`, local storage or provider APIs to bypass these tools or their access errors.
 "#;
 
 const IMAGE_MIME_TYPES: &[&str] = &[
@@ -5279,9 +5276,6 @@ fn managed_wework_mcp_config_overrides(
             &mut overrides,
         );
     }
-    if crate::task_runtime::mcp::encoded_space_context_grant(request).is_none() {
-        return Ok((overrides, env));
-    }
     append_managed_mcp_config(
         crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
         crate::task_runtime::mcp::space_mcp_client_config(request)?,
@@ -5328,7 +5322,7 @@ fn append_managed_mcp_config(
             ));
         }
     }
-    if config.context_bound {
+    if config.auto_approve {
         overrides.push(format!(
             "{key}.default_tools_approval_mode={}",
             toml_value("approve")
