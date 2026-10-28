@@ -76,6 +76,9 @@ interface SkillUploadModalProps {
   isPublic?: boolean // Whether this is for public skill management (admin)
   createTarget?: ResourceCreateTarget
   writableGroups?: Group[]
+  writableGroupsError?: Error | null
+  writableGroupsLoading?: boolean
+  onRetryWritableGroups?: () => void
   publishAfterCreate?: boolean
   onCreateOptionsChange?: (
     target: ResourceCreateTarget,
@@ -130,6 +133,9 @@ export default function SkillUploadModal({
   isPublic = false,
   createTarget = { scope: 'personal' },
   writableGroups = [],
+  writableGroupsError = null,
+  writableGroupsLoading = false,
+  onRetryWritableGroups,
   publishAfterCreate = false,
   onCreateOptionsChange,
 }: SkillUploadModalProps) {
@@ -676,6 +682,9 @@ export default function SkillUploadModal({
                         groupNames={targetGroupNames}
                         onChange={handlePublishTargetChange}
                         multipleGroups
+                        groupsError={writableGroupsError}
+                        groupsLoading={writableGroupsLoading}
+                        onRetryGroups={onRetryWritableGroups}
                       />
                       {publishTarget === 'marketplace' && (
                         <MarketplaceTagSelector
@@ -728,6 +737,9 @@ export default function SkillUploadModal({
                           groupNames={targetGroupNames}
                           onChange={handlePublishTargetChange}
                           multipleGroups
+                          groupsError={writableGroupsError}
+                          groupsLoading={writableGroupsLoading}
+                          onRetryGroups={onRetryWritableGroups}
                         />
                         {publishTarget === 'marketplace' && (
                           <MarketplaceTagSelector

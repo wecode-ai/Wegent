@@ -1143,6 +1143,46 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
+  it('keeps a selected creation group without a parent callback', async () => {
+    const writableGroups = [
+      {
+        id: 7,
+        name: 'engineering',
+        display_name: 'Engineering',
+        my_role: 'Developer',
+      } as Group,
+    ]
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+        writableGroups={writableGroups}
+      />
+    )
+
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'New group agent' },
+    })
+    fireEvent.click(screen.getByTestId('capability-scope-team'))
+    fireEvent.click(screen.getByTestId('capability-scope-group-engineering'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedCreateBot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target_group_names: ['engineering'],
+        })
+      )
+    })
+  })
+
   it('confirms before removing all team publication bindings', async () => {
     const team = makeTeam()
     mockedGetAgentBindings.mockResolvedValueOnce({

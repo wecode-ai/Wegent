@@ -55,4 +55,26 @@ describe('CapabilityScopeSelector', () => {
 
     expect(onChange).toHaveBeenLastCalledWith('team', 'team-b', ['team-b'])
   })
+
+  it('shows a group load error with a retry action', async () => {
+    const user = userEvent.setup()
+    const onRetryGroups = jest.fn()
+
+    render(
+      <CapabilityScopeSelector
+        value="team"
+        groups={groups}
+        multipleGroups
+        onChange={jest.fn()}
+        groupsError={new Error('group load failed')}
+        onRetryGroups={onRetryGroups}
+      />
+    )
+
+    expect(screen.getByTestId('capability-scope-groups-error')).toHaveTextContent(
+      'messages.groups_load_failed'
+    )
+    await user.click(screen.getByTestId('capability-scope-groups-retry'))
+    expect(onRetryGroups).toHaveBeenCalledTimes(1)
+  })
 })

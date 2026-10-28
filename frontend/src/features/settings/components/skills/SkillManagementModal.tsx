@@ -88,8 +88,17 @@ export default function SkillManagementModal({
   )
   const [referencedGhosts, setReferencedGhosts] = useState<ReferencedGhost[]>([])
 
-  const uploadNamespace = scope === 'group' && groupName ? groupName : undefined
-  const { groups: writableGroups } = useWritableGroups(open && scope !== 'public')
+  const targetGroupName =
+    createTarget.scope === 'group'
+      ? createTarget.groupName || createTarget.groupNames?.[0]
+      : undefined
+  const uploadNamespace = editingSkill?.namespace || targetGroupName
+  const {
+    groups: writableGroups,
+    error: writableGroupsError,
+    loading: writableGroupsLoading,
+    reload: reloadWritableGroups,
+  } = useWritableGroups(open && scope !== 'public')
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true)
@@ -572,6 +581,9 @@ export default function SkillManagementModal({
           isPublic={scope === 'public'}
           createTarget={createTarget}
           writableGroups={writableGroups}
+          writableGroupsError={writableGroupsError}
+          writableGroupsLoading={writableGroupsLoading}
+          onRetryWritableGroups={reloadWritableGroups}
           onCreateOptionsChange={setCreateTarget}
         />
       )}
