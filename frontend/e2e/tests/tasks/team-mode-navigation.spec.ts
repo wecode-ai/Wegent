@@ -1,8 +1,11 @@
 import { expect, type Page } from '@playwright/test'
 import { expectSelected, test, type HistoryTeam } from '../../fixtures/recent-team-history'
 
-async function openCodePage(page: Page): Promise<void> {
-  await page.goto('/chat?agent=code', { waitUntil: 'domcontentloaded' })
+async function openCodePage(page: Page, teamId?: number): Promise<void> {
+  const params = new URLSearchParams({ agent: 'code' })
+  if (teamId !== undefined) params.set('teamId', String(teamId))
+  await page.goto(`/chat?${params.toString()}`, { waitUntil: 'domcontentloaded' })
+  await expect(page).toHaveURL(/\/chat\?.*agent=code/)
   await expect(page.getByTestId('quick-access-more-button')).toBeVisible({ timeout: 15000 })
 }
 
@@ -23,9 +26,11 @@ async function selectFromAllAgents(page: Page, team: HistoryTeam): Promise<void>
 
 test.describe('Agent selection keeps the current page mode', () => {
   test('dual-mode agent selected from all agents stays in code mode', async ({ page, history }) => {
+    const initialTeam = await history.teamWithModes('dual-all-agents-initial', ['chat', 'code'])
     const team = await history.teamWithModes('dual-all-agents', ['chat', 'code'])
 
-    await openCodePage(page)
+    await openCodePage(page, initialTeam.id)
+    await expectSelected(page, initialTeam)
     await selectFromAllAgents(page, team)
 
     await expectCodeModeSelected(page, team)
@@ -35,10 +40,12 @@ test.describe('Agent selection keeps the current page mode', () => {
     page,
     history,
   }) => {
+    const initialTeam = await history.teamWithModes('dual-selector-initial', ['chat', 'code'])
     const team = await history.teamWithModes('dual-selector', ['chat', 'code'])
     await history.seed(team, 'code')
 
-    await openCodePage(page)
+    await openCodePage(page, initialTeam.id)
+    await expectSelected(page, initialTeam)
     await page.getByTestId('agent-skill-selector-button').click()
     await page.getByTestId(`team-option-${team.name}`).click()
 
