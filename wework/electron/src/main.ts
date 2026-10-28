@@ -38,9 +38,13 @@ import {
   captureWebContentsDataUrl,
   createElectronCapabilityRouter,
   WEWORK_WORKBENCH_PRINCIPAL,
+  WEWORK_APP_PRINCIPAL,
   createWorkbenchCapabilityRouter,
 } from './host/electron-capabilities.js'
 import { HostPipeServer } from './host/host-pipe.js'
+import { HostCapabilityRouter, HostCapabilityError } from './host/capability-router.js'
+import { assertDesktopIpcSender } from './host/desktop-ipc.js'
+import { SystemCredentialBackend } from './host/system-credential-backend.js'
 import { DesktopHostEventBroker } from './host/desktop-host-events.js'
 import { StartupTelemetryLifecycle, StartupTelemetrySuccessGate } from './host/startup-telemetry.js'
 import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.js'
@@ -161,6 +165,8 @@ import {
   type LocalWorkspaceOpenRequest,
 } from './runtime/local-workspace-cli.js'
 import { SecureValueStore } from './host/secure-value-store.js'
+import { CredentialMirrorMigration } from './host/credential-mirror-migration.js'
+import { ModelConfigurationStore } from './host/model-configuration-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { syncDockBadge } from './host/dock-badge.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
@@ -342,6 +348,11 @@ let e2eForegroundActivationAllowed = false
 let preferences: PreferencesStore | null = null
 let rendererStorage: RendererStorageStore | null = null
 let cloudCredentials: CloudCredentialService | null = null
+let secureStorage: SecureValueStore | null = null
+let desktopCapabilityRouter: HostCapabilityRouter | null = null
+const desktopIpcOrigins = new Map<number, string>()
+const desktopWorkbenchRouters = new Map<string, HostCapabilityRouter>()
+const desktopWorkbenchContents = new Map<number, { tabId: string; url: string }>()
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
 let startupRecovery: StartupRecoveryService | null = null
@@ -593,7 +604,29 @@ rendererHealth.on('change', () => {
   mainWindow?.webContents.send('runtime:changed')
 })
 
+function trustedDesktopHandle(
+  channel: string,
+  handler: (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown
+): void {
+  ipcMain.handle(channel, (event, ...args: unknown[]) => {
+    assertDesktopIpcSender(event, desktopIpcOrigins)
+    if (!channel.startsWith('desktop:') && desktopWorkbenchContents.has(event.sender.id))
+      throw new HostCapabilityError(
+        'capability_denied',
+        'This operation requires the main application'
+      )
+    return handler(event, ...args)
+  })
+}
+
+function desktopHostPipe(router: HostCapabilityRouter): HostPipeServer {
+  desktopCapabilityRouter = router
+  return new HostPipeServer(router)
+}
+
 function secureDshContents(contents: WebContents, dshUrl: string): void {
+  desktopIpcOrigins.set(contents.id, dshUrl)
+  contents.once('destroyed', () => desktopIpcOrigins.delete(contents.id))
   const allowedOrigin = new URL(dshUrl).origin
   installContextMenu(contents, 'app')
   contents.setWindowOpenHandler(({ url }) => {
@@ -710,6 +743,17 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       ownerId: contents.id,
     })
     embeddedBrowser.attach(pending.label, guestContents)
+    const workbench = desktopRuntime
+      ?.diagnostics()
+      .workbenchRuntimes.find(runtime => runtime.tabId === pending.label)
+    if (workbench && desktopWorkbenchRouters.has(workbench.tabId)) {
+      desktopIpcOrigins.set(guestContents.id, workbench.url)
+      desktopWorkbenchContents.set(guestContents.id, { tabId: workbench.tabId, url: workbench.url })
+      guestContents.once('destroyed', () => {
+        desktopIpcOrigins.delete(guestContents.id)
+        desktopWorkbenchContents.delete(guestContents.id)
+      })
+    }
     const browserManager = embeddedBrowser
     installContextMenu(
       guestContents,
@@ -1625,10 +1669,55 @@ function installIpc(): void {
     if (typeof name !== 'string' || !name.trim()) throw new Error('Plugin name is required')
     return requiredStartupRecovery().disablePlugin(name)
   })
-  ipcMain.handle('cloud-credentials:get-device-public-key', () =>
+  const desktopIdentity = (id: number) => {
+    const binding = desktopWorkbenchContents.get(id)
+    if (!binding) return { router: desktopCapabilityRouter, principal: WEWORK_APP_PRINCIPAL }
+    const active = desktopRuntime
+      ?.diagnostics()
+      .workbenchRuntimes.some(
+        runtime => runtime.tabId === binding.tabId && runtime.url === binding.url
+      )
+    if (!active)
+      throw new HostCapabilityError('capability_denied', 'Workbench runtime is no longer active')
+    return {
+      router: desktopWorkbenchRouters.get(binding.tabId),
+      principal: WEWORK_WORKBENCH_PRINCIPAL,
+    }
+  }
+  trustedDesktopHandle('desktop:describe', event => {
+    const { router, principal } = desktopIdentity(event.sender.id)
+    return { protocolVersion: 1, capabilities: router?.describe(principal) ?? [] }
+  })
+  trustedDesktopHandle('desktop:invoke', async (event, capability, params) => {
+    try {
+      const { router, principal } = desktopIdentity(event.sender.id)
+      if (
+        !router ||
+        typeof capability !== 'string' ||
+        !params ||
+        typeof params !== 'object' ||
+        Array.isArray(params)
+      ) {
+        throw new HostCapabilityError('invalid_params', 'Invalid desktop request')
+      }
+      return {
+        ok: true,
+        result: await router.invoke(principal, capability, params as Record<string, unknown>),
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: error instanceof HostCapabilityError ? error.code : 'capability_failed',
+          message: error instanceof Error ? error.message : 'Desktop operation failed',
+        },
+      }
+    }
+  })
+  trustedDesktopHandle('cloud-credentials:get-device-public-key', () =>
     requiredCloudCredentials().devicePublicKey()
   )
-  ipcMain.handle('cloud-credentials:claim-authorization', async (_event, input: unknown) => {
+  trustedDesktopHandle('cloud-credentials:claim-authorization', async (_event, input: unknown) => {
     try {
       if (!input || typeof input !== 'object' || Array.isArray(input)) {
         throw new CloudCredentialError('request_failed', 'Authorization input is invalid')
@@ -1646,19 +1735,22 @@ function installIpc(): void {
       return cloudCredentialFailure(error)
     }
   })
-  ipcMain.handle('cloud-credentials:refresh-access-token', async (_event, apiBaseUrl: unknown) => {
-    try {
-      return {
-        ok: true,
-        value: await requiredCloudCredentials().refreshAccessToken(
-          requiredText(apiBaseUrl, 'apiBaseUrl')
-        ),
+  trustedDesktopHandle(
+    'cloud-credentials:refresh-access-token',
+    async (_event, apiBaseUrl: unknown) => {
+      try {
+        return {
+          ok: true,
+          value: await requiredCloudCredentials().refreshAccessToken(
+            requiredText(apiBaseUrl, 'apiBaseUrl')
+          ),
+        }
+      } catch (error) {
+        return cloudCredentialFailure(error)
       }
-    } catch (error) {
-      return cloudCredentialFailure(error)
     }
-  })
-  ipcMain.handle('cloud-credentials:clear', () => requiredCloudCredentials().clear())
+  )
+  trustedDesktopHandle('cloud-credentials:clear', () => requiredCloudCredentials().clear())
   ipcMain.handle('runtime:get-state', () => ({
     ...(desktopRuntime?.state() ?? {
       coreDshUrl: null,
@@ -1679,7 +1771,7 @@ function installIpc(): void {
     }
     await startDesktopRuntime()
   })
-  ipcMain.handle('runtime:list-execution-environments', async () => {
+  trustedDesktopHandle('runtime:list-execution-environments', async () => {
     const runtime = await electronNodeRuntime()
     const configuredPath = await configuredNodePath()
     return [
@@ -1691,7 +1783,7 @@ function installIpc(): void {
       },
     ]
   })
-  ipcMain.handle('runtime:choose-node-executable', async () => {
+  trustedDesktopHandle('runtime:choose-node-executable', async () => {
     const options: OpenDialogOptions = {
       title: 'Select Node.js executable',
       properties: ['openFile'],
@@ -1705,11 +1797,11 @@ function installIpc(): void {
     await requiredPreferences().update({ nodeExecutablePath: path })
     return { path, version }
   })
-  ipcMain.handle('runtime:use-builtin-node', async () => {
+  trustedDesktopHandle('runtime:use-builtin-node', async () => {
     await requiredPreferences().update({ nodeExecutablePath: null })
   })
-  ipcMain.handle('runtime:resolve-proxy', async (_event, targetUrl: string) =>
-    resolveSystemProxy(session.defaultSession, targetUrl)
+  trustedDesktopHandle('runtime:resolve-proxy', async (_event, targetUrl: unknown) =>
+    resolveSystemProxy(session.defaultSession, requiredText(targetUrl, 'targetUrl'))
   )
 }
 
@@ -1833,8 +1925,22 @@ async function configureDesktopRuntime(): Promise<void> {
   }
   if (!preferences) throw new Error('Desktop preferences are unavailable')
   if (!rendererStorage) throw new Error('Renderer storage is unavailable')
+  if (!secureStorage) throw new Error('System credential storage is unavailable')
+  await secureStorage.initialize()
+  await requiredCloudCredentials().initialize()
+  const credentialMirrors = new CredentialMirrorMigration(secureStorage)
+  await credentialMirrors.cleanArtifacts(app.getPath('userData'))
+  preferences.transform = value => credentialMirrors.preferences(value)
+  preferences.protectDamaged = (name, content) => credentialMirrors.archive(name, content)
+  rendererStorage.transform = value => credentialMirrors.renderer(value)
+  rendererStorage.protectDamaged = (name, content) => credentialMirrors.archive(name, content)
   logStartupStep('runtime-preferences-read', 'started')
   const codexSubscriptionPreferences = await preferences.read()
+  const modelConfiguration = new ModelConfigurationStore(
+    join(app.getPath('userData'), 'model-connections'),
+    secureStorage
+  )
+  await modelConfiguration.initialize()
   logStartupStep('runtime-preferences-read', 'completed')
   // The Electron PreferencesStore returns raw JSON without normalization, so an
   // absent field (e.g. a fresh install or a user who never toggled it) must fall
@@ -1853,7 +1959,6 @@ async function configureDesktopRuntime(): Promise<void> {
     downloadsDirectory,
     logDirectories: runtimeLogDirectories,
   })
-  const secureStorage = new SecureValueStore(app.getPath('userData'))
   embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'), event => {
     desktopHostEvents.publish('browser.event', { ...event })
   })
@@ -1928,14 +2033,16 @@ async function configureDesktopRuntime(): Promise<void> {
     readWorkbenchMode: async () =>
       normalizeWorkbenchMode((await requiredPreferences().read()).workbenchMode),
     createWorkbenchHostPipe: tabId => {
-      const pipe = new HostPipeServer(createWorkbenchCapabilityRouter(embeddedBrowser, tabId))
+      const router = createWorkbenchCapabilityRouter(embeddedBrowser, tabId)
+      desktopWorkbenchRouters.set(tabId, router)
+      const pipe = new HostPipeServer(router, WEWORK_WORKBENCH_PRINCIPAL)
       return { hostPipe: pipe, principal: WEWORK_WORKBENCH_PRINCIPAL }
     },
     onExecutorEvent: (event, payload) => {
       systemSleep.handleExecutorEvent(event, payload)
       trayNativeStatus?.handleExecutorEvent(event)
     },
-    hostPipe: new HostPipeServer(
+    hostPipe: desktopHostPipe(
       createElectronCapabilityRouter(
         () => mainWindow,
         () => rendererHealth.snapshot(),
@@ -1997,6 +2104,11 @@ async function configureDesktopRuntime(): Promise<void> {
               taskId: taskAddressId,
             }),
           secureStorage,
+          modelConfiguration,
+          publishModelCredentials: entries => {
+            if (!desktopRuntime) throw new Error('Executor is unavailable')
+            return desktopRuntime.replaceModelCredentials(entries)
+          },
           takePendingWorkspaceOpenRequests,
           pendingSchemes,
           openScheme: openSchemeInMainWindow,
@@ -2375,7 +2487,15 @@ if (hasSingleInstanceLock) {
         console.error('[popout-window] global shortcut failed', error)
       )
     }
-    cloudCredentials = new CloudCredentialService(app.getPath('userData'))
+    secureStorage = new SecureValueStore(app.getPath('userData'), {
+      backend: new SystemCredentialBackend(`${applicationId}.credentials.v3`),
+      acquireLock: resources => {
+        const executable = startupRuntimeEnvironment?.WEWORK_EXECUTOR_PATH?.trim()
+        if (!executable) throw new Error('Credential migration lock is unavailable')
+        return executorMigrationLock(executable, { wait: true })(resources)
+      },
+    })
+    cloudCredentials = new CloudCredentialService(app.getPath('userData'), secureStorage)
     startupRecovery = new StartupRecoveryService({
       rendererStorage,
       preferences,
@@ -2389,7 +2509,13 @@ if (hasSingleInstanceLock) {
         }
       },
       clearRuntimeFiles: () => clearStartupRuntimeFiles(app.getPath('userData')),
-      clearUserFiles: () => {
+      clearUserFiles: async () => {
+        await secureStorage!.update(values => {
+          for (const key of Object.keys(values)) delete values[key]
+          values['wework-mirrors.models'] = '3'
+          values['wework-cloud.mirrors-closed'] = '3'
+          values['wework-cloud.migrated'] = '3'
+        })
         const environment = startupRuntimeEnvironment ?? process.env
         const home = environment.WEGENT_EXECUTOR_HOME?.trim() || executorHome
         return clearStartupUserFiles({
@@ -2698,10 +2824,7 @@ function cloudCredentialFailure(error: unknown): {
   const credentialError =
     error instanceof CloudCredentialError
       ? error
-      : new CloudCredentialError(
-          'request_failed',
-          error instanceof Error ? error.message : String(error)
-        )
+      : new CloudCredentialError('request_failed', 'Cloud credential operation failed')
   return {
     ok: false,
     error: {

@@ -33,7 +33,10 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
   private readonly token = randomBytes(32).toString('base64url')
   private session: HostPipeSession | null = null
 
-  constructor(private readonly router: HostCapabilityRouter) {
+  constructor(
+    private readonly router: HostCapabilityRouter,
+    private readonly principal = '@wegent/dsh-app-wework'
+  ) {
     super()
   }
 
@@ -179,7 +182,7 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
       message.type !== 'hello' ||
       message.protocolVersion !== HOST_PROTOCOL_VERSION ||
       message.token !== this.token ||
-      !principal
+      principal !== this.principal
     ) {
       this.protocolFailure(session, new Error('Desktop host handshake was rejected'))
       return

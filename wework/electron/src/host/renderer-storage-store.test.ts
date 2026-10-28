@@ -30,6 +30,40 @@ describe('RendererStorageStore', () => {
     ).toEqual({ marker: 'before', theme: 'dark' })
   })
 
+  it('refuses future storage versions without archiving, rewriting or clearing browser data', async () => {
+    const { root, store } = await createStore()
+    const path = join(root, 'renderer-local-storage.json')
+    const source = JSON.stringify({ version: 2, entries: { appearance: 'dark' } })
+    await writeFile(path, source)
+    store.protectDamaged = vi.fn()
+    const cleanup = { clearAll: vi.fn(), clearOrigin: vi.fn() }
+    await expect(store.initialize({})).rejects.toThrow('Unsupported renderer storage version')
+    await expect(store.prepareOrigin('http://127.0.0.1:4101', cleanup)).rejects.toThrow(
+      'Unsupported renderer storage version'
+    )
+    await expect(store.update({ clear: false, changes: { appearance: 'light' } })).rejects.toThrow(
+      'Unsupported renderer storage version'
+    )
+    expect(await readFile(path, 'utf8')).toBe(source)
+    expect(store.protectDamaged).not.toHaveBeenCalled()
+    expect(cleanup.clearAll).not.toHaveBeenCalled()
+  })
+
+  it('protects damaged mirrors before healing, preserving source when the vault is unavailable', async () => {
+    const { root, store } = await createStore()
+    const path = join(root, 'renderer-local-storage.json')
+    const source = '{"token":"secret-canary"'
+    await writeFile(path, source)
+    store.protectDamaged = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('vault locked'))
+      .mockResolvedValue(undefined)
+    await expect(store.initialize({})).rejects.toThrow('vault locked')
+    expect(await readFile(path, 'utf8')).toBe(source)
+    expect(await store.initialize({ appearance: 'dark' })).toEqual({ appearance: 'dark' })
+    expect(store.protectDamaged).toHaveBeenLastCalledWith('renderer-local-storage.json', source)
+    expect(await readFile(path, 'utf8')).not.toContain('secret-canary')
+  })
   it('preserves browser storage until a durable snapshot exists', async () => {
     const { store } = await createStore()
     const cleanup = {

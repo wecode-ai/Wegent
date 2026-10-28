@@ -1,4 +1,5 @@
 import { createOrdinaryMcpRegression } from './ordinary-mcp-regression.mjs'
+import { desktopHostInvoke } from '../modules/desktop-host-ipc.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -92,18 +93,12 @@ export function createDesktopScenario({
         /^codex-sandbox:\/\/[a-f0-9-]+\.web-sandbox\.oaiusercontent\.com\/mcp-app\.html$/
       )
       const frameAction = async (action, selector, value) => {
-        const response = await fetch(`${origin}/wework/electron-host/v1/invoke`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            capability: 'e2e.mcpAppFrame',
-            params: { url: frameUrl, action, selector, value },
-          }),
-          signal: AbortSignal.timeout(uiTimeoutMs),
+        return desktopHostInvoke(control, 'e2e.mcpAppFrame', {
+          url: frameUrl,
+          action,
+          selector,
+          value,
         })
-        const result = await response.json()
-        assert.equal(result.ok, true, JSON.stringify(result.error))
-        return result.result
       }
       assert.equal(await frameAction('document-status', 'body'), 200)
       const waitText = async text => {

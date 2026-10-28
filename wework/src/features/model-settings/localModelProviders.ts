@@ -1,3 +1,4 @@
+import { MODEL_PRESET_PROBES } from '../../../electron/src/host/model-probe-target'
 import {
   DEEPSEEK_FLASH_MODEL_ID,
   DEEPSEEK_V4_CONTEXT_WINDOW,
@@ -86,11 +87,7 @@ function miniMaxProviderProfile(
     requestPath: '/v1/messages',
     modelsPath: '/v1/models',
     modelsApiKeyHeader: 'Authorization',
-    connectionTest: {
-      baseUrl: modelsBaseUrl,
-      requestPath: '/v1/text/chatcompletion_v2',
-      apiFormat: 'openai-chat-completions',
-    },
+    connectionTest: MODEL_PRESET_PROBES[id],
     toolProfile: 'function',
     group: 'MiniMax',
     contextWindow: 204_800,

@@ -1,3 +1,4 @@
+import { clearLocalModelConfigs, listLegacyLocalModelConfigs } from '@/test/model-config-fixtures'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { expandCompletedProcessing } from '../../e2e/desktop/modules/streaming-text-fixture.mjs'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
@@ -9,11 +10,12 @@ import {
   seedDesktopE2ELocalModels,
   seedDesktopE2ERuntime,
 } from './automation'
-import {
-  clearLocalModelConfigs,
-  listLegacyLocalModelConfigs,
-} from '@/features/model-settings/localModelSettings'
+
 import { replaceProviderModelConfigs } from '@/features/model-settings/providerModelState'
+import type {
+  ModelConfigurationSnapshot,
+  PublicModelProvider,
+} from '@/features/model-settings/providerModelConfiguration'
 
 afterEach(() => {
   delete window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__
@@ -37,6 +39,23 @@ function providerModel(id: string, enabled = true) {
     enabled,
     updatedAt: '2026-01-01T00:00:00.000Z',
   }
+}
+
+function nativeModelFixture() {
+  const snapshot: ModelConfigurationSnapshot = {
+    path: '/fixture/model.yml',
+    revision: 'fixture',
+    providers: [],
+    loadedAt: '2026-10-28T00:00:00Z',
+  }
+  vi.spyOn(desktopHost, 'invokeDesktopHost').mockImplementation(async (capability, params) => {
+    if (capability === 'modelConfiguration.save')
+      snapshot.providers = params?.providers as PublicModelProvider[]
+    else if (capability !== 'modelConfiguration.read')
+      throw new Error(`Unexpected fixture capability: ${capability}`)
+    return snapshot as never
+  })
+  return () => snapshot.providers.flatMap(provider => provider.models.map(model => model.id))
 }
 
 describe('Electron desktop E2E automation', () => {
@@ -445,6 +464,7 @@ describe('Electron desktop E2E automation', () => {
   })
 
   test('seeds local model fixtures without configuring a cloud connection', async () => {
+    const savedIds = nativeModelFixture()
     const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)
     window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
@@ -455,16 +475,18 @@ describe('Electron desktop E2E automation', () => {
     await seedDesktopE2ERuntime()
 
     expect(fetch).not.toHaveBeenCalled()
-    expect(listLegacyLocalModelConfigs().map(model => model.id)).toEqual(
+    expect(savedIds()).toEqual(
       expect.arrayContaining([
         'desktop-e2e-responses',
         'desktop-e2e-vision',
         'desktop-e2e-vision-main',
       ])
     )
+    expect(listLegacyLocalModelConfigs()).toEqual([])
   })
 
   test('propagates cloud identity failures after seeding local models', async () => {
+    const savedIds = nativeModelFixture()
     const fetch = vi.fn().mockRejectedValue(new Error('identity unavailable'))
     vi.stubGlobal('fetch', fetch)
     window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
@@ -476,10 +498,12 @@ describe('Electron desktop E2E automation', () => {
     await expect(seedDesktopE2ERuntime()).rejects.toThrow('identity unavailable')
 
     expect(fetch).toHaveBeenCalledOnce()
-    expect(listLegacyLocalModelConfigs().map(model => model.id)).toContain('desktop-e2e-responses')
+    expect(savedIds()).toContain('desktop-e2e-responses')
+    expect(listLegacyLocalModelConfigs()).toEqual([])
   })
 
   test('treats non-successful cloud identity responses as failures', async () => {
+    nativeModelFixture()
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 401 })))
     window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
       cloudBackendUrl: 'https://cloud.example.com',
@@ -490,14 +514,16 @@ describe('Electron desktop E2E automation', () => {
     await expect(seedDesktopE2ERuntime()).rejects.toThrow('E2E cloud identity returned 401')
   })
 
-  test('skips a dependent model when Provider owns its vision proxy', () => {
+  test('skips a dependent model when Provider owns its vision proxy', async () => {
+    const savedIds = nativeModelFixture()
     replaceProviderModelConfigs([providerModel('desktop-e2e-vision')])
 
-    seedDesktopE2ELocalModels({ seedLocalModels: true }, 'http://127.0.0.1:43111')
+    await seedDesktopE2ELocalModels({ seedLocalModels: true }, 'http://127.0.0.1:43111')
 
-    const standaloneIds = listLegacyLocalModelConfigs().map(model => model.id)
+    const standaloneIds = savedIds()
     expect(standaloneIds).toContain('desktop-e2e-responses')
     expect(standaloneIds).not.toContain('desktop-e2e-vision')
     expect(standaloneIds).not.toContain('desktop-e2e-vision-main')
+    expect(listLegacyLocalModelConfigs()).toEqual([])
   })
 })

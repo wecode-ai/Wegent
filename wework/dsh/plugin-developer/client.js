@@ -5,14 +5,10 @@ window.__ModuleLoader__.load({
     const { createElement, useCallback, useEffect, useState } = React
 
     async function invoke(capability, params = {}) {
-      const response = await fetch('/wework/electron-host/v1/invoke', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ capability, params }),
-      })
-      const body = await response.json()
-      if (!response.ok || body.ok !== true) {
-        throw new Error(body.error?.message || `Electron host request failed (${response.status})`)
+      if (!window.weworkElectronHost) throw new Error('Trusted desktop IPC is unavailable')
+      const body = await window.weworkElectronHost.invoke(capability, params)
+      if (body.ok !== true) {
+        throw new Error(body.error?.message || 'Electron host request failed')
       }
       return body.result
     }

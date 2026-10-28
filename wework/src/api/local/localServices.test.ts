@@ -1,3 +1,4 @@
+import { clearLocalModelConfigs, saveLocalModelConfig } from '@/test/model-config-fixtures'
 import * as codexPlugins from './codexPlugins'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import {
@@ -17,10 +18,8 @@ import {
   resetLocalRuntimeChatStreamsForTests,
 } from './localServices'
 import {
-  clearLocalModelConfigs,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
-  saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'

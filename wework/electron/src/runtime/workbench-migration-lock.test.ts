@@ -10,7 +10,10 @@ vi.mock('node:child_process', async importOriginal => {
     ...original,
     // Keep real child pipes and lifecycle while launching the fixture on every platform.
     spawn: (command: string, args: string[], options: import('node:child_process').SpawnOptions) =>
-      original.spawn(process.execPath, [command, ...args], options),
+      original.spawn(process.execPath, [command, ...args], {
+        ...options,
+        env: { ...options.env, ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE },
+      }),
   }
 })
 

@@ -36,7 +36,17 @@ const LOCAL_GIT_ENV_VARS: &[&str] = &[
     "GIT_COMMON_DIR",
 ];
 
+#[tokio::test]
+async fn client_cannot_publish_credentials_by_claiming_owner_in_request_parameters() {
+    let server = AppIpcServer::new();
+    let response = server.handle_line(&json!({"type": "request", "id": "forged-owner", "method": "executor.credentials.replace", "params": {"credential_protocol": 3, "entries": [], "owner": true, "role": "owner"}}).to_string()).await.unwrap();
+    assert_eq!(response["ok"], false);
+    assert_eq!(response["error"]["code"], "permission_denied");
+    assert!(!response.to_string().contains("entries"));
+}
+
 struct EnvLockGuard {
+    _runtime_environment: Vec<EnvGuard>,
     _codex_home: EnvGuard,
     _codex_home_directory: tempfile::TempDir,
     _guard: MutexGuard<'static, ()>,
@@ -52,7 +62,21 @@ async fn env_lock() -> EnvLockGuard {
     // executor home. Keep personal projects out of every IPC fixture.
     let codex_home_directory = tempfile::tempdir().unwrap();
     let codex_home = EnvGuard::set("CODEX_HOME", codex_home_directory.path().to_str().unwrap());
+    let runtime_environment = vec![
+        EnvGuard::set(
+            "WEGENT_EXECUTOR_HOME",
+            codex_home_directory
+                .path()
+                .join("executor")
+                .to_str()
+                .unwrap(),
+        ),
+        EnvGuard::remove("WEGENT_CAPABILITIES_HOME"),
+        EnvGuard::remove("WEGENT_CODEX_HOME"),
+        EnvGuard::remove("WEGENT_CLAUDE_HOME"),
+    ];
     EnvLockGuard {
+        _runtime_environment: runtime_environment,
         _codex_home: codex_home,
         _codex_home_directory: codex_home_directory,
         _guard: guard,
@@ -65,6 +89,11 @@ struct EnvGuard {
 }
 
 impl EnvGuard {
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);

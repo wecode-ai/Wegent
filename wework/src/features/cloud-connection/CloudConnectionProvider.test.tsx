@@ -248,13 +248,13 @@ describe('CloudConnectionProvider', () => {
     await waitFor(() => {
       expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}')).toMatchObject({
         credentialMode: 'legacy_access_token',
-        token,
       })
+      expect(localStorage.getItem('wework.cloudConnection')).not.toContain(token)
     })
     expect(credentialMocks.refreshAccessToken).not.toHaveBeenCalled()
   })
 
-  it('restores a legacy access-token connection without the desktop refresh service', async () => {
+  it('restores a legacy connection through the protected desktop credential service', async () => {
     const token = tokenWithExp()
     saveStoredCloudConnection({
       backendUrl: 'https://legacy.example.com',
@@ -297,7 +297,9 @@ describe('CloudConnectionProvider', () => {
       })
     )
     expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
-    expect(credentialMocks.refreshAccessToken).not.toHaveBeenCalled()
+    expect(credentialMocks.refreshAccessToken).toHaveBeenCalledWith(
+      'https://legacy.example.com/api'
+    )
   })
 
   it('does not initialize application plugins when restoring a cloud connection', async () => {
@@ -477,7 +479,7 @@ describe('CloudConnectionProvider', () => {
     expect(credentialMocks.clear).toHaveBeenCalledTimes(1)
   })
 
-  it('disconnects when the desktop credential bridge throws synchronously', async () => {
+  it('reports a failed disconnect and retains recovery metadata when credential deletion fails', async () => {
     saveStoredCloudConnection({
       backendUrl: 'https://cloud.example.com',
       apiBaseUrl: 'https://cloud.example.com/api',
@@ -498,8 +500,8 @@ describe('CloudConnectionProvider', () => {
 
     await userEvent.click(screen.getByTestId('disconnect-cloud-button'))
 
-    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('disconnected')
-    expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
+    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('error')
+    expect(localStorage.getItem('wework.cloudConnection')).not.toBeNull()
   })
 
   it('does not reconnect when an in-flight credential refresh completes after disconnecting', async () => {
@@ -870,7 +872,7 @@ describe('CloudConnectionProvider', () => {
       if (credentialMode === 'desktop_refresh') {
         expect(credentialMocks.refreshAccessToken).toHaveBeenCalledWith('http://127.0.0.1:8000/api')
       } else {
-        expect(credentialMocks.refreshAccessToken).not.toHaveBeenCalled()
+        expect(credentialMocks.refreshAccessToken).toHaveBeenCalledWith('http://127.0.0.1:8000/api')
       }
     }
   )

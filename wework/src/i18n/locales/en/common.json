@@ -4160,7 +4160,8 @@
     "app_update_rollback_restore_description": "Rolling back to v{{version}} requires restoring pre-update data. New local data will be preserved separately. Repositories and cloud records are unaffected.",
     "app_update_rollback_confirm": "Roll back and restart",
     "app_update_rollback_failed": "Rollback failed. See the update log.",
-    "app_update_rollback_load_failed": "Unable to read the previous release."
+    "app_update_rollback_load_failed": "Unable to read the previous release.",
+    "cloud_connection_disconnect_failed": "Credentials could not be removed from system storage. Unlock it and try disconnecting again."
   },
   "delivery": {
     "action": "Deliver",

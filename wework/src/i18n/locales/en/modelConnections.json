@@ -73,5 +73,21 @@
   "testConnection": "Test connection",
   "testing": "Testing…",
   "testSuccess": "Connected",
-  "testFailed": "Failed"
+  "testFailed": "Failed",
+  "recoveryTitle": "Recover model connections",
+  "recoveryDescription": "Choose connections to recover and check their endpoints. Keys are restored by secure storage and are never displayed here.",
+  "recoveryUnavailable": "Secure storage is unavailable. Unlock the system credential store and retry; restart the app after a timeout. After changing machines or system users, restore the original system credential store or configure keys again.",
+  "recoveryFailed": "Recovery could not be confirmed. Original files and archives are retained. Refresh before retrying; restore a valid snapshot first if the configuration file is damaged.",
+  "recoverySuccess": "Configuration restored. Select the recovered model and test its connection.",
+  "recoveryLegacy": "Connections from before the upgrade",
+  "recoverySaved": "Last valid configuration",
+  "recoveryImport": "Restore as separate connections",
+  "recoveryNewFile": "Restore to a new file",
+  "recoveryEmpty": "No model connections can be restored automatically. Enter an API key again or choose a valid model file.",
+  "recoveryUnreadable": "{{count}} archives cannot be restored automatically. Original data remains in secure storage. Use a valid model file or enter keys again.",
+  "recoveryCloud": "Historical cloud credentials conflict. Reconnect to confirm your account; old tokens will not be restored automatically.",
+  "recoveryConfirmTitle": "Confirm recovery",
+  "recoveryConfirmLegacy": "Restore these old connections separately and retain the current configuration. Check the original endpoints and select the recovered model afterward.",
+  "recoveryConfirmSaved": "Restore the valid snapshot to a new file and switch to it. Original files and archives will be retained. Check these endpoints.",
+  "recoveryChooseFile": "Choose a valid model file"
 }

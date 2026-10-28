@@ -1,197 +1,169 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
-describe('desktop host events', () => {
-  beforeEach(() => {
-    vi.resetModules()
-    window.sessionStorage.clear()
+beforeEach(() => {
+  vi.resetModules()
+  window.sessionStorage.clear()
+})
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+  delete window.weworkElectronHost
+})
+
+test('E2E can delay only delivery of a completed real host response', async () => {
+  vi.stubEnv('VITE_WEWORK_E2E', 'true')
+  const gates = await import('@/e2e/runtime-transport-gates')
+  gates.armRuntimeTransportGate({
+    id: 'handoff',
+    kind: 'response',
+    name: 'smartApps.storeAdditionalProxyTokens',
+    where: [{ path: 'params.installationId', equals: 'app-1' }],
   })
-
-  afterEach(() => {
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-    vi.unstubAllEnvs()
+  const result = { stored: true }
+  const invoke = vi.fn().mockResolvedValue({ ok: true, result })
+  window.weworkElectronHost = { describe: vi.fn(), invoke }
+  const { invokeDesktopHost } = await import('./desktopHost')
+  let delivered = false
+  const pending = invokeDesktopHost('smartApps.storeAdditionalProxyTokens', {
+    installationId: 'app-1',
+    tokens: ['test-token'],
+  }).then(value => {
+    delivered = true
+    return value
   })
-
-  test('E2E can delay only delivery of a completed real host response', async () => {
-    vi.stubEnv('VITE_WEWORK_E2E', 'true')
-    const gates = await import('@/e2e/runtime-transport-gates')
-    gates.armRuntimeTransportGate({
-      id: 'handoff',
-      kind: 'response',
-      name: 'smartApps.storeAdditionalProxyTokens',
-      where: [{ path: 'params.installationId', equals: 'app-1' }],
-    })
-    const result = { stored: true }
-    const response = {
-      ok: true,
-      status: 200,
-      json: vi.fn().mockResolvedValue({ ok: true, result }),
-    }
-    const fetchMock = vi.fn().mockResolvedValue(response)
-    vi.stubGlobal('fetch', fetchMock)
-    const { invokeDesktopHost } = await import('./desktopHost')
-    let delivered = false
-    const pending = invokeDesktopHost('smartApps.storeAdditionalProxyTokens', {
+  try {
+    await vi.waitFor(() => expect(gates.readRuntimeTransportGate('handoff')).not.toBeNull())
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('smartApps.storeAdditionalProxyTokens', {
       installationId: 'app-1',
       tokens: ['test-token'],
-    }).then(value => {
-      delivered = true
-      return value
     })
-    try {
-      await vi.waitFor(() => expect(gates.readRuntimeTransportGate('handoff')).not.toBeNull())
-      expect(fetchMock).toHaveBeenCalledOnce()
-      expect(response.json).toHaveBeenCalledOnce()
-      expect(delivered).toBe(false)
-      gates.releaseRuntimeTransportGate('handoff')
-      expect(await pending).toBe(result)
-    } finally {
-      gates.resetRuntimeTransportGates()
-      await pending
-    }
-  })
+    expect(delivered).toBe(false)
+    gates.releaseRuntimeTransportGate('handoff')
+    expect(await pending).toBe(result)
+  } finally {
+    gates.resetRuntimeTransportGates()
+    await pending
+  }
+})
 
-  test('production host responses cannot be held by an E2E gate', async () => {
+test('production host responses cannot be held by an E2E gate', async () => {
+  vi.stubEnv('VITE_WEWORK_E2E', 'true')
+  const gates = await import('@/e2e/runtime-transport-gates')
+  gates.armRuntimeTransportGate({ id: 'production', kind: 'response', name: 'smartApps.start' })
+  vi.stubEnv('MODE', 'production')
+  vi.stubEnv('VITE_WEWORK_E2E', 'false')
+  window.weworkElectronHost = {
+    describe: vi.fn(),
+    invoke: vi.fn().mockResolvedValue({ ok: true, result: 'running' }),
+  }
+  const { invokeDesktopHost } = await import('./desktopHost')
+  try {
+    await expect(invokeDesktopHost('smartApps.start')).resolves.toBe('running')
     vi.stubEnv('VITE_WEWORK_E2E', 'true')
-    const gates = await import('@/e2e/runtime-transport-gates')
-    gates.armRuntimeTransportGate({ id: 'production', kind: 'response', name: 'smartApps.start' })
-    vi.stubEnv('MODE', 'production')
-    vi.stubEnv('VITE_WEWORK_E2E', 'false')
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ ok: true, result: 'running' }),
-      })
-    )
-    const { invokeDesktopHost } = await import('./desktopHost')
-    try {
-      await expect(invokeDesktopHost('smartApps.start')).resolves.toBe('running')
-      vi.stubEnv('VITE_WEWORK_E2E', 'true')
-      expect(gates.readRuntimeTransportGate('production')).toBeNull()
-    } finally {
-      vi.stubEnv('VITE_WEWORK_E2E', 'true')
-      gates.resetRuntimeTransportGates()
-    }
-  })
+    expect(gates.readRuntimeTransportGate('production')).toBeNull()
+  } finally {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    gates.resetRuntimeTransportGates()
+  }
+})
 
-  test('shares one bounded poll loop across subscribers and advances the cursor', async () => {
-    vi.useFakeTimers()
-    let resolveFirstRequest:
-      | ((value: { ok: boolean; status: number; json: () => Promise<unknown> }) => void)
-      | null = null
-    const fetchMock = vi
+test('missing desktop IPC fails closed without falling back to HTTP', async () => {
+  delete window.weworkElectronHost
+  const request = vi.fn()
+  vi.stubGlobal('fetch', request)
+  const { invokeDesktopHost } = await import('./desktopHost')
+  await expect(invokeDesktopHost('secureStorage.get', { key: 'plugin.valid-key' })).rejects.toThrow(
+    /IPC/
+  )
+  expect(request).not.toHaveBeenCalled()
+})
+
+test('preserves structured capability errors through the preload bridge', async () => {
+  window.weworkElectronHost = {
+    describe: vi.fn(),
+    invoke: vi
       .fn()
-      .mockImplementationOnce(
-        () =>
-          new Promise(resolve => {
-            resolveFirstRequest = resolve
-          })
-      )
-      .mockImplementation(
-        () =>
-          new Promise(() => {
-            // Keep the next poll pending until the listeners are removed.
-          })
-      )
-    vi.stubGlobal('fetch', fetchMock)
-    const { subscribeDesktopHostEvents } = await import('./desktopHost')
-    const firstHandler = vi.fn()
-    const secondHandler = vi.fn()
+      .mockResolvedValue({ ok: false, error: { code: 'capability_denied', message: 'Denied' } }),
+  }
+  const { invokeDesktopHost } = await import('./desktopHost')
+  await expect(
+    invokeDesktopHost('secureStorage.get', { key: 'wework-cloud.identity' })
+  ).rejects.toMatchObject({ code: 'capability_denied' })
+})
 
-    const unsubscribeFirst = subscribeDesktopHostEvents(firstHandler)
-    const unsubscribeSecond = subscribeDesktopHostEvents(secondHandler)
-    resolveFirstRequest?.({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        ok: true,
-        result: {
-          events: [{ sequence: 1, type: 'tray.action', payload: { type: 'open-settings' } }],
-          latestSequence: 1,
-          historyLost: false,
-        },
-      }),
-    })
-
-    await vi.waitFor(() => expect(firstHandler).toHaveBeenCalledOnce())
-    expect(firstHandler).toHaveBeenCalledOnce()
-    expect(secondHandler).toHaveBeenCalledOnce()
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
-      capability: 'desktop.events',
-      params: { after: 0 },
-    })
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-
-    await vi.advanceTimersByTimeAsync(500)
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
-      capability: 'desktop.events',
-      params: { after: 1 },
-    })
-    expect(window.sessionStorage.getItem('wework.desktopHostEventCursor')).toBe('1')
-
-    const replayedHandler = vi.fn()
-    const unsubscribeReplayed = subscribeDesktopHostEvents(replayedHandler, {
-      replay: event => event.type === 'tray.action',
-    })
-    expect(replayedHandler).toHaveBeenCalledWith({
-      sequence: 1,
-      type: 'tray.action',
-      payload: { type: 'open-settings' },
-    })
-
-    unsubscribeFirst()
-    unsubscribeSecond()
-    unsubscribeReplayed()
+test('shares one bounded poll loop, advances the cursor and replays the latest event', async () => {
+  vi.useFakeTimers()
+  let reply!: (value: unknown) => void
+  const invoke = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          reply = resolve
+        })
+    )
+    .mockImplementation(() => new Promise(() => {}))
+  window.weworkElectronHost = { invoke, describe: vi.fn() }
+  const { subscribeDesktopHostEvents } = await import('./desktopHost')
+  const first = vi.fn()
+  const second = vi.fn()
+  const stopFirst = subscribeDesktopHostEvents(first)
+  const stopSecond = subscribeDesktopHostEvents(second)
+  reply({
+    ok: true,
+    result: {
+      events: [{ sequence: 1, type: 'tray.action', payload: { type: 'open-settings' } }],
+      latestSequence: 1,
+      historyLost: false,
+    },
   })
-
-  test('keeps only the latest browser page state for each browser in a batch', async () => {
-    vi.useFakeTimers()
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        ok: true,
-        result: {
-          events: [
-            {
-              sequence: 1,
-              type: 'browser.event',
-              payload: {
-                type: 'page-state',
-                payload: { label: 'workspace-browser', url: 'https://stale.example' },
-              },
-            },
-            {
-              sequence: 2,
-              type: 'tray.action',
-              payload: { type: 'open-settings' },
-            },
-            {
-              sequence: 3,
-              type: 'browser.event',
-              payload: {
-                type: 'page-state',
-                payload: { label: 'workspace-browser', url: 'https://current.example' },
-              },
-            },
-          ],
-          latestSequence: 3,
-          historyLost: false,
-        },
-      }),
-    })
-    vi.stubGlobal('fetch', fetchMock)
-    const { subscribeDesktopHostEvents } = await import('./desktopHost')
-    const handler = vi.fn()
-
-    const unsubscribe = subscribeDesktopHostEvents(handler)
-
-    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(2))
-    expect(handler.mock.calls.map(([event]) => event.sequence)).toEqual([2, 3])
-    expect(window.sessionStorage.getItem('wework.desktopHostEventCursor')).toBe('3')
-
-    unsubscribe()
+  await vi.waitFor(() => expect(first).toHaveBeenCalledOnce())
+  expect(second).toHaveBeenCalledOnce()
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('desktop.events', { after: 0 })
+  await vi.advanceTimersByTimeAsync(500)
+  expect(invoke).toHaveBeenLastCalledWith('desktop.events', { after: 1 })
+  expect(window.sessionStorage.getItem('wework.desktopHostEventCursor')).toBe('1')
+  const replay = vi.fn()
+  const stopReplay = subscribeDesktopHostEvents(replay, {
+    replay: event => event.type === 'tray.action',
   })
+  expect(replay).toHaveBeenCalledWith({
+    sequence: 1,
+    type: 'tray.action',
+    payload: { type: 'open-settings' },
+  })
+  stopFirst()
+  stopSecond()
+  stopReplay()
+})
+
+test('keeps only the latest browser page state in each batch', async () => {
+  vi.useFakeTimers()
+  const event = (sequence: number) => ({
+    sequence,
+    type: 'browser.event',
+    payload: {
+      type: 'page-state',
+      payload: { label: 'workspace-browser', url: `https://page-${sequence}.example` },
+    },
+  })
+  window.weworkElectronHost = {
+    describe: vi.fn(),
+    invoke: vi.fn().mockResolvedValue({
+      ok: true,
+      result: {
+        events: [event(1), { sequence: 2, type: 'tray.action', payload: {} }, event(3)],
+        latestSequence: 3,
+        historyLost: false,
+      },
+    }),
+  }
+  const { subscribeDesktopHostEvents } = await import('./desktopHost')
+  const handler = vi.fn()
+  const stop = subscribeDesktopHostEvents(handler)
+  await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(2))
+  expect(handler.mock.calls.map(([event]) => event.sequence)).toEqual([2, 3])
+  expect(window.sessionStorage.getItem('wework.desktopHostEventCursor')).toBe('3')
+  stop()
 })

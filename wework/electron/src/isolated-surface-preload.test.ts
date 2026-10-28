@@ -3,7 +3,7 @@ import { basename, resolve } from 'node:path'
 import { describe, expect, test } from 'vitest'
 
 describe('isolated surface preload', () => {
-  test('exposes only the cloud access token refresh capability', async () => {
+  test('uses validated desktop IPC while exposing only refresh in the cloud credential bridge', async () => {
     const sourcePath = resolve(
       process.cwd(),
       basename(process.cwd()) === 'electron'
@@ -14,6 +14,8 @@ describe('isolated surface preload', () => {
 
     expect(source).not.toMatch(/from\s+['"]\.\.?\//)
     expect(source).toContain("'weworkElectronCloudCredentials'")
+    expect(source).toContain('if (process.isMainFrame)')
+    expect(source).toContain("'desktop:invoke'")
     expect(source).toContain("'cloud-credentials:refresh-access-token'")
     expect(source).not.toContain('cloud-credentials:get-device-public-key')
     expect(source).not.toContain('cloud-credentials:claim-authorization')

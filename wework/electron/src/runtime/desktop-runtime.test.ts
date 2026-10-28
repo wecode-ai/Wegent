@@ -170,6 +170,51 @@ describe('DesktopRuntime lifecycle generation', () => {
     prepareState.resolveLaunch = null
   })
 
+  test('restores owner credentials on restart and stops the runtime when revocation is not acknowledged', async () => {
+    const executors: Array<FakeExecutor & { replaceCredentials: ReturnType<typeof vi.fn> }> = []
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      {
+        createExecutor: () => {
+          const executor = Object.assign(new FakeExecutor(), {
+            replaceCredentials: vi.fn().mockResolvedValue(undefined),
+          })
+          executors.push(executor)
+          return executor
+        },
+      }
+    )
+    const entries = [{ reference: 'synthetic-reference', secret: 'synthetic-canary' }]
+    try {
+      await runtime.start()
+      await runtime.replaceModelCredentials(entries)
+      expect(executors[0].replaceCredentials).toHaveBeenLastCalledWith(entries)
+      await runtime.stop()
+      await runtime.start()
+      expect(executors[1].replaceCredentials).toHaveBeenCalledWith(entries)
+      executors[1].replaceCredentials.mockRejectedValueOnce(new Error('owner unavailable'))
+      await expect(runtime.replaceModelCredentials([])).rejects.toThrow(/runtime stopped/)
+      expect(executors[1].stopCalls).toBe(1)
+      expect(runtime.state().ready).toBe(false)
+      await runtime.start()
+      expect(executors[2].replaceCredentials).not.toHaveBeenCalled()
+    } finally {
+      await runtime.stop()
+    }
+  })
+
+  test('an executor without the credential protocol cannot remain active after publication fails', async () => {
+    const executor = new FakeExecutor()
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      { createExecutor: () => executor }
+    )
+    await runtime.start()
+    await expect(runtime.replaceModelCredentials([])).rejects.toThrow(/runtime stopped/)
+    expect(executor.stopCalls).toBe(1)
+    expect(runtime.state().ready).toBe(false)
+  })
+
   test('reapplies development configuration after each profile preparation', async () => {
     const sourceRoot = '/tmp/wework-development-plugin'
     const ensure = vi

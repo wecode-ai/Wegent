@@ -50,14 +50,14 @@ try {
   ) {
     throw new Error(`Unexpected executor health: ${JSON.stringify(health)}`)
   }
-  const host = await fetchJson(new URL('/wework/electron-host/v1/invoke', origin), {
+  const hostResponse = await fetch(new URL('/wework/electron-host/v1/invoke', origin), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ capability: 'app.getVersion', params: {} }),
   })
-  if (host.result?.version !== 'managed-runtime-smoke') {
-    throw new Error(`Unexpected Electron host response: ${JSON.stringify(host)}`)
-  }
+  const host = await hostResponse.json()
+  if (hostResponse.status !== 403 || host.error?.code !== 'capability_denied')
+    throw new Error('Electron host capabilities must be unavailable over HTTP')
   const terminal = await verifyTerminalRuntime(origin, root)
   const appHtml = await fetchText(appUrl)
   if (

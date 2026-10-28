@@ -57,7 +57,23 @@ export async function testProviderConnection(
             toolProfile: probe ? 'function' : config.toolProfile,
             apiKey: config.apiKey,
           },
-          { verifyExactProbePayload: false }
+          {
+            verifyExactProbePayload: false,
+            fetcher: async (_url, options) => {
+              const result = await invokeDesktopHost<{ status: number; body: string }>(
+                'modelConfiguration.probe',
+                {
+                  reference: entry.provider.api_key,
+                  preset: Boolean(probe),
+                  body: options?.body,
+                }
+              )
+              return new Response(result.body, {
+                status: result.status,
+                headers: { 'Content-Type': 'application/json' },
+              })
+            },
+          }
         )
         return { model: config.displayName }
       } catch (error) {

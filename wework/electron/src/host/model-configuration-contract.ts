@@ -45,6 +45,7 @@ export type PublicModelProvider = Omit<ModelProvider, 'api_key'> & {
 }
 export interface ModelConfiguration {
   version: 1
+  credential_protocol?: 3
   providers: ModelProvider[]
 }
 export interface ModelConfigurationSnapshot {
@@ -57,4 +58,22 @@ export interface ModelConfigurationSnapshot {
 export interface ResolvedProviderModel {
   provider: Omit<ModelProvider, 'models'>
   model: ProviderModel
+}
+
+export interface ModelRecoveryCandidate {
+  id: string
+  kind: 'legacy-models' | 'saved-configuration'
+  providers: Array<{
+    name: string
+    baseUrl: string
+    apiFormat: ModelApiFormat
+    models: string[]
+  }>
+}
+
+export interface ModelRecoverySnapshot {
+  revision: string
+  candidates: ModelRecoveryCandidate[]
+  unreadableArchives: number
+  cloudConflicts: number
 }

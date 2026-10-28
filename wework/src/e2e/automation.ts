@@ -21,11 +21,15 @@ import {
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { EditorView } from '@codemirror/view'
 import {
-  listLegacyLocalModelConfigs,
+  createLocalModelConfig,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
-  saveLocalModelConfig,
+  type LocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
 import { getProviderModelConfigs } from '@/features/model-settings/providerModelState'
+import {
+  groupLegacyModels,
+  type ModelConfigurationSnapshot,
+} from '@/features/model-settings/providerModelConfiguration'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
@@ -433,10 +437,10 @@ function createBridge(): WeworkAutomationBridge {
   }
 }
 
-export function seedDesktopE2ELocalModels(
+export async function seedDesktopE2ELocalModels(
   runtimeConfig: DesktopE2ERuntimeConfig,
   modelServerUrl: string
-): void {
+): Promise<void> {
   const seedLocalModels =
     runtimeConfig.seedLocalModels ?? import.meta.env.VITE_WEWORK_E2E_SEED_LOCAL_MODELS === 'true'
   if (!seedLocalModels) return
@@ -503,12 +507,8 @@ export function seedDesktopE2ELocalModels(
     },
   ]
   const providerOwnedModelIds = new Set(getProviderModelConfigs().map(model => model.id))
-  // saveLocalModelConfig validates vision proxies against standalone storage.
-  const standaloneModelIds = new Set(
-    listLegacyLocalModelConfigs()
-      .filter(model => model.enabled)
-      .map(model => model.id)
-  )
+  const standaloneModelIds = new Set<string>()
+  const fixtures: LocalModelConfig[] = []
   for (const model of localModels) {
     if (providerOwnedModelIds.has(model.id)) continue
     const visionModelConfigId =
@@ -519,15 +519,31 @@ export function seedDesktopE2ELocalModels(
       )
       continue
     }
-    saveLocalModelConfig({
-      catalogReady: localModelsCatalogReady,
-      ...model,
-      baseUrl: modelServerUrl,
-      apiKey: 'wework-e2e-test-key',
-      enabled: true,
-    })
+    fixtures.push(
+      createLocalModelConfig(
+        {
+          catalogReady: localModelsCatalogReady,
+          ...model,
+          baseUrl: modelServerUrl,
+          apiKey: 'wework-e2e-test-key',
+          enabled: true,
+        },
+        fixtures
+      )
+    )
     standaloneModelIds.add(model.id)
   }
+  const snapshot = await invokeDesktopHost<ModelConfigurationSnapshot>('modelConfiguration.read')
+  if (snapshot.error) throw new Error(snapshot.error)
+  const owned = new Set(
+    snapshot.providers.flatMap(provider => provider.models.map(model => model.id))
+  )
+  const missing = fixtures.filter(model => !owned.has(model.id))
+  if (missing.length)
+    await invokeDesktopHost('modelConfiguration.save', {
+      revision: snapshot.revision,
+      providers: [...snapshot.providers, ...groupLegacyModels(missing)],
+    })
   saveLocalUserPreferences({
     wework_new_chat_model_selection: {
       modelName: 'gpt-5.4',
@@ -578,7 +594,7 @@ export async function seedDesktopE2ERuntime(): Promise<void> {
   const backendUrl = resolveDesktopE2ECloudBackendUrl(runtimeConfig)
   const modelServerUrl = resolveDesktopE2EModelServerUrl(runtimeConfig, backendUrl)
   if (modelServerUrl) {
-    seedDesktopE2ELocalModels(runtimeConfig, modelServerUrl)
+    await seedDesktopE2ELocalModels(runtimeConfig, modelServerUrl)
   }
   await seedDesktopE2ECloudConnection(runtimeConfig)
 }
@@ -2413,6 +2429,25 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'getLocationOrigin':
       return window.location.origin
+    case 'invokeDesktopHost': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        capability: string
+        params?: Record<string, unknown>
+        label?: string
+      }
+      if (input.label) {
+        return JSON.stringify(
+          await invokeDesktopHost('browser.evaluate', {
+            label: input.label,
+            expression: `window.weworkElectronHost.invoke(${JSON.stringify(input.capability)}, ${JSON.stringify(input.params ?? {})})`,
+          })
+        )
+      }
+      if (!window.weworkElectronHost) throw new Error('Trusted desktop IPC is unavailable')
+      return JSON.stringify(
+        await window.weworkElectronHost.invoke(input.capability, input.params ?? {})
+      )
+    }
     case 'restartCoreDsh':
       await flushDesktopLocalStoragePersistence()
       return ''

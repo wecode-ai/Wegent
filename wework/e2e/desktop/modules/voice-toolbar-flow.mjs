@@ -1,3 +1,4 @@
+import { desktopHostInvoke } from './desktop-host-ipc.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -42,19 +43,10 @@ export function apply(ctx) {
 }
 `
   )
-  const origin = await control.command('getLocationOrigin', 'body')
-  const response = await fetch(`${origin}/wework/electron-host/v1/invoke`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      capability: 'runtime.installCoreDshPlugin',
-      params: { spec: `file:${directory}` },
-    }),
+  const installed = await desktopHostInvoke(control, 'runtime.installCoreDshPlugin', {
+    spec: `file:${directory}`,
   })
-  const payload = await response.json()
-  assert.equal(response.ok, true, JSON.stringify(payload))
-  assert.equal(payload.ok, true, JSON.stringify(payload))
-  assert.ok(payload.result.some(plugin => plugin.name === PACKAGE && plugin.enabled))
+  assert.ok(installed.some(plugin => plugin.name === PACKAGE && plugin.enabled))
 }
 
 async function assertToolbar(control, active) {

@@ -55,6 +55,7 @@ const DEFAULT_REASONING_EFFORT: &str = "medium";
 const NON_OFFICIAL_MODEL_IMAGE_SHORT_EDGE: u32 = 720;
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
 const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
+    "WEGENT_APP_IPC_OWNER_TOKEN",
     "WEGENT_EXECUTOR_BINARY",
     "WEGENT_EXECUTOR_HOME",
     "WEGENT_EXECUTOR_LOG_DIR",

@@ -266,6 +266,12 @@ describe('managed executor runtime', () => {
                 ok: accepted,
                 protocol_version: 1,
               }) + '\\n')
+              socket.on('data', requestLine => {
+                const request = JSON.parse(requestLine)
+                if (request.method === 'executor.credentials.replace') socket.write(JSON.stringify({
+                  type: 'response', id: request.id, ok: true, result: { credential_protocol: 3 },
+                }) + '\\n')
+              })
             })
           }).listen(endpoint)
         `,

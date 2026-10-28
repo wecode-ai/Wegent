@@ -1,4 +1,11 @@
-const { ipcRenderer } = require('electron') as typeof import('electron')
+const { ipcRenderer, contextBridge } = require('electron') as typeof import('electron')
+
+if (process.isMainFrame)
+  contextBridge.exposeInMainWorld('weworkElectronHost', {
+    invoke: (capability: string, params: Record<string, unknown> = {}) =>
+      ipcRenderer.invoke('desktop:invoke', capability, params),
+    describe: () => ipcRenderer.invoke('desktop:describe'),
+  })
 
 type Rect = { x: number; y: number; width: number; height: number }
 

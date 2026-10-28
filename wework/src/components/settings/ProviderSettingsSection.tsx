@@ -1,4 +1,5 @@
 import { ProviderEditor } from './ProviderEditor'
+import { ProviderCredentialRecovery } from './ProviderCredentialRecovery'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { ChevronDown, Plus } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -7,6 +8,7 @@ import { isElectronRuntime } from '@/lib/runtime-environment'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
   getProviderConfigurationState,
+  chooseProviderConfiguration,
   initializeProviderModelConfiguration,
   reloadProviderConfiguration,
   saveProviderConfiguration,
@@ -118,6 +120,23 @@ export function ProviderSettingsSection() {
         >
           {error || loadError}
         </p>
+      )}
+      {loadError && !editor && (
+        <button
+          type="button"
+          className={BUTTON}
+          data-testid="provider-choose-recovery-file"
+          disabled={pending}
+          onClick={() => void perform(chooseProviderConfiguration)}
+        >
+          {t('recoveryChooseFile')}
+        </button>
+      )}
+      {!editor && (
+        <ProviderCredentialRecovery
+          disabled={pending}
+          configurationAvailable={!!snapshot && !loadError}
+        />
       )}
       {editor && (
         <ProviderEditor
