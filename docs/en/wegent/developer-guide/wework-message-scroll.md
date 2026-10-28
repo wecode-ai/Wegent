@@ -16,6 +16,7 @@ flowchart TD
   Measure --> Engine
   Engine --> Viewport[Normal DOM viewport]
   Controller[Follow / read / navigate / drag] -->|Ordinary follow and read policy| Engine
+  End[End key: clear the reading anchor first] -->|Enter follow immediately| Controller
   Controller -->|Reading restore| Viewport
   Controller -->|Save only while unsuspended| Snapshot[Conversation reading snapshot]
   Snapshot -->|Restore after closing isolated search| Viewport
@@ -47,6 +48,7 @@ Implementation invariants:
 - Pretext estimates unmeasured content; real DOM geometry remains authoritative. Use current UI fonts, paragraph line heights and exact widths. Prepared text is independent of width. Fenced code uses unwrapped line counts and process sections use their default collapsed height.
 - Cached rows validate the actual message-column width, layout classes, typography, font-loading revision and content signature. Measure the column during layout before enabling virtualization and restoring or estimating heights; viewport width cannot substitute for column width. Cache fingerprints of complete block content so equal-length changes also invalidate a measurement. Expanded, edited or search-specific sizes are excluded. At most 50 conversations are retained; task aliases migrate snapshots, sizes and validity metadata together, and eviction removes them together.
 - Search prepares the selected range and starts one native scroll. Navigation owns the viewport until `scrollend` or arrival at the target. Pausing, replacing the target, unmounting and reader input cancel an unfinished animation. Manual input cancels positioning while highlights keep updating with loaded messages. Navigation completion cannot reclaim ownership already handed to reading or dragging.
+- End expresses the same follow intent as the scroll-to-bottom button: clear the reading anchor and enter follow during input, before row measurements can change the range. Do not infer that intent from a later scroll event. Subsequent measurements track the actual end; Home or upward input resumes reading immediately.
 - `overflow-anchor: none` prevents another anchoring owner. TanStack owns row geometry; the text anchor only corrects residual displacement: `correction = ΔanchorOffset + ΔreaderScrollTop`. Exclude actual engine writes and range clamps from reader movement. If the original node disappears, resample rather than using its old ordinal to select another paragraph.
 - Switching conversations uses saved snapshots without scanning the outgoing transcript during unmount. Follow snapshots save zero bottom distance; reading snapshots save distance and resolvable message/item/text identity. Suspending automatic scrolling for search or a hidden pane also suspends snapshot writes: temporary navigation in isolated search pages must not overwrite the original conversation snapshot. Restore-generated scroll events cannot overwrite the reader's position.
 
@@ -56,6 +58,7 @@ Implementation invariants:
 | Own message or guidance submission                    | Resume following                                                                                             |
 | Wheel, touch, scrollbar or keyboard                   | Cancel programmatic scrolling immediately; upward movement pauses, downward arrival at the bottom can resume |
 | Scroll-to-bottom button                               | Clear manual input and enter follow; retain ownership across future size changes without a release timer     |
+| End key                                               | Enter follow before the keyboard write; subsequent measurements cannot restore an obsolete reading anchor    |
 | Search or turn navigation                             | Cancel prior commands; actual layout and scrollend settle positioning; user input interrupts                 |
 | Side panel, font change, expansion or history prepend | Update real sizes and preserve the same text position                                                        |
 | Hidden pane                                           | Suspend scrolling and restore the previous follow/read policy on display                                     |

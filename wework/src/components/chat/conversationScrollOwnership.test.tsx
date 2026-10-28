@@ -93,6 +93,54 @@ test('bottom-button motion owns all layout growth until canceled by reader input
   hook.unmount()
 })
 
+test.each(['viewport', 'scrollbar'] as const)(
+  'End on the %s follows the actual end when measurement changes before scroll delivery',
+  target => {
+    const viewport = document.createElement('div')
+    const interaction = document.createElement('div')
+    let height = 1000
+    Object.defineProperties(viewport, {
+      clientHeight: { value: 200 },
+      scrollHeight: { get: () => height },
+    })
+    viewport.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      viewport.scrollTop = Number(top)
+    })
+    const hook = renderHook(() =>
+      useConversationScrollController({
+        messages,
+        externalScrollRef: { current: viewport },
+        externalScrollInteractionRef: { current: interaction },
+        conversationKey: `keyboard-end-${target}`,
+      })
+    )
+    try {
+      fireEvent.wheel(viewport, { deltaY: -100 })
+      viewport.scrollTop = 100
+      fireEvent.scroll(viewport)
+      fireEvent(viewport, new Event('scrollend'))
+      fireEvent.keyDown(target === 'viewport' ? viewport : interaction, { key: 'End' })
+      viewport.scrollTop = 800
+      height = 1600
+      // A native scroll can arrive before ResizeObserver reports the new row sizes.
+      fireEvent.scroll(viewport)
+      act(() => hook.result.current.handleContentLayoutChange())
+      expect(viewport.scrollTop).toBe(1400)
+      height = 1800
+      act(() => hook.result.current.handleContentLayoutChange())
+      expect(viewport.scrollTop).toBe(1600)
+      fireEvent.keyDown(target === 'viewport' ? viewport : interaction, { key: 'Home' })
+      viewport.scrollTop = 0
+      fireEvent.scroll(viewport)
+      height = 2000
+      act(() => hook.result.current.handleContentLayoutChange())
+      expect(viewport.scrollTop).toBe(0)
+    } finally {
+      hook.unmount()
+    }
+  }
+)
+
 test('scrollbar drag owns layout changes and returns to text anchoring after release', () => {
   const viewport = document.createElement('div')
   const content = document.createElement('div')

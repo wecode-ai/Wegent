@@ -187,7 +187,10 @@ export function useConversationScrollController({
       modeRef.current === 'follow'
         ? { pinnedToBottom: true, distanceFromBottomPx: 0 }
         : modeRef.current === 'drag'
-          ? { pinnedToBottom: false, distanceFromBottomPx: getDistanceFromBottom(viewport) }
+          ? {
+              pinnedToBottom: false,
+              distanceFromBottomPx: getDistanceFromBottom(viewport),
+            }
           : createScrollSnapshot(viewport)
     if (modeRef.current === 'read' || modeRef.current === 'drag') snapshot.pinnedToBottom = false
     if (modeRef.current === 'follow') {
@@ -226,7 +229,11 @@ export function useConversationScrollController({
       const engine = virtualizerRef.current
       if (engine) {
         engine.cancelScroll()
-        engine.setOptions({ ...engine.options, followOnAppend: false, scrollEndThreshold: -1 })
+        engine.setOptions({
+          ...engine.options,
+          followOnAppend: false,
+          scrollEndThreshold: -1,
+        })
       }
       setMotionActive(true)
       const key = identityRef.current
@@ -455,6 +462,13 @@ export function useConversationScrollController({
         paused: modeRef.current === 'read',
       })
       lastScrollPositionRef.current = viewport.scrollTop
+      if (event instanceof KeyboardEvent && event.key === 'End') {
+        // End selects follow intent before row measurements can change the range.
+        inputRef.current = false
+        clearAnchor()
+        changeMode('follow')
+        return
+      }
       const scrollbarPointer =
         interaction?.contains(event.target as Node) && event instanceof PointerEvent
       if (scrollbarPointer) {
