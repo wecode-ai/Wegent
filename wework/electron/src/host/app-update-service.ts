@@ -181,6 +181,7 @@ export class AppUpdateService {
 
   private async prepare(pending: UpgradeRelease): Promise<void> {
     const started = performance.now()
+    this.options.log?.({ event: 'release-preparation-started', version: pending.version })
     this.progress = { downloadedBytes: 0, totalBytes: pending.bytes, phase: 'host' }
     const store = this.options.store
     await this.registerInstalledRelease()

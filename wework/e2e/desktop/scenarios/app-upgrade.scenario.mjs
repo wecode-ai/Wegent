@@ -9,6 +9,7 @@ import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.
 import { compareVersions } from '../../../electron/src/runtime/upgrade-policy.mjs'
 import { ACTIVE_COMPOSER_SELECTOR, createSingleRootLocalProject } from '../modules/shared.mjs'
 import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
+import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
 import {
   assistantMessage,
   createSse,
@@ -330,16 +331,9 @@ export async function createDesktopScenario(options) {
         'The download request blocked until preparation completed'
       )
       assert.notEqual(accepted.phase, 'failed', 'The download failed to start')
-      const deadline = Date.now() + 300_000
-      let observedProgress
-      do {
-        observedProgress = JSON.parse(await control.command('getAppUpdateProgress', 'body'))
-        if (observedProgress.phase === 'failed')
-          assert.fail(`Update preparation failed: ${observedProgress.failure?.message}`)
-        if (observedProgress.phase === 'ready') break
-        await new Promise(accept => setTimeout(accept, 250))
-      } while (Date.now() < deadline)
-      assert.equal(observedProgress.phase, 'ready', 'Update preparation did not complete')
+      await waitForUpdatePreparation(async () =>
+        JSON.parse(await control.command('getAppUpdateProgress', 'body'))
+      )
       const transfers = requests.filter(request => request.path === `/${pair.to.name}`)
       assert.equal(transfers.length, 1, 'The updater must download the complete host exactly once')
       assert.equal(transfers[0].range, null, 'The host update must use one full request')

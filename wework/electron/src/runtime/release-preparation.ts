@@ -1,16 +1,47 @@
 import { mkdir, readFile, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { materializeBundledRuntimes } from './bundled-runtime-materializer.js'
 import { ComponentUpdateManager } from './component-update-manager.js'
 import { prepareCoreDshRuntime } from './core-dsh-runtime.js'
 import { cloneReleaseProfile, profileRevision } from './release-profile.js'
 import { atomicReleaseWrite, ReleaseStore, type DesktopRelease } from './release-store.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
+import { RotatingLog } from './rotating-log.js'
 
 export interface ReleasePreparationRequest {
   release: DesktopRelease
   storeRoot: string
   sourceProfile: string
+}
+
+async function preparationStep<T>(
+  log: RotatingLog,
+  release: DesktopRelease,
+  stage: string,
+  run: () => Promise<T>
+): Promise<T> {
+  const startedAt = performance.now()
+  const write = (phase: string) =>
+    log.write(
+      'supervisor',
+      JSON.stringify({
+        event: 'release-preparation-stage',
+        releaseId: release.id,
+        version: release.version,
+        stage,
+        phase,
+        elapsedMs: Math.round(performance.now() - startedAt),
+      })
+    )
+  await write('started')
+  try {
+    const result = await run()
+    await write('completed')
+    return result
+  } catch (error) {
+    await write('failed')
+    throw error
+  }
 }
 
 /** Runs in the target package, before importing main or opening any live application data. */
@@ -32,7 +63,14 @@ export async function prepareReleaseEnvironment(
   )
     throw new Error('Target release identity does not match the selected package')
   const store = new ReleaseStore(request.storeRoot)
-  const sourceRevision = await cloneReleaseProfile(request.sourceProfile, release.profileRoot)
+  const log = new RotatingLog({
+    path: join(dirname(request.storeRoot), 'logs', 'release-preparation.log'),
+  })
+  const step = <T>(stage: string, run: () => Promise<T>) =>
+    preparationStep(log, release, stage, run)
+  const sourceRevision = await step('profile-copy', () =>
+    cloneReleaseProfile(request.sourceProfile, release.profileRoot)
+  )
   const bundledAssetsOnly: typeof fetch = async () => {
     throw new Error('The complete release package is missing preparation assets')
   }
@@ -45,10 +83,12 @@ export async function prepareReleaseEnvironment(
     validateExecutor: path =>
       assertExecutorWorkbenchCompatibility({ ...process.env, WEWORK_EXECUTOR_PATH: path }),
   })
-  const components = await manager.prepareStartup()
-  await materializeBundledRuntimes(components.coreDsh, release.runtimeRoot, ['core', 'workbench'], {
-    fetch: bundledAssetsOnly,
-  })
+  const components = await step('components', () => manager.prepareStartup())
+  await step('runtimes', () =>
+    materializeBundledRuntimes(components.coreDsh, release.runtimeRoot, ['core', 'workbench'], {
+      fetch: bundledAssetsOnly,
+    })
+  )
   const preparationHome = join(store.slot(release.id), 'preparation')
   // The prepared profile is isolated; DSH's live data stays in the stable DSH_HOME.
   await mkdir(join(preparationHome, 'dsh-core', 'profiles'), { recursive: true, mode: 0o700 })
@@ -59,15 +99,17 @@ export async function prepareReleaseEnvironment(
     join(preparationHome, 'dsh-core', 'profiles', 'wework-core'),
     process.platform === 'win32' ? 'junction' : 'dir'
   )
-  await prepareCoreDshRuntime({
-    runtimeRoot: release.runtimeRoot,
-    dataDirectory: preparationHome,
-    environment: {
-      ...process.env,
-      WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
-      WEWORK_CORE_PLUGINS_SHA256: components.contentSha256.weworkCorePlugins,
-    },
-  })
+  await step('profile-prepare', () =>
+    prepareCoreDshRuntime({
+      runtimeRoot: release.runtimeRoot,
+      dataDirectory: preparationHome,
+      environment: {
+        ...process.env,
+        WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
+        WEWORK_CORE_PLUGINS_SHA256: components.contentSha256.weworkCorePlugins,
+      },
+    })
+  )
   if ((await profileRevision(request.sourceProfile)) !== sourceRevision)
     throw new Error('Plugin configuration changed during update preparation')
   await atomicReleaseWrite(
