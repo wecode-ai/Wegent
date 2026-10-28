@@ -50,6 +50,7 @@ import {
 } from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
 import { MarketplaceTagsDialog } from '@/features/resource-library/components/MarketplaceTagsDialog'
 
 interface SkillManagementModalProps {
@@ -104,6 +105,7 @@ export default function SkillManagementModal({
 }: SkillManagementModalProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
+  const { user } = useUser()
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [uploadModalOpen, setUploadModalOpen] = useState(false)
@@ -121,6 +123,26 @@ export default function SkillManagementModal({
   const [referencedGhosts, setReferencedGhosts] = useState<ReferencedGhost[]>([])
 
   const uploadNamespace = scope === 'group' && groupName ? groupName : undefined
+
+  const getSkillSourceLabel = (skill: UnifiedSkill): string => {
+    if (skill.is_group_shared || skill.namespace !== 'default') {
+      return skill.namespace && skill.namespace !== 'default'
+        ? `${t('settings:skills.source.group')} · ${skill.namespace}`
+        : t('settings:skills.source.group')
+    }
+    if (user && skill.user_id === user.id) {
+      return t('settings:skills.source.personal')
+    }
+    if (skill.user_id === 0) {
+      return t('settings:skills.source.system')
+    }
+    return t('settings:skills.source.group')
+  }
+
+  const isPersonalSkill = (skill: UnifiedSkill): boolean =>
+    !skill.is_group_shared &&
+    skill.namespace === 'default' &&
+    Boolean(user && skill.user_id === user.id)
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true)
@@ -469,10 +491,8 @@ export default function SkillManagementModal({
                                   className="flex items-center gap-1.5 mt-2"
                                   data-testid={`managed-skill-source-${skill.id}`}
                                 >
-                                  <Tag variant={skill.namespace === 'default' ? 'default' : 'info'}>
-                                    {skill.namespace === 'default'
-                                      ? t('settings:skills.source.personal')
-                                      : `${t('settings:skills.source.group')} · ${skill.namespace}`}
+                                  <Tag variant={isPersonalSkill(skill) ? 'default' : 'info'}>
+                                    {getSkillSourceLabel(skill)}
                                   </Tag>
                                 </div>
                               )}

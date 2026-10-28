@@ -14,6 +14,7 @@ const translations: Record<string, string> = {
   'common:skills.upload_skill': '上传技能',
   'settings:skills.source.personal': '我的技能',
   'settings:skills.source.group': '团队技能',
+  'settings:skills.source.system': '系统技能',
 }
 const mockT = (key: string) => translations[key] || key
 
@@ -40,6 +41,10 @@ jest.mock('@/hooks/use-toast', () => ({
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: mockT }),
+}))
+
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({ user: { id: 1, role: 'user' } }),
 }))
 
 jest.mock('@/features/settings/components/skills/SkillUploadModal', () => {
@@ -101,12 +106,19 @@ describe('SkillManagementModal scope', () => {
     name: 'moodly-get-data',
     namespace: 'moodly',
   })
+  const boundPublicSkill = makeSkill({
+    id: 303,
+    name: 'public-skill-bound-to-team',
+    namespace: 'default',
+    user_id: 0,
+    is_group_shared: true,
+  })
 
   beforeEach(() => {
     jest.clearAllMocks()
     mockedFetchUnifiedSkillsList.mockImplementation(async params => {
       if (params?.scope === 'personal') return [personalSkill]
-      if (params?.scope === 'group') return [groupSkill]
+      if (params?.scope === 'group') return [groupSkill, boundPublicSkill]
       return []
     })
   })
@@ -118,8 +130,10 @@ describe('SkillManagementModal scope', () => {
 
     expect(await screen.findByText('sass-stability-monitor')).toBeInTheDocument()
     expect(screen.getByText('moodly-get-data')).toBeInTheDocument()
+    expect(screen.getByText('public-skill-bound-to-team')).toBeInTheDocument()
     expect(screen.getByTestId('managed-skill-source-101')).toHaveTextContent('我的技能')
     expect(screen.getByTestId('managed-skill-source-202')).toHaveTextContent('团队技能 · moodly')
+    expect(screen.getByTestId('managed-skill-source-303')).toHaveTextContent('团队技能')
     expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({ scope: 'personal' })
     expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({
       scope: 'group',
