@@ -50,7 +50,9 @@ import {
 } from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useWritableGroups } from '@/hooks/useWritableGroups'
 import { MarketplaceTagsDialog } from '@/features/resource-library/components/MarketplaceTagsDialog'
+import type { ResourceCreateTarget } from '@/features/resource-library/components/ResourceCreateButton'
 
 interface SkillManagementModalProps {
   open: boolean
@@ -73,6 +75,7 @@ export default function SkillManagementModal({
   const [isLoading, setIsLoading] = useState(true)
   const [uploadModalOpen, setUploadModalOpen] = useState(false)
   const [editingSkill, setEditingSkill] = useState<UnifiedSkill | null>(null)
+  const [createTarget, setCreateTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
   const [skillToDelete, setSkillToDelete] = useState<UnifiedSkill | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -86,6 +89,7 @@ export default function SkillManagementModal({
   const [referencedGhosts, setReferencedGhosts] = useState<ReferencedGhost[]>([])
 
   const uploadNamespace = scope === 'group' && groupName ? groupName : undefined
+  const { groups: writableGroups } = useWritableGroups(open && scope !== 'public')
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true)
@@ -119,6 +123,7 @@ export default function SkillManagementModal({
 
   const handleCreateSkill = () => {
     setEditingSkill(null)
+    setCreateTarget({ scope: 'personal' })
     setUploadModalOpen(true)
   }
 
@@ -565,6 +570,9 @@ export default function SkillManagementModal({
           skill={editingSkill}
           namespace={uploadNamespace}
           isPublic={scope === 'public'}
+          createTarget={createTarget}
+          writableGroups={writableGroups}
+          onCreateOptionsChange={setCreateTarget}
         />
       )}
 

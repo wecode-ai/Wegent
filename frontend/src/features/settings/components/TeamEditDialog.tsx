@@ -50,6 +50,7 @@ import {
 import { createTeam, updateTeam } from '../services/teams'
 import TeamEditDrawer from './TeamEditDrawer'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useWritableGroups } from '@/hooks/useWritableGroups'
 import { shellApis, UnifiedShell } from '@/apis/shells'
 import { BotEditRef } from './BotEdit'
 import { useTeamContext } from '@/contexts/TeamContext'
@@ -188,6 +189,10 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     onCreateOptionsChange,
     fixedCreateTargetLabel,
   } = props
+
+  const groupsLoadedByParent = writableGroups.length > 0
+  const { groups: loadedWritableGroups } = useWritableGroups(open && !groupsLoadedByParent)
+  const availableWritableGroups = groupsLoadedByParent ? writableGroups : loadedWritableGroups
 
   const { t } = useTranslation()
   const { invalidateTeams } = useTeamContext({ enabled: false })
@@ -1364,8 +1369,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             ? nextGroupNames
             : editingGroupNames.length > 0
               ? editingGroupNames
-              : writableGroups[0]?.name
-                ? [writableGroups[0].name]
+              : availableWritableGroups[0]?.name
+                ? [availableWritableGroups[0].name]
                 : []
         )
       }
@@ -1376,12 +1381,12 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       onCreateOptionsChange?.(
         {
           scope: 'group',
-          groupName: nextGroupNames[0] || writableGroups[0]?.name,
+          groupName: nextGroupNames[0] || availableWritableGroups[0]?.name,
           groupNames:
             nextGroupNames.length > 0
               ? nextGroupNames
-              : writableGroups[0]?.name
-                ? [writableGroups[0].name]
+              : availableWritableGroups[0]?.name
+                ? [availableWritableGroups[0].name]
                 : [],
         },
         false,
@@ -1611,7 +1616,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 <div data-testid="team-publish-scope-section">
                   <CapabilityScopeSelector
                     value={publishTarget}
-                    groups={writableGroups}
+                    groups={availableWritableGroups}
                     groupName={publishGroupName}
                     groupNames={publishGroupNames}
                     onChange={handlePublishTargetChange}
