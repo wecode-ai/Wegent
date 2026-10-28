@@ -711,6 +711,10 @@ struct ContextTypeData {
     file_extension: Option<OpaqueJson>,
     file_size: Option<OpaqueJson>,
     mime_type: Option<OpaqueJson>,
+    task_id: Option<OpaqueJson>,
+    relative_path: Option<OpaqueJson>,
+    modified_at: Option<OpaqueJson>,
+    sha256: Option<OpaqueJson>,
     knowledge_id: Option<OpaqueJson>,
     document_count: Option<OpaqueJson>,
     document_ids: Option<OpaqueJson>,
@@ -727,7 +731,6 @@ struct ContextTypeData {
     target_type: Option<OpaqueJson>,
     node_id: Option<OpaqueJson>,
     parent_id: Option<OpaqueJson>,
-    task_id: Option<OpaqueJson>,
     updated_at: Option<OpaqueJson>,
 }
 
@@ -757,6 +760,7 @@ pub(crate) fn context_brief(context: &ContextRow) -> ContextBriefResponse {
         .unwrap_or_default();
     let context_type = context.subtask_contexts_context_type.as_str();
     let attachment = context_type == "attachment";
+    let artifact = context_type == "remote_workspace_artifact";
     let knowledge = context_type == "knowledge_base";
     let external = context_type == "external_knowledge";
     // `build_context_display_fields` renders `selected_documents` as the
@@ -770,9 +774,13 @@ pub(crate) fn context_brief(context: &ContextRow) -> ContextBriefResponse {
         context_type: context_type.to_owned(),
         name: context.subtask_contexts_name.clone(),
         status: context.subtask_contexts_status.clone(),
-        file_extension: context_field(&data.file_extension, attachment),
-        file_size: context_field(&data.file_size, attachment),
-        mime_type: context_field(&data.mime_type, attachment),
+        file_extension: context_field(&data.file_extension, attachment || artifact),
+        file_size: context_field(&data.file_size, attachment || artifact),
+        mime_type: context_field(&data.mime_type, attachment || artifact),
+        remote_task_id: context_field(&data.task_id, artifact),
+        remote_path: context_field(&data.relative_path, artifact),
+        modified_at: context_field(&data.modified_at, artifact),
+        sha256: context_field(&data.sha256, artifact),
         knowledge_id: context_field(&data.knowledge_id, knowledge),
         document_count: if selected_documents {
             OpaqueJson::from_serializable(selected_document_count(&data.document_ids))

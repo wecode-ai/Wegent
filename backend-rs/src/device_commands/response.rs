@@ -19,9 +19,9 @@ use super::unhandled;
 /// `DeviceCommandResponse`: serialized in field declaration order.
 #[derive(Debug, Serialize)]
 pub(crate) struct DeviceCommandResponse {
-    success: bool,
+    pub(crate) success: bool,
     exit_code: Option<i64>,
-    stdout: Value,
+    pub(crate) stdout: Value,
     stderr: String,
     duration: f64,
     timed_out: bool,

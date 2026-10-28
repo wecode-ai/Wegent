@@ -15,6 +15,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(test)]
+mod artifact_tests;
 pub(crate) mod codex_model_catalog;
 mod codex_responses_proxy_transform;
 mod config;
@@ -163,6 +165,7 @@ where
         .route("/v1/runtime/bind", post(bind_runtime::<R>))
         .route("/filesystem/list-dir", get(list_workspace_directory))
         .route("/filesystem/file", get(download_workspace_file))
+        .route("/filesystem/artifact", get(download_workspace_artifact))
         .route(
             "/filesystem.Filesystem/ListDir",
             post(connect_list_workspace_directory),
@@ -509,7 +512,39 @@ async fn download_workspace_file(
         status: StatusCode::BAD_REQUEST,
         detail: "missing path".to_owned(),
     })?;
-    let path = resolve_workspace_path(raw_path)?;
+    workspace_file_response(resolve_workspace_path(raw_path)?).await
+}
+
+async fn download_workspace_artifact(
+    Query(query): Query<crate::artifact_workspace::ArtifactQuery>,
+) -> Result<Response, HttpError> {
+    let root = crate::artifact_workspace::resolve(&query).map_err(|detail| HttpError {
+        status: StatusCode::FORBIDDEN,
+        detail,
+    })?;
+    let Some(raw_path) = query.path.as_deref() else {
+        return Ok(Json(json!({"workspace_root": root})).into_response());
+    };
+    if query.root_path.is_none() {
+        return Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: "missing captured workspace root".into(),
+        });
+    }
+    let path = crate::local::workspace_files::resolve_workspace_file(&root, raw_path).map_err(
+        |detail| HttpError {
+            status: if detail.contains("outside workspace") {
+                StatusCode::FORBIDDEN
+            } else {
+                StatusCode::NOT_FOUND
+            },
+            detail,
+        },
+    )?;
+    workspace_file_response(path).await
+}
+
+async fn workspace_file_response(path: PathBuf) -> Result<Response, HttpError> {
     let metadata = fs::metadata(&path).map_err(|_| HttpError {
         status: StatusCode::NOT_FOUND,
         detail: "File not found".to_owned(),
