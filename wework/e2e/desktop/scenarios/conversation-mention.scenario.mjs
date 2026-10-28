@@ -104,7 +104,12 @@ async function waitForNewTaskRow(control, knownTaskRows, timeoutMs) {
   throw new Error('The conversation mention task row did not appear')
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  workspacePath,
+}) {
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   let active = false
   let sourceRequest = null
@@ -260,7 +265,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: LARGE_SOURCE_COMPLETION,
-        timeoutMs: uiTimeoutMs,
+        // This includes starting the sandbox and processing 18 MB of real tool output.
+        timeoutMs: modelResponseTimeoutMs,
       })
       assert.ok(
         largeSourceToolRequested,

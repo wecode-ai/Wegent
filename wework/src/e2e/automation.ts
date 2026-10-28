@@ -1,4 +1,5 @@
 import { rendererCrashStore } from './rendererCrashStore'
+import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { createDesktopControlFile } from './file-fixture'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
@@ -2179,6 +2180,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'getHarnessAppLaunchDiagnostics':
+      return JSON.stringify(captureHarnessAppLaunchDiagnostics(command.value ?? ''))
     case 'dispatchLocalModelSettingsChangedThenMacrotask':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       await waitForDesktopControlTick()
@@ -2919,6 +2922,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(await checkForWeworkUpdate('stable'))
     case 'getAppUpdateProgress':
       return JSON.stringify(await invokeDesktopHost('appUpdate.downloadProgress'))
+    case 'getInstalledAppVersion':
+      return JSON.stringify(await invokeDesktopHost('app.getVersion'))
+    case 'quitApp':
+      await invokeDesktopHost('app.quit')
+      return 'quitting'
     // Starts the host download without following it to completion, so a
     // scenario can observe that accepting the download does not wait for the
     // whole transfer. downloadPendingAppUpdate remains the end-to-end command.

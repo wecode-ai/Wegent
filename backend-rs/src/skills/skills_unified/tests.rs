@@ -271,3 +271,123 @@ fn numeric_versions_render_as_strings() {
     let item = user_skill_item(&kind, false, &HashSet::new());
     assert_eq!(item.get("version"), Some(&json!(null)));
 }
+
+/// The inline-name statement must carry the exact UTF-8 scalar values: the
+/// recorded `namespace.name = '微博运营部'` lookup cannot match a byte-to-char
+/// mojibake rendering.
+#[test]
+fn quote_literal_preserves_unicode_scalars() {
+    assert_eq!(super::quote_literal("微博运营部"), "'微博运营部'");
+    assert_eq!(super::quote_literal("默认组-α😀"), "'默认组-α😀'");
+}
+
+/// Every MySQL string escape stays an escape while Unicode survives.
+#[test]
+fn quote_literal_escapes_mysql_specials_and_keeps_unicode() {
+    let raw = "q'w\\e\0r\ns\rt\u{1a}u微博";
+    let expected = "'q\\'w\\\\e\\0r\\ns\\rt\\Zu微博'";
+    assert_eq!(super::quote_literal(raw), expected);
+}
+
+/// `namespace_id_by_name`: the pooled read renders the Unicode literal.
+#[tokio::test]
+async fn namespace_id_by_name_inlines_the_utf8_literal() {
+    use crate::sql_test_support::KindQueryCapture;
+    let mysql = KindQueryCapture::default();
+    let row = super::group_members::namespace_id_by_name(&mysql, "微博运营部")
+        .await
+        .unwrap();
+    assert!(row.is_none());
+    let queries = mysql.queries();
+    assert_eq!(queries.len(), 1);
+    assert!(
+        queries[0].sql.contains("namespace.name = '微博运营部'"),
+        "{}",
+        queries[0].sql
+    );
+    assert!(!queries[0].sql.contains("å"), "{}", queries[0].sql);
+
+    let raw = "q'w\\e\0r\ns\rt\u{1a}u微博";
+    let mysql = KindQueryCapture::default();
+    super::group_members::namespace_id_by_name(&mysql, raw)
+        .await
+        .unwrap();
+    let queries = mysql.queries();
+    assert!(
+        queries[0]
+            .sql
+            .contains("namespace.name = 'q\\'w\\\\e\\0r\\ns\\rt\\Zu微博'"),
+        "{}",
+        queries[0].sql
+    );
+}
+
+/// `namespace_id_by_name_on`: the request-handle read renders the same
+/// Unicode literal and escapes.
+#[tokio::test]
+async fn namespace_id_by_name_on_inlines_the_utf8_literal() {
+    use crate::request_sql::{RequestSql, RouteKey, StatementArgs};
+
+    #[derive(Default)]
+    struct Recorded {
+        calls: std::sync::Mutex<Vec<(RouteKey, String)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl RequestSql for Recorded {
+        async fn execute_statement(
+            &mut self,
+            _: RouteKey,
+            _: &str,
+            _: StatementArgs,
+        ) -> brz_mysql::MysqlResult<brz_mysql::MysqlExecution> {
+            panic!("unexpected write in a namespace read")
+        }
+
+        async fn fetch_optional_row(
+            &mut self,
+            route: RouteKey,
+            sql: &str,
+            _: StatementArgs,
+        ) -> brz_mysql::MysqlResult<Option<brz_mysql::MysqlRow>> {
+            self.calls.lock().unwrap().push((route, sql.to_string()));
+            Ok(None)
+        }
+
+        async fn fetch_all_rows(
+            &mut self,
+            _: RouteKey,
+            _: &str,
+            _: StatementArgs,
+        ) -> brz_mysql::MysqlResult<Vec<brz_mysql::MysqlRow>> {
+            panic!("unexpected fetch_all in a namespace read")
+        }
+    }
+
+    let mut sql = Recorded::default();
+    super::group_members::namespace_id_by_name_on(&mut sql, "微博运营部")
+        .await
+        .unwrap();
+    let calls = sql.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1);
+    assert!(
+        calls[0].1.contains("namespace.name = '微博运营部'"),
+        "{}",
+        calls[0].1
+    );
+    assert!(!calls[0].1.contains("å"), "{}", calls[0].1);
+
+    let mut sql = Recorded::default();
+    let raw = "q'w\\e\0r\ns\rt\u{1a}u微博";
+    super::group_members::namespace_id_by_name_on(&mut sql, raw)
+        .await
+        .unwrap();
+    let calls = sql.calls.lock().unwrap().clone();
+    assert!(
+        calls[0]
+            .1
+            .contains("namespace.name = 'q\\'w\\\\e\\0r\\ns\\rt\\Zu微博'"),
+        "{}",
+        calls[0].1
+    );
+}

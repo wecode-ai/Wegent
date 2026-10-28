@@ -115,6 +115,10 @@ export function createDesktopScenario({
     const panel = scoped('[data-testid="work-item-new-task-chat-panel"]')
     const composer = `${panel} [data-testid="chat-message-input"]`
     await control.command('waitFor', composer)
+    // Mounting the composer does not imply its asynchronous model selection is ready.
+    await control.command('waitFor', `${panel} [data-testid="send-message-button"]`, {
+      enabled: true,
+    })
     await control.command('press', composer, { key: 'Enter' })
     await control.command(
       'waitFor',

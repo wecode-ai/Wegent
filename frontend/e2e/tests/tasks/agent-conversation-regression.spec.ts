@@ -12,6 +12,7 @@ import { APIRequestContext, Page, expect, test, type Route } from '@playwright/t
 import { ADMIN_USER } from '../../config/test-users'
 import { ApiClient, createApiClient } from '../../utils/api-client'
 import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
+import { settleMentionTasks } from '../../utils/mention-task-fixtures'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -308,8 +309,16 @@ test.describe('Agent conversation regression', () => {
       prompt: `Seed project conversation ${projectToken}`,
       projectId: project.id,
     })
-    await seedMentionTasks(request, 55, index => `Project filler ${index}`, project.id)
-    await touchMentionTask(request, sourceTaskId, `Project handoff ${projectToken}`)
+    const fillerTaskIds = await seedMentionTasks(
+      request,
+      55,
+      index => `Project filler ${index}`,
+      project.id
+    )
+    await touchMentionTask(request, sourceTaskId, `Project handoff ${projectToken}`, {
+      id: project.id,
+      taskIds: fillerTaskIds,
+    })
 
     const projectTaskRequests: string[] = []
     page.on('request', outgoing => {
@@ -378,7 +387,17 @@ test.describe('Agent conversation regression', () => {
       project.id
     )
     const newestFirstPageTaskId = firstPageTaskIds[firstPageTaskIds.length - 1]
-    await touchMentionTask(request, laterPageTaskId, `Retry page two ${retryToken}`)
+    // Completion order can differ from creation order, so pin both visible candidates.
+    await touchMentionTask(
+      request,
+      newestFirstPageTaskId,
+      `Retry page one ${firstPageTaskIds.length - 1}`,
+      { id: project.id, taskIds: [laterPageTaskId, ...firstPageTaskIds.slice(0, -1)] }
+    )
+    await touchMentionTask(request, laterPageTaskId, `Retry page two ${retryToken}`, {
+      id: project.id,
+      taskIds: firstPageTaskIds,
+    })
 
     const isCursorPage = (url: URL) =>
       url.pathname === `/api/projects/${project.id}/tasks` && url.searchParams.has('cursor')
@@ -1796,8 +1815,8 @@ test.describe('Agent conversation regression', () => {
     return { id: project.id! }
   }
 
-  // Creates one real conversation record without running a model turn. The
-  // task still carries a CRD title, which is what the mention search reads.
+  // The real create API also dispatches the first model turn. Project fixtures
+  // must settle those executions before touching their mention sort order.
   async function seedMentionTask(
     request: APIRequestContext,
     input: { title: string; prompt: string; projectId?: number }
@@ -1836,19 +1855,57 @@ test.describe('Agent conversation regression', () => {
     return taskIds
   }
 
-  // Touches a task so its `updated_at` sorts it first in the mention list
-  // without changing which project task page it belongs to.
+  // Pins the title and makes project fixtures newest without changing their task page.
   async function touchMentionTask(
     request: APIRequestContext,
     taskId: number,
-    title: string
+    title: string,
+    project?: { id: number; taskIds: number[] }
   ): Promise<void> {
-    const response = await request.put(`${API_BASE_URL}/api/tasks/${taskId}`, {
-      headers: authHeaders(),
-      data: { title },
-    })
-    const body = await response.text()
-    expect(response.status(), body).toBe(200)
+    let latestUpdatedSecond = 0
+    if (project) {
+      await settleMentionTasks([taskId, ...project.taskIds], fixtureId =>
+        waitForBackendTerminal(request, fixtureId)
+      )
+      const response = await request.get(
+        `${API_BASE_URL}/api/projects/${project.id}/tasks?limit=100`,
+        { headers: authHeaders() }
+      )
+      const body = await response.text()
+      expect(response.status(), body).toBe(200)
+      const page = JSON.parse(body) as {
+        items: { task_id: number; updated_at: string }[]
+        has_more: boolean
+      }
+      expect(page.has_more, 'The fixture snapshot should contain every project task').toBe(false)
+      expect(new Set(page.items.map(task => task.task_id))).toEqual(
+        new Set([taskId, ...project.taskIds])
+      )
+      latestUpdatedSecond = Math.max(
+        ...page.items.map(task => Math.floor(Date.parse(task.updated_at) / 1_000))
+      )
+      expect(Number.isFinite(latestUpdatedSecond), 'Project tasks need valid updated_at').toBe(true)
+    }
+
+    // Completion updates must settle first, and MySQL timestamps have second precision.
+    await expect
+      .poll(
+        async () => {
+          const response = await request.put(`${API_BASE_URL}/api/tasks/${taskId}`, {
+            headers: authHeaders(),
+            data: { title },
+          })
+          const body = await response.text()
+          expect(response.status(), body).toBe(200)
+          const task = JSON.parse(body) as { updated_at: string }
+          return Math.floor(Date.parse(task.updated_at) / 1_000)
+        },
+        {
+          message: 'Touched task should sort after all completed mention fixtures',
+          timeout: 5_000,
+        }
+      )
+      .toBeGreaterThan(latestUpdatedSecond)
   }
 
   async function openTaskPage(

@@ -1344,6 +1344,28 @@ describe('createLocalAppServices', () => {
     )
     expect(JSON.stringify(contextCall)).not.toContain('cloud-token')
     expect(JSON.stringify(contextCall)).not.toContain('provider-secret')
+
+    request.mockClear()
+    const extraLaunch = await services.localHarnessModelApi?.resolveLaunch(
+      'opencode',
+      {
+        key: 'context-model',
+        label: 'Context Model',
+        source: 'local',
+        model: {
+          name: 'local-model:' + config.id,
+          type: 'runtime',
+          provider: 'local',
+          displayName: 'Context Model',
+          modelId: 'context-upstream-model',
+          config: { weworkModelKind: 'model-interface' },
+        },
+      },
+      undefined,
+      false
+    )
+    expect(extraLaunch?.context).toBeUndefined()
+    expect(request).not.toHaveBeenCalledWith('runtime.harness_context.register', expect.anything())
   })
 
   test('registers a decision route through the local Executor with the caller scope', async () => {

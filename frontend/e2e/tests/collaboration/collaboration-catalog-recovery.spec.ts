@@ -612,3 +612,54 @@ for (const outcome of ['success', 'failure'] as const) {
     }
   })
 }
+
+test('workspace members remain usable while the real Agent catalog response is pending', async ({
+  page,
+  projectFixture: { workspaceId },
+}) => {
+  const workspacePath = `/api/v1/workspaces/${workspaceId}`
+  let release!: () => void
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
+  let fetched = false
+  let agentRequests = 0
+  let memberRequests = 0
+  page.on('request', request => {
+    const url = new URL(request.url())
+    if (url.pathname === `${workspacePath}/agents`) agentRequests++
+    if (url.pathname === `${workspacePath}/members`) memberRequests++
+  })
+  const catalogUrl = (url: URL) => url.pathname === `${workspacePath}/agents`
+  const holdFirst = async (route: Route) => {
+    expect(new URL(route.request().url()).searchParams.get('include_readiness')).toBe('false')
+    if (fetched) return route.continue()
+    const response = await route.fetch()
+    expect(response.ok()).toBe(true)
+    fetched = true
+    await held
+    await route.fulfill({ response })
+  }
+  await page.route(catalogUrl, holdFirst)
+  try {
+    await page.goto(`/collaboration/workspaces/${workspaceId}/agents`)
+    await expect(page.getByTestId('project-agent-config-loading')).toBeVisible()
+    await expect.poll(() => fetched).toBe(true)
+    expect(agentRequests).toBe(1)
+    expect(memberRequests).toBe(0)
+    await page.getByTestId('collaboration-workspace-participants-tab-members').click()
+    await expect(page.getByTestId('collaboration-workspace-member-invite')).toBeVisible()
+    await expect(page.getByTestId('workspace-members-loading')).toHaveCount(0)
+    expect(memberRequests).toBe(1)
+    expect(agentRequests).toBe(1)
+    release()
+    await page.getByTestId('collaboration-workspace-participants-tab-agents').click()
+    await expect(page.getByTestId('project-agent-config-loading')).toHaveCount(0)
+    await expect(page.getByTestId('project-agent-add')).toBeEnabled()
+    await page.getByTestId('collaboration-workspace-participants-tab-members').click()
+    await expect(page.getByTestId('collaboration-workspace-member-invite')).toBeVisible()
+  } finally {
+    release()
+    await page.unroute(catalogUrl, holdFirst)
+  }
+})

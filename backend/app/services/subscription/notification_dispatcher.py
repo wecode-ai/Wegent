@@ -223,7 +223,8 @@ class SubscriptionNotificationDispatcher:
         """
         logger.info(
             f"[SubscriptionNotificationDispatcher] Dispatching notifications for "
-            f"subscription {subscription_id} execution {execution_id} result_summary: {result_summary}"
+            f"subscription {subscription_id} execution {execution_id} "
+            f"summary_chars={len(result_summary or '')}"
         )
         # Get all accepted followers with their settings
         followers_with_settings = (
@@ -1107,13 +1108,14 @@ class SubscriptionNotificationDispatcher:
                 },
             }
 
-            # Log request details
+            # Log request details; the markdown text embeds the full summary, so
+            # only its length is logged.
             logger.info(
                 f"[_send_dingtalk_webhook] Sending request:\n"
                 f"  URL: {url}\n"
                 f"  Final URL: {final_url}\n"
                 f"  Has Secret: {bool(secret)}\n"
-                f"  Payload: {payload}"
+                f"  Payload text chars: {len(text_with_title)}"
             )
 
             async with httpx.AsyncClient(timeout=30.0) as client:

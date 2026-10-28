@@ -489,15 +489,23 @@ async function verifyBackgroundTaskWindowLifecycle({
     })
 
     await reactivateMacApplication(appIdentifier, appBundlePath)
+    await waitForWindowVisibility(control, { mainVisible: true })
+    assert.equal(
+      control.ready?.clientId,
+      controlClientIdBeforeClose,
+      'Closing to tray replaced the retained Electron renderer'
+    )
+    // Electron retains its renderer when hidden; reload to verify retired-client isolation.
+    await control.command('reloadMainWindow', 'body')
     await withTimeout(
       control.awaitReadyAfter(readyCountBeforeClose),
       WORKBENCH_READY_TIMEOUT_MS,
-      'The reopened Wework WebView did not reconnect to the desktop controller'
+      'The reloaded Wework WebView did not reconnect to the desktop controller'
     )
     assert.notEqual(
       control.ready?.clientId,
       controlClientIdBeforeClose,
-      'The reopened WebView reused the closed control client identity'
+      'The reloaded WebView reused the closed control client identity'
     )
     const reopenedTaskWait = control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
       stableMs: COMPOSER_READY_STABILITY_MS,

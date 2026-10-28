@@ -132,6 +132,12 @@ Static checks provide fast feedback for deterministic errors. Service availabili
 
 Installed Smart apps launch DSH with `--port 0`, letting the operating system assign the loopback port when the server binds. Wework reuses the runtime's listening announcement and readiness probes, then persists the actual address from `WorkbenchRuntimeSnapshot.url`. It does not probe and release a free port before launch, avoiding port allocation races between concurrent processes.
 
+Startup, token handoff, and stop are serialized by installation ID without blocking other installations. An immediate reopen waits for the old runtime to stop and release its routes before registering new ones. Catalog refreshes must not cancel an in-flight launch, and background tabs keep their pending startup owner connected until startup settles or the tab is actually removed.
+
+Failure and close release default-model, additional-model, context, and decision routes independently. Startup retains local handles so an Electron token-read failure cannot prevent releasing known routes; handed-off handles are deduplicated. Additional provider addresses use only validated, normalized URLs, never raw control characters in DSH configuration.
+
+The `harness-app-models` desktop checkpoint in Core shard 6 covers real DSH calls to default and additional models, catalog refresh during startup, close during token handoff followed by a background reopen, and HTTP 404 from old routes. Handoff races reuse E2E transport gates that delay only completed real Electron responses, without replacing the runtime or proxy. Evidence retains timing summaries, not tokens.
+
 ### 1. Structure and security
 
 Extend existing manifest checks to validate:
