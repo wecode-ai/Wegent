@@ -541,6 +541,7 @@ Restoring native model-catalog defaults temporarily unmounts model rows while re
 The scenario observes the stable page until the original row returns without its customization
 marker, then verifies native data and the persisted override file.
 The overload cancellation phase selects its fixture model independently for the new conversation.
+When a user resumes and completes a Goal during overload backoff, the executor processes queued new-turn events before applying the latest Goal snapshot. A new turn still running must deliver its own terminal event. Focused regressions cover completed, in-flight, paused, and cleared Goals, preserving the current turn identity without an extra Goal activation or turn start.
 Action execution and result acknowledgement are separate: an acknowledgement failure must not
 produce a fabricated failed-action result. E2E Electron logs retain loopback request paths and
 network error codes without headers or query parameters. Windows failure artifacts include

@@ -2508,8 +2508,40 @@ async fn read_shared_turn_notifications(
     let (response_error_tx, mut response_error_rx) = mpsc::unbounded_channel();
     let mut cancellation_requested = false;
     let mut overload_recovery = overload_recovery::OverloadRecovery::default();
+    let mut deferred_goal_snapshot: Option<Value> = None;
     loop {
+        // A user can resume and finish a Goal while overload backoff is sleeping.
+        // Consume its queued turns before applying the newer RPC snapshot.
+        let buffered_notification = if deferred_goal_snapshot.is_some() {
+            match notification_rx.try_recv() {
+                Ok(message) => Some(Ok(message)),
+                Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
+                    Some(Err(broadcast::error::RecvError::Lagged(skipped)))
+                }
+                Err(_) => {
+                    let response = deferred_goal_snapshot.take().unwrap();
+                    overload_recovery::sync_goal_snapshot(
+                        state,
+                        options.notifications.as_ref(),
+                        thread_id,
+                        &response,
+                    );
+                    options.wait_for_goal_continuation = false;
+                    if options.active_turn_id.is_none() {
+                        return Ok(last_outcome.unwrap_or(ExecutionOutcome::Cancelled {
+                            message: "Goal changed during model overload recovery".to_owned(),
+                        }));
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let receive_notification = async {
+            if let Some(notification) = buffered_notification {
+                return Ok(Some(notification));
+            }
             if let Some(cancel_rx) = options.cancellation.as_mut() {
                 tokio::select! {
                     _ = cancel_rx => Ok(None),
@@ -2752,20 +2784,23 @@ async fn read_shared_turn_notifications(
                     )
                     .await?;
                     if restoring_goal {
-                        overload_recovery::sync_goal_snapshot(
-                            state,
-                            options.notifications.as_ref(),
-                            thread_id,
-                            &response,
-                        );
-                        if !restarted && !state.goal_is_active() {
-                            return Ok(ExecutionOutcome::Cancelled {
-                                message: "Goal changed during model overload recovery".to_owned(),
-                            });
+                        if !restarted
+                            && response.pointer("/goal/status").and_then(Value::as_str)
+                                != Some("active")
+                        {
+                            deferred_goal_snapshot = Some(response);
+                            options.wait_for_goal_continuation = true;
+                        } else {
+                            overload_recovery::sync_goal_snapshot(
+                                state,
+                                options.notifications.as_ref(),
+                                thread_id,
+                                &response,
+                            );
+                            // Activating an idle Goal starts its native continuation.
+                            // Do not race it with a second turn/start request.
+                            options.wait_for_goal_continuation = state.goal_is_active();
                         }
-                        // Activating an idle Goal starts its native continuation.
-                        // Do not race it with a second turn/start request.
-                        options.wait_for_goal_continuation = state.goal_is_active();
                     } else {
                         options.active_turn_id = turn_start_response_id(&response);
                     }
@@ -2861,6 +2896,14 @@ async fn read_shared_turn_notifications(
                 state,
                 options.wait_for_goal_continuation,
             ) {
+                if let Some(response) = deferred_goal_snapshot.take() {
+                    overload_recovery::sync_goal_snapshot(
+                        state,
+                        options.notifications.as_ref(),
+                        thread_id,
+                        &response,
+                    );
+                }
                 return Ok(outcome);
             }
             last_outcome = Some(outcome);
