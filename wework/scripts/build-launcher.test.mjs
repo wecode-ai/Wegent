@@ -9,6 +9,10 @@ import { buildLauncher } from '../electron/scripts/build-launcher.mjs'
 
 const execute = promisify(execFile)
 
+function missingReleaseRoot(error) {
+  return error.code === 1 && error.stderr.includes('Missing release root')
+}
+
 async function installedLinker() {
   if (process.platform !== 'win32') {
     const { stdout } = await execute('sh', ['-c', 'command -v cc'])
@@ -48,6 +52,14 @@ test('launcher honors the target linker with Git link.exe first on PATH', async 
   const target = /^host: (.+)$/m.exec(stdout)[1]
   const key = `CARGO_TARGET_${target.toUpperCase().replaceAll('-', '_')}_LINKER`
   const linker = process.env[key] || (await installedLinker())
+  delete process.env[key]
+  const defaultOutput = await buildLauncher(join(root, 'default'), target)
+  await assert.rejects(execute(defaultOutput, []), missingReleaseRoot)
+  process.env[key] = ''
+  await assert.rejects(
+    buildLauncher(join(root, 'empty'), target),
+    /couldn't extract file stem from specified linker/
+  )
   let gitBin = join(root, 'git', 'usr', 'bin')
   if (process.platform === 'win32') {
     const { stdout: gitExecPath } = await execute('git', ['--exec-path'])
@@ -80,5 +92,5 @@ test('launcher honors the target linker with Git link.exe first on PATH', async 
   process.env[key] = linker
   const output = await buildLauncher(join(root, 'configured'), target)
   // Executing the real launcher validates that compilation produced a usable native binary.
-  await assert.rejects(execute(output, []), error => error.code === 1)
+  await assert.rejects(execute(output, []), missingReleaseRoot)
 })

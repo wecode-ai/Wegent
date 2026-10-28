@@ -17,7 +17,7 @@ export async function buildLauncher(resources, target) {
     '2021',
     '--target',
     target,
-    ...(linker ? ['-C', `linker=${linker}`] : []),
+    ...(linker !== undefined ? ['-C', `linker=${linker}`] : []),
     '-O',
     join(root, '..', 'launcher', 'src', 'main.rs'),
     '-o',

@@ -67,7 +67,8 @@ the target's `CARGO_TARGET_<TARGET>_LINKER` environment variable into `-C linker
 the target name and replace hyphens with underscores. For Windows x64, set
 `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER` to the MSVC `link.exe` path. Direct `rustc` does not
 read this Cargo setting; configuring Cargo alone does not prevent name collisions in Git Bash.
-Without an explicit linker, preserve Rust's default selection. Invalid explicit settings fail the build.
+Without an explicit linker, preserve Rust's default selection. Empty or invalid explicit settings fail
+the build, matching Cargo.
 
 `node --test wework/scripts/build-launcher.test.mjs` compiles and starts the real launcher with
 Git `link.exe` first on PATH, and verifies that invalid linker settings are never ignored. Windows

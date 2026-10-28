@@ -78,7 +78,7 @@ runner 自动构建当前源码所需的独立 A/B 包。已有版本对时，�
 连字符替换为下划线。例如 Windows x64 使用
 `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER`，其值应指向 MSVC 的 `link.exe`。
 直接调用 `rustc` 不会读取 Cargo 的这项配置；仅配置 Cargo 无法避免 Git Bash 中同名工具的冲突。
-未配置链接器时保留 Rust 的默认选择，显式配置无效时让构建失败。
+未配置链接器时保留 Rust 的默认选择；显式配置为空或无效时让构建失败，与 Cargo 保持一致。
 
 `node --test wework/scripts/build-launcher.test.mjs` 真实编译并启动 launcher，验证 PATH 中优先出现
 Git `link.exe` 时仍使用配置的链接器，并检查无效配置不会被忽略。Windows 使用 Git 自带的真实
