@@ -21,6 +21,10 @@ pub use crate::task_store_listing::{
     OwnedTaskPage, SubtaskListing, SubtaskPage, count_subtasks_by_task, load_subtasks_by_ids,
     ordered_subtasks_for_user, page_subtasks_by_task, subtask_context_columns,
 };
+pub use crate::task_store_personal::{
+    PERSONAL_TASK_HISTORY_LIMIT, PersonalTaskIndexes, personal_task_candidates,
+    personal_task_candidates_statement,
+};
 pub use crate::task_store_pipeline::{PipelineStageAdvance, advance_pipeline_stage};
 pub use crate::task_store_project::{
     active_project_task_statement, fetch_active_project_task, task_by_id_refresh_statement,
@@ -163,15 +167,17 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         &self,
         user_id: i64,
         limit: i64,
-        cursor: Option<(chrono::NaiveDateTime, i64)>,
+        cursor: Option<i64>,
         client_origin: Option<&str>,
     ) -> MysqlResult<Vec<MysqlRow>> {
-        crate::task_store_listing::personal_task_candidates(
+        personal_task_candidates(
             &self.mysql,
+            TASKS_TABLE,
             user_id,
             limit,
             cursor,
             client_origin,
+            None,
         )
         .await
     }

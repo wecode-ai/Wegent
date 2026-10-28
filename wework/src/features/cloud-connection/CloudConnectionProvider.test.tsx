@@ -300,6 +300,44 @@ describe('CloudConnectionProvider', () => {
     expect(credentialMocks.refreshAccessToken).not.toHaveBeenCalled()
   })
 
+  it('preserves the resolved socket endpoint while refreshing restored cloud metadata', async () => {
+    const connection = {
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'wss://backend-socket.example.com',
+      socketPath: '/socket.io',
+      webUrl: 'https://cloud.example.com',
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-20T00:00:00.000Z',
+    }
+    saveStoredCloudConnection(connection)
+    await updateAppPreferences({ cloudConnection: connection })
+    let resolveMetadata!: (value: { web_url: string; socket_url: string }) => void
+    httpMocks.get.mockImplementation((endpoint: string) => {
+      if (endpoint === '/auth/wework/config') {
+        return new Promise(resolve => {
+          resolveMetadata = resolve
+        })
+      }
+      if (endpoint === '/users/me') return Promise.resolve(connection.user)
+      return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+    })
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+    await waitFor(() => expect(resolveMetadata).toBeDefined())
+    expect(screen.getByTestId('cloud-socket-base-url')).toHaveTextContent(connection.socketBaseUrl)
+    await act(async () =>
+      resolveMetadata({
+        web_url: connection.webUrl,
+        socket_url: connection.socketBaseUrl,
+      })
+    )
+    expect(screen.getByTestId('cloud-socket-base-url')).toHaveTextContent(connection.socketBaseUrl)
+  })
+
   it('does not initialize application plugins when restoring a cloud connection', async () => {
     saveStoredCloudConnection({
       backendUrl: 'https://cloud.example.com',

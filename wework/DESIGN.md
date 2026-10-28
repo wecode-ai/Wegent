@@ -771,6 +771,22 @@ content inset so card edges do not overlap the vertical thumb.
 
 ## 7. Interaction and state
 
+### Page loading and failure boundaries
+
+页面和标签页按当前可见内容加载数据；同属一个设置入口不构成数据依赖。
+成员、智能体等独立页面分别维护加载、错误和重试状态，一个页面的请求失败
+不能阻塞另一个页面或导航。未打开的弹窗和编辑器按需加载。刷新失败保留当前
+作用域内已成功加载的数据并显示局部错误，不能伪装成空列表；切换作用域时
+不得显示旧作用域数据，迟到响应不得覆盖新页面。
+
+Pages and tabs load data for their active content. A shared settings shell is
+not a data dependency. Independent pages own independent loading, error and
+retry states; one failed catalog cannot block another page or navigation.
+Load unopened dialogs and editors on demand. Refresh failures preserve valid
+same-scope data and show a local error, never an empty-state substitute. Scope
+changes hide old data and reject late responses. Follow the shared
+[implementation contract](../frontend/AGENTS.md#page-data-loading-and-error-isolation).
+
 Every interactive component must account for the applicable states:
 
 - default;

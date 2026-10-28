@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.5.13-beta.7",
+  "version": "0.5.13-beta.8",
   "type": "module",
   "scripts": {
     "dev": "vite",
