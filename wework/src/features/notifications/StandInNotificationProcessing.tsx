@@ -9,7 +9,7 @@ import {
 } from '@wegent/chat-core/runtime-user-input'
 import type { RequestUserInputPayload, RequestUserInputResponse } from '@wegent/chat-core/runtime'
 import type { StandInNotification, StandInNotificationState } from './standInNotifications'
-import { standInOrigin, standInState } from './standInNotifications'
+import { standInOrigin, standInState, standInVersion } from './standInNotifications'
 import { notificationTextFromMessages } from '@/features/workbench/runtimeTaskNotificationContent'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { projectRuntimePaneTranscript } from '@/features/workbench/runtimeTaskLifecycle/projection'
@@ -41,7 +41,10 @@ export function StandInNotificationProcessing({
   const [busy, setBusy] = useState(false)
   const submitting = useRef(false)
   const [error, setError] = useState<string | null>(null)
-  const [started, setStarted] = useState<StandInNotificationState | null>(null)
+  const [started, setStarted] = useState<{
+    state: StandInNotificationState
+    notificationVersion: string | null
+  } | null>(null)
   const [loaded, setLoaded] = useState<{
     signature: string
     question: RequestUserInputPayload | null
@@ -50,9 +53,12 @@ export function StandInNotificationProcessing({
   } | null>(null)
   const [submittedVersion, setSubmittedVersion] = useState<string | null>(null)
   const notifiedState = notification.payload.standIn
+  const notificationVersion = notifiedState ? standInVersion(notifiedState) : null
+  if (started && notifiedState && notificationVersion !== started.notificationVersion)
+    setStarted(null)
   const state =
-    started && (!notifiedState || started.updatedAt > notifiedState.updatedAt)
-      ? started
+    started && (!notifiedState || started.notificationVersion === notificationVersion)
+      ? started.state
       : notifiedState
   const actorName = notification.payload.actorName?.trim()
   const runtimeApi = services?.runtimeWorkApi
@@ -162,7 +168,7 @@ export function StandInNotificationProcessing({
         throw Object.assign(new Error(result.error || t('notifications.stand_in_unavailable')), {
           code: result.code,
         })
-      setStarted(standInState({ address, task: result.task }))
+      setStarted({ state: standInState({ address, task: result.task }), notificationVersion })
     })
 
   const canStart = !state && services?.standInApi && projectId && issueId && userId != null

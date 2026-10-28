@@ -73,6 +73,69 @@ beforeEach(() => {
   readTask.mockResolvedValue({ success: true, task: runtimeItem.task })
 })
 describe('notification inline handling', () => {
+  it.each([undefined, 'turn-1'])(
+    'accepts completed source state with second precision and turn %s',
+    async turnId => {
+      const task = {
+        ...runtimeItem.task,
+        updatedAt: '2026-10-21T12:05:00.800Z',
+        runtimeHandle: { ...runtimeItem.task.runtimeHandle, lastTurnId: turnId },
+      }
+      readTask.mockResolvedValue({ success: true, task })
+      const props = { rowProps, services, userId: 1, onChanged }
+      const rendered = render(
+        <StandInNotificationProcessing notification={assignment} {...props} />
+      )
+      fireEvent.click(screen.getByTestId('notification-stand-in-start-assignment'))
+      await waitFor(() =>
+        expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+          'notifications.stand_in_running'
+        )
+      )
+      const completed = mergeStandInNotifications(
+        [assignment],
+        [
+          {
+            ...runtimeItem,
+            task: {
+              ...task,
+              status: 'done',
+              running: false,
+              updatedAt: '2026-10-21T12:05:00.900Z',
+              completedAt: '2026-10-21T12:05:00Z',
+            },
+          },
+        ]
+      )[0]
+      rendered.rerender(<StandInNotificationProcessing notification={completed} {...props} />)
+      expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+        'notifications.stand_in_completed'
+      )
+      expect(await screen.findByTestId('notification-stand-in-reply-open-assignment')).toBeEnabled()
+      rendered.rerender(<StandInNotificationProcessing notification={assignment} {...props} />)
+      expect(screen.queryByTestId('notification-stand-in-status-assignment')).toBeNull()
+      expect(screen.getByTestId('notification-stand-in-start-assignment')).toBeEnabled()
+    }
+  )
+
+  it('retains the retry snapshot until the failed source version changes', async () => {
+    readTask.mockResolvedValue({
+      success: true,
+      task: { ...runtimeItem.task, updatedAt: '2026-10-21T12:06:00.800Z' },
+    })
+    const rendered = render(view('failed'))
+    fireEvent.click(screen.getByTestId('notification-stand-in-retry-assignment'))
+    await waitFor(() =>
+      expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+        'notifications.stand_in_running'
+      )
+    )
+    rendered.rerender(view('failed'))
+    expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+      'notifications.stand_in_running'
+    )
+  })
+
   it('shows the existing execution status instead of announcing a new run', async () => {
     readTask.mockResolvedValue({
       success: true,
