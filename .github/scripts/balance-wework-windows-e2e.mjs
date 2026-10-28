@@ -7,6 +7,28 @@ const measurements = JSON.parse(
   readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))
 )
 
+function preparationTasks(checkpoints) {
+  const pending = new Map(checkpoints.map(checkpoint => [checkpoint.segment, checkpoint]))
+  const tasks = []
+  // These checkpoints shared expensive preparation in the original Core matrix.
+  for (const group of [
+    ['claude-runtime', 'local-harness', 'workbench-mode', 'native-window-startup'],
+    ['collaboration-issue-mcp-comments', 'collaboration-delivery-editing'],
+  ]) {
+    const members = group.map(segment => pending.get(segment)).filter(Boolean)
+    if (!members.length) continue
+    tasks.push({
+      segments: members.map(checkpoint => checkpoint.segment),
+      seconds: members.reduce((total, checkpoint) => total + checkpoint.seconds, 0),
+    })
+    for (const checkpoint of members) pending.delete(checkpoint.segment)
+  }
+  for (const checkpoint of pending.values()) {
+    tasks.push({ segments: [checkpoint.segment], seconds: checkpoint.seconds })
+  }
+  return tasks.sort((a, b) => b.seconds - a.seconds || a.segments[0].localeCompare(b.segments[0]))
+}
+
 export function checkpointSeconds(segment, seconds = measurements.seconds) {
   const checkpoints = expandDesktopCheckpoints([segment])
   if (checkpoints.some(checkpoint => seconds[checkpoint] === undefined)) return null
@@ -43,11 +65,10 @@ export function balanceWindowsMatrix(matrix, seconds = measurements.seconds) {
       }
     }
   }
-  pending.sort((a, b) => b.seconds - a.seconds || a.segment.localeCompare(b.segment))
-  for (const checkpoint of pending) {
+  for (const task of preparationTasks(pending)) {
     const target = ordinary.reduce((best, shard) => (shard.seconds < best.seconds ? shard : best))
-    target.segments.push(checkpoint.segment)
-    target.seconds += checkpoint.seconds
+    target.segments.push(...task.segments)
+    target.seconds += task.seconds
   }
   return {
     include: shards

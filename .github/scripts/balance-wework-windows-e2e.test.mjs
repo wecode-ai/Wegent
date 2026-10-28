@@ -84,6 +84,39 @@ test('duplicate selection is rejected rather than silently losing coverage', () 
   )
 })
 
+test('balancing never multiplies expensive conditional preparation from the original workflow', () => {
+  const steps = JSON.parse(
+    execFileSync(
+      'ruby',
+      [
+        '-ryaml',
+        '-rjson',
+        '-e',
+        "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['wework-desktop-windows-core-e2e']['steps'])",
+        '.github/workflows/wework-e2e.yml',
+      ],
+      { cwd: root, encoding: 'utf8' }
+    )
+  )
+  const balanced = balanceWindowsMatrix(original)
+  for (const name of [
+    'Install local harness CLIs',
+    'Build real object storage',
+    'Install Electron for native startup and schema verification',
+  ]) {
+    const step = steps.find(step => step.name === name)
+    assert.ok(step, name)
+    const triggers = [...step.if.matchAll(/contains\(matrix.segments, '([^']+)'\)/g)].map(
+      match => match[1]
+    )
+    assert.ok(triggers.length, `Preparation triggers are required for ${name}`)
+    const count = matrix =>
+      matrix.include.filter(shard => triggers.some(segment => shard.segments.includes(segment)))
+        .length
+    assert.equal(count(balanced), count(original), name)
+  }
+})
+
 test('timing evidence contains positive successful samples with source run links', () => {
   const evidence = JSON.parse(
     readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))

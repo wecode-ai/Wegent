@@ -294,6 +294,7 @@ Windows Core 使用 `.github/ci/wework-windows-checkpoint-durations.json` 中带
 Actions 来源链接的成功检查点耗时中位数，单独均衡串行分片；Linux 分组不变。
 调度保留十个 runner 的预算、两个独占基准分片和全部检查点。包含未测量检查点的
 分片整体保持原样，待有成功日志后更新耗时数据。失败和取消的检查点不计入基线；
+共享 CLI、Electron 或对象存储准备的检查点一起调度，保持原有准备任务数量。
 估算负载不包含 runner 排队、公共初始化和清理时间，最终收益以完整 CI 实测为准。
 
 功能分支不在普通 `push` 事件中运行重复 CI；创建 PR 后由 `pull_request` 事件验证。

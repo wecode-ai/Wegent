@@ -304,6 +304,8 @@ which records the source Actions runs. Linux grouping stays unchanged. Schedulin
 preserves the ten-runner budget, two exclusive benchmark shards, and every
 checkpoint. A shard containing an unmeasured checkpoint remains intact until
 successful logs provide evidence. Failed and cancelled checkpoints are excluded.
+Checkpoints sharing CLI, Electron, or object-storage preparation stay together,
+preserving the original number of preparation jobs.
 Estimated loads omit runner queues, common setup, and cleanup; validate actual
 savings with a complete CI run.
 
