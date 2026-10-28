@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
 
 import { telemetryEvents } from './response-protocol.mjs'
+import { awaitIdentityEvent } from './telemetry-identity.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -171,7 +172,7 @@ async function verifyInitialTelemetryConsent(control, sensitiveValues, posture =
   )
 
   await control.awaitTelemetryEvent('app_started')
-  if (identified) await control.awaitTelemetryEvent('$identify')
+  if (identified) await awaitIdentityEvent(control)
   const requests = control.telemetryRequests
   const events = requests.flatMap(request => telemetryEvents(request.payload))
   assert.ok(events.length > 0, 'The telemetry request did not contain an event')

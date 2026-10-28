@@ -18,6 +18,25 @@ function recordedBodies(control) {
   return control.telemetryRequests.map(request => request.rawBody).join('\n')
 }
 
+/**
+ * Waits for the identity capture and reports the events that did arrive when it
+ * never shows up, so a policy that silently stayed anonymous is diagnosable
+ * from the failure message alone.
+ */
+async function awaitIdentityEvent(control, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
+  try {
+    return await control.awaitTelemetryEvent('$identify', timeoutMs)
+  } catch (error) {
+    const observed = [...new Set(recordedEvents(control).map(event => event.event))]
+    throw new Error(
+      `The desktop app did not send the $identify telemetry event. Observed events: ${
+        observed.length > 0 ? observed.join(', ') : 'none'
+      }`,
+      { cause: error }
+    )
+  }
+}
+
 async function awaitAttributedEvent(control, eventName, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -38,7 +57,7 @@ async function awaitAttributedEvent(control, eventName, timeoutMs = DEFAULT_STEP
  * client IP is kept, and the account email never leaves the app.
  */
 async function verifyIdentifiedTelemetryIdentity(control) {
-  await control.awaitTelemetryEvent('$identify')
+  await awaitIdentityEvent(control)
 
   const events = recordedEvents(control)
   const identify = events.find(event => event.event === '$identify')
@@ -78,5 +97,6 @@ async function verifyIdentifiedTelemetryIdentity(control) {
 export {
   IDENTIFIED_TELEMETRY_EMAIL,
   IDENTIFIED_TELEMETRY_USERNAME,
+  awaitIdentityEvent,
   verifyIdentifiedTelemetryIdentity,
 }
