@@ -8,10 +8,11 @@ import { useStandInAssignmentNotifications } from './useStandInAssignmentNotific
 import type { TaskSource } from './NotificationTaskSourceContext'
 import * as runtimeEnvironment from '@/lib/runtime-environment'
 
-const { send, transcript, run } = vi.hoisted(() => ({
+const { send, transcript, run, readTask } = vi.hoisted(() => ({
   send: vi.fn(),
   transcript: vi.fn(),
   run: vi.fn(),
+  readTask: vi.fn(),
 }))
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -22,7 +23,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 }))
 const services = {
   runtimeWorkApi: { sendRuntimeMessage: send, getRuntimeTranscript: transcript },
-  standInApi: { run },
+  standInApi: { run, readTask },
   getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'device' }),
 } as unknown as WorkbenchServices
 const onChanged = vi.fn().mockResolvedValue(undefined)
@@ -69,8 +70,51 @@ beforeEach(() => {
   })
   send.mockResolvedValue({ accepted: true, taskId: 'task' })
   run.mockResolvedValue(runtimeItem.address)
+  readTask.mockResolvedValue({ success: true, task: runtimeItem.task })
 })
 describe('notification inline handling', () => {
+  it('shows the existing execution status instead of announcing a new run', async () => {
+    readTask.mockResolvedValue({
+      success: true,
+      task: { ...runtimeItem.task, status: 'done', running: false },
+    })
+    render(
+      <StandInNotificationProcessing
+        notification={assignment}
+        rowProps={rowProps}
+        services={services}
+        userId={1}
+        onChanged={onChanged}
+      />
+    )
+    fireEvent.click(screen.getByTestId('notification-stand-in-start-assignment'))
+    await waitFor(() =>
+      expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+        'notifications.stand_in_completed'
+      )
+    )
+    expect(readTask).toHaveBeenCalledWith('device', 'task')
+  })
+
+  it('does not announce execution when the returned task is unavailable', async () => {
+    readTask.mockResolvedValue({ success: false, code: 'stand_in_unavailable' })
+    render(
+      <StandInNotificationProcessing
+        notification={assignment}
+        rowProps={rowProps}
+        services={services}
+        userId={1}
+        onChanged={onChanged}
+      />
+    )
+    fireEvent.click(screen.getByTestId('notification-stand-in-start-assignment'))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '分身暂不可用，请检查分身是否已启用并关联此项目。'
+    )
+    expect(screen.queryByTestId('notification-stand-in-status-assignment')).toBeNull()
+    expect(onChanged).not.toHaveBeenCalled()
+  })
+
   it('lets the Executor resolve the connected identity for an unhandled assignment', async () => {
     render(
       <StandInNotificationProcessing
