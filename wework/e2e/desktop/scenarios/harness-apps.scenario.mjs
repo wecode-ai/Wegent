@@ -9,7 +9,7 @@ import {
   STRANGER_NAME,
   USER_PASSWORD,
 } from '../modules/harness-app-fixture.mjs'
-import { join } from 'node:path'
+import { isAbsolute, join, relative } from 'node:path'
 import { homedir } from 'node:os'
 import { verifyDefaultOnlyDshPackage } from '../modules/dsh-runtime-cache.mjs'
 import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
@@ -44,12 +44,21 @@ export async function createDesktopScenario({
     process.platform === 'linux' ? join(resultDir, 'home') : join(homedir(), 'Downloads')
   let sharedSmartAppId = null
   let ownerRequest
+  let harnessRuntimeRoot
   return {
     requiresCloudEnvironment: true,
-    async prepareApp({ appBinary }) {
+    requiresIsolatedHarnessRuntime: true,
+    async prepareApp({ appBinary, appEnvironment }) {
+      harnessRuntimeRoot = appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT
+      assert.ok(harnessRuntimeRoot, 'Harness app scenarios require a prepared private runtime')
+      const runtimeLocation = relative(resultDir, harnessRuntimeRoot)
+      assert.ok(
+        runtimeLocation && !runtimeLocation.startsWith('..') && !isAbsolute(runtimeLocation),
+        'Harness app cold-download scenarios require their own writable runtime cache'
+      )
       await verifyDefaultOnlyDshPackage(
         join(packagedResourcesRoot(appBinary), 'harness-runtime'),
-        join(resultDir, 'harness-runtime')
+        harnessRuntimeRoot
       )
     },
 
@@ -213,12 +222,14 @@ export async function createDesktopScenario({
         captureScreenshot,
         electronUserDataDirectory,
         resultDir,
+        harnessRuntimeRoot,
       })
       if (checkpoint === 'harness-app-development') {
         try {
           await verifyHarnessDevelopment(control, {
             uiTimeoutMs,
             resultDir,
+            harnessRuntimeRoot,
             captureScreenshot,
             electronUserDataDirectory,
             legacyRuntimeCache,
@@ -253,6 +264,7 @@ export async function createDesktopScenario({
           ownerRequest,
           downloadsPath,
           resultDir,
+          harnessRuntimeRoot,
           legacyRuntimeCache,
         })
       }

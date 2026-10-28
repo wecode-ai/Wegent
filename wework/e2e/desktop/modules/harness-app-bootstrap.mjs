@@ -7,7 +7,7 @@ import { verifyDownloadedDshRuntimeCache } from './dsh-runtime-cache.mjs'
 
 export async function prepareHarnessAppUi(
   control,
-  { uiTimeoutMs, captureScreenshot, electronUserDataDirectory, resultDir }
+  { uiTimeoutMs, captureScreenshot, electronUserDataDirectory, resultDir, harnessRuntimeRoot }
 ) {
   await setExperimentalFeatures(control, false, uiTimeoutMs)
   await control.command('navigate', 'body', { value: '/' })
@@ -142,10 +142,7 @@ export async function prepareHarnessAppUi(
     '0.1.0-rc.8',
     'An existing Smart app must keep its declared compatible runtime'
   )
-  const legacyRuntimeCache = await verifyDownloadedDshRuntimeCache(
-    join(resultDir, 'harness-runtime'),
-    '0.1.0-rc.8'
-  )
+  const legacyRuntimeCache = await verifyDownloadedDshRuntimeCache(harnessRuntimeRoot, '0.1.0-rc.8')
   await control.command('click', `[data-testid="workspace-tab-select-${officialManagementTabId}"]`)
   await control.command(
     'waitFor',

@@ -1325,7 +1325,9 @@ async function main() {
     const usesReleasePackageRuntimeAssets =
       desktopScenario?.usesReleasePackageRuntimeAssets === true
     const harnessRuntimes = needsPackagedHarnessRuntime
-      ? await prepareHarnessRuntimeRoots(appBinary)
+      ? await prepareHarnessRuntimeRoots(appBinary, {
+          isolated: desktopScenario?.requiresIsolatedHarnessRuntime === true,
+        })
       : null
     const configuredElectronCoreRuntimeRoot =
       process.env.WEWORK_E2E_HARNESS_RUNTIME_ROOT?.trim() || null

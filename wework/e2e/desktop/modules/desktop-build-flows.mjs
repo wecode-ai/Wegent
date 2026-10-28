@@ -471,10 +471,11 @@ function codexCacheRoot() {
   )
 }
 
-async function prepareHarnessRuntimeRoots(appBinary) {
+async function prepareHarnessRuntimeRoots(appBinary, { isolated = false } = {}) {
   return preparePackagedHarnessRuntimeRoots({
     appBinary,
     configuredRuntimeRoot: process.env.WEWORK_E2E_HARNESS_RUNTIME_ROOT?.trim(),
+    isolated,
     extractArchive: (archivePath, extracted) =>
       runChecked('tar', ['-xzf', archivePath, '-C', extracted], { cwd: weworkDir }),
     resultDirectory: resultDir,

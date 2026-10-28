@@ -5,6 +5,7 @@ export async function preparePackagedHarnessRuntimeRoots({
   appBinary,
   configuredRuntimeRoot,
   extractArchive,
+  isolated = false,
   platform = process.platform,
   resultDirectory,
 }) {
@@ -14,10 +15,11 @@ export async function preparePackagedHarnessRuntimeRoots({
   )
   const packagedResources = join(resourcesRoot, 'harness-runtime')
   const catalog = JSON.parse(await readFile(join(packagedResources, 'runtimes.json'), 'utf8'))
-  const runtimeRoot = configuredRuntimeRoot
+  const usesSharedRuntime = Boolean(configuredRuntimeRoot) && !isolated
+  const runtimeRoot = usesSharedRuntime
     ? resolve(configuredRuntimeRoot)
     : join(resultDirectory, 'harness-runtime')
-  if (!configuredRuntimeRoot) {
+  if (!usesSharedRuntime) {
     await rm(runtimeRoot, { recursive: true, force: true })
     await mkdir(runtimeRoot, { recursive: true })
     const runtimes = new Map(catalog.runtimes.map(runtime => [runtime.sourceFingerprint, runtime]))

@@ -26,6 +26,7 @@ export async function createNativeAccountFixture(resultDir, pluginRoot) {
   const binaryName = process.platform === 'win32' ? 'native-account.exe' : 'native-account'
   const build = wrapWindowsScriptCommand('go', [
     'build',
+    '-buildvcs=false',
     '-o',
     join(pluginRoot, 'scripts', binaryName),
     '.',
