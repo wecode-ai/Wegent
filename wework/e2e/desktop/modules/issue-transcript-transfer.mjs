@@ -239,6 +239,21 @@ export async function verifyIssueTranscriptTransfer({
     'clickWhenEnabled',
     scope(`[data-testid="cloud-todo-card-${fixture.issue.id}"]`)
   )
+  // Reload also refreshes the runtime token and replaces its cloud connection.
+  // History transfer starts only after the new registration is acknowledged.
+  const registrationDeadline = Date.now() + timeoutMs
+  let registration
+  do {
+    registration = JSON.parse(
+      await control.command('getPluginSyncDiagnostics', 'body', { value: address.deviceId })
+    )
+    if (registration.rendererConnected && registration.backend.connected) break
+    await new Promise(resolve => setTimeout(resolve, 100))
+  } while (Date.now() < registrationDeadline)
+  assert.ok(
+    registration.rendererConnected && registration.backend.connected,
+    'The reloaded client must complete its runtime registration before reading Issue history'
+  )
   await control.command(
     'click',
     scope(`[data-testid="cloud-todo-open-task-conversation-${binding.id}"]`)

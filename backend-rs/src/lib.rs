@@ -160,6 +160,7 @@ mod loop_item_attachments;
 mod loop_item_executions;
 pub(crate) mod loop_item_pages;
 mod loop_items;
+mod loop_node_storage;
 mod loop_tasks;
 mod market_subscriptions;
 mod marketplace_tags;
