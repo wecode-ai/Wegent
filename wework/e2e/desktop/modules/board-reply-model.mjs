@@ -292,6 +292,7 @@ export function createBoardReplyModelRegression({
     },
 
     async verify(control, issue, scope, cloud) {
+      upstreamModels.clear()
       active = true
       try {
         const activity = scope(`[data-testid="cloud-task-activity-${issue.id}"]`)
