@@ -1,4 +1,4 @@
-import { render, waitFor } from '@testing-library/react'
+import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { HarnessAppAutoLauncher } from './HarnessAppAutoLauncher'
 import { captureHarnessAppLaunchDiagnostics } from '@/e2e/harness-app-launch-diagnostics'
@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   takeContext: vi.fn(),
   takeDecision: vi.fn(),
   clearLaunch: vi.fn(),
+  failLaunch: vi.fn(),
   notifyInstallationsChanged: vi.fn(),
 }))
 
@@ -54,7 +55,7 @@ vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
 vi.mock('@/features/harness-apps/harnessAppLaunchState', () => ({
   beginHarnessAppLaunch: vi.fn(),
   clearHarnessAppLaunch: mocks.clearLaunch,
-  failHarnessAppLaunch: vi.fn(),
+  failHarnessAppLaunch: mocks.failLaunch,
 }))
 
 vi.mock('@/features/harness-apps/harnessAppInstallationsChanged', () => ({
@@ -296,6 +297,144 @@ describe('HarnessAppAutoLauncher', () => {
     expect(mocks.unregisterProxy).not.toHaveBeenCalledWith('new-token')
     expect(mocks.unregisterProxy.mock.invocationCallOrder[0]!).toBeLessThan(
       mocks.start.mock.invocationCallOrder[1]!
+    )
+  })
+
+  test('uses the committed catalog when a reopened launch waits for old route cleanup', async () => {
+    let releaseHandoff: () => void = () => {}
+    let releaseCleanup: (token: null) => void = () => {}
+    mocks.list.mockResolvedValue([installation])
+    mocks.start.mockResolvedValue(running)
+    mocks.storeProxy.mockReturnValueOnce(
+      new Promise<void>(resolve => {
+        releaseHandoff = resolve
+      })
+    )
+    mocks.takeProxy.mockReturnValueOnce(
+      new Promise<null>(resolve => {
+        releaseCleanup = resolve
+      })
+    )
+    mocks.resolveLaunch
+      .mockResolvedValueOnce({
+        baseUrl: 'http://127.0.0.1:9000/v1/harness-router/old-token',
+        proxyToken: 'old-token',
+      })
+      .mockImplementation(async (_shell, model) => ({
+        baseUrl: `http://127.0.0.1:9000/v1/harness-router/new-${model.key}`,
+        proxyToken: `new-${model.key}`,
+      }))
+    const original = render(<HarnessAppAutoLauncher installationId="app-1" />)
+    await waitFor(() => expect(mocks.storeProxy).toHaveBeenCalledTimes(1))
+    original.unmount()
+    releaseHandoff()
+    await waitFor(() => expect(mocks.takeProxy).toHaveBeenCalledTimes(1))
+
+    workbenchState.models = []
+    mocks.listModelOptions.mockReturnValue([])
+    const settled = vi.fn()
+    const replacement = render(
+      <HarnessAppAutoLauncher installationId="app-1" onStartupSettled={settled} />
+    )
+    workbenchState.models = [{ name: 'model-1' }, { name: 'model-2' }]
+    mocks.listModelOptions.mockReturnValue([
+      { key: 'model-1', label: 'Refreshed default' },
+      { key: 'model-2', label: 'Refreshed second' },
+    ])
+    replacement.rerender(
+      <HarnessAppAutoLauncher installationId="app-1" onStartupSettled={settled} />
+    )
+    expect(mocks.start).toHaveBeenCalledTimes(1)
+
+    await act(async () => releaseCleanup(null))
+    await waitFor(() => expect(settled).toHaveBeenCalledWith('app-1'))
+
+    expect(mocks.start).toHaveBeenCalledTimes(2)
+    expect(mocks.start).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        modelBaseUrl: 'http://127.0.0.1:9000/v1/harness-router/new-model-1',
+        additionalModels: [
+          {
+            modelKey: 'model-2',
+            displayName: 'Refreshed second',
+            baseUrl: 'http://127.0.0.1:9000/v1/harness-router/new-model-2',
+          },
+        ],
+      })
+    )
+    expect(mocks.register).toHaveBeenCalledTimes(1)
+    expect(mocks.unregisterProxy).toHaveBeenCalledWith('old-token')
+    expect(mocks.unregisterProxy).not.toHaveBeenCalledWith('new-model-1')
+    expect(mocks.unregisterProxy.mock.invocationCallOrder[0]!).toBeLessThan(
+      mocks.start.mock.invocationCallOrder[1]!
+    )
+  })
+
+  test('rejects a configured model removed while installation lookup is pending', async () => {
+    let resolveInstallations: (value: (typeof installation)[]) => void = () => {}
+    mocks.list.mockReturnValue(
+      new Promise(resolve => {
+        resolveInstallations = resolve
+      })
+    )
+    const settled = vi.fn()
+    const view = render(
+      <HarnessAppAutoLauncher installationId="app-1" onStartupSettled={settled} />
+    )
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(1))
+
+    workbenchState.models = [{ name: 'model-2' }]
+    mocks.listModelOptions.mockReturnValue([{ key: 'model-2', label: 'Other model' }])
+    view.rerender(<HarnessAppAutoLauncher installationId="app-1" onStartupSettled={settled} />)
+    await act(async () => resolveInstallations([installation]))
+    await waitFor(() => expect(settled).toHaveBeenCalledWith('app-1'))
+
+    expect(mocks.failLaunch).toHaveBeenCalledWith('app-1', expect.any(String))
+    expect(mocks.resolveLaunch).not.toHaveBeenCalled()
+    expect(mocks.start).not.toHaveBeenCalled()
+  })
+
+  test('keeps one catalog snapshot for default and additional registration', async () => {
+    let resolveDefault: (value: { baseUrl: string; proxyToken: string }) => void = () => {}
+    mocks.list.mockResolvedValue([installation])
+    mocks.start.mockResolvedValue(running)
+    mocks.listModelOptions.mockReturnValue([
+      { key: 'model-1', label: 'Default model' },
+      { key: 'model-2', label: 'Second model' },
+    ])
+    mocks.resolveLaunch.mockReturnValueOnce(
+      new Promise(resolve => {
+        resolveDefault = resolve
+      })
+    )
+    const view = render(<HarnessAppAutoLauncher installationId="app-1" />)
+    await waitFor(() => expect(mocks.resolveLaunch).toHaveBeenCalledTimes(1))
+
+    workbenchState.models = [{ name: 'model-1' }, { name: 'model-3' }]
+    mocks.listModelOptions.mockReturnValue([
+      { key: 'model-1', label: 'Refreshed default' },
+      { key: 'model-3', label: 'Third model' },
+    ])
+    view.rerender(<HarnessAppAutoLauncher installationId="app-1" />)
+    await act(async () =>
+      resolveDefault({ baseUrl: 'http://127.0.0.1:9000', proxyToken: 'default-token' })
+    )
+    await waitFor(() => expect(mocks.register).toHaveBeenCalledWith(running))
+
+    expect(mocks.resolveLaunch).toHaveBeenCalledTimes(2)
+    expect(mocks.resolveLaunch).toHaveBeenLastCalledWith(
+      'opencode',
+      { key: 'model-2', label: 'Second model' },
+      undefined,
+      false
+    )
+    expect(mocks.start).toHaveBeenCalledTimes(1)
+    expect(mocks.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        additionalModels: [
+          { modelKey: 'model-2', displayName: 'Second model', baseUrl: 'http://127.0.0.1:9000' },
+        ],
+      })
     )
   })
 

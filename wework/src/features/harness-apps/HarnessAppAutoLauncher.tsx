@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { harnessAppsApi } from '@/api/local/harnessApps'
 import {
   beginHarnessAppLaunch,
@@ -47,6 +47,10 @@ export function HarnessAppAutoLauncher({
     () => listLocalHarnessModelOptions('opencode', projectChat.models),
     [projectChat.models]
   )
+  const committedModelOptions = useRef(modelOptions)
+  useLayoutEffect(() => {
+    committedModelOptions.current = modelOptions
+  }, [modelOptions])
   useEffect(() => {
     if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
       return observeHarnessAppLaunchCatalog(
@@ -107,7 +111,10 @@ export function HarnessAppAutoLauncher({
         if (isElectronRuntime()) clearHarnessAppLaunch(installationId)
         return
       }
-      const model = modelOptions.find(option => option.key === installation.modelKey)
+      // A reopen can wait behind old route cleanup while its catalog loads.
+      // Select once from committed state; later refreshes cannot mix providers.
+      const launchModelOptions = committedModelOptions.current
+      const model = launchModelOptions.find(option => option.key === installation.modelKey)
       if (!model) {
         beginHarnessAppLaunch(installationId, installation.manifest.displayName, retry)
         failHarnessAppLaunch(
@@ -142,7 +149,7 @@ export function HarnessAppAutoLauncher({
         stage = 'additional-model-routes'
         const additionalModels = await registerAdditionalHarnessAppModels(
           model,
-          modelOptions,
+          launchModelOptions,
           modelApi,
           token => additionalProxyTokens.push(token)
         )
