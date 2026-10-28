@@ -45,6 +45,8 @@ function makeController(members = [inherited, direct]) {
   return {
     members,
     loading: false,
+    loadError: null as string | null,
+    retryLoad: vi.fn(),
     membersOpen: false,
     setMembersOpen: vi.fn(),
     memberComposerRef: createRef<HTMLDivElement>(),
