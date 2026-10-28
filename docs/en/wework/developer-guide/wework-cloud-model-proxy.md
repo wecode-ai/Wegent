@@ -115,10 +115,12 @@ seconds.
 Recovery submits an empty native `turn/start` input against the saved history. It
 does not replay the original task, attachments, user-message identity, or already
 merged additional context. Completed tool results remain in history. The task
-stays running and exposes reconnecting status during recovery; cancellation stops
-the wait immediately, and exhausted recovery returns the final failure. Quota,
-authentication, context-window, and subagent errors, as well as errors already
-being retried by Codex, do not trigger this policy.
+stays running and exposes reconnecting status during recovery. Before the retry
+request starts, the executor emits a recovery event so open views clear that
+turn's terminal error state instead of showing a stale failure card. Cancellation
+stops the wait immediately, and exhausted recovery returns the final failure.
+Quota, authentication, context-window, and subagent errors, as well as errors
+already being retried by Codex, do not trigger this policy.
 
 The executor persists the IDs of failed turns that entered recovery. Native and
 cached transcript reads clear only those turns' terminal error state while

@@ -103,6 +103,36 @@ export interface SmartAppVerificationService {
 const DECISION_ROUTER_PROTOCOL_VERSION = 1
 const DECISION_ROUTER_LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
 const DECISION_ROUTE_TOKEN = /^[A-Za-z0-9._~-]{8,200}$/
+const MODEL_ROUTE_PATH = /^\/v1\/harness-router\/([A-Za-z0-9._~-]{8,200})$/
+
+function validateAdditionalModelRoute(route: {
+  modelKey: string
+  displayName: string
+  baseUrl: string
+}): { modelKey: string; displayName: string; baseUrl: string } {
+  let url: URL
+  try {
+    url = new URL(route.baseUrl)
+  } catch {
+    throw new Error('Wework model router base URL is not a valid URL')
+  }
+  if (
+    url.protocol !== 'http:' ||
+    !DECISION_ROUTER_LOOPBACK_HOSTS.has(url.hostname) ||
+    Boolean(url.username || url.password || url.search || url.hash) ||
+    !MODEL_ROUTE_PATH.test(url.pathname)
+  ) {
+    throw new Error('Wework model router base URL must be a local harness route')
+  }
+  if (!route.modelKey.trim() || !route.displayName.trim()) {
+    throw new Error('Wework model router requires a model key and display name')
+  }
+  return {
+    modelKey: route.modelKey.trim(),
+    displayName: route.displayName.trim(),
+    baseUrl: url.href,
+  }
+}
 
 /**
  * Accepts only the loopback route Wework itself hands to a Smart app: an
@@ -143,6 +173,7 @@ function validateDecisionRouteUrl(raw: string): string {
 
 export class SmartAppManager {
   private readonly proxyTokens = new Map<string, string>()
+  private readonly additionalProxyTokens = new Map<string, string[]>()
   private readonly contextTokens = new Map<string, string>()
   private readonly decisionTokens = new Map<string, string>()
   private readonly verificationService: SmartAppVerificationService
@@ -457,6 +488,7 @@ export class SmartAppManager {
   async start(input: {
     installationId: string
     modelBaseUrl?: string | null
+    additionalModels?: Array<{ modelKey: string; displayName: string; baseUrl: string }>
     contextBaseUrl?: string | null
     contextToken?: string | null
     decisionBaseUrl?: string | null
@@ -466,6 +498,14 @@ export class SmartAppManager {
       const runtimeHost = this.requiredRuntimeHost()
       const installations = await this.readRegistry()
       const installation = requiredInstallation(installations, input.installationId)
+      const additionalModels = (input.additionalModels ?? []).map(validateAdditionalModelRoute)
+      const modelKeys = additionalModels.map(model => model.modelKey)
+      if (new Set(modelKeys).size !== modelKeys.length) {
+        throw new Error('Wework model router contains duplicate models')
+      }
+      if (additionalModels.length && !input.modelBaseUrl?.trim()) {
+        throw new Error('Wework model router requires a default model route')
+      }
       // Defense in depth: the renderer only registers a decision route for an
       // authorized installation, but the host re-validates the address and the
       // grant, so a compromised renderer cannot smuggle in another service.
@@ -488,6 +528,7 @@ export class SmartAppManager {
           environment: this.options.environment,
           port: 0,
           modelBaseUrl: input.modelBaseUrl,
+          additionalModels,
           contextBaseUrl: input.contextBaseUrl,
           contextToken: input.contextToken,
           decisionBaseUrl: decisionRoute?.baseUrl ?? null,
@@ -571,6 +612,7 @@ export class SmartAppManager {
         })
       }
       this.proxyTokens.delete(installationId)
+      this.additionalProxyTokens.delete(installationId)
       this.contextTokens.delete(installationId)
       this.decisionTokens.delete(installationId)
     })
@@ -661,6 +703,17 @@ export class SmartAppManager {
 
   takeProxyToken(installationId: string): string | null {
     return takeToken(this.proxyTokens, installationId)
+  }
+
+  storeAdditionalProxyTokens(installationId: string, tokens: string[]): void {
+    this.additionalProxyTokens.set(requiredText(installationId), tokens.map(requiredText))
+  }
+
+  takeAdditionalProxyTokens(installationId: string): string[] {
+    const key = requiredText(installationId)
+    const tokens = this.additionalProxyTokens.get(key) ?? []
+    this.additionalProxyTokens.delete(key)
+    return tokens
   }
 
   storeContextToken(installationId: string, token: string): void {

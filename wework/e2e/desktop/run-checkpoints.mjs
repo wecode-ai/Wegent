@@ -84,6 +84,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'local-harness': './scenarios/local-terminal.scenario.mjs',
   'harness-app-development': './scenarios/harness-apps.scenario.mjs',
   'harness-app-lifecycle': './scenarios/harness-apps.scenario.mjs',
+  'harness-app-models': './scenarios/harness-apps.scenario.mjs',
 
   'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',
   'browser-toolbar-actions': './scenarios/embedded-browser-toolbar-actions.scenario.mjs',
@@ -259,6 +260,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'local-harness',
   'harness-app-development',
   'harness-app-lifecycle',
+  'harness-app-models',
 
   'offline-local-project-space',
   'cloud-context-resilience',

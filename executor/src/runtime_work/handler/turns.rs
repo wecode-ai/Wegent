@@ -1408,8 +1408,22 @@ impl RuntimeWorkRpcHandler {
             });
             let recovery_handler = handler.clone();
             let recovery_local_task_id = turn_local_task_id.clone();
+            let recovery_event_request = request.clone();
             let overload_turn_recovering: CodexActiveTurnCallback = Box::new(move |_, turn_id| {
                 recovery_handler.record_overload_recovery_turn(&recovery_local_task_id, &turn_id);
+                let mut event_request = recovery_event_request.clone();
+                event_request.subtask_id = turn_id.clone();
+                // A recoverable overload is not a terminal failure. Tell the
+                // renderer before the retry request starts so a transcript
+                // refresh cannot leave a stale error card on screen.
+                emit_response_event(
+                    &recovery_handler.event_tx,
+                    &recovery_handler.device_id,
+                    "response.recovered",
+                    &recovery_local_task_id,
+                    &event_request,
+                    json!({"turnId": turn_id}),
+                );
             });
             let result = async {
                 stand_in_context?;

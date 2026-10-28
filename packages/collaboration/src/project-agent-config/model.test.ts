@@ -9,6 +9,7 @@ import type { CollaborationOwnedAgent } from "../types";
 import {
   createResourceAgentBindingInput,
   createSharedAgentBindingInput,
+  isSelectableAgentResource,
   normalizeProjectAgent,
 } from "./model";
 
@@ -24,6 +25,14 @@ const team: CollaborationOwnedAgent = {
 };
 
 describe("project agent configuration model", () => {
+  it.each([
+    ["available", true],
+    ["unchecked", true],
+    ["unavailable", false],
+  ] as const)("catalog status %s is selectable: %s", (status, selectable) => {
+    expect(isSelectableAgentResource({ status })).toBe(selectable);
+  });
+
   it("normalizes snake_case and camelCase project agent DTOs", () => {
     expect(
       normalizeProjectAgent({

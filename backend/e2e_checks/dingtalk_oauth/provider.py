@@ -299,7 +299,7 @@ class DingTalkProvider:
                 "status": "success",
                 "fileName": "export.xlsx",
                 "downloadUrl": self.download_url(actor, service),
-            }
+            },
         }
 
     async def download(self, request: web.Request) -> web.Response:

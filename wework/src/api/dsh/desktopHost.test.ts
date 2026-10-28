@@ -9,6 +9,70 @@ describe('desktop host events', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
+  test('E2E can delay only delivery of a completed real host response', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    const gates = await import('@/e2e/runtime-transport-gates')
+    gates.armRuntimeTransportGate({
+      id: 'handoff',
+      kind: 'response',
+      name: 'smartApps.storeAdditionalProxyTokens',
+      where: [{ path: 'params.installationId', equals: 'app-1' }],
+    })
+    const result = { stored: true }
+    const response = {
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ ok: true, result }),
+    }
+    const fetchMock = vi.fn().mockResolvedValue(response)
+    vi.stubGlobal('fetch', fetchMock)
+    const { invokeDesktopHost } = await import('./desktopHost')
+    let delivered = false
+    const pending = invokeDesktopHost('smartApps.storeAdditionalProxyTokens', {
+      installationId: 'app-1',
+      tokens: ['test-token'],
+    }).then(value => {
+      delivered = true
+      return value
+    })
+    try {
+      await vi.waitFor(() => expect(gates.readRuntimeTransportGate('handoff')).not.toBeNull())
+      expect(fetchMock).toHaveBeenCalledOnce()
+      expect(response.json).toHaveBeenCalledOnce()
+      expect(delivered).toBe(false)
+      gates.releaseRuntimeTransportGate('handoff')
+      expect(await pending).toBe(result)
+    } finally {
+      gates.resetRuntimeTransportGates()
+      await pending
+    }
+  })
+
+  test('production host responses cannot be held by an E2E gate', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    const gates = await import('@/e2e/runtime-transport-gates')
+    gates.armRuntimeTransportGate({ id: 'production', kind: 'response', name: 'smartApps.start' })
+    vi.stubEnv('MODE', 'production')
+    vi.stubEnv('VITE_WEWORK_E2E', 'false')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, result: 'running' }),
+      })
+    )
+    const { invokeDesktopHost } = await import('./desktopHost')
+    try {
+      await expect(invokeDesktopHost('smartApps.start')).resolves.toBe('running')
+      vi.stubEnv('VITE_WEWORK_E2E', 'true')
+      expect(gates.readRuntimeTransportGate('production')).toBeNull()
+    } finally {
+      vi.stubEnv('VITE_WEWORK_E2E', 'true')
+      gates.resetRuntimeTransportGates()
+    }
   })
 
   test('shares one bounded poll loop across subscribers and advances the cursor', async () => {

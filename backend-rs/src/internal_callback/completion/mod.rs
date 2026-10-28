@@ -33,11 +33,13 @@ use serde_json::Value;
 
 use crate::executor_manager::ExecutorManager;
 
-pub(crate) use persist::{mark_subtask_running, persist_completed_result};
+pub(crate) use collect::collect_completed_result;
+pub(crate) use persist::{mark_subtask_running, persist_completed_result, update_task_status};
 pub(crate) use sql::Tables;
 
 /// The deployment inputs one completion flow renders.
 pub(crate) struct Completion<'a, M: Mysql, R: Redis> {
+    pub(crate) app: Option<&'a crate::AppState>,
     pub(crate) mysql: &'a M,
     pub(crate) redis: &'a R,
     pub(crate) tables: Tables,
@@ -56,6 +58,9 @@ pub(crate) struct TaskCompletedEvent<'a> {
     pub(crate) task_id: i64,
     pub(crate) user_id: i64,
     pub(crate) status: &'a str,
+    pub(crate) subtask_id: i64,
+    pub(crate) result: Option<&'a Value>,
+    pub(crate) error: Option<&'a str>,
 }
 
 /// `_get_task_status_user_id`: the owner of one active task, read before the
@@ -116,12 +121,41 @@ pub(crate) async fn complete_terminal<M: Mysql, R: Redis>(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
 ) -> (Option<Value>, Option<i64>) {
+    let (final_result, user_id, _) = complete_terminal_with_advance(
+        ctx,
+        task_id,
+        subtask_id,
+        status,
+        result,
+        error,
+        error_code,
+        executor_name,
+        executor_namespace,
+    )
+    .await;
+    (final_result, user_id)
+}
+
+/// [`complete_terminal`] plus the `PipelineAutoAdvanceIntent` the terminal
+/// status update produced.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn complete_terminal_with_advance<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    task_id: i64,
+    subtask_id: i64,
+    status: &str,
+    result: Option<&Value>,
+    error: Option<&str>,
+    error_code: Option<&str>,
+    executor_name: Option<&str>,
+    executor_namespace: Option<&str>,
+) -> (Option<Value>, Option<i64>, bool) {
     // `callback.py:145 _get_task_status_user_id`: the owner of the single
     // active state, read before the event is emitted so the Socket.IO status
     // frame can address `user:{id}`. The source reads it before the emit step;
     // that step is Redis-only here, so the read keeps its wire position.
     let user_id = task_status_user_id(ctx.mysql, ctx.tables, task_id).await;
-    let final_result = finish_terminal(
+    let (final_result, auto_advance) = finish_terminal(
         ctx,
         task_id,
         subtask_id,
@@ -134,7 +168,7 @@ pub(crate) async fn complete_terminal<M: Mysql, R: Redis>(
     )
     .await;
 
-    (final_result, user_id)
+    (final_result, user_id, auto_advance)
 }
 
 /// `StatusUpdatingEmitter`'s terminal branch without the callback's owner
@@ -169,9 +203,12 @@ pub(crate) async fn complete_terminal_event<M: Mysql, R: Redis>(
         executor_namespace,
     )
     .await
+    .0
 }
 
 /// The shared terminal steps: collect, persist, publish `TaskCompletedEvent`.
+/// Returns the collected result and the persisted status update's
+/// auto-advance decision.
 #[allow(clippy::too_many_arguments)]
 async fn finish_terminal<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
@@ -183,11 +220,11 @@ async fn finish_terminal<M: Mysql, R: Redis>(
     error_code: Option<&str>,
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
-) -> Option<Value> {
+) -> (Option<Value>, bool) {
     let final_result =
         collect::collect_completed_result(ctx, subtask_id, status, result, error, error_code).await;
 
-    persist::persist_completed_result(
+    let auto_advance = persist::persist_completed_result(
         ctx,
         task_id,
         subtask_id,
@@ -199,7 +236,15 @@ async fn finish_terminal<M: Mysql, R: Redis>(
     )
     .await;
 
-    events::publish_task_completed(ctx, task_id, status).await;
+    events::publish_task_completed(
+        ctx,
+        task_id,
+        subtask_id,
+        status,
+        final_result.as_ref(),
+        error,
+    )
+    .await;
 
-    final_result
+    (final_result, auto_advance)
 }
