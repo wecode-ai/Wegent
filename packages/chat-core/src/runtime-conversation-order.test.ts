@@ -449,6 +449,21 @@ describe("native conversation ordering contract", () => {
     ]);
   });
 
+  it("retains an observed gap when a later delta carries no native boundary", () => {
+    const reply: RuntimeConversationItem = {
+      ...item("reply", 1),
+      position: undefined,
+    };
+    expect(
+      ids(
+        mergeRuntimeConversationTurns(
+          [turn([reply, item("native", 2)])],
+          [turn([reply])],
+        ),
+      ),
+    ).toEqual(["reply", "native"]);
+  });
+
   it("materializes the accepted user when turn start supplied only its identity", () => {
     const turns: RuntimeConversationTurn[] = [
       {

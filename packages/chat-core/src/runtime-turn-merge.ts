@@ -233,11 +233,9 @@ export function mergeRuntimeConversationItems(
   snapshotItems: RuntimeConversationItem[],
   preserveLocalTerminal = false,
 ): RuntimeConversationItem[] {
-  const positionedIds = new Set(
-    snapshotItems
-      .filter((item) => item.position !== undefined)
-      .map((item) => item.id),
-  );
+  const hasNativePositions =
+    localItems.some((item) => item.position !== undefined) ||
+    snapshotItems.some((item) => item.position !== undefined);
   const snapshotUserIds = new Map(
     snapshotItems.flatMap((item) =>
       item.type === "user_message" ? [[item.message.id, item.id] as const] : [],
@@ -249,7 +247,7 @@ export function mergeRuntimeConversationItems(
     ),
   );
   const reconciledLocalItems =
-    positionedIds.size > 0
+    hasNativePositions
       ? localItems
       : removeEquivalentAssistantTextItems(localItems, snapshotItems);
   const canonicalLocalItems = reconciledLocalItems.filter(

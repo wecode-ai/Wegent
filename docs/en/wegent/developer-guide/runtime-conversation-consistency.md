@@ -12,7 +12,7 @@ The pinned Codex `0.163.0-alpha.5` supports `thread/timeline/list`. Entries carr
 
 `thread/items/list` supplies ordered arrays, but its entries and live notifications do not share a persisted position or snapshot revision. Receive order, timestamps, tool completion times, and text equality cannot establish canonical history order.
 
-The executor preserves native positions on normalized turns and items. Multiple display blocks derived from one source item retain its position and their stable identities. Pages and events update items by identity; confirmed positions determine ordering. Distinct native items with identical text remain distinct. Unpersisted live output may remain provisional without a position. Completed live-cache items outside a native page must not be appended to that page.
+The executor preserves native positions on normalized turns and items. Multiple display blocks derived from one source item retain its position and their stable identities. Pages and events update items by identity; confirmed positions determine ordering. Distinct native items with identical text remain distinct, including when only the cache retains their native positions and the incoming delta has none. Unpersisted live output may remain provisional without a position. Completed live-cache items outside a native page must not be appended to that page.
 
 Positions belong to a native `threadId`. Replacing a thread invalidates the previous branch's cached ordering and supersedes its in-flight reads. Ordinary task navigation retains each task's shared conversation.
 
