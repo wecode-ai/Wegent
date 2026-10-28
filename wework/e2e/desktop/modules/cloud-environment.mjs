@@ -365,6 +365,7 @@ class RealCloudEnvironment {
       BACKEND_INTERNAL_URL: this.backendUrl,
       WEGENT_BACKEND_PUBLIC_URL: this.backendUrl,
       WEGENT_SOCKET_URL: this.socketUrl,
+      CONNECTOR_OAUTH_REDIRECT_URI: `${this.backendUrl}/api/connector-apps/oauth/callback`,
     }
   }
 
