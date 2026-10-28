@@ -264,18 +264,18 @@ fn cwd_error(cwd: Option<&Path>) -> Option<CommandResult> {
     }
 }
 
-async fn run_diff_with_timeout<F, T>(timeout_seconds: f64, run: F) -> Result<T, CommandResult>
+async fn run_diff_with_timeout<F>(timeout_seconds: f64, run: F) -> CommandResult
 where
-    F: std::future::Future<Output = T>,
+    F: std::future::Future<Output = CommandResult>,
 {
     let timeout = Duration::from_secs_f64(timeout_seconds.max(0.001));
     match time::timeout(timeout, run).await {
-        Ok(value) => Ok(value),
-        Err(_) => Err(CommandResult::error(
+        Ok(value) => value,
+        Err(_) => CommandResult::error(
             format!("Command timed out after {timeout_seconds} seconds"),
             0.0,
             true,
-        )),
+        ),
     }
 }
 
@@ -296,7 +296,7 @@ pub async fn workspace_diff(
     let call_timeout = GIT_CALL_TIMEOUT.min(Duration::from_secs_f64(timeout_seconds.max(1.0)));
     let max_output_bytes = max_output_bytes.clamp(1, MAX_DIFF_OUTPUT_BYTES);
 
-    let result = run_diff_with_timeout(timeout_seconds, async {
+    run_diff_with_timeout(timeout_seconds, async {
         let head_exists = head_commit_exists(cwd_path, &process_env, call_timeout).await;
         let tracked_args = if head_exists {
             vec!["diff", "--binary", "HEAD", "--"]
@@ -329,9 +329,7 @@ pub async fn workspace_diff(
             None,
         )
     })
-    .await;
-
-    result.unwrap_or_else(|error| error)
+    .await
 }
 
 /// Branch diff: changes on the current branch against its merge base with the
@@ -352,7 +350,7 @@ pub async fn branch_diff(
     let call_timeout = GIT_CALL_TIMEOUT.min(Duration::from_secs_f64(timeout_seconds.max(1.0)));
     let max_output_bytes = max_output_bytes.clamp(1, MAX_DIFF_OUTPUT_BYTES);
 
-    let result = run_diff_with_timeout(timeout_seconds, async {
+    run_diff_with_timeout(timeout_seconds, async {
         let base = resolve_diff_base(cwd_path, &process_env, call_timeout).await;
         let merge_base = match base.as_deref() {
             Some(base) => merge_base_of(base, cwd_path, &process_env, call_timeout).await,
@@ -389,9 +387,7 @@ pub async fn branch_diff(
             None,
         )
     })
-    .await;
-
-    result.unwrap_or_else(|error| error)
+    .await
 }
 
 /// Branch diff shortstat used by the environment summary, matching the
@@ -411,7 +407,7 @@ pub async fn branch_diff_shortstat(
     let call_timeout = GIT_CALL_TIMEOUT.min(Duration::from_secs_f64(timeout_seconds.max(1.0)));
     let max_output_bytes = max_output_bytes.clamp(1, MAX_DIFF_OUTPUT_BYTES);
 
-    let result = run_diff_with_timeout(timeout_seconds, async {
+    run_diff_with_timeout(timeout_seconds, async {
         let base = resolve_diff_base(cwd_path, &process_env, call_timeout).await;
         let merge_base = match base.as_deref() {
             Some(base) => merge_base_of(base, cwd_path, &process_env, call_timeout).await,
@@ -433,9 +429,7 @@ pub async fn branch_diff_shortstat(
         .unwrap_or_else(|(message, _)| (Vec::new(), message, false));
         build_result(started_at, success, stdout, stderr, None)
     })
-    .await;
-
-    result.unwrap_or_else(|error| error)
+    .await
 }
 
 /// Push the current branch to origin, replacing the previous `sh` script.
@@ -454,7 +448,7 @@ pub async fn push_current_branch(
     let call_timeout = GIT_CALL_TIMEOUT.min(Duration::from_secs_f64(timeout_seconds.max(1.0)));
     let max_output_bytes = max_output_bytes.clamp(1, MAX_DIFF_OUTPUT_BYTES);
 
-    let result = run_diff_with_timeout(timeout_seconds, async {
+    run_diff_with_timeout(timeout_seconds, async {
         let branch_args = owned_args(&["branch", "--show-current"]);
         let (branch_stdout, _, success) =
             run_git(&branch_args, cwd_path, &process_env, call_timeout, 4096)
@@ -485,9 +479,7 @@ pub async fn push_current_branch(
         .unwrap_or_else(|(message, _)| (Vec::new(), message, false));
         build_result(started_at, success, stdout, stderr, None)
     })
-    .await;
-
-    result.unwrap_or_else(|error| error)
+    .await
 }
 
 /// Add a git worktree, replacing the previous `sh` script. `args` carries
@@ -514,7 +506,7 @@ pub async fn worktree_add(
     let max_output_bytes = max_output_bytes.clamp(1, MAX_DIFF_OUTPUT_BYTES);
     let target_path = Path::new(target);
 
-    let result = run_diff_with_timeout(timeout_seconds, async {
+    run_diff_with_timeout(timeout_seconds, async {
         if let Some(parent) = target_path.parent() {
             if let Err(error) = std::fs::create_dir_all(parent) {
                 return CommandResult::error(
@@ -589,9 +581,7 @@ pub async fn worktree_add(
         .unwrap_or_else(|(message, _)| (Vec::new(), message, false));
         build_result(started_at, success, stdout, stderr, None)
     })
-    .await;
-
-    result.unwrap_or_else(|error| error)
+    .await
 }
 
 /// Remove a git worktree, replacing the previous `sh` script. The target is

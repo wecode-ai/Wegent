@@ -14,7 +14,7 @@ export interface ModelSelectorProps {
   onSelectModelAndOptions?: (
     model: UnifiedModel,
     options: ModelOptions,
-  ) => void;
+  ) => boolean | void;
   onSelectModelOption: (optionId: string, value: string) => void;
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void;
   onOpenChange?: (

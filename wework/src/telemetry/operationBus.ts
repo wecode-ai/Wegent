@@ -1,6 +1,4 @@
-import { PLUGIN_OPERATION_DEFINITIONS, type PluginOperationKey } from './generated/pluginEvents'
-import { SMART_APP_OPERATION_DEFINITIONS } from './generated/smartAppEvents'
-import type { SmartAppOperationKey } from './generated/smartAppEvents'
+import { DOMAIN_OPERATION_DEFINITIONS, type DomainOperationKey } from './domainRegistry'
 import type { WeworkTelemetryContext } from './facts'
 
 export interface OperationResult {
@@ -22,9 +20,9 @@ export interface OperationResultDetail {
   readonly properties?: Readonly<Record<string, unknown>>
 }
 
-export type OperationKey = SmartAppOperationKey | PluginOperationKey
+export type OperationKey = DomainOperationKey
 
-const definitions = [...SMART_APP_OPERATION_DEFINITIONS, ...PLUGIN_OPERATION_DEFINITIONS]
+const definitions = DOMAIN_OPERATION_DEFINITIONS
 
 const listeners = new Set<(result: OperationResult) => void>()
 

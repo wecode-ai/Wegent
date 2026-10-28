@@ -123,3 +123,5 @@ mod project_editing_feature_tests {
         );
     }
 }
+
+mod stand_in_telemetry;

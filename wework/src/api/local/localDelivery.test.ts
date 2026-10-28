@@ -26,6 +26,39 @@ const projectRecord = {
   completed_at: null,
 }
 
+test('updates delivery content through one atomic IPC request', async () => {
+  const request = vi.fn().mockResolvedValue({ id: 'delivery-1', version: 4 })
+  const api = createLocalDeliveryApi(request)
+  const file = new File(['new'], 'result.txt', { type: 'text/plain' })
+  Object.defineProperty(file, 'arrayBuffer', {
+    value: async () => new TextEncoder().encode('new').buffer,
+  })
+  await api.updateDelivery('delivery-1', {
+    title: 'Title',
+    version: 3,
+    markdown: 'Notes',
+    chat: null,
+    retained_asset_ids: ['kept'],
+    files: [{ relative_path: 'reports/result.txt', file }],
+  })
+  expect(request).toHaveBeenCalledWith('deliveries.update', {
+    delivery_id: 'delivery-1',
+    delivery: {
+      title: 'Title',
+      version: 3,
+      markdown: 'Notes',
+      chat: null,
+      retained_asset_ids: ['kept'],
+      files: [
+        {
+          relative_path: 'reports/result.txt',
+          file: { display_name: 'result.txt', content_type: 'text/plain', base64: 'bmV3' },
+        },
+      ],
+    },
+  })
+})
+
 const taskRecord = {
   ...projectRecord,
   id: 'LOCAL-1',

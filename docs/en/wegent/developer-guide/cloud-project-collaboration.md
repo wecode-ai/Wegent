@@ -8,7 +8,7 @@ sidebar_position: 32
 
 ## Goal
 
-A cloud project is the shared collaboration and storage boundary for a team. Members may select the same cloud project as the default destination of their own local projects, execute work in Wework, and submit selected conversations, files, and Markdown as immutable delivery snapshots.
+A cloud project is the shared collaboration and storage boundary for a team. Members may select the same cloud project as the default destination of their own local projects, execute work in Wework, and submit selected conversations, files, and Markdown as editable deliveries.
 
 A cloud project is not the existing `Project` model:
 
@@ -83,7 +83,7 @@ projects/{cloud-project-public-id}/
       files/
 ```
 
-Finalized delivery prefixes are immutable. Later tasks may only read or copy them.
+Delivered artifacts support atomic updates with optimistic version checks. An update writes new objects under a distinct `edits/{revision}` prefix within the project delivery, then commits the title, object references, asset list, and version together. Failed commits preserve the original content; successful commits clean up superseded objects.
 
 ## Data model
 
@@ -211,7 +211,7 @@ The Wework local runtime classifies bindings as `system` or `user`. Every runtim
 
 ### Delivery
 
-`deliveries` and `delivery_assets` store immutable snapshot metadata. The nullable `Delivery.source_task_binding_id` points to a verified TODO/Task binding for local delivery and is null when a TODO is completed directly in the cloud UI.
+`deliveries` and `delivery_assets` store delivery metadata. The nullable `Delivery.source_task_binding_id` points to a verified TODO/Task binding for local delivery and is null when a TODO is completed directly in the cloud UI.
 
 ## Authorization
 
@@ -231,7 +231,7 @@ Every TODO, delivery, file, and MCP request resolves the caller's cloud-project 
 ```text
 cloud_projects/  projects and members
 loop_items/      TODOs, state transitions, and Task bindings
-delivery/        immutable delivery snapshots
+delivery/        editable deliveries
 cloud_files/     mutable shared files
 mcp_server/tools/delivery.py  authorized AI access to cloud references
 ```
@@ -244,8 +244,10 @@ Delivery services do not own TODO CRUD. LoopItem services do not access MinIO di
 2. Upload assets in bounded chunks and record size and SHA-256 metadata.
 3. `finalize` locks the Delivery and LoopItem and validates that the source Task is still linked to the TODO.
 4. Write `manifest.json`.
-5. In one database transaction, mark the Delivery delivered, complete the TODO, and update `current_delivery_id`.
+5. In one database transaction, mark the Delivery delivered and update `current_delivery_id`. Initial human-assignment delivery follows round-settlement rules; editing a delivery never settles the round again.
 6. If the database commit fails, remove the new manifest while keeping the draft retryable.
+
+`PATCH /api/v1/deliveries/{id}` is implemented by the Rust Backend. It accepts multipart `metadata` and `file_0`, `file_1`, and subsequent file parts. Metadata includes `title`, `version`, `markdown`, `chat`, `retained_asset_ids`, and file descriptors. New and retained assets must have unique relative paths; references to assets from other deliveries are rejected. Existing creation, read, and initial publication endpoints retain their current ownership.
 
 ## API
 

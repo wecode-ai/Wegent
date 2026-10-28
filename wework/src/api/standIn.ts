@@ -1,3 +1,4 @@
+import type { StandInGeneratedEventMap } from '@/telemetry/generated/standInEvents'
 import type {
   SharedWorkspaceApi,
   WorkspaceStandInSettings,
@@ -83,7 +84,24 @@ export type StandInProjectSettings = WorkspaceStandInSettings & {
   projectStore: ProjectStore
   userId: number
 }
+export type StandInTelemetryFact = {
+  [Name in keyof StandInGeneratedEventMap]: {
+    name: Name
+    properties: StandInGeneratedEventMap[Name]
+    id: string
+    occurredAt: number
+  }
+}[keyof StandInGeneratedEventMap]
+
 export interface StandInExecutorApi {
+  configureTelemetry(
+    userId: number,
+    deviceId: string,
+    enabled: boolean,
+    enabledSince?: number
+  ): Promise<void>
+  telemetryFacts(userId: number, deviceId: string): Promise<{ items: StandInTelemetryFact[] }>
+  acknowledgeTelemetry(userId: number, deviceId: string, ids: string[]): Promise<void>
   connectionProviders(deviceId: string): Promise<{ items: ConnectionProviderDescriptor[] }>
   installConnectionDependencies(
     deviceId: string,
@@ -95,7 +113,8 @@ export interface StandInExecutorApi {
     deviceId: string,
     workId: string,
     messageIds: string[],
-    targetWorkId?: string
+    targetWorkId?: string,
+    telemetryAction?: 'split' | 'merge' | 'move' | 'undo'
   ): Promise<StandInInboxWork>
   memories(userId: number, deviceId: string): Promise<StandInMemory[]>
   saveMemory(
@@ -164,7 +183,7 @@ export interface StandInExecutorApi {
   readTask(
     deviceId: string,
     taskId: string
-  ): Promise<{ success: boolean; task?: RuntimeTaskSummary }>
+  ): Promise<{ success: boolean; task?: RuntimeTaskSummary; code?: string; error?: string }>
   catalog(deviceId: string): Promise<{ models: RunnerModel[] }>
   run(
     projectId: string,
@@ -197,6 +216,18 @@ export interface StandInExecutorApi {
 
 export function createStandInExecutorApi(request: Request): StandInExecutorApi {
   return {
+    configureTelemetry: async (userId, deviceId, enabled, enabledSince) => {
+      await request(
+        'runtime.stand_in.telemetry.configure',
+        { userId, enabled, ...(enabledSince == null ? {} : { enabledSince }) },
+        deviceId
+      )
+    },
+    telemetryFacts: (userId, deviceId) =>
+      request('runtime.stand_in.telemetry.list', { userId }, deviceId),
+    acknowledgeTelemetry: async (userId, deviceId, ids) => {
+      await request('runtime.stand_in.telemetry.ack', { userId, ids }, deviceId)
+    },
     connectionProviders: deviceId => request('runtime.connections.catalog', {}, deviceId),
     installConnectionDependencies: (deviceId, providerId, aliases) =>
       request('runtime.connections.dependencies.install', { providerId, aliases }, deviceId),
@@ -218,10 +249,16 @@ export function createStandInExecutorApi(request: Request): StandInExecutorApi {
       request('runtime.stand_in.work.messages', { userId, workId }, deviceId),
     runWork: (userId, deviceId, workId) =>
       request('runtime.stand_in.work.run', { userId, workId }, deviceId),
-    organizeWork: (userId, deviceId, workId, messageIds, targetWorkId) =>
+    organizeWork: (userId, deviceId, workId, messageIds, targetWorkId, telemetryAction) =>
       request(
         'runtime.stand_in.work.organize',
-        { userId, workId, messageIds, targetWorkId },
+        {
+          userId,
+          workId,
+          messageIds,
+          targetWorkId,
+          ...(telemetryAction ? { telemetryAction } : {}),
+        },
         deviceId
       ),
     adjustMessage: (userId, deviceId, workId, messageId, targetWorkId) =>

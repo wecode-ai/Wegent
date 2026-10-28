@@ -1,0 +1,491 @@
+{
+  "schemaVersion": 1,
+  "domain": "stand_in",
+  "owner": "wework/stand-in",
+  "routes": [],
+  "operations": [
+    {
+      "key": "stand_in.configuration",
+      "action": "configuration",
+      "name": {
+        "zh-CN": "保存分身配置",
+        "en": "Save stand-in configuration"
+      },
+      "description": {
+        "zh-CN": "保存分身配置",
+        "en": "Save stand-in configuration"
+      },
+      "failureStages": [
+        "request",
+        "confirm",
+        "prepare",
+        "bind",
+        "start",
+        "interrupted",
+        "permission",
+        "unknown"
+      ],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["stand_in"]
+        },
+        {
+          "name": "identity",
+          "type": "enum",
+          "values": ["primary", "role", "unknown"]
+        },
+        {
+          "name": "source",
+          "type": "enum",
+          "values": [
+            "local_project",
+            "cloud_project",
+            "dingtalk",
+            "connection",
+            "conversation",
+            "unknown"
+          ]
+        },
+        {
+          "name": "trigger",
+          "type": "enum",
+          "values": ["automatic", "manual", "conversation", "unknown"]
+        },
+        {
+          "name": "action",
+          "type": "enum",
+          "values": ["create", "update", "delete", "enable", "disable", "connect", "disconnect"]
+        },
+        {
+          "name": "executor_location",
+          "type": "enum",
+          "values": ["local", "cloud", "remote", "unknown"]
+        }
+      ]
+    },
+    {
+      "key": "stand_in.conversation",
+      "action": "conversation",
+      "name": {
+        "zh-CN": "发送分身对话",
+        "en": "Send stand-in message"
+      },
+      "description": {
+        "zh-CN": "发送分身对话",
+        "en": "Send stand-in message"
+      },
+      "failureStages": [
+        "request",
+        "confirm",
+        "prepare",
+        "bind",
+        "start",
+        "interrupted",
+        "permission",
+        "unknown"
+      ],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["stand_in"]
+        },
+        {
+          "name": "identity",
+          "type": "enum",
+          "values": ["primary", "role", "unknown"]
+        },
+        {
+          "name": "source",
+          "type": "enum",
+          "values": [
+            "local_project",
+            "cloud_project",
+            "dingtalk",
+            "connection",
+            "conversation",
+            "unknown"
+          ]
+        },
+        {
+          "name": "trigger",
+          "type": "enum",
+          "values": ["automatic", "manual", "conversation", "unknown"]
+        },
+        {
+          "name": "action",
+          "type": "enum",
+          "values": ["send"]
+        },
+        {
+          "name": "executor_location",
+          "type": "enum",
+          "values": ["local", "cloud", "remote", "unknown"]
+        }
+      ]
+    },
+    {
+      "key": "stand_in.proposal",
+      "action": "proposal",
+      "name": {
+        "zh-CN": "处理分身配置提案",
+        "en": "Resolve stand-in proposal"
+      },
+      "description": {
+        "zh-CN": "处理分身配置提案",
+        "en": "Resolve stand-in proposal"
+      },
+      "failureStages": [
+        "request",
+        "confirm",
+        "prepare",
+        "bind",
+        "start",
+        "interrupted",
+        "permission",
+        "unknown"
+      ],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["stand_in"]
+        },
+        {
+          "name": "identity",
+          "type": "enum",
+          "values": ["primary", "role", "unknown"]
+        },
+        {
+          "name": "source",
+          "type": "enum",
+          "values": [
+            "local_project",
+            "cloud_project",
+            "dingtalk",
+            "connection",
+            "conversation",
+            "unknown"
+          ]
+        },
+        {
+          "name": "trigger",
+          "type": "enum",
+          "values": ["automatic", "manual", "conversation", "unknown"]
+        },
+        {
+          "name": "action",
+          "type": "enum",
+          "values": ["accept", "reject"]
+        },
+        {
+          "name": "executor_location",
+          "type": "enum",
+          "values": ["local", "cloud", "remote", "unknown"]
+        }
+      ]
+    },
+    {
+      "key": "stand_in.work_action",
+      "action": "work_action",
+      "name": {
+        "zh-CN": "操作分身工作",
+        "en": "Act on stand-in work"
+      },
+      "description": {
+        "zh-CN": "操作分身工作",
+        "en": "Act on stand-in work"
+      },
+      "failureStages": [
+        "request",
+        "confirm",
+        "prepare",
+        "bind",
+        "start",
+        "interrupted",
+        "permission",
+        "unknown"
+      ],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["stand_in"]
+        },
+        {
+          "name": "identity",
+          "type": "enum",
+          "values": ["primary", "role", "unknown"]
+        },
+        {
+          "name": "source",
+          "type": "enum",
+          "values": [
+            "local_project",
+            "cloud_project",
+            "dingtalk",
+            "connection",
+            "conversation",
+            "unknown"
+          ]
+        },
+        {
+          "name": "trigger",
+          "type": "enum",
+          "values": ["automatic", "manual", "conversation", "unknown"]
+        },
+        {
+          "name": "action",
+          "type": "enum",
+          "values": ["confirm", "retry", "split", "merge", "move", "undo", "adjust", "reply"]
+        },
+        {
+          "name": "executor_location",
+          "type": "enum",
+          "values": ["local", "cloud", "remote", "unknown"]
+        }
+      ]
+    },
+    {
+      "key": "stand_in.dispatch",
+      "action": "dispatch",
+      "name": {
+        "zh-CN": "派发分身工作",
+        "en": "Dispatch stand-in work"
+      },
+      "description": {
+        "zh-CN": "派发分身工作",
+        "en": "Dispatch stand-in work"
+      },
+      "failureStages": [
+        "request",
+        "confirm",
+        "prepare",
+        "bind",
+        "start",
+        "interrupted",
+        "permission",
+        "unknown"
+      ],
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["stand_in"]
+        },
+        {
+          "name": "identity",
+          "type": "enum",
+          "values": ["primary", "role", "unknown"]
+        },
+        {
+          "name": "source",
+          "type": "enum",
+          "values": [
+            "local_project",
+            "cloud_project",
+            "dingtalk",
+            "connection",
+            "conversation",
+            "unknown"
+          ]
+        },
+        {
+          "name": "trigger",
+          "type": "enum",
+          "values": ["automatic", "manual", "conversation", "unknown"]
+        },
+        {
+          "name": "action",
+          "type": "enum",
+          "values": ["dispatch"]
+        },
+        {
+          "name": "executor_location",
+          "type": "enum",
+          "values": ["local", "cloud", "remote", "unknown"]
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "key": "stand_in.opened",
+      "eventName": "stand_in_opened",
+      "name": {
+        "zh-CN": "打开分身",
+        "en": "Open stand-in"
+      },
+      "description": {
+        "zh-CN": "打开分身",
+        "en": "Open stand-in"
+      },
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["stand_in"]
+        },
+        {
+          "name": "surface",
+          "type": "enum",
+          "values": ["overview", "settings", "conversation", "work", "memory"]
+        },
+        {
+          "name": "identity",
+          "type": "enum",
+          "values": ["primary", "role", "unknown"]
+        }
+      ]
+    },
+    {
+      "key": "stand_in.execution_started",
+      "eventName": "stand_in_execution_started",
+      "name": {
+        "zh-CN": "分身执行开始",
+        "en": "Stand-in execution started"
+      },
+      "description": {
+        "zh-CN": "分身执行开始",
+        "en": "Stand-in execution started"
+      },
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["stand_in"]
+        },
+        {
+          "name": "identity",
+          "type": "enum",
+          "values": ["primary", "role", "unknown"]
+        },
+        {
+          "name": "source",
+          "type": "enum",
+          "values": [
+            "local_project",
+            "cloud_project",
+            "dingtalk",
+            "connection",
+            "conversation",
+            "unknown"
+          ]
+        },
+        {
+          "name": "trigger",
+          "type": "enum",
+          "values": ["automatic", "manual", "conversation", "unknown"]
+        },
+        {
+          "name": "executor_location",
+          "type": "enum",
+          "values": ["local", "cloud", "remote", "unknown"]
+        }
+      ]
+    },
+    {
+      "key": "stand_in.execution_waiting",
+      "eventName": "stand_in_execution_waiting",
+      "name": {
+        "zh-CN": "分身等待回复或确认",
+        "en": "Stand-in execution waiting"
+      },
+      "description": {
+        "zh-CN": "分身等待回复或确认",
+        "en": "Stand-in execution waiting"
+      },
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["stand_in"]
+        },
+        {
+          "name": "identity",
+          "type": "enum",
+          "values": ["primary", "role", "unknown"]
+        },
+        {
+          "name": "source",
+          "type": "enum",
+          "values": [
+            "local_project",
+            "cloud_project",
+            "dingtalk",
+            "connection",
+            "conversation",
+            "unknown"
+          ]
+        },
+        {
+          "name": "trigger",
+          "type": "enum",
+          "values": ["automatic", "manual", "conversation", "unknown"]
+        },
+        {
+          "name": "executor_location",
+          "type": "enum",
+          "values": ["local", "cloud", "remote", "unknown"]
+        }
+      ]
+    },
+    {
+      "key": "stand_in.execution_completed",
+      "eventName": "stand_in_execution_completed",
+      "name": {
+        "zh-CN": "分身执行结束",
+        "en": "Stand-in execution completed"
+      },
+      "description": {
+        "zh-CN": "分身执行结束",
+        "en": "Stand-in execution completed"
+      },
+      "publicProperties": [
+        {
+          "name": "domain",
+          "type": "enum",
+          "values": ["stand_in"]
+        },
+        {
+          "name": "identity",
+          "type": "enum",
+          "values": ["primary", "role", "unknown"]
+        },
+        {
+          "name": "source",
+          "type": "enum",
+          "values": [
+            "local_project",
+            "cloud_project",
+            "dingtalk",
+            "connection",
+            "conversation",
+            "unknown"
+          ]
+        },
+        {
+          "name": "trigger",
+          "type": "enum",
+          "values": ["automatic", "manual", "conversation", "unknown"]
+        },
+        {
+          "name": "result",
+          "type": "enum",
+          "values": ["success", "failure", "cancelled"]
+        },
+        {
+          "name": "duration_ms",
+          "type": "number"
+        },
+        {
+          "name": "executor_location",
+          "type": "enum",
+          "values": ["local", "cloud", "remote", "unknown"]
+        }
+      ]
+    }
+  ]
+}

@@ -115,11 +115,13 @@ function projectChatControls(overrides: Partial<ProjectChatControls> = {}): Proj
 function AttachmentChatInput({
   upload,
   variant = 'desktop',
+  initialValue = '',
 }: {
   upload: (file: File) => Promise<Attachment>
   variant?: 'desktop' | 'compact'
+  initialValue?: string
 }) {
-  const [value, setValue] = useState('')
+  const [value, setValue] = useState(initialValue)
   const attachments = useComposerAttachments({
     uploadAttachment: upload,
     deleteAttachment: vi.fn(),
@@ -1032,9 +1034,13 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
 
-    expect(continueInNewConversation).toHaveBeenCalledWith(targetModel, undefined, {
-      draft: '继续排查',
-    })
+    expect(continueInNewConversation).toHaveBeenCalledWith(
+      targetModel,
+      { modelSelection: 'model' },
+      {
+        draft: '继续排查',
+      }
+    )
     expect(setSelectedModel).not.toHaveBeenCalled()
   })
 
@@ -1740,10 +1746,12 @@ describe('ChatInput', () => {
     'dismisses an attachment failure in the %s composer without losing the draft',
     async variant => {
       const upload = vi.fn().mockRejectedValue(new Error('test disk full'))
-      render(<AttachmentChatInput upload={upload} variant={variant} />)
+      render(
+        <AttachmentChatInput upload={upload} variant={variant} initialValue="keep this draft" />
+      )
       const editor = screen.getByTestId('chat-message-input')
       await userEvent.click(editor)
-      await userEvent.keyboard('keep this draft')
+      expect(editor).toHaveValue('keep this draft')
       const input = screen.getByTestId(
         variant === 'desktop' ? 'attachment-file-input' : 'mobile-image-file-input'
       )
@@ -2448,8 +2456,12 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('model-selector-tooltip')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-menu').parentElement).toHaveClass(
       'fixed',
-      'z-system-popover',
-      'w-[254px]'
+      'z-system-popover'
+    )
+    expect(screen.getByTestId('model-selector-menu')).toHaveClass('w-full')
+    expect(screen.getByTestId('model-selection-mode')).toHaveTextContent('固定模型')
+    expect(screen.getByTestId('model-slider-description')).toHaveTextContent(
+      '仅调整当前模型的推理强度'
     )
     expect(screen.getByTestId('model-selector-menu').parentElement?.parentElement).toBe(
       document.body
@@ -3166,6 +3178,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-option-default'))
 
     expect(setSelectedModelAndOptions).toHaveBeenCalledWith(solModel, {
+      modelSelection: 'runtime:gpt-5.6-sol:recommended',
       reasoning: 'medium',
       speed: 'standard',
     })
@@ -3471,6 +3484,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-option-preset-quality'))
 
     expect(setSelectedModelAndOptions).toHaveBeenCalledWith(cloudTerraModel, {
+      modelSelection: 'public:cloud-sol:quality',
       reasoning: 'high',
     })
 
