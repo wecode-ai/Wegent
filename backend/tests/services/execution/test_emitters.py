@@ -123,9 +123,16 @@ class TestWebSocketResultEmitter:
         """Test emitting done event."""
         from app.services.execution.emitters import WebSocketResultEmitter
 
-        with patch(
-            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
-        ) as mock_get:
+        with (
+            patch(
+                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+            ) as mock_get,
+            patch("app.db.session.SessionLocal"),
+            patch(
+                "app.services.context.context_service.context_service.get_briefs_by_subtask",
+                return_value=[],
+            ),
+        ):
             mock_ws = AsyncMock()
             mock_get.return_value = mock_ws
 

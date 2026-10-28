@@ -23,6 +23,25 @@ export function visibleRuntimeGoal(goal: RuntimeGoal | null | undefined): Runtim
   return isVisibleRuntimeGoal(goal) ? goal : null
 }
 
+export function reconcileRuntimeGoal(
+  current: RuntimeGoal | null,
+  next: RuntimeGoal | null
+): RuntimeGoal | null {
+  if (!next || !current) return next
+  // Native Goals use second precision; a matching native creation must own its
+  // optimistic millisecond seed without admitting snapshots of an older Goal.
+  if (
+    current.threadId === 'pending' &&
+    next.threadId !== 'pending' &&
+    next.objective === current.objective &&
+    next.tokenBudget === current.tokenBudget &&
+    next.createdAt >= Math.floor(current.createdAt / 1000) * 1000
+  ) {
+    return next
+  }
+  return next.updatedAt < current.updatedAt ? current : next
+}
+
 export function updateRuntimeGoalContinuation(
   current: RuntimeGoalContinuationPayload | null,
   event:

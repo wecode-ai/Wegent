@@ -154,6 +154,13 @@ fn main() {
         return;
     }
     raise_open_files_soft_limit();
+    if wegent_executor::artifact_cli::is_artifact_command() {
+        if let Err(error) = runtime().block_on(wegent_executor::artifact_cli::run()) {
+            eprintln!("artifact command failed: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if wegent_executor::plugin_workspace_cli::is_plugin_workspace_command() {
         if let Err(error) = runtime().block_on(wegent_executor::plugin_workspace_cli::run()) {
             eprintln!("plugin workspace command failed: {error}");
