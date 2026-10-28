@@ -25,6 +25,8 @@ const TOOL_CACHE_TTL_SECONDS: i64 = 600;
 #[brz_json::model]
 #[derive(Debug, Deserialize)]
 struct CachedToolSummary {
+    /// `summary["name"] or f"{slug}__{rawName}"`; older caches may omit it.
+    #[serde(default, deserialize_with = "brz_json::adapters::null_as_default")]
     name: String,
     title: Option<String>,
     #[serde(default, deserialize_with = "brz_json::adapters::null_as_default")]
@@ -188,7 +190,11 @@ impl ConnectorConnection {
 
     /// `_cached_tools`: the cached tool surface while it is still fresh, or
     /// `None` when discovery has to run again.
-    pub(crate) fn cached_tool_entries(&self, allowlist: &[String]) -> Option<Vec<Value>> {
+    pub(crate) fn cached_tool_entries(
+        &self,
+        slug: &str,
+        allowlist: &[String],
+    ) -> Option<Vec<Value>> {
         if self.tool_summaries.is_empty() {
             return None;
         }
@@ -208,8 +214,13 @@ impl ConnectorConnection {
                     if !allowlist.is_empty() && !allowlist.iter().any(|tool| tool == raw_name) {
                         return None;
                     }
+                    let name = if summary.name.is_empty() {
+                        format!("{slug}__{raw_name}")
+                    } else {
+                        summary.name.clone()
+                    };
                     let mut entry = serde_json::json!({
-                        "name": summary.name,
+                        "name": name,
                         "description": summary.description,
                         "inputSchema": summary
                             .input_schema
@@ -488,7 +499,7 @@ mod tests {
     #[test]
     fn a_fresh_cache_is_served() {
         let entries = cached(iso(Utc::now().naive_utc()))
-            .cached_tool_entries(&[])
+            .cached_tool_entries("dingtalk", &[])
             .expect("fresh cache");
 
         assert_eq!(entries.len(), 2);
@@ -509,16 +520,31 @@ mod tests {
     #[test]
     fn a_stale_cache_is_ignored() {
         let stale = iso(Utc::now().naive_utc() - Duration::seconds(TOOL_CACHE_TTL_SECONDS + 1));
-        assert!(cached(stale).cached_tool_entries(&[]).is_none());
+        assert!(cached(stale).cached_tool_entries("dingtalk", &[]).is_none());
     }
 
     /// The administrator's allowlist still bounds a cached surface.
     #[test]
     fn a_cached_surface_respects_the_allowlist() {
         let entries = cached(iso(Utc::now().naive_utc()))
-            .cached_tool_entries(&["list".to_string()])
+            .cached_tool_entries("dingtalk", &["list".to_string()])
             .expect("fresh cache");
         assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["name"], serde_json::json!("dingtalk__list"));
+    }
+
+    /// `_cached_tools` derives the name from the slug when a summary omits it.
+    #[test]
+    fn a_summary_without_a_name_uses_the_app_slug() {
+        let connection = ConnectorConnection::from_row(&row(serde_json::json!({
+            "status": "connected",
+            "toolsDiscoveredAt": iso(Utc::now().naive_utc()),
+            "toolSummaries": [{"rawToolName": "list"}],
+        })));
+        let entries = connection
+            .cached_tool_entries("dingtalk", &[])
+            .expect("fresh cache");
+
         assert_eq!(entries[0]["name"], serde_json::json!("dingtalk__list"));
     }
 

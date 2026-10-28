@@ -172,7 +172,7 @@ async fn list_tools(
         let stored = row.as_ref().map(connection::ConnectorConnection::from_row);
         if let Some(cached) = stored
             .as_ref()
-            .and_then(|stored| stored.cached_tool_entries(&app.tool_allowlist))
+            .and_then(|stored| stored.cached_tool_entries(&app.slug, &app.tool_allowlist))
         {
             tools.extend(cached);
             continue;
