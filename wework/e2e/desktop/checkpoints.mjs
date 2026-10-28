@@ -180,6 +180,7 @@ export const DESKTOP_CHECKPOINTS = [
   'harness-apps',
   'harness-app-development',
   'harness-app-lifecycle',
+  'harness-app-models',
 
   'browser-multi-tabs',
   'embedded-browser',
@@ -231,7 +232,7 @@ export const DESKTOP_CHECKPOINT_GROUPS = new Map([
       'plugin-uninstall-reinstall-race',
     ],
   ],
-  ['harness-apps', ['harness-app-development', 'harness-app-lifecycle']],
+  ['harness-apps', ['harness-app-development', 'harness-app-lifecycle', 'harness-app-models']],
   [
     'streaming-text',
     [

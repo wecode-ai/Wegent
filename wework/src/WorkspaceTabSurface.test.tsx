@@ -520,6 +520,115 @@ describe('WorkspaceTabSurface', () => {
     clearHarnessAppLaunch(installationId)
   })
 
+  test.each([false, true])(
+    'keeps a queued background startup connected with previous launch state cleared=%s',
+    async hadPreviousLaunch => {
+      const installationId = `queued-app-${hadPreviousLaunch}`
+      runtimeEnvironmentMocks.electron = true
+      let finishLaunch: () => void = () => {}
+      harnessAppLauncherMocks.waitUntilReady.mockImplementation(
+        () =>
+          new Promise<void>(resolve => {
+            finishLaunch = resolve
+          })
+      )
+      if (hadPreviousLaunch) {
+        beginHarnessAppLaunch(installationId, 'Queued app', vi.fn())
+      }
+      const props = {
+        cloudWebUrl: null,
+        lifecycleStore: {} as never,
+        services: {} as never,
+        smartAppsEnabled: true,
+        tab: {
+          id: `queued-tab-${hadPreviousLaunch}`,
+          kind: 'auxiliary' as const,
+          title: 'Queued app',
+          contentRoute: `/app/harness-${installationId}`,
+        },
+        user: { id: 1, user_name: 'tester', email: 'tester@example.com' },
+      }
+      const view = render(<WorkspaceTabSurface {...props} active />)
+      try {
+        view.rerender(<WorkspaceTabSurface {...props} active={false} />)
+        act(() => clearHarnessAppLaunch(installationId))
+        expect(screen.getByTestId(`workspace-tab-content-${props.tab.id}`)).toHaveClass('hidden')
+        expect(harnessAppLauncherMocks.cleanup).not.toHaveBeenCalled()
+        finishLaunch()
+        await waitFor(() =>
+          expect(harnessAppLauncherMocks.started).toHaveBeenCalledWith(installationId)
+        )
+      } finally {
+        finishLaunch()
+        view.unmount()
+        clearHarnessAppLaunch(installationId)
+      }
+    }
+  )
+
+  test('mounts pending startup ownership when Open has already registered an iframe', async () => {
+    const installationId = 'reopened-existing-iframe'
+    runtimeEnvironmentMocks.electron = true
+    let finishLaunch: () => void = () => {}
+    harnessAppLauncherMocks.waitUntilReady.mockImplementation(
+      () =>
+        new Promise<void>(resolve => {
+          finishLaunch = resolve
+        })
+    )
+    registerHarnessAppTab({
+      id: installationId,
+      manifest: {
+        name: installationId,
+        displayName: 'Reopened app',
+        version: '0.1.0',
+        type: 'deepseek-harness-plugin-bundle',
+        description: '',
+        entry: { installPackage: '.', profile: 'default' },
+        requirements: { dsh: '0.1.0-rc.8', node: '>=22' },
+      },
+      packagePath: '/tmp/reopened-existing-iframe',
+      sha256: 'fixture',
+      modelKey: null,
+      resident: false,
+      runtimeVersion: '0.1.0-rc.8',
+      state: 'running',
+      webUrl: 'http://127.0.0.1:4101',
+      error: null,
+      source: 'managed',
+    })
+    beginHarnessAppLaunch(installationId, 'Reopened app', vi.fn())
+    const props = {
+      cloudWebUrl: null,
+      lifecycleStore: {} as never,
+      services: {} as never,
+      smartAppsEnabled: true,
+      tab: {
+        id: 'reopened-existing-iframe-tab',
+        kind: 'auxiliary' as const,
+        title: 'Reopened app',
+        contentRoute: `/app/harness-${installationId}`,
+      },
+      user: { id: 1, user_name: 'tester', email: 'tester@example.com' },
+    }
+    const view = render(<WorkspaceTabSurface {...props} active />)
+    try {
+      expect(harnessAppLauncherMocks.requested).toHaveBeenCalledWith(installationId)
+      view.rerender(<WorkspaceTabSurface {...props} active={false} />)
+      act(() => clearHarnessAppLaunch(installationId))
+      expect(harnessAppLauncherMocks.cleanup).not.toHaveBeenCalled()
+      finishLaunch()
+      await waitFor(() =>
+        expect(harnessAppLauncherMocks.started).toHaveBeenCalledWith(installationId)
+      )
+    } finally {
+      finishLaunch()
+      view.unmount()
+      clearHarnessAppLaunch(installationId)
+      unregisterHarnessAppTab(installationId)
+    }
+  })
+
   test('renders a running Electron Harness app through the DOM webview host', () => {
     const installationId = 'dom-webview-app'
     runtimeEnvironmentMocks.electron = true

@@ -50,10 +50,10 @@ const AUTO_UPDATE_FAILURE_LIMIT: i64 = 3;
 const SYNC_EVENT: &str = "device:sync_capabilities";
 /// `SYNC_NAMESPACE`.
 const SYNC_NAMESPACE: &str = "/local-executor";
-/// `SYNC_TIMEOUT_SECONDS`.
-const SYNC_TIMEOUT_SECONDS: std::time::Duration = std::time::Duration::from_secs(180);
+/// `SYNC_TIMEOUT_SECONDS`: the API-driven capability sync deadline.
+pub(super) const SYNC_TIMEOUT_SECONDS: std::time::Duration = std::time::Duration::from_secs(180);
 /// `DESIRED_STATE_SYNC_ATTEMPTS`.
-const DESIRED_STATE_SYNC_ATTEMPTS: usize = 3;
+pub(super) const DESIRED_STATE_SYNC_ATTEMPTS: usize = 3;
 
 /// One active `InstalledPlugin` kinds row (`_desired_installs`), projected with
 /// SQLAlchemy's labeled aliases.
@@ -207,7 +207,15 @@ async fn sync_latest_device_capabilities(
     let mut payload = build_payload(state, user_id, device_id).await?;
     let mut last: Option<SyncResult> = None;
     for _attempt in 1..=DESIRED_STATE_SYNC_ATTEMPTS {
-        let result = sync_device_payload(state, user_id, device_id, &payload).await?;
+        let result = sync_device_payload(
+            state,
+            user_id,
+            device_id,
+            &payload,
+            None,
+            SYNC_TIMEOUT_SECONDS,
+        )
+        .await?;
         if !result.acknowledged {
             return Ok(result);
         }
@@ -232,7 +240,7 @@ async fn sync_latest_device_capabilities(
 
 /// One `build_desired_capabilities` load; any failure is the source's
 /// unhandled 500.
-async fn build_payload(
+pub(super) async fn build_payload(
     state: &AppState,
     user_id: i64,
     device_id: &str,
@@ -251,11 +259,13 @@ fn log_build_error(user_id: i64, error: &BuildError) {
 
 /// Source `sync_device_payload`: resolve the online Runtime route, publish the
 /// adapter `emit`, and map the acknowledgement.
-async fn sync_device_payload(
+pub(super) async fn sync_device_payload(
     state: &AppState,
     user_id: i64,
     device_id: &str,
     payload: &Value,
+    live_socket_id: Option<&str>,
+    timeout: std::time::Duration,
 ) -> Result<SyncResult, FastApiError> {
     let device =
         crate::device_identity::resolve_owned_device_alias(&state.mysql, user_id, device_id)
@@ -287,14 +297,22 @@ async fn sync_device_payload(
     let Some(online) = online.filter(Value::is_object) else {
         return Ok(SyncResult::failure(device_id, None, "device is offline"));
     };
-    let Some(socket_id) = online
+    let recorded_socket_id = online
         .get("socket_id")
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|socket_id| !socket_id.is_empty())
-    else {
+        .filter(|socket_id| !socket_id.is_empty());
+    // The source requires a stored socket id before dispatching, so a document
+    // without one is still "device is offline". The register-time caller then
+    // addresses the session that just wrote the document instead of the value
+    // read back from it.
+    let Some(recorded_socket_id) = recorded_socket_id else {
         return Ok(SyncResult::failure(device_id, None, "device is offline"));
     };
+    let socket_id = live_socket_id
+        .map(str::trim)
+        .filter(|socket_id| !socket_id.is_empty())
+        .unwrap_or(recorded_socket_id);
     if !runtime_instance_matches(&device, &online) {
         return Ok(SyncResult::failure(device_id, None, "device is offline"));
     }
@@ -343,7 +361,7 @@ async fn sync_device_payload(
             "Socket.IO Redis adapter is unavailable",
         ));
     }
-    match call.wait(SYNC_TIMEOUT_SECONDS).await {
+    match call.wait(timeout).await {
         Ok(args) => Ok(SyncResult::from_ack(device_id, ack_argument(&args))),
         Err(error) => {
             tracing::warn!(%error, user_id, device_id, "sync-device RPC failed");
@@ -444,7 +462,15 @@ async fn reconcile_device_plugins(
     let user_id = user.id;
     let mut payload = desired_plugins(state, user_id, normalized_device_id).await?;
     for _attempt in 0..DESIRED_STATE_SYNC_ATTEMPTS {
-        let result = sync_device_payload(state, user_id, normalized_device_id, &payload).await?;
+        let result = sync_device_payload(
+            state,
+            user_id,
+            normalized_device_id,
+            &payload,
+            None,
+            SYNC_TIMEOUT_SECONDS,
+        )
+        .await?;
         if !result.success || !result.errors.is_empty() || result.plugins.iter().any(is_failed_item)
         {
             return Err(FastApiError::detail(
@@ -610,7 +636,7 @@ fn reconciliation_failure_detail(result: &SyncResult) -> String {
 /// iteration and emits every INSERT/UPDATE only at the `db.commit()` flush, so
 /// the write statements are collected here and flushed through
 /// [`PendingFlush`] instead of being executed inline.
-async fn ensure_pending_for_device<Q>(
+pub(super) async fn ensure_pending_for_device<Q>(
     session: &mut Q,
     user_id: i64,
     device_id: &str,

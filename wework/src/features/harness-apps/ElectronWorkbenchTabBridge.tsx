@@ -1,10 +1,13 @@
 import { useEffect, useRef } from 'react'
 import { harnessAppsApi } from '@/api/local/harnessApps'
+import { createLocalAppServices } from '@/api/local/localServices'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { notifyHarnessAppInstallationsChanged } from './harnessAppInstallationsChanged'
 import { harnessAppInstallationIdFromPath } from './harnessAppLaunchState'
 import { unregisterHarnessAppTab } from './harnessAppTabs'
+import { releaseHarnessAppRoutes } from './harnessAppRoutes'
+import { runHarnessAppRuntimeOperation } from './harnessAppRuntimeOperations'
 
 export function ElectronWorkbenchTabBridge() {
   const workspaceTabs = useWorkspaceTabs()
@@ -23,14 +26,24 @@ export function ElectronWorkbenchTabBridge() {
     for (const installationId of previousInstallationIds.current) {
       if (current.has(installationId)) continue
       unregisterHarnessAppTab(installationId)
-      void harnessAppsApi
-        .stop(installationId)
-        .then(() => {
-          notifyHarnessAppInstallationsChanged({ type: 'stopped', installationId })
-        })
-        .catch(error => {
+      const services = createLocalAppServices()
+      void runHarnessAppRuntimeOperation(installationId, async () => {
+        let stopped = false
+        try {
+          await harnessAppsApi.stop(installationId)
+          stopped = true
+        } catch (error) {
           console.warn(`[Wework] failed to stop closed Smart app ${installationId}`, error)
-        })
+        }
+        await releaseHarnessAppRoutes(
+          installationId,
+          services.localHarnessModelApi,
+          services.localDecisionRouterApi
+        )
+        if (stopped) {
+          notifyHarnessAppInstallationsChanged({ type: 'stopped', installationId })
+        }
+      })
     }
     previousInstallationIds.current = current
   }, [workspaceTabs.tabs])

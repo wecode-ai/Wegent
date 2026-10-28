@@ -132,16 +132,14 @@ function finishExport(exportTaskId) {
 
 async function finalizeExport(task) {
   try {
-    await task.handle.sync()
-    await task.handle.close()
+    await finalizeStage(task, 'sync-document', () => syncAndClose(task.handle))
     task.handle = null
     for (const asset of task.assets.values()) {
       if (asset.kind !== 'uploaded') continue
-      await asset.handle.sync()
-      await asset.handle.close()
+      await finalizeStage(task, 'sync-asset', () => syncAndClose(asset.handle))
       asset.handle = null
     }
-    if (task.archive) await writeArchive(task)
+    if (task.archive) await finalizeStage(task, 'package', () => writeArchive(task))
     const temporaryMetadata = await stat(task.temporaryPath)
     if (
       !temporaryMetadata.isFile() ||
@@ -150,11 +148,13 @@ async function finalizeExport(task) {
     ) {
       throw new Error('Conversation export file verification failed')
     }
-    await replaceDestination(
-      task.temporaryPath,
-      task.destination,
-      task.exportTaskId,
-      temporaryMetadata.size
+    await finalizeStage(task, 'replace-destination', () =>
+      replaceDestination(
+        task.temporaryPath,
+        task.destination,
+        task.exportTaskId,
+        temporaryMetadata.size
+      )
     )
     task.size = temporaryMetadata.size
     task.state = 'completed'
@@ -165,6 +165,31 @@ async function finalizeExport(task) {
   } finally {
     if (task.state === 'completed') await cleanupTaskStagingFiles(task)
     task.updatedAt = Date.now()
+  }
+}
+
+async function syncAndClose(handle) {
+  await handle.sync()
+  await handle.close()
+}
+
+async function finalizeStage(task, stage, operation) {
+  const startedAt = performance.now()
+  const details = { exportTaskId: task.exportTaskId, stage, assetCount: task.assets.size }
+  console.info('[wework-conversation-export] finalization started', details)
+  try {
+    const result = await operation()
+    console.info('[wework-conversation-export] finalization completed', {
+      ...details,
+      elapsedMs: Math.round(performance.now() - startedAt),
+    })
+    return result
+  } catch (error) {
+    console.warn('[wework-conversation-export] finalization failed', {
+      ...details,
+      elapsedMs: Math.round(performance.now() - startedAt),
+    })
+    throw error
   }
 }
 

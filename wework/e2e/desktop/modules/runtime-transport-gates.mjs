@@ -25,6 +25,7 @@ function transportEvidence(capture) {
   return {
     ...timing,
     taskId: value.params?.taskId ?? value.payload?.taskId,
+    installationId: value.params?.installationId,
     event: value.event,
     sequence: value.sequence,
     subtaskId: value.payload?.subtaskId,
@@ -47,8 +48,8 @@ export function runtimeTransportGates(control) {
     read,
     release: id => command('releaseRuntimeTransportGate', id),
     reset: (keep = []) => command('resetRuntimeTransportGates', keep),
-    async wait(id, kick) {
-      const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+    async wait(id, kick, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
+      const deadline = Date.now() + timeoutMs
       while (Date.now() < deadline) {
         const evidence = await read(id)
         if (evidence) return evidence

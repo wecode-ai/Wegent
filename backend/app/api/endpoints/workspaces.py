@@ -266,6 +266,7 @@ def remove_workspace_member(
 )
 def list_workspace_agents(
     workspace_id: int,
+    include_readiness: bool = Query(default=True),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> WorkspaceAgentListResponse:
@@ -273,7 +274,7 @@ def list_workspace_agents(
         items=[
             WorkspaceAgentResponse.model_validate(agent)
             for agent in workspace_service.list_agents(
-                db, workspace_id, current_user.id
+                db, workspace_id, current_user.id, include_readiness=include_readiness
             )
         ]
     )

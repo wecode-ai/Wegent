@@ -535,7 +535,7 @@ function mockSystemSkillsFetch(
     marketplaceConnectorAccountAuth: boolean
     marketplaceHasSkill: boolean
     marketplaceVisibility: 'personal' | 'workspace' | 'public'
-    marketplaceSourceProvider: 'codex' | 'wegent'
+    marketplaceSourceProvider: 'codex' | 'wegent' | 'user'
     marketplaceAccessRole: 'catalog' | 'owner' | 'recipient'
     marketplaceName: string
     marketplaceDisplayName: string
@@ -6829,6 +6829,62 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByRole('heading', { name: '试试这些任务' })).toBeInTheDocument()
     expect(document.querySelector('img[src="./assets/github-small.svg"]')).toBeNull()
   })
+
+  test.each([
+    ['install', 'workspace', 'wegent'],
+    ['trial', 'workspace', 'wegent'],
+    ['install', 'public', 'user'],
+    ['trial', 'public', 'user'],
+  ] as const)(
+    'requires unofficial plugin confirmation before %s for %s from %s and preserves cancellation',
+    async (action, visibility, sourceProvider) => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({
+        marketplaceVisibility: visibility,
+        marketplaceSourceProvider: sourceProvider,
+      })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      sessionStorage.clear()
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+      await screen.findByTestId('plugin-marketplace-row-101')
+      if (action === 'trial') {
+        await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
+      }
+      const trigger = action === 'trial' ? 'plugin-prompt-0' : 'plugin-marketplace-install-101'
+      await userEvent.click(screen.getByTestId(trigger))
+      expect(await screen.findByTestId('plugin-install-unofficial-warning')).toBeInTheDocument()
+      const installed = () =>
+        vi
+          .mocked(fetch)
+          .mock.calls.some(
+            ([url, init]) =>
+              String(url).includes('/plugins/marketplace/101/install') && init?.method === 'POST'
+          )
+      expect(installed()).toBe(false)
+      await userEvent.click(screen.getByTestId('install-plugin-dialog-cancel'))
+      expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
+      expect(installed()).toBe(false)
+      expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+
+      await userEvent.click(screen.getByTestId(trigger))
+      await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
+      await waitFor(() => expect(installed()).toBe(true))
+      if (action === 'install') {
+        await screen.findByTestId('plugin-marketplace-actions-101')
+      }
+      if (action === 'trial') {
+        await waitFor(() =>
+          expect(
+            JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')
+          ).toMatchObject({
+            input: expect.stringContaining('Draft a document outline from this chat'),
+            openInNewChat: true,
+          })
+        )
+      }
+    }
+  )
 
   test('automatically installs from a detail example and restores it in a new chat', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }

@@ -43,7 +43,7 @@ pub(crate) struct ModelConfig {
 
 /// The shared wire protocol a Model CRD maps to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Protocol {
+pub(crate) enum Protocol {
     OpenAiResponses,
     OpenAiChatCompletions,
     AnthropicMessages,
@@ -414,7 +414,7 @@ fn encode_wegent_header_value(value: &str) -> String {
 }
 
 /// `resolve_llm_proxy_protocol`.
-pub(super) fn resolve_llm_proxy_protocol(
+pub(crate) fn resolve_llm_proxy_protocol(
     model_name: &str,
     config: &ModelConfig,
 ) -> Result<Protocol, FastApiError> {

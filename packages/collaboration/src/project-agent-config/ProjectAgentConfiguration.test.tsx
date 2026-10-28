@@ -239,6 +239,37 @@ describe("ProjectAgentConfiguration", () => {
     });
   }
 
+  it("shows a retryable list failure without claiming the catalog is empty", async () => {
+    const { api, list } = createApi();
+    list.mockRejectedValueOnce(new Error("Agent service unavailable"));
+    await render(api);
+    expect(container.textContent).toContain("Agent service unavailable");
+    expect(
+      container.querySelector('[data-testid="project-agent-list"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="project-agent-list-empty"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="project-agent-add"]',
+      )!.disabled,
+    ).toBe(true);
+    await click("project-agent-config-retry");
+    expect(
+      container.querySelector('[data-testid="project-agent-list"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="project-agent-config-error"]'),
+    ).toBeNull();
+    expect(api.resources!.list).not.toHaveBeenCalled();
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="project-agent-add"]',
+      )!.disabled,
+    ).toBe(false);
+  });
+
   async function renderHosted(
     api: SharedWorkspaceApi,
     options: {

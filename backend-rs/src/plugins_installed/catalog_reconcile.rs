@@ -199,7 +199,7 @@ async fn plugin_can_access<Q, R>(
     user_id: i64,
 ) -> MysqlResult<bool>
 where
-    Q: PluginQuery,
+    Q: PluginQuery + crate::permissions::EntityQuery,
     R: brz_redis::Redis,
 {
     if plugin.visibility == "public" {
@@ -251,7 +251,7 @@ async fn published_plugin_by_key<Q, R>(
     marketplace: &str,
 ) -> MysqlResult<Option<PluginRow>>
 where
-    Q: PluginQuery,
+    Q: PluginQuery + crate::permissions::EntityQuery,
     R: brz_redis::Redis,
 {
     let normalized = plugin_key.trim();
@@ -302,7 +302,7 @@ async fn matching_published_plugin<Q, R>(
     request: &PluginMatch<'_>,
 ) -> MysqlResult<Option<PluginRow>>
 where
-    Q: PluginQuery,
+    Q: PluginQuery + crate::permissions::EntityQuery,
     R: brz_redis::Redis,
 {
     let alive = [matched_alive, caller_plugin];
@@ -404,7 +404,7 @@ async fn reconcile_installed_kind_catalog_ref<Q, R>(
     plugin_key: &str,
 ) -> MysqlResult<bool>
 where
-    Q: PluginQuery,
+    Q: PluginQuery + crate::permissions::EntityQuery,
     R: brz_redis::Redis,
 {
     let json = row.json.0.to_value();
@@ -504,7 +504,7 @@ pub(super) async fn reconcile_stale_installed_catalog_refs<Q, R>(
     user_id: i64,
 ) -> MysqlResult<usize>
 where
-    Q: PluginQuery,
+    Q: PluginQuery + crate::permissions::EntityQuery,
     R: brz_redis::Redis,
 {
     let rows: Vec<InstalledKindRow> = mysql

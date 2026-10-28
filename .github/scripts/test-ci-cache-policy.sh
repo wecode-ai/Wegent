@@ -684,6 +684,7 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
   fail "Wework desktop builds must reuse content-addressed artifacts and shared Rust runtimes"
 fi
 
+ruby "$script_dir/test-backend-rs-e2e-runtime.rb"
 bash "$script_dir/test-wework-core-e2e-runtimes.sh"
 
 bash "$script_dir/test-build-macos-e2e-runtimes.sh"

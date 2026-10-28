@@ -12,9 +12,11 @@
 //! `Any + Send + Sync` type, so these newtypes need no manual trait impl.
 
 /// Route a task or subtask lookup by its task identifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ByTaskId(pub u64);
 
 /// Route an owner-scoped task or subtask lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ByUserId(pub u64);
 
 /// Maximum number of ancestors visited while resolving fork history.
