@@ -51,12 +51,16 @@ async function verifyPdfPreview(page: Page, dialog: Locator, origin: string): Pr
   // A 206 response event only means headers arrived. PDF.js can cancel that
   // transfer, leaving no response body for Playwright to inspect.
   const [rangeRequest] = await Promise.all([
-    page.waitForEvent(
-      'requestfinished',
-      request =>
+    page.waitForEvent('requestfinished', {
+      // The 256 KiB/s throttle also slows the viewer's own multi-megabyte
+      // asset downloads (renderer chunk, pdf.worker.mjs) before PDF.js can
+      // issue its first range, so the default 15s action timeout cannot
+      // cover CI startup.
+      timeout: 45_000,
+      predicate: request =>
         request.url() === `${origin}/preview.pdf` &&
-        /^bytes=[1-9]\d*-\d+$/.test(request.headers().range || '')
-    ),
+        /^bytes=[1-9]\d*-\d+$/.test(request.headers().range || ''),
+    }),
     previewTrigger(page, 'preview.pdf').click(),
   ])
   // A nonzero range cannot be the application's bytes=0-15 signature probe.
