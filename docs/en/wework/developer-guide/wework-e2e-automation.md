@@ -236,7 +236,7 @@ which now contains 15 tasks; other ordinary Core shards contain 14. The estimate
 above exclude this new checkpoint.
 
 - `plugin-account-auth` expands into password sync, exclusive credential transfer, OAuth, DWS accounts, conversation QR, and GitHub checkpoints.
-- `plugin-uninstall-resilience` expands into write coordination, registration coordination, lost response, unknown result, restart recovery, reinstall race, catalog boundaries, and operation boundaries checkpoints. `plugin-write-coordination` independently checks API responsiveness during contention, post-commit ACK conflicts, and later sync recovery. Removal recovery checkpoints create another active installation so catalog refresh is tested alongside pending cleanup.
+- `plugin-uninstall-resilience` expands into write coordination, lost response, unknown result, restart recovery, and reinstall race checkpoints. `plugin-write-coordination` independently checks API responsiveness during contention, post-commit ACK conflicts, and later sync recovery. Removal recovery checkpoints create another active installation so catalog refresh is tested alongside pending cleanup.
 - `harness-apps` expands into development and installation/runtime lifecycle checkpoints.
 - `streaming-text` expands into content, tool details, timers, scrolling, message order, and subagent checkpoints.
 
@@ -391,7 +391,7 @@ The main desktop flow also covers pasting or dropping ordinary files and folders
 
 Following the cc-switch conversion boundary, the mock strictly validates what reaches the model side: authentication, model ID, stream settings, message history, tool choice, shell tools, and either the `apply_patch` Lark grammar or its function wrapper. Any incorrect field returns a non-2xx response and fails the test. The desktop test stores a follow-up screenshot for each interface plus the complete `model-requests.json`; GitHub Actions uploads desktop diagnostics on both success and failure.
 
-The `plugin-uninstall-resilience` group includes independent removal recovery, write coordination, and plugin boundary checkpoints. `plugin-operation-boundaries` verifies installation, manual updates, and automatic update recovery using the shared real MinIO helper and transport fault proxy. Run it independently with `pnpm --filter wework e2e:desktop -- --segment plugin-operation-boundaries`; CI registers it as a separate Cloud shard.
+`plugin-uninstall-resilience` also includes registration coordination, catalog boundaries, and operation boundaries checkpoints. `plugin-operation-boundaries` verifies installation, manual updates, and automatic update recovery using the shared real MinIO helper and transport fault proxy. Run it independently with `pnpm --filter wework e2e:desktop -- --segment plugin-operation-boundaries`; CI registers it as a separate Cloud shard.
 
 Operation coverage includes disconnection, lost committed responses, failed initial package publication, retaining the working version after an upgrade failure, and continuing healthy updates after a failed item. Faults affect real transports without replacing business responses. SHA-256 request ID fingerprints distinguish logical operations from transport attempts without recording headers or credentials. Assertions check the UI, database, device versions, and actual skill contents.
 
