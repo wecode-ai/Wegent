@@ -14,6 +14,7 @@ pub(crate) struct TerminalResult {
     pub(crate) status: &'static str,
     pub(crate) silent: bool,
     pub(crate) summary: Option<String>,
+    pub(crate) notification_summary: Option<String>,
 }
 
 pub(crate) fn terminal_result(event: &TaskCompletedEvent<'_>) -> TerminalResult {
@@ -33,6 +34,7 @@ pub(crate) fn terminal_result(event: &TaskCompletedEvent<'_>) -> TerminalResult 
         status,
         silent,
         summary: super::directives::strip(state::result_summary(event.result)),
+        notification_summary: state::result_summary(event.result),
     }
 }
 
@@ -130,7 +132,7 @@ pub(crate) async fn after_status<M: Mysql, R: Redis>(
             .filter(|value| !value.trim().is_empty())
             .unwrap_or("Execution failed; no error details were provided.")
     } else {
-        result.summary.as_deref().unwrap_or("")
+        result.notification_summary.as_deref().unwrap_or("")
     };
     if let Err(error) = super::delivery::notify(app, &execution, status, message).await {
         tracing::warn!(%error, "subscription completion notification failed")

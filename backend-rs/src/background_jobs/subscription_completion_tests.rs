@@ -70,6 +70,10 @@ fn the_terminal_status_mapping_matches_the_source() {
         ..silent_event
     });
     assert_eq!(directive_result.summary.as_deref(), Some("Build finished"));
+    assert_eq!(
+        directive_result.notification_summary.as_deref(),
+        Some("Build finished\n\n【静默】【@列表：900101】")
+    );
 
     let event = TaskCompletedEvent {
         task_id,
