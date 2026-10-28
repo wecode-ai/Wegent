@@ -531,8 +531,10 @@ The message-order scenario waits for the current turn's SSE response to finish s
 The stream-recovery scenario selects its registered fixture model before the first send;
 the composer appearing does not establish model-catalog readiness. It still verifies that
 streaming continues during renderer reload and restores the complete output.
-Post-restart follow-ups wait for the send control to become enabled before sending Enter once;
-stable composer text does not establish restored model-catalog readiness. The model request and
+The shared Enter-send helper and model matrix reuse the same send-control readiness check.
+After filling a draft, wait for the control to become enabled with the original ten-second step
+budget, then send Enter once. An available editor or stable composer text does not establish
+restored model-catalog readiness after reload. The model request and
 send action are awaited together so either failure follows the normal diagnostics and cleanup
 path instead of an unhandled Promise rejection exiting Node without a failure snapshot.
 Model-request waits stop polling when their budget expires, leaving no active poll timers.
