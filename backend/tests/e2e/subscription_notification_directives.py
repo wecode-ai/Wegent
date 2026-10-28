@@ -194,8 +194,8 @@ class SubscriptionNotificationDirectives(unittest.TestCase):
                     "im_channels": {
                         str(channel.id): {
                             "channel_type": "dingtalk",
-                            "sender_id": "41068",
-                            "sender_staff_id": "41068",
+                            "sender_id": "900101",
+                            "sender_staff_id": "900101",
                         }
                     }
                 }
@@ -390,17 +390,17 @@ class SubscriptionNotificationDirectives(unittest.TestCase):
         self.assertNotIn("静默", json.dumps(webhook[0]["payload"], ensure_ascii=False))
 
     def test_mention_reaches_group_card(self) -> None:
-        evidence = self._run_completion("Build failed\n\n【@列表：41068】")
+        evidence = self._run_completion("Build failed\n\n【@列表：900101】")
         group = _card_payloads(evidence["requests"], "IM_GROUP")
         self.assertEqual(len(group), 1)
         model = group[0]["imGroupOpenDeliverModel"]
-        self.assertIn("41068", model.get("atUserIds", {}))
+        self.assertIn("900101", model.get("atUserIds", {}))
         self.assertIn("@", group[0]["cardData"]["cardParamMap"]["content"])
         self.assertNotIn("【", group[0]["cardData"]["cardParamMap"]["content"])
         self.assertEqual(evidence["summary"], "Build failed")
 
     def test_silence_wins_over_mentions(self) -> None:
-        evidence = self._run_completion("Quiet\n\n【静默】【@列表：41068】")
+        evidence = self._run_completion("Quiet\n\n【静默】【@列表：900101】")
         self.assertEqual(_card_payloads(evidence["requests"], "IM_GROUP"), [])
         self.assertEqual(len(_card_payloads(evidence["requests"], "IM_ROBOT")), 1)
         self.assertEqual(evidence["summary"], "Quiet")

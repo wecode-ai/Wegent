@@ -476,6 +476,11 @@ jobs:
       HOME: /root
       UV_PYTHON: "3.11"
       UV_MANAGED_PYTHON: "true"
+      DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: test-secret-key-for-ci-testing
+      ENVIRONMENT: development
+      DB_AUTO_MIGRATE: "false"
     container:
       image: ${{ needs.prepare-platform-e2e-image.outputs.image }}
       credentials:
@@ -1022,11 +1027,6 @@ jobs:
         if: matrix.shardIndex == 1
         working-directory: ./backend
         env:
-          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
-          REDIS_URL: redis://redis:6379/0
-          SECRET_KEY: test-secret-key-for-ci-testing
-          ENVIRONMENT: development
-          DB_AUTO_MIGRATE: "false"
           E2E_API_URL: http://localhost:8000
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
           E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/subscription-notification-directives
@@ -1123,11 +1123,6 @@ jobs:
         if: matrix.shardIndex == 1
         working-directory: ./backend
         env:
-          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
-          REDIS_URL: redis://redis:6379/0
-          SECRET_KEY: test-secret-key-for-ci-testing
-          ENVIRONMENT: development
-          DB_AUTO_MIGRATE: "false"
           E2E_API_URL: http://localhost:8000
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
           E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/subscription-execution-notification-directives

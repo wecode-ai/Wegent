@@ -309,8 +309,8 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
                     "im_channels": {
                         str(channel_id): {
                             "channel_type": "dingtalk",
-                            "sender_id": "41068",
-                            "sender_staff_id": "41068",
+                            "sender_id": "900101",
+                            "sender_staff_id": "900101",
                         }
                     }
                 }
@@ -321,11 +321,11 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
     def _configure_model_response(self, prompt: str) -> None:
         response = "测试，现在时间：12:00:00"
         if "【静默】" in prompt and "【@列表" in prompt:
-            response += "\n【静默】【@列表：41068】"
+            response += "\n【静默】【@列表：900101】"
         elif "【静默】" in prompt:
             response += "\n【静默】"
         elif "【@列表" in prompt:
-            response += "\n【@列表：41068】"
+            response += "\n【@列表：900101】"
         self.client.post(
             "http://localhost:9999/stream-rules",
             json={
@@ -465,21 +465,21 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
 
     def test_mention_real_execution(self) -> None:
         result = self._execute(
-            "只输出两行：第一行“测试，现在时间：{{time}}”，最后一行【@列表：41068】",
+            "只输出两行：第一行“测试，现在时间：{{time}}”，最后一行【@列表：900101】",
             "Chat",
         )
         self._wait_group_card(result)
         self.assertEqual(result["status"], "COMPLETED")
         group = _cards(result["requests"], "IM_GROUP")
         self.assertEqual(len(group), 1)
-        self.assertIn("41068", group[0]["imGroupOpenDeliverModel"]["atUserIds"])
+        self.assertIn("900101", group[0]["imGroupOpenDeliverModel"]["atUserIds"])
         self.assertNotIn("【", group[0]["cardData"]["cardParamMap"]["content"])
         self.assertTrue(group[0]["imGroupOpenDeliverModel"].get("atUserIds"))
 
     def test_silence_wins_over_mention_real_execution(self) -> None:
         result = self._execute(
             "只输出两行：第一行“测试，现在时间：{{time}}”，"
-            "最后一行【静默】【@列表：41068】",
+            "最后一行【静默】【@列表：900101】",
             "Chat",
         )
         self.assertEqual(result["status"], "COMPLETED")
@@ -489,7 +489,7 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
     def test_group_delivery_failure_does_not_block_private(self) -> None:
         _DingTalkStub.fail_group = True
         result = self._execute(
-            "只输出两行：第一行“测试，现在时间：{{time}}”，最后一行【@列表：41068】",
+            "只输出两行：第一行“测试，现在时间：{{time}}”，最后一行【@列表：900101】",
             "Chat",
         )
         self.assertEqual(result["status"], "COMPLETED")
@@ -518,19 +518,19 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
 
     def test_claudecode_mention_execution(self) -> None:
         result = self._execute(
-            "只输出两行：第一行“测试，现在时间：{{time}}”，最后一行【@列表：41068】",
+            "只输出两行：第一行“测试，现在时间：{{time}}”，最后一行【@列表：900101】",
             "ClaudeCode",
         )
         self._wait_group_card(result)
         self.assertEqual(result["status"], "COMPLETED")
         group = _cards(result["requests"], "IM_GROUP")
         self.assertEqual(len(group), 1)
-        self.assertIn("41068", group[0]["imGroupOpenDeliverModel"]["atUserIds"])
+        self.assertIn("900101", group[0]["imGroupOpenDeliverModel"]["atUserIds"])
 
     def test_claudecode_silence_wins_over_mention(self) -> None:
         result = self._execute(
             "只输出两行：第一行“测试，现在时间：{{time}}”，"
-            "最后一行【静默】【@列表：41068】",
+            "最后一行【静默】【@列表：900101】",
             "ClaudeCode",
         )
         self.assertEqual(result["status"], "COMPLETED")

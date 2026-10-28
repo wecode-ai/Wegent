@@ -145,7 +145,7 @@ async def test_dispatch_passes_per_message_mentions(monkeypatch):
         subscription_id=1,
         execution_id=2,
         subscription_display_name="Daily alert",
-        result_summary="Alert needs attention.\n\n[@列表:41068,220750]",
+        result_summary="Alert needs attention.\n\n[@列表:900101,900102]",
         status="COMPLETED",
     )
 
@@ -153,7 +153,7 @@ async def test_dispatch_passes_per_message_mentions(monkeypatch):
     kwargs = send_dingtalk.await_args.kwargs
     assert kwargs["message"] == "Alert needs attention."
     assert kwargs["group_silent"] is False
-    assert kwargs["directive_mention_user_ids"] == ["41068", "220750"]
+    assert kwargs["directive_mention_user_ids"] == ["900101", "900102"]
 
 
 @pytest.mark.asyncio
@@ -207,7 +207,7 @@ async def test_per_message_mentions_reach_group_card(monkeypatch):
             return {"success": True, "outTrackId": "track-1"}
 
     async def resolve_mentions(_db, _values):
-        return ["41068:张三", "220750:李四"]
+        return ["900101:张三", "900102:李四"]
 
     monkeypatch.setattr(
         "shared.utils.crypto.decrypt_sensitive_data", lambda _value: "secret"
@@ -231,12 +231,12 @@ async def test_per_message_mentions_reach_group_card(monkeypatch):
         send_private=False,
         send_group=True,
         group_conversation_id="conversation-1",
-        directive_mention_user_ids=["41068", "220750"],
+        directive_mention_user_ids=["900101", "900102"],
     )
 
     assert len(calls) == 1
     assert calls[0]["open_space_id"] == "dtv1.card//IM_GROUP.conversation-1"
-    assert calls[0]["mention_user_ids"] == ["41068:张三", "220750:李四"]
+    assert calls[0]["mention_user_ids"] == ["900101:张三", "900102:李四"]
 
 
 @pytest.mark.asyncio
@@ -260,7 +260,7 @@ async def test_webhook_payload_drops_controls_without_treating_silence_as_group(
             )
         ],
         subscription_display_name="Daily alert",
-        result_summary="Nothing changed today.\n\n[静默] [@列表:41068]",
+        result_summary="Nothing changed today.\n\n[静默] [@列表:900101]",
         status="COMPLETED",
         execution_id=2,
     )

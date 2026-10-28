@@ -25,11 +25,11 @@ from app.services.subscription.notification_directives import (
         ("No changes today. [silent]", "No changes today."),
         ("No changes today. 【silent】", "No changes today."),
         (
-            "Please review the alert.\n\n[@列表:41068,220750]",
+            "Please review the alert.\n\n[@列表:900101,900102]",
             "Please review the alert.",
         ),
         (
-            "Please review the alert.\n\n【@列表:41068,220750】",
+            "Please review the alert.\n\n【@列表:900101,900102】",
             "Please review the alert.",
         ),
         (
@@ -37,15 +37,15 @@ from app.services.subscription.notification_directives import (
             "Please review the alert.",
         ),
         (
-            "Please review the alert.\n\n[mention: 41068, 220750]",
+            "Please review the alert.\n\n[mention: 900101, 900102]",
             "Please review the alert.",
         ),
         (
-            "Please review the alert.\n\n【mention:41068,220750】",
+            "Please review the alert.\n\n【mention:900101,900102】",
             "Please review the alert.",
         ),
         (
-            "Please review the alert.\n\n[静默] [@列表:41068]",
+            "Please review the alert.\n\n[静默] [@列表:900101]",
             "Please review the alert.",
         ),
     ],
@@ -60,11 +60,11 @@ def test_parse_notification_directives_strips_trailing_controls(
 
 def test_parse_notification_directives_extracts_silent_and_mentions() -> None:
     directives = parse_notification_directives(
-        "Alert needs attention.\n\n[静默] [@列表:41068, 220750, 41068]"
+        "Alert needs attention.\n\n[静默] [@列表:900101, 900102, 900101]"
     )
 
     assert directives.silent is True
-    assert directives.mention_staff_ids == ("41068", "220750")
+    assert directives.mention_staff_ids == ("900101", "900102")
     assert directives.content == "Alert needs attention."
 
 
@@ -82,14 +82,14 @@ def test_parse_notification_directives_accepts_brackets_and_comma_variants() -> 
 
 def test_parse_notification_directives_accepts_colon_variants() -> None:
     fullwidth_colon = parse_notification_directives(
-        "Alert needs attention.\n\n【@列表：41068】"
+        "Alert needs attention.\n\n【@列表：900101】"
     )
     ascii_colon = parse_notification_directives(
-        "Alert needs attention.\n\n[@列表:41068]"
+        "Alert needs attention.\n\n[@列表:900101]"
     )
 
-    assert fullwidth_colon.mention_staff_ids == ("41068",)
-    assert ascii_colon.mention_staff_ids == ("41068",)
+    assert fullwidth_colon.mention_staff_ids == ("900101",)
+    assert ascii_colon.mention_staff_ids == ("900101",)
 
 
 @pytest.mark.parametrize(
@@ -100,18 +100,18 @@ def test_parse_notification_directives_works_for_shell_results(
     shell_type: str,
 ) -> None:
     result = {
-        "value": "测试\n【@列表：41068】",
+        "value": "测试\n【@列表：900101】",
         "executor_session": {"agent": shell_type},
     }
 
     directives = parse_notification_directives(extract_result_summary(result))
 
     assert directives.content == "测试"
-    assert directives.mention_staff_ids == ("41068",)
+    assert directives.mention_staff_ids == ("900101",)
 
 
 def test_parse_notification_directives_keeps_body_mentions() -> None:
-    message = "Please ask @41068 to review.\nThis is still the body."
+    message = "Please ask @900101 to review.\nThis is still the body."
 
     directives = parse_notification_directives(message)
 
@@ -122,10 +122,10 @@ def test_parse_notification_directives_keeps_body_mentions() -> None:
 
 def test_parse_notification_directives_drops_mention_display_names() -> None:
     directives = parse_notification_directives(
-        "Alert needs attention.\n\n[@列表:41068：张三,220750:李四]"
+        "Alert needs attention.\n\n[@列表:900101：张三,900102:李四]"
     )
 
-    assert directives.mention_staff_ids == ("41068", "220750")
+    assert directives.mention_staff_ids == ("900101", "900102")
 
 
 @pytest.mark.parametrize(
@@ -152,8 +152,8 @@ def test_parse_notification_directives_drops_empty_or_non_staff_mentions(
     [
         "Nothing changed today.\n静默",
         "Nothing changed today. (静默)",
-        "Please ask @41068 to review.",
-        "Please ask @41068 @220750",
+        "Please ask @900101 to review.",
+        "Please ask @900101 @900102",
     ],
 )
 def test_parse_notification_directives_requires_bracketed_controls(
