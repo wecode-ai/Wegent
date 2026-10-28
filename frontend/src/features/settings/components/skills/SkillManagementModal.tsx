@@ -98,7 +98,7 @@ export default function SkillManagementModal({
     error: writableGroupsError,
     loading: writableGroupsLoading,
     reload: reloadWritableGroups,
-  } = useWritableGroups(open && scope !== 'public')
+  } = useWritableGroups(open && scope !== 'public' && uploadModalOpen)
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true)

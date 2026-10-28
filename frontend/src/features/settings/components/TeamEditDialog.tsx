@@ -671,6 +671,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         setTechnicalNameUnlocked(true)
         setIdentityConfirmVisible(false)
         setIdentityConfirmation('')
+        setCreatingGroupNames([])
         setCreatingPublishTarget(
           publishAfterCreate
             ? 'marketplace'

@@ -141,4 +141,38 @@ describe('useWritableGroups', () => {
       expect(listGroups).toHaveBeenCalledTimes(2)
     })
   })
+
+  it('ignores a response that arrives after the dialog closes', async () => {
+    let resolvePending: (value: { total: number; items: Group[] }) => void = () => {}
+    ;(listGroups as jest.Mock).mockReturnValueOnce(
+      new Promise(resolve => {
+        resolvePending = resolve
+      })
+    )
+
+    const { result, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => useWritableGroups(enabled),
+      { initialProps: { enabled: true } }
+    )
+    expect(result.current.loading).toBe(true)
+
+    rerender({ enabled: false })
+
+    await act(async () => {
+      resolvePending({ total: 1, items: [makeGroup('stale', 'Developer')] })
+    })
+
+    expect(result.current.groups).toEqual([])
+    expect(result.current.loading).toBe(false)
+    ;(listGroups as jest.Mock).mockResolvedValue({
+      total: 1,
+      items: [makeGroup('fresh', 'Developer')],
+    })
+    rerender({ enabled: true })
+
+    await waitFor(() => {
+      expect(result.current.groups.map(group => group.name)).toEqual(['fresh'])
+    })
+    expect(listGroups).toHaveBeenCalledTimes(2)
+  })
 })

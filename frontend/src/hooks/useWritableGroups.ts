@@ -30,8 +30,11 @@ export function useWritableGroups(enabled = true): UseWritableGroupsResult {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const loadedRef = useRef(false)
+  const requestIdRef = useRef(0)
 
   const reload = useCallback(async () => {
+    const requestId = requestIdRef.current + 1
+    requestIdRef.current = requestId
     setLoading(true)
     setError(null)
     try {
@@ -47,19 +50,27 @@ export function useWritableGroups(enabled = true): UseWritableGroupsResult {
         if (items.length === 0) break
       }
 
+      if (requestIdRef.current !== requestId) return
       setGroups(allGroups.filter(group => canEditContent(group.my_role)))
       loadedRef.current = true
     } catch (cause) {
+      if (requestIdRef.current !== requestId) return
       setError(cause instanceof Error ? cause : new Error('Failed to load groups'))
       loadedRef.current = false
     } finally {
-      setLoading(false)
+      if (requestIdRef.current === requestId) {
+        setLoading(false)
+      }
     }
   }, [])
 
   useEffect(() => {
     if (!enabled) {
+      // Invalidate any in-flight request so a stale response cannot mark the
+      // disabled hook as loaded.
+      requestIdRef.current += 1
       loadedRef.current = false
+      setLoading(false)
       return
     }
     if (!loadedRef.current) {
