@@ -1,7 +1,7 @@
 /** @jest-environment node */
 
 import { execFile } from 'node:child_process'
-import { delimiter, resolve } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import {
   artifactDatabaseState,
@@ -56,7 +56,7 @@ describe('artifact database process isolation', () => {
     expect(options.timeout).toBe(30_000)
     expect(options.env.UV_NO_EDITABLE).toBe('0')
     const paths = options.env.PYTHONPATH.split(delimiter)
-    expect(paths[0]).toBe(resolve(repository, 'backend'))
+    expect(paths[0]).toBe(join(repository, 'backend'))
     expect(paths[1]).toBe(repository)
     expect(paths[2]).toBe('/existing/source')
     expect(options.env.DATABASE_URL).toBe(process.env.DATABASE_URL)
@@ -93,7 +93,7 @@ describe('artifact database process isolation', () => {
     await artifactDatabaseState(identity)
     const paths = execute.mock.calls[0][2].env.PYTHONPATH.split(delimiter)
     expect(paths).toHaveLength(2)
-    expect(paths[0]).toBe(resolve(repository, 'backend'))
+    expect(paths[0]).toBe(join(repository, 'backend'))
     expect(paths[1]).toBe(repository)
   })
 

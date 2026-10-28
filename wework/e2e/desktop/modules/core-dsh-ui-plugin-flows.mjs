@@ -359,7 +359,8 @@ async function verifyConversationExportOutsideWorkspace(control, resultDir) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('waitFor', '[data-testid="conversation-export-completed-path"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    // Completion follows a background filesystem job, including fsync and ZIP creation.
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   assert.equal(
     await control.command('getText', '[data-testid="conversation-export-completed-path"]'),
@@ -391,7 +392,7 @@ async function verifyConversationExportOutsideWorkspace(control, resultDir) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('waitFor', '[data-testid="conversation-export-completed-path"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   assert.equal(
     await control.command('getText', '[data-testid="conversation-export-completed-path"]'),

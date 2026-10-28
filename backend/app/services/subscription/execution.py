@@ -945,9 +945,10 @@ class BackgroundExecutionManager:
         else:
             logger.debug(", ".join(log_parts))
 
-        # Emit WebSocket event to notify frontend of the status update
+        # Emit WebSocket event to notify frontend of the status update.
+        # Log only the summary length: a completion reply can be very large.
         logger.debug(
-            f"[Subscription] Emitting WS event for execution {execution_id}, user_id={execution.user_id}, summary={result_summary}"
+            f"[Subscription] Emitting WS event for execution {execution_id}, user_id={execution.user_id}, summary_chars={len(result_summary or '')}"
         )
         emit_background_execution_update(
             db=db,
@@ -963,7 +964,7 @@ class BackgroundExecutionManager:
         # Skip if caller will handle notifications separately (e.g., Chat Shell tasks)
         if status == BackgroundExecutionStatus.COMPLETED and not skip_notifications:
             logger.info(
-                f"[Subscription] Dispatching completion notifications for execution {execution_id}, result_summary={result_summary}"
+                f"[Subscription] Dispatching completion notifications for execution {execution_id}, summary_chars={len(result_summary or '')}"
             )
             self._dispatch_completion_notifications(
                 db=db,
