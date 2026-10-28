@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.services.execution.device_socketio import publish_device_execution
 from app.services.execution.dispatcher import ExecutionDispatcher
 from app.services.execution.router import CommunicationMode, ExecutionTarget
 from shared.models import ExecutionRequest
@@ -50,6 +51,39 @@ async def test_dispatch_allows_app_device_task_execution() -> None:
 
     recover.assert_awaited_once_with(request, device_id="app-device")
     dispatch.assert_awaited_once()
+
+
+def test_worker_device_dispatch_uses_cross_process_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker must not consume its own event in an empty local room."""
+    published = []
+
+    class FakeRedis:
+        def publish(self, channel, message):
+            published.append((channel, message))
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("redis.from_url", lambda *_args, **_kwargs: FakeRedis())
+
+    publish_device_execution(
+        event="task:execute",
+        namespace="/local-executor",
+        room="device:9:device-1",
+        payload={"task_id": 1},
+    )
+
+    channel, raw_message = published[0]
+    message = __import__("json").loads(raw_message)
+    assert channel == "socketio"
+    assert message["method"] == "emit"
+    assert message["event"] == "task:execute"
+    assert message["namespace"] == "/local-executor"
+    assert message["room"] == "device:9:device-1"
+    assert message["data"] == [{"task_id": 1}]
+    assert message["host_id"]
 
 
 @pytest.mark.asyncio

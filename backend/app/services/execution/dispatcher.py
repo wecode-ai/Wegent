@@ -570,11 +570,15 @@ class ExecutionDispatcher:
         """
 
         async def _emit() -> None:
-            await sio.emit(
-                target.event,
-                payload,
-                room=target.room,
-                namespace=target.namespace,
+            from app.services.execution.device_socketio import (
+                publish_device_execution,
+            )
+
+            publish_device_execution(
+                event=target.event,
+                namespace=target.namespace or "/",
+                room=target.room or "",
+                payload=payload,
             )
 
         await run_in_main_loop(_emit)
