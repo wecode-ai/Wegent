@@ -12040,7 +12040,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('renders the environment commit menu as the compact commit or push panel', async () => {
+  async function renderEnvironmentCommitMenu() {
     mockDesktopWorkbenchMainWidth(1024)
     deviceExecuteCommandMock.mockResolvedValue({ success: true, stdout: [] })
     const onCommitAndPushEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
@@ -12081,25 +12081,9 @@ describe('DesktopWorkbenchLayout', () => {
         onCommitAndPushEnvironmentChanges={onCommitAndPushEnvironmentChanges}
         onPushEnvironmentChanges={onPushEnvironmentChanges}
         state={{
-          ...baseProps.state,
+          ...activeProjectState,
           currentRuntimeTask: activeProjectRuntimeTask,
           runtimeWork,
-          currentProject: {
-            id: 1,
-            name: 'github_wegent',
-            tasks: [],
-            config: {
-              mode: 'workspace',
-              execution: {
-                targetType: 'local',
-                deviceId: 'device-1',
-              },
-              workspace: {
-                source: 'local_path',
-                localPath: '/workspace/github_wegent',
-              },
-            },
-          },
         }}
       />
     )
@@ -12107,6 +12091,16 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => expect(deviceExecuteCommandMock).toHaveBeenCalledTimes(1))
     const popover = await screen.findByTestId('environment-info-popover')
     const commitMenuButton = await screen.findByTestId('environment-commit-button')
+    return {
+      popover,
+      commitMenuButton,
+      onCommitAndPushEnvironmentChanges,
+      onPushEnvironmentChanges,
+    }
+  }
+
+  test('renders the environment commit menu as the compact commit or push panel', async () => {
+    const { popover, commitMenuButton } = await renderEnvironmentCommitMenu()
     expect(commitMenuButton).toHaveTextContent('提交或推送')
 
     await userEvent.click(commitMenuButton)
@@ -12135,6 +12129,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(commitMenuButton).toHaveFocus()
 
     await userEvent.click(commitMenuButton)
+    expect(screen.getByTestId('environment-commit-message-input')).toHaveValue('keep this')
+  }, 10_000)
+
+  test('preserves the environment commit draft and outside control focus after dismissal', async () => {
+    const { commitMenuButton } = await renderEnvironmentCommitMenu()
+    await userEvent.click(commitMenuButton)
+    await userEvent.type(screen.getByTestId('environment-commit-message-input'), 'keep this')
     const commitMessageInput = screen.getByTestId('environment-commit-message-input')
     await userEvent.click(commitMessageInput)
     expect(commitMessageInput).toHaveFocus()
@@ -12144,17 +12145,37 @@ describe('DesktopWorkbenchLayout', () => {
     expect(outsideControl).toHaveFocus()
 
     await userEvent.click(commitMenuButton)
-    await userEvent.click(screen.getByTestId('environment-commit-and-push-button'))
-    await waitFor(() =>
-      expect(onCommitAndPushEnvironmentChanges).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 1 }),
-        'keep this',
-        activeProjectRuntimeTarget
+    expect(screen.getByTestId('environment-commit-message-input')).toHaveValue('keep this')
+  }, 10_000)
+
+  test('routes environment commit and push actions after the previous mutation finishes refreshing', async () => {
+    const { commitMenuButton, onCommitAndPushEnvironmentChanges, onPushEnvironmentChanges } =
+      await renderEnvironmentCommitMenu()
+    await userEvent.click(commitMenuButton)
+    await userEvent.type(screen.getByTestId('environment-commit-message-input'), 'keep this')
+    const refresh = createDeferred<{ success: boolean; stdout: string[] }>()
+    deviceExecuteCommandMock.mockImplementationOnce(() => refresh.promise)
+    try {
+      await userEvent.click(screen.getByTestId('environment-commit-and-push-button'))
+      await waitFor(() =>
+        expect(onCommitAndPushEnvironmentChanges).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 1 }),
+          'keep this',
+          activeProjectRuntimeTarget
+        )
       )
-    )
-    await waitFor(() => expect(deviceExecuteCommandMock).toHaveBeenCalledTimes(2))
+      await waitFor(() => expect(deviceExecuteCommandMock).toHaveBeenCalledTimes(2))
+      // Command admission does not mean the mutation and its environment refresh have settled.
+      expect(screen.getByTestId('environment-commit-progress-row')).toBeInTheDocument()
+      expect(screen.queryByTestId('environment-commit-button')).not.toBeInTheDocument()
+      expect(onPushEnvironmentChanges).not.toHaveBeenCalled()
+    } finally {
+      await act(async () => refresh.resolve({ success: true, stdout: [] }))
+    }
+    await waitFor(() => expect(screen.getByTestId('environment-commit-button')).toBeEnabled())
 
     await userEvent.click(screen.getByTestId('environment-commit-button'))
+    await waitFor(() => expect(screen.getByTestId('environment-push-button')).toBeEnabled())
     await userEvent.click(screen.getByTestId('environment-push-button'))
     await waitFor(() =>
       expect(onPushEnvironmentChanges).toHaveBeenCalledWith(
@@ -12163,6 +12184,7 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     await waitFor(() => expect(deviceExecuteCommandMock).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(screen.getByTestId('environment-commit-button')).toBeEnabled())
   }, 10_000)
 
   test('shows the environment commit progress row while generating a message', async () => {
