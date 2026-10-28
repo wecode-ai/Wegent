@@ -1,4 +1,5 @@
 import { APIRequestContext, expect, test } from '@playwright/test'
+import { verifyRestrictedFilePreviews } from '../../utils/restricted-preview-test-support'
 import { REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
 import { createExternalImportRetrieval } from '../../utils/external-import-retrieval'
@@ -22,6 +23,7 @@ import {
   authHeaders,
   getMcpCalls,
   PROVIDER_NATIVE_API_URL,
+  PROVIDER_NATIVE_MOCK_URL,
 } from '../../utils/provider-native-test-support'
 
 /**
@@ -164,30 +166,35 @@ test.describe('External DingTalk document import', () => {
     })
   })
 
-  test('blocks embedded sources and keeps restricted file previews in the document dialog', async ({
-    page,
-    request,
-  }) => {
-    test.setTimeout(120_000)
-    await runScenario(request, 'restricted-preview', async context => {
-      const blockedEmbedRequests: string[] = []
-      page.on('request', browserRequest => {
-        if (browserRequest.url().startsWith('https://outside.example/')) {
-          blockedEmbedRequests.push(browserRequest.url())
-        }
-      })
-      await page.route('https://dingtalk-preview.invalid/**', async route => {
-        const isUnavailable = route.request().url().endsWith('/unavailable.txt')
-        await route.fulfill({
-          status: isUnavailable ? 404 : 200,
-          contentType: 'text/plain; charset=utf-8',
-          headers: { 'Access-Control-Allow-Origin': '*' },
-          body: isUnavailable ? 'missing' : 'DINGTALK-RESTRICTED-PREVIEW-CONTENT',
+  test.describe('real HTTPS file previews', () => {
+    // Only this fixture origin uses an ephemeral self-signed certificate.
+    test.use({ ignoreHTTPSErrors: true })
+    test.afterAll(async ({ request }) => {
+      const response = await request.delete(`${PROVIDER_NATIVE_MOCK_URL}/preview-file-source`)
+      expect(response.ok()).toBeTruthy()
+    })
+
+    test('blocks embedded sources and keeps restricted file previews in the document dialog', async ({
+      page,
+      request,
+    }) => {
+      test.setTimeout(120_000)
+      await runScenario(request, 'restricted-preview', async context => {
+        const blockedEmbedRequests: string[] = []
+        page.on('request', browserRequest => {
+          if (browserRequest.url().startsWith('https://outside.example/')) {
+            blockedEmbedRequests.push(browserRequest.url())
+          }
         })
-      })
-      await configureMockImport(request, {
-        documentContents: {
-          [EXTERNAL_IMPORT_NODES.product]: `# Restricted preview
+        const fileSource = await request.get(`${PROVIDER_NATIVE_MOCK_URL}/preview-file-source`)
+        expect(fileSource.ok(), await fileSource.text()).toBeTruthy()
+        const { port } = (await fileSource.json()) as { port: number }
+        const origin = new URL(PROVIDER_NATIVE_MOCK_URL)
+        origin.protocol = 'https:'
+        origin.port = String(port)
+        await configureMockImport(request, {
+          documentContents: {
+            [EXTERNAL_IMPORT_NODES.product]: `# Restricted preview
 
 <iframe src="https://outside.example/iframe"></iframe>
 
@@ -195,91 +202,67 @@ test.describe('External DingTalk document import', () => {
 
 <embed src="https://outside.example/embed">
 
-[preview.txt](https://dingtalk-preview.invalid/preview.txt)
+[preview.pdf](${origin.origin}/preview.pdf)
 
-[unavailable.txt](https://dingtalk-preview.invalid/unavailable.txt)`,
-        },
-      })
+[preview.docx](${origin.origin}/preview.docx)
 
-      await openKnowledgeBase(page, context.knowledgeBaseId)
-      await importThroughDialog(page, [EXTERNAL_IMPORT_NODES.product], {
-        sourceFolderPath: [EXTERNAL_IMPORT_NODES.folderRoot],
-      })
-      await page.getByTestId('dingtalk-import-done').click()
-      const document = await waitForDocument(
-        request,
-        context.token,
-        context.knowledgeBaseId,
-        'E2E_产品说明'
-      )
-
-      // The dialog fetches its body from the detail API exactly once, so a
-      // response without content would leave it permanently blank. Wait for
-      // the restricted body on the same endpoint the dialog consumes.
-      await expect
-        .poll(
-          async () => {
-            const detailResponse = await request.get(
-              `${PROVIDER_NATIVE_API_URL}/api/knowledge-bases/${context.knowledgeBaseId}/documents/${document.id}/detail`,
-              {
-                headers: authHeaders(context.token),
-                params: { include_content: 'true', include_summary: 'false' },
-              }
-            )
-            const detail = (await detailResponse.json()) as { content?: string }
-            return detail.content ?? ''
+[unavailable.txt](${origin.origin}/unavailable.txt)`,
           },
-          {
-            timeout: 45_000,
-            message: 'Restricted preview body should be served by the detail API',
-          }
+        })
+
+        await openKnowledgeBase(page, context.knowledgeBaseId)
+        await importThroughDialog(page, [EXTERNAL_IMPORT_NODES.product], {
+          sourceFolderPath: [EXTERNAL_IMPORT_NODES.folderRoot],
+        })
+        await page.getByTestId('dingtalk-import-done').click()
+        const document = await waitForDocument(
+          request,
+          context.token,
+          context.knowledgeBaseId,
+          'E2E_产品说明'
         )
-        .toContain('Restricted preview')
 
-      await page.reload({ waitUntil: 'domcontentloaded' })
-      // The row's center can overlap its inline Edit button at the CI viewport.
-      // Click the document name to open the content preview through the row handler.
-      await page
-        .getByTestId(`document-row-${document.id}`)
-        .getByText(document.name, { exact: true })
-        .click()
-      await expect(page.getByRole('heading', { name: 'Restricted preview' })).toBeVisible({
-        timeout: 30_000,
+        // The dialog fetches its body from the detail API exactly once, so a
+        // response without content would leave it permanently blank. Wait for
+        // the restricted body on the same endpoint the dialog consumes.
+        await expect
+          .poll(
+            async () => {
+              const detailResponse = await request.get(
+                `${PROVIDER_NATIVE_API_URL}/api/knowledge-bases/${context.knowledgeBaseId}/documents/${document.id}/detail`,
+                {
+                  headers: authHeaders(context.token),
+                  params: { include_content: 'true', include_summary: 'false' },
+                }
+              )
+              const detail = (await detailResponse.json()) as { content?: string }
+              return detail.content ?? ''
+            },
+            {
+              timeout: 45_000,
+              message: 'Restricted preview body should be served by the detail API',
+            }
+          )
+          .toContain('Restricted preview')
+
+        await page.reload({ waitUntil: 'domcontentloaded' })
+        // The row's center can overlap its inline Edit button at the CI viewport.
+        // Click the document name to open the content preview through the row handler.
+        await page
+          .getByTestId(`document-row-${document.id}`)
+          .getByText(document.name, { exact: true })
+          .click()
+        await expect(page.getByRole('heading', { name: 'Restricted preview' })).toBeVisible({
+          timeout: 30_000,
+        })
+
+        await expect(page.getByTestId('document-embedded-content-blocked')).toHaveCount(3)
+        await expect(page.locator('iframe, object, embed')).toHaveCount(0)
+        expect(blockedEmbedRequests).toEqual([])
+        await expect(page.getByTestId('document-link-preview-card')).toHaveCount(3)
+        await verifyRestrictedFilePreviews(page, origin.origin, test.info())
+        expect(blockedEmbedRequests).toEqual([])
       })
-
-      await expect(page.getByTestId('document-embedded-content-blocked')).toHaveCount(3)
-      await expect(page.locator('iframe, object, embed')).toHaveCount(0)
-      expect(blockedEmbedRequests).toEqual([])
-      await expect(page.getByTestId('document-link-preview-card')).toHaveCount(2)
-
-      const originalUrl = page.url()
-      const originalPageCount = page.context().pages().length
-      const availableCard = page
-        .getByTestId('document-link-preview-card')
-        .filter({ hasText: 'preview.txt' })
-      await availableCard.getByTestId('document-link-preview-trigger').click()
-      await expect(page.getByTestId('document-link-preview-dialog')).toBeVisible()
-      // The loaded card cover shows the same text; scope the assertion to the
-      // dialog so strict mode does not match both elements.
-      await expect(
-        page
-          .getByTestId('document-link-preview-dialog')
-          .getByText('DINGTALK-RESTRICTED-PREVIEW-CONTENT')
-      ).toBeVisible()
-      expect(page.url()).toBe(originalUrl)
-      expect(page.context().pages()).toHaveLength(originalPageCount)
-      await page
-        .getByTestId('document-link-preview-dialog')
-        .getByRole('button', { name: /close/i })
-        .click()
-
-      const unavailableCard = page
-        .getByTestId('document-link-preview-card')
-        .filter({ hasText: 'unavailable.txt' })
-      await unavailableCard.getByTestId('document-link-preview-trigger').click()
-      await expect(page.getByTestId('document-link-preview-error')).toBeVisible()
-      expect(page.url()).toBe(originalUrl)
-      expect(page.context().pages()).toHaveLength(originalPageCount)
     })
   })
 

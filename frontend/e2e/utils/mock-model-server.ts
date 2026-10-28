@@ -13,6 +13,7 @@
  */
 
 import * as http from 'http'
+import { closePreviewFileSource, handlePreviewFileSource } from './preview-file-source'
 import { writeAnthropicStreamingResponse, writeAnthropicJsonResponse } from './mock-anthropic'
 import {
   writeAnthropicStreamingToolCalls,
@@ -617,6 +618,14 @@ const server = http.createServer((req, res) => {
   req.on('end', async () => {
     const timestamp = new Date().toISOString()
 
+    try {
+      if (await handlePreviewFileSource(req, res)) return
+    } catch (error) {
+      console.error('Preview file source failed:', error)
+      res.writeHead(500).end('Preview file source failed')
+      return
+    }
+
     // Parse request body
     const parsedBody = parseJsonBody<ModelRequest>(body)
     if (body && !parsedBody) {
@@ -1003,8 +1012,9 @@ server.listen(PORT, () => {
 })
 
 // Handle graceful shutdown
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('\nShutting down mock server...')
+  await closePreviewFileSource()
   server.close(() => {
     console.log('Server closed')
     process.exit(0)
