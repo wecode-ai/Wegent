@@ -112,7 +112,7 @@ function TextInputDialogContent({
             setValue(event.target.value)
             setError(null)
           }}
-          className="mt-2 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+          className="mt-2 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-primary keyboard:focus:ring-2 keyboard:focus:ring-primary/20"
         />
         {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
         <div className="mt-6 flex justify-end gap-2">

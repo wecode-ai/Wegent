@@ -124,6 +124,7 @@ describe('TaskSupervisorControl', () => {
           modelType: 'public',
           options: {
             reasoning: 'high',
+            modelSelection: 'model',
             weworkCloudModelNamespace: 'default',
             weworkCloudModelResourceUserId: '0',
           },
@@ -190,6 +191,7 @@ describe('TaskSupervisorControl', () => {
           modelType: 'runtime',
           options: {
             reasoning: 'low',
+            modelSelection: 'model',
           },
         },
         30

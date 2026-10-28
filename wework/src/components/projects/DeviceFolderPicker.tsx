@@ -300,7 +300,7 @@ export function DeviceFolderPicker({
             className={
               remoteLayout
                 ? 'h-10 w-full border border-transparent bg-transparent font-mono text-sm text-text-primary outline-none disabled:opacity-60'
-                : 'h-9 w-full rounded-md border border-transparent bg-transparent px-1 font-mono text-sm text-text-primary outline-none focus:border-focus focus:bg-background focus:ring-2 focus:ring-focus/20 disabled:opacity-60'
+                : 'h-9 w-full rounded-md border border-transparent bg-transparent px-1 font-mono text-sm text-text-primary outline-none keyboard:focus:border-focus focus:bg-background keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-60'
             }
             placeholder={t('workbench.project_directory_loading', '正在加载目录...')}
           />
@@ -341,7 +341,7 @@ export function DeviceFolderPicker({
             className={
               remoteLayout
                 ? 'h-10 min-w-0 flex-1 rounded-xl border border-border bg-muted px-3 text-sm text-text-primary outline-none focus:border-text-secondary disabled:opacity-60'
-                : 'h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60'
+                : 'h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-60'
             }
             placeholder={t('workbench.project_create_folder_placeholder', '输入文件夹名称')}
           />

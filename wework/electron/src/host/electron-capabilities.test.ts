@@ -35,9 +35,8 @@ import type { RendererStorageStore } from './renderer-storage-store.js'
 const electronMocks = vi.hoisted(() => ({
   appGetPath: vi.fn(() => '/tmp'),
   appGetVersion: vi.fn(() => '0.0.0-test'),
-  clipboardRead: vi.fn(
-    async () => [] as Array<{ types: string[]; getType: (type: string) => Promise<Blob> }>
-  ),
+  clipboardAvailableFormats: vi.fn(() => [] as string[]),
+  clipboardReadBuffer: vi.fn(() => Buffer.alloc(0)),
   clipboardReadText: vi.fn(() => 'native text'),
   clipboardWriteText: vi.fn(),
   dialogShowMessageBox: vi.fn(),
@@ -53,13 +52,16 @@ const electronMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('electron', () => ({
+  protocol: { handle: vi.fn(), unhandle: vi.fn() },
   app: {
+    once: vi.fn(),
     getPath: electronMocks.appGetPath,
     getVersion: electronMocks.appGetVersion,
   },
   BrowserWindow: class BrowserWindow {},
   clipboard: {
-    read: electronMocks.clipboardRead,
+    availableFormats: electronMocks.clipboardAvailableFormats,
+    readBuffer: electronMocks.clipboardReadBuffer,
     readText: electronMocks.clipboardReadText,
     writeText: electronMocks.clipboardWriteText,
   },
@@ -996,7 +998,9 @@ describe('registerDesktopServiceCapabilities', () => {
 describe('isolated surface clipboard capabilities', () => {
   test('inspects supplied workspace paths when the native clipboard is unavailable', async () => {
     const { router } = createIsolatedClipboardRouter()
-    electronMocks.clipboardRead.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+    electronMocks.clipboardAvailableFormats.mockImplementationOnce(() => {
+      throw new Error('Clipboard unavailable')
+    })
 
     await expect(
       router.invoke(WEWORK_APP_PRINCIPAL, 'clipboard.readWorkspacePaths', {
@@ -1012,10 +1016,12 @@ describe('isolated surface clipboard capabilities', () => {
     electronMocks.clipboardWriteText.mockClear()
   })
 
-  test('propagates asynchronous clipboard write failures', async () => {
+  test('propagates clipboard write failures', async () => {
     const { router } = createIsolatedClipboardRouter()
     await router.invoke(WEWORK_APP_PRINCIPAL, 'isolatedClipboard.activate', { leaseId: 'lease-1' })
-    electronMocks.clipboardWriteText.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+    electronMocks.clipboardWriteText.mockImplementationOnce(() => {
+      throw new Error('Clipboard unavailable')
+    })
 
     await expect(
       router.invoke(WEWORK_APP_PRINCIPAL, 'isolatedClipboard.writeText', {

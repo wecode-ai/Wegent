@@ -107,10 +107,40 @@ executor_lock="${executor_lock/wework_target=false/wework_target=true}"
 assert_warmup_case "executor lock" "$executor_lock" "executor/Cargo.lock"
 backend_rs_lock="${warmup_all_false/wework_target=false/wework_target=true}"
 assert_warmup_case "Backend Rust lock" "$backend_rs_lock" "backend-rs/Cargo.lock"
+assert_warmup_case "Backend Rust OCI resolver" "$backend_rs_lock" \
+  ".github/scripts/resolve-backend-rs-e2e-runtime.sh"
+assert_warmup_case "Backend Rust OCI recipe" "$backend_rs_lock" \
+  ".github/runtime-images/backend-rs-e2e.Dockerfile"
 assert_warmup_case "Backend Rust source" "$backend_rs_lock" \
   "backend-rs/src/hybrid.rs"
 assert_warmup_case "Executor source warms desktop sidecar" "$executor_lock" \
   "executor/src/main.rs"
+assert_warmup_case "Executor dependency source warms desktop sidecar" "$executor_lock" \
+  "executor/vendor/tf-rust-socketio/src/ack_id.rs"
+
+if ! ruby - "$workflow_dir" "$script_dir/../.." <<'RUBY'
+workflow_dir, root = ARGV
+['ci-cache-warmup.yml', 'wework-e2e.yml', 'e2e-tests.yml'].each do |name|
+  File.read(File.join(workflow_dir, name)).scan(/hashFiles\([^)]*\)/).each do |expression|
+    next unless expression.include?("'executor/src/")
+    abort "#{name} omits vendored Executor dependencies from its source digest" unless expression.include?("'executor/vendor/**'")
+  end
+end
+[
+  'docker/executor/Dockerfile',
+  'docker/device/Dockerfile',
+  'docker/standalone/Dockerfile',
+  'frontend/e2e/fixtures/claudecode-executor/Dockerfile'
+].each do |name|
+  lines = File.readlines(File.join(root, name))
+  copy = lines.index { |line| line.start_with?('COPY executor/vendor ') }
+  build = lines.index { |line| line.include?('cargo build') }
+  abort "#{name} must copy Executor dependencies before compiling" unless copy && build && copy < build
+end
+RUBY
+then
+  fail "Executor dependency sources must participate in runtime builds and cache keys"
+fi
 
 docker_only="${warmup_all_false/docker=false/docker=true}"
 assert_warmup_case "Executor E2E resolver" "$docker_only" \
@@ -219,6 +249,35 @@ for action_file in "$action_dir"/*/action.yml; do
 done
 
 platform_e2e_workflow="$workflow_dir/e2e-tests.yml"
+if ! ruby -ryaml - "$platform_e2e_workflow" <<'RUBY'
+workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+job = workflow.fetch("jobs").fetch("e2e-tests")
+raise "Platform shards must retain their browser container" unless job["container"]
+
+environment = job.fetch("env")
+raise "Container Python must be selected explicitly" unless environment["UV_PYTHON"] == "3.11"
+raise "Container Python must not use the host tool cache" unless environment["UV_MANAGED_PYTHON"] == "true"
+
+steps = job.fetch("steps")
+setup = steps.find { |step| step["uses"] == "./.github/actions/setup-python-uv-cache" }
+raise "Container must retain the shared uv cache" unless setup
+inputs = setup.fetch("with")
+raise "Host Python setup must stay disabled inside the container" unless inputs["setup-python"] == "false"
+raise "Container must use the image's uv" unless inputs["setup-uv"] == "false"
+
+prepare = steps.index { |step| step["run"].to_s.match?(/^\s*uv python install\b/) }
+dependencies = steps.index { |step| step["run"].to_s.match?(/\buv (?:venv|sync)\b/) }
+raise "Container Python must be prepared before dependency environments" unless prepare && dependencies && prepare < dependencies
+command = steps.fetch(prepare).fetch("run")
+raise "Container Python must verify SSL before network use" unless command.include?("import ssl")
+raise "Container Python must install its unversioned commands" unless command.match?(/uv python install\s+--default\b/)
+raise "Container Python must be exported for later steps" unless command.include?("GITHUB_PATH") && command.include?("uv python dir --bin")
+raise "Container Python must verify command discovery" unless command.include?("command -v python")
+RUBY
+then
+  fail "Platform E2E Python must be owned and verified by the container"
+fi
+
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
 if ! grep -Fq -- '--shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}' \

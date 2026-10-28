@@ -8,6 +8,9 @@ import {
 } from "@wegent/chat-core/model-execution";
 import type { ModelOptions, UnifiedModel } from "@wegent/chat-core/models";
 
+// Persist UI selection intent with the model so remounts do not change slider semantics.
+export const MODEL_SELECTION_OPTION = "modelSelection";
+
 export interface ModelControlOption {
   value: string;
   label: string;
@@ -303,18 +306,23 @@ export function isModelInterfaceModel(model: UnifiedModel | null): boolean {
   return kind === "model-interface" || kind.startsWith("model-interface:");
 }
 
+export function modelSelectionKey(model: UnifiedModel): string {
+  return JSON.stringify([
+    model.type,
+    model.name,
+    modelConfigString(model, "codexProviderId") ||
+      (model.type === "runtime" ? (model.runtime?.provider ?? "") : ""),
+    model.namespace ?? "",
+    String(model.resourceUserId ?? ""),
+  ]);
+}
+
 export function isSameModelSelection(
   left: UnifiedModel | null,
   right: UnifiedModel | null,
 ): boolean {
-  if (!left || !right || left.type !== right.type || left.name !== right.name) {
-    return false;
-  }
-  return (
-    modelConfigString(left, "codexProviderId") ===
-      modelConfigString(right, "codexProviderId") &&
-    (left.namespace ?? "") === (right.namespace ?? "") &&
-    String(left.resourceUserId ?? "") === String(right.resourceUserId ?? "")
+  return Boolean(
+    left && right && modelSelectionKey(left) === modelSelectionKey(right),
   );
 }
 
@@ -886,6 +894,9 @@ export function normalizeModelOptions(
     permissionMode === "full-access"
   ) {
     normalized.permissionMode = permissionMode;
+  }
+  if (options[MODEL_SELECTION_OPTION]) {
+    normalized[MODEL_SELECTION_OPTION] = options[MODEL_SELECTION_OPTION];
   }
   return normalized;
 }

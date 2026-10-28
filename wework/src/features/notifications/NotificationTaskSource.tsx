@@ -1,3 +1,4 @@
+import { StandInTelemetryAgent } from '@/telemetry/StandInTelemetryAgent'
 import { useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { NotificationTaskContext, type TaskSource } from './NotificationTaskSourceContext'
@@ -26,7 +27,10 @@ export function NotificationTaskSourceProvider({ children }: { children: ReactNo
     [registerTaskSource, taskSource]
   )
   return (
-    <NotificationTaskContext.Provider value={value}>{children}</NotificationTaskContext.Provider>
+    <NotificationTaskContext.Provider value={value}>
+      <StandInTelemetryAgent />
+      {children}
+    </NotificationTaskContext.Provider>
   )
 }
 

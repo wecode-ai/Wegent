@@ -40,4 +40,8 @@ export const remoteWorkspaceApis = {
   getFileUrl(taskId: number, path: string, disposition: RemoteWorkspaceDisposition) {
     return `/api/tasks/${taskId}/remote-workspace/file?path=${encodeURIComponent(path)}&disposition=${disposition}`
   },
+
+  getArtifactFileUrl(taskId: number, contextId: number, disposition: RemoteWorkspaceDisposition) {
+    return `/api/tasks/${taskId}/remote-workspace/artifacts/${contextId}/file?disposition=${disposition}`
+  },
 }

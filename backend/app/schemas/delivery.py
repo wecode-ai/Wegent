@@ -21,7 +21,7 @@ from app.schemas.issue_workflow import IssueWorkflowInstance, WorkflowExecutionC
 from app.schemas.loop_item_position import LoopItemPosition
 from app.schemas.runner_routing import RunnerSelection
 from app.schemas.runtime_work import RuntimeModelSelection
-from app.schemas.tagging import MAX_TAGS_PER_ITEM
+from app.schemas.tagging import MAX_TAGS_PER_ITEM, TagName
 from app.schemas.tagging import normalize_tags as _normalize_tags
 from app.utils.schedule_time import normalize_schedule_datetime
 
@@ -40,7 +40,7 @@ class LoopItemCreate(BaseModel):
     start_at: datetime | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
-    tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
+    tags: list[TagName] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
     workflow: IssueWorkflowInstance | None = None
     execution_config: WorkflowExecutionConfig | None = None
     automation_rule_id: str | None = Field(default=None, max_length=64)
@@ -87,7 +87,7 @@ class LoopItemUpdate(BaseModel):
     start_at: datetime | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
-    tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
+    tags: list[TagName] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
     workflow: IssueWorkflowInstance | None = None
     execution_config: WorkflowExecutionConfig | None = None
     automation_rule_id: str | None = Field(default=None, max_length=64)
@@ -555,6 +555,7 @@ class DeliveryChatSelection(BaseModel):
 
 
 class DeliveryCreate(BaseModel):
+    title: str = Field(default="", max_length=255)
     markdown: str = ""
     chat: dict[str, Any] | None = None
     chat_selection: DeliveryChatSelection | None = None
@@ -695,6 +696,8 @@ class DeliveryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    title: str = ""
+    version: int = 1
     loop_item_id: str
     created_by_user_id: int
     source_task_binding_id: int | None
@@ -704,6 +707,11 @@ class DeliveryResponse(BaseModel):
     delivered_at: datetime | None
     assets: list[DeliveryAssetResponse] = Field(default_factory=list)
     fulfillments: list[DeliveryFulfillment] = Field(default_factory=list)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def normalize_unset_title(cls, value: object) -> object:
+        return "" if value is None else value
 
     @field_validator("source_task_binding_id", mode="before")
     @classmethod

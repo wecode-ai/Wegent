@@ -45,6 +45,26 @@ describe('useBatchAttachment — KB video queue gate', () => {
     registerVideoUploader(null)
   })
 
+  it('rejects empty files and still queues nonempty files in the same batch', () => {
+    const { result } = renderHook(() => useBatchAttachment())
+    let outcome: { added: number; rejected: number; reason?: string } | undefined
+
+    act(() => {
+      outcome = result.current.addFiles([
+        new File([], 'image.png', { type: 'image/png' }),
+        new File([], 'clip.mp4', { type: 'video/mp4' }),
+        new File(['name,value\nitem,42'], 'data.csv', { type: 'text/csv' }),
+      ])
+    })
+
+    expect(outcome).toEqual({
+      added: 1,
+      rejected: 2,
+      reason: expect.stringContaining('common:attachment.errors.empty_file'),
+    })
+    expect(result.current.state.files.map(item => item.file.name)).toEqual(['data.csv'])
+  })
+
   it('rejects a video when no provider is registered (open-source default)', () => {
     const { result } = renderHook(() => useBatchAttachment())
 

@@ -40,6 +40,7 @@ interface MentionAutocompleteProps {
   currentTaskId?: number | null
   showTeamMention?: boolean
   enableTaskMentions?: boolean
+  onOpen?: () => void
   onSelect: (mention: string) => void
   onSelectTask?: (task: Task) => void
   onClose: () => void
@@ -102,6 +103,7 @@ export default function MentionAutocomplete({
   currentTaskId,
   showTeamMention = false,
   enableTaskMentions = false,
+  onOpen,
   onSelect,
   onSelectTask,
   onClose,
@@ -109,6 +111,8 @@ export default function MentionAutocomplete({
 }: MentionAutocompleteProps) {
   const { t } = useTranslation()
   const menuRef = useRef<HTMLDivElement>(null)
+  const onOpenRef = useRef(onOpen)
+  onOpenRef.current = onOpen
   const [selectedIndex, setSelectedIndex] = useState(0)
   const selectedIndexRef = useRef(selectedIndex)
   selectedIndexRef.current = selectedIndex
@@ -127,6 +131,12 @@ export default function MentionAutocomplete({
     window.addEventListener('resize', updateViewport)
     return () => window.removeEventListener('resize', updateViewport)
   }, [])
+
+  useEffect(() => {
+    if (enableTaskMentions) {
+      onOpenRef.current?.()
+    }
+  }, [enableTaskMentions])
 
   useEffect(() => {
     const normalizedQuery = query.trim()

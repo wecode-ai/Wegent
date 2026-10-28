@@ -362,6 +362,7 @@ pub async fn prepare_claude_runtime(
 
     let config_dir =
         claude_config_dir(request, Some(&task_dir)).unwrap_or_else(|| task_dir.join(".claude"));
+    crate::artifact_workspace::bind(request, Some(&task_dir))?;
     fs::create_dir_all(&config_dir).map_err(|error| {
         format!(
             "failed to create Claude config dir {}: {error}",

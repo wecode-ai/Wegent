@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
 from app.api.endpoints.internal import callback
 from shared.models.responses_api import ResponsesAPIStreamEvents
@@ -48,6 +49,45 @@ def _patch_emitters(monkeypatch, state):
         AsyncMock(),
     )
     return emitter
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "data"),
+    [
+        (
+            ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
+            {"delta": "thinking"},
+        ),
+        (
+            ResponsesAPIStreamEvents.ERROR.value,
+            {"message": "failed", "code": "runtime_error"},
+        ),
+    ],
+)
+async def test_single_callback_http_route_reaches_python_handler(
+    test_app, monkeypatch, event_type, data
+):
+    emitter = _patch_emitters(monkeypatch, {"open": False})
+    monkeypatch.setattr(callback, "_get_task_status_user_id", lambda *args: 7)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/internal/callback",
+            json={
+                "event_type": event_type,
+                "task_id": 1,
+                "subtask_id": 2,
+                "data": data,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    emitter.emit.assert_awaited_once()
+    emitter.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio

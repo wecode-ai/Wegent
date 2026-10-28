@@ -13,11 +13,15 @@
  */
 
 import * as http from 'http'
+import { writeAnthropicStreamingResponse, writeAnthropicJsonResponse } from './mock-anthropic'
 import {
-  writeAnthropicSseEvent,
-  writeAnthropicStreamingResponse,
-  writeAnthropicJsonResponse,
-} from './mock-anthropic'
+  writeAnthropicStreamingToolCalls,
+  writeAnthropicJsonToolCalls,
+  writeAnthropicToolUseResponse,
+  type ToolCallRule,
+  type ToolResponse,
+} from './mock-anthropic-tools'
+import { handleClaudeBackgroundRequest } from './mock-claude-background'
 import { handleClaudeCompactionRequest } from './mock-claude-compaction'
 import { handleEmbeddingRequest } from './mock-embedding'
 import { handleMineruRequest } from './mock-mineru'
@@ -26,6 +30,7 @@ import {
   deferredToolSearchCall,
   modelToolDefinitions,
   modelToolMatches,
+  resolveToolName,
 } from './model-tool-discovery'
 
 interface CapturedRequest {
@@ -58,13 +63,6 @@ interface ModelRequest {
   tools?: Array<Record<string, unknown>>
 }
 
-interface ToolResponse {
-  id: string
-  nameIncludes: string
-  input: Record<string, unknown>
-  text?: string
-}
-
 interface StreamRule {
   matchText: string
   responseContent?: string
@@ -72,11 +70,6 @@ interface StreamRule {
   responseTools?: ToolResponse[]
   chunkDelayMs?: number
   doneDelayMs?: number
-}
-
-interface ToolCallRule {
-  toolName: string
-  arguments: Record<string, unknown>
 }
 
 interface ToolScenarioStep {
@@ -256,13 +249,6 @@ function resolveScenarioToolCalls(
     ...toolCall,
     arguments: resolveScenarioValue(toolCall.arguments, request) as Record<string, unknown>,
   }))
-}
-
-function resolveToolName(request: ModelRequest | null, requestedName: string): string {
-  return (
-    modelToolDefinitions(request).find(tool => modelToolMatches(tool, requestedName))?.name ??
-    requestedName
-  )
 }
 
 function resolveResponsesTool(
@@ -547,6 +533,18 @@ function writeResponsesToolCalls(
 ): void {
   const responseId = `resp_${Date.now()}`
   const output = toolCalls.map((toolCall, index) => {
+    const codeTool = modelToolDefinitions(request).find(
+      tool => tool.namespace === 'functions' && tool.name === 'exec'
+    )
+    if (toolCall.toolName === 'exec_command' && codeTool) {
+      return {
+        type: 'custom_tool_call',
+        call_id: `call_${Date.now()}_${index}`,
+        namespace: codeTool.namespace,
+        name: codeTool.name,
+        input: `text(await tools.exec_command(${JSON.stringify(toolCall.arguments)}))`,
+      }
+    }
     const tool = resolveResponsesTool(request, toolCall.toolName)
     return {
       type: 'function_call',
@@ -592,196 +590,24 @@ function writeResponsesToolCalls(
   res.end()
 }
 
-function writeAnthropicStreamingToolCalls(
-  res: http.ServerResponse,
-  request: ModelRequest | null,
-  model: string,
-  toolCalls: ToolCallRule[]
-): void {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  })
-  writeAnthropicSseEvent(res, 'message_start', {
-    type: 'message_start',
-    message: {
-      id: `msg_${Date.now()}`,
-      type: 'message',
-      role: 'assistant',
-      model,
-      content: [],
-      stop_reason: null,
-      usage: { input_tokens: 100, output_tokens: 0 },
-    },
-  })
-  toolCalls.forEach((toolCall, index) => {
-    writeAnthropicSseEvent(res, 'content_block_start', {
-      type: 'content_block_start',
-      index,
-      content_block: {
-        type: 'tool_use',
-        id: `toolu_${Date.now()}_${index}`,
-        name: resolveToolName(request, toolCall.toolName),
-        input: {},
-      },
-    })
-    writeAnthropicSseEvent(res, 'content_block_delta', {
-      type: 'content_block_delta',
-      index,
-      delta: {
-        type: 'input_json_delta',
-        partial_json: JSON.stringify(toolCall.arguments),
-      },
-    })
-    writeAnthropicSseEvent(res, 'content_block_stop', {
-      type: 'content_block_stop',
-      index,
-    })
-  })
-  writeAnthropicSseEvent(res, 'message_delta', {
-    type: 'message_delta',
-    delta: { stop_reason: 'tool_use', stop_sequence: null },
-    usage: { output_tokens: toolCalls.length * 10 },
-  })
-  writeAnthropicSseEvent(res, 'message_stop', { type: 'message_stop' })
-  res.end()
-}
-
-function writeAnthropicJsonToolCalls(
-  res: http.ServerResponse,
-  request: ModelRequest | null,
-  model: string,
-  toolCalls: ToolCallRule[]
-): void {
-  writeJson(res, 200, {
-    id: `msg_${Date.now()}`,
-    type: 'message',
-    role: 'assistant',
-    model,
-    content: toolCalls.map((toolCall, index) => ({
-      type: 'tool_use',
-      id: `toolu_${Date.now()}_${index}`,
-      name: resolveToolName(request, toolCall.toolName),
-      input: toolCall.arguments,
-    })),
-    stop_reason: 'tool_use',
-    stop_sequence: null,
-    usage: { input_tokens: 100, output_tokens: toolCalls.length * 10 },
-  })
-}
-
-function findToolName(request: ModelRequest | null, nameIncludes: string): string | null {
-  const tool = request?.tools?.find(candidate => {
-    const name = candidate.name
-    return typeof name === 'string' && name.includes(nameIncludes)
-  })
-  const name = tool?.name
-  return typeof name === 'string' ? name : null
-}
-
-function writeAnthropicToolUseResponse(
-  res: http.ServerResponse,
-  request: ModelRequest | null,
-  tool: ToolResponse,
-  model: string
-): void {
-  const toolName = findToolName(request, tool.nameIncludes)
-  if (!toolName) {
-    writeJson(res, 400, {
-      error: `Configured response tool was not offered: ${tool.nameIncludes}`,
-    })
-    return
-  }
-  const input = JSON.stringify(tool.input)
-
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  })
-  writeAnthropicSseEvent(res, 'message_start', {
-    type: 'message_start',
-    message: {
-      id: `msg_${Date.now()}`,
-      type: 'message',
-      role: 'assistant',
-      model,
-      content: [],
-      stop_reason: null,
-      stop_sequence: null,
-      usage: {
-        input_tokens: 100,
-        output_tokens: 0,
-      },
-    },
-  })
-  let toolBlockIndex = 0
-  if (tool.text) {
-    writeAnthropicSseEvent(res, 'content_block_start', {
-      type: 'content_block_start',
-      index: 0,
-      content_block: {
-        type: 'text',
-        text: '',
-      },
-    })
-    writeAnthropicSseEvent(res, 'content_block_delta', {
-      type: 'content_block_delta',
-      index: 0,
-      delta: {
-        type: 'text_delta',
-        text: tool.text,
-      },
-    })
-    writeAnthropicSseEvent(res, 'content_block_stop', {
-      type: 'content_block_stop',
-      index: 0,
-    })
-    toolBlockIndex = 1
-  }
-  writeAnthropicSseEvent(res, 'content_block_start', {
-    type: 'content_block_start',
-    index: toolBlockIndex,
-    content_block: {
-      type: 'tool_use',
-      id: tool.id,
-      name: toolName,
-      input: {},
-    },
-  })
-  writeAnthropicSseEvent(res, 'content_block_delta', {
-    type: 'content_block_delta',
-    index: toolBlockIndex,
-    delta: {
-      type: 'input_json_delta',
-      partial_json: input,
-    },
-  })
-  writeAnthropicSseEvent(res, 'content_block_stop', {
-    type: 'content_block_stop',
-    index: toolBlockIndex,
-  })
-  writeAnthropicSseEvent(res, 'message_delta', {
-    type: 'message_delta',
-    delta: {
-      stop_reason: 'tool_use',
-      stop_sequence: null,
-    },
-    usage: {
-      output_tokens: 1,
-    },
-  })
-  writeAnthropicSseEvent(res, 'message_stop', {
-    type: 'message_stop',
-  })
-  res.end()
-}
-
 /**
  * Create the mock HTTP server
  */
 const server = http.createServer((req, res) => {
+  const pathname = req.url?.split('?')[0]
+  if (
+    pathname &&
+    [
+      '/health',
+      '/captured-requests',
+      '/clear-requests',
+      '/stream-rules',
+      '/tool-scenarios',
+    ].includes(pathname)
+  ) {
+    // Control requests can outlive an idle pooled socket while the browser drives a scenario.
+    res.setHeader('Connection', 'close')
+  }
   let body = ''
 
   req.on('data', chunk => {
@@ -824,6 +650,8 @@ const server = http.createServer((req, res) => {
     if (handleProviderMcpHttpRequest(req, res, body, PORT)) {
       return
     }
+
+    if (handleClaudeBackgroundRequest(req, res, body)) return
 
     if (handleClaudeCompactionRequest(req, res, body)) return
 

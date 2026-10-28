@@ -240,7 +240,7 @@ def refresh_dingtalk_copy(
     update_time: int | None = None
     try:
         update_time = asyncio.run(
-            provider.get_update_time(user, document.external_resource_id)
+            provider.get_update_time(db, user, document.external_resource_id)
         )
     except ExternalDocumentFetchError as exc:
         probe_error = exc

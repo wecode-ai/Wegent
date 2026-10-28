@@ -459,6 +459,7 @@ impl LocalTaskStore {
         value["userId"] = json!(user);
         value["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
         write_personal(connection, &value)?;
+        super::stand_in_telemetry::configuration_changes(connection, user, &previous, &value);
         Ok(value)
     }
 

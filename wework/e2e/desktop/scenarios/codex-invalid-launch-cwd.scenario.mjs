@@ -3,6 +3,11 @@ import { createHash } from 'node:crypto'
 import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { isReplyPredictionRequest } from '../modules/response-protocol.mjs'
+import {
+  currentExecutorPid,
+  waitForRestartedExecutor,
+} from '../modules/executor-restart-readiness.mjs'
 import {
   WORKBENCH_READY_TIMEOUT_MS,
   createSingleRootLocalProject,
@@ -21,7 +26,7 @@ const BUILTIN_MODEL_ID = 'gpt-5.5'
 const BUILTIN_MODEL_LABEL = 'GPT-5.5'
 const WEBSOCKET_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
-function responseEvents(responseId) {
+function responseEvents(responseId, text = COMPLETION) {
   const itemId = `${responseId}-message`
   return [
     { type: 'response.created', response: { id: responseId } },
@@ -49,7 +54,7 @@ function responseEvents(responseId) {
       item_id: itemId,
       output_index: 0,
       content_index: 0,
-      text: COMPLETION,
+      text,
     },
     {
       type: 'response.output_item.done',
@@ -59,7 +64,7 @@ function responseEvents(responseId) {
         type: 'message',
         status: 'completed',
         role: 'assistant',
-        content: [{ type: 'output_text', text: COMPLETION, annotations: [] }],
+        content: [{ type: 'output_text', text, annotations: [] }],
         phase: 'final_answer',
       },
     },
@@ -194,10 +199,55 @@ function acceptWebSocket(request, socket, head, onMessage) {
   consumeWebSocketFrames(socket, head, onMessage)
 }
 
-async function currentExecutorPid(control) {
-  const diagnostics = JSON.parse(await control.command('getDesktopRuntimeDiagnostics', 'body'))
-  const pid = Number(diagnostics.executorPid)
-  return Number.isInteger(pid) && pid > 0 ? pid : null
+export function attachCodexModelWebSocket(
+  server,
+  { modelServerUrl, onForegroundRequest, isVerificationComplete }
+) {
+  const sockets = new Set()
+  let closing = false
+  server.on('upgrade', (request, socket, head) => {
+    let auxiliaryRequest = false
+    sockets.add(socket)
+    socket.once('close', () => sockets.delete(socket))
+    socket.on('error', error => {
+      const peerDisconnected = ['ECONNRESET', 'EPIPE'].includes(error.code)
+      // Composer predictions and warmups may be cancelled while the model is writing.
+      // Foreground transport errors must still fail the checkpoint.
+      if (!(peerDisconnected && (auxiliaryRequest || closing || isVerificationComplete()))) {
+        server.emit('error', error)
+      }
+      socket.destroy()
+    })
+    const url = new URL(request.url ?? '/', modelServerUrl)
+    if (!['/v1/responses', '/responses'].includes(url.pathname)) {
+      socket.destroy()
+      return
+    }
+    acceptWebSocket(request, socket, head, message => {
+      const body = JSON.parse(message)
+      if (body.type !== 'response.create') return
+
+      const responseId = `wework-invalid-cwd-${Date.now()}`
+      const isWarmup = body.generate === false
+      const isPrediction = isReplyPredictionRequest(body)
+      auxiliaryRequest = isWarmup || isPrediction
+      if (!auxiliaryRequest) onForegroundRequest(body)
+      const events = isWarmup
+        ? warmupResponseEvents(responseId)
+        : responseEvents(
+            responseId,
+            isPrediction ? JSON.stringify({ suggestion: null }) : COMPLETION
+          )
+      if (!socket.destroyed) {
+        socket.write(Buffer.concat(events.map(event => websocketFrame(JSON.stringify(event)))))
+      }
+    })
+  })
+  return () => {
+    closing = true
+    for (const socket of sockets) socket.destroy()
+    sockets.clear()
+  }
 }
 
 async function restartExecutorAfterRemovingCwd(
@@ -213,20 +263,13 @@ async function restartExecutorAfterRemovingCwd(
   await rm(launchWorkingDirectory, { recursive: true })
   process.kill(originalPid, 'SIGTERM')
 
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < timeoutMs) {
-    const restartedPid = await currentExecutorPid(control)
-    const newLogContent = (await readFile(executorLogPath, 'utf8').catch(() => '')).slice(logOffset)
-    if (
-      restartedPid &&
-      restartedPid !== originalPid &&
-      /method=executor\.protocol\.describe.*ok=true/.test(newLogContent)
-    ) {
-      return restartedPid
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  throw new Error('The executor did not become protocol-ready after the Electron cwd was removed')
+  return waitForRestartedExecutor({
+    control,
+    originalPid,
+    executorLogPath,
+    logOffset,
+    timeoutMs,
+  })
 }
 
 export function createDesktopScenario({
@@ -237,7 +280,7 @@ export function createDesktopScenario({
 }) {
   let requestCount = 0
   let verificationComplete = false
-  const sockets = new Set()
+  let closeModelSockets
   const executorLogPath = join(resultDir, 'executor.log')
   const launchWorkingDirectory = join(resultDir, 'invalid-launch-cwd')
   const modelServerPort = process.env.WEWORK_E2E_MODEL_SERVER_PORT
@@ -269,35 +312,17 @@ export function createDesktopScenario({
       await captureConfigState('before-launch')
     },
     attachServer(server) {
-      server.on('upgrade', (request, socket, head) => {
-        sockets.add(socket)
-        socket.once('close', () => sockets.delete(socket))
-        socket.on('error', error => {
-          if (!verificationComplete || error.code !== 'ECONNRESET') server.emit('error', error)
-          socket.destroy()
-        })
-        const url = new URL(request.url ?? '/', modelServerUrl)
-        if (!['/v1/responses', '/responses'].includes(url.pathname)) {
-          socket.destroy()
-          return
-        }
-        acceptWebSocket(request, socket, head, message => {
-          const body = JSON.parse(message)
-          if (body.type !== 'response.create') return
-
-          const responseId = `wework-invalid-cwd-${Date.now()}`
-          const isWarmup = body.generate === false
-          if (!isWarmup) {
-            assert.match(
-              JSON.stringify(body),
-              new RegExp(PROMPT),
-              'The built-in OpenAI request did not contain the submitted prompt'
-            )
-            requestCount += 1
-          }
-          const events = isWarmup ? warmupResponseEvents(responseId) : responseEvents(responseId)
-          for (const event of events) socket.write(websocketFrame(JSON.stringify(event)))
-        })
+      closeModelSockets = attachCodexModelWebSocket(server, {
+        modelServerUrl,
+        isVerificationComplete: () => verificationComplete,
+        onForegroundRequest(body) {
+          assert.match(
+            JSON.stringify(body),
+            new RegExp(PROMPT),
+            'The built-in OpenAI request did not contain the submitted prompt'
+          )
+          requestCount += 1
+        },
       })
     },
     codexConfigToml: `openai_base_url = "${modelServerUrl}/v1"`,
@@ -306,8 +331,7 @@ export function createDesktopScenario({
     modelId: BUILTIN_MODEL_ID,
     modelServerUrl,
     close() {
-      for (const socket of sockets) socket.destroy()
-      sockets.clear()
+      closeModelSockets?.()
     },
 
     async verify(control) {

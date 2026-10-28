@@ -359,7 +359,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-executor
-          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-executor-runtime-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-executor-runtime-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs', 'executor/vendor/**') }}
 
       - name: Restore macOS arm64 Rust backend runtime
         id: macos-backend-rs-runtime-cache
@@ -370,7 +370,7 @@ jobs:
 
       - name: Restore macOS arm64 runtimes from OCI
         env:
-          EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs') }}
+          EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs', 'executor/vendor/**') }}
           EXECUTOR_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-head-${{ github.sha }}
           BACKEND_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-v1-${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
           BACKEND_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-head-${{ github.sha }}
@@ -421,7 +421,7 @@ jobs:
 
       - name: Publish shared macOS Wework E2E build
         env:
-          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs') }}
+          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs', 'executor/vendor/**') }}
           BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
         run: |
           reference_output="$(mktemp)"
@@ -439,7 +439,7 @@ jobs:
 
       - name: Publish macOS arm64 runtimes to OCI
         env:
-          EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs') }}
+          EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs', 'executor/vendor/**') }}
           EXECUTOR_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-head-${{ github.sha }}
           BACKEND_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-v1-${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
           BACKEND_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-head-${{ github.sha }}
@@ -516,8 +516,8 @@ jobs:
       - name: Resolve shared Rust E2E runtimes
         id: runtime
         env:
-          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'shared/assets/**') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**') }}
+          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'shared/assets/**') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', '.github/runtime-images/backend-rs-e2e.Dockerfile') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \
@@ -525,9 +525,13 @@ jobs:
             .github/scripts/resolve-executor-e2e-runtime.sh
           executor_image="$(sed -n 's/^image=//p' "$runtime_output")"
           test -n "$executor_image"
+          backend_image="$(
+            SOURCE_DIGEST="$BACKEND_RS_SOURCE_DIGEST" \
+              .github/scripts/resolve-backend-rs-e2e-runtime.sh
+          )"
           {
             echo "executor-ref=$executor_image"
-            echo "backend-rs-ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-backend-rs-e2e:v1-$BACKEND_RS_SOURCE_DIGEST"
+            echo "backend-rs-ref=$backend_image"
           } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
@@ -675,7 +679,7 @@ jobs:
       - name: Resolve Executor E2E runtime
         id: runtime
         env:
-          SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'shared/assets/**') }}
+          SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'shared/assets/**') }}
         run: .github/scripts/resolve-executor-e2e-runtime.sh
 
       - name: Check content-addressed Executor E2E image

@@ -13,6 +13,7 @@ import {
   removeRuntimeTasks,
   resolveComposerProjectPluginNames,
   truncateRuntimeTaskTitle,
+  updateRuntimeWorkTask,
   updateRuntimeWorkTaskPinned,
   updateRuntimeWorkTaskTitle,
   writeLastProjectId,
@@ -22,6 +23,23 @@ import type { RuntimeWorkListResponse } from '@/types/api'
 describe('workbenchRuntimeHelpers', () => {
   beforeEach(() => {
     localStorage.clear()
+  })
+
+  test('preserves a non-null runtime list when an update has no matching task', () => {
+    const runtimeWork: RuntimeWorkListResponse = { projects: [], chats: [], totalTasks: 0 }
+    const updated: RuntimeWorkListResponse = updateRuntimeWorkTask(
+      runtimeWork,
+      { deviceId: 'device-1', taskId: 'missing' },
+      { supervisor: null }
+    )
+
+    expect(updated).toEqual(runtimeWork)
+  })
+
+  test.each([null, undefined])('does not create a runtime list from %s', runtimeWork => {
+    expect(
+      updateRuntimeWorkTask(runtimeWork, { deviceId: 'device-1', taskId: 'missing' }, {})
+    ).toBeNull()
   })
 
   test('builds readable titles from structured plugin mentions', () => {

@@ -58,6 +58,12 @@ export function createIssueBoardCardLabels(
   t: CollaborationTranslate
 ): CollaborationIssueCardLabels {
   return {
+    statuses: Object.fromEntries(
+      ['inbox', 'pending', 'in_progress', 'in_review', 'completed'].map(status => [
+        status,
+        t(`todo.status_${status}`),
+      ])
+    ),
     assignee: t('board.card.assignee'),
     createdAt: t('board.card.created_at'),
     unassigned: t('board.card.unassigned'),

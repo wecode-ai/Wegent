@@ -11,6 +11,7 @@ import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import {
   isRuntimeTaskAuthoritativeCompletion,
+  isRuntimeTaskConfirmedActive,
   normalizeRuntimeTaskSummary,
   shouldReplaceRuntimeTaskProjection,
   summarizeRuntimeTaskExecution,
@@ -360,14 +361,20 @@ export class RuntimeTaskLifecycleStore {
     const current = this.getTask(address)
     const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
     if (hasStreamingTurn) {
+      if (ignoreStaleRunningTranscript) {
+        const machine = this.ensureMachine(this.canonicalizeAddress(address))
+        for (const turn of transcript.turns) {
+          if (turn.id && (turn.status === 'pending' || turn.status === 'streaming')) {
+            machine.observeTurn(turn.id)
+          }
+        }
+        return
+      }
       if (
-        ignoreStaleRunningTranscript ||
-        (currentTurn?.active &&
-          streamingTurn?.id &&
-          (this.isPriorTurn(address, streamingTurn.id) ||
-            (transcript.running === false &&
-              currentTurn.id &&
-              streamingTurn.id !== currentTurn.id)))
+        currentTurn?.active &&
+        streamingTurn?.id &&
+        (this.isPriorTurn(address, streamingTurn.id) ||
+          (transcript.running === false && currentTurn.id && streamingTurn.id !== currentTurn.id))
       )
         return
       this.executorStarted(address)
@@ -439,12 +446,24 @@ export class RuntimeTaskLifecycleStore {
     const previous = machine.getSnapshot()
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
-      previous.turn.active &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
-      machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId) &&
-      previous.task?.completedAt != null
-    )
+      ((isRuntimeTaskConfirmedActive(canonicalEvent.task) &&
+        machine.isPriorSettledTurn(canonicalEvent.task.runtimeHandle.lastTurnId)) ||
+        (machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId) &&
+          (previous.turn.active
+            ? previous.task?.completedAt != null
+            : previous.turn.outcome !== null)))
+    ) {
+      logRuntimeTaskCreateStage('lifecycle-snapshot-skipped', {
+        taskId: canonicalAddress.taskId,
+        deviceId: canonicalAddress.deviceId,
+        reason: 'prior-turn',
+        receivedTurnId: canonicalEvent.task.runtimeHandle.lastTurnId,
+        activeTurnId: previous.turn.id,
+        latestTurnId: previous.turn.latestId,
+      })
       return false
+    }
     const key = previous.key
     const wasRunning = previous.derived.isRunning || this.previousRunningTaskKeys.has(key)
     if (
@@ -827,7 +846,8 @@ function shouldIgnoreStaleRunningTranscript(current: RuntimeTaskLifecycleSnapsho
   return Boolean(
     current &&
     !current.derived.isRunning &&
-    (current.turn.outcome !== null ||
+    (current.task?.goalExecutionStatus === 'needsAttention' ||
+      current.turn.outcome !== null ||
       (current.goalStatus !== 'active' &&
         current.task !== null &&
         isRuntimeTaskAuthoritativeCompletion(current.task)))

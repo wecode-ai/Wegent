@@ -4,6 +4,8 @@ export type ModelSelectorCloseReason = "dismiss" | "selection";
 
 export interface ModelSelectorProps {
   models: UnifiedModel[];
+  /** Stable option identifiers are separate from catalog names and labels. */
+  getModelOptionId?: (model: UnifiedModel) => string;
   selectedModel: UnifiedModel | null;
   selectedModelOptions: ModelOptions;
   nextTurn?: boolean;
@@ -12,7 +14,7 @@ export interface ModelSelectorProps {
   onSelectModelAndOptions?: (
     model: UnifiedModel,
     options: ModelOptions,
-  ) => void;
+  ) => boolean | void;
   onSelectModelOption: (optionId: string, value: string) => void;
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void;
   onOpenChange?: (

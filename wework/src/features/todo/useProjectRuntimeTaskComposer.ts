@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 
-import type { RuntimeTaskComposerCreateOptions } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import type { RuntimeTaskComposerCreateOptions } from '@/types/workbench'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type {
   ProjectWithTasks,

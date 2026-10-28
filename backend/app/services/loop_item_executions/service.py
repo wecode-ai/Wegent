@@ -296,9 +296,24 @@ def execution_ai_state(
 
     if execution.status == STATUS_PENDING_APPROVAL:
         return None
-    state = dict(existing) if isinstance(existing, dict) else {}
     agent = db.get(ProjectChatAgent, execution.agent_id) if execution.agent_id else None
     team = db.get(Kind, execution.team_id) if execution.team_id else None
+    return execution_ai_state_from_resources(
+        execution, existing=existing, agent=agent, team=team
+    )
+
+
+def execution_ai_state_from_resources(
+    execution: LoopItemExecution,
+    *,
+    existing: object = None,
+    agent: ProjectChatAgent | None = None,
+    team: Kind | None = None,
+) -> dict[str, object] | None:
+    """Render execution state using resources loaded by the caller."""
+    if execution.status == STATUS_PENDING_APPROVAL:
+        return None
+    state = dict(existing) if isinstance(existing, dict) else {}
 
     def iso(value: datetime) -> str | None:
         optional = _optional_datetime(value)
@@ -3003,6 +3018,29 @@ class LoopItemExecutionService:
         return None
 
     @staticmethod
+    def _bind_activity_runtime_turn(
+        db: Session,
+        execution: LoopItemExecution,
+        payload: dict,
+    ) -> None:
+        """Bind the current Runtime turn so later snapshots match exactly."""
+
+        raw_turn_id = payload.get("subtaskId") or payload.get("subtask_id")
+        if not isinstance(raw_turn_id, str):
+            return
+        turn_id = raw_turn_id.strip()
+        if not turn_id:
+            return
+        activity = LoopItemExecutionService._linked_activity(db, execution)
+        if activity is None or activity.status not in {"pending", "streaming"}:
+            return
+        metadata = dict(activity.metadata_json or {})
+        if metadata.get("runtime_turn_id") == turn_id:
+            return
+        metadata["runtime_turn_id"] = turn_id
+        activity.metadata_json = metadata
+
+    @staticmethod
     def _is_subagent_activity(activity: ProjectChatMessage) -> bool:
         metadata = (
             activity.metadata_json if isinstance(activity.metadata_json, dict) else {}
@@ -3306,6 +3344,9 @@ class LoopItemExecutionService:
                 commit=False,
                 push=False,
             )
+        # Any accepted observation identifies the current turn, even when the
+        # created event lost a concurrent lease update or arrived out of order.
+        self._bind_activity_runtime_turn(db, row, payload)
         db.commit()
         db.refresh(row)
         return row

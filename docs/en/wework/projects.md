@@ -68,6 +68,11 @@ space, and the creation UI identifies the actual storage location:
 - A **local project** is stored on the current device and is available only on that device.
 - A **cloud project** is stored in Wegent Cloud and supports collaboration across devices signed in to the same account. Selecting it while signed out starts the sign-in flow. If the account has no cloud space after sign-in, Wework creates one before continuing project creation.
 
+While creating a cloud space, the button shows **Creating…** and prevents duplicate
+submissions. If creation fails, the dialog displays the error and keeps your input
+so you can edit it and retry. A successful save opens the new space or continues
+the project creation you started earlier.
+
 The storage location cannot be changed after the project is created. The task source (built-in tasks, GitHub, or GitLab) controls where task data is read from; it does not change whether the project is stored locally or in the cloud.
 
 ### Configure local project collaborators
@@ -159,6 +164,29 @@ Each completed step is marked automatically, and the guide hides after all three
 
 Empty columns also explain what belongs in each stage and name the creation action that is currently available. During a drag, the destination column describes the resulting status. The default **My tasks** board uses task terminology, while other project spaces continue to use issue terminology.
 
+## Save and switch board views
+
+The native task board's view dropdown on the right provides switching, creation, and board settings on the same toolbar as **Focus view** and **Archived**. The base board groups Issues by the five default statuses: Inbox, Pending, In progress, In review, and Completed. Status and custom tags remain separate Issue properties.
+
+Project administrators can save multiple views, bind each lane to a status or tag, reorder lanes, configure tag filters, and choose the project default view. Entering a project opens its default; subsequent switches apply to the current visit. Views and their default are shared with project members. Deleting the default view restores the base board. Lane settings and card fields are edited in one dialog and saved together; card fields apply to every view in the project.
+
+Tag names allow up to 32 Unicode code points, including supplementary characters such as emoji. Stored names have no leading or trailing whitespace; lanes and filters must reference the same canonical names. Issue tags, project tags, tag lanes, and filters use the same length limit. Longer input displays an error and cannot be saved; names are never automatically truncated. Historical long tags retain their original values when read or when unrelated fields such as titles change.
+
+Each Issue and the tag catalog saved in project settings allow up to 20 distinct tags. Dragging an Issue with 19 tags into a new tag lane adds its twentieth tag. Adding another tag at the limit displays an error, preserves the original tags and version, and shows no success feedback. Replacing a tag between two tag lanes remains available. Tag lists are never automatically truncated; historical lists above the limit remain intact when read or when unrelated fields change.
+
+Renaming or deleting a tag in a native project saves the catalog, tags on undeleted Issues, lane bindings, and filter references together. A project version conflict or any Issue update failure rolls back the entire operation so it can be retried after resolving the error. Externally hosted Issues do not support this transaction across records. Failed bulk status changes in the table list the affected Issues and reasons; successful Issues are deselected while failed Issues stay selected for retry.
+
+| Drag direction | Issue changes |
+| --- | --- |
+| Status → Status | Update status and keep tags |
+| Status → Tag | Add the destination tag and keep status |
+| Tag → Status | Update status and keep tags |
+| Tag → Tag | Remove the source tag, add the destination tag, and keep other tags and status |
+
+An Issue can appear in both its matching status and tag lanes. After a cross-type drag, the destination card is highlighted and feedback describes the actual change. Dragging into a tag lane never reopens a completed Issue. Custom views with In progress or In review lanes also support Focus view to expand execution progress.
+
+Existing projects keep the base board without converting historical Issue statuses or tags. Concurrent configuration changes produce a conflict message and refresh the latest configuration. Older clients cannot edit unknown view formats created by newer versions.
+
 ## Lane sorting
 
 Each lane on a native project-space board has its own **Sort by** control and defaults to highest priority first. Add ascending or descending rules for priority, creation time, and update time, then move rules up or down or remove them. Rules apply from top to bottom: each subsequent rule breaks ties, and manual order breaks any remaining ties. Choose **Manual order** to reorder cards within status, priority, assignee, or tag lanes, or insert a card into another lane at a specific position. Non-status lanes can mix Issues with different statuses; reordering within a lane preserves status, assignee, and tags. Manual positions use the project’s shared order across groupings. Preferences are saved on the current device by user, project space, grouping, and lane, are restored when reopening the board, and do not affect other members. Drop onto the blank space at the end of a lane to append a card. Group fields and position are saved together; a failed save commits neither. Changes to different lane preferences in multiple windows are retained independently and synchronized to open boards.
@@ -206,7 +234,7 @@ An issue that is no longer needed can be deleted from the board card menu, the t
 
 ## Project-space files
 
-The **Files** tab in a project space shows shared files and delivery snapshots together. Shared files support upload, folder creation, rename or move, delete, and open; delivery snapshots come from completed tasks and remain read-only. Select the preview action next to any shared file, delivery snapshot, or local task attachment to open it in the reusable workspace file preview panel on the right. The original download or open action remains available.
+The **Files** tab in a project space shows shared files and delivery snapshots together. Shared files support upload, folder creation, rename or move, delete, and open; delivery files can be edited in the corresponding Issue’s delivery details. Select the preview action next to any shared file, delivery snapshot, or local task attachment to open it in the reusable workspace file preview panel on the right. The original download or open action remains available.
 
 Local and remote project spaces share files differently. Local project spaces aggregate attachments sent by users and generated by AI during task conversations into the **Task attachments** area by default. Remote project spaces do not expose raw task attachments; files appear in the project-space Files tab only after a task is completed and explicitly delivered. Remote delivery does not include the entire conversation by default. Select the chat messages, conversation attachments, and local files or folders that should be included in the snapshot.
 
@@ -272,3 +300,16 @@ For worktree tasks, the file tree, terminal, and development tools use the task'
 A project can reference a different folder on each local, cloud, or remote device. Select the device that contains the code when starting a task. Copying a task to another device requires a project folder on that device.
 
 On macOS, open a folder from a terminal with `wework .` or `wework /path/to/project`.
+
+
+## Editing deliveries
+
+Set a title and Markdown notes when delivering, and select the messages, files, or folders to include. The title initially uses the current task title.
+
+Open a delivery from its Issue and select **Edit** to change its title, notes, files, and selected messages. **Select more source messages** reads the source conversation under current access permissions. If the source is offline, deleted, or inaccessible, existing messages can still be kept or removed. Assets referenced by deliverable requirements cannot be removed directly.
+
+**Save changes** updates the same delivery and preserves its link, source task, and initial delivery time. Editing does not complete tasks again or advance workflows. There is no version-history UI. Cancel makes no changes. Failed saves retain the form. On a concurrent-edit conflict, preserve any text you need before choosing **Reload and discard edits** to view the latest delivery.
+
+Local projects support offline editing. Cloud projects require access to the Issue and a Developer or higher project role. The Files tab shows the saved attachments.
+
+Desktop regression: `pnpm --filter wework e2e:desktop --segment collaboration-delivery-editing`. This independent Core CI checkpoint creates its own project and delivery and checks editing, cancellation, version conflicts, and persistence after reloading.

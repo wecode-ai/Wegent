@@ -19,6 +19,7 @@ interface AttachmentBadgesProps {
   errors: Map<string, string>
   codeComments?: CodeCommentContext[]
   onRemoveAttachment: (attachmentId: number) => void
+  onDismissAttachmentError?: (filename: string) => void
   onShowTextAttachment?: (attachment: Attachment) => void
   onClearCodeComments?: () => void
 }
@@ -38,7 +39,7 @@ function CodeCommentBadge({
       <div
         data-testid="code-comment-context-badge"
         tabIndex={0}
-        className="relative inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 pr-7 text-xs font-medium text-text-primary shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+        className="relative inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 pr-7 text-xs font-medium text-text-primary shadow-sm focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary keyboard:focus-visible:ring-offset-2"
       >
         <MessageSquare className="h-3.5 w-3.5 text-text-secondary" />
         <span>{t('workbench.code_comment_count', { count })}</span>
@@ -50,7 +51,7 @@ function CodeCommentBadge({
               event.stopPropagation()
               onRemove()
             }}
-            className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-text-primary text-background shadow-sm transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-text-primary text-background shadow-sm transition-opacity hover:opacity-80 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary keyboard:focus-visible:ring-offset-2"
             aria-label={t('workbench.remove_code_comments')}
           >
             <X className="h-2.5 w-2.5" />
@@ -101,6 +102,19 @@ export function AttachmentBadges({
     <>
       <ComposerAttachmentBadges<Attachment>
         {...props}
+        onRemoveAttachment={id => {
+          if (
+            props.attachments.find(attachment => attachment.id === id)?.filename ===
+            openError?.filename
+          ) {
+            setOpenError(null)
+          }
+          props.onRemoveAttachment(id)
+        }}
+        onDismissAttachmentError={filename => {
+          setOpenError(current => (current?.filename === filename ? null : current))
+          props.onDismissAttachmentError?.(filename)
+        }}
         imageServices={imageServices}
         onOpenAttachment={attachment => void openAttachment(attachment)}
         errors={
@@ -111,6 +125,7 @@ export function AttachmentBadges({
         labels={{
           showText: t('workbench.show_text_attachment_in_composer'),
           addingText: t('workbench.adding_pasted_text_attachment'),
+          dismissError: t('workbench.dismiss_attachment_error'),
           pastedText: t('workbench.pasted_text_attachment'),
           appshot: t('workbench.appshot_attachment_label', '应用快照'),
         }}

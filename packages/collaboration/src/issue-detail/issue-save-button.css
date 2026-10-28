@@ -27,7 +27,9 @@
   padding: 0 6px;
 }
 
-.issue-save-actions button:focus-visible {
+:where(html:not([data-input-modality="pointer"]))
+  .issue-save-actions
+  button:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
 }

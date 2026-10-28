@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
-export const MAX_LOCAL_ATTACHMENT_BYTES = 100 * 1024 * 1024
 export const MAX_LOCAL_ATTACHMENT_CHUNK_BYTES = 384 * 1024
 
 interface AttachmentUpload {
@@ -28,7 +27,7 @@ export class LocalAttachmentStore {
   }
 
   async begin(filename: string, size: number): Promise<AttachmentUploadStarted> {
-    if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_LOCAL_ATTACHMENT_BYTES) {
+    if (!Number.isSafeInteger(size) || size <= 0) {
       throw new Error('Attachment size is invalid')
     }
     await this.initialize()

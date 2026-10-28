@@ -1,4 +1,5 @@
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
+import { requireIssueTaskAvailable } from './issueTaskAvailability'
 import { useStandInProjects } from './useStandInProjects'
 import { StandInIcon } from '@wegent/collaboration'
 import { bindProjectStandInApi } from '@/api/standIn'
@@ -416,6 +417,16 @@ export function WeworkSharedProject({
   const latestProjectRef = useRef(project)
   const previousProjectPropRef = useRef(project)
   const taskComposerSequenceRef = useRef(0)
+  const closeTaskConversation = useCallback(() => {
+    taskComposerSequenceRef.current += 1
+    setTaskComposer(null)
+  }, [])
+  useEffect(
+    () => () => {
+      taskComposerSequenceRef.current += 1
+    },
+    []
+  )
   const acceptedDispatchTaskActions = useRef(new Set<string>())
   const [pinnedProgressIssueId, setPinnedProgressIssueId] = useState<string | null>(null)
   if (location.issueId && pinnedProgressIssueId !== null) setPinnedProgressIssueId(null)
@@ -448,13 +459,17 @@ export function WeworkSharedProject({
     }
   }, [project])
   const hasFullWorkspaceAccess = 'access_role' in workspace
+  const workspaceAccessRef = useRef(hasFullWorkspaceAccess)
+  useLayoutEffect(() => {
+    workspaceAccessRef.current = hasFullWorkspaceAccess
+  }, [hasFullWorkspaceAccess])
   const scopedApi = useMemo<SharedWorkspaceApi>(
     () => ({
       ...api,
       projects: {
         ...api.projects,
         list: async () => {
-          if (hasFullWorkspaceAccess) return api.projects.list(workspace.id)
+          if (workspaceAccessRef.current) return api.projects.list(workspace.id)
           const accessibleProjects = await api.projects.list()
           return accessibleProjects.filter(candidate => String(candidate.id) === String(project.id))
         },
@@ -484,7 +499,7 @@ export function WeworkSharedProject({
         },
       },
     }),
-    [api, hasFullWorkspaceAccess, project.id, project.project_store, workspace.id]
+    [api, project.id, project.project_store, workspace.id]
   )
   const standInWorkspaceApi = useMemo(
     () => ({
@@ -602,6 +617,7 @@ export function WeworkSharedProject({
       }) as unknown as CloudProject,
     [project]
   )
+  const taskOwnerUserId = project.project_store === 'local' ? 0 : userId
   const deviceNamesById = useMemo(
     () => ({
       ...getWorkbenchDeviceNamesById(devices ?? []),
@@ -767,6 +783,7 @@ export function WeworkSharedProject({
   const openNewTaskConversation = useCallback(
     async (issue: CollaborationIssue, dispatch?: IssueTaskDispatchInput) => {
       if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
+      const requestSequence = ++taskComposerSequenceRef.current
       try {
         dispatch ??= await resolveHumanTaskDispatch(
           detailServices?.projectChatClient,
@@ -775,6 +792,7 @@ export function WeworkSharedProject({
           userId
         )
       } catch (cause) {
+        if (requestSequence !== taskComposerSequenceRef.current) return
         notify(
           t('workbench.issue_task_dispatch_lookup_failed', {
             reason: cause instanceof Error ? cause.message : String(cause),
@@ -783,12 +801,13 @@ export function WeworkSharedProject({
         )
         return
       }
+      if (requestSequence !== taskComposerSequenceRef.current) return
       clearNotice()
       const humanTaskBinding = issue.human_task_binding ?? null
       const currentProject = latestProjectRef.current
       setTaskComposer({
         issue,
-        conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
+        conversationKey: `${issue.id}:new:${requestSequence}`,
         dispatch,
         humanTaskBinding,
         taskRequest: {
@@ -843,28 +862,48 @@ export function WeworkSharedProject({
   )
   const openBoundTaskConversation = useCallback(
     async (issue: CollaborationIssue, address: RuntimeTaskAddress) => {
-      const latestBinding = scopedApi.taskBindings
-        ? (await scopedApi.taskBindings.list(issue.id, String(project.id))).find(
-            binding => binding.deviceId === address.deviceId && binding.taskId === address.taskId
-          )
-        : undefined
-      const resolvedAddress = latestBinding
-        ? workspaceExecutionAddress(latestBinding, runtimeWork, issue.id, project.project_store)
-        : {
-            ...address,
-            issueExecution: { projectId: String(project.id), issueId: issue.id },
-            ...(project.project_store === 'backend'
-              ? { projectSession: { projectId: String(project.id), issueId: issue.id } }
-              : {}),
-          }
-      setTaskComposer({
-        issue,
-        address: resolvedAddress,
-        conversationKey: `${issue.id}:${resolvedAddress.deviceId}:${resolvedAddress.taskId}`,
-      })
-      projectHost.navigate({ ...projectHost.location, issueId: issue.id })
+      const requestSequence = ++taskComposerSequenceRef.current
+      try {
+        const latestBinding = (
+          await scopedApi.taskBindings?.list(issue.id, String(project.id))
+        )?.find(
+          binding => binding.deviceId === address.deviceId && binding.taskId === address.taskId
+        )
+        const availableBinding = await requireIssueTaskAvailable(
+          latestBinding,
+          taskOwnerUserId,
+          services.standInApi,
+          key => t(key)
+        )
+        if (requestSequence !== taskComposerSequenceRef.current) return
+        const resolvedAddress = workspaceExecutionAddress(
+          availableBinding,
+          runtimeWork,
+          issue.id,
+          project.project_store
+        )
+        setTaskComposer({
+          issue,
+          address: resolvedAddress,
+          conversationKey: `${issue.id}:${resolvedAddress.deviceId}:${resolvedAddress.taskId}`,
+        })
+        projectHost.navigate({ ...projectHost.location, issueId: issue.id })
+      } catch (error) {
+        if (requestSequence !== taskComposerSequenceRef.current) return
+        notify(error instanceof Error ? error.message : t('todo.linked_task_unavailable'), 'error')
+      }
     },
-    [project.id, project.project_store, projectHost, runtimeWork, scopedApi.taskBindings]
+    [
+      notify,
+      project.id,
+      project.project_store,
+      projectHost,
+      runtimeWork,
+      scopedApi.taskBindings,
+      services.standInApi,
+      t,
+      taskOwnerUserId,
+    ]
   )
 
   /** Open the personal task an assignment notification hands to this reader. */
@@ -959,7 +998,7 @@ export function WeworkSharedProject({
             : workItemComposerReference(project, taskComposer.issue)
         }
         initialAddress={taskComposer.address}
-        onClose={() => setTaskComposer(null)}
+        onClose={closeTaskConversation}
         onAddressChange={address => {
           setTaskComposer(current =>
             current?.conversationKey === taskComposer.conversationKey
@@ -1071,18 +1110,20 @@ export function WeworkSharedProject({
             onDelete,
           }) => (
             <IssueConversationDrawers
+              key={issue.id}
               label={createCollaborationTranslator(locale)('todo.issue_details')}
               conversation={taskComposer?.issue.id === issue.id ? conversationPanel : null}
               conversationKey={taskComposer?.conversationKey}
               onClose={() => {
-                setTaskComposer(null)
+                closeTaskConversation()
                 onClose()
               }}
-              onCloseConversation={() => setTaskComposer(null)}
+              onCloseConversation={closeTaskConversation}
             >
               {closeDrawers => (
                 <TodoEditor
                   key={issue.id}
+                  getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
                   mode="edit"
                   focusedCommentId={focusedItemId === issue.id ? focusedCommentId : null}
                   focusedCommentRequestKey={
@@ -1157,7 +1198,7 @@ export function WeworkSharedProject({
                         : undefined
                   }
                   onEscape={
-                    taskComposer?.issue.id === issue.id ? () => setTaskComposer(null) : closeDrawers
+                    taskComposer?.issue.id === issue.id ? closeTaskConversation : closeDrawers
                   }
                   onUpdated={updated => onChange(updated as unknown as CollaborationIssue)}
                   onRead={updated => onRead(updated as unknown as CollaborationIssue)}
@@ -1376,6 +1417,8 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     String(props.activeProjectRef?.projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
       ? null
       : (props.activeProjectRef ?? null)
+  const routedProjectId = activeProject ? String(activeProject.projectId) : null
+  const routedProjectStore = activeProject?.projectStore
   const [location, setLocation] = useState<CollaborationPlatformLocation>(() => ({
     ...(routeProjectLocation(activeProject, props.focusedItemId ?? null) ?? initialLocation),
   }))
@@ -1429,43 +1472,42 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
   ])
 
   useEffect(() => {
-    const activeProjectId = activeProject ? String(activeProject.projectId) : null
+    const activeProjectId = routedProjectId
     if (pendingNavigationProjectIdRef.current !== undefined) {
       if (pendingNavigationProjectIdRef.current !== activeProjectId) return
       pendingNavigationProjectIdRef.current = undefined
     }
-    if (!platformApi?.projects.get || !activeProject) return
+    if (!platformApi?.projects.get || !activeProjectId || !routedProjectStore) return
     let cancelled = false
-    const target = routeProjectLocation(activeProject, props.focusedItemId ?? null)
+    const target = routeProjectLocation(
+      { projectId: activeProjectId, projectStore: routedProjectStore },
+      props.focusedItemId ?? null
+    )
     if (target) {
       const routedFocus = props.focusedItemId ?? null
-      const projectAlreadyOnScreen = String(location.projectId ?? '') === target.projectId
-      // The route names a project, and only sometimes the Issue to open. Once
-      // that project is on screen the Issue the reader opened inside it — or
-      // the one the platform opened itself — stands, so only a routed focus
-      // moves the location.
-      if (!projectAlreadyOnScreen || (routedFocus !== null && location.issueId !== routedFocus)) {
-        queueMicrotask(() => {
-          if (cancelled) return
-          setLocation(current => {
-            const movingProject = String(current.projectId ?? '') !== target.projectId
-            const issueId = movingProject ? routedFocus : (routedFocus ?? current.issueId)
-            if (
-              !movingProject &&
-              current.issueId === issueId &&
-              current.workspaceView === target.workspaceView &&
-              current.projectView === target.projectView
-            )
-              return current
-            return {
-              ...current,
-              ...target,
-              issueId,
-              projectSettingsSection: null,
-            }
-          })
+      // Apply a notification focus when its route changes, not again when the
+      // reader selects another Issue before the old focus is cleared.
+      queueMicrotask(() => {
+        if (cancelled) return
+        setLocation(current => {
+          const movingProject = String(current.projectId ?? '') !== target.projectId
+          if (!movingProject && routedFocus === null) return current
+          const issueId = movingProject ? routedFocus : (routedFocus ?? current.issueId)
+          if (
+            !movingProject &&
+            current.issueId === issueId &&
+            current.workspaceView === target.workspaceView &&
+            current.projectView === target.projectView
+          )
+            return current
+          return {
+            ...current,
+            ...target,
+            issueId,
+            projectSettingsSection: null,
+          }
         })
-      }
+      })
     }
 
     // The workspace the board belongs to is the one thing the route cannot name,
@@ -1473,10 +1515,11 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     if (resolvedWorkspaceProjectRef.current !== activeProjectId) {
       resolvedWorkspaceProjectRef.current = activeProjectId
       void platformApi.projects
-        .get(String(activeProject.projectId))
+        .get(activeProjectId)
         .then(project => {
           if (cancelled) return
           setLocation(current => {
+            if (String(current.projectId ?? '') !== activeProjectId) return current
             const collaborationDomain = project.project_store === 'local' ? 'local' : 'cloud'
             const workspaceId = project.workspace_id ?? null
             if (
@@ -1495,9 +1538,8 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       cancelled = true
     }
   }, [
-    activeProject,
-    location.issueId,
-    location.projectId,
+    routedProjectId,
+    routedProjectStore,
     navigationSyncRevision,
     platformApi,
     props.focusedCommentId,

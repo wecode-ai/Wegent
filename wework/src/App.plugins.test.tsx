@@ -226,15 +226,21 @@ vi.mock('@/desktop/localExecutor', () => ({
   getLocalExecutorStatus: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
-  ensureLocalExecutorAvailable: vi
-    .fn()
-    .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  ensureLocalExecutorAvailable: vi.fn().mockResolvedValue({
+    running: true,
+    ready: true,
+    deviceId: 'local-device',
+    deviceRouteId: 'local-device',
+  }),
   ensureLocalExecutorStarted: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
   getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
   getKnownLocalExecutorDeviceId: vi.fn().mockReturnValue('local-device'),
   requestLocalExecutor: vi.fn(async (capability: string) => {
+    if (capability === 'executor.plugins.device_route') {
+      return { device_id: 'local-device', device_route_id: 'local-device' }
+    }
     if (capability === 'executor.plugins.personal.list') {
       return { marketplacePath: '', plugins: [] }
     }
@@ -345,6 +351,7 @@ const workbenchValue: WorkbenchContextValue = {
     setSelectedModelOption: vi.fn(),
     setInput: vi.fn(),
     setInputForScope: vi.fn(),
+    getInputRevisionForScope: vi.fn().mockReturnValue(0),
     setSelectedSkills: vi.fn(),
     toggleSkill: vi.fn(),
     handleFileSelect: vi.fn(),

@@ -10,7 +10,89 @@ import {
   type CloudTaskContext,
 } from './deliveries'
 
+it('updates delivered content in one multipart request', async () => {
+  const patch = vi.fn().mockResolvedValue({ id: 'delivery-1', version: 4 })
+  const api = createDeliveryApi({ patch } as unknown as HttpClient)
+  const file = new File(['new'], 'result.txt', { type: 'text/plain' })
+  await api.updateDelivery('delivery-1', {
+    title: 'Title',
+    version: 3,
+    markdown: 'Notes',
+    chat: null,
+    retained_asset_ids: ['kept'],
+    files: [{ relative_path: 'reports/result.txt', file }],
+  })
+  const [path, body] = patch.mock.calls[0]
+  expect(path).toBe('/v1/deliveries/delivery-1')
+  expect(JSON.parse(body.get('metadata'))).toEqual({
+    title: 'Title',
+    version: 3,
+    markdown: 'Notes',
+    chat: null,
+    retained_asset_ids: ['kept'],
+    files: [
+      {
+        relative_path: 'reports/result.txt',
+        display_name: 'result.txt',
+        content_type: 'text/plain',
+      },
+    ],
+  })
+  expect(body.get('file_0').name).toBe('result.txt')
+})
+
 describe('createDeliveryApi queue and assignment routes', () => {
+  it('refreshes notification counts after an Issue read is persisted', async () => {
+    const updated = { id: 'issue-1', is_unread: false }
+    let resolveRead!: (value: typeof updated) => void
+    const post = vi.fn(
+      () =>
+        new Promise<typeof updated>(resolve => {
+          resolveRead = resolve
+        })
+    )
+    const refresh = vi.fn()
+    window.addEventListener('wework-notifications-changed', refresh)
+    try {
+      const pending = createDeliveryApi({ post } as unknown as HttpClient).markLoopItemRead(
+        'issue-1',
+        3
+      )
+      expect(refresh).not.toHaveBeenCalled()
+      resolveRead(updated)
+      await expect(pending).resolves.toEqual(updated)
+      expect(refresh).toHaveBeenCalledOnce()
+      expect(post).toHaveBeenCalledWith('/v1/loop-items/issue-1/read', { activity_sequence: 3 })
+    } finally {
+      window.removeEventListener('wework-notifications-changed', refresh)
+    }
+  })
+
+  it('preserves notification counts when persisting Issue read state fails', async () => {
+    const failure = new Error('Read failed')
+    const post = vi.fn().mockRejectedValue(failure)
+    const refresh = vi.fn()
+    window.addEventListener('wework-notifications-changed', refresh)
+    try {
+      await expect(
+        createDeliveryApi({ post } as unknown as HttpClient).markLoopItemRead('issue-1')
+      ).rejects.toThrow(failure)
+      expect(refresh).not.toHaveBeenCalled()
+    } finally {
+      window.removeEventListener('wework-notifications-changed', refresh)
+    }
+  })
+
+  it('loads receipts through the indexed current-assignment endpoint', async () => {
+    const human = { id: 'assignment', target_type: 'human', human_read_at: '2026-10-27T00:00:00Z' }
+    const get = vi.fn(async () => ({ items: [human] }))
+    const api = createDeliveryApi(clientWith({ get }))
+
+    expect(await api.getIssueAssignmentReceipts('ISSUE/1')).toEqual([human])
+    expect(get).toHaveBeenCalledOnce()
+    expect(get).toHaveBeenCalledWith('/v1/loop-items/ISSUE%2F1/assignments')
+  })
+
   it('recognizes only the canonical default work-item project', () => {
     const canonical = {
       id: DEFAULT_WORK_ITEM_PROJECT_ID,

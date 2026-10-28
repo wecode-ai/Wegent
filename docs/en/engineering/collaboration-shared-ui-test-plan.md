@@ -25,6 +25,27 @@ neither host may duplicate shared business views.
 
 ## Objective
 
+### Delivery batches and conversation snapshots
+
+`collaboration-deliveries` uses an isolated Electron app, the real local Executor, and file storage;
+no model response is required. Each independent run creates a project, an Issue, and three finalized
+batches: notes with selected messages and two files, a project discussion snapshot, and one file.
+
+1. Show the latest two batches by default and all batches after expansion. Display the first notes
+   line, message and attachment counts, filenames, delivery author, and local timestamp.
+2. Open the mixed batch and verify notes, Markdown emphasis, an ordered list starting at 3, and
+   attachment paths. The detail must retain the Issue drawer width and left edge.
+3. Return and open the discussion snapshot. Preserve message order and support both Runtime `role`
+   and project-activity `sender.type` fields. Chat-only deliveries show no empty notes or file section.
+4. File-only deliveries show no conversation or empty notes. Close and reopen the Issue and verify
+   the persisted delivery remains readable.
+5. Unit tests additionally cover different authors, unavailable member names, loading, and failures.
+   A failed summary request must never be presented as an empty delivery.
+
+Focused command: `pnpm --filter wework e2e:desktop -- --segment collaboration-deliveries`.
+The checkpoint is registered in the shared runner and Core CI shard. The runner cleans up the
+isolated project and files; logs and screenshots remain local under `wework/test-results/`.
+
 ### Execution activity ordering regression
 
 Run `collaboration-local-agent-dispatch` and `collaboration-remote-agent-dispatch`

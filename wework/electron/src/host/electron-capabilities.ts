@@ -1,4 +1,5 @@
 import { registerModelConfigurationCapabilities } from './model-configuration-capabilities.js'
+import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
 import {
   app,
@@ -7,6 +8,7 @@ import {
   dialog,
   Notification,
   powerMonitor,
+  protocol,
   shell,
   type WebContents,
   type FileFilter,
@@ -14,10 +16,10 @@ import {
   type OpenDialogOptions,
   type SaveDialogOptions,
 } from 'electron'
-import { stat } from 'node:fs/promises'
+import { stat, writeFile } from 'node:fs/promises'
 import { cpus } from 'node:os'
 import { availableMemoryRatio } from './maintenance-memory.js'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import {
   HOST_CAPABILITIES,
   HostCapabilityError,
@@ -36,10 +38,8 @@ import { registerWorkspaceFileActions } from './workspace-file-actions.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
 import type { ProcessSnapshot } from '../vendor/process-explorer/contract.js'
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
-import {
-  extractFilePathsFromNativePayloads,
-  inspectWorkspacePaths,
-} from './workspace-path-inspector.js'
+import { inspectWorkspacePaths } from './workspace-path-inspector.js'
+import { readClipboardWorkspacePaths } from './workspace-path-clipboard.js'
 import { FeedbackBundleManager, type FeedbackExportRequest } from './feedback-bundle-manager.js'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
 import type { TrayActivation, TrayMenuState, TraySnapshot } from './tray-manager.js'
@@ -591,31 +591,9 @@ export function createElectronCapabilityRouter(
     await desktopServices.secureStorage.delete(stringParam(params, 'key'))
     return { deleted: true }
   })
-  router.register('clipboard.readWorkspacePaths', async params => {
-    const fallbackPaths = stringArrayParam(params, 'fallbackPaths') ?? []
-    const items = await clipboard.read().catch(() => [])
-    const nativePayloads = await Promise.all(
-      items.flatMap(item =>
-        item.types
-          .filter(format => /(file|filename|uri)/i.test(format))
-          .map(async format => {
-            try {
-              const payload = await item.getType(format)
-              if (!('arrayBuffer' in payload)) return []
-              const buffer = Buffer.from(await payload.arrayBuffer())
-              return [buffer.toString('utf8'), buffer.toString('utf16le')]
-            } catch {
-              // Native clipboard formats may become unavailable during a read.
-              return []
-            }
-          })
-      )
-    )
-    return inspectWorkspacePaths([
-      ...extractFilePathsFromNativePayloads(nativePayloads.flat()),
-      ...fallbackPaths,
-    ])
-  })
+  router.register('clipboard.readWorkspacePaths', params =>
+    readClipboardWorkspacePaths(stringArrayParam(params, 'fallbackPaths') ?? [])
+  )
   router.register('clipboard.writeText', params =>
     clipboard.writeText(rawStringParam(params, 'text'))
   )
@@ -893,6 +871,62 @@ export function createElectronCapabilityRouter(
   router.register('dialog.message', params =>
     dialog.showMessageBox(requiredWindow(window), messageBoxOptions(params))
   )
+  const mcpAppDocuments = new McpAppDocuments()
+  protocol.handle(MCP_APP_SCHEME, request => mcpAppDocuments.respond(request))
+  app.once('will-quit', () => {
+    protocol.unhandle(MCP_APP_SCHEME)
+    mcpAppDocuments.dispose()
+  })
+  router.register('mcpApps.createDocument', params =>
+    mcpAppDocuments.create(stringParam(params, 'html'), objectParam(params, 'metadata'))
+  )
+  router.register('mcpApps.releaseDocument', params => {
+    mcpAppDocuments.release(stringParam(params, 'id'))
+    return {}
+  })
+  router.register('mcpApps.renewDocument', params => {
+    mcpAppDocuments.renew(stringParam(params, 'id'))
+    return {}
+  })
+  router.register('mcpApps.saveFile', async params => {
+    if (typeof params.data !== 'string') throw new Error('Missing MCP App download data')
+    const data = params.data
+    if (data.length > 28 * 1024 * 1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
+      throw new Error('Invalid or oversized MCP App download')
+    }
+    const result =
+      e2eSaveDialogOverride() ??
+      (await dialog.showSaveDialog(requiredWindow(window), {
+        defaultPath: basename(stringParam(params, 'name')),
+      }))
+    if (result.canceled || !result.filePath) return { isError: true }
+    await writeFile(result.filePath, Buffer.from(data, 'base64'))
+    return {}
+  })
+  router.register('e2e.mcpAppFrame', async params => {
+    assertE2EEnabled('MCP App frame controls')
+    const url = stringParam(params, 'url')
+    if (params.action === 'document-status') {
+      return mcpAppDocuments.respond(new Request(url)).status
+    }
+    if (!mcpAppDocuments.owns(url)) throw new Error('Unknown MCP App document')
+    const contents = e2eHost.captureTarget('main')
+    const frame = contents?.mainFrame.framesInSubtree.find(frame => frame.url === url)
+    if (!frame) throw new Error('MCP App frame is not loaded')
+    const action = stringParam(params, 'action')
+    if (!['text', 'click', 'fill', 'attribute', 'value'].includes(action))
+      throw new Error('Unsupported MCP App test action')
+    return frame.executeJavaScript(`(() => {
+      const element = document.querySelector(${JSON.stringify(stringParam(params, 'selector'))});
+      if (!element) throw new Error('MCP App target not found');
+      const action = ${JSON.stringify(action)};
+      if (action === 'click') element.click();
+      if (action === 'fill') { element.value = ${JSON.stringify(optionalStringParam(params, 'value') ?? '')}; element.dispatchEvent(new Event('input', { bubbles: true })); }
+      if (action === 'attribute') return element.getAttribute(${JSON.stringify(optionalStringParam(params, 'value') ?? '')});
+      if (action === 'value') return element.value;
+      return element.textContent;
+    })()`)
+  })
   router.register('filesystem.stat', async params => {
     const path = stringParam(params, 'path')
     const metadata = await stat(path)
@@ -1410,7 +1444,11 @@ export async function systemPressureSnapshot(): Promise<{
   const cpuAfter = cpuTimeSample()
   return {
     cpuLoadRatio: cpuLoadRatioBetween(cpuBefore, cpuAfter),
-    freeMemoryRatio: availableMemoryRatio(process.getSystemMemoryInfo(), process.platform),
+    freeMemoryRatio: availableMemoryRatio(
+      process.getSystemMemoryInfo(),
+      process.platform,
+      process.availableMemory()
+    ),
     userIdleSeconds: powerMonitor.getSystemIdleTime(),
   }
 }

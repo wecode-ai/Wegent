@@ -40,7 +40,7 @@ export function WorkbenchHarnessModelSelector({
         </span>
       }
       placement="bottom-end"
-      triggerClassName="flex h-8 max-w-56 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary opacity-90 hover:bg-muted hover:text-text-primary hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+      triggerClassName="flex h-8 max-w-56 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary opacity-90 hover:bg-muted hover:text-text-primary hover:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
       items={[
         {
           label: defaultLabel,

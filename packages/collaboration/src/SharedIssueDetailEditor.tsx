@@ -1,6 +1,11 @@
+import { IssueDeliveryContent } from "./issue-detail/IssueDeliveryContent";
+import { IssueDeliveryEditor } from "./issue-detail/IssueDeliveryEditor";
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
 import { persistIssueDetailFields } from "./issue-detail/persistIssueDetailFields";
 import * as Popover from "@radix-ui/react-popover";
+import { runnerEnvironmentError } from "./execution-environment/runnerEnvironmentError";
+import { collectProjectTags } from "./project-board/projectTags";
+import { MAX_TAGS_PER_ITEM } from "./tagging";
 import {
   useCallback,
   useEffect,
@@ -183,6 +188,7 @@ export interface SharedIssueDetailExtensions {
     item: SharedEditorIssue;
     project: SharedEditorProject;
   }): ReactNode;
+  renderAssignmentReceipts?(item: SharedEditorIssue): ReactNode;
   renderAssignmentHistory?(context: {
     anchor: HTMLElement | null;
     entries: NonNullable<SharedEditorIssue["assignment_history"]>;
@@ -696,6 +702,8 @@ export function TodoEditor(props: TodoEditorProps) {
   const showPanelControls = props.showPanelControls !== false;
   const showFullscreenControl = props.showFullscreenControl !== false;
   const item = editProps?.item ?? null;
+  const latestItemRef = useRef(item);
+  latestItemRef.current = item;
   const creation = useIssueCreation(editorPort);
   const [securityBusy, setSecurityBusy] = useState(false);
   const isAITableEdit =
@@ -792,19 +800,18 @@ export function TodoEditor(props: TodoEditorProps) {
     if (allItems.some((candidate) => candidate.id === parentId)) return;
     setParentId("");
   }, [allItems, item, parentId, setParentId]);
-  // Tag autocomplete candidates: the project registry plus tags already used
-  // by any item in the project.
-  const tagSuggestions = Array.from(
-    new Set([
-      ...(createProps?.project.tags ?? editProps?.project?.tags ?? []),
-      ...allItems.flatMap((candidate) => candidate.tags ?? []),
-    ]),
+  const tagSuggestions = collectProjectTags(
+    createProps?.project ?? editProps?.project ?? {},
+    allItems,
   ).sort((a, b) => a.localeCompare(b, "zh-CN"));
   const [pendingFiles, setPendingFiles] = useState<File[]>(() =>
     draftKey ? (draftAttachmentStore.get(draftKey) ?? []) : [],
   );
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
+  const [editingDelivery, setEditingDelivery] = useState<{ id: string } | null>(
+    null,
+  );
   const [selectedDelivery, setSelectedDelivery] =
     useState<DeliveryDetail | null>(null);
   const [tasks, setTasks] = useState<LoopItemTaskBinding[]>(
@@ -844,6 +851,23 @@ export function TodoEditor(props: TodoEditorProps) {
     Record<string, boolean>
   >({});
   const [saving, setSaving] = useState(false);
+  const persistedIssueRef = useRef<CloudLoopItem | null>(null);
+  useEffect(() => {
+    const persisted = persistedIssueRef.current;
+    if (!item || !persisted || saving || item.id !== persisted.id) return;
+    if (item.version < persisted.version) {
+      console.warn(
+        "[Collaboration] Issue detail source trails a successful save",
+        {
+          issueId: item.id,
+          sourceVersion: item.version,
+          persistedVersion: persisted.version,
+          sourceAssignee: issueAssigneeTarget(item),
+          persistedAssignee: issueAssigneeTarget(persisted),
+        },
+      );
+    }
+  }, [item, saving]);
   const [saveError, setSaveError] = useState<string | null>(null);
   const workspaceAgents = useIssueAssigneeResources(
     editorPort,
@@ -898,6 +922,10 @@ export function TodoEditor(props: TodoEditorProps) {
   initialTaskBindingsRef.current = props.initialTaskBindings;
   const taskBindingsRequestIdRef = useRef(0);
   const deliveriesRequestIdRef = useRef(0);
+  const currentDeliveryIdRef = useRef(item?.current_delivery_id);
+  useLayoutEffect(() => {
+    currentDeliveryIdRef.current = item?.current_delivery_id;
+  }, [item?.current_delivery_id]);
   const currentDeliveryRequestIdRef = useRef(0);
   const selectedDeliveryRequestIdRef = useRef(0);
   const attachmentsRequestIdRef = useRef(0);
@@ -976,7 +1004,20 @@ export function TodoEditor(props: TodoEditorProps) {
         loadedEditItemIdRef.current !== editItemId
       )
         return;
-      setDeliveries(nextDeliveries);
+      setDeliveries((existing) => {
+        const current = existing.find(
+          (delivery) => delivery.id === currentDeliveryIdRef.current,
+        );
+        return current &&
+          !nextDeliveries.some((delivery) => delivery.id === current.id)
+          ? [
+              current,
+              ...nextDeliveries.filter(
+                (delivery) => delivery.id !== current.id,
+              ),
+            ]
+          : nextDeliveries;
+      });
     } catch {
       // Independent detail sources fail closed without hiding available data.
     }
@@ -1100,6 +1141,7 @@ export function TodoEditor(props: TodoEditorProps) {
     selectedDeliveryRequestIdRef.current += 1;
     attachmentsRequestIdRef.current += 1;
     setDeliveries([]);
+    setEditingDelivery(null);
     setSelectedDelivery(null);
     setTasks(initialTaskBindingsRef.current ?? []);
     setAttachments([]);
@@ -1187,7 +1229,6 @@ export function TodoEditor(props: TodoEditorProps) {
           loadedEditItemIdRef.current !== editItemId
         )
           return;
-        deliveriesRequestIdRef.current += 1;
         setDeliveries((existing) => [
           currentDelivery,
           ...existing.filter((delivery) => delivery.id !== currentDelivery.id),
@@ -1581,6 +1622,7 @@ export function TodoEditor(props: TodoEditorProps) {
     if (!editable && assigneeTarget === issueAssigneeTarget(current)) return;
     setSaving(true);
     setSaveError(null);
+    let fieldsPersisted = false;
     try {
       if (!editable) {
         const updated = await persistAssignee(
@@ -1588,8 +1630,7 @@ export function TodoEditor(props: TodoEditorProps) {
           assigneeTarget,
           notifyAssignee,
         );
-        setAssigneeTarget(issueAssigneeTarget(updated));
-        props.onUpdated(updated);
+        acceptSavedIssue(updated);
         return;
       }
       const sourceDueDate = (
@@ -1616,8 +1657,8 @@ export function TodoEditor(props: TodoEditorProps) {
         notifyAssignee,
         {
           getAssigneeTarget: issueAssigneeTarget,
-          update: (source, values) =>
-            persistIssueDetailFields(
+          update: async (source, values) => {
+            const saved = await persistIssueDetailFields(
               source,
               {
                 title: values.title.trim(),
@@ -1630,7 +1671,10 @@ export function TodoEditor(props: TodoEditorProps) {
                 tags: values.tags,
               },
               editorPort.issues,
-            ),
+            );
+            fieldsPersisted = true;
+            return saved;
+          },
           clearAssignment: (source) =>
             editorPort.issues.update(source.id, {
               version: source.version,
@@ -1641,21 +1685,34 @@ export function TodoEditor(props: TodoEditorProps) {
           assign: persistAssignee,
         },
       );
-      setAssigneeTarget(issueAssigneeTarget(updated));
-      props.onUpdated(updated);
+      acceptSavedIssue(updated);
       if (readFirst) {
         setEditingContent(false);
         setDescriptionExpanded(false);
       }
     } catch (cause) {
+      const environmentError = runnerEnvironmentError(cause, t);
+      const latest = latestItemRef.current;
+      if (environmentError && !fieldsPersisted && latest?.id === current.id) {
+        setIssueDraft((draft) =>
+          draft.status === status ? { ...draft, status: latest.status } : draft,
+        );
+      }
       setSaveError(
-        cause instanceof Error
-          ? cause.message
-          : t("todo.save_issue_failed", "保存任务失败"),
+        environmentError ??
+          (cause instanceof Error
+            ? cause.message
+            : t("todo.save_issue_failed", "保存任务失败")),
       );
     } finally {
       setSaving(false);
     }
+  }
+
+  function acceptSavedIssue(updated: CloudLoopItem) {
+    persistedIssueRef.current = updated;
+    setAssigneeTarget(issueAssigneeTarget(updated));
+    if (props.mode === "edit") props.onUpdated(updated);
   }
 
   function cancelContentEditing() {
@@ -1934,11 +1991,29 @@ export function TodoEditor(props: TodoEditorProps) {
 
   if (selectedDelivery && item) {
     return (
-      <aside className="fixed inset-y-0 right-0 z-modal flex w-full min-w-0 flex-col border-l border-border bg-background shadow-xl md:w-[calc(100%-248px)]">
+      <aside
+        data-testid="todo-detail-delivery-panel"
+        className={cn(
+          "flex min-h-0 min-w-0 flex-col overflow-hidden bg-background",
+          workspacePanel
+            ? cn(
+                "task-detail-workspace-panel-shell relative z-10 h-full shrink-0",
+                props.workspacePanelFill &&
+                  "task-detail-workspace-panel-fill w-full min-w-0",
+                fullScreen && "is-expanded",
+              )
+            : "fixed bottom-0 right-0 top-[38px] z-modal w-[min(760px,calc(100vw-48px))] border-l border-border shadow-xl",
+        )}
+        onKeyDown={handleKeyDown}
+      >
         <header className="flex h-12 items-center border-b border-border px-4">
           <button
             type="button"
-            onClick={() => setSelectedDelivery(null)}
+            data-testid="todo-detail-delivery-back"
+            onClick={() => {
+              setSelectedDelivery(null);
+              setEditingDelivery(null);
+            }}
             className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary hover:bg-hover"
           >
             <ArrowLeft className="h-3.5 w-3.5" /> {t("todo.back", "返回")}
@@ -1946,38 +2021,64 @@ export function TodoEditor(props: TodoEditorProps) {
           <span className="flex-1" />
           <button
             type="button"
+            data-testid="todo-detail-delivery-close"
+            aria-label={t("common.close", "关闭")}
             onClick={onClose}
             className="h-7 w-7 rounded-lg hover:bg-hover"
           >
             <X className="mx-auto h-4 w-4" />
           </button>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto p-6">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
           <p className="font-mono text-xs text-text-muted">
             {item.id} · {t("todo.delivered", "已交付")}
           </p>
-          <h2 className="mt-2 text-heading-md font-semibold">{item.title}</h2>
-          <article className="mt-6 whitespace-pre-wrap rounded-lg bg-muted/40 p-4 text-sm leading-6 text-text-primary">
-            {selectedDelivery.markdown ||
-              t("todo.no_delivery_description", "无交付说明")}
-          </article>
-          <h3 className="mt-6 text-xs font-semibold text-text-secondary">
-            {t("todo.attachment", "附件")}
-          </h3>
-          <div className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border">
-            {selectedDelivery.assets.map((asset) => (
-              <div
-                key={asset.id}
-                className="flex h-10 items-center gap-2 px-3 text-sm"
-              >
-                <File className="h-4 w-4 text-text-muted" />
-                <span className="min-w-0 flex-1 truncate">
-                  {asset.relative_path}
-                </span>
-                <span className="text-text-muted">{asset.size_bytes} B</span>
-              </div>
-            ))}
+          <div className="mt-2 flex items-center gap-2">
+            <h2 className="min-w-0 flex-1 text-heading-md font-semibold">
+              {selectedDelivery.title || item.title}
+            </h2>
+            {editable &&
+              editorPort.deliveries.update &&
+              editingDelivery?.id !== selectedDelivery.id && (
+                <button
+                  type="button"
+                  data-testid="delivery-edit"
+                  onClick={() =>
+                    setEditingDelivery({ id: selectedDelivery.id })
+                  }
+                  className="h-7 rounded-md px-2 text-sm hover:bg-hover"
+                >
+                  {t("delivery.edit")}
+                </button>
+              )}
           </div>
+          {editingDelivery?.id === selectedDelivery.id ? (
+            <IssueDeliveryEditor
+              key={selectedDelivery.id}
+              delivery={selectedDelivery}
+              issueTitle={item.title}
+              api={editorPort.deliveries}
+              translate={t}
+              onCancel={() => setEditingDelivery(null)}
+              onSaved={(updated) => {
+                if (loadedEditItemIdRef.current !== updated.loop_item_id)
+                  return;
+                setSelectedDelivery((current) =>
+                  current?.id === updated.id ? updated : current,
+                );
+                setDeliveries((current) =>
+                  current.map((delivery) =>
+                    delivery.id === updated.id ? updated : delivery,
+                  ),
+                );
+                setEditingDelivery((current) =>
+                  current === editingDelivery ? null : current,
+                );
+              }}
+            />
+          ) : (
+            <IssueDeliveryContent delivery={selectedDelivery} translate={t} />
+          )}
         </div>
       </aside>
     );
@@ -2068,7 +2169,26 @@ export function TodoEditor(props: TodoEditorProps) {
       value={assigneeTarget}
       onChange={setAssigneeTarget}
       disabled={!canAssign || saving}
-      className={overlayControlClass}
+      className="relative inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default"
+      triggerContent={
+        <>
+          {assigneeTarget.startsWith("group:") ? (
+            <UsersRound aria-hidden="true" size={15} />
+          ) : assigneeTarget.startsWith("agent:") ||
+            assigneeTarget.startsWith("team:") ? (
+            <Bot aria-hidden="true" size={15} />
+          ) : (
+            <CircleUserRound aria-hidden="true" size={15} />
+          )}
+          <strong className={workspacePanel ? undefined : "font-normal"}>
+            {assigneeName ?? t("todo.unassigned", "未指派")}
+          </strong>
+          {item && !assigneeChanged
+            ? extensions?.renderAssignmentReceipts?.(item)
+            : null}
+          {canAssign ? <ChevronDown aria-hidden="true" size={13} /> : null}
+        </>
+      }
       searchPlaceholder={t("todo.search_assignee", "搜索负责人")}
       emptyLabel={t("todo.no_matching_assignee", "没有匹配的负责人")}
       actions={
@@ -2238,7 +2358,6 @@ export function TodoEditor(props: TodoEditorProps) {
       {statusLabel}
     </>
   );
-  const assigneeDisplayName = assigneeName ?? t("todo.unassigned", "未指派");
   const issueSecurityLabel =
     item?.security_level === "related"
       ? t("todo.issue_security_related", "仅相关人员可见")
@@ -2349,18 +2468,6 @@ export function TodoEditor(props: TodoEditorProps) {
       {priorityChip}
       {showAssignee ? (
         <span className={cn(propChipClass, !assigneeName && "text-text-muted")}>
-          {assigneeGroup ? (
-            <UsersRound className="h-3.5 w-3.5 text-text-muted" />
-          ) : assigneeAgent || assigneeTeam ? (
-            <Bot className="h-3.5 w-3.5 text-violet-600" />
-          ) : (
-            <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
-          )}
-          <span className="text-text-muted">
-            {t("todo.assignee", "负责人")}
-          </span>
-          {assigneeName ?? t("todo.unassigned", "未指派")}
-          <ChevronDown className="h-3 w-3 text-text-muted" />
           {assigneeSelect}
         </span>
       ) : null}
@@ -2531,6 +2638,11 @@ export function TodoEditor(props: TodoEditorProps) {
                 onChange={setTags}
                 disabled={!editable}
                 suggestions={tagSuggestions}
+                lengthErrorLabel={t("todo.tag_name_too_long")}
+                tagLimit={{
+                  max: MAX_TAGS_PER_ITEM,
+                  errorLabel: t("todo.tag_limit_exceeded"),
+                }}
                 placeholder={t("todo.add_tag", "添加标签")}
                 removeLabel={(tag) =>
                   t("todo.remove_name", "删除 {{name}}", { name: tag })
@@ -2859,6 +2971,11 @@ export function TodoEditor(props: TodoEditorProps) {
                     onChange={setTags}
                     disabled={!editable}
                     suggestions={tagSuggestions}
+                    lengthErrorLabel={t("todo.tag_name_too_long")}
+                    tagLimit={{
+                      max: MAX_TAGS_PER_ITEM,
+                      errorLabel: t("todo.tag_limit_exceeded"),
+                    }}
                     placeholder={t("todo.add_tag", "添加标签")}
                     removeLabel={(tag) =>
                       t("todo.remove_name", "删除 {{name}}", { name: tag })
@@ -2871,18 +2988,6 @@ export function TodoEditor(props: TodoEditorProps) {
                 <div className="task-detail-meta-line">
                   {showAssignee ? (
                     <span className="task-detail-meta-item relative cursor-pointer">
-                      {assigneeGroup ? (
-                        <UsersRound className="h-3.5 w-3.5" />
-                      ) : assigneeAgent || assigneeTeam ? (
-                        <Bot className="h-3.5 w-3.5 text-violet-600" />
-                      ) : (
-                        <CircleUserRound className="h-3.5 w-3.5" />
-                      )}
-                      {t("todo.assignee", "负责人")}
-                      <span className="text-text-primary">
-                        {assigneeName ?? t("todo.unassigned", "未指派")}
-                      </span>
-                      <ChevronDown className="h-3 w-3" />
                       {assigneeSelect}
                       {item?.assignment_history?.length ? (
                         <button
@@ -3151,34 +3256,12 @@ export function TodoEditor(props: TodoEditorProps) {
                         </span>
                       </Tooltip>
                       {showAssignee ? (
-                        <Tooltip
-                          label={t(
-                            "todo.assignee_help",
-                            "负责人：{{value}}。负责推进并跟进这个 Issue。",
-                            { value: assigneeDisplayName },
-                          )}
-                          side="bottom"
-                          align="start"
+                        <span
+                          className="task-detail-state-assignee"
+                          data-testid="cloud-todo-state-assignee"
                         >
-                          <span
-                            className="task-detail-state-assignee"
-                            data-testid="cloud-todo-state-assignee"
-                          >
-                            {assigneeTarget.startsWith("group:") ? (
-                              <UsersRound aria-hidden="true" size={15} />
-                            ) : assigneeTarget.startsWith("agent:") ||
-                              assigneeTarget.startsWith("team:") ? (
-                              <Bot aria-hidden="true" size={15} />
-                            ) : (
-                              <CircleUserRound aria-hidden="true" size={15} />
-                            )}
-                            <strong>{assigneeDisplayName}</strong>
-                            {canAssign ? (
-                              <ChevronDown aria-hidden="true" size={13} />
-                            ) : null}
-                            {assigneeSelect}
-                          </span>
-                        </Tooltip>
+                          {assigneeSelect}
+                        </span>
                       ) : null}
                       {assigneeSaveButton}
                       {scheduleRangeControl("task-detail-state-due relative")}
@@ -3320,6 +3403,8 @@ export function TodoEditor(props: TodoEditorProps) {
                       <IssueDeliveries
                         key={`deliveries-${item.id}`}
                         deliveries={deliveries}
+                        getDelivery={editorPort.deliveries.get}
+                        memberName={(id) => memberNameById(projectMembers, id)}
                         onOpen={(id) => void openDelivery(id)}
                         translate={t}
                       />

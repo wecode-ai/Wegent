@@ -20,13 +20,16 @@ use crate::{config::device::DeviceConfig, protocol::ExecutionRequest};
 
 use super::personal_marketplace_lock::acquire_personal_marketplace_lock;
 
+mod activation_revision;
 mod manifest_migration;
+mod plugin_skills;
 mod plugin_sync_protocol;
 mod runtime_recovery;
 mod runtime_skill_config;
 mod shared_packages;
 mod support;
 
+use plugin_skills::scan_plugin_skills;
 pub use runtime_recovery::PluginRuntimeRecoveryReport;
 use support::*;
 
@@ -687,7 +690,7 @@ impl GlobalCapabilityStore {
             self.install_plugin_runtime_metadata(&spec, &store_path, &mut manifest)?;
             restored.push(key);
         }
-        self.garbage_collect_unreferenced_managed_plugins(&manifest)?;
+        self.garbage_collect_unreferenced_managed_plugins(&manifest, |_| {})?;
         self.manifest.save_with_revision_bump(manifest)?;
         Ok(restored)
     }
@@ -695,6 +698,7 @@ impl GlobalCapabilityStore {
     fn garbage_collect_unreferenced_managed_plugins(
         &self,
         manifest: &Value,
+        mut observe_native_change: impl FnMut(&Path),
     ) -> Result<Vec<PathBuf>, CapabilitySyncError> {
         // Live and rollback references span agents and processes. A local manifest
         // cannot prove a shared package or native cache is unreferenced.
@@ -734,11 +738,13 @@ impl GlobalCapabilityStore {
             &self.plugins_dir,
             &self.plugins_dir.join("cache"),
             &expected_claude_cache_paths,
+            &mut observe_native_change,
         )?);
         removed.extend(remove_unreferenced_cloud_plugin_cache(
             &self.codex_plugins_dir,
             &self.codex_plugins_dir.join("cache"),
             &expected_codex_cache_paths,
+            &mut observe_native_change,
         )?);
         for marketplace in CLOUD_MANAGED_PLUGIN_MARKETPLACES {
             let desired_names = plugins
@@ -761,11 +767,13 @@ impl GlobalCapabilityStore {
                 &self.plugins_dir,
                 &claude_marketplace_dir.join("plugins"),
                 &desired_claude_link_names,
+                &mut observe_native_change,
             )?);
             removed.extend(remove_unreferenced_marketplace_links(
                 &self.codex_plugins_dir,
                 &codex_marketplace_dir.join("plugins"),
                 &desired_names,
+                &mut observe_native_change,
             )?);
             prune_unreferenced_marketplace_plugins(
                 &self.plugins_dir,
@@ -874,12 +882,15 @@ impl GlobalCapabilityStore {
         spec: &PluginSyncSpec,
         store_path: &Path,
         timestamp: &str,
+        reused: &BTreeSet<PathBuf>,
     ) -> Result<(), CapabilitySyncError> {
         let runtime_path = self.plugin_runtime_link(spec);
-        copy_dir_atomic(store_path, &runtime_path)?;
-        ensure_dual_plugin_manifests(&runtime_path)?;
-        ensure_plugin_hook_permissions(&runtime_path)?;
-        self.install_marketplace_metadata_at(spec, &runtime_path, timestamp)?;
+        if !reused.contains(&runtime_path) {
+            copy_dir_atomic(store_path, &runtime_path)?;
+            ensure_dual_plugin_manifests(&runtime_path)?;
+            ensure_plugin_hook_permissions(&runtime_path)?;
+        }
+        self.install_marketplace_metadata_at(spec, &runtime_path, timestamp, reused)?;
         upsert_installed_plugin_at(&self.plugins_dir, spec, &runtime_path, timestamp)?;
         set_plugin_enabled(&self.plugins_dir, &spec.key, spec.enabled)
     }
@@ -888,12 +899,16 @@ impl GlobalCapabilityStore {
         &self,
         spec: &PluginSyncSpec,
         store_path: &Path,
+        previous_states: &Value,
+        reused: &BTreeSet<PathBuf>,
     ) -> Result<(), CapabilitySyncError> {
         let marketplace_dir = self.codex_marketplace_dir(&spec.marketplace);
         let marketplace_link = marketplace_dir
             .join("plugins")
             .join(self.marketplace_plugin_name(spec, false));
-        link_or_copy_dir(store_path, &marketplace_link)?;
+        if !reused.contains(&marketplace_link) {
+            link_or_copy_dir(store_path, &marketplace_link)?;
+        }
 
         let marketplace_json_path = marketplace_dir.join(".agents/plugins/marketplace.json");
         let mut marketplace = read_json_or_default(&marketplace_json_path, || json!({}))?;
@@ -939,6 +954,12 @@ impl GlobalCapabilityStore {
             value(marketplace_dir.display().to_string());
         document["plugins"][&spec.key]["enabled"] = value(spec.enabled);
         runtime_skill_config::relocate_plugin_skill_config(&mut document, spec, store_path)?;
+        runtime_skill_config::apply_plugin_skill_states(
+            &mut document,
+            spec,
+            store_path,
+            previous_states,
+        )?;
         let next_content = document.to_string();
         if next_content != content {
             replace_codex_config(&config_path, &next_content)?;
@@ -1019,7 +1040,12 @@ impl GlobalCapabilityStore {
         spec: &PluginSyncSpec,
         store_path: &Path,
     ) -> Result<(), CapabilitySyncError> {
-        self.install_marketplace_metadata_at(spec, store_path, &now_rfc3339_like())
+        self.install_marketplace_metadata_at(
+            spec,
+            store_path,
+            &now_rfc3339_like(),
+            &BTreeSet::new(),
+        )
     }
 
     fn install_marketplace_metadata_at(
@@ -1027,12 +1053,15 @@ impl GlobalCapabilityStore {
         spec: &PluginSyncSpec,
         store_path: &Path,
         timestamp: &str,
+        reused: &BTreeSet<PathBuf>,
     ) -> Result<(), CapabilitySyncError> {
         let marketplace_dir = self.claude_marketplace_dir(&spec.marketplace);
         let marketplace_plugins_dir = marketplace_dir.join("plugins");
         let marketplace_plugin_name = self.marketplace_plugin_name(spec, true);
         let marketplace_link = marketplace_plugins_dir.join(&marketplace_plugin_name);
-        link_or_copy_dir(store_path, &marketplace_link)?;
+        if !reused.contains(&marketplace_link) {
+            link_or_copy_dir(store_path, &marketplace_link)?;
+        }
 
         let marketplace_source = json!({
             "source": "directory",
@@ -1322,7 +1351,6 @@ where
         let _sync_guard = self.sync_lock.lock().await;
         let _activation = crate::services::capability_activation::activate().await;
         let queued_ms = started.elapsed().as_millis();
-        let _changed = shared_packages::ActivationRevision;
         let _publication_lock = self.store.lock_shared_manifest()?;
         let plugins_only = payload.get("scope").and_then(Value::as_str) == Some("plugins");
         if plugins_only
@@ -1347,6 +1375,11 @@ where
             .into_iter()
             .map(|value| PluginSyncSpec::from_value(&value))
             .collect::<Result<Vec<_>, _>>()?;
+        let mut activation = activation_revision::ActivationRevision::begin(
+            &self.store,
+            &plugin_specs,
+            &skill_specs,
+        )?;
         let mut manifest = {
             let _binding = self.plugin_sync_binding.lock_active()?;
             if plugin_specs.is_empty() || self.store.shared_packages {
@@ -1387,23 +1420,34 @@ where
             self.record_mcps(payload.get("mcps"), mode, &mut manifest)?;
         }
         self.store
-            .garbage_collect_unreferenced_managed_plugins(&manifest)?;
+            .garbage_collect_unreferenced_managed_plugins(&manifest, |path| {
+                activation.observe_cleanup_path(path);
+            })?;
         self.store.manifest.save_with_revision_bump(manifest)?;
         let success = skill_results
             .iter()
             .chain(plugin_results.iter())
             .all(|result| result.get("status").and_then(Value::as_str) != Some("failed"));
+        drop(_binding);
+        let changes = activation.finish_with_skill_reload().await?;
         crate::logging::log_executor_event(
             "capability_sync_completed",
             &[
                 ("queue_ms", queued_ms.to_string()),
                 ("total_ms", started.elapsed().as_millis().to_string()),
                 ("plugin_count", plugin_specs.len().to_string()),
+                ("changed", changes.changed.to_string()),
+                ("requires_restart", changes.requires_restart.to_string()),
+                ("detection_ms", changes.detection_ms.to_string()),
+                ("changed_plugins", changes.plugins.join(",")),
+                ("changed_skills", changes.skills.join(",")),
             ],
         );
 
         Ok(json!({
             "success": success,
+            "changed": changes.changed,
+            "requires_restart": changes.requires_restart,
             "scope": if plugins_only { "plugins" } else { "all" },
             "skills": skill_results,
             "plugins": plugin_results,
@@ -1935,6 +1979,7 @@ fn remove_unreferenced_cloud_plugin_cache(
     managed_root: &Path,
     cache_dir: &Path,
     expected_paths: &BTreeSet<PathBuf>,
+    observe_native_change: &mut impl FnMut(&Path),
 ) -> Result<Vec<PathBuf>, CapabilitySyncError> {
     ensure_managed_path_without_symlinks(managed_root, cache_dir)?;
     let mut removed = Vec::new();
@@ -1954,6 +1999,7 @@ fn remove_unreferenced_cloud_plugin_cache(
                         plugin_dir.display()
                     )));
                 }
+                observe_native_change(&plugin_dir);
                 remove_existing_path(&plugin_dir)?;
                 removed.push(plugin_dir);
                 continue;
@@ -1972,6 +2018,7 @@ fn remove_unreferenced_cloud_plugin_cache(
                 if referenced_legacy_zip {
                     continue;
                 }
+                observe_native_change(&plugin_dir);
                 remove_existing_path(&plugin_dir)?;
                 removed.push(plugin_dir);
                 continue;
@@ -1988,6 +2035,7 @@ fn remove_unreferenced_cloud_plugin_cache(
                     }
                     continue;
                 }
+                observe_native_change(&version_path);
                 remove_existing_path(&version_path)?;
                 removed.push(version_path);
             }
@@ -2002,6 +2050,7 @@ fn remove_unreferenced_marketplace_links(
     managed_root: &Path,
     plugins_dir: &Path,
     desired_names: &BTreeSet<String>,
+    observe_native_change: &mut impl FnMut(&Path),
 ) -> Result<Vec<PathBuf>, CapabilitySyncError> {
     ensure_managed_path_without_symlinks(managed_root, plugins_dir)?;
     let mut removed = Vec::new();
@@ -2011,6 +2060,7 @@ fn remove_unreferenced_marketplace_links(
             continue;
         }
         let path = entry.path();
+        observe_native_change(&path);
         remove_existing_path(&path)?;
         removed.push(path);
     }

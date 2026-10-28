@@ -37,6 +37,7 @@ from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 from app.models.subtask import Subtask
 from app.models.user import User
+from tests.mcp_oauth_cache import mcp_session_cache  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
@@ -258,6 +259,27 @@ def test_session_factory(test_engine):
     return sessionmaker(
         autocommit=False, autoflush=False, bind=test_engine, expire_on_commit=False
     )
+
+
+@pytest.fixture(scope="function")
+def mcp_test_db(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, mcp_session_cache
+) -> Generator[Session, None, None]:
+    """Expose committed MCP state to independent transaction sessions."""
+    from app.services import user_mcp_service as mcp_module
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path}/mcp.sqlite", connect_args={"check_same_thread": False}
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(mcp_module, "SessionLocal", factory, raising=False)
+    monkeypatch.setattr("app.db.timezone.DATABASE_DATETIME_TIMEZONE", timezone.utc)
+    try:
+        with factory() as db:
+            yield db
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture(scope="function")

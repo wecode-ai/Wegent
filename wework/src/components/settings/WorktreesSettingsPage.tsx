@@ -389,7 +389,7 @@ export function WorktreesSettingsPage({
                   }}
                   placeholder={t('workbench.worktrees_default')}
                   disabled={saving}
-                  className="w-56 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-primary disabled:opacity-50 max-sm:w-full"
+                  className="w-56 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none transition-colors placeholder:text-text-muted keyboard:focus:border-primary disabled:opacity-50 max-sm:w-full"
                 />
               }
             />
@@ -431,7 +431,7 @@ export function WorktreesSettingsPage({
                       if (event.key === 'Enter') event.currentTarget.blur()
                     }}
                     disabled={saving || !settings.autoCleanupEnabled}
-                    className="w-24 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none [appearance:textfield] focus:border-primary disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    className="w-24 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none [appearance:textfield] keyboard:focus:border-primary disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                   />
                 </div>
               }

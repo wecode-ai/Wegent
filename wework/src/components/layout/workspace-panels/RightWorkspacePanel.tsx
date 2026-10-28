@@ -1,3 +1,10 @@
+import { McpAppPanelSlot } from '@/features/mcp-apps/McpAppPanelSlot'
+import {
+  getMcpAppPanel,
+  isMcpAppPanelTab,
+  useMcpAppPanels,
+  type McpAppPanelTab,
+} from '@/features/mcp-apps/workspacePanels'
 import {
   Bot,
   CheckCircle2,
@@ -124,6 +131,7 @@ export type RightWorkspaceHarnessTab = `harness:${string}`
 export type RightWorkspaceTerminalTab = `terminal:${string}`
 export type RightWorkspaceBackgroundTerminalTab = `background-terminal:${string}`
 export type RightWorkspacePanelTab =
+  | McpAppPanelTab
   | 'review'
   | 'files'
   | 'plan'
@@ -611,6 +619,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onChatAddressChange,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
+  const mcpAppPanels = useMcpAppPanels(currentRuntimeTask)
   const filePanelRef = useRef<FileWorkspacePanelHandle>(null)
   const tabsViewportRef = useRef<HTMLDivElement>(null)
   const activeFileTab = isWorkspaceFileTab(activeView) ? fileTabs[activeView] : undefined
@@ -1170,6 +1179,16 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             </div>
           )
         })}
+        {mcpAppPanels
+          .filter(panel => openTabs.includes(panel.id))
+          .map(panel => (
+            <div
+              key={panel.id}
+              className={cn('min-h-0 flex-1 flex-col', activeView === panel.id ? 'flex' : 'hidden')}
+            >
+              <McpAppPanelSlot panel={panel} />
+            </div>
+          ))}
         {openTabs.filter(isRightWorkspaceExtensionTab).map(tab => {
           const extensionState = extensionTabs[tab]
           const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionState)
@@ -1255,7 +1274,7 @@ function RightWorkspaceTitleTab({
       onClick={onSelect}
       onKeyDown={handleKeyDown}
       className={cn(
-        'group/tab relative flex h-8 min-w-0 max-w-[200px] shrink-0 cursor-pointer items-stretch rounded-md text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 pointer-events-auto',
+        'group/tab relative flex h-8 min-w-0 max-w-[200px] shrink-0 cursor-pointer items-stretch rounded-md text-left text-xs font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40 pointer-events-auto',
         active
           ? 'bg-muted text-text-primary'
           : 'text-text-secondary hover:bg-muted hover:text-text-primary'
@@ -1293,7 +1312,7 @@ function RightWorkspaceTitleTab({
             event.stopPropagation()
             onClose()
           }}
-          className="flex h-[18px] w-[18px] items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-black/70 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          className="flex h-[18px] w-[18px] items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-black/70 hover:text-white focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40"
           aria-label={t('workbench.close_right_workspace_panel')}
         >
           <X className="h-3 w-3" />
@@ -1515,6 +1534,7 @@ function getRightWorkspaceTabLabel(
   extensionTabs: Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>,
   backgroundTerminals: BackgroundTerminal[]
 ) {
+  if (isMcpAppPanelTab(tab)) return getMcpAppPanel(tab)?.title ?? t('mcp_apps.title')
   if (tab.startsWith('background-terminal:')) {
     return (
       unwrapShellCommand(
@@ -1556,6 +1576,7 @@ function getRightWorkspaceTabLabel(
 }
 
 function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
+  if (isMcpAppPanelTab(tab)) return `right-workspace-mcp-app-tab-${tab.slice(8)}`
   if (isWorkspaceFileTab(tab)) return `right-workspace-file-tab-${tab.slice('file:'.length)}`
   if (isRightWorkspaceExtensionTab(tab)) {
     return `right-workspace-extension-tab-${tab.slice('dsh:'.length)}`
@@ -1580,6 +1601,7 @@ function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
 }
 
 function getRightWorkspaceTabIcon(tab: RightWorkspacePanelTab) {
+  if (isMcpAppPanelTab(tab)) return PanelRight
   if (tab.startsWith('background-terminal:')) return SquareTerminal
   if (isRightWorkspaceExtensionTab(tab)) return PanelRight
   if (tab === 'review') return FileDiff

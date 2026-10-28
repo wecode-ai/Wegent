@@ -16,19 +16,10 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.subtask_context import ContextType
 from app.schemas.context_display import build_context_display_fields
 
 logger = logging.getLogger(__name__)
-
-
-class ContextType(str, Enum):
-    """Context type enumeration."""
-
-    ATTACHMENT = "attachment"
-    KNOWLEDGE_BASE = "knowledge_base"
-    SELECTED_DOCUMENTS = "selected_documents"
-    EXTERNAL_KNOWLEDGE = "external_knowledge"
-    CONVERSATION = "conversation"
 
 
 class ContextStatus(str, Enum):
@@ -102,6 +93,11 @@ class SubtaskContextBrief(BaseModel):
     file_extension: Optional[str] = None
     file_size: Optional[int] = None
     mime_type: Optional[str] = None
+    # Remote workspace artifact fields (metadata only; bytes stay on the device)
+    remote_task_id: Optional[int] = None
+    remote_path: Optional[str] = None
+    modified_at: Optional[int] = None
+    sha256: Optional[str] = None
     # Knowledge base fields (from type_data)
     knowledge_id: Optional[int] = None
     document_count: Optional[int] = None

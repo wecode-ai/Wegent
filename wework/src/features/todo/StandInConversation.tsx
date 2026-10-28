@@ -1,3 +1,4 @@
+import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import { useEffect, useState, type ReactNode } from 'react'
 import { standInConversationTaskId } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
@@ -23,6 +24,7 @@ export function StandInConversation({
   active?: boolean
   pendingConfiguration?: ReactNode
 }) {
+  useStandInOpened('conversation', roleId ? 'role' : 'primary', active)
   const { t } = useTranslation('common')
   const [address, setAddress] = useState<RuntimeTaskAddress | null>()
   const [error, setError] = useState<string | null>(null)

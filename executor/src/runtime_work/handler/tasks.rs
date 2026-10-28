@@ -130,7 +130,7 @@ impl RuntimeWorkRpcHandler {
         let local_task_id = link.local_task_id.clone();
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
-        request.ephemeral = true;
+        request.use_ephemeral_codex_thread();
         let result = self
             .codex_app_server
             .run_turn_with_cancel(request.clone(), CodexAppServerTurnOptions::default())
@@ -697,6 +697,11 @@ impl RuntimeWorkRpcHandler {
             runtime.clone(),
         );
         link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
+        if is_codex_runtime(&runtime) && link.ephemeral {
+            // Visibility belongs to the task; native history must survive process reloads.
+            request.ephemeral = true;
+            request.persist_runtime_thread();
+        }
         link.runtime_project_key = request.runtime_project_key.clone();
         link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
         link.project_instructions = request.system_prompt.clone();
@@ -1028,6 +1033,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         if let Some(link) = existing_link.as_ref() {
+            super::mcp_apps::append_model_context(&mut request, link);
             // A failed preparation has no session yet. Retry its saved snapshot;
             // established conversations never prepare a new project directory.
             if link.thread_id.is_none() {
@@ -1176,7 +1182,15 @@ impl RuntimeWorkRpcHandler {
             }));
         }
         let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
-        let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
+        // Only the saved creation request identifies recoverable native threads.
+        request.extra.remove("persist_runtime_thread");
+        if let Some(link) = link_for_send {
+            request.ephemeral |= link.ephemeral;
+            if link.ephemeral && !runtime_task_uses_ephemeral_codex_thread(link) {
+                request.persist_runtime_thread();
+            }
+        }
+        let ephemeral = request.uses_ephemeral_codex_thread();
 
         let mut fields = task_fields(&request.task_id, &request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
@@ -1239,10 +1253,10 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&local_task_id);
         let _guard = gate.lock().await;
-        let check_provider_turn = !bool_field(&payload, "ephemeral").unwrap_or(false)
-            && !self
-                .local_task_link(&local_task_id)
-                .is_some_and(|link| link.ephemeral);
+        let check_provider_turn = self.local_task_link(&local_task_id).map_or_else(
+            || !bool_field(&payload, "ephemeral").unwrap_or(false),
+            |link| !runtime_task_uses_ephemeral_codex_thread(&link),
+        );
         let thread_id = if check_provider_turn {
             runtime_session_id_from_payload(&payload).or_else(|| {
                 self.local_task_link(&local_task_id)

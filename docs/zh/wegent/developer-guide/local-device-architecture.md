@@ -34,6 +34,26 @@ flowchart LR
     style BE fill:#14B8A6,color:#fff
 ```
 
+### 设备产物声明与下载
+
+关联 Backend Task 的 Claude Code 或 Wegent executor 可以声明最终交付文件：
+
+```bash
+$WEGENT_EXECUTOR_BINARY artifact declare --path outputs/report.pdf
+```
+
+声明仅发送文件名、相对路径、规范化工作区根目录、大小、修改时间和 SHA-256，不上传文件内容。`WEGENT_BACKEND_TASK_ID` 用于 Backend API 路径；`WEGENT_TASK_ID` 保留本地会话身份并用于工作区定位。认证只使用该轮执行的 `AUTH_TOKEN`（Task Token），不能使用独立的 runtime credential。
+
+Executor 工作目录、`WEGENT_TASK_WORKSPACE` 和声明命令复用同一套工作区路径解析。本地设备配置 `LOCAL_WORKSPACE_ROOT` 时，不得把逻辑别名 `/workspace` 当作物理工作区目录。
+
+新版默认 `Ghost/default/wegent-wework` 要求先成功声明最终交付文件，再引导用户使用对话文件卡片，不能用本地路径或 `computer://` 链接代替。初始化 YAML 不覆盖已存在的 Ghost；Claude Code（启用工具时）和 Codex 在执行时注入产物声明规则，因此旧 Ghost 无需数据库改写也能使用这条交付链路。原提示词数据迁移及其空操作 revision 均已删除，不读写业务数据；已记录 `a9c4e7b2d610` 的环境需在部署前单独处理版本兼容，配置不会被自动恢复。版本链处理见[迁移撤回说明](./device-artifact-prompt-migration.md)。
+
+Backend 从 Task Token 对应的 assistant subtask 捕获 executor 名称和 namespace，并与工作区根目录一起保存为产物来源。下载始终使用这份来源快照，不选择任务最新的 executor；即使原 subtask 后续发生恢复重绑，也不能把旧卡片改指向新设备。原来源不可用时返回不可用，分享和复制任务不会携带这些设备产物。
+
+设备下载复用 `workspace_read_file_chunk` 的规范路径校验；HTTP executor 下载使用必须指定 `root_path` 的 `/filesystem/artifact`。读取前解析真实路径并检查仍位于原工作区内，因此声明后把文件替换为指向工作区外的符号链接也会被拒绝。旧 executor 不支持该端点时明确失败；校验失败后也不得退回 `/files`。文件内容只在用户下载时经过 Backend 转发，不写入 Backend 产物存储；卡片读取的是原工作区的当前文件，不是永久保存的历史副本。
+
+单个产物下载上限为 50 MiB。HTTP 下载在读取响应体前检查 `Content-Length`，并在读取过程中累计实际字节数；即使长度缺失或声明偏小，也会在超限时立即停止读取并返回 413。
+
 ### Wework 打包 App 本地优先通道
 
 本地 Electron 打包与正式发布包复用相同的品牌元数据和更新源配置。本地打包也必须在 Resources 中生成 `app-update.yml`，包含按包名生成的 `updaterCacheDirName`，以便启动时能迁移真实的更新缓存目录；该文件必须在 macOS 签名之前写入。
@@ -145,6 +165,8 @@ executor 的活动 transcript 缓存同时累计 `item/agentMessage/delta` 和 `
 仍在流式累计且尚未标注 phase 的文本条目与实时流一样按过程文本展示，完成后再按终态投影；历史加载不能提前把它改成最终回答。Goal 恢复在原生 turn 建立前失败或取消时，终态事件也必须移除旧用户消息身份，且不能修改用于后端上报的原请求。
 
 Goal 的单个物理 turn 完成后，executor 会等待 Codex 自动创建下一轮。若等待超时，它会通过 `thread/goal/get` 和 `thread/read` 对账 provider 的权威状态：已有活跃 turn 时重新绑定并继续监听；目标仍为 active 且线程空闲时只尝试一次原生 `thread/resume`；仍无法继续时停止静默等待并向 Wework 暴露 `needsAttention`。Wework 使用 `running`、`recovering` 和 `needsAttention` 三种 Goal 执行状态分别显示正常运行、重启恢复和需要用户恢复，用户点击恢复时复用已保留的 Goal 请求，而不是发送一条普通聊天消息。
+
+首个模型或工具进展的等待超时不能单独证明执行已停止。共享 Codex app-server 只有一个活跃执行时，executor 可以终止该进程并上报超时失败；为保护其他活跃执行而跳过重启时，必须保留原来的启动请求、事件订阅和取消入口，继续等待真实终态，不能上报失败或将 Goal 标记为 `needsAttention`。等待期间按启动超时间隔重新检查恢复条件；启动请求尚未返回或 Goal 尚无 turn ID 时，取消仍须发送原生启动中断。已经进入 `needsAttention` 且停止的执行，不得被历史 transcript 中残留的流式回合重新激活；被抑制的回合 ID 必须保留为历史，防止迟到快照覆盖恢复后的新回合。新的运行中 executor 快照或用户恢复操作仍可正常启动后续执行。该规则确保任务状态、Goal 恢复提示和“正在思考”反映同一执行生命周期。
 
 Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任务生命周期；Store 为每个任务维护一个状态机并负责事件路由，状态机是执行状态、回合状态、Goal 状态和未读状态的聚合根，reducer 仅作为状态机内部的状态转换实现。React Provider 只把同一个 Store 适配为订阅，不保存或推断运行状态。任务列表、输入框、消息思考态、系统托盘、关闭保护和完成提醒都读取该 Store 的同一份快照。
 

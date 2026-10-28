@@ -126,14 +126,16 @@ node e2e/utils/mock-connector-upstream-server.mjs
 
 主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/run-checkpoints.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
+`runtime-input-answer-persistence` Core checkpoint 会在主工作区和临时聊天中通过真实交互回答 MCP elicitation 表单。Executor、Codex app-server、MCP server、桌面自动化传输和工作区列表刷新均为真实集成，仅模型服务由 loopback fixture 提供。测试通过 Executor 请求闸门在真实响应后保持已接受的答案待定，并延迟终态续跑响应，从而确定性地建立“接受成功 → 终态历史先到 → 工作区列表刷新后完成”的顺序，并在刷新前后都断言完整答案摘要可见。checkpoint 同时验证传输失败和过期请求的真实拒绝都不会把答案标记为成功，以及等待接受期间归档不会恢复答案。
+
 主桌面 runner 也支持按有序 checkpoint 分段执行。当前 checkpoint 依次为
-`remote-device-onboarding`、`workspace-tabs`、`cloud-project-creation`、
+`mcp-apps`、`remote-device-onboarding`、`workspace-tabs`、`cloud-project-creation`、
 `cloud-space-mention`、`priority-filter`、`telemetry-consent`、
 `automation-lifecycle`、`project-automation`、
 `project-assignment-notification`、`offline-local-project-space`、
 `core-dsh-plugin-management`、`plugin-auto-update`、
 `plugin-workspace-publication`、`project-ai-settings`、`model-routing`、
-`permission-modes`、`computer-use`、`task-status-sync`、
+`permission-modes`、`runtime-input-answer-persistence`、`computer-use`、`task-status-sync`、
 `task-board-association`、`core-task-flow`、`task-attachments`、
 `cloud-git-worktree`、`cloud-worktree-capability`、`cloud-worktree-create`、
 `cloud-worktree-queued-cancel`、`cloud-worktree-tools`、
@@ -152,6 +154,9 @@ checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fix
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
 Core 和 Cloud 的分片定义以 `.github/scripts/classify-wework-desktop-e2e.sh` 为准。
+
+`collaboration-runtime-reconciliation` 是可独立运行的 Core checkpoint，自动建立隔离的云项目、Issue、智能体和真实 Executor。它通过透明 WebSocket 代理暂存真实完成事件，分别验证快照先到、最终事件先到，以及两个终态事务在真实 MySQL 行锁后交错提交。每种顺序都检查数据库中的完整最终文本、Issue 界面和刷新后的结果。续轮在模型响应暂停期间重放旧完成事件，覆盖重复、乱序、无序号和空内容；每次都等待后端真实确认，再检查新轮、工作流和执行容量未被旧事件改变。代理只调度传输，模型服务之外的组件均保持真实；清理时释放模型、事务锁和代理连接。
+
 Linux Core 和 Cloud job 最多并行运行 4 个彼此隔离的 checkpoint，实际并发还受
 分片内 checkpoint 数量限制。每个 checkpoint 使用独立的数据库、Redis、端口和运行目录，
 Harness runtime 在分片启动前统一解压，因此不再因“重型运行时”或“协作”分组而全程串行。
@@ -188,6 +193,9 @@ Lint、单元测试、平台 E2E 和桌面 E2E 的汇总 job 使用 `always() &&
 输出，并通过原生 PageDown 返回。不能用一个 10 秒总期限限制多次翻页：并发 CI 中，
 控制链路延迟可能使循环在历史仍存在时提前停止。该情形由慢控制链路、滚动停滞及
 历史缺失的聚焦回归覆盖。
+`background-terminals` 在同一分片内先独占 runner，结束后其余 checkpoint 恢复
+既有并发。这样原生按键不与其他完整桌面环境争抢 CPU，同时复用准备流程，
+不新增 matrix job、不提高 10 秒单步超时，也不减少历史或原生输入断言。
 分片按 CI 实测耗时平衡；新增或明显变慢的 checkpoint
 必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。
 长场景按独立行为拆成 checkpoint，而不是只调整分片：
@@ -311,6 +319,8 @@ pnpm --filter wework e2e:desktop:plugins -- --from-segment skill-mention-renderi
 120 秒。控制命令和等待 helper 都可以通过 `timeoutMs` 为确实较慢的特殊步骤设置
 独立上限；启动、工作台恢复和模型协议矩阵等场景使用各自的专用超时。临时排查慢速
 环境时，可通过 `WEWORK_E2E_STEP_TIMEOUT_MS` 调整普通步骤的全局默认值。
+
+分身角色设置异步加载时，来源管理入口使用 `clickWhenEnabled` 等待控件就绪后再点击。Catalog 保存或恢复先通过共享 `waitForCatalogRestart` 处理真实重启确认，并验证写入之后的新 Codex 进程已提供模型目录，再断言编辑器关闭；IPC 请求返回成功不能代替重启完成。相关回归保留原来的 10 秒预算，不靠重跑或扩大超时绕过失败。
 
 首次模型路由任务与真实 Harness CLI 启动使用工作台启动预算；流式滚动先等待模型请求，再使用原有 10 秒预算校验界面。切换项目后等待执行模式按钮可用；看板卡片移列后先滚动到结果再校验可见性。云端分身复用自适应视图选择 helper，兼容紧凑下拉框。
 
@@ -636,6 +646,8 @@ const route = await app.route();
 
 ## CI 建议
 
+Backend Rust E2E 镜像同时包含 `wegent-backend-rs` 和 `attachment-s3-e2e`。生产者、桌面消费者及预热任务共享 `resolve-backend-rs-e2e-runtime.sh` 的 `v2` 镜像命名规则，哈希输入必须一致，并包含 Rust manifest、锁文件、源码、examples 和 `.github/runtime-images/backend-rs-e2e.Dockerfile`。镜像配方变化会生成新标签，不能复用只包含主程序的旧 `v1` 镜像。缓存命中仍必须恢复完整产物；构建、发布、恢复和上传的路径一致性由 CI 调用的 runtime handoff 单测验证，不以跳过缺失文件或临时回退掩盖缓存错误。
+
 平台 E2E 基础镜像 `docker/wework-e2e/browser.Dockerfile` 通过 `docker.io` 预装 Docker CLI，并在构建时执行 `docker --version`。各分片准备远程工作区 Executor 时直接使用镜像内的 CLI，不再运行 apt 更新和安装。Dockerfile 的内容哈希决定镜像标签，修改后 CI 会构建新镜像并在后续运行中复用。
 
 本地列表启动读取和手动刷新共享同一版本号。启动读取若已被后续刷新取代，必须在写入列表和发起云端同步之前一并退出，避免过期启动请求重新开启同步并覆盖已选择的本地项目。原任务发现 E2E 的执行模式和本地运行断言保持不变。
@@ -703,7 +715,7 @@ Linux 与 Windows Desktop Core E2E 共享分类器输出的同一份分片矩阵
 
 普通 Draft PR 不运行浏览器或桌面 E2E。merge queue 会在提交进入 `main` 之前运行
 完整浏览器以及 Linux、Windows 桌面 Core 套件；`main` 不再重复运行已经通过的
-合并队列检查。macOS 内存门禁仅在带有 `ci:memory` 或 `ci:all` 标签的非 Draft PR 中运行；
+合并队列检查。macOS 内存门禁仅在带有 `ci:all` 标签的非 Draft PR 中运行；
 普通 PR、定时任务和手动任务均不运行内存 E2E。
 workflow 每天 UTC 04:00 运行一次回归（不含内存 E2E）。添加 `ci:all` 标签则会运行浏览器、
 Linux 与 Windows 桌面以及 macOS 内存 E2E，即使 PR 的改动路径通常不会触发
