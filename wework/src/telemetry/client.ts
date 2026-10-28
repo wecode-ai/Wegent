@@ -570,8 +570,9 @@ function updateStandInCollectionBoundary(allow: boolean) {
     return
   }
   localStorage.removeItem(STAND_IN_COLLECTION_SINCE_KEY)
-  for (const key of Object.keys(localStorage)) {
-    if (key.startsWith('wework.stand-in-telemetry:public:')) localStorage.removeItem(key)
+  const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))
+  for (const key of keys) {
+    if (key?.startsWith('wework.stand-in-telemetry:public:')) localStorage.removeItem(key)
   }
 }
 

@@ -882,8 +882,10 @@ describe('durable public stand-in transport', () => {
     }
     localStorage.setItem('wework.stand-in-telemetry:public:old-account', 'pending')
     localStorage.setItem('wework.stand-in-telemetry:public:offline-device', 'pending')
+    localStorage.setItem('unrelated-preference', 'preserved')
     await setTelemetryEnabled(false)
     expect(localStorage.getItem('wework.stand-in-telemetry:public:old-account')).toBeNull()
     expect(localStorage.getItem('wework.stand-in-telemetry:public:offline-device')).toBeNull()
+    expect(localStorage.getItem('unrelated-preference')).toBe('preserved')
   })
 })
