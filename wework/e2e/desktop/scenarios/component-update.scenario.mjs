@@ -89,6 +89,14 @@ export async function createDesktopScenario({
           platform: target.platform,
           arch: target.arch,
           components,
+          upgradePolicy: {
+            schemaVersion: 1,
+            channel: packaged.channel,
+            platform: target.platform,
+            arch: target.arch,
+            releases: [],
+            edges: [],
+          },
         })
       )
       return
@@ -139,6 +147,7 @@ export async function createDesktopScenario({
         undefined,
         'Startup staged a same-version component update'
       )
+      const policyChecks = requests.filter(path => path.startsWith('/components-')).length
       if (process.platform === 'linux') {
         await assert.rejects(
           control.command('checkForAppUpdate', 'body'),
@@ -149,9 +158,9 @@ export async function createDesktopScenario({
         assert.equal(check, null, 'A same-version release must not be offered as an app update')
       }
       assert.equal(
-        requests.some(path => path.startsWith('/components-')),
-        false,
-        'Checking the app version independently fetched a component update'
+        requests.filter(path => path.startsWith('/components-')).length,
+        policyChecks + (process.platform === 'linux' ? 0 : 1),
+        'The app update check must read the verified policy from the existing manifest'
       )
       assert.equal(
         requests.includes(`/${assetName}`),
@@ -179,9 +188,9 @@ export async function createDesktopScenario({
         'Restart activated different code for the same app version'
       )
       assert.equal(
-        requests.some(path => path.startsWith('/components-')),
+        requests.includes(`/${assetName}`),
         false,
-        'Restart independently checked for component updates'
+        'Restart downloaded unversioned component code'
       )
       const appLog = await readFile(join(resultDir, 'app.log'), 'utf8')
       assert.doesNotMatch(appLog, /\[runtime\] startup failed/)
