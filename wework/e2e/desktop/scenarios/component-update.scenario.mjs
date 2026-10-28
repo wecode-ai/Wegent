@@ -6,6 +6,8 @@ import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 
 import { hashComponentPath } from '../../../scripts/lib/component-content-hash.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const MARKER_NAME = join('e2e-component-update', 'nested', 'marker.txt')
 
@@ -147,7 +149,20 @@ export async function createDesktopScenario({
         undefined,
         'Startup staged a same-version component update'
       )
-      const policyChecks = requests.filter(path => path.startsWith('/components-')).length
+      const countPolicyChecks = () =>
+        requests.filter(path => path.startsWith('/components-')).length
+      if (process.platform !== 'linux') {
+        // The provider checks automatically after startup, independently of the
+        // host command below. Establish that request before measuring the manual check.
+        await waitForValue(
+          countPolicyChecks,
+          count => count > 0,
+          'The startup app update check did not read the verified manifest',
+          DEFAULT_STEP_TIMEOUT_MS
+        )
+        assert.equal(countPolicyChecks(), 1, 'Startup must check the verified manifest once')
+      }
+      const policyChecks = countPolicyChecks()
       if (process.platform === 'linux') {
         await assert.rejects(
           control.command('checkForAppUpdate', 'body'),
@@ -158,7 +173,7 @@ export async function createDesktopScenario({
         assert.equal(check, null, 'A same-version release must not be offered as an app update')
       }
       assert.equal(
-        requests.filter(path => path.startsWith('/components-')).length,
+        countPolicyChecks(),
         policyChecks + (process.platform === 'linux' ? 0 : 1),
         'The app update check must read the verified policy from the existing manifest'
       )
