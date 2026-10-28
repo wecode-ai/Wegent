@@ -172,6 +172,7 @@ def _task_binding_metadata(
         "dispatch_id",
         "dispatch_round_id",
         "assignment_id",
+        "issue_assignment_id",
     ):
         value = getattr(values, key)
         if value:

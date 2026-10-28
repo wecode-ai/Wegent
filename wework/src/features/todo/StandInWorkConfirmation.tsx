@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useMemo } from 'react'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { requestUserInputPayloadKey } from '@/components/chat/requestUserInputMessages'
@@ -54,7 +55,7 @@ export function StandInWorkConfirmation({ address }: { address: RuntimeTaskAddre
     <div className="mt-5 min-w-0" data-testid="stand-in-work-confirmation">
       {session.transcriptError && (
         <div role="alert" className="mb-3 text-sm text-error">
-          <p>{session.transcriptError}</p>
+          <p>{getStandInErrorMessage(session.transcriptError)}</p>
           <button
             type="button"
             data-testid="stand-in-confirmation-retry"
@@ -82,7 +83,7 @@ export function StandInWorkConfirmation({ address }: { address: RuntimeTaskAddre
       )}
       {session.error && (
         <p role="alert" className="mt-3 text-sm text-error">
-          {session.error}
+          {getStandInErrorMessage(session.error)}
         </p>
       )}
     </div>

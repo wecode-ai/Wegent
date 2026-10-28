@@ -33,6 +33,7 @@ export function createDesktopScenario(options) {
         await control.command('waitFor', install, {
           timeoutMs: options.workbenchReadyTimeoutMs,
         })
+        // Refresh keeps the catalog visible while reconciliation blocks installs.
         await control.command('clickWhenEnabled', install)
         await control.command('waitFor', testId('plugin-install-unofficial-warning'))
         assert.equal(await accountPlugin(cloud, slug), undefined)
