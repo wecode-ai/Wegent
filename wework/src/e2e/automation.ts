@@ -3100,7 +3100,18 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!desktopControlElementEnabled(element)) {
         throw new Error(`Selector "${command.selector}" is disabled`)
       }
+      const startedAt = Date.now()
+      logRuntimeTaskCreateStage(
+        'desktop-control-click-started',
+        { commandId: command.id, selector: command.selector },
+        'debug'
+      )
       element.click()
+      logRuntimeTaskCreateStage(
+        'desktop-control-click-dispatched',
+        { commandId: command.id, elapsedMs: Date.now() - startedAt },
+        'debug'
+      )
       return element.textContent?.trim() ?? ''
     }
     case 'clickThenMacrotask': {

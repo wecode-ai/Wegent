@@ -76,6 +76,12 @@ uses Git's actual `link.exe`; macOS/Linux use a native conflicting program to sh
 
 ## Release promotion
 
+CI workspace dependency caches must also distinguish absolute checkout paths: pnpm records
+absolute project paths, so sharing host and container caches triggers reinstallation during service
+startup. Main-branch platform E2E jobs populate the container cache. Windows desktop shards consume
+packaged dependencies directly; native startup verification installs Electron separately. Parallel
+Rust tests use checked-in executable script fixtures to avoid `ETXTBSY` from inherited writer handles.
+
 `wework/upgrade-policy.json` declares the current target's floor and `sourceVersions`. The initial protocol release may have no incoming edges; subsequent releases must verify at least one. A source may remain fixed rather than tracking the immediately preceding release.
 
 Release jobs create complete portable packages, download declared immutable sources, and invoke the shared checkpoint runner for upgrade and rollback. Evidence binds both versions and package hashes, platform, architecture, suite version, and CI run. Merge only successful edges into the component manifest. Preserve historical edges and their intermediate artifacts. Changed artifacts require a new version and new verification.
