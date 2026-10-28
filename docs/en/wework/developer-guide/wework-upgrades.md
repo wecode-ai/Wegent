@@ -60,6 +60,20 @@ The existing `app-update-full` checkpoint shares the real-package scenario and r
 
 Upgrade edges explicitly record `fromSourceSha` and `toSourceSha`, each matching the delivered package metadata’s `sourceSha`; E2E results record both revisions. Missing or mismatched revisions block promotion, and clients also check the downloaded package revision. Diagnostic log failures must neither block preparation nor replace its original error. Before restoring data after a startup timeout, the native launcher must terminate the complete runtime tree, including writers in independent process groups.
 
+## Native launcher linker
+
+Packaging compiles the launcher through a direct `rustc` invocation, so it must explicitly translate
+the target's `CARGO_TARGET_<TARGET>_LINKER` environment variable into `-C linker=<path>`. Uppercase
+the target name and replace hyphens with underscores. For Windows x64, set
+`CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER` to the MSVC `link.exe` path. Direct `rustc` does not
+read this Cargo setting; configuring Cargo alone does not prevent name collisions in Git Bash.
+Without an explicit linker, preserve Rust's default selection. Invalid explicit settings fail the build.
+
+`node --test wework/scripts/build-launcher.test.mjs` compiles and starts the real launcher with
+Git `link.exe` first on PATH, and verifies that invalid linker settings are never ignored. Windows
+uses Git's actual `link.exe`; macOS/Linux use a native conflicting program to shadow the default
+`cc`. The upgrade E2E workflow runs this test on all three platforms.
+
 ## Release promotion
 
 `wework/upgrade-policy.json` declares the current target's floor and `sourceVersions`. The initial protocol release may have no incoming edges; subsequent releases must verify at least one. A source may remain fixed rather than tracking the immediately preceding release.

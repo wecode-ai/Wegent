@@ -71,6 +71,19 @@ runner 自动构建当前源码所需的独立 A/B 包。已有版本对时，�
 
 升级边显式记录 `fromSourceSha` 和 `toSourceSha`，必须分别匹配交付包元数据中的 `sourceSha`；E2E 结果同时记录这两个提交号。缺失或不匹配的提交号不能晋升，客户端还会校验下载包内的提交号。诊断日志写入失败仅输出诊断错误，不阻止实际准备，也不能覆盖准备失败的原始原因。原生启动器在超时恢复数据前必须终止完整运行时进程树，包括独立进程组中的写入进程。
 
+## 原生 launcher 的链接器
+
+打包脚本直接调用 `rustc` 编译 launcher，因此必须将目标对应的
+`CARGO_TARGET_<TARGET>_LINKER` 环境变量显式转换为 `-C linker=<path>`；其中目标名称转为大写，
+连字符替换为下划线。例如 Windows x64 使用
+`CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER`，其值应指向 MSVC 的 `link.exe`。
+直接调用 `rustc` 不会读取 Cargo 的这项配置；仅配置 Cargo 无法避免 Git Bash 中同名工具的冲突。
+未配置链接器时保留 Rust 的默认选择，显式配置无效时让构建失败。
+
+`node --test wework/scripts/build-launcher.test.mjs` 真实编译并启动 launcher，验证 PATH 中优先出现
+Git `link.exe` 时仍使用配置的链接器，并检查无效配置不会被忽略。Windows 使用 Git 自带的真实
+`link.exe`，macOS/Linux 使用原生冲突程序覆盖默认的 `cc`。升级 E2E 工作流在三个平台运行此测试。
+
 ## 发布版本对
 
 `wework/upgrade-policy.json` 维护本次目标的最低来源版本和希望开放的 `sourceVersions`。首次支持新协议的版本可以没有入边；之后发布必须声明并验证至少一条入边。来源可固定在某个已发布版本，不要求每次选择紧邻版本。
