@@ -3,23 +3,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Real HTTP gateway, JWT, MySQL Model lookup and LLM streaming regression.
-//! Only the external model service is simulated. Both slow cases run together
-//! against the unchanged production timeout policy, taking about 121 seconds.
+//! Only the external model service is simulated. Socket barriers establish both
+//! slow cases before virtual time advances against the production timeout policy.
 
 use anyhow::{Context as _, Result};
 use brz_mysql::MysqlService;
 use brz_redis::Redis as _;
 use serde_json::{Value, json};
-use std::{
-    path::Path,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{path::Path, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::{TcpListener, TcpStream},
-    sync::oneshot,
+    sync::{mpsc, oneshot},
     task::JoinHandle,
+    time::Instant,
 };
 use wegent_backend_rs::{
     Application, Gateway, HybridConfig, OriginService, RouteTable, auth::AppAuthenticator, bind,
@@ -209,8 +206,14 @@ pub(super) async fn model_request(stream: &mut TcpStream) -> String {
     }
 }
 
-/// Simulates only a model provider, delaying headers or an intermediate SSE event.
-async fn model_response(mut stream: TcpStream) {
+#[derive(Debug)]
+struct ModelGate {
+    before_headers: bool,
+    release: oneshot::Sender<()>,
+}
+
+/// Holds headers or the final event until the real client reaches the time barrier.
+async fn model_response(mut stream: TcpStream, ready: mpsc::UnboundedSender<ModelGate>) {
     let line = model_request(&mut stream).await;
     let before_headers = line == "post /v1/headers/responses http/1.1";
     assert!(before_headers || line == "post /v1/stream/responses http/1.1");
@@ -218,32 +221,51 @@ async fn model_response(mut stream: TcpStream) {
         "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
         FIRST_EVENT.len() + LAST_EVENT.len()
     );
-    if before_headers {
-        tokio::time::sleep(MODEL_DELAY).await;
-    }
-    stream.write_all(head.as_bytes()).await.unwrap();
-    stream.write_all(FIRST_EVENT).await.unwrap();
     if !before_headers {
-        tokio::time::sleep(MODEL_DELAY).await;
+        stream.write_all(head.as_bytes()).await.unwrap();
+        stream.write_all(FIRST_EVENT).await.unwrap();
+    }
+    let (release, released) = oneshot::channel();
+    ready
+        .send(ModelGate {
+            before_headers,
+            release,
+        })
+        .unwrap();
+    released
+        .await
+        .expect("model response released after the virtual delay");
+    if before_headers {
+        stream.write_all(head.as_bytes()).await.unwrap();
+        stream.write_all(FIRST_EVENT).await.unwrap();
     }
     stream.write_all(LAST_EVENT).await.unwrap();
 }
 
-/// Runs both independent provider connections concurrently, sharing one delay window.
-async fn start_model() -> (String, JoinHandle<()>) {
+/// Runs both real provider sockets and exposes their scheduling barriers.
+async fn start_model() -> (String, mpsc::UnboundedReceiver<ModelGate>, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
+    let (ready_tx, ready) = mpsc::unbounded_channel();
     let task = tokio::spawn(async move {
         let mut cases = tokio::task::JoinSet::new();
         for _ in 0..2 {
             let (stream, _) = listener.accept().await.unwrap();
-            cases.spawn(model_response(stream));
+            cases.spawn(model_response(stream, ready_tx.clone()));
         }
         while let Some(result) = cases.join_next().await {
             result.unwrap();
         }
     });
-    (url, task)
+    (url, ready, task)
+}
+
+/// Advances confirmed dependency waits, keeping real socket I/O on a resumed clock.
+pub(super) async fn advance_time(duration: Duration) {
+    tokio::time::pause();
+    tokio::time::advance(duration).await;
+    tokio::time::resume();
+    tokio::task::yield_now().await;
 }
 
 struct ProxyResult {
@@ -275,7 +297,12 @@ pub(super) fn proxy_builder(
 }
 
 /// Consumes the complete SSE stream through the public HTTP gateway, without retries.
-async fn proxy_request(http: &brz_http::Client, url: &str, mode: &str) -> Result<ProxyResult> {
+async fn proxy_request(
+    http: &brz_http::Client,
+    url: &str,
+    mode: &str,
+    mut first_event: Option<oneshot::Sender<()>>,
+) -> Result<ProxyResult> {
     let start = Instant::now();
     let mut response = proxy_builder(http, url, mode)?.send().await?;
     let status = response.status().as_u16();
@@ -291,6 +318,9 @@ async fn proxy_request(http: &brz_http::Client, url: &str, mode: &str) -> Result
         body.extend_from_slice(&chunk);
         if first_event_after.is_none() && body.len() >= FIRST_EVENT.len() {
             first_event_after = Some(start.elapsed());
+            if let Some(first_event) = first_event.take() {
+                first_event.send(()).unwrap();
+            }
         }
     }
     Ok(ProxyResult {
@@ -302,10 +332,55 @@ async fn proxy_request(http: &brz_http::Client, url: &str, mode: &str) -> Result
     })
 }
 
+/// Waits for both authenticated model requests and an end-to-end first SSE event.
+async fn model_barriers(
+    ready: &mut mpsc::UnboundedReceiver<ModelGate>,
+    first_event: oneshot::Receiver<()>,
+) -> [ModelGate; 2] {
+    let first = ready.recv().await.expect("first model request");
+    let second = ready.recv().await.expect("second model request");
+    assert_ne!(
+        first.before_headers, second.before_headers,
+        "both slow stages must be present"
+    );
+    first_event
+        .await
+        .expect("the first SSE event reached the client before advancing time");
+    [first, second]
+}
+
+/// Drives the actual proxy futures while establishing and releasing virtual-time barriers.
+async fn slow_requests(
+    http: &brz_http::Client,
+    url: &str,
+    ready: &mut mpsc::UnboundedReceiver<ModelGate>,
+) -> (Result<ProxyResult>, Result<ProxyResult>) {
+    let deadline = Instant::now() + TEST_BUDGET;
+    let (first_event, received) = oneshot::channel();
+    let headers = proxy_request(http, url, "headers", None);
+    let stream = proxy_request(http, url, "stream", Some(first_event));
+    tokio::pin!(headers, stream);
+    let gates = tokio::time::timeout_at(deadline, async {
+        tokio::select! {
+            result = &mut headers => panic!("headers completed before model release: {:?}", result.map(|reply| reply.status)),
+            result = &mut stream => panic!("stream completed before model release: {:?}", result.map(|reply| reply.status)),
+            gates = model_barriers(ready, received) => gates,
+        }
+    }).await.expect("real requests must reach both model barriers");
+    advance_time(MODEL_DELAY).await;
+    for gate in gates {
+        gate.release.send(()).unwrap();
+    }
+    tokio::time::timeout_at(deadline, async { tokio::join!(headers, stream) })
+        .await
+        .expect("both proxy requests must finish within the test budget")
+}
+
 /// Proves the production route survives both former 120s read-timeout failures.
 #[tokio::test]
 #[ignore = "requires disposable MySQL and Redis; invoked by Backend Rust CI"]
 async fn llm_proxy_slow_headers_and_streaming_http_e2e() {
+    let wall_start = std::time::Instant::now();
     for variable in ["DATABASE_URL", "REDIS_URL"] {
         let url = url::Url::parse(&std::env::var(variable).expect("explicit E2E URL")).unwrap();
         assert_eq!(
@@ -315,7 +390,7 @@ async fn llm_proxy_slow_headers_and_streaming_http_e2e() {
         );
     }
     let database = super::fixture::Fixture::new().await;
-    let (provider_url, mut provider) = start_model().await;
+    let (provider_url, mut ready, mut provider) = start_model().await;
     seed_models(&database.mysql, &provider_url).await;
     let app = HttpApp::start(database.mysql.clone()).await;
     let client = brz_http::Client::builder()
@@ -331,21 +406,13 @@ async fn llm_proxy_slow_headers_and_streaming_http_e2e() {
         .await
         .unwrap();
     assert_eq!(unauthenticated.status().as_u16(), 401);
-    let results = tokio::time::timeout(TEST_BUDGET, async {
-        tokio::join!(
-            proxy_request(&client, &app.url, "headers"),
-            proxy_request(&client, &app.url, "stream")
-        )
-    })
-    .await;
+    let (headers, stream) = slow_requests(&client, &app.url, &mut ready).await;
     let provider_result = tokio::time::timeout(Duration::from_secs(5), &mut provider).await;
     if provider_result.is_err() {
         provider.abort();
     }
     app.stop().await;
     database.close().await;
-    let (headers, stream) =
-        results.expect("both proxy requests must finish within the test budget");
     let headers = headers.context("delayed response headers failed").unwrap();
     let stream = stream.context("delayed stream chunk failed").unwrap();
     for (mode, result) in [("headers", &headers), ("stream", &stream)] {
@@ -366,7 +433,7 @@ async fn llm_proxy_slow_headers_and_streaming_http_e2e() {
             "the original timeout must be exceeded"
         );
         eprintln!(
-            "LLM proxy HTTP E2E: {mode}, status={}, elapsed={:?}, bytes={}",
+            "LLM proxy HTTP E2E: {mode}, status={}, virtual_elapsed={:?}, bytes={}",
             result.status,
             result.completed_after,
             result.body.len()
@@ -380,4 +447,8 @@ async fn llm_proxy_slow_headers_and_streaming_http_e2e() {
     provider_result
         .expect("model provider must handle both requests")
         .unwrap();
+    eprintln!(
+        "LLM proxy HTTP E2E: wall_elapsed={:?}",
+        wall_start.elapsed()
+    );
 }

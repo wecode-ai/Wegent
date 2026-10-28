@@ -9,7 +9,8 @@
 use super::{
     fixture::Fixture,
     llm_proxy_timeouts::{
-        FIRST_EVENT, HttpApp, LAST_EVENT, model_request, proxy_builder, seed_models,
+        FIRST_EVENT, HttpApp, LAST_EVENT, advance_time as advance, model_request, proxy_builder,
+        seed_models,
     },
 };
 use async_trait::async_trait;
@@ -245,14 +246,6 @@ impl ObservedRequest {
             .expect("production route must finish after its deadline")
             .unwrap()
     }
-}
-
-/// Advances only known dependency waits; real socket I/O runs with time resumed.
-async fn advance(duration: Duration) {
-    tokio::time::pause();
-    tokio::time::advance(duration).await;
-    tokio::time::resume();
-    tokio::task::yield_now().await;
 }
 
 #[tokio::test]
