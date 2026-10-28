@@ -4735,6 +4735,7 @@ fn codex_model_provider_validation_accepts_requested_provider() {
 
 #[test]
 fn turn_input_matches_shared_prompt_reference_cases() {
+    let _lock = crate::test_env::lock();
     let cases: Vec<Value> = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../packages/chat-core/test-fixtures/prompt-mentions.json"
