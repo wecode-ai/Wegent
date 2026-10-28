@@ -16,6 +16,7 @@ import { latestModelInputText } from './response-protocol.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
+  ACTIVE_SEND_BUTTON_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   BACKGROUND_GUIDANCE,
   BACKGROUND_GUIDANCE_CONTINUATION,
@@ -107,7 +108,16 @@ async function waitForLastElementAbove(control, selector, top, description) {
 async function sendPrompt(control, selector, prompt) {
   await waitForActiveTaskIdle(control)
   await control.command('fill', selector, { value: prompt })
+  await waitForPromptSendReady(control)
   await control.command('press', selector, { key: 'Enter' })
+}
+
+async function waitForPromptSendReady(control) {
+  await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
+    enabled: true,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function sendPromptWithButton(
@@ -124,11 +134,7 @@ async function sendPromptWithButton(
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs,
   })
-  await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
-    { enabled: true, visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-  )
+  await waitForPromptSendReady(control)
   await control.command('press', selector, { key: 'Enter', timeoutMs })
   if (confirmCloudModelCatalogSync) {
     await control.command('waitFor', '[data-testid="cloud-model-catalog-sync-dialog"]', {

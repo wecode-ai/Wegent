@@ -3,6 +3,28 @@ use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
 #[tokio::test]
+async fn stand_in_entry_futures_leave_room_on_windows_worker_stacks() {
+    let handler = RuntimeWorkRpcHandler::new("measurement", "unused");
+    fn future_size<F: Future>(_: impl FnOnce() -> F) -> usize {
+        std::mem::size_of::<F>()
+    }
+    // Match Clippy's large-future boundary before nested polling amplifies it.
+    for (entry, bytes) in [
+        ("manual", future_size(|| handler.run_stand_in(json!({})))),
+        (
+            "assignment",
+            future_size(|| handler.handle_stand_in_assignment(json!({}))),
+        ),
+        ("scheduler", future_size(|| handler.poll_local_stand_ins())),
+    ] {
+        assert!(
+            bytes < 16 * 1024,
+            "{entry} future uses {bytes} inline bytes"
+        );
+    }
+}
+
+#[tokio::test]
 async fn omitted_manual_identity_uses_a_connected_role_and_rejects_no_connection() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
