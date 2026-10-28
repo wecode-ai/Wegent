@@ -1335,8 +1335,8 @@ wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","co
 wework_desktop_macos_inspector_e2e=true'
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,resilience,project-member-overrides/\"segments\":\"project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides}"
 full_desktop_expected="${full_desktop_expected/collaboration-issue-comment-attachments,reply-predictions/collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions}"
-full_desktop_expected="${full_desktop_expected/model-settings,tray-lifecycle/model-settings,tray-lifecycle,mcp-apps}"
-full_desktop_expected="${full_desktop_expected/\"segments\":\"collaboration-shared-core\"/\"segments\":\"collaboration-shared-core,runtime-input-answer-persistence\"}"
+full_desktop_expected="${full_desktop_expected/model-settings,tray-lifecycle,window-lifecycle/model-settings,tray-lifecycle,window-lifecycle,mcp-apps}"
+full_desktop_expected="${full_desktop_expected/collaboration-shared-core,runtime-input-answer-persistence,permission-modes/collaboration-shared-core,runtime-input-answer-persistence,permission-modes,telemetry-identity}"
 
 assert_desktop_case "latest conversation history runs its desktop regression" \
   'wework_desktop_e2e=true
