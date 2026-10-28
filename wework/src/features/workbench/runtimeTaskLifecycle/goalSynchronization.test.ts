@@ -85,6 +85,85 @@ test('updates conversation content from an inactive pane without writing task li
   expect(store.getTask(address)?.goalStatus).toBe('blocked')
 })
 
+test('replaces a millisecond optimistic Goal with a same-second native blocked Goal', () => {
+  const store = new RuntimeTaskLifecycleStore('goal-sync-pending')
+  const startedAt = 1_792_770_994_048
+  const nativeTimestamp = Math.floor(startedAt / 1000) * 1000
+  syncRuntimeGoal(store, address, {
+    ...goal,
+    threadId: 'pending',
+    createdAt: startedAt,
+    updatedAt: startedAt,
+  })
+  const nativeGoal: RuntimeGoal = {
+    ...goal,
+    createdAt: nativeTimestamp,
+    updatedAt: nativeTimestamp,
+  }
+  syncRuntimeGoal(store, address, nativeGoal)
+  const blockedGoal: RuntimeGoal = { ...nativeGoal, status: 'blocked' }
+
+  const accepted = syncRuntimeGoal(store, address, blockedGoal)
+
+  expect(accepted).toEqual(blockedGoal)
+  expect(getRuntimeConversationMetadata(address).goal).toEqual(blockedGoal)
+  expect(store.getTask(address)?.goalStatus).toBe('blocked')
+})
+
+test.each(['active', 'blocked', 'paused', 'complete'] as const)(
+  'accepts the first authoritative %s Goal without requiring an active event first',
+  status => {
+    const store = new RuntimeTaskLifecycleStore('goal-sync-authority')
+    const createdAt = 1_792_770_994_048
+    syncRuntimeGoal(store, address, {
+      ...goal,
+      threadId: 'pending',
+      createdAt,
+      updatedAt: createdAt,
+    })
+    const nativeGoal: RuntimeGoal = {
+      ...goal,
+      status,
+      createdAt: 1_792_770_994_000,
+      updatedAt: 1_792_770_994_000,
+    }
+
+    expect(syncRuntimeGoal(store, address, nativeGoal)).toEqual(nativeGoal)
+    expect(store.getTask(address)?.goalStatus).toBe(status)
+
+    const staleGoal: RuntimeGoal = { ...nativeGoal, status: 'active', updatedAt: createdAt - 1000 }
+    expect(syncRuntimeGoal(store, address, staleGoal)).toEqual(nativeGoal)
+    expect(store.getTask(address)?.goalStatus).toBe(status)
+  }
+)
+
+test.each(['creation', 'objective', 'budget'] as const)(
+  'does not replace a newer optimistic Goal with a mismatched native %s',
+  mismatch => {
+    const store = new RuntimeTaskLifecycleStore('goal-sync-other-goal')
+    const createdAt = 1_792_770_994_048
+    const pendingGoal: RuntimeGoal = {
+      ...goal,
+      threadId: 'pending',
+      createdAt,
+      updatedAt: createdAt,
+    }
+    const nativeGoal: RuntimeGoal = {
+      ...goal,
+      status: 'complete',
+      createdAt: 1_792_770_994_000,
+      updatedAt: 1_792_770_994_000,
+      ...(mismatch === 'creation' ? { createdAt: 1_792_770_993_000 } : {}),
+      ...(mismatch === 'objective' ? { objective: 'An earlier objective' } : {}),
+      ...(mismatch === 'budget' ? { tokenBudget: 1000 } : {}),
+    }
+    syncRuntimeGoal(store, address, pendingGoal)
+
+    expect(syncRuntimeGoal(store, address, nativeGoal)).toEqual(pendingGoal)
+    expect(store.getTask(address)?.goalStatus).toBe('active')
+  }
+)
+
 test('replaces the pending Goal clock with the native Goal before projecting lifecycle', () => {
   const store = new RuntimeTaskLifecycleStore('goal-sync-pending')
   const nativeGoal = { ...goal, createdAt: 1792759113000, updatedAt: 1792759113000 }

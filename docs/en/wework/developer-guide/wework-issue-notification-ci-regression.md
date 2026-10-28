@@ -64,6 +64,41 @@ or human submission permission changes are introduced.
 
 ## QA plan
 
+### Observing the transient highlight
+
+PR #3947 Core shard 8 read `animation-name=none` after waiting for the comment to
+settle. The scenario waited for the detail and comment to remain stable for 400 ms
+each before querying a two-second animation. A busy runner can consume that
+observation window. The scenario now reuses renderer frame sampling before
+navigation to retain the exact comment selector's `animationName`, then checks the
+record after landing. It does not extend the animation or wait budgets.
+Each navigation rejects an existing highlight and retains its own frame evidence.
+A missing target animation, another comment's animation, failed navigation, or a
+highlight beyond the original eight-second budget still fails. The six-second
+landing budget, reload, link opening, and persisted-read checks remain intact;
+product highlight behavior is unchanged.
+
+Focused tests cover expired animation records, exact comment ownership, and
+failure cleanup. Real Electron continues to run the existing
+`collaboration-issue-comment-notification` checkpoint in Core CI.
+
+### Local push-gate resource isolation
+
+Memory-constrained hosts can set
+`WEWORK_PRE_PUSH_RENDERER_SHARD_CONCURRENCY=1` to run the original complete
+`1/2` and `2/2` renderer shards serially. The default still runs both concurrently;
+`WEWORK_PRE_PUSH_TEST_WORKERS` continues to control workers per shard.
+All files, timeouts, and failure propagation remain intact, and a failed first
+shard still runs the second. Invalid concurrency values explicitly block the push.
+Gate regressions cover non-overlap, complete coverage, and failure propagation.
+
+The visible activity cursor unit test waits for loaded comments and drives the
+real scrolling hook with controlled animation frames. It no longer depends on
+the host scheduling `requestAnimationFrame` promptly. No read may occur before
+the frame; afterward only visible sequence 2 may be acknowledged, never offscreen
+sequence 3, with the original parent callback checks retained. Product scrolling
+and presentation behavior remain unchanged.
+
 Environment: isolated Electron with real Backend, Socket.IO and devices; only
 model services use the scenario's test service. Focused local Vitest checks run
 before submission; existing GitHub Core shards provide desktop validation.

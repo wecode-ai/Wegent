@@ -386,15 +386,23 @@ async fn public_contexts_by_subtask(
     for row in rows {
         let context = ContextRow::from_mysql_row(row).map_err(internal)?;
         let subtask_id = context.subtask_contexts_subtask_id;
-        contexts.push((subtask_id, public_context(context)));
+        if let Some(context) = public_context(context) {
+            contexts.push((subtask_id, context));
+        }
     }
     Ok(contexts)
 }
 
 /// The `ctx_dict` + `build_context_display_fields` projection of one context.
-fn public_context(context: ContextRow) -> PublicContextData {
+fn public_context(context: ContextRow) -> Option<PublicContextData> {
+    if matches!(
+        context.subtask_contexts_context_type.as_str(),
+        "knowledge_base" | "remote_workspace_artifact"
+    ) {
+        return None;
+    }
     let brief = context_brief(&context);
-    PublicContextData {
+    Some(PublicContextData {
         id: context.subtask_contexts_id,
         context_type: context.subtask_contexts_context_type.clone(),
         name: context.subtask_contexts_name.clone().unwrap_or_default(),
@@ -412,7 +420,7 @@ fn public_context(context: ContextRow) -> PublicContextData {
         external_document_id: opt_field(&brief.external_document_id),
         external_parent_id: opt_field(&brief.external_parent_id),
         ..PublicContextData::default()
-    }
+    })
 }
 
 /// A non-null `RawJson` display field as an opaque value (`null` stays absent).
@@ -728,6 +736,28 @@ fn internal(error: impl std::fmt::Display) -> FastApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_projection_excludes_private_runtime_contexts() {
+        for context_type in ["remote_workspace_artifact", "knowledge_base", "attachment"] {
+            let context = ContextRow {
+                subtask_contexts_id: 1,
+                subtask_contexts_subtask_id: 2,
+                subtask_contexts_context_type: context_type.to_owned(),
+                subtask_contexts_name: Some("report.pdf".to_owned()),
+                subtask_contexts_status: Some("ready".to_owned()),
+                subtask_contexts_type_data: None,
+            };
+
+            let payload = serde_json::to_value(public_context(context)).unwrap();
+
+            if context_type == "attachment" {
+                assert_eq!(payload["context_type"], "attachment");
+            } else {
+                assert!(payload.is_null(), "private context exposed: {context_type}");
+            }
+        }
+    }
 
     /// `is_active_query()` is `[STATE_ACTIVE, STATE_SUBSCRIPTION]`, so the
     /// public-share task read filters `IN (1, 2)` — unlike the single-state

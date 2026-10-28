@@ -248,6 +248,7 @@ export type Event =
       sources?: UnifiedMessage['sources']
       hasError?: boolean
       errorMessage?: string
+      contexts?: UnifiedMessage['contexts']
     }
   | {
       type: 'CHAT_BLOCK_UPDATED'

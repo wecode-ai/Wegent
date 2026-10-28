@@ -134,7 +134,7 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
     assert.equal(calls.filter(call => call.action === 'dragBy').length, 1)
     assert.equal(captures.length, 3)
     const dayWaits = calls.filter(
-      call => call.action === 'waitFor' && call.selector.includes('collaboration-calendar-day-')
+      call => call.action === 'waitFor' && /collaboration-calendar-day-\d{4}/.test(call.selector)
     )
     assert.deepEqual(
       dayWaits.map(call => call.selector),

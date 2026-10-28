@@ -173,7 +173,7 @@ export function buildMessagesFromSubtasks({
         subtaskId: subtask.id,
         messageId: subtask.message_id,
         attachments: subtask.attachments,
-        contexts: subtask.contexts,
+        contexts: subtask.contexts ?? existingAiMessage?.contexts,
         botName: subtask.bots?.[0]?.name || teamName,
         subtaskStatus: subtask.status,
         result: runningResult,
@@ -198,6 +198,7 @@ export function buildMessagesFromSubtasks({
 
       messages.set(messageId, {
         ...existingSnapshotMessage,
+        contexts: subtask.contexts ?? existingSnapshotMessage.contexts,
         status: nextStatus,
         content:
           backendContent.length > existingSnapshotMessage.content.length
