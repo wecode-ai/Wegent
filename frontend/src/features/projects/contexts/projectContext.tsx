@@ -44,6 +44,7 @@ interface ProjectContextValue {
   removeTaskFromProject: (projectId: number, taskId: number) => Promise<boolean>
   projectTaskPages: Record<number, ProjectTaskPageState>
   loadProjectTasks: (projectId: number, loadMore?: boolean) => Promise<void>
+  loadAllProjectTasks: (projectId: number) => Promise<void>
 
   // UI state
   toggleProjectExpanded: (projectId: number) => void
@@ -102,8 +103,13 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     },
     []
   )
-  const { projectTaskPages, loadProjectTasks, resetProjectTasks, refreshProjectTaskHead } =
-    useProjectTaskPages(accountKey, projectsRef, updateProjects)
+  const {
+    projectTaskPages,
+    loadProjectTasks,
+    loadAllProjectTasks,
+    resetProjectTasks,
+    refreshProjectTaskHead,
+  } = useProjectTaskPages(accountKey, projectsRef, updateProjects)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expandedProjects, setExpandedProjects] = useState<Set<number>>(new Set())
@@ -535,6 +541,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     removeTaskFromProject,
     projectTaskPages,
     loadProjectTasks,
+    loadAllProjectTasks,
     toggleProjectExpanded,
     expandedProjects,
     isProjectSectionCollapsed,

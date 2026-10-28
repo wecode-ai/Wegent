@@ -200,6 +200,13 @@ jobs:
           cargo test --locked --lib attachments_task_all::auth::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/attachment-auth-mysql.log
 
+      - name: Verify handoff title search with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib tasks_search::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/tasks-search-mysql.log
+
       - name: Verify Responses HTTP E2E with large JSON and long conversations
         working-directory: backend-rs
         env:
@@ -267,6 +274,21 @@ jobs:
           PLUGIN_AUTH_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
           PLUGIN_AUTH_REDIS_TEST_URL: redis://127.0.0.1:6379/15
         run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py integration_checks/test_plugin_write_races_mysql.py integration_checks/test_plugin_connection_requests_mysql.py integration_checks/test_plugin_policy_bootstrap_mysql.py -n 0
+
+      - name: Verify MCP OAuth refresh and authorization races with InnoDB and Redis
+        working-directory: backend
+        env:
+          MCP_OAUTH_TEST_MYSQL_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
+          MCP_OAUTH_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+        run: uv run pytest integration_checks/test_user_mcp_oauth_mysql.py -n 0 --junitxml=reports/mcp-oauth-mysql.xml
+
+      - name: Upload MCP OAuth concurrency results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-oauth-mysql-results
+          path: backend/reports/mcp-oauth-mysql.xml
+          if-no-files-found: error
 
       - name: Verify namespace grants with MySQL connection collations
         working-directory: backend

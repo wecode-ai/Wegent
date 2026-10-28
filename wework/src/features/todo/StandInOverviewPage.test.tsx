@@ -118,18 +118,33 @@ it('keeps the active conversation mounted while settings reload', async () => {
   const { props } = fixture()
   const api = props.services.standInApi!
   const settings = await api.personalGet(7, 'device')
+  let resolveInitial!: (value: typeof settings) => void
+  const initial = new Promise<typeof settings>(done => {
+    resolveInitial = done
+  })
   let resolve!: (value: typeof settings) => void
   const pending = new Promise<typeof settings>(done => {
     resolve = done
   })
+  vi.mocked(api.personalGet).mockReturnValueOnce(initial)
   render(<StandInOverviewPage {...props} />)
-  const conversation = await screen.findByTestId('identity-conversation')
-  vi.mocked(api.personalGet).mockReturnValueOnce(pending)
-  act(() => publishPersonalStandIn(settings))
-  await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
-  expect(screen.getByTestId('identity-conversation')).toBe(conversation)
-  await act(async () => resolve(settings))
-  expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+  try {
+    await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(2))
+    // Settle initialization and its device-scoped subscription before reloading.
+    await act(async () => resolveInitial(settings))
+    const conversation = await screen.findByTestId('identity-conversation')
+    vi.mocked(api.personalGet).mockReturnValueOnce(pending)
+    act(() => publishPersonalStandIn(settings))
+    await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
+    expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+    await act(async () => resolve(settings))
+    expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+  } finally {
+    await act(async () => {
+      resolveInitial(settings)
+      resolve(settings)
+    })
+  }
 })
 
 it('hides empty message associations while preserving existing execution history', async () => {

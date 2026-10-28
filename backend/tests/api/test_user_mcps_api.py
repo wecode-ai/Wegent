@@ -21,6 +21,11 @@ from shared.utils.crypto import is_data_encrypted
 
 
 @pytest.fixture
+def test_db(mcp_test_db: Session) -> Session:
+    return mcp_test_db
+
+
+@pytest.fixture
 def user_mcps_client(test_db: Session, test_user: User) -> TestClient:
     """Create a focused test client for user MCP endpoints."""
 
