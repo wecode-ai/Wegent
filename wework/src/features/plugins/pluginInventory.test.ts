@@ -84,14 +84,20 @@ describe('installed-only management refresh', () => {
   })
 
   test('publishes cold local rows first, then resolves cloud membership for the actual device once', async () => {
+    const local = deferred<{ items: InstalledPlugin[]; deviceId: string }>()
     const cloud = deferred<{ items: InstalledPlugin[] }>()
+    const readLocal = vi.fn(() => local.promise)
     const readCloud = vi.fn(() => cloud.promise)
     const refresh = refreshInstalledPluginInventory({
       cacheKey: 'test',
-      readLocal: async () => ({ items: [dingtalk], deviceId: 'device' }),
+      readLocal,
       readCloud,
       isCurrent: () => true,
     })
+    await vi.waitFor(() => expect(readLocal).toHaveBeenCalled())
+    expect(readCloud).not.toHaveBeenCalled()
+    expect(getPluginMarketplaceCache('test')).toBeNull()
+    local.resolve({ items: [dingtalk], deviceId: 'device' })
     await vi.waitFor(() => expect(readCloud).toHaveBeenCalledWith('device'))
     expect(getPluginMarketplaceCache('test')?.installedPlugins).toHaveLength(1)
     expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBeUndefined()
@@ -100,6 +106,137 @@ describe('installed-only management refresh', () => {
     expect(readCloud).toHaveBeenCalledTimes(1)
     expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBeGreaterThan(0)
   })
+
+  test.each(['cloud', 'local'] as const)(
+    'publishes the first known-device %s result without claiming complete inventory',
+    async first => {
+      const personal: InstalledPlugin = {
+        ...dingtalk,
+        metadata: { ...dingtalk.metadata, name: 'personal', labels: { id: 'personal' } },
+        spec: {
+          ...dingtalk.spec,
+          pluginId: null,
+          origin: 'created',
+          source: { ...dingtalk.spec.source, type: 'local', pluginKey: 'personal' },
+        },
+      }
+      const local = deferred<{ items: InstalledPlugin[]; deviceId: string }>()
+      const cloud = deferred<{ items: InstalledPlugin[] }>()
+      const readCloud = vi.fn(() => cloud.promise)
+      const refresh = refreshInstalledPluginInventory({
+        cacheKey: 'test',
+        deviceId: 'device',
+        readLocal: () => local.promise,
+        readCloud,
+        isCurrent: () => true,
+      })
+      if (first === 'cloud') cloud.resolve({ items: [dingtalk] })
+      else local.resolve({ items: [personal], deviceId: 'device' })
+      await vi.waitFor(() =>
+        expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([
+          first === 'cloud' ? dingtalk : personal,
+        ])
+      )
+      expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBeUndefined()
+
+      if (first === 'cloud') local.resolve({ items: [personal], deviceId: 'device' })
+      else cloud.resolve({ items: [dingtalk] })
+      await refresh
+
+      expect(readCloud).toHaveBeenCalledExactlyOnceWith('device')
+      expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([dingtalk, personal])
+      expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBeGreaterThan(0)
+    }
+  )
+
+  test.each([false, true])(
+    'accepts a successful cloud source while preserving pending local rows and enrichment (empty: %s)',
+    async empty => {
+      const personal: InstalledPlugin = {
+        ...dingtalk,
+        metadata: { ...dingtalk.metadata, name: 'personal', labels: { id: 'personal' } },
+        spec: {
+          ...dingtalk.spec,
+          pluginId: null,
+          origin: 'created',
+          source: { ...dingtalk.spec.source, type: 'local', pluginKey: 'personal' },
+        },
+      }
+      const updated = { ...dingtalk, spec: { ...dingtalk.spec, description: 'Fresh cloud data' } }
+      const cloudItems = empty ? [] : [updated]
+      writePluginInventory('test', 'device', {
+        installedPlugins: [dingtalk, personal],
+        installedPluginsFetchedAt: 123,
+      })
+      const local = deferred<{ items: InstalledPlugin[]; deviceId: string }>()
+      const refresh = refreshInstalledPluginInventory({
+        cacheKey: 'test',
+        deviceId: 'device',
+        readLocal: () => local.promise,
+        readCloud: async () => ({ items: cloudItems }),
+        isCurrent: () => true,
+      })
+      await vi.waitFor(() =>
+        expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([
+          ...cloudItems,
+          personal,
+        ])
+      )
+      expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBe(123)
+      const enriched = {
+        ...personal,
+        spec: { ...personal.spec, interface: { logo: 'data:image/png;base64,fresh' } },
+      }
+      writePluginInventory('test', 'device', { installedPlugins: [...cloudItems, enriched] })
+      local.reject(new Error('Local unavailable'))
+
+      await expect(refresh).rejects.toThrow('Local unavailable')
+      expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([...cloudItems, enriched])
+      expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBe(123)
+    }
+  )
+
+  test.each([false, true])(
+    'accepts fresh warm local membership while preserving a pending cloud source (empty: %s)',
+    async empty => {
+      const personal: InstalledPlugin = {
+        ...dingtalk,
+        metadata: { ...dingtalk.metadata, name: 'personal', labels: { id: 'personal' } },
+        spec: {
+          ...dingtalk.spec,
+          pluginId: null,
+          origin: 'created',
+          source: { ...dingtalk.spec.source, type: 'local', pluginKey: 'personal' },
+        },
+      }
+      const updated = { ...personal, spec: { ...personal.spec, description: 'Fresh local data' } }
+      const localItems = empty ? [] : [updated]
+      writePluginInventory('test', 'device', {
+        installedPlugins: [dingtalk, personal],
+        installedPluginsFetchedAt: 123,
+      })
+      const cloud = deferred<{ items: InstalledPlugin[] }>()
+      const refresh = refreshInstalledPluginInventory({
+        cacheKey: 'test',
+        deviceId: 'device',
+        readLocal: async () => ({ items: localItems, deviceId: 'device' }),
+        readCloud: () => cloud.promise,
+        isCurrent: () => true,
+      })
+      await vi.waitFor(() =>
+        expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([
+          dingtalk,
+          ...localItems,
+        ])
+      )
+      expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBe(123)
+      cloud.resolve({ items: [] })
+      await refresh
+
+      expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual(localItems)
+      expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBeGreaterThan(123)
+    }
+  )
 
   test('persists a complete empty inventory without introducing another cache', async () => {
     await refreshInstalledPluginInventory({
@@ -218,6 +355,7 @@ describe('installed-only management refresh', () => {
     await expect(
       refreshInstalledPluginInventory({
         cacheKey: 'test',
+        deviceId: 'device',
         // The local API already retained the failed source and cleared the successful source.
         readLocal: async () => ({ items: [retained], deviceId: 'device', partial: true }),
         readCloud: async () => ({ items: [] }),
@@ -315,6 +453,34 @@ describe('installed-only management refresh', () => {
     expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([])
   })
 
+  test('publishes known-device cloud rows before rejecting a different local device', async () => {
+    writePluginInventory('test', 'old-device', { installedPlugins: [dingtalk] })
+    const local = deferred<{ items: InstalledPlugin[]; deviceId: string }>()
+    const updated = {
+      ...dingtalk,
+      metadata: { ...dingtalk.metadata, name: 'new-device-plugin', labels: { id: '63' } },
+      spec: { ...dingtalk.spec, pluginId: 2 },
+    }
+    const readCloud = vi.fn().mockResolvedValue({ items: [updated] })
+    const refresh = refreshInstalledPluginInventory({
+      cacheKey: 'test',
+      deviceId: 'new-device',
+      readLocal: () => local.promise,
+      readCloud,
+      isCurrent: () => true,
+    })
+    await vi.waitFor(() =>
+      expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([updated])
+    )
+    expect(getPluginMarketplaceCache('test')?.deviceId).toBe('new-device')
+    expect(getPluginMarketplaceCache('test')?.installedPluginsFetchedAt).toBeUndefined()
+    local.resolve({ items: [dingtalk], deviceId: 'old-device' })
+
+    await expect(refresh).rejects.toThrow('Local plugin device changed')
+    expect(readCloud).toHaveBeenCalledExactlyOnceWith('new-device')
+    expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([updated])
+  })
+
   test('treats malformed local membership as a source failure and still reads cloud rows', async () => {
     await expect(
       refreshInstalledPluginInventory({
@@ -372,33 +538,58 @@ describe('installed-only management refresh', () => {
     expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([updated])
   })
 
-  test.each(['mutation', 'refresh', 'device', 'unmount'] as const)(
-    'does not overwrite a newer %s while cloud membership is pending',
-    async change => {
-      const cloud = deferred<{ items: InstalledPlugin[] }>()
-      const readCloud = vi.fn(() => cloud.promise)
-      let current = true
-      const refresh = refreshInstalledPluginInventory({
-        cacheKey: 'test',
-        readLocal: async () => ({ items: [dingtalk], deviceId: 'device' }),
-        readCloud,
-        isCurrent: () => current,
+  test.each(
+    (['cloud', 'local'] as const).flatMap(first =>
+      (['install', 'uninstall', 'mutation', 'refresh', 'device', 'unmount'] as const).map(
+        change => [first, change] as const
+      )
+    )
+  )('ignores late inventory after %s publishes first and a newer %s', async (first, change) => {
+    const local = deferred<{ items: InstalledPlugin[]; deviceId: string }>()
+    const cloud = deferred<{ items: InstalledPlugin[] }>()
+    const readCloud = vi.fn(() => cloud.promise)
+    let current = true
+    const refresh = refreshInstalledPluginInventory({
+      cacheKey: 'test',
+      deviceId: 'device',
+      readLocal: () => local.promise,
+      readCloud,
+      isCurrent: () => current,
+    })
+    if (first === 'cloud') cloud.resolve({ items: [dingtalk] })
+    else local.resolve({ items: [dingtalk], deviceId: 'device' })
+    await vi.waitFor(() =>
+      expect(getPluginMarketplaceCache('test')?.installedPlugins).toEqual([dingtalk])
+    )
+    if (change === 'unmount') current = false
+    else if (change === 'install')
+      commitPluginInventoryInstallation('test', 'device', {
+        ...dingtalk,
+        metadata: { ...dingtalk.metadata, name: 'new-install', labels: { id: '63' } },
+        spec: { ...dingtalk.spec, pluginId: 2 },
       })
-      await vi.waitFor(() => expect(readCloud).toHaveBeenCalled())
-      if (change === 'unmount') current = false
-      else
-        writePluginInventory(
-          'test',
-          change === 'device' ? 'other-device' : 'device',
-          { installedPlugins: [] },
-          { mutation: change === 'mutation' }
-        )
-      const expected = getPluginMarketplaceCache('test')
-      cloud.resolve({ items: [dingtalk] })
-      await refresh
-      expect(getPluginMarketplaceCache('test')).toBe(expected)
-    }
-  )
+    else if (change === 'uninstall')
+      removePluginMarketplaceInstallation('test', {
+        installedIds: ['62'],
+        marketplaceItemIds: [],
+        pluginKeys: ['dingtalk'],
+      })
+    else
+      writePluginInventory(
+        'test',
+        change === 'device' ? 'other-device' : 'device',
+        {
+          installedPlugins: [dingtalk],
+          ...(change === 'refresh' ? { installedPluginsFetchedAt: 123 } : {}),
+        },
+        { mutation: change === 'mutation' }
+      )
+    const expected = getPluginMarketplaceCache('test')
+    if (first === 'cloud') local.resolve({ items: [dingtalk], deviceId: 'device' })
+    else cloud.resolve({ items: [dingtalk] })
+    await refresh
+    expect(getPluginMarketplaceCache('test')).toBe(expected)
+  })
 
   test('does not publish a late local response after a confirmed installation', async () => {
     const local = deferred<{ items: InstalledPlugin[]; deviceId: string }>()

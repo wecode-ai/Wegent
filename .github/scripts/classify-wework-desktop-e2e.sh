@@ -195,8 +195,6 @@ cloud_segments=(
   plugin-uninstall-unknown-result
   plugin-uninstall-restart-recovery
   plugin-uninstall-reinstall-race
-  plugin-catalog-boundaries
-  plugin-operation-boundaries
   plugin-write-coordination
   plugin-registration-coordination
   plugin-account-auth-coordination
@@ -222,8 +220,6 @@ cloud_shards=(
   plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth
   plugin-composer-long-list,plugin-collaboration-composer-isolation,plugin-runtime-route-refresh,plugin-background-sync-isolation,plugin-periodic-reconcile
   plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github
-  plugin-catalog-boundaries
-  plugin-operation-boundaries
 )
 # Run 39930854745: eight ordinary Core shards predict 323-332 seconds.
 # Co-locate CLI and Electron preparation; keep the two latency benchmarks exclusive.
@@ -391,8 +387,6 @@ select_uninstall_checkpoints() {
   select_target "cloud:plugin-write-coordination"
   select_target "cloud:plugin-registration-coordination"
   select_target "cloud:plugin-account-auth-coordination"
-  select_target "cloud:plugin-catalog-boundaries"
-  select_target "cloud:plugin-operation-boundaries"
 }
 
 select_plugin_sync_checkpoints() {
@@ -1056,7 +1050,6 @@ classify_wework_path() {
       select_target "core:collaboration-issue-mcp-comments"
       select_target "core:collaboration-delivery-editing"
       select_target "cloud:plugin-write-coordination"
-      select_target "cloud:plugin-operation-boundaries"
       select_target "cloud:plugin-runtime-route-refresh"
       select_target "cloud:plugin-background-sync-isolation"
       select_target "cloud:plugin-periodic-reconcile"
@@ -1621,11 +1614,16 @@ classify_path() {
       wework/e2e/desktop/modules/plugin-scope-boundaries.mjs | \
       wework/e2e/desktop/modules/plugin-detail-resilience.mjs | \
       wework/e2e/desktop/modules/plugin-partial-inventory-resilience.mjs)
-      select_target "cloud:plugin-catalog-boundaries"
+      select_target "cloud:plugin-uninstall-lost-response"
       return
       ;;
     wework/e2e/desktop/modules/plugin-install-update-resilience.mjs)
-      select_target "cloud:plugin-operation-boundaries"
+      select_target "cloud:plugin-write-coordination"
+      return
+      ;;
+    wework/scripts/plugin-resilience-checkpoints.test.mjs)
+      select_target "cloud:plugin-uninstall-lost-response"
+      select_target "cloud:plugin-write-coordination"
       return
       ;;
     wework/e2e/desktop/scenarios/plugin-uninstall-resilience.scenario.mjs | \

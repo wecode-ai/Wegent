@@ -61,8 +61,6 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-uninstall-unknown-result': './scenarios/plugin-uninstall-resilience.scenario.mjs',
   'plugin-uninstall-restart-recovery': './scenarios/plugin-uninstall-resilience.scenario.mjs',
   'plugin-uninstall-reinstall-race': './scenarios/plugin-uninstall-resilience.scenario.mjs',
-  'plugin-catalog-boundaries': './scenarios/plugin-uninstall-resilience.scenario.mjs',
-  'plugin-operation-boundaries': './scenarios/plugin-uninstall-resilience.scenario.mjs',
 
   'plugin-composer-long-list': './scenarios/plugin-composer-long-list.scenario.mjs',
   'plugin-collaboration-composer-isolation':
@@ -244,8 +242,6 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'plugin-uninstall-unknown-result',
   'plugin-uninstall-restart-recovery',
   'plugin-uninstall-reinstall-race',
-  'plugin-catalog-boundaries',
-  'plugin-operation-boundaries',
 
   'plugin-composer-long-list',
   'plugin-collaboration-composer-isolation',

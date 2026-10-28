@@ -98,8 +98,6 @@ export const DESKTOP_CHECKPOINTS = [
   'plugin-uninstall-unknown-result',
   'plugin-uninstall-restart-recovery',
   'plugin-uninstall-reinstall-race',
-  'plugin-catalog-boundaries',
-  'plugin-operation-boundaries',
 
   'plugin-composer-long-list',
   'plugin-collaboration-composer-isolation',
@@ -231,8 +229,6 @@ export const DESKTOP_CHECKPOINT_GROUPS = new Map([
       'plugin-uninstall-unknown-result',
       'plugin-uninstall-restart-recovery',
       'plugin-uninstall-reinstall-race',
-      'plugin-catalog-boundaries',
-      'plugin-operation-boundaries',
     ],
   ],
   ['harness-apps', ['harness-app-development', 'harness-app-lifecycle', 'harness-app-models']],

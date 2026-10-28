@@ -925,7 +925,7 @@ jobs:
           setup-uv: "false"
 
       - name: Set up real object storage for plugin sync recovery E2E
-        if: contains(matrix.segments, 'plugin-write-coordination') || contains(matrix.segments, 'plugin-runtime-route-refresh') || contains(matrix.segments, 'plugin-background-sync-isolation') || contains(matrix.segments, 'plugin-periodic-reconcile') || contains(matrix.segments, 'plugin-operation-boundaries')
+        if: contains(matrix.segments, 'plugin-write-coordination') || contains(matrix.segments, 'plugin-runtime-route-refresh') || contains(matrix.segments, 'plugin-background-sync-isolation') || contains(matrix.segments, 'plugin-periodic-reconcile')
         uses: ./.github/actions/setup-minio-e2e
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}

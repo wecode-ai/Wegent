@@ -43,11 +43,10 @@ export async function createDesktopScenario({
 }) {
   const appEnvironment = { ELECTRON_ENABLE_LOGGING: '1' }
   const evidence = []
-  const objectStorage = ['plugin-write-coordination', 'plugin-operation-boundaries'].includes(
-    checkpoint
-  )
-    ? await startRealObjectStorage(resultDir, workbenchReadyTimeoutMs)
-    : null
+  const objectStorage =
+    checkpoint === 'plugin-write-coordination'
+      ? await startRealObjectStorage(resultDir, workbenchReadyTimeoutMs)
+      : null
   let packageProxy
   try {
     if (checkpoint === 'plugin-write-coordination') {
@@ -313,6 +312,11 @@ export async function createDesktopScenario({
       cloud,
       control,
       apiProxy,
+      deviceProxy,
+      packageProxy,
+      localDeviceId: local.device_id,
+      evidence,
+      timeoutMs: workbenchReadyTimeoutMs,
       deviceId: rendererDevice.deviceId,
       executorHome,
       codexSqliteHome,
@@ -327,17 +331,30 @@ export async function createDesktopScenario({
     // Every group restores its own real fault and fixtures before the next one.
     // Keep all independent evidence, then fail the checkpoint if any group failed.
     for (const [name, verify] of groups) {
+      const phaseStartedAt = Date.now()
       try {
         console.log(`[plugin-boundary-e2e] START ${name}`)
         await control.command('click', testId('workspace-tab-select-fixed-task'))
         await control.command('waitFor', testId('plugins-button'))
         await control.command('click', testId('new-chat-button'))
-        evidence.push({ group: name, ...(await verify(options)) })
+        const result = await verify(options)
+        evidence.push({
+          group: name,
+          ...result,
+          phaseStartedAt,
+          phaseElapsedMs: Date.now() - phaseStartedAt,
+        })
         console.log(`[plugin-boundary-e2e] PASS ${name}`)
       } catch (error) {
         console.log(`[plugin-boundary-e2e] FAIL ${name}: ${error?.message ?? error}`)
         failures.push(new Error(`${name}: ${error?.message ?? error}`, { cause: error }))
-        evidence.push({ group: name, passed: false, error: String(error?.stack ?? error) })
+        evidence.push({
+          group: name,
+          passed: false,
+          error: String(error?.stack ?? error),
+          phaseStartedAt,
+          phaseElapsedMs: Date.now() - phaseStartedAt,
+        })
       }
     }
     if (failures.length) throw new AggregateError(failures, 'Plugin boundary E2E failures')
@@ -390,8 +407,9 @@ export async function createDesktopScenario({
       try {
         const checks = new Map([
           [
-            'plugin-catalog-boundaries',
+            'plugin-uninstall-lost-response',
             control =>
+              // The real empty-catalog checks must precede the old uninstall fixtures.
               verifyBoundaryGroups(control, [
                 ['source-continuation', verifyPluginSourceContinuation],
                 ['catalog-sources', verifyPluginCatalogBoundaries],
@@ -399,13 +417,7 @@ export async function createDesktopScenario({
                 ['plugin-detail', verifyPluginDetailResilience],
                 ['partial-inventory', verifyPluginPartialInventoryResilience],
                 ['account-and-device', verifyPluginScopeBoundaries],
-              ]),
-          ],
-          [
-            'plugin-operation-boundaries',
-            control =>
-              verifyBoundaryGroups(control, [
-                ['install-and-update', verifyPluginInstallUpdateResilience],
+                ['committed-delete-lost-response', () => lostResponse(control)],
               ]),
           ],
           [
@@ -422,29 +434,13 @@ export async function createDesktopScenario({
           ],
           [
             'plugin-write-coordination',
-            async control => {
-              await verifyPluginSyncDisconnect({
-                cloud,
-                control,
-                apiProxy,
-                packageProxy,
-                executorHome,
-                localDeviceId: local.device_id,
-                evidence,
-                timeoutMs: workbenchReadyTimeoutMs,
-              })
-              await verifyPluginWriteCoordination({
-                cloud,
-                control,
-                apiProxy,
-                deviceProxy,
-                localDeviceId: local.device_id,
-                evidence,
-                timeoutMs: workbenchReadyTimeoutMs,
-              })
-            },
+            control =>
+              verifyBoundaryGroups(control, [
+                ['sync-disconnect', verifyPluginSyncDisconnect],
+                ['write-coordination', verifyPluginWriteCoordination],
+                ['install-and-update', verifyPluginInstallUpdateResilience],
+              ]),
           ],
-          ['plugin-uninstall-lost-response', lostResponse],
           ['plugin-uninstall-unknown-result', unknownResult],
           ['plugin-uninstall-restart-recovery', restartRecovery],
           ['plugin-uninstall-reinstall-race', reinstallRace],

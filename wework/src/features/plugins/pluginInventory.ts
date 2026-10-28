@@ -231,7 +231,6 @@ export async function refreshInstalledPluginInventory(options: {
   isCurrent: () => boolean
 }): Promise<void> {
   let expected = getPluginMarketplaceCache(options.cacheKey)
-  const initial = expected
   let deviceId = options.deviceId || expected?.deviceId || ''
   const canPublish = () => {
     const current = getPluginMarketplaceCache(options.cacheKey)
@@ -243,6 +242,18 @@ export async function refreshInstalledPluginInventory(options: {
       (current === expected ||
         samePluginInstallations(current?.installedPlugins ?? [], expected?.installedPlugins ?? []))
     )
+  }
+  const publishInventory = (installedPlugins: InstalledPlugin[], complete = false) => {
+    if (
+      complete ||
+      (expected && expected.deviceId !== deviceId) ||
+      JSON.stringify(expected?.installedPlugins ?? []) !== JSON.stringify(installedPlugins)
+    ) {
+      expected = writePluginInventory(options.cacheKey, deviceId, {
+        installedPlugins,
+        ...(complete ? { installedPluginsFetchedAt: Date.now() } : {}),
+      })
+    }
   }
   const validate = <T extends { items: InstalledPlugin[] }>(result: T): T => {
     if (
@@ -266,12 +277,30 @@ export async function refreshInstalledPluginInventory(options: {
     return result
   }
   const initialDeviceId = deviceId
+  let localItemsRead: InstalledPlugin[] | undefined
+  let cloudItemsRead: InstalledPlugin[] | undefined
   // A known device lets the independent cloud read proceed during a slow local read.
   const cloudRead = deviceId
     ? Promise.allSettled([
         Promise.resolve()
           .then(() => options.readCloud(initialDeviceId))
-          .then(validate),
+          .then(validate)
+          .then(cloud => {
+            cloudItemsRead = cloud.items
+            if (!options.deviceId || initialDeviceId !== deviceId || !canPublish()) return cloud
+            const current = getPluginMarketplaceCache(options.cacheKey)
+            const previous = current?.deviceId === deviceId ? current.installedPlugins : []
+            // A healthy cloud source must not wait for local membership to settle.
+            publishInventory(
+              mergeInstalledPlugins(
+                cloud.items,
+                localItemsRead ?? previous.filter(plugin => !isCloudManagedInstalledPlugin(plugin)),
+                deviceId,
+                true
+              )
+            )
+            return cloud
+          }),
       ])
     : null
   let [local] = await Promise.allSettled([Promise.resolve().then(options.readLocal).then(validate)])
@@ -283,18 +312,25 @@ export async function refreshInstalledPluginInventory(options: {
   ) {
     local = { status: 'rejected', reason: new Error('Local plugin device changed during refresh') }
   }
-  if (local.status === 'fulfilled') deviceId = local.value.deviceId || deviceId
+  if (local.status === 'fulfilled') {
+    deviceId = local.value.deviceId || deviceId
+    localItemsRead = local.value.items
+  }
   if (!canPublish()) return
-  // A cold page can display local packages while cloud membership is pending.
-  // Never mark this partial inventory complete or replace existing cached rows.
-  if (
-    local.status === 'fulfilled' &&
-    local.value.items.length &&
-    !expected?.installedPlugins.length
-  ) {
-    expected = writePluginInventory(options.cacheKey, deviceId, {
-      installedPlugins: mergeInstalledPlugins([], local.value.items, deviceId),
-    })
+  // Replace only the successful source while the other membership read is pending.
+  // Partial publication must not claim that the complete inventory was refreshed.
+  if (local.status === 'fulfilled') {
+    const current = getPluginMarketplaceCache(options.cacheKey)
+    const previous = current?.deviceId === deviceId ? current.installedPlugins : []
+    const cloudItems = initialDeviceId === deviceId ? cloudItemsRead : undefined
+    publishInventory(
+      mergeInstalledPlugins(
+        cloudItems ?? previous.filter(isCloudManagedInstalledPlugin),
+        local.value.items,
+        deviceId,
+        Boolean(cloudItems)
+      )
+    )
   }
   const [cloud] = await (cloudRead && initialDeviceId === deviceId
     ? cloudRead
@@ -304,7 +340,8 @@ export async function refreshInstalledPluginInventory(options: {
           .then(validate),
       ]))
   if (!canPublish()) return
-  const previous = initial?.deviceId === deviceId ? initial.installedPlugins : []
+  const current = getPluginMarketplaceCache(options.cacheKey)
+  const previous = current?.deviceId === deviceId ? current.installedPlugins : []
   // The local API already retains only failed sources; preserve its fresh membership and details.
   const localItems =
     local.status === 'fulfilled'
@@ -322,16 +359,7 @@ export async function refreshInstalledPluginInventory(options: {
     deviceId,
     cloud.status === 'fulfilled'
   )
-  if (
-    complete ||
-    (expected && expected.deviceId !== deviceId) ||
-    JSON.stringify(expected?.installedPlugins ?? []) !== JSON.stringify(installedPlugins)
-  ) {
-    writePluginInventory(options.cacheKey, deviceId, {
-      installedPlugins,
-      ...(complete ? { installedPluginsFetchedAt: Date.now() } : {}),
-    })
-  }
+  publishInventory(installedPlugins, complete)
   if (!complete) {
     if (local.status === 'rejected')
       throw local.reason ?? new Error('Local plugin list unavailable')
