@@ -40,6 +40,11 @@ describe('autolinkUrls', () => {
     )
   })
 
+  it('does not autolink URLs inside reference-style link labels', () => {
+    const source = '[https://example.com/docs][target]\n\n[target]: /docs'
+    expect(autolinkUrls(source)).toBe(source)
+  })
+
   it.each([
     '`https://example.com/code`',
     '```\nhttps://example.com/code\n```',

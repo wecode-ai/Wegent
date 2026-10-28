@@ -1735,7 +1735,9 @@ export function DocumentList({
         allowDownload={allowDownload}
         watermarkText={documentProtection.watermark_text}
         onDocumentSynced={synchronizedDocument => {
-          setViewingDoc(synchronizedDocument)
+          setViewingDoc(current =>
+            current?.id === synchronizedDocument.id ? synchronizedDocument : current
+          )
           void refresh()
           onDocumentsChanged?.()
         }}

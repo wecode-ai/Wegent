@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { TextDecoder as NodeTextDecoder } from 'node:util'
+
 import {
   loadBoundedRemoteFile,
   MAX_NON_RANGE_VIDEO_BYTES,
@@ -161,10 +163,25 @@ describe('remote video range probe', () => {
 
 describe('bounded remote file loading', () => {
   const originalFetch = global.fetch
+  const originalTextDecoder = global.TextDecoder
+
+  beforeAll(() => {
+    Object.defineProperty(global, 'TextDecoder', {
+      configurable: true,
+      value: NodeTextDecoder,
+    })
+  })
 
   afterEach(() => {
     global.fetch = originalFetch
     jest.restoreAllMocks()
+  })
+
+  afterAll(() => {
+    Object.defineProperty(global, 'TextDecoder', {
+      configurable: true,
+      value: originalTextDecoder,
+    })
   })
 
   it('rejects an image whose decoded pixel dimensions exceed the budget', async () => {
@@ -227,6 +244,64 @@ describe('bounded remote file loading', () => {
         'animation.gif'
       )
     ).resolves.toMatchObject({ mimeType: 'image/gif', size: gif.length })
+  })
+
+  it('reads the full VP8L height bit field when enforcing the pixel budget', async () => {
+    const webp = new Uint8Array(25)
+    webp.set(
+      Uint8Array.from('RIFF', character => character.charCodeAt(0)),
+      0
+    )
+    webp.set(
+      Uint8Array.from('WEBPVP8L', character => character.charCodeAt(0)),
+      8
+    )
+    webp[20] = 0x2f
+    const width = 4_000
+    const height = 4_000
+    const packed = (width - 1) | ((height - 1) << 14) | (1 << 28)
+    new DataView(webp.buffer).setUint32(21, packed, true)
+    const { response } = fileResponse(webp, {
+      'content-type': 'image/webp',
+      'content-length': String(webp.length),
+    })
+    global.fetch = jest.fn().mockResolvedValue(response)
+
+    await expect(
+      loadBoundedRemoteFile(
+        'https://cdn.example.com/large.webp',
+        'image',
+        new AbortController().signal,
+        'large.webp'
+      )
+    ).rejects.toMatchObject({ code: 'too-complex' })
+  })
+
+  it('accepts a JPEG whose SOF marker follows a large APP segment', async () => {
+    const jpeg = new Uint8Array(65_550)
+    jpeg.set([0xff, 0xd8, 0xff, 0xe1])
+    const view = new DataView(jpeg.buffer)
+    view.setUint16(4, 65_535)
+    const sofOffset = 65_539
+    jpeg.set([0xff, 0xc0], sofOffset)
+    view.setUint16(sofOffset + 2, 7)
+    jpeg[sofOffset + 4] = 8
+    view.setUint16(sofOffset + 5, 100)
+    view.setUint16(sofOffset + 7, 100)
+    const { response } = fileResponse(jpeg, {
+      'content-type': 'image/jpeg',
+      'content-length': String(jpeg.length),
+    })
+    global.fetch = jest.fn().mockResolvedValue(response)
+
+    await expect(
+      loadBoundedRemoteFile(
+        'https://cdn.example.com/photo.jpg',
+        'image',
+        new AbortController().signal,
+        'photo.jpg'
+      )
+    ).resolves.toMatchObject({ mimeType: 'image/jpeg', size: jpeg.length })
   })
 })
 

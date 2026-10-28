@@ -3,13 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { DocumentLinkPreview } from '@/features/knowledge/document/components/DocumentLinkPreview'
 import { DocumentLinkResource } from '@/features/knowledge/document/components/DocumentLinkResource'
 import {
   createDocumentLinkResource,
   type DocumentLinkResource as Resource,
 } from '@/features/knowledge/document/utils/documentLinkResource'
+import { loadBoundedRemoteFile } from '@/features/knowledge/document/utils/boundedRemoteFile'
 
 const mockOfficePreview = jest.fn(
   ({ blob, url }: { blob?: Blob; url?: string; onError?: (error: Error) => void }) => (
@@ -138,6 +139,27 @@ describe('DocumentLinkResource', () => {
     rerender(<DocumentLinkResource resource={textResource} onOpen={jest.fn()} />)
     expect(await screen.findByText('# Preview content')).toBeInTheDocument()
     expect(screen.getByTestId('document-link-preview-card')).toBeInTheDocument()
+  })
+
+  it('does not allocate an image object URL after its cover has unmounted', async () => {
+    let resolveLoad: ((value: { blob: Blob; mimeType: string; size: number }) => void) | undefined
+    jest.mocked(loadBoundedRemoteFile).mockReturnValueOnce(
+      new Promise(resolve => {
+        resolveLoad = resolve
+      })
+    )
+    const createObjectUrl = jest.mocked(URL.createObjectURL)
+    createObjectUrl.mockClear()
+    const { unmount } = render(<DocumentLinkResource resource={imageResource} onOpen={jest.fn()} />)
+    await waitFor(() => expect(loadBoundedRemoteFile).toHaveBeenCalled())
+
+    unmount()
+    await act(async () => {
+      resolveLoad!({ blob: new Blob(['image']), mimeType: 'image/png', size: 5 })
+      await Promise.resolve()
+    })
+
+    expect(createObjectUrl).not.toHaveBeenCalled()
   })
 
   it('uses the shared PDF renderer instead of an Edge-blocked iframe', async () => {

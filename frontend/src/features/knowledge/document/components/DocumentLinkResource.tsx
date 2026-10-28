@@ -150,6 +150,7 @@ function DocumentLinkCover({ resource, onOpen }: Omit<DocumentLinkResourceProps,
           )
     void loadCover
       .then(async result => {
+        if (controller.signal.aborted) return
         objectUrl =
           resource.kindHint === 'image' && result.blob
             ? URL.createObjectURL(result.blob)

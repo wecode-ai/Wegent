@@ -120,7 +120,7 @@ function readImageDimensions(bytes: Uint8Array): { width: number; height: number
     if (chunk === 'VP8L' && bytes.length >= 25 && bytes[20] === 0x2f) {
       return {
         width: 1 + (((bytes[22] & 0x3f) << 8) | bytes[21]),
-        height: 1 + ((bytes[24] << 6) | (bytes[23] >> 2)),
+        height: 1 + (((bytes[24] & 0x0f) << 10) | (bytes[23] << 2) | (bytes[22] >> 6)),
       }
     }
     if (
@@ -163,7 +163,8 @@ function readImageDimensions(bytes: Uint8Array): { width: number; height: number
 }
 
 async function assertImageComplexity(blob: Blob): Promise<void> {
-  const bytes = new Uint8Array(await readBlob(blob.slice(0, 64 * 1024)))
+  // The blob is already bounded by MAX_BYTES.image; JPEG SOF can follow large APP segments.
+  const bytes = new Uint8Array(await readBlob(blob))
   const dimensions = readImageDimensions(bytes)
   if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) {
     throw new RemoteFileError('unsupported-type', 'Image dimensions could not be verified')

@@ -108,6 +108,9 @@ function isAlreadyLinked(text: string, urlStart: number, urlEnd: number): boolea
 function linkLabelRanges(text: string): Array<{ start: number; end: number }> {
   const ranges: Array<{ start: number; end: number }> = []
   const brackets: number[] = []
+  const referenceLabels = new Set(
+    Array.from(text.matchAll(/^ {0,3}\[([^\]]+)\]:/gm), match => normalizeReferenceLabel(match[1]))
+  )
   for (let index = 0; index < text.length; index++) {
     if (text[index] === '\\') {
       index++
@@ -131,12 +134,29 @@ function linkLabelRanges(text: string): Array<{ start: number; end: number }> {
       brackets.push(index)
     } else if (text[index] === ']') {
       const start = brackets.pop()
-      if (start !== undefined && text[index + 1] === '(') {
+      if (start === undefined) continue
+      if (text[index + 1] === '(') {
+        ranges.push({ start, end: index })
+        continue
+      }
+      const label = text.slice(start + 1, index)
+      if (text[index + 1] === '[') {
+        const referenceEnd = text.indexOf(']', index + 2)
+        if (referenceEnd === -1) continue
+        const reference = text.slice(index + 2, referenceEnd) || label
+        if (referenceLabels.has(normalizeReferenceLabel(reference))) {
+          ranges.push({ start, end: index })
+        }
+      } else if (referenceLabels.has(normalizeReferenceLabel(label))) {
         ranges.push({ start, end: index })
       }
     }
   }
   return ranges
+}
+
+function normalizeReferenceLabel(label: string): string {
+  return label.trim().replace(/\s+/g, ' ').toLowerCase()
 }
 
 /**
