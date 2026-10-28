@@ -1,14 +1,4 @@
-import { readFileSync } from 'node:fs'
-
-const contract = JSON.parse(
-  readFileSync(
-    new URL(
-      '../../../../packages/chat-core/test-fixtures/conversation-search-contract.json',
-      import.meta.url
-    ),
-    'utf8'
-  )
-)
+import contract from '../../../../packages/chat-core/test-fixtures/conversation-search-contract.json' with { type: 'json' }
 
 export const SEARCH_CONTRACT_TURN_START = 80
 export const SEARCH_CONTRACT_CASES = contract.cases
