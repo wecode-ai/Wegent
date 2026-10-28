@@ -12,6 +12,7 @@ import {
   requestContainsToolOutput,
   responseCompleted,
   responseCreated,
+  toolOutputText,
 } from '../modules/response-protocol.mjs'
 
 const prompt = 'WEWORK_E2E_ORDINARY_MCP'
@@ -37,7 +38,13 @@ export function createOrdinaryMcpRegression({ uiTimeoutMs, modelResponseTimeoutM
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       assert.ok(JSON.stringify(body).includes(prompt))
-      const events = requestContainsToolOutput(body, callId)
+      const completed = requestContainsToolOutput(body, callId)
+      if (completed) {
+        const output = toolOutputText(body, callId) ?? ''
+        const result = output.includes('Output:\n') ? output.split('Output:\n').at(-1) : output
+        assert.deepEqual(JSON.parse(result), { count: 0 })
+      }
+      const events = completed
         ? [assistantMessage(completion), responseCompleted('ordinary-mcp', [])]
         : [
             ...mcpToolRequestEvents(body, {
