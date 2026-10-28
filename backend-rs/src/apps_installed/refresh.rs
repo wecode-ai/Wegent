@@ -496,6 +496,11 @@ mod tests {
 
     /// Serve one HTTP response so the token request hits a real socket.
     async fn serve_response(response: &'static str) -> String {
+        serve_owned_response(response.to_string()).await
+    }
+
+    /// [`serve_response`] for a response assembled at runtime.
+    async fn serve_owned_response(response: String) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -644,6 +649,58 @@ mod tests {
             token_request(&github_app(), &config),
             Err(RefreshError::Unavailable)
         ));
+    }
+
+    /// The dedicated GitHub branch renews a live grant over a real socket: the
+    /// first-party form goes to the configured endpoint and the token response
+    /// decodes into a usable grant.
+    #[tokio::test]
+    async fn github_exchanges_a_valid_grant_over_http() {
+        let body = r#"{"access_token":"gh-access","refresh_token":"gh-refresh-new","token_type":"bearer","expires_in":28800,"scope":"repo read:org"}"#;
+        let endpoint = serve_owned_response(format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        ))
+        .await;
+        let config = OAuthConfig {
+            github_client_id: "gh-client".to_string(),
+            github_client_key: "gh-secret".to_string(),
+            github_token_endpoint: endpoint,
+        };
+        let request = token_request(&github_app(), &config).expect("GitHub is configured");
+
+        let payload = request_tokens(request.endpoint(&config), &request.form("ghr-old"))
+            .await
+            .expect("the GitHub endpoint issued a grant");
+        let grant = parse_grant(&payload).expect("the grant decodes");
+
+        assert_eq!(grant.access_token, "gh-access");
+        assert_eq!(grant.refresh_token.as_deref(), Some("gh-refresh-new"));
+        assert_eq!(grant.expires_in, Some(28800));
+        assert_eq!(grant.granted_scopes, Some(vec!["repo".into(), "read:org".into()]));
+    }
+
+    /// The same exchange surfaces a revoked GitHub grant as a rejection.
+    #[tokio::test]
+    async fn github_reports_a_revoked_grant_as_rejected() {
+        let body = r#"{"error":"bad_refresh_token"}"#;
+        let endpoint = serve_owned_response(format!(
+            "HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        ))
+        .await;
+        let config = OAuthConfig {
+            github_client_id: "gh-client".to_string(),
+            github_client_key: "gh-secret".to_string(),
+            github_token_endpoint: endpoint,
+        };
+        let request = token_request(&github_app(), &config).expect("GitHub is configured");
+
+        let error = request_tokens(request.endpoint(&config), &request.form("ghr-old"))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, RefreshError::Rejected));
     }
 
     /// Every other app still requires its stored dynamic registration.
