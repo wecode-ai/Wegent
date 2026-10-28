@@ -20,12 +20,13 @@ async def executor_pod_missing(
     executor_name: str,
     executor_namespace: str | None,
 ) -> bool:
-    """Return True only when executor_manager confirms the executor is gone.
+    """Return True when executor_manager confirms the executor cannot serve tasks.
 
     Wraps ``remote_workspace_service.executor_alive`` in a thread because the
     underlying httpx call is synchronous. Any transport/decoding failure is
     treated as "pod still alive" so dispatch surfaces the real error instead
-    of triggering a spurious recovery.
+    of triggering a spurious recovery. A pod that exists but has reached a
+    terminal phase (Succeeded/Failed) also returns True so dispatch recreates it.
     """
     from app.services.remote_workspace_service import remote_workspace_service
 

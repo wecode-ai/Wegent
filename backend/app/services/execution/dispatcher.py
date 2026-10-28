@@ -355,7 +355,7 @@ class ExecutionDispatcher:
             return False
 
         logger.info(
-            "[ExecutionDispatcher] Executor pod missing, marking deleted: "
+            "[ExecutionDispatcher] Executor unavailable, marking deleted: "
             "task_id=%s, subtask_id=%s, executor=%s/%s",
             subtask.task_id,
             subtask.id,

@@ -291,7 +291,7 @@ async def _dispatch_task_async(task_id: int) -> None:
                     )
                 ):
                     logger.info(
-                        "[schedule_dispatch] Executor pod missing, marking deleted "
+                        "[schedule_dispatch] Executor unavailable, marking deleted "
                         "task_id=%s subtask_id=%s executor=%s/%s",
                         task_id,
                         subtask.id,
