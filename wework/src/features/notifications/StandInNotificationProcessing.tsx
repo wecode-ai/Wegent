@@ -64,7 +64,7 @@ export function StandInNotificationProcessing({
   const runtimeApi = services?.runtimeWorkApi
   const projectId = notification.payload.projectId
   const issueId = notification.payload.itemId
-  const signature = state ? `${state.deviceId}:${state.taskId}:${state.updatedAt}` : ''
+  const signature = state ? `${state.deviceId}:${state.taskId}:${standInVersion(state)}` : ''
   const deviceId = state?.deviceId
   const taskId = state?.taskId
   const status = state?.status

@@ -136,6 +136,39 @@ describe('notification inline handling', () => {
     )
   })
 
+  it('settles an inline follow-up whose completion shares the previous timestamp', async () => {
+    const completed = notification()
+    completed.payload.standIn!.turnId = 'turn-1'
+    const props = { rowProps, services, userId: 1, onChanged }
+    const rendered = render(<StandInNotificationProcessing notification={completed} {...props} />)
+    fireEvent.click(await screen.findByTestId('notification-stand-in-reply-open-assignment'))
+    fireEvent.change(screen.getByTestId('notification-stand-in-reply-assignment'), {
+      target: { value: 'Continue checking' },
+    })
+    fireEvent.click(screen.getByTestId('notification-stand-in-send-assignment'))
+    await waitFor(() =>
+      expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+        'notifications.stand_in_running'
+      )
+    )
+    rendered.rerender(
+      <StandInNotificationProcessing
+        notification={{
+          ...completed,
+          payload: {
+            ...completed.payload,
+            standIn: { ...completed.payload.standIn!, turnId: 'turn-2' },
+          },
+        }}
+        {...props}
+      />
+    )
+    expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+      'notifications.stand_in_completed'
+    )
+    expect(screen.getByTestId('notification-stand-in-reply-open-assignment')).toBeEnabled()
+  })
+
   it('shows the existing execution status instead of announcing a new run', async () => {
     readTask.mockResolvedValue({
       success: true,
