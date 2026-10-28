@@ -262,6 +262,7 @@ mod task_store_default;
 mod task_store_edit;
 mod task_store_executor_reference;
 mod task_store_listing;
+mod task_store_personal;
 mod task_store_pipeline;
 mod task_store_project;
 mod task_store_project_count;
