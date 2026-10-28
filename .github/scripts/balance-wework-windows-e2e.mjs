@@ -11,15 +11,18 @@ function preparationTasks(checkpoints) {
   const pending = new Map(checkpoints.map(checkpoint => [checkpoint.segment, checkpoint]))
   const tasks = []
   // These checkpoints shared expensive preparation in the original Core matrix.
-  for (const group of [
-    ['claude-runtime', 'local-harness', 'workbench-mode', 'native-window-startup'],
-    ['collaboration-issue-mcp-comments', 'collaboration-delivery-editing'],
-  ]) {
+  for (const [preparation, group] of Object.entries({
+    'local-harness': ['claude-runtime', 'local-harness', 'workbench-mode', 'native-window-startup'],
+    'object-storage': ['collaboration-issue-mcp-comments', 'collaboration-delivery-editing'],
+  })) {
     const members = group.map(segment => pending.get(segment)).filter(Boolean)
     if (!members.length) continue
     tasks.push({
       segments: members.map(checkpoint => checkpoint.segment),
-      seconds: members.reduce((total, checkpoint) => total + checkpoint.seconds, 0),
+      seconds: members.reduce(
+        (total, checkpoint) => total + checkpoint.seconds,
+        measurements.preparationSeconds[preparation]
+      ),
     })
     for (const checkpoint of members) pending.delete(checkpoint.segment)
   }

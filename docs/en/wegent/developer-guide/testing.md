@@ -306,6 +306,9 @@ checkpoint. A shard containing an unmeasured checkpoint remains intact until
 successful logs provide evidence. Failed and cancelled checkpoints are excluded.
 Checkpoints sharing CLI, Electron, or object-storage preparation stay together,
 preserving the original number of preparation jobs.
+Loads also include measured conditional preparation costs with a source job link,
+so cold object-storage compilation does not sit on an otherwise full shard.
+Cache hits may reduce these costs.
 Estimated loads omit runner queues, common setup, and cleanup; validate actual
 savings with a complete CI run.
 

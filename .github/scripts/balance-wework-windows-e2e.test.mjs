@@ -99,6 +99,16 @@ test('balancing never multiplies expensive conditional preparation from the orig
     )
   )
   const balanced = balanceWindowsMatrix(original)
+  const evidence = JSON.parse(
+    readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))
+  )
+  const preparationWeights = {
+    'Install local harness CLIs': evidence.preparationSeconds['local-harness'],
+    'Build real object storage': evidence.preparationSeconds['object-storage'],
+  }
+  const preparationLoads = matrix => matrix.include.map(shard => measuredLoad(shard))
+  const originalLoads = preparationLoads(original)
+  const balancedLoads = preparationLoads(balanced)
   for (const name of [
     'Install local harness CLIs',
     'Build real object storage',
@@ -110,11 +120,26 @@ test('balancing never multiplies expensive conditional preparation from the orig
       match => match[1]
     )
     assert.ok(triggers.length, `Preparation triggers are required for ${name}`)
+    for (const [matrix, loads] of [
+      [original, originalLoads],
+      [balanced, balancedLoads],
+    ]) {
+      for (const [index, shard] of matrix.include.entries()) {
+        if (triggers.some(segment => shard.segments.split(',').includes(segment))) {
+          loads[index] += preparationWeights[name] ?? 0
+        }
+      }
+    }
     const count = matrix =>
       matrix.include.filter(shard => triggers.some(segment => shard.segments.includes(segment)))
         .length
     assert.equal(count(balanced), count(original), name)
   }
+  assert.equal(
+    balancedLoads.reduce((a, b) => a + b),
+    originalLoads.reduce((a, b) => a + b)
+  )
+  assert.ok(Math.max(...balancedLoads) < Math.max(...originalLoads))
 })
 
 test('timing evidence contains positive successful samples with source run links', () => {
@@ -126,4 +151,7 @@ test('timing evidence contains positive successful samples with source run links
     assert.match(run, /^https:\/\/github.com\/wecode-ai\/Wegent\/actions\/runs\/\d+$/)
   for (const seconds of Object.values(evidence.seconds))
     assert.ok(Number.isFinite(seconds) && seconds > 0)
+  for (const seconds of Object.values(evidence.preparationSeconds))
+    assert.ok(Number.isFinite(seconds) && seconds > 0)
+  assert.match(evidence.preparationSource, /\/actions\/runs\/\d+\/job\/\d+$/)
 })

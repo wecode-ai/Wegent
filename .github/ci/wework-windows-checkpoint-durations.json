@@ -6,6 +6,12 @@
     "https://github.com/wecode-ai/Wegent/actions/runs/40718345759",
     "https://github.com/wecode-ai/Wegent/actions/runs/40747839908"
   ],
+  "preparationSource": "https://github.com/wecode-ai/Wegent/actions/runs/40747839908/job/123040595116",
+  "preparationDescription": "Successful conditional setup on a cold Windows runner; cache hits can reduce these costs.",
+  "preparationSeconds": {
+    "local-harness": 35,
+    "object-storage": 182
+  },
   "seconds": {
     "application-menu": 41,
     "archived-worktree-cleanup": 41,
