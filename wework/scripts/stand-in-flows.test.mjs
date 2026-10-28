@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { test } from 'vitest'
 
 import { openProjectStandIn } from '../e2e/desktop/modules/stand-in-flows.mjs'
@@ -11,7 +12,7 @@ test.each(['cli', 'mcp'])(
   '%s capability scenario uses the startup budget only for cold catalog bootstrap',
   async boundary => {
     const source = await readFile(
-      new URL(`../e2e/desktop/scenarios/stand-in-${boundary}.scenario.mjs`, import.meta.url),
+      resolve(import.meta.dirname, `../e2e/desktop/scenarios/stand-in-${boundary}.scenario.mjs`),
       'utf8'
     )
     assert.match(
