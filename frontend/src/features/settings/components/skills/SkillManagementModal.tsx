@@ -76,6 +76,7 @@ export default function SkillManagementModal({
   const [uploadModalOpen, setUploadModalOpen] = useState(false)
   const [editingSkill, setEditingSkill] = useState<UnifiedSkill | null>(null)
   const [createTarget, setCreateTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
+  const [publishAfterCreate, setPublishAfterCreate] = useState(false)
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
   const [skillToDelete, setSkillToDelete] = useState<UnifiedSkill | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -133,8 +134,14 @@ export default function SkillManagementModal({
   const handleCreateSkill = () => {
     setEditingSkill(null)
     setCreateTarget({ scope: 'personal' })
+    setPublishAfterCreate(false)
     setUploadModalOpen(true)
   }
+
+  const handleCreateOptionsChange = useCallback((target: ResourceCreateTarget, publish = false) => {
+    setCreateTarget(target)
+    setPublishAfterCreate(publish)
+  }, [])
 
   const handleEditSkill = (skill: UnifiedSkill) => {
     setEditingSkill(skill)
@@ -580,11 +587,12 @@ export default function SkillManagementModal({
           namespace={uploadNamespace}
           isPublic={scope === 'public'}
           createTarget={createTarget}
+          publishAfterCreate={publishAfterCreate}
           writableGroups={writableGroups}
           writableGroupsError={writableGroupsError}
           writableGroupsLoading={writableGroupsLoading}
           onRetryWritableGroups={reloadWritableGroups}
-          onCreateOptionsChange={setCreateTarget}
+          onCreateOptionsChange={handleCreateOptionsChange}
         />
       )}
 

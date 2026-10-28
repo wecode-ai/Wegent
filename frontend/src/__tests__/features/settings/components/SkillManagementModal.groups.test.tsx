@@ -43,6 +43,7 @@ jest.mock('@/features/settings/components/skills/SkillUploadModal', () => ({
   default: ({
     writableGroups,
     createTarget,
+    publishAfterCreate,
     namespace,
     writableGroupsError,
     onCreateOptionsChange,
@@ -50,6 +51,7 @@ jest.mock('@/features/settings/components/skills/SkillUploadModal', () => ({
   }: {
     writableGroups: Array<{ name: string }>
     createTarget: { scope: string; groupName?: string; groupNames?: string[] }
+    publishAfterCreate?: boolean
     namespace?: string
     writableGroupsError: Error | null
     onCreateOptionsChange: (
@@ -65,6 +67,7 @@ jest.mock('@/features/settings/components/skills/SkillUploadModal', () => ({
         {createTarget.groupNames?.join(',') || createTarget.scope}
       </span>
       <span data-testid="upload-namespace">{namespace || ''}</span>
+      <span data-testid="publish-after-create">{String(Boolean(publishAfterCreate))}</span>
       {writableGroupsError && (
         <span data-testid="writable-groups-error">{writableGroupsError.message}</span>
       )}
@@ -80,6 +83,13 @@ jest.mock('@/features/settings/components/skills/SkillUploadModal', () => ({
         }
       >
         select-team
+      </button>
+      <button
+        type="button"
+        data-testid="select-marketplace"
+        onClick={() => onCreateOptionsChange({ scope: 'personal' }, true, [])}
+      >
+        select-marketplace
       </button>
       <button type="button" data-testid="retry-writable-groups" onClick={onRetryWritableGroups}>
         retry-groups
@@ -147,5 +157,16 @@ describe('SkillManagementModal group publishing', () => {
       expect(screen.queryByTestId('writable-groups-error')).not.toBeInTheDocument()
     })
     expect(listGroups).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the marketplace selection in the parent create options', async () => {
+    render(<SkillManagementModal open onClose={jest.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /common:skills\.upload_skill/ }))
+    expect(screen.getByTestId('publish-after-create')).toHaveTextContent('false')
+
+    fireEvent.click(screen.getByTestId('select-marketplace'))
+
+    expect(screen.getByTestId('publish-after-create')).toHaveTextContent('true')
   })
 })
