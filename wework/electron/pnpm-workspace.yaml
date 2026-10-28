@@ -7,5 +7,9 @@ allowBuilds:
   electron: true
   electron-winstaller: true
 
+overrides:
+  # Older readers suppress EOF in Electron's Node runtime and stall ZIP extraction.
+  'extract-zip>yauzl': 3.4.0
+
 patchedDependencies:
   '@trycua/cua-driver@0.22.1': patches/@trycua__cua-driver@0.22.1.patch
