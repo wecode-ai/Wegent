@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Verify subscription completion through the real hybrid gateway and MySQL.
+"""Verify subscription MCP and completion through the real hybrid gateway.
 
 Run directly, outside pytest's service-mocking conftest. CI supplies the same
 running Backend, MySQL and Redis used by the other gateway API E2E tests.
@@ -19,6 +19,7 @@ import sys
 import time
 import unittest
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -33,12 +34,13 @@ from app.models.subscription import BackgroundExecution
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.auth.task_token import create_task_token
 
 COMMAND = "uv run --no-sync python tests/e2e/subscription_callback_gateway.py"
 
 
 class SubscriptionCallbackGateway(unittest.TestCase):
-    """Persist three terminal callbacks without replacing any product service."""
+    """Exercise subscription tools and callbacks without replacing services."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -276,6 +278,116 @@ class SubscriptionCallbackGateway(unittest.TestCase):
     def test_cancelled_callback_persists_subscription_cancellation(self) -> None:
         self._callback("response.incomplete", {}, "CANCELLED")
 
+    def _subscription_tool(self, name: str, arguments: dict) -> dict:
+        token = create_task_token(
+            task_id=self.task_id,
+            subtask_id=self.subtask_id,
+            user_id=self.user_id,
+            user_name=self.marker,
+        )
+        response = self.client.post(
+            "/api/mcp/subscription/sse",
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "Authorization": f"Bearer {token}",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": self.marker,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        rpc = response.json()
+        self.assertNotIn("error", rpc, rpc)
+        self.assertFalse(rpc["result"].get("isError", False), rpc)
+        return json.loads(rpc["result"]["content"][0]["text"])
+
+    def _prepare_subscription_mcp(self) -> None:
+        with SessionLocal() as db:
+            db.add(
+                Kind(
+                    user_id=self.user_id,
+                    kind="Team",
+                    name=self.marker,
+                    namespace="default",
+                    is_active=True,
+                    json={
+                        "kind": "Team",
+                        "metadata": {"name": self.marker, "namespace": "default"},
+                        "spec": {"bots": []},
+                    },
+                )
+            )
+            db.get(TaskResource, self.task_id).is_active = TaskResource.STATE_ACTIVE
+            db.commit()
+
+    def _cleanup_subscription_preview(self, preview_id: str) -> None:
+        with Redis.from_url(os.environ["REDIS_URL"]) as redis:
+            redis.delete(
+                f"subscription:preview:{preview_id}",
+                f"chat:streaming:blocks:{self.subtask_id}",
+            )
+
+    def test_subscription_mcp_preview_and_confirmed_create(self) -> None:
+        self._prepare_subscription_mcp()
+        arguments = {
+            "display_name": self.marker,
+            "trigger_type": "one_time",
+            "execute_at": (datetime.now() + timedelta(days=7)).isoformat(),
+            "prompt_template": self.marker,
+        }
+        preview = self._subscription_tool("preview_subscription", arguments)
+        self.assertTrue(preview["__silent_exit__"], preview)
+        self.assertEqual(preview["type"], "subscription_preview")
+        self.assertEqual(preview["status"], "pending")
+        preview_id = preview["preview_id"]
+        self.addCleanup(self._cleanup_subscription_preview, preview_id)
+        key = f"subscription:preview:{preview_id}"
+        with Redis.from_url(os.environ["REDIS_URL"]) as redis:
+            stored = json.loads(redis.get(key))
+            self.assertEqual(stored["user_id"], self.user_id)
+            self.assertEqual(stored["prompt_template"], self.marker)
+            blocks = redis.lrange(f"chat:streaming:blocks:{self.subtask_id}", 0, -1)
+            self.assertTrue(
+                any(
+                    json.loads(block).get("preview_id") == preview_id
+                    for block in blocks
+                )
+            )
+        with SessionLocal() as db:
+            count = (
+                db.query(Kind)
+                .filter_by(user_id=self.user_id, kind="Subscription")
+                .count()
+            )
+            self.assertEqual(count, 1, "Preview must not create a subscription")
+
+        created = self._subscription_tool(
+            "create_subscription", {**arguments, "preview_id": preview_id}
+        )
+        self.assertTrue(created["success"], created)
+        with SessionLocal() as db:
+            subscription = (
+                db.query(Kind)
+                .filter_by(
+                    id=created["subscription"]["id"],
+                    user_id=self.user_id,
+                    kind="Subscription",
+                    namespace="default",
+                )
+                .one()
+            )
+            self.assertEqual(subscription.json["spec"]["promptTemplate"], self.marker)
+            self.assertEqual(
+                subscription.json["spec"]["trigger"]["one_time"]["execute_at"],
+                arguments["execute_at"],
+            )
+        with Redis.from_url(os.environ["REDIS_URL"]) as redis:
+            self.assertFalse(redis.exists(key), "Creation must consume its preview")
+        self.evidence.append({"preview_id": preview_id, "created": created})
+
 
 if __name__ == "__main__":
     report_dir = Path(os.environ["E2E_REPORT_DIR"])
@@ -292,7 +404,7 @@ if __name__ == "__main__":
         "errors": len(result.errors),
         "skipped": len(result.skipped),
         "success": result.wasSuccessful()
-        and result.testsRun == 3
+        and result.testsRun == 4
         and not result.skipped,
     }
     (report_dir / "result.json").write_text(json.dumps(report, indent=2) + "\n")
