@@ -661,7 +661,10 @@ function redactDiagnostics(value: string): string {
   return value
     .replace(/(https?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, '$1[redacted]@')
     .replace(/(\bBearer\s+)[^\s'"]+/gi, '$1[redacted]')
-    .replace(/((?:token|password|authorization|_authToken)\s*[:=]\s*)[^\s]+/gi, '$1[redacted]')
+    .replace(
+      /(["']?(?:token|password|authorization|_authToken)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s]+)/gi,
+      '$1[redacted]'
+    )
 }
 
 function errorMessage(error: unknown): string {
@@ -670,6 +673,36 @@ function errorMessage(error: unknown): string {
 
 function logPluginCommand(environment: NodeJS.ProcessEnv, fields: Record<string, unknown>): void {
   if (environment.VITE_WEWORK_E2E === 'true') console.info('[core-dsh-plugin-command]', fields)
+}
+
+function packageManagerProgress(output: string): Record<string, number | string[]> {
+  const progress = [
+    ...output.matchAll(/Progress: resolved (\d+), reused (\d+), downloaded (\d+), added (\d+)/g),
+  ].at(-1)
+  const knownCodes = [
+    'EAI_AGAIN',
+    'ECONNRESET',
+    'ECONNREFUSED',
+    'ETIMEDOUT',
+    'ENOTFOUND',
+    'ERR_PNPM_META_FETCH_FAIL',
+    'ERR_PNPM_FETCH_FAILED',
+    'ERR_PNPM_NO_MATCHING_VERSION',
+    'ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED',
+    'ERR_PNPM_TARBALL_INTEGRITY',
+    ...[400, 401, 403, 404, 429, 500, 502, 503, 504].map(code => `ERR_PNPM_FETCH_${code}`),
+  ]
+  return {
+    ...(progress
+      ? {
+          resolved: Number(progress[1]),
+          reused: Number(progress[2]),
+          downloaded: Number(progress[3]),
+          added: Number(progress[4]),
+        }
+      : {}),
+    errorCodes: knownCodes.filter(code => new RegExp(`\\b${code}\\b`).test(output)),
+  }
 }
 
 function runCommand(
@@ -706,7 +739,8 @@ function runCommand(
           stage: 'command-output',
           phase,
           stream: 'stdout',
-          output: redactDiagnostics(stdout).slice(-4000),
+          bytes: Buffer.byteLength(stdout),
+          ...packageManagerProgress(stdout),
         })
     })
     child.stderr.on('data', chunk => {
@@ -715,9 +749,8 @@ function runCommand(
         stage: 'command-output',
         phase,
         stream: 'stderr',
-        ...(phase === 'package-manager'
-          ? { output: redactDiagnostics(stderr).slice(-4000) }
-          : { bytes: Buffer.byteLength(chunk) }),
+        bytes: Buffer.byteLength(stderr),
+        ...(phase === 'package-manager' ? packageManagerProgress(stderr) : {}),
       })
     })
     child.once('error', error => {
