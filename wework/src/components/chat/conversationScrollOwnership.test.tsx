@@ -4,6 +4,7 @@ import { ScrollableMessageArea } from './ScrollableMessageArea'
 import { useConversationScrollController } from '../../../../packages/collaboration/src/conversation/useConversationScrollController'
 import type { ConversationVirtualizer } from '../../../../packages/collaboration/src/conversation/useConversationVirtualizer'
 import type { WorkbenchMessage } from '@/types/workbench'
+import { getConversationScrollSnapshot } from '@/features/workbench/runtimeConversationCache'
 
 vi.mock('@/lib/runtime-environment', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/runtime-environment')>()),
@@ -29,6 +30,81 @@ const messages: WorkbenchMessage[] = [
     runtimeMessageIndex: 2,
   },
 ]
+
+test.each(['pointer', 'touch'] as const)(
+  'a transcript %s tap cannot turn a later streaming follow step into reader input',
+  input => {
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1)
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
+    const viewport = document.createElement('div')
+    let height = 1000
+    Object.defineProperties(viewport, {
+      clientHeight: { value: 200 },
+      scrollHeight: { get: () => height },
+    })
+    const key = `transcript-tap-${input}`
+    const hook = renderHook(() =>
+      useConversationScrollController({
+        messages: messages.map(message => ({ ...message, status: 'streaming' as const })),
+        externalScrollRef: { current: viewport },
+        conversationKey: key,
+      })
+    )
+    try {
+      viewport.scrollTop = 800
+      if (input === 'pointer') {
+        fireEvent.pointerDown(viewport)
+        fireEvent.pointerUp(viewport)
+      } else {
+        fireEvent.touchStart(viewport)
+        fireEvent.touchEnd(viewport)
+      }
+      height = 1600
+      act(() => hook.result.current.handleContentLayoutChange())
+      // Native delivery of an intermediate spring step, still far from the growing end.
+      viewport.scrollTop = 900
+      fireEvent.scroll(viewport)
+      fireEvent(viewport, new Event('scrollend'))
+      expect(getConversationScrollSnapshot(key)?.pinnedToBottom).toBe(true)
+    } finally {
+      hook.unmount()
+    }
+  }
+)
+
+test('native touch movement pauses follow and resumes it on returning to the end', () => {
+  const viewport = document.createElement('div')
+  Object.defineProperties(viewport, {
+    clientHeight: { value: 200 },
+    scrollHeight: { value: 1000 },
+  })
+  viewport.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+    viewport.scrollTop = Number(top)
+  })
+  const key = 'touch-movement-owner'
+  const hook = renderHook(() =>
+    useConversationScrollController({
+      messages,
+      externalScrollRef: { current: viewport },
+      conversationKey: key,
+    })
+  )
+  try {
+    fireEvent.touchStart(viewport)
+    fireEvent.touchMove(viewport)
+    viewport.scrollTop = 400
+    fireEvent.scroll(viewport)
+    act(() => hook.result.current.handleContentLayoutChange())
+    expect(viewport.scrollTop).toBe(400)
+    expect(getConversationScrollSnapshot(key)?.pinnedToBottom).toBe(false)
+    fireEvent.touchMove(viewport)
+    viewport.scrollTop = 800
+    fireEvent.scroll(viewport)
+    expect(getConversationScrollSnapshot(key)?.pinnedToBottom).toBe(true)
+  } finally {
+    hook.unmount()
+  }
+})
 
 test('a stale gap request cannot clear a new request after switching away and back', async () => {
   const resolve: Array<() => void> = []

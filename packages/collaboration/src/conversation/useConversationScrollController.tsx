@@ -442,6 +442,9 @@ export function useConversationScrollController({
     let pointerStepObserved = true
     const markInput = (event: Event) => {
       if (!isConversationScrollInput(event)) return
+      const scrollbarPointer =
+        interaction?.contains(event.target as Node) && event instanceof PointerEvent
+      if (event instanceof PointerEvent && !scrollbarPointer) return
       if (modeRef.current === 'read') restoreReaderPositionFromLayout()
       cancelMotion()
       restoringRef.current = null
@@ -469,8 +472,6 @@ export function useConversationScrollController({
         changeMode('follow')
         return
       }
-      const scrollbarPointer =
-        interaction?.contains(event.target as Node) && event instanceof PointerEvent
       if (scrollbarPointer) {
         changeMode('drag')
         clearAnchor()
@@ -526,7 +527,7 @@ export function useConversationScrollController({
     targets.forEach(target => {
       target.addEventListener('wheel', markInput, { passive: true })
       target.addEventListener('pointerdown', markInput, { capture: true })
-      target.addEventListener('touchstart', markInput, { passive: true })
+      target.addEventListener('touchmove', markInput, { passive: true })
       target.addEventListener('keydown', markInput, { capture: true })
     })
     interaction?.addEventListener('pointermove', drag, { capture: true })
@@ -538,7 +539,7 @@ export function useConversationScrollController({
       targets.forEach(target => {
         target.removeEventListener('wheel', markInput)
         target.removeEventListener('pointerdown', markInput, true)
-        target.removeEventListener('touchstart', markInput)
+        target.removeEventListener('touchmove', markInput)
         target.removeEventListener('keydown', markInput, true)
       })
       interaction?.removeEventListener('pointermove', drag, true)

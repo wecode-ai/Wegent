@@ -156,9 +156,8 @@ describe('ScrollableMessageArea: reading', () => {
       const anchorBefore = model.anchorTopPx()
       model.sample()
 
-      // Clicking a file link opens a panel beside the conversation. The pointer down marks input intent, and
-      // the re-layout that follows moves the offset before its scroll event is read; taking that as the
-      // position the reader chose is what left the paragraph they were reading above the pane's top edge.
+      // A file click can open a panel after layout has changed but before scroll delivery.
+      // Keep the original text anchor instead of adopting that intermediate layout as reader input.
       model.apply({ aboveViewportGrowthPx: -332, coalesceScrollEvent: true })
       fireEvent.pointerDown(scroller)
       fireEvent.scroll(scroller)
