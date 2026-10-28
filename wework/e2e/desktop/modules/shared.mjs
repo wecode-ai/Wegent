@@ -512,6 +512,8 @@ const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const TELEMETRY_CAPTURE_PATH = '/e/'
 const TELEMETRY_TEST_PROJECT_KEY = 'wework-desktop-e2e'
 const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
+  // The anonymous person an `$identify` call merges into the account.
+  '$anon_distinct_id',
   '$device_id',
   '$geoip_disable',
   '$lib',
