@@ -6,8 +6,9 @@
 
 Run directly, outside pytest's service-mocking conftest. CI supplies the same
 running Backend, MySQL and Redis used by the other gateway API E2E tests.
-Only fixture rows are inserted directly; callbacks traverse the public listener,
-the selected callback handler and the subscription completion handler.
+Only fixture rows are inserted directly. Callbacks traverse the public Rust
+gateway; the Python-owned subscription MCP tools are verified on both the
+public gateway and the direct Python upstream.
 """
 
 from __future__ import annotations
@@ -57,20 +58,26 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         assert settings.DATABASE_URL.startswith("mysql"), "Real MySQL is required"
         with Redis.from_url(os.environ["REDIS_URL"]) as redis:
             assert redis.ping(), "Real Redis is required"
-        cls.route = os.environ["E2E_CALLBACK_ROUTE"]
+        cls.route = os.environ["E2E_SUBSCRIPTION_ROUTE"]
         assert cls.route in {"python", "rust"}
-        if cls.route == "python":
-            base_url = f"http://127.0.0.1:{state['python_port']}"
-            cls.handler_log = Path(os.environ["E2E_PYTHON_LOG"])
-        else:
-            cls.handler_log = Path(os.environ["E2E_RUST_LOG"])
-        assert cls.handler_log.is_file(), f"{cls.route} process log is required"
         cls.client = httpx.Client(base_url=base_url, timeout=30, trust_env=False)
+        cls.mcp_client = cls.client
+        if cls.route == "python":
+            cls.mcp_client = httpx.Client(
+                base_url=f"http://127.0.0.1:{state['python_port']}",
+                timeout=30,
+                trust_env=False,
+            )
+            cls.python_log = Path(os.environ["E2E_PYTHON_LOG"])
+            assert cls.python_log.is_file(), "Python process log is required"
+        cls.handler_log = Path(os.environ["E2E_RUST_LOG"])
+        assert cls.handler_log.is_file(), "Rust process log is required"
         cls.evidence: list[dict] = []
 
     @classmethod
     def tearDownClass(cls) -> None:
         cls.client.close()
+        cls.mcp_client.close()
         (Path(os.environ["E2E_REPORT_DIR"]) / "persistence.json").write_text(
             json.dumps(cls.evidence, indent=2) + "\n"
         )
@@ -222,15 +229,6 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         return after
 
     def _assert_handler_receipt(self, expected: str) -> None:
-        if self.route == "python":
-            receipt = (
-                f"[TaskCompletionHandler] Received TaskCompletedEvent: "
-                f"task_id={self.task_id}, subtask_id={self.subtask_id}, "
-                f"status={expected}"
-            )
-            self.assertIn(receipt, self.handler_log.read_text())
-            return
-
         # Breeze flushes asynchronously; require the migrated handler's receipt
         # for this exact callback as well as its durable database side effects.
         deadline = time.monotonic() + 5
@@ -285,7 +283,7 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             user_id=self.user_id,
             user_name=self.marker,
         )
-        response = self.client.post(
+        response = self.mcp_client.post(
             "/api/mcp/subscription/sse",
             headers={
                 "Accept": "application/json, text/event-stream",
@@ -383,6 +381,11 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             self.assertEqual(
                 subscription.json["spec"]["trigger"]["one_time"]["execute_at"],
                 arguments["execute_at"],
+            )
+        if self.route == "python":
+            self.assertIn(
+                "request : POST /api/mcp/subscription/sse ",
+                self.python_log.read_text(),
             )
         with Redis.from_url(os.environ["REDIS_URL"]) as redis:
             self.assertFalse(redis.exists(key), "Creation must consume its preview")
