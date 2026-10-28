@@ -221,6 +221,11 @@ PageDown restores the viewport. A single ten-second deadline cannot bound many
 page operations: control latency under concurrent CI can exhaust it while
 history remains intact. Focused regressions cover a slow control channel, stalled
 scrolling, and missing history.
+`background-terminals` runs alone first within its existing shard; the remaining
+checkpoints then regain their configured concurrency. Native keyboard actions
+avoid CPU contention from other full desktop environments while preparation is
+reused, without another matrix job, a longer ten-second step budget, or fewer
+history and native-input assertions.
 Shards are balanced from observed CI durations; a new or
 materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures.

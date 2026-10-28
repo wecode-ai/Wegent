@@ -70,14 +70,18 @@ async function renderLoadedOverview(props: ReturnType<typeof fixture>['props']) 
     })
   )
   render(<StandInOverviewPage {...props} />)
-  await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(2))
-  expect(screen.getByTestId('stand-in-overview')).toBeInTheDocument()
-  expect(screen.getByTestId('stand-in-overview-status')).toBeInTheDocument()
-  expect(screen.queryByTestId('stand-in-overview-role-default')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('identity-conversation')).not.toBeInTheDocument()
-  // Install the device-scoped subscription before publishing a reload event.
-  await act(async () => resolveInitial(settings))
-  return { api, settings, conversation: screen.getByTestId('identity-conversation') }
+  try {
+    await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('stand-in-overview')).toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-overview-status')).toBeInTheDocument()
+    expect(screen.queryByTestId('stand-in-overview-role-default')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('identity-conversation')).not.toBeInTheDocument()
+    // Install the device-scoped subscription before publishing a reload event.
+    await act(async () => resolveInitial(settings))
+    return { api, settings, conversation: screen.getByTestId('identity-conversation') }
+  } finally {
+    await act(async () => resolveInitial(settings))
+  }
 }
 
 it('lists existing stand-ins without execution history and keeps project names separate', async () => {
@@ -141,12 +145,16 @@ it('keeps the active conversation mounted while settings reload', async () => {
   const pending = new Promise<typeof settings>(done => {
     resolve = done
   })
-  vi.mocked(api.personalGet).mockReturnValueOnce(pending)
-  act(() => publishPersonalStandIn(settings))
-  await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
-  expect(screen.getByTestId('identity-conversation')).toBe(conversation)
-  await act(async () => resolve(settings))
-  expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+  try {
+    vi.mocked(api.personalGet).mockReturnValueOnce(pending)
+    act(() => publishPersonalStandIn(settings))
+    await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
+    expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+    await act(async () => resolve(settings))
+    expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+  } finally {
+    await act(async () => resolve(settings))
+  }
 })
 
 it('hides empty message associations while preserving existing execution history', async () => {

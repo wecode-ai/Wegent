@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import json
 import logging
 from typing import Literal, Optional
@@ -450,22 +451,14 @@ async def update_mcp_provider_service_config(
             ),
         )
 
-    updated_preferences = user_mcp_service.set_provider_service_config(
-        current_user.preferences,
+    updated_config = await asyncio.to_thread(
+        user_mcp_service.save_service_config,
+        current_user.id,
         provider_id=provider_id,
         service_id=service_id,
         enabled=config.enabled,
         url=url,
         auth_mode=config.auth_mode,
-    )
-    current_user.preferences = user_mcp_service.dump_preferences(updated_preferences)
-
-    db.add(current_user)
-    db.commit()
-    db.refresh(current_user)
-
-    updated_config = user_mcp_service.get_provider_service_config(
-        current_user.preferences, provider_id, service_id
     )
     return MCPProviderServiceConfigResponse(
         provider_id=provider_id, **service, **updated_config

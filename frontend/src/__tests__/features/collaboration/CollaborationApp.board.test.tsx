@@ -447,37 +447,37 @@ describe('CollaborationApp shared project board', () => {
     expect(updateProject).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps lane rules isolated when accounts switch in the same browser', async () => {
-    const legacyKey = 'collaboration-board-column-sort:v2:project-1'
-    localStorage.setItem(legacyKey, JSON.stringify({ '["status","pending"]': [] }))
-    const mountAccount = async (userId: number | undefined) => {
-      const api = {
-        projects: {
-          get: jest.fn().mockResolvedValue({ ...project(), current_user_id: userId }),
-          listExecutionEnvironments: jest.fn().mockResolvedValue([]),
-        },
-        issues: {
-          getBoardSnapshot: jest.fn().mockResolvedValue({
-            items: [issue()],
-            members: [],
-            taskBindings: [],
-          }),
-        },
-        members: { list: jest.fn().mockResolvedValue([]) },
-        agents: { list: jest.fn().mockResolvedValue([]) },
-      } as unknown as SharedWorkspaceApi
-      const host: CollaborationHostAdapter = {
-        capabilities: { automation: true, dingtalkAitable: false },
-        location: { projectId: 'project-1', issueId: null, view: 'board' },
-        navigate: jest.fn(),
-      }
-      const view = render(
-        <CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />
-      )
-      const sort = await screen.findByTestId('cloud-board-sort-by-pending')
-      return { ...view, sort }
+  const legacyKey = 'collaboration-board-column-sort:v2:project-1'
+  const mountAccount = async (userId: number | undefined) => {
+    const api = {
+      projects: {
+        get: jest.fn().mockResolvedValue({ ...project(), current_user_id: userId }),
+        listExecutionEnvironments: jest.fn().mockResolvedValue([]),
+      },
+      issues: {
+        getBoardSnapshot: jest.fn().mockResolvedValue({
+          items: [issue()],
+          members: [],
+          taskBindings: [],
+        }),
+      },
+      members: { list: jest.fn().mockResolvedValue([]) },
+      agents: { list: jest.fn().mockResolvedValue([]) },
+    } as unknown as SharedWorkspaceApi
+    const host: CollaborationHostAdapter = {
+      capabilities: { automation: true, dingtalkAitable: false },
+      location: { projectId: 'project-1', issueId: null, view: 'board' },
+      navigate: jest.fn(),
     }
+    const view = render(
+      <CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />
+    )
+    const sort = await screen.findByTestId('cloud-board-sort-by-pending')
+    return { ...view, sort }
+  }
 
+  it('keeps lane rules isolated when accounts switch in the same browser', async () => {
+    localStorage.setItem(legacyKey, JSON.stringify({ '["status","pending"]': [] }))
     const first = await mountAccount(1)
     expect(first.sort).toHaveAttribute('data-sort-rules', 'priority-desc')
     fireEvent.click(first.sort)
@@ -496,7 +496,10 @@ describe('CollaborationApp shared project board', () => {
     const secondRestored = await mountAccount(2)
     expect(secondRestored.sort).toHaveAttribute('data-sort-rules', 'priority-desc,created-desc')
     secondRestored.unmount()
+  })
 
+  it('persists local account lane rules independently of the legacy key', async () => {
+    localStorage.setItem(legacyKey, JSON.stringify({ '["status","pending"]': [] }))
     const localAccount = await mountAccount(0)
     fireEvent.click(localAccount.sort)
     fireEvent.click(screen.getByTestId('cloud-board-sort-by-pending-manual'))
@@ -504,17 +507,28 @@ describe('CollaborationApp shared project board', () => {
     const localRestored = await mountAccount(0)
     expect(localRestored.sort).toHaveAttribute('data-sort-rules', 'manual')
     localRestored.unmount()
+    expect(Object.keys(localStorage).sort()).toEqual([
+      'collaboration-board-column-sort:v2:0:project-1:["status","pending"]',
+      legacyKey,
+    ])
+  })
 
+  it('keeps unknown account lane rules in memory without rewriting saved accounts', async () => {
+    localStorage.setItem(legacyKey, JSON.stringify({ '["status","pending"]': [] }))
+    for (const userId of [0, 1, 2]) {
+      localStorage.setItem(
+        `collaboration-board-column-sort:v2:${userId}:project-1:["status","pending"]`,
+        '[]'
+      )
+    }
+    const saved = { ...localStorage }
     const unknownAccount = await mountAccount(undefined)
     expect(unknownAccount.sort).toHaveAttribute('data-sort-rules', 'priority-desc')
     fireEvent.click(unknownAccount.sort)
     fireEvent.click(screen.getByTestId('cloud-board-sort-by-pending-manual'))
-    expect(Object.keys(localStorage).sort()).toEqual([
-      'collaboration-board-column-sort:v2:0:project-1:["status","pending"]',
-      'collaboration-board-column-sort:v2:1:project-1:["status","pending"]',
-      'collaboration-board-column-sort:v2:2:project-1:["status","pending"]',
-      legacyKey,
-    ])
+    expect(unknownAccount.sort).toHaveAttribute('data-sort-rules', 'manual')
+    expect({ ...localStorage }).toEqual(saved)
+    unknownAccount.unmount()
   })
 
   it('keeps saved views available on empty projects and shows their configured columns', async () => {

@@ -1714,6 +1714,15 @@ describe('TaskActivityView', () => {
   }, 10_000)
 
   it('persists the visible Issue activity cursor without reading offscreen comments', async () => {
+    const frames = new Map<number, FrameRequestCallback>()
+    let nextFrame = 0
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+      frames.set(++nextFrame, callback)
+      return nextFrame
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => {
+      frames.delete(id)
+    })
     const task = {
       id: 'WEG-1',
       title: 'Unread activities',
@@ -1763,7 +1772,15 @@ describe('TaskActivityView', () => {
         linear
       />
     )
-    await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledWith(task.id, 2))
+    await screen.findByText('Activity 2')
+    expect(markLoopItemRead).not.toHaveBeenCalled()
+    expect(frames.size).toBeGreaterThan(0)
+    await act(async () => {
+      const pending = [...frames.values()]
+      frames.clear()
+      for (const callback of pending) callback(performance.now())
+    })
+    expect(markLoopItemRead).toHaveBeenCalledWith(task.id, 2)
     expect(markLoopItemRead).not.toHaveBeenCalledWith(task.id, 3)
     expect(onTaskRead).toHaveBeenCalledWith(updated)
     expect(onTaskUpdated).not.toHaveBeenCalled()

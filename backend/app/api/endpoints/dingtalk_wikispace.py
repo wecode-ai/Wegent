@@ -24,6 +24,7 @@ from app.schemas.dingtalk_doc import (
 )
 from app.services.dingtalk_doc_service import DingTalkDocService
 from app.services.dingtalk_wikispace_service import DingTalkWikiSpaceService
+from app.services.user_mcp_service import MCPPreferencesError
 
 router = APIRouter()
 
@@ -61,6 +62,8 @@ async def sync_wikispace_nodes(
         return DingtalkSyncResult(**result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except MCPPreferencesError:
+        raise
     except Exception as e:
         logger.exception("Failed to sync DingTalk wikispace nodes: %s", e)
         raise HTTPException(

@@ -49,12 +49,10 @@ describe('runSmartAppProjectScripts', () => {
           environment: { PATH: process.env.PATH, CI: 'true' },
         }),
       })
-      const failureLogs = await Promise.all(
-        result.scripts
-          .filter(script => script.status === 'failed')
-          .map(script => readFile(join(root, script.logPath), 'utf8'))
+      const logs = await Promise.all(
+        result.scripts.map(script => readFile(join(root, script.logPath), 'utf8'))
       )
-      expect(result.issues, failureLogs.join('\n')).toEqual([])
+      expect(result.issues, JSON.stringify({ node: process.execPath, pnpmEntry, logs })).toEqual([])
       expect(result.scripts.map(script => script.status)).toEqual(['passed', 'passed', 'passed'])
       await expect(readFile(join(host, 'pnpm-lock.yaml'))).rejects.toMatchObject({ code: 'ENOENT' })
     },
