@@ -10,7 +10,6 @@ import type { UserViewportAnchor } from './scrollableMessageTypes'
 export interface ConversationFrameProbeState {
   anchor: UserViewportAnchor | null
   userSelfOffset: number
-  bottomOrigin: boolean
 }
 
 type ReadProbeState = () => ConversationFrameProbeState
@@ -81,7 +80,7 @@ function sampleFrame(frameTimeMs: number): void {
     return
   }
   const { scroller, readState } = target
-  const { anchor, userSelfOffset, bottomOrigin } = readState()
+  const { anchor, userSelfOffset } = readState()
   const viewport = scroller.getBoundingClientRect()
   const scrollTop = scroller.scrollTop
   const scrollHeight = scroller.scrollHeight
@@ -92,11 +91,7 @@ function sampleFrame(frameTimeMs: number): void {
   const anchorOffset = currentPoint ? currentPoint.rect.top - viewport.top : null
   const believedScrollTop = anchor ? anchor.scrollTopPx + userSelfOffset : null
   const clampedScrollTop =
-    believedScrollTop === null
-      ? null
-      : bottomOrigin
-        ? Math.min(0, Math.max(-maximumOffset, believedScrollTop))
-        : Math.min(maximumOffset, Math.max(0, believedScrollTop))
+    believedScrollTop === null ? null : Math.min(maximumOffset, Math.max(0, believedScrollTop))
   const readerScrollTop = clampedScrollTop === null ? null : scrollTop - clampedScrollTop
   const expectedAnchorOffset =
     anchor && readerScrollTop !== null ? anchor.offsetFromScrollerTop - readerScrollTop : null
@@ -135,7 +130,6 @@ function sampleFrame(frameTimeMs: number): void {
     clientWidth: scroller.clientWidth,
     scrollerTop: viewport.top,
     scrollerHeight: viewport.height,
-    bottomOrigin,
     hasAnchor: anchor !== null,
     connected,
     anchorNodeId: anchor ? nodeId(anchor.element) : null,

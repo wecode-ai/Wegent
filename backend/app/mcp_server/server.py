@@ -1121,19 +1121,6 @@ def _apply_mount_prefix(spec: McpAppSpec, prefix: str) -> McpAppSpec:
                 "OPTIONS",
             ),
         )
-    if effective_spec.mount_path == "/api/mcp/subscription":
-        return replace(
-            effective_spec,
-            transport_methods=(
-                # MIGRATION-CANDIDATE(api="GET /api/mcp/subscription/sse"): remove after final confirmation.
-                # "GET",
-                # MIGRATION-CANDIDATE(api="POST /api/mcp/subscription/sse"): remove after final confirmation.
-                # "POST",
-                "DELETE",
-                "OPTIONS",
-            ),
-        )
-
     return effective_spec
 
 
