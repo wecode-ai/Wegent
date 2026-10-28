@@ -152,7 +152,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'stand-in-mcp': './scenarios/stand-in-mcp.scenario.mjs',
   'stand-in-cli': './scenarios/stand-in-cli.scenario.mjs',
   'stand-in-plugin-bridge': './scenarios/stand-in-plugin-bridge.scenario.mjs',
-  'stand-in-assignment-notifications': './scenarios/stand-in-assignment-notifications.scenario.mjs',
+  'stand-in-assignment-notifications': './scenarios/stand-in-assignment-suite.scenario.mjs',
   'stand-in-personal-task': './scenarios/stand-in-personal-task.scenario.mjs',
   'stand-in': './scenarios/stand-in.scenario.mjs',
   'stand-in-cloud': './scenarios/stand-in-cloud.scenario.mjs',

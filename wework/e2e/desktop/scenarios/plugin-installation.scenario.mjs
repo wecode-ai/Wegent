@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { createDesktopScenario as createToggleScenario } from './plugin-toggle-persistence.scenario.mjs'
-import { refreshPluginInventory } from '../modules/plugin-inventory-state.mjs'
 import {
   accountPlugin,
   openPlugin,
@@ -29,8 +28,12 @@ export function createDesktopScenario(options) {
       const fixture = { ...release, slug }
       try {
         await openPlugin(control, fixture)
-        await refreshPluginInventory(control)
+        await control.command('click', testId('plugins-refresh-button'))
         const install = testId(`plugin-marketplace-install-${release.pluginId}`)
+        await control.command('waitFor', install, {
+          timeoutMs: options.workbenchReadyTimeoutMs,
+        })
+        // Refresh keeps the catalog visible while reconciliation blocks installs.
         await control.command('clickWhenEnabled', install)
         await control.command('waitFor', testId('plugin-install-unofficial-warning'))
         assert.equal(await accountPlugin(cloud, slug), undefined)

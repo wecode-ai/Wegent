@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useRef, useState } from 'react'
 import { ArrowUp, LoaderCircle, MessageSquare } from 'lucide-react'
 import { isImeEnterEvent } from '@wegent/chat-core/ime'
@@ -82,7 +83,9 @@ export function StandInNotificationProcessing({
           signature,
           question: pending?.renderPayload ?? null,
           summary:
-            (status === 'failed' ? transcript.turns.at(-1)?.error : '') ||
+            (status === 'failed' && transcript.turns.at(-1)?.error
+              ? getStandInErrorMessage(transcript.turns.at(-1)?.error)
+              : '') ||
             notificationTextFromMessages(response.messages)?.body ||
             '',
         })
@@ -93,7 +96,7 @@ export function StandInNotificationProcessing({
             signature,
             question: null,
             summary: '',
-            error: cause instanceof Error ? cause.message : String(cause),
+            error: getStandInErrorMessage(cause),
           })
       })
     return () => {
@@ -111,7 +114,7 @@ export function StandInNotificationProcessing({
       await onChanged()
       return true
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(getStandInErrorMessage(cause))
       return false
     } finally {
       submitting.current = false
@@ -148,7 +151,7 @@ export function StandInNotificationProcessing({
         userId,
         origin?.projectStore === 'local' ? 'local' : 'cloud',
         target,
-        typeof origin?.standInId === 'string' ? origin.standInId : 'default'
+        typeof origin?.standInId === 'string' ? origin.standInId : undefined
       )
       setStarted({
         ...address,
@@ -203,7 +206,7 @@ export function StandInNotificationProcessing({
               )}
               {(state?.summary || summary) && (
                 <p className="line-clamp-2 rounded-lg bg-muted/70 px-3 py-2 text-sm text-text-secondary">
-                  {state?.summary || summary}
+                  {state?.summary ? getStandInErrorMessage(state.summary) : summary}
                 </p>
               )}
               {(canStart ||

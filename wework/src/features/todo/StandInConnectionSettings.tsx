@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useState } from 'react'
 import { ArrowLeft, ChevronRight, Folder, MessageSquare, Plus } from 'lucide-react'
 import type { CollaborationProject } from '@wegent/collaboration'
@@ -61,7 +62,8 @@ export function StandInConnectionSettings({
           })
       })
       .catch(cause => {
-        if (active) setCatalog({ key: catalogKey, api, items: [], error: String(cause) })
+        if (active)
+          setCatalog({ key: catalogKey, api, items: [], error: getStandInErrorMessage(cause) })
       })
     return () => {
       active = false
@@ -124,7 +126,7 @@ export function StandInConnectionSettings({
       )
       setRefresh(value => value + 1)
     } catch (cause) {
-      setError(String(cause))
+      setError(getStandInErrorMessage(cause))
     } finally {
       setInstalling(false)
     }
