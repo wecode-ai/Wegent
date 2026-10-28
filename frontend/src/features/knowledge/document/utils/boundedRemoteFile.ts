@@ -298,7 +298,16 @@ async function assertFileComplexity(
   if (kind === 'text') await assertTextComplexity(blob)
 }
 
-function createTimedSignal(signal: AbortSignal): {
+const REMOTE_FILE_MIN_BYTES_PER_SECOND = 256 * 1024
+
+function remoteFileTimeoutMs(maxBytes: number): number {
+  return REMOTE_FILE_TIMEOUT_MS + Math.ceil((maxBytes / REMOTE_FILE_MIN_BYTES_PER_SECOND) * 1000)
+}
+
+function createTimedSignal(
+  signal: AbortSignal,
+  timeoutMs = REMOTE_FILE_TIMEOUT_MS
+): {
   signal: AbortSignal
   cleanup: () => void
   didTimeout: () => boolean
@@ -311,7 +320,7 @@ function createTimedSignal(signal: AbortSignal): {
   const timer = window.setTimeout(() => {
     timedOut = true
     controller.abort()
-  }, REMOTE_FILE_TIMEOUT_MS)
+  }, timeoutMs)
   return {
     signal: controller.signal,
     cleanup: () => {
@@ -329,7 +338,7 @@ export async function loadBoundedRemoteFile(
   filename = new URL(url).pathname.split('/').pop() || 'file'
 ): Promise<{ blob: Blob; mimeType: string; size: number }> {
   const maxBytes = MAX_BYTES[kind]
-  const timedSignal = createTimedSignal(signal)
+  const timedSignal = createTimedSignal(signal, remoteFileTimeoutMs(maxBytes))
   let response: Response
   try {
     response = await fetch(url, {

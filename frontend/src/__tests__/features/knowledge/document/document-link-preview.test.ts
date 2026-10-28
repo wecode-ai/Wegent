@@ -227,6 +227,47 @@ describe('bounded remote file loading', () => {
     })
   })
 
+  it('scales the bounded fetch timeout with the kind size limit', async () => {
+    const setTimeoutSpy = jest.spyOn(window, 'setTimeout').mockImplementation(((
+      callback: unknown,
+      timeoutMs?: number
+    ) => {
+      setTimeoutMockCalls.push(timeoutMs ?? 0)
+      return 0 as unknown as ReturnType<typeof window.setTimeout>
+    }) as unknown as typeof window.setTimeout)
+    const setTimeoutMockCalls: number[] = []
+    try {
+      const textBytes = Uint8Array.from('plain text fixture', character => character.charCodeAt(0))
+      const { response } = fileResponse(textBytes, {
+        'content-type': 'text/plain; charset=utf-8',
+        'content-length': String(textBytes.length),
+      })
+      global.fetch = jest.fn().mockResolvedValue(response)
+
+      // The outcome does not matter; the timer is armed before the fetch.
+      await loadBoundedRemoteFile(
+        'https://cdn.example.com/text.txt',
+        'text',
+        new AbortController().signal,
+        'text.txt'
+      ).catch(() => undefined)
+      await loadBoundedRemoteFile(
+        'https://cdn.example.com/file.pdf',
+        'pdf',
+        new AbortController().signal,
+        'file.pdf'
+      ).catch(() => undefined)
+
+      const [textTimeout, pdfTimeout] = setTimeoutMockCalls
+      // 20 s base plus the size budget at 256 KiB/s.
+      expect(textTimeout).toBe(20_000 + Math.ceil(((512 * 1024) / (256 * 1024)) * 1000))
+      expect(pdfTimeout).toBe(20_000 + Math.ceil(((100 * 1024 * 1024) / (256 * 1024)) * 1000))
+      expect(pdfTimeout).toBeGreaterThan(textTimeout)
+    } finally {
+      setTimeoutSpy.mockRestore()
+    }
+  })
+
   it('rejects an image whose decoded pixel dimensions exceed the budget', async () => {
     const png = new Uint8Array(24)
     png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
