@@ -65,7 +65,7 @@ async fn acknowledge_assignment(
 ) -> Result<Value, FastApiError> {
     // The existing read policy includes project membership and Issue security.
     require_issue_read(state, item_id, &user).await?;
-    ensure_active_index(state, item_id).await?;
+    ensure_active_index(&state.mysql, item_id).await?;
     let assignment: Option<ReceiptRow> = state
         .mysql
         .fetch_optional(

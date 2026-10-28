@@ -264,8 +264,10 @@ export async function createDesktopScenario({
       assert.equal(saved.enabled, true)
       assert.ok(saved.executionDeviceId)
       assert.equal(saved.prompt, MARKER)
-      await captureScreenshot(control, 'stand-in-05-saved-project-status.png')
       await control.command('waitFor', `${CONTENT} [data-testid="stand-in-project-${project.id}"]`)
+      // The project header reloads after saving; the sidebar can already be visible.
+      await control.command('waitFor', `${CONTENT} [data-testid="stand-in-enabled"]`)
+      await captureScreenshot(control, 'stand-in-05-saved-project-status.png')
       assert.equal(
         await control.command(
           'getElementCount',

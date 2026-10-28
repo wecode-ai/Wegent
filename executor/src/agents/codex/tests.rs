@@ -648,9 +648,13 @@ fn environment_change_diagnostics_report_keys_without_values() {
 
 #[test]
 fn shared_notification_lag_is_recoverable() {
-    let notification =
-        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None, false)
-            .expect("lagged notifications should keep the turn alive");
+    let notification = shared_notification_result(
+        Err(broadcast::error::RecvError::Lagged(37)),
+        None,
+        false,
+        false,
+    )
+    .expect("lagged notifications should keep the turn alive");
 
     assert!(matches!(notification, SharedNotification::Lagged(37)));
 }
@@ -658,9 +662,59 @@ fn shared_notification_lag_is_recoverable() {
 #[test]
 fn closed_notification_stream_reports_executor_shutdown() {
     assert!(matches!(
-        shared_notification_result(Err(broadcast::error::RecvError::Closed), None, true),
+        shared_notification_result(Err(broadcast::error::RecvError::Closed), None, true, false),
         Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
     ));
+}
+
+#[test]
+fn closed_notification_stream_does_not_reuse_an_earlier_outcome_during_shutdown() {
+    assert!(matches!(
+        shared_notification_result(
+            Err(broadcast::error::RecvError::Closed),
+            Some(ExecutionOutcome::Completed { content: "Earlier turn".into() }),
+            true,
+            true,
+        ),
+        Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
+    ));
+}
+
+#[test]
+fn stopping_an_active_goal_does_not_complete_it_with_its_previous_turn() {
+    for shutdown in [false, true] {
+        let expected = if shutdown {
+            CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
+        } else {
+            CODEX_APP_SERVER_ACTIVE_GOAL_INTERRUPTED
+        };
+        let previous = || {
+            Some(ExecutionOutcome::Completed {
+                content: "Earlier turn".into(),
+            })
+        };
+        assert!(matches!(
+            shared_notification_result(
+                Err(broadcast::error::RecvError::Closed), previous(), shutdown, true,
+            ),
+            Err(error) if error == expected
+        ));
+        assert_eq!(
+            stopped_shared_turn_outcome(previous(), shutdown, true, "app-server exited"),
+            Err(expected.to_owned())
+        );
+    }
+}
+
+#[test]
+fn stopping_after_a_finished_non_goal_turn_keeps_its_completed_outcome() {
+    let outcome = ExecutionOutcome::Completed {
+        content: "Finished turn".into(),
+    };
+    assert_eq!(
+        stopped_shared_turn_outcome(Some(outcome.clone()), false, false, "app-server exited"),
+        Ok(outcome)
+    );
 }
 
 #[tokio::test]
