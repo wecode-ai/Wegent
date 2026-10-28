@@ -32,26 +32,33 @@ async fn assignments_http_preserves_access_and_results_without_index_writes() {
     eprintln!("Assignment E2E logs: {}", log_dir.display());
     let fixture = fixture::Fixture::new().await;
     data::seed(&fixture.mysql).await;
+    let reader = data::ReadOnlyMysql::new(&fixture.mysql).await;
     let writer = data::writer(&fixture.mysql).await;
-    let server = http_e2e::Server::start(fixture.mysql.clone()).await;
-    let mysql = fixture.mysql.clone();
+    let server = http_e2e::Server::start(reader.mysql.clone()).await;
+    let receipt_server = http_e2e::Server::start(fixture.mysql.clone()).await;
+    let mysql = server.mysql.clone();
     let base = server.base.clone();
+    let receipt_base = receipt_server.base.clone();
+    let lock_writer = writer.clone();
     let result = tokio::spawn(async move {
-        assert_scenario(&base, &mysql, &writer).await;
-        writer.close().await;
+        assert_scenario(&base, &receipt_base, &mysql, &lock_writer).await;
     })
     .await;
     server.close().await;
+    receipt_server.close().await;
+    reader.close(&fixture.mysql).await;
+    writer.close().await;
     fixture.close().await;
     result.unwrap();
 }
 
-async fn assert_scenario(base: &str, mysql: &MysqlService, writer: &MysqlService) {
-    // The fixture has one connection, so every GET must work in a read-only session.
-    mysql
-        .execute("SET SESSION TRANSACTION READ ONLY", ())
-        .await
-        .unwrap();
+async fn assert_scenario(
+    base: &str,
+    receipt_base: &str,
+    mysql: &MysqlService,
+    writer: &MysqlService,
+) {
+    assert_writes_denied(mysql).await;
     assert_access(base).await;
     let expected = data::expected();
     let listed = http_e2e::get(base, "issue-1", Some(7)).await;
@@ -63,14 +70,35 @@ async fn assert_scenario(base: &str, mysql: &MysqlService, writer: &MysqlService
     );
     assert_no_index(mysql).await;
     assert_nonblocking_read(base, mysql, writer, &expected).await;
-    mysql
-        .execute("SET SESSION TRANSACTION READ WRITE", ())
-        .await
-        .unwrap();
-    assert_receipts(base, mysql, &expected).await;
+    assert_receipts(base, receipt_base, mysql, &expected).await;
+    assert_writes_denied(mysql).await;
     eprintln!(
         "Assignment HTTP E2E: authentication, access, locked read, no index writes, receipt parity passed"
     );
+}
+
+async fn assert_writes_denied(mysql: &MysqlService) {
+    let account: String = mysql.fetch_one("SELECT CURRENT_USER()", ()).await.unwrap();
+    assert!(
+        account.starts_with("assign_ro_"),
+        "HTTP pool account: {account}"
+    );
+    for sql in [
+        "INSERT INTO loop_items (id,resource_type,description,created_at,updated_at) \
+         VALUES ('read-only-write-probe','comment','probe',NOW(),NOW())",
+        "UPDATE loop_items SET description = description WHERE id = 'issue-1'",
+        "DELETE FROM loop_items WHERE id = 'read-only-write-probe'",
+    ] {
+        let error = mysql
+            .execute(sql, ())
+            .await
+            .expect_err("HTTP pool must reject writes");
+        assert_eq!(error.database_code(), Some(1142), "{error}");
+        eprintln!(
+            "Assignment HTTP pool negative control: {} denied with MySQL 1142",
+            sql.split_whitespace().next().unwrap()
+        );
+    }
 }
 
 async fn assert_access(base: &str) {
@@ -130,9 +158,9 @@ async fn assert_nonblocking_read(
     }).await.unwrap();
 }
 
-async fn assert_receipts(base: &str, mysql: &MysqlService, expected: &Value) {
+async fn assert_receipts(base: &str, receipt_base: &str, mysql: &MysqlService, expected: &Value) {
     let receipt = http_e2e::request(
-        base,
+        receipt_base,
         "POST",
         "issue-1/assignments/102/receipt",
         Some(&http_e2e::token(7, 300)),
@@ -153,7 +181,7 @@ async fn assert_receipts(base: &str, mysql: &MysqlService, expected: &Value) {
         "receipt writes still initialize the active index"
     );
     let denied = http_e2e::request(
-        base,
+        receipt_base,
         "POST",
         "issue-1/assignments/102/receipt",
         Some(&http_e2e::token(8, 300)),
@@ -167,10 +195,6 @@ async fn assert_receipts(base: &str, mysql: &MysqlService, expected: &Value) {
             json!({"detail":"Only the recipient can acknowledge an assignment"})
         )
     );
-    mysql
-        .execute("SET SESSION TRANSACTION READ ONLY", ())
-        .await
-        .unwrap();
     assert_eq!(
         http_e2e::get(base, "issue-1", Some(7)).await,
         (200, expected.clone()),

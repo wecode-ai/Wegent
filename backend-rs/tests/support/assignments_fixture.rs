@@ -6,7 +6,50 @@
 
 use brz_mysql::{MysqlRow, MysqlService, MysqlServiceOptions};
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+pub struct ReadOnlyMysql {
+    pub mysql: MysqlService,
+    user: String,
+}
+
+impl ReadOnlyMysql {
+    pub async fn new(admin: &MysqlService) -> Self {
+        let database = database_name(admin).await;
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let user = format!("assign_ro_{unique:x}");
+        admin
+            .execute(format!("CREATE USER '{user}'@'%'"), ())
+            .await
+            .unwrap();
+        admin
+            .execute(format!("GRANT SELECT ON {database}.* TO '{user}'@'%'"), ())
+            .await
+            .unwrap();
+        let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS").unwrap();
+        // Every connection authenticates as this SELECT-only account, including
+        // replacement connections. No session setting or pool scheduling is assumed.
+        let mysql = MysqlService::connect_lazy_with_options(
+            &format!("mysql://{user}@{address}/{database}?ssl-mode=disabled"),
+            MysqlServiceOptions::default()
+                .with_max_connections(4)
+                .with_query_timeout(Duration::from_secs(10)),
+        )
+        .unwrap();
+        Self { mysql, user }
+    }
+
+    pub async fn close(self, admin: &MysqlService) {
+        self.mysql.close().await;
+        admin
+            .execute(format!("DROP USER '{}'@'%'", self.user), ())
+            .await
+            .unwrap();
+    }
+}
 
 pub async fn seed(mysql: &MysqlService) {
     mysql
@@ -85,12 +128,7 @@ fn assign(target: &str, id: &str) -> Value {
 }
 
 pub async fn writer(mysql: &MysqlService) -> MysqlService {
-    let row: MysqlRow = mysql
-        .fetch_one("SELECT DATABASE() AS name", ())
-        .await
-        .unwrap();
-    let name: String = row.get_required("name").unwrap();
-    assert!(name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    let name = database_name(mysql).await;
     let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS").unwrap();
     MysqlService::connect_lazy_with_options(
         &format!("mysql://root@{address}/{name}?ssl-mode=disabled"),
@@ -99,6 +137,16 @@ pub async fn writer(mysql: &MysqlService) -> MysqlService {
             .with_query_timeout(Duration::from_secs(10)),
     )
     .unwrap()
+}
+
+async fn database_name(mysql: &MysqlService) -> String {
+    let row: MysqlRow = mysql
+        .fetch_one("SELECT DATABASE() AS name", ())
+        .await
+        .unwrap();
+    let name: String = row.get_required("name").unwrap();
+    assert!(name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    name
 }
 
 pub fn expected() -> Value {

@@ -18,6 +18,7 @@ const SIGNING_KEY: &str = "assignment-e2e-signing-key";
 
 pub struct Server {
     pub base: String,
+    pub mysql: MysqlService,
     api_stop: oneshot::Sender<()>,
     gateway_stop: oneshot::Sender<()>,
     api_task: JoinHandle<()>,
@@ -27,6 +28,8 @@ pub struct Server {
 impl Server {
     pub async fn start(mysql: MysqlService) -> Self {
         let state = application_state(mysql).await;
+        // Expose the actual application pool for the database negative controls.
+        let mysql = state.mysql.clone();
         let application = Application::build(state.clone()).await.unwrap();
         let server = wegent_backend_rs::http_server::Server::bind_with_authenticator(
             "127.0.0.1:0".parse().unwrap(),
@@ -71,6 +74,7 @@ impl Server {
         });
         Self {
             base,
+            mysql,
             api_stop,
             gateway_stop,
             api_task,
