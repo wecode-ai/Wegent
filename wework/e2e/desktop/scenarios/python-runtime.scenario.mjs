@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   assertManagedPythonSettings,
   assertPathMissing,
+  collectManagedPythonStatus,
   inspectManagedPython,
   managedPythonPath,
   PYTHON_BOOTSTRAP_TIMEOUT_MS,
@@ -46,7 +47,24 @@ export async function createDesktopScenario({
     },
     async verify(control) {
       // No settings action triggers this first installation: startup owns it.
-      await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-completed')
+      try {
+        await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-completed')
+      } catch (error) {
+        try {
+          const diagnostic = await collectManagedPythonStatus(control)
+          await writeFile(
+            join(resultDir, 'python-runtime-startup-failure.json'),
+            JSON.stringify(diagnostic, null, 2)
+          )
+          await captureScreenshot(control, 'python-runtime-startup-failure.png', 'body')
+        } catch (diagnosticError) {
+          console.error(
+            '[desktop-e2e] Python startup diagnostic collection failed:',
+            diagnosticError
+          )
+        }
+        throw error
+      }
       observations.push({
         phase: 'cold-start',
         ...(await inspectManagedPython(electronUserDataDirectory, launchDirectory)),

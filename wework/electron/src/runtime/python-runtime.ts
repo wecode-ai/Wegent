@@ -185,9 +185,16 @@ export class PythonRuntimeManager {
   }
 
   private async performEnsure(): Promise<PythonRuntimeStatus> {
+    this.log({
+      event: 'python-runtime-ensure-started',
+      version: PYTHON_VERSION,
+      platform: this.platform,
+      arch: this.arch,
+    })
     const installed = await this.inspectInstalledPython()
     if (installed?.version === PYTHON_VERSION) {
       this.currentStatus = installed
+      this.log({ event: 'python-runtime-ensure-completed', version: installed.version })
       return { ...installed }
     }
 
@@ -265,12 +272,16 @@ export class PythonRuntimeManager {
 
   private async ensureUv(): Promise<string> {
     const artifact = this.artifact()
+    this.log({ event: 'python-runtime-uv-prepare-started', archive: artifact.archiveName })
     const executableName = this.platform === 'win32' ? 'uv.exe' : 'uv'
     const targetDirectory = join(this.root, 'bootstrap', `uv-${UV_VERSION}`)
     const targetPath = join(targetDirectory, executableName)
     if (await isFile(targetPath)) {
       try {
-        if ((await this.fileSha256(targetPath)) === artifact.executableSha256) return targetPath
+        if ((await this.fileSha256(targetPath)) === artifact.executableSha256) {
+          this.log({ event: 'python-runtime-uv-cache-verified', version: UV_VERSION })
+          return targetPath
+        }
       } catch {
         // Treat unreadable cached files as invalid and restore them from the pinned archive.
       }
@@ -286,13 +297,18 @@ export class PythonRuntimeManager {
       totalBytes: artifact.archiveBytes,
     })
 
+    let stage = 'download'
     try {
       await this.downloadUv(artifact, archivePath)
+      stage = 'extract'
+      this.log({ event: 'python-runtime-uv-extract-started', archive: artifact.archiveName })
       if (artifact.archiveName.endsWith('.zip')) {
         await extractZip(archivePath, { dir: stagingDirectory })
       } else {
         await tar.x({ file: archivePath, cwd: stagingDirectory })
       }
+      this.log({ event: 'python-runtime-uv-extract-completed', archive: artifact.archiveName })
+      stage = 'verify'
       const extractedPath = join(stagingDirectory, artifact.executablePath)
       if (!(await isFile(extractedPath))) {
         throw new Error(`uv archive does not contain ${artifact.executablePath}`)
@@ -300,12 +316,23 @@ export class PythonRuntimeManager {
       if ((await this.fileSha256(extractedPath)) !== artifact.executableSha256) {
         throw new Error('uv executable checksum mismatch')
       }
+      stage = 'publish'
+      this.log({ event: 'python-runtime-uv-publish-started', version: UV_VERSION })
       await mkdir(dirname(targetPath), { recursive: true, mode: 0o700 })
       const pendingPath = `${targetPath}.${randomUUID()}.pending`
       await copyFile(extractedPath, pendingPath)
       if (this.platform !== 'win32') await chmod(pendingPath, 0o700)
       await rename(pendingPath, targetPath)
+      this.log({ event: 'python-runtime-uv-publish-completed', version: UV_VERSION })
       return targetPath
+    } catch (error) {
+      this.log({
+        event: 'python-runtime-uv-prepare-failed',
+        stage,
+        downloadedBytes: this.currentStatus.downloadedBytes,
+        totalBytes: this.currentStatus.totalBytes,
+      })
+      throw error
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })
     }
@@ -344,8 +371,19 @@ export class PythonRuntimeManager {
   private async downloadUv(artifact: UvArtifact, destination: string): Promise<void> {
     const controller = new AbortController()
     let timedOut = false
+    this.log({
+      event: 'python-runtime-uv-download-started',
+      archive: artifact.archiveName,
+      totalBytes: artifact.archiveBytes,
+      timeoutMs: this.downloadTimeoutMs,
+    })
     const timeout = setTimeout(() => {
       timedOut = true
+      this.log({
+        event: 'python-runtime-uv-download-aborting',
+        downloadedBytes: this.currentStatus.downloadedBytes,
+        totalBytes: artifact.archiveBytes,
+      })
       controller.abort()
     }, this.downloadTimeoutMs)
 
@@ -373,7 +411,8 @@ export class PythonRuntimeManager {
       await pipeline(
         Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
         tracker,
-        createWriteStream(destination, { mode: 0o600 })
+        createWriteStream(destination, { mode: 0o600 }),
+        { signal: controller.signal }
       )
       const actualSha256 = hash.digest('hex')
       if (downloadedBytes !== artifact.archiveBytes) {
@@ -384,7 +423,14 @@ export class PythonRuntimeManager {
       if (actualSha256 !== artifact.archiveSha256) {
         throw new Error('uv archive checksum mismatch')
       }
+      this.log({ event: 'python-runtime-uv-download-completed', downloadedBytes })
     } catch (error) {
+      this.log({
+        event: 'python-runtime-uv-download-failed',
+        timedOut,
+        downloadedBytes: this.currentStatus.downloadedBytes,
+        totalBytes: artifact.archiveBytes,
+      })
       if (timedOut) {
         throw new Error(`uv download timed out after ${this.downloadTimeoutMs}ms`, {
           cause: error,

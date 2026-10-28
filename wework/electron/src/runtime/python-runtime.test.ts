@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -399,6 +399,7 @@ describe('PythonRuntimeManager', () => {
 
   test('retains a verified download failure for diagnostics and retry', async () => {
     const directory = await temporaryDirectory()
+    const log = vi.fn()
     const manager = new PythonRuntimeManager({
       dataDirectory: directory,
       environment: {},
@@ -407,12 +408,64 @@ describe('PythonRuntimeManager', () => {
       arch: 'arm64',
       fetch: vi.fn().mockResolvedValue(new Response(new Uint8Array([1, 2, 3]))),
       runFile: vi.fn().mockRejectedValue(new Error('missing')),
+      log,
     })
 
     await expect(manager.ensure()).rejects.toThrow('uv archive size mismatch')
     await expect(manager.status()).resolves.toMatchObject({
       state: 'error',
       error: expect.stringContaining('uv archive size mismatch'),
+    })
+    expect(log).toHaveBeenCalledWith({
+      event: 'python-runtime-uv-prepare-failed',
+      stage: 'download',
+      downloadedBytes: 3,
+      totalBytes: 18_341_942,
+    })
+    expect(log.mock.calls.map(([event]) => event.event)).toEqual([
+      'python-runtime-ensure-started',
+      'python-runtime-uv-prepare-started',
+      'python-runtime-uv-download-started',
+      'python-runtime-uv-download-failed',
+      'python-runtime-uv-prepare-failed',
+      'python-runtime-install-failed',
+    ])
+  })
+
+  test('aborts a stalled response body and removes its partial uv download', async () => {
+    const directory = await temporaryDirectory()
+    const cancel = vi.fn()
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]))
+      },
+      cancel,
+    })
+    // This real stream deliberately ignores the fetch signal and never closes.
+    // The pipeline must enforce the deadline after response headers arrive.
+    const fetch = vi.fn().mockResolvedValue(new Response(body))
+    const log = vi.fn()
+    const manager = new PythonRuntimeManager({
+      dataDirectory: directory,
+      environment: {},
+      runtimeBin: join(directory, 'runtime', 'bin'),
+      platform: 'darwin',
+      arch: 'arm64',
+      fetch,
+      downloadTimeoutMs: 10,
+      log,
+    })
+
+    await expect(manager.ensure()).rejects.toThrow('uv download timed out after 10ms')
+
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(await readdir(join(directory, 'managed-runtimes', 'python', 'temporary'))).toEqual([])
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'python-runtime-uv-download-failed', timedOut: true })
+    )
+    await expect(manager.status()).resolves.toMatchObject({
+      state: 'error',
+      error: 'uv download timed out after 10ms',
     })
   })
 

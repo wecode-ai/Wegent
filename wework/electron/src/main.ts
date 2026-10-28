@@ -2498,6 +2498,12 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const nodeRuntime = await electronNodeRuntime()
   logStartupStep('node-runtime-prepare', 'completed')
   const pythonRuntime = await managedPythonRuntime()
+  console.info('[python-runtime]', {
+    event: 'python-runtime-bootstrap-configured',
+    enabled: pythonRuntimeEnabled,
+    platform: process.platform,
+    arch: process.arch,
+  })
   if (pythonRuntimeEnabled) {
     pythonRuntime.startBackgroundEnsure()
   }

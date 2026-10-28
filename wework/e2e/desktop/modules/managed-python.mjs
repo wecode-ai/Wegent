@@ -55,16 +55,41 @@ export async function waitForPythonRuntimeEvent(logPath, event, startOffset = 0)
   const deadline = Date.now() + PYTHON_BOOTSTRAP_TIMEOUT_MS
   while (Date.now() < deadline) {
     const log = (await readFile(logPath, 'utf8')).slice(startOffset)
-    if (log.includes(event)) return log
-    if (
-      event === 'python-runtime-install-completed' &&
-      log.includes('python-runtime-install-failed')
-    ) {
-      throw new Error(`The real Python installation failed; see ${logPath}`)
+    if (event === 'python-runtime-install-completed') {
+      const failure = [
+        'python-runtime-install-failed',
+        'python-runtime-background-ensure-failed',
+      ].find(candidate => log.includes(candidate))
+      if (failure) {
+        throw new Error(`The real Python installation reported ${failure}; see ${logPath}`)
+      }
     }
+    if (log.includes(event)) return log
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(`The real Python runtime did not report ${event}; see ${logPath}`)
+}
+
+export async function collectManagedPythonStatus(control, windowLabel = 'main') {
+  const diagnostic = { capturedAt: new Date().toISOString(), windowLabel }
+  try {
+    await control.commandForWindow(windowLabel, 'navigate', 'body', {
+      value: '/settings/execution-environments',
+    })
+    await control.commandForWindow(
+      windowLabel,
+      'waitFor',
+      '[data-testid="execution-environment-python"]'
+    )
+    diagnostic.statusText = await control.commandForWindow(
+      windowLabel,
+      'getText',
+      '[data-testid="execution-environment-python"]'
+    )
+  } catch (error) {
+    diagnostic.captureError = error instanceof Error ? error.message : String(error)
+  }
+  return diagnostic
 }
 
 export async function assertManagedPythonSettings(
