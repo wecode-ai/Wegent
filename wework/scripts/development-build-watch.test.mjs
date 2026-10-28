@@ -1,14 +1,8 @@
 import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises'
-import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test, expect, vi, onTestFinished } from 'vitest'
 import { watchDevelopmentBuild } from './lib/development-build-watch.mjs'
-
-vi.mock('node:fs', async importOriginal => {
-  const actual = await importOriginal()
-  return { ...actual, watch: vi.fn(actual.watch) }
-})
 
 test('rebuilds input edits reported only as a directory-self notification', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'development-build-self-'))
@@ -16,7 +10,7 @@ test('rebuilds input edits reported only as a directory-self notification', asyn
   await writeFile(source, 'one')
   let notify
   const close = vi.fn()
-  vi.mocked(fs.watch).mockImplementationOnce((_directory, _options, callback) => {
+  const watchDirectory = vi.fn((_directory, _options, callback) => {
     notify = callback
     return { on: vi.fn(), close }
   })
@@ -31,6 +25,7 @@ test('rebuilds input edits reported only as a directory-self notification', asyn
     build,
     onError,
     debounceMs: 20,
+    watchDirectory,
   })
   onTestFinished(async () => {
     await watcher.close()
@@ -41,6 +36,7 @@ test('rebuilds input edits reported only as a directory-self notification', asyn
   notify('rename', path.basename(root))
   await expect.poll(() => published).toBe('two')
   expect(build).toHaveBeenCalledTimes(2)
+  expect(watchDirectory).toHaveBeenCalledTimes(1)
   expect(onError).not.toHaveBeenCalled()
 })
 
