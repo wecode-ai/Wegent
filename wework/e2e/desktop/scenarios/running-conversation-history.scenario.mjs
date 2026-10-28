@@ -398,6 +398,55 @@ async function reloadWorkbench(control) {
   )
 }
 
+async function restorePaginatedConversation(control, { taskId, taskRowId, uiTimeoutMs }) {
+  await reloadWorkbench(control)
+  await control.command('waitFor', `[data-testid="${taskRowId}"]`, { timeoutMs: uiTimeoutMs })
+  await control.command('click', `[data-testid="${taskRowId}"]`)
+  // Restoring the deliberately delayed native transcript precedes ordinary UI interactions.
+  const restored = await waitForTranscriptState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
+      snapshot.pane?.currentRuntimeTask?.taskId === taskId &&
+      snapshot.pane?.transcript?.loading === false,
+    'The paginated conversation did not finish restoration',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  assert.equal(restored.pane.transcript.hasMoreBefore, true)
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`,
+    { timeoutMs: uiTimeoutMs }
+  )
+}
+
+export async function verifyNativeItemPagination(control, { taskId, taskRowId, uiTimeoutMs }) {
+  await restorePaginatedConversation(control, { taskId, taskRowId, uiTimeoutMs })
+  const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
+  for (let page = 0; page < 2; page += 1) {
+    await control.command('click', loadOlder)
+    await waitForTranscriptState(
+      control,
+      snapshot => snapshot.pane?.transcript?.loadingMoreBefore === false,
+      'Native item pagination did not finish',
+      // This checkpoint deliberately delays transcript reads and restores 1,250 native
+      // items. Include queued reads and hydration in the existing restoration budget.
+      WORKBENCH_READY_TIMEOUT_MS
+    )
+  }
+  const nativeSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
+  assert.ok(
+    nativeSnapshot.runtimeAssistantDisplayItemCount >= PAGED_ITEM_COUNT,
+    'The UI did not restore the middle of the running native turn'
+  )
+  // Restore a partially loaded live view before testing isolated search pages.
+  await restorePaginatedConversation(control, { taskId, taskRowId, uiTimeoutMs })
+  const originalSearchPane = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  ).pane
+  return { loadOlder, originalSearchPane }
+}
+
 async function verifyMoveToProject(control, { taskId, executorHome, timeoutMs }) {
   const targetPath = join(executorHome, 'task-move-target')
   await mkdir(targetPath, { recursive: true })
@@ -941,46 +990,11 @@ export function createDesktopScenario({
         'Pagination returned the live cache again'
       )
 
-      await reloadWorkbench(control)
-      await control.command('waitFor', `[data-testid="${pagedRowId}"]`, {
-        timeoutMs: uiTimeoutMs,
+      const { loadOlder, originalSearchPane } = await verifyNativeItemPagination(control, {
+        taskId: pagedTaskId,
+        taskRowId: pagedRowId,
+        uiTimeoutMs,
       })
-      await control.command('click', `[data-testid="${pagedRowId}"]`)
-      const restored = await waitForTranscriptState(
-        control,
-        snapshot =>
-          snapshot.workbench?.currentRuntimeTask?.taskId === pagedTaskId &&
-          snapshot.pane?.transcript?.loading === false,
-        'The paginated conversation did not finish restoration',
-        WORKBENCH_READY_TIMEOUT_MS
-      )
-      assert.equal(restored.pane.transcript.hasMoreBefore, true)
-      const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
-      await control.command('waitFor', loadOlder, { timeoutMs: uiTimeoutMs })
-      for (let page = 0; page < 2; page += 1) {
-        await control.command('click', loadOlder)
-        await waitForTranscriptState(
-          control,
-          snapshot => snapshot.pane?.transcript?.loadingMoreBefore === false,
-          'Native item pagination did not finish',
-          // This checkpoint deliberately delays transcript reads and restores 1,250 native
-          // items. Include queued reads and hydration in the existing restoration budget.
-          WORKBENCH_READY_TIMEOUT_MS
-        )
-      }
-      const nativeSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
-      assert.ok(
-        nativeSnapshot.runtimeAssistantDisplayItemCount >= PAGED_ITEM_COUNT,
-        'The UI did not restore the middle of the running native turn'
-      )
-      // Restore a partially loaded live view before testing isolated search pages.
-      await reloadWorkbench(control)
-      await control.command('waitFor', `[data-testid="${pagedRowId}"]`)
-      await control.command('click', `[data-testid="${pagedRowId}"]`)
-      await control.command('waitFor', loadOlder)
-      const originalSearchPane = JSON.parse(
-        await control.command('getWorkbenchDebugSnapshot', 'body')
-      ).pane
       const comparison = originalSearchPane.messageStyleComparison
       const partialAssistant = [comparison.transcriptLoaded, comparison.currentStreaming].find(
         message => message?.id === anchorMessageId
