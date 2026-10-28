@@ -190,13 +190,16 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     fixedCreateTargetLabel,
   } = props
 
+  const isEditing = editingTeamId !== null && editingTeamId > 0
   const groupsLoadedByParent = writableGroups.length > 0
+  // A fixed creation target renders no scope selector, so group choices are unused.
+  const usesFixedCreateTarget = Boolean(fixedCreateTargetLabel) && !isEditing
   const {
     groups: loadedWritableGroups,
     error: loadedWritableGroupsError,
     loading: loadedWritableGroupsLoading,
     reload: reloadWritableGroups,
-  } = useWritableGroups(open && !groupsLoadedByParent)
+  } = useWritableGroups(open && !groupsLoadedByParent && !usesFixedCreateTarget)
   const availableWritableGroups = groupsLoadedByParent ? writableGroups : loadedWritableGroups
   const availableWritableGroupsError = groupsLoadedByParent ? null : loadedWritableGroupsError
   const availableWritableGroupsLoading = !groupsLoadedByParent && loadedWritableGroupsLoading
@@ -209,7 +212,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     editingTeamId === 0 ? null : teams.find(t => t.id === editingTeamId) || null
 
   const formTeam = editingTeam ?? (editingTeamId === 0 ? initialTeam : null) ?? null
-  const isEditing = editingTeamId !== null && editingTeamId > 0
 
   // Form state
   const [name, setName] = useState('')
@@ -1620,7 +1622,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             )}
 
             <div data-testid="team-save-publish-section">
-              {fixedCreateTargetLabel && !isEditing ? (
+              {usesFixedCreateTarget ? (
                 <div
                   className="rounded-lg border border-border bg-surface px-4 py-3"
                   data-testid="team-fixed-create-target"

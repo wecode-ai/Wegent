@@ -1183,6 +1183,25 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
+  it('skips writable group loading when the create target is fixed', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+        fixedCreateTargetLabel="Engineering"
+      />
+    )
+
+    expect(await screen.findByTestId('team-fixed-create-target')).toBeInTheDocument()
+    expect(listGroups).not.toHaveBeenCalled()
+  })
+
   it('resets a stale creation group when the dialog reopens for another target', async () => {
     const writableGroups = [
       {
