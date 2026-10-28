@@ -2,7 +2,7 @@ import { Virtualizer } from '@tanstack/react-virtual'
 import { describe, expect, test, vi } from 'vitest'
 
 // Exercise the installed engine, including its commit phase; no virtualizer mock.
-function createConversation(offset = 350, { count = 10, viewportHeight = 200 } = {}) {
+function createConversation(offset = 350, { count = 10, viewportHeight = 200, overscan = 1 } = {}) {
   let following = true
   let keys = Array.from({ length: count }, (_, index) => `m${index}`)
   let readOffset: (offset: number, scrolling: boolean) => void = () => {}
@@ -17,6 +17,7 @@ function createConversation(offset = 350, { count = 10, viewportHeight = 200 } =
     getItemKey: (index: number) => keys[index],
     getScrollElement: () => element,
     estimateSize: () => 100,
+    overscan,
     initialOffset: offset,
     initialRect: { width: 800, height: viewportHeight },
     anchorTo: 'end' as const,
@@ -74,6 +75,21 @@ function createConversation(offset = 350, { count = 10, viewportHeight = 200 } =
 }
 
 describe('installed TanStack chat contract', () => {
+  test('a six-row conversation can retain later text while unmounting its first message', () => {
+    const keys = ['base', 'history', 'goal', 'initial', 'cancelled', 'recovered']
+    const overflowing = createConversation(300, { count: 6, viewportHeight: 300, overscan: 2 })
+    overflowing.replace(keys)
+    expect(overflowing.keys()).toEqual(keys)
+    expect(overflowing.virtualizer.getVirtualItems().map(row => row.key)).toEqual(keys.slice(1))
+    overflowing.dispose()
+
+    const fitting = createConversation(0, { count: 6, viewportHeight: 800, overscan: 2 })
+    fitting.replace(keys)
+    expect(fitting.element.scrollHeight).toBeLessThanOrEqual(fitting.element.clientHeight)
+    expect(fitting.virtualizer.getVirtualItems().map(row => row.key)).toEqual(keys)
+    fitting.dispose()
+  })
+
   test('end anchoring keeps short rows at their natural positions and follows once they overflow', () => {
     const fixture = createConversation(0, { count: 4, viewportHeight: 600 })
     expect(fixture.virtualizer.getVirtualItems().map(row => row.start)).toEqual([0, 100, 200, 300])

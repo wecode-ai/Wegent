@@ -20,6 +20,7 @@ import {
   assertConversationTextOrder,
 } from '../modules/conversation-navigation.mjs'
 import { waitForCompletedRuntimeTaskThread } from '../modules/runtime-task-evidence.mjs'
+import { withShortConversationViewport } from '../modules/conversation-short-layout.mjs'
 
 const BASE = 'WEWORK_OUTPUT_IDENTITY_BASE'
 const GOAL = 'WEWORK_OUTPUT_IDENTITY_GOAL'
@@ -151,7 +152,7 @@ export function createDesktopScenario(options) {
         assert.equal(payload.ok, true, payload.error?.message)
         return payload.result
       }
-      const waitText = text => control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { text })
+      const waitText = text => control.command('waitFor', activeTranscriptSelector(), { text })
       const send = async text => {
         await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: text })
         await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
@@ -199,10 +200,16 @@ export function createDesktopScenario(options) {
           originalUser.turnId,
           'Automatic recovery rebound the original user message to the recovered turn'
         )
-        for (const text of [HISTORY, INITIAL, RECOVERED]) await waitText(text)
-        await assertConversationTextOccurrences(
+        await withShortConversationViewport(
           control,
-          Object.fromEntries([BASE, HISTORY, GOAL, INITIAL, RECOVERED].map(text => [text, 1]))
+          'The recovered Goal identity fixture',
+          async () => {
+            for (const text of [BASE, HISTORY, GOAL, INITIAL, RECOVERED]) await waitText(text)
+            await assertConversationTextOccurrences(
+              control,
+              Object.fromEntries([BASE, HISTORY, GOAL, INITIAL, RECOVERED].map(text => [text, 1]))
+            )
+          }
         )
         phase = 'pause-response'
         await control.command(
@@ -232,8 +239,6 @@ export function createDesktopScenario(options) {
         )
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('click', `[data-testid="runtime-local-task-row-${address.taskId}"]`)
-        for (const text of [BASE, HISTORY, GOAL, INITIAL, RECOVERED, FOLLOW_UP, FINAL])
-          await waitText(text)
         await waitForWorkbenchDebugState(
           control,
           snapshot => snapshot.pane?.transcript?.loading === false,
@@ -243,16 +248,20 @@ export function createDesktopScenario(options) {
           join(options.resultDir, 'output-identity-transcript.json'),
           JSON.stringify(await transcript(), null, 2)
         )
-        const visible = await control.command(
-          'getText',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
-        )
-        const ordered = [BASE, HISTORY, GOAL, INITIAL, RECOVERED, FOLLOW_UP, FINAL]
-        await assertConversationTextOccurrences(
+        await withShortConversationViewport(
           control,
-          Object.fromEntries(ordered.map(text => [text, 1]))
+          'The completed Goal identity fixture',
+          async () => {
+            const ordered = [BASE, HISTORY, GOAL, INITIAL, RECOVERED, FOLLOW_UP, FINAL]
+            for (const text of ordered) await waitText(text)
+            const visible = await control.command('getText', activeTranscriptSelector())
+            await assertConversationTextOccurrences(
+              control,
+              Object.fromEntries(ordered.map(text => [text, 1]))
+            )
+            assertConversationTextOrder(visible, ordered)
+          }
         )
-        assertConversationTextOrder(visible, ordered)
       } catch (error) {
         console.error('[goal-output-identity] verification failed', { phase, requestTrace }, error)
         try {

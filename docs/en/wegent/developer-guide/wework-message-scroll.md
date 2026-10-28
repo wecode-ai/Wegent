@@ -4,6 +4,8 @@ sidebar_position: 19
 
 # Wework Message Scroll Verification
 
+Full-history DOM occurrence and ordering checks must establish that their fixture fits the viewport and wait for and read text from the same active pane. Goal recovery retains empty cancelled turns, so the virtual row count can exceed the number of nonempty texts. Later text being mounted near the bottom does not prove the first message is mounted. Reuse the short-conversation viewport preparation and size restoration while keeping every occurrence and ordering assertion; long-conversation scrolling keeps its overflowing fixtures.
+
 The shared conversation uses normal DOM coordinates: `scrollTop = 0` at the top and `max(0, scrollHeight - clientHeight)` at the bottom. Desktop workbenches, temporary conversations and web Issue conversations share this implementation. Short conversations start at the top, leaving spare space between the messages and the bottom composer. Once content overflows, follow or read mode controls scrolling. The scrollbar uses the same real range.
 
 ```mermaid
