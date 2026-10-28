@@ -3,6 +3,7 @@ import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { withTimeout } from '../modules/shared.mjs'
+import { waitForBundledMarketplaceRegistration } from '../modules/plugin-flows.mjs'
 
 const PACKAGE = '@test/connection-source'
 const PROVIDER = `${PACKAGE}/records`
@@ -20,6 +21,7 @@ export function createDesktopScenario({
   const records = join(resultDir, 'records.json')
   const audit = join(resultDir, 'calls.jsonl')
   let modelRequests = 0
+  let codexHome
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const codex = (control, method, params) =>
     rpc(control, 'runtime.codex.app_server.request', { method, params })
@@ -46,7 +48,8 @@ source = ${JSON.stringify(root)}
         modelRequests++
       return false
     },
-    async prepareApp() {
+    async prepareApp({ codexHome: isolatedCodexHome }) {
+      codexHome = isolatedCodexHome
       await mkdir(join(root, '.agents/plugins'), { recursive: true })
       await mkdir(join(source, '.codex-plugin'), { recursive: true })
       await writeFile(records, JSON.stringify([{ id: 'record-1', value: 'existing-plugin-value' }]))
@@ -128,6 +131,9 @@ source = ${JSON.stringify(root)}
       )
     },
     async verify(control) {
+      // Startup restarts Codex before registering the bundled marketplace.
+      // Wait before adding a marketplace held by that app-server process.
+      await waitForBundledMarketplaceRegistration(codexHome)
       const initial = await rpc(control, 'runtime.connections.catalog', {})
       assert.equal(
         initial.items.find(item => item.id === PROVIDER)?.availability.status,

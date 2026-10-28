@@ -197,6 +197,7 @@ import {
 import { withPublishedPluginCloudLink } from './publishedPluginIdentity'
 import {
   installedPluginMarketplaceId,
+  isOfficialMarketplacePlugin,
   marketplaceItemMarketplaceId,
   marketplacePluginDistribution,
 } from './pluginDistribution'
@@ -2052,16 +2053,18 @@ export function PluginsWorkspace({
 
     // Open the confirm dialog immediately. Do not wait on plugin/read, connector-apps,
     // or health probes — that made Install feel broken (no UI for seconds).
-    if (!promptAfterInstall) {
+    const requiresConfirmation = !promptAfterInstall || !isOfficialMarketplacePlugin(item)
+    if (requiresConfirmation) {
       setPendingInstall({
         item,
         requiredConnectionNames: requiredConnectionNames(item),
+        promptAfterInstall,
       })
     }
 
     void prepareMarketplaceInstallItem(item)
       .then(async preparedItem => {
-        if (promptAfterInstall) {
+        if (!requiresConfirmation) {
           executeMarketplaceInstall({
             item: preparedItem,
             requiredConnectionNames: [],
@@ -2075,6 +2078,7 @@ export function PluginsWorkspace({
           return {
             item: preparedItem,
             requiredConnectionNames: names,
+            promptAfterInstall: previous.promptAfterInstall,
           }
         })
       })
@@ -4670,6 +4674,7 @@ export function PluginsWorkspace({
             logoContrastPad: pendingInstallLogo?.contrastPad,
             useLogoInitial: pendingInstallLogo?.source === 'fallback',
             logoDistribution: marketplacePluginDistribution(pendingInstall.item),
+            isOfficial: isOfficialMarketplacePlugin(pendingInstall.item),
             componentCount: marketplaceComponentCount(pendingInstall.item),
             requiredConnectionNames: pendingInstall.requiredConnectionNames,
           }}

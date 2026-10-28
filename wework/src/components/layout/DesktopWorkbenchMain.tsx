@@ -1375,7 +1375,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     cloudProjectMentionCandidates,
     defaultProject,
     deliveryDialogOpen,
-    finishLocalDelivery,
+    finishDelivery,
     handleSelectCloudProject,
     openBoundProjectSpaceTask,
     openDelivery,
@@ -4794,7 +4794,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
       onOpenConversationWorkspaceFile={path => void openWorkspaceFileFromMessage(path)}
       onDeliver={
-        currentRuntimeTask && services?.deliveryApi && activeDeliveryItem ? openDelivery : undefined
+        currentRuntimeTask && boundProjectSpaceApi && activeDeliveryItem ? openDelivery : undefined
       }
       todoLabel={
         boundCloudItem ? `${boundCloudItem.id} · ${boundCloudItem.title}` : boundCloudProject?.name
@@ -6184,20 +6184,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           onCreate={associateRuntimeTaskWithNewItem}
           onSelect={associateRuntimeTaskWithExistingItem}
         />
-        {deliveryDialogOpen &&
-          activeDeliveryItem &&
-          currentRuntimeTask &&
-          services?.deliveryApi && (
-            <DeliveryDialog
-              item={activeDeliveryItem}
-              runtimeTask={currentRuntimeTask}
-              runtimeTaskTitle={runtimeTaskTitle}
-              messages={paneSession.messages}
-              deliveryApi={services.deliveryApi}
-              onCancel={closeDeliveryDialog}
-              onDelivered={() => void finishLocalDelivery()}
-            />
-          )}
+        {deliveryDialogOpen && activeDeliveryItem && currentRuntimeTask && boundProjectSpaceApi && (
+          <DeliveryDialog
+            item={activeDeliveryItem}
+            runtimeTask={currentRuntimeTask}
+            runtimeTaskTitle={runtimeTaskTitle}
+            messages={paneSession.messages}
+            deliveryApi={boundProjectSpaceApi}
+            onCancel={closeDeliveryDialog}
+            onDelivered={finishDelivery}
+          />
+        )}
       </>
     </main>
   )

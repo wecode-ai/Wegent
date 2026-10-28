@@ -1298,6 +1298,7 @@ classify_wework_path() {
       executor/src/agents/codex/mcp_apps.rs | \
       executor/src/runtime_work/handler/mcp_apps.rs | \
       wework/e2e/desktop/scenarios/mcp-apps.scenario.mjs | \
+      wework/e2e/desktop/scenarios/ordinary-mcp-regression.mjs | \
       wework/e2e/utils/mcp-app-server.mjs)
       select_target "core:mcp-apps"
       return
