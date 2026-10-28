@@ -393,6 +393,7 @@ function createIsolatedClipboardRouter(
         get: vi.fn(),
         set: vi.fn(),
       },
+      modelConfiguration: {},
       ...services,
     } as never,
     popoutHost as never

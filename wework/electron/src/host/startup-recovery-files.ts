@@ -24,6 +24,7 @@ export async function clearStartupUserFiles(paths: StartupUserDataPaths): Promis
     join(paths.dataDirectory, 'dsh-core'),
     join(paths.dataDirectory, 'secure-values.json'),
     join(paths.dataDirectory, 'secure-values.key'),
+    join(paths.dataDirectory, 'model-connections'),
     join(paths.codexHome, 'plugins'),
     join(paths.codexHome, 'config.toml'),
     join(paths.codexHome, 'auth.json'),

@@ -1,3 +1,4 @@
+import { saveLocalModelConfig } from '@/test/model-config-fixtures'
 import { beforeEach, describe, expect, test } from 'vitest'
 import { groupLegacyModels, resolveProviderModel } from './providerModelConfiguration'
 import { getProviderModelConfigs, replaceProviderModelConfigs } from './providerModelState'
@@ -7,7 +8,6 @@ import {
   listLocalModelConfigs,
   localModelName,
   markLocalModelCatalogReady,
-  saveLocalModelConfig,
 } from './localModelSettings'
 
 beforeEach(() => {
@@ -95,7 +95,7 @@ describe('Provider configuration runtime adapter', () => {
       resolveProviderModel({ provider: groups[0], model: groups[0].models[0] }).maxOutputTokens
     ).toBe(2345)
   })
-  test('projection shadows only matching migrated IDs; legacy records and cloud-looking names remain distinct', () => {
+  test('only the native projection can supply runtime identities, including restored legacy IDs', () => {
     const legacy = saveLocalModelConfig({
       id: 'old',
       modelId: 'shared',
@@ -107,11 +107,10 @@ describe('Provider configuration runtime adapter', () => {
       model: { id: legacy.id, model_id: legacy.modelId },
     })
     replaceProviderModelConfigs([migrated])
-    expect(listLocalModelConfigs()).toHaveLength(2)
+    expect(listLocalModelConfigs()).toEqual([migrated])
     expect(listLocalModelConfigs().find(model => model.id === 'old')).toBe(migrated)
-    expect(() =>
-      saveLocalModelConfig({ id: 'old', modelId: 'changed', baseUrl: provider.base_url })
-    ).toThrow(/Provider settings/)
+    localStorage.setItem('wework.localModelSettings.v1', JSON.stringify([legacy]))
+    expect(listLocalModelConfigs()).toEqual([migrated])
   })
 })
 

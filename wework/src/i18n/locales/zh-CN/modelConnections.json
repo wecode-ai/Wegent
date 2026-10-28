@@ -73,5 +73,21 @@
   "testConnection": "测试连接",
   "testing": "测试中…",
   "testSuccess": "连接正常",
-  "testFailed": "连接失败"
+  "testFailed": "连接失败",
+  "recoveryTitle": "恢复模型配置",
+  "recoveryDescription": "选择需要恢复的连接并核对接口地址。密钥由本机安全存储恢复，不会显示在界面中。",
+  "recoveryUnavailable": "无法读取安全存储。请解锁系统凭据库后重试；如系统提示已超时，请重启应用。换机或更换系统用户后，需要恢复原系统凭据库或重新配置密钥。",
+  "recoveryFailed": "恢复未能确认完成。原文件和归档已保留，请刷新状态后重试；如配置文件损坏，请先恢复有效快照。",
+  "recoverySuccess": "配置已恢复，请选择恢复的模型并测试连接。",
+  "recoveryLegacy": "升级前的模型连接",
+  "recoverySaved": "最近有效配置",
+  "recoveryImport": "恢复为独立连接",
+  "recoveryNewFile": "恢复到新文件",
+  "recoveryEmpty": "没有可自动恢复的模型连接。请重新填写 API Key 或选择有效模型文件。",
+  "recoveryUnreadable": "有 {{count}} 份归档无法自动恢复，原始数据仍保留在安全存储中。请使用有效模型文件或重新填写密钥。",
+  "recoveryCloud": "检测到历史云凭据冲突。请重新连接云端确认账号；旧令牌不会自动恢复。",
+  "recoveryConfirmTitle": "确认恢复配置",
+  "recoveryConfirmLegacy": "将以下旧配置恢复为独立连接，并保留当前配置。请核对原接口地址，恢复后手动选择模型。",
+  "recoveryConfirmSaved": "将有效快照恢复到新文件并切换使用。原文件和归档会保留。请核对以下接口地址。",
+  "recoveryChooseFile": "选择有效模型文件"
 }

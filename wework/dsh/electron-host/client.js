@@ -5,8 +5,6 @@ window.__ModuleLoader__.load({
     const exports = module.exports
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
-    const BASE_PATH = '/wework/electron-host/v1'
-
     class WeworkDesktopClientError extends Error {
       constructor(code, message, details = {}) {
         super(message)
@@ -16,7 +14,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function createWeworkDesktopClient(fetchImpl = window.fetch.bind(window)) {
+    function createWeworkDesktopClient() {
       let active = true
 
       function assertActive() {
@@ -30,48 +28,28 @@ window.__ModuleLoader__.load({
 
       async function request(path, init) {
         assertActive()
-        let response
-        try {
-          response = await fetchImpl(`${BASE_PATH}${path}`, {
-            credentials: 'same-origin',
-            cache: 'no-store',
-            ...init,
-          })
-        } catch (error) {
+        const bridge = window.weworkElectronHost
+        if (!bridge)
           throw new WeworkDesktopClientError(
-            'host_unreachable',
-            error instanceof Error ? error.message : String(error)
+            'host_unavailable',
+            'Trusted desktop IPC is unavailable'
           )
-        }
-        let body
-        try {
-          body = await response.json()
-        } catch {
-          throw new WeworkDesktopClientError(
-            'invalid_host_response',
-            'Electron host returned invalid JSON'
-          )
-        }
-        if (!response.ok || body?.ok === false) {
-          const error = body?.error
-          throw new WeworkDesktopClientError(
-            typeof error?.code === 'string' ? error.code : 'capability_failed',
-            typeof error?.message === 'string'
-              ? error.message
-              : `Electron host request failed with HTTP ${response.status}`,
-            error?.details && typeof error.details === 'object' ? error.details : {}
-          )
-        }
+        if (path === '') return bridge.describe()
+        const input = JSON.parse(init.body)
+        const body = await bridge.invoke(input.capability, input.params)
         assertActive()
-        return path === '' ? body : body?.result
+        if (body?.ok !== true) {
+          throw new WeworkDesktopClientError(
+            body?.error?.code ?? 'capability_failed',
+            body?.error?.message ?? 'Desktop operation failed',
+            body?.error?.details
+          )
+        }
+        return body.result
       }
 
       function invoke(capability, params = {}) {
-        return request('/invoke', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ capability, params }),
-        })
+        return request('/invoke', { body: JSON.stringify({ capability, params }) })
       }
 
       const service = Object.freeze({

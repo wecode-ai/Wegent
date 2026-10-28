@@ -1,10 +1,7 @@
+import { clearLocalModelConfigs, saveLocalModelConfig } from '@/test/model-config-fixtures'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createLocalAppServices } from './localServices'
 import { CODEX_API_URL, resolveLocalCodexProxyUrl } from '@/desktop/systemProxy'
-import {
-  clearLocalModelConfigs,
-  saveLocalModelConfig,
-} from '@/features/model-settings/localModelSettings'
 
 const gateway = 'https://wegent.example/api/runtime-work/llm-responses-proxy'
 const cloudModel = {

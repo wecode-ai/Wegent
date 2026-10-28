@@ -21,6 +21,17 @@ use cli::CliArgs;
 use std::env;
 use std::fmt;
 use std::net::SocketAddr;
+use std::sync::OnceLock;
+
+static LOCAL_OWNER_TOKEN: OnceLock<Option<String>> = OnceLock::new();
+
+/// Called by the binary before threads or login shells start. The owner secret
+/// must never be inherited by model, terminal, hook, Git or MCP subprocesses.
+pub fn capture_local_owner_token() {
+    let token = env::var("WEGENT_APP_IPC_OWNER_TOKEN").ok();
+    env::remove_var("WEGENT_APP_IPC_OWNER_TOKEN");
+    let _ = LOCAL_OWNER_TOKEN.set(token);
+}
 
 #[derive(Debug)]
 pub enum AppError {
@@ -170,6 +181,7 @@ pub async fn run_with_shell_environment(
             Ok(())
         }
     };
+    crate::server::model_credentials::revoke_all();
     // The runtime stopped because the desktop app went away or asked us to stop:
     // take the agent processes it drove down with us instead of letting them
     // outlive this executor, and release the blocking reads parked on their
@@ -256,9 +268,12 @@ async fn serve_local_sidecar(
         LocalSidecarTransport::Stdio => serve_local_app_sidecar(config).await,
         LocalSidecarTransport::LocalEndpoint => {
             let endpoint = required_environment("WEGENT_APP_IPC_ENDPOINT")?;
-            let owner_token = required_environment("WEGENT_APP_IPC_OWNER_TOKEN")?;
+            let owner_token = LOCAL_OWNER_TOKEN
+                .get()
+                .and_then(Option::as_deref)
+                .ok_or_else(|| "Local owner authentication is unavailable".to_owned())?;
             let token = required_environment("WEGENT_APP_IPC_TOKEN")?;
-            serve_local_app_endpoint(config, &endpoint, &token, &owner_token).await
+            serve_local_app_endpoint(config, &endpoint, &token, owner_token).await
         }
     }
 }

@@ -1,5 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { durableWrite } from './durable-file.js'
 
 interface RendererStorageState {
   version: 1
@@ -24,6 +25,8 @@ export interface RendererStorageCleanup {
 export class RendererStorageStore {
   private operation = Promise.resolve()
   private closed = false
+  transform: ((entries: Record<string, string>) => Promise<Record<string, string>>) | null = null
+  protectDamaged: ((name: string, content: string) => Promise<void>) | null = null
 
   constructor(private readonly dataDirectory: string) {}
 
@@ -34,7 +37,10 @@ export class RendererStorageStore {
 
   prepareOrigin(origin: string, cleanup: RendererStorageCleanup): Promise<void> {
     return this.serial(async () => {
-      if (!(await this.readFile())) return
+      const mirror = await this.readFile()
+      if (!mirror) return
+      if (this.transform)
+        await this.writeFile({ version: 1, entries: await this.transform(mirror.entries) })
 
       const state = await this.readOriginFile()
       if (!state) {
@@ -54,10 +60,11 @@ export class RendererStorageStore {
   initialize(seed: Record<string, string>): Promise<Record<string, string>> {
     return this.serial(async () => {
       const state = await this.readFile()
-      if (state) return state.entries
-
-      await this.writeFile({ version: 1, entries: seed })
-      return seed
+      const entries = this.transform
+        ? await this.transform(state?.entries ?? seed)
+        : (state?.entries ?? seed)
+      await this.writeFile({ version: 1, entries })
+      return entries
     })
   }
 
@@ -77,7 +84,10 @@ export class RendererStorageStore {
           entries[key] = value
         }
       }
-      await this.writeFile({ version: 1, entries })
+      await this.writeFile({
+        version: 1,
+        entries: this.transform ? await this.transform(entries) : entries,
+      })
     })
   }
 
@@ -94,16 +104,32 @@ export class RendererStorageStore {
   }
 
   private async readFile(): Promise<RendererStorageState | null> {
+    let content: string
     try {
-      const value = JSON.parse(await readFile(this.path(), 'utf8')) as unknown
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-      const record = value as Partial<RendererStorageState>
-      if (record.version !== 1 || !validEntries(record.entries)) return null
-      return { version: 1, entries: record.entries }
+      content = await readFile(this.path(), 'utf8')
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
       throw error
     }
+    let value: Partial<RendererStorageState> | null
+    try {
+      value = JSON.parse(content) as typeof value
+    } catch {
+      return this.recoverDamaged(content)
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      return this.recoverDamaged(content)
+    if (value.version !== undefined && value.version !== 1)
+      throw new Error('Unsupported renderer storage version')
+    if (value.version !== 1 || !validEntries(value.entries)) return this.recoverDamaged(content)
+    return { version: 1, entries: value.entries }
+  }
+
+  private async recoverDamaged(content: string): Promise<null> {
+    if (!this.protectDamaged) throw new Error('Invalid renderer storage format')
+    await this.protectDamaged('renderer-local-storage.json', content)
+    await this.writeFile({ version: 1, entries: {} })
+    return null
   }
 
   private async readOriginFile(): Promise<RendererStorageOriginState | null> {
@@ -135,10 +161,7 @@ export class RendererStorageStore {
   }
 
   private async writeJsonFile(path: string, value: unknown): Promise<void> {
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-    const temporary = `${path}.${process.pid}.tmp`
-    await writeFile(temporary, `${JSON.stringify(value)}\n`, { mode: 0o600 })
-    await rename(temporary, path)
+    await durableWrite(path, `${JSON.stringify(value)}\n`)
   }
 
   private serial<Result>(operation: () => Promise<Result>): Promise<Result> {

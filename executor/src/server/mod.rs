@@ -23,6 +23,7 @@ mod config;
 pub(crate) mod harness_context;
 pub(crate) mod local_decision_proxy;
 pub(crate) mod local_model_proxy;
+pub(crate) mod model_credentials;
 
 use axum::{
     body::{Body, Bytes},

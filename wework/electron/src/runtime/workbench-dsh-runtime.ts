@@ -153,11 +153,8 @@ export async function prepareWorkbenchDshLaunch(
     )
   }
   if (options.includeElectronHostBridge !== false) {
-    // The workbench is an isolated harness profile. Without the electron-host
-    // plugin its DSH client has no route to the scoped host pipe, so calling
-    // /wework/electron-host/v1/invoke hits a plain page and every capability
-    // (including dshCapture.*) silently degrades. Install the trusted host bridge
-    // into the profile so the workbench can reach the owner-scoped capabilities.
+    // The client contribution uses the preload's scoped IPC bridge. HTTP routes
+    // cannot invoke Host capabilities, including in an isolated workbench profile.
     const hostPluginPath = join(runtime.pluginsRoot, 'wework-electron-host')
     const corePluginsRoot = options.environment.WEWORK_CORE_PLUGIN_ROOT?.trim()
     const resolvedHostPluginPath = (await isDirectory(hostPluginPath))

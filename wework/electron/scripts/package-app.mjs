@@ -67,9 +67,14 @@ await run(
   electronRoot
 )
 await Promise.all(
-  ['scripts', 'src', 'pnpm-workspace.yaml', 'tsconfig.json', 'vitest.config.ts'].map(path =>
-    rm(join(staging, path), { recursive: true, force: true })
-  )
+  [
+    'scripts',
+    'src',
+    'test-fixtures',
+    'pnpm-workspace.yaml',
+    'tsconfig.json',
+    'vitest.config.ts',
+  ].map(path => rm(join(staging, path), { recursive: true, force: true }))
 )
 await cp(join(electronRoot, 'dist'), join(staging, 'dist'), { recursive: true })
 await writeFile(

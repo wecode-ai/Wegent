@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -18,6 +18,11 @@ const secrets = {
   },
   delete: async (key: string) => {
     values.delete(key)
+  },
+  update: async (change: (values: Record<string, string>) => void) => {
+    const next = Object.fromEntries(values)
+    change(next)
+    values = new Map(Object.entries(next))
   },
 }
 beforeEach(async () => {
@@ -70,6 +75,142 @@ describe('Provider YAML schema', () => {
 })
 
 describe('Provider configuration file store', () => {
+  test('independent store instances cannot overwrite a concurrent protected revision', async () => {
+    const first = new ModelConfigurationStore(directory, secrets)
+    const second = new ModelConfigurationStore(directory, secrets)
+    const initial = await first.read()
+    await second.read()
+    const result = await Promise.allSettled([
+      first.save(initial.revision, parseModelConfiguration(YAML).config.providers),
+      second.save(
+        initial.revision,
+        parseModelConfiguration(YAML.replace('secret-not-for-output', 'other-key')).config.providers
+      ),
+    ])
+    expect(result.filter(value => value.status === 'fulfilled')).toHaveLength(1)
+    expect(result.filter(value => value.status === 'rejected')).toHaveLength(1)
+    const recovered = new ModelConfigurationStore(directory, secrets)
+    expect((await recovered.read()).error).toBeUndefined()
+    expect(['secret-not-for-output', 'other-key']).toContain(
+      (await recovered.runtime()).models[0].provider.api_key
+    )
+    expect(values.has('wework-models.pending')).toBe(false)
+  })
+
+  test('legacy migration is native, idempotent, and never publishes a malformed aggregate', async () => {
+    const legacy = JSON.stringify([
+      {
+        id: 'legacy-a',
+        modelId: 'a',
+        baseUrl: 'https://legacy.example/v1',
+        apiKey: 'legacy-canary',
+      },
+      {
+        id: 'legacy-b',
+        modelId: 'b',
+        baseUrl: 'https://legacy.example/v1',
+        apiKey: 'legacy-canary',
+      },
+    ])
+    values.set('wework-models.legacy', legacy)
+    const store = new ModelConfigurationStore(directory, secrets)
+    const migrated = await store.read()
+    expect(migrated.providers).toHaveLength(1)
+    expect(migrated.providers[0].models.map(model => model.id)).toEqual(['legacy-a', 'legacy-b'])
+    expect(JSON.stringify(migrated)).not.toContain('legacy-canary')
+    expect(await readFile(migrated.path, 'utf8')).not.toContain('legacy-canary')
+    expect(values.has('wework-models.legacy')).toBe(false)
+    values.set('wework-models.legacy', legacy)
+    expect((await new ModelConfigurationStore(directory, secrets).read()).providers).toHaveLength(1)
+    const duplicate = JSON.stringify([
+      { id: 'duplicate', modelId: 'a', baseUrl: 'https://legacy.example' },
+      { id: 'duplicate', modelId: 'b', baseUrl: 'https://legacy.example' },
+    ])
+    values.set('wework-models.legacy', duplicate)
+    expect((await store.read()).error).toBeTruthy()
+    expect(values.get('wework-models.legacy')).toBe(duplicate)
+    expect(values.has('wework-models.pending')).toBe(false)
+  })
+
+  test('explicit file selection resolves malformed legacy import while preserving its protected source', async () => {
+    const source = '[{"apiKey":"protected-legacy-canary"'
+    values.set('wework-models.legacy', source)
+    const store = new ModelConfigurationStore(directory, secrets)
+    expect((await store.read()).error).toBeTruthy()
+    const selected = join(directory, 'selected.yml')
+    await writeFile(selected, YAML)
+    const bound = await store.bind(selected)
+    expect(bound.error).toBeUndefined()
+    const restarted = new ModelConfigurationStore(directory, secrets)
+    const restored = await restarted.read()
+    expect(restored.error).toBeUndefined()
+    expect(restored.providers[0].id).toBe('relay')
+    await expect(restarted.save(restored.revision, restored.providers)).resolves.toMatchObject({
+      path: await realpath(selected),
+    })
+    expect(values.get('wework-models.legacy')).toBe(source)
+    expect(await readFile(selected, 'utf8')).not.toContain('protected-legacy-canary')
+  })
+
+  test.each(['before-intent', 'after-intent', 'before-cleanup', 'after-cleanup'])(
+    'publication recovers a consistent file and secret after %s failure',
+    async failure => {
+      const original = new ModelConfigurationStore(directory, secrets)
+      const empty = await original.read()
+      const saved = await original.save(
+        empty.revision,
+        parseModelConfiguration(YAML).config.providers
+      )
+      let calls = 0
+      const faulty = new ModelConfigurationStore(directory, {
+        ...secrets,
+        update: async change => {
+          calls++
+          const fail = calls === (failure.endsWith('intent') ? 1 : 2)
+          if (fail && failure.startsWith('before')) throw new Error('injected publication failure')
+          await secrets.update(change)
+          if (fail && failure.startsWith('after')) throw new Error('injected publication failure')
+        },
+      })
+      // Reading an unchanged committed file performs no protected mutation.
+      const before = await faulty.read()
+      calls = 0
+      await expect(
+        faulty.save(before.revision, [{ ...saved.providers[0], api_key: 'rotated-key' }])
+      ).rejects.toThrow('injected publication failure')
+      const restarted = new ModelConfigurationStore(directory, secrets)
+      const current = await restarted.read()
+      expect(current.error).toBeUndefined()
+      const key = values.get(current.providers[0].api_key_ref!)
+      expect(['rotated-key', 'secret-not-for-output']).toContain(key)
+      expect((await restarted.runtime()).models[0].provider.api_key).toBe(key)
+      expect(values.has('wework-models.pending')).toBe(false)
+    }
+  )
+  test('external endpoint changes, removed credentials and restored legacy files cannot redirect existing models', async () => {
+    const store = new ModelConfigurationStore(directory, secrets)
+    const empty = await store.read()
+    const saved = await store.save(empty.revision, parseModelConfiguration(YAML).config.providers)
+    const source = await readFile(saved.path, 'utf8')
+    for (const tampered of [
+      source.replace('https://relay.example/v1', 'https://attacker.example/v1'),
+      source
+        .replace(/\s+api_key_ref:.*\n/, '\n')
+        .replace('https://relay.example/v1', 'https://attacker.example/v1'),
+      YAML,
+    ]) {
+      await writeFile(saved.path, tampered)
+      expect((await store.read()).error).toBeTruthy()
+      expect((await store.runtime()).models[0].provider.base_url).toBe('https://relay.example/v1')
+    }
+    const other = join(directory, 'untrusted.yml')
+    await writeFile(
+      other,
+      source.replace('https://relay.example/v1', 'https://attacker.example/v1')
+    )
+    await expect(store.bind(other)).rejects.toThrow(/authorize this file/)
+    expect(await readFile(other, 'utf8')).toContain('https://attacker.example')
+  })
   test('resolves draft credentials from its saved provider without persisting changes', async () => {
     const store = new ModelConfigurationStore(directory, secrets)
     const empty = await store.read()
@@ -82,11 +223,9 @@ describe('Provider configuration file store', () => {
     expect(api_key_configured).toBe(true)
     draft.base_url = 'https://draft.example/v1'
     draft.api_key_ref = 'wework-model-key.untrusted-ref'
-    const runtime = await store.runtime(draft)
-    expect(runtime.models[0].provider).toMatchObject({
-      base_url: draft.base_url,
-      api_key: 'secret-not-for-output',
-    })
+    await expect(store.runtime(draft)).rejects.toThrow(/authorize a changed endpoint/)
+    draft.base_url = snapshot.providers[0].base_url
+    expect((await store.runtime(draft)).models[0].provider.api_key).toBe('secret-not-for-output')
     delete draft.api_key_ref
     expect(
       (await store.runtime({ ...draft, api_key: 'replacement' })).models[0].provider.api_key
@@ -134,7 +273,7 @@ describe('Provider configuration file store', () => {
     await writeFile(join(directory, 'model.yml'), YAML)
     const store = new ModelConfigurationStore(directory, secrets)
     const snapshot = await store.read()
-    const changed = YAML.replace('My relay', 'External rename')
+    const changed = (await readFile(snapshot.path, 'utf8')).replace('My relay', 'External rename')
     await writeFile(join(directory, 'model.yml'), changed)
     await expect(store.save(snapshot.revision, snapshot.providers)).rejects.toThrow(
       /changed externally/
@@ -204,7 +343,7 @@ describe('Provider configuration file store', () => {
     await expect(store.save(before.revision, before.providers)).rejects.toThrow(
       /changed externally/
     )
-    expect(await readFile(other, 'utf8')).toBe(YAML)
+    expect(await readFile(other, 'utf8')).not.toContain('secret-not-for-output')
   })
   test('binding rejects an invalid file and preserves the previous binding', async () => {
     const store = new ModelConfigurationStore(directory, secrets)
@@ -281,14 +420,12 @@ describe('Provider credential recovery and retirement', () => {
     const empty = await store.read()
     let saved = await store.save(empty.revision, parseModelConfiguration(YAML).config.providers)
     const oldRef = saved.providers[0].api_key_ref!
-    saved = await store.save(saved.revision, [
-      ...saved.providers,
-      { ...saved.providers[0], id: 'shared', models: [] },
-    ])
-    saved = await store.save(
-      saved.revision,
-      saved.providers.filter(provider => provider.id !== 'relay')
-    )
+    await expect(
+      store.save(saved.revision, [
+        ...saved.providers,
+        { ...saved.providers[0], id: 'shared', models: [] },
+      ])
+    ).rejects.toThrow(/another provider/)
     expect(await secrets.get(oldRef)).toBe('secret-not-for-output')
     saved = await store.save(saved.revision, [{ ...saved.providers[0], api_key: 'new-key' }])
     const newRef = saved.providers[0].api_key_ref!
@@ -300,17 +437,16 @@ describe('Provider credential recovery and retirement', () => {
     expect((await store.runtime()).models).toEqual([])
   })
 
-  test('an external edit during key rotation retains old keys and rolls back staged keys', async () => {
+  test('a publication conflict retains both snapshots and native file selection recovers without overwriting edits', async () => {
     const store = new ModelConfigurationStore(directory, secrets)
     const empty = await store.read()
     const saved = await store.save(empty.revision, parseModelConfiguration(YAML).config.providers)
     const originalSource = await readFile(saved.path, 'utf8')
     const racingSecrets = {
       ...secrets,
-      set: async (key: string, value: string) => {
-        await secrets.set(key, value)
-        if (key.startsWith('wework-model-key.'))
-          await writeFile(saved.path, `${originalSource}# external edit\n`)
+      update: async (change: (values: Record<string, string>) => void) => {
+        await writeFile(saved.path, `${originalSource}# external edit\n`)
+        await secrets.update(change)
       },
     }
     const racing = new ModelConfigurationStore(directory, racingSecrets)
@@ -318,11 +454,21 @@ describe('Provider credential recovery and retirement', () => {
     const previousKeys = [...values.keys()].filter(key => key.startsWith('wework-model-key.'))
     await expect(
       racing.save(before.revision, [{ ...before.providers[0], api_key: 'staged-key' }])
-    ).rejects.toThrow(/changed externally/)
-    expect([...values.keys()].filter(key => key.startsWith('wework-model-key.'))).toEqual(
-      previousKeys
-    )
+    ).rejects.toThrow(/changed during publication/)
+    expect(values.has('wework-models.pending')).toBe(true)
+    expect(previousKeys.every(key => values.has(key))).toBe(true)
     expect((await racing.runtime()).models[0].provider.api_key).toBe('secret-not-for-output')
+    const externalSource = await readFile(saved.path, 'utf8')
+    const selected = join(directory, 'selected.yml')
+    await writeFile(selected, YAML.replace('secret-not-for-output', 'selected-key'))
+    const recovered = new ModelConfigurationStore(directory, secrets)
+    await expect(recovered.read()).rejects.toThrow(/changed during publication/)
+    const bound = await recovered.bind(selected)
+    expect(bound.path).toBe(await realpath(selected))
+    expect(values.has('wework-models.pending')).toBe(false)
+    expect((await recovered.runtime()).models[0].provider.api_key).toBe('selected-key')
+    expect(await readFile(saved.path, 'utf8')).toBe(externalSource)
+    expect((await new ModelConfigurationStore(directory, secrets).read()).path).toBe(bound.path)
   })
 
   test('a recovery-backup failure never deletes the key referenced by the committed file', async () => {
@@ -331,10 +477,12 @@ describe('Provider credential recovery and retirement', () => {
     const saved = await store.save(empty.revision, parseModelConfiguration(YAML).config.providers)
     const faulty = new ModelConfigurationStore(directory, {
       ...secrets,
-      set: async (key: string, value: string) => {
-        if (key === 'wework-models.last-good' && !value.includes(saved.providers[0].api_key_ref!))
+      update: async (change: (values: Record<string, string>) => void) => {
+        const next = Object.fromEntries(values)
+        change(next)
+        if (!next['wework-models.last-good'].includes(saved.providers[0].api_key_ref!))
           throw new Error('backup write failed')
-        await secrets.set(key, value)
+        await secrets.update(change)
       },
     })
     const before = await faulty.read()
@@ -342,11 +490,11 @@ describe('Provider credential recovery and retirement', () => {
       faulty.save(before.revision, [{ ...before.providers[0], api_key: 'committed-key' }])
     ).rejects.toThrow(/backup write failed/)
     const committed = parseModelConfiguration(await readFile(saved.path, 'utf8')).config
-    expect(await secrets.get(committed.providers[0].api_key_ref!)).toBe('committed-key')
+    expect(await secrets.get(committed.providers[0].api_key_ref!)).toBe('secret-not-for-output')
     expect(await secrets.get(saved.providers[0].api_key_ref!)).toBe('secret-not-for-output')
     const restarted = new ModelConfigurationStore(directory, secrets)
     await restarted.read()
-    expect((await restarted.runtime()).models[0].provider.api_key).toBe('committed-key')
+    expect((await restarted.runtime()).models[0].provider.api_key).toBe('secret-not-for-output')
   })
 })
 
@@ -383,9 +531,7 @@ describe('Provider model discovery', () => {
         signal: expect.any(AbortSignal),
       })
     )
-    await expect(readFile(join(directory, 'model.yml'), 'utf8')).rejects.toMatchObject({
-      code: 'ENOENT',
-    })
+    expect(await readFile(join(directory, 'model.yml'), 'utf8')).toContain('credential_protocol: 3')
     expect((await store.read()).revision).toBe(before.revision)
     expect((await store.runtime()).models).toEqual([])
     expect(values).toEqual(secretsBefore)
@@ -398,9 +544,9 @@ describe('Provider model discovery', () => {
     const secretsBefore = new Map(values)
     const request = vi.fn().mockResolvedValue(response({ data: [] }))
     vi.stubGlobal('fetch', request)
-    await store.discover('relay', { ...draft, api_key: '' })
+    await store.discover('relay', { ...draft, base_url: 'https://relay.example/v1', api_key: '' })
     expect(request).toHaveBeenCalledWith(
-      'https://draft.example/v1/models',
+      'https://relay.example/v1/models',
       expect.objectContaining({
         headers: { Authorization: 'Bearer secret-not-for-output' },
       })
@@ -423,7 +569,9 @@ describe('Provider model discovery', () => {
       })
     )
     expect((await store.runtime()).models[0].provider.api_key).toBe('secret-not-for-output')
-    expect(await readFile(join(directory, 'model.yml'), 'utf8')).toBe(YAML)
+    expect(await readFile(join(directory, 'model.yml'), 'utf8')).not.toContain(
+      'secret-not-for-output'
+    )
   })
 
   test('retains saved-provider discovery for older callers', async () => {
@@ -506,9 +654,13 @@ describe('Provider model discovery', () => {
     values.clear()
     const request = vi.fn().mockResolvedValue(response({ data: [] }))
     vi.stubGlobal('fetch', request)
-    await expect(store.discover('relay', { ...draft, api_key: undefined })).rejects.toThrow(
-      /saved API key/
-    )
+    await expect(
+      store.discover('relay', {
+        ...draft,
+        base_url: 'https://relay.example/v1',
+        api_key: undefined,
+      })
+    ).rejects.toThrow(/saved API key/)
     expect(request).not.toHaveBeenCalled()
     await expect(store.discover('relay', draft)).resolves.toEqual([])
   })

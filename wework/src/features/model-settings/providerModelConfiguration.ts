@@ -4,14 +4,14 @@ import {
   defaultLocalModelRequestPath,
   defaultLocalModelToolProfile,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
-  listLegacyLocalModelConfigs,
-  removeMigratedLocalModelConfigs,
+  LOCAL_MODEL_SETTINGS_STORAGE_KEY,
   type LocalModelConfig,
 } from './localModelSettings'
 import { createDefaultLocalModelCatalogEntry } from './localModelCatalog'
 import { getProviderModelConfigs, replaceProviderModelConfigs } from './providerModelState'
 import type {
   ModelConfigurationSnapshot,
+  ModelRecoverySnapshot,
   ModelProvider,
   ProviderModel,
   PublicModelProvider,
@@ -19,6 +19,7 @@ import type {
 } from '../../../electron/src/host/model-configuration-contract'
 
 export type { ModelConfigurationSnapshot, ModelProvider, ProviderModel, PublicModelProvider }
+export type { ModelRecoverySnapshot }
 
 interface ProviderConfigurationState {
   snapshot: ModelConfigurationSnapshot | null
@@ -29,7 +30,6 @@ const listeners = new Set<() => void>()
 let initialized: Promise<void> | null = null
 let reloadSequence = 0
 let latestReload: Promise<void> = Promise.resolve()
-let migrationWrite: Promise<unknown> | null = null
 
 /** Return the stable snapshot consumed by useSyncExternalStore. */
 export function getProviderConfigurationState(): ProviderConfigurationState {
@@ -121,35 +121,6 @@ export function resolveProviderModel(
   return config
 }
 
-/** Share a migration write across catalog refreshes triggered by native notifications. */
-async function migrateLegacySnapshot(
-  snapshot: ModelConfigurationSnapshot
-): Promise<ModelConfigurationSnapshot> {
-  if (migrationWrite) {
-    await migrationWrite
-    snapshot = await invokeDesktopHost<ModelConfigurationSnapshot>('modelConfiguration.read')
-  }
-  if (snapshot.error) throw new Error(snapshot.error)
-  const ownedIds = new Set(
-    snapshot.providers.flatMap(provider => provider.models.map(model => model.id))
-  )
-  const unowned = listLegacyLocalModelConfigs().filter(model => !ownedIds.has(model.id))
-  if (!unowned.length) return snapshot
-  const write = invokeDesktopHost('modelConfiguration.save', {
-    revision: snapshot.revision,
-    providers: [...snapshot.providers, ...groupLegacyModels(unowned)],
-  })
-  migrationWrite = write
-  try {
-    await write
-    const saved = await invokeDesktopHost<ModelConfigurationSnapshot>('modelConfiguration.read')
-    if (saved.error) throw new Error(saved.error)
-    return saved
-  } finally {
-    if (migrationWrite === write) migrationWrite = null
-  }
-}
-
 /** Load matching public and runtime revisions, ignoring superseded asynchronous requests. */
 export async function reloadProviderConfiguration(): Promise<void> {
   let reload = loadProviderConfiguration(++reloadSequence)
@@ -164,11 +135,9 @@ export async function reloadProviderConfiguration(): Promise<void> {
 
 async function loadProviderConfiguration(sequence: number): Promise<void> {
   try {
-    let snapshot = await invokeDesktopHost<ModelConfigurationSnapshot>('modelConfiguration.read')
+    const snapshot = await invokeDesktopHost<ModelConfigurationSnapshot>('modelConfiguration.read')
     if (sequence !== reloadSequence) return
     if (snapshot.error) throw new Error(snapshot.error)
-    const legacy = listLegacyLocalModelConfigs()
-    snapshot = await migrateLegacySnapshot(snapshot)
     const runtime = await invokeDesktopHost<{ revision: string; models: ResolvedProviderModel[] }>(
       'modelConfiguration.runtime'
     )
@@ -182,15 +151,9 @@ async function loadProviderConfiguration(sequence: number): Promise<void> {
     const changed =
       next.length !== previous.size || next.some(model => model !== previous.get(model.id))
     replaceProviderModelConfigs(next)
-    // Only remove legacy entries after the saved configuration and runtime agree.
-    const persistedIds = new Set(
-      snapshot.providers.flatMap(provider => provider.models.map(model => model.id))
-    )
-    if (legacy.some(model => persistedIds.has(model.id))) {
-      removeMigratedLocalModelConfigs(
-        new Set(legacy.filter(model => persistedIds.has(model.id)).map(model => model.id))
-      )
-    }
+    // Native storage initialization protected the original bytes before this load.
+    // Restored renderer copies must never become a second credential authority.
+    globalThis.localStorage?.removeItem(LOCAL_MODEL_SETTINGS_STORAGE_KEY)
     publish(snapshot, snapshot.error ?? null)
     if (changed) window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
   } catch (error) {
@@ -228,6 +191,20 @@ export async function saveProviderConfiguration(
 export async function chooseProviderConfiguration(): Promise<void> {
   const result = await invokeDesktopHost('modelConfiguration.choose')
   if (result) await reloadProviderConfiguration()
+}
+
+export function readProviderRecovery(): Promise<ModelRecoverySnapshot> {
+  return invokeDesktopHost('modelConfiguration.recovery')
+}
+
+export async function restoreProviderRecovery(id: string, revision: string): Promise<void> {
+  await invokeDesktopHost('modelConfiguration.restoreRecovery', {
+    id,
+    revision,
+    configurationRevision: state.snapshot?.revision ?? '',
+  })
+  await reloadProviderConfiguration()
+  if (state.error) throw new Error(state.error)
 }
 
 /** Preserve the legacy model identity, protocol overrides, and capability catalog during migration. */

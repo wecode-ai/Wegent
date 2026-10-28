@@ -19,6 +19,22 @@ export function markProviderModelCatalogReady(
 ): void {
   const versions = new Map(snapshot.map(model => [model.id, model.updatedAt]))
   configurations = configurations.map(model =>
-    versions.get(model.id) === model.updatedAt ? { ...model, catalogReady: true } : model
+    versions.get(model.id) === model.updatedAt ? readyModel(model) : model
   )
+}
+
+export function reconcileProviderModelCatalogRuntime(runtimeInstanceId: string): void {
+  configurations = configurations.map(model =>
+    !model.catalogReady &&
+    model.catalogPendingRuntimeInstanceId &&
+    model.catalogPendingRuntimeInstanceId !== runtimeInstanceId
+      ? readyModel(model)
+      : model
+  )
+}
+
+function readyModel(model: LocalModelConfig): LocalModelConfig {
+  const current = { ...model }
+  delete current.catalogPendingRuntimeInstanceId
+  return { ...current, catalogReady: true }
 }

@@ -1,5 +1,13 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
+if (process.isMainFrame) {
+  contextBridge.exposeInMainWorld('weworkElectronHost', {
+    invoke: (capability: string, params: Record<string, unknown> = {}) =>
+      ipcRenderer.invoke('desktop:invoke', capability, params),
+    describe: () => ipcRenderer.invoke('desktop:describe'),
+  })
+}
+
 if (location.protocol === 'file:') {
   contextBridge.exposeInMainWorld('weworkElectron', {
     getRuntimeState: () => ipcRenderer.invoke('runtime:get-state'),

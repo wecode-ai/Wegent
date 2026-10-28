@@ -120,7 +120,7 @@ describe('HostPipeServer', () => {
   test('returns structured denial errors for ungranted principals', async () => {
     const router = new HostCapabilityRouter()
     router.register('window.close', vi.fn())
-    const server = new HostPipeServer(router)
+    const server = new HostPipeServer(router, '@third-party/app')
     const childToHost = new PassThrough()
     const hostToChild = new PassThrough()
     const replies = createInterface({ input: hostToChild })
@@ -277,6 +277,31 @@ describe('HostPipeServer', () => {
       })}\n`
     )
     await vi.waitFor(() => expect(protocolError).toHaveBeenCalledOnce())
+  })
+
+  test('a workbench transport cannot self-declare the application principal with a valid token', async () => {
+    const router = new HostCapabilityRouter()
+    const handler = vi.fn()
+    router.grant('@wegent/dsh-app-wework', ['secureStorage.get'])
+    router.register('secureStorage.get', handler)
+    const server = new HostPipeServer(router, '@wegent/dsh-workbench')
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const rejected = vi.fn()
+    server.on('protocolError', rejected)
+    server.attachStreams(input, output)
+    input.write(
+      JSON.stringify({
+        type: 'hello',
+        protocolVersion: 1,
+        token: server.environment().WEWORK_ELECTRON_HOST_TOKEN,
+        principal: '@wegent/dsh-app-wework',
+      }) + '\n'
+    )
+    await vi.waitFor(() => expect(rejected).toHaveBeenCalledOnce())
+    expect(handler).not.toHaveBeenCalled()
+    expect(output.writableEnded).toBe(true)
+    server.stop()
   })
 
   test('converts a broken response pipe into a protocol error', async () => {

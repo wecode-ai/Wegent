@@ -27,6 +27,24 @@ describe('PreferencesStore', () => {
     })
   })
 
+  test('protects damaged preferences before replacing them, and never logs source contents', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-preferences-'))
+    roots.push(root)
+    const store = new PreferencesStore(root)
+    const path = join(root, 'app-preferences.json')
+    const source = '{"token":"secret-canary"'
+    await writeFile(path, source)
+    store.protectDamaged = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('vault locked'))
+      .mockResolvedValue(undefined)
+    await expect(store.read()).rejects.toThrow('vault locked')
+    expect(await readFile(path, 'utf8')).toBe(source)
+    expect(await store.read()).toEqual({})
+    expect(store.protectDamaged).toHaveBeenLastCalledWith('app-preferences.json', source)
+    expect(await readdir(root)).toEqual(['app-preferences.json'])
+    expect(await readFile(path, 'utf8')).not.toContain('secret-canary')
+  })
   test('persists merged updates atomically', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-preferences-'))
     roots.push(root)

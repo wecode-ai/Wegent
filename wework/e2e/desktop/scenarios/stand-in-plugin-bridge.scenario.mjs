@@ -1,3 +1,4 @@
+import { desktopHostInvoke } from '../modules/desktop-host-ipc.mjs'
 import assert from 'node:assert/strict'
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -25,18 +26,7 @@ export function createDesktopScenario({
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const codex = (control, method, params) =>
     rpc(control, 'runtime.codex.app_server.request', { method, params })
-  async function host(control, capability, params) {
-    const origin = await control.command('getLocationOrigin', 'body')
-    const response = await fetch(`${origin}/wework/electron-host/v1/invoke`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ capability, params }),
-      signal: AbortSignal.timeout(workbenchReadyTimeoutMs),
-    })
-    const result = await response.json()
-    assert.equal(result.ok, true, JSON.stringify(result.error))
-    return result.result
-  }
+  const host = (control, capability, params) => desktopHostInvoke(control, capability, params)
   return {
     async handleHttp(req, _response, url) {
       if (req.method === 'POST' && ['/responses', '/v1/responses'].includes(url.pathname))

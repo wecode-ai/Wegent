@@ -1,14 +1,12 @@
+import { clearLocalModelConfigs, saveLocalModelConfig } from '@/test/model-config-fixtures'
+import { replaceProviderModelConfigs } from './providerModelState'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
-  clearLocalModelConfigs,
-  deleteLocalModelConfig,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
-  LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   localModelName,
   markLocalModelCatalogReady,
   reconcileLocalModelCatalogRuntime,
-  saveLocalModelConfig,
 } from './localModelSettings'
 
 describe('localModelSettings', () => {
@@ -74,6 +72,7 @@ describe('localModelSettings', () => {
 
   beforeEach(() => {
     localStorage.clear()
+    clearLocalModelConfigs()
   })
 
   test('validates URL and model ID before saving', () => {
@@ -96,7 +95,7 @@ describe('localModelSettings', () => {
     ).toThrow('Model ID is required')
   })
 
-  test('saves optional API key with a durable browser fallback', () => {
+  test('normalizes optional keys in memory without a browser persistence path', () => {
     const withoutKey = saveLocalModelConfig({
       id: 'ollama',
       displayName: 'Ollama GPT',
@@ -130,7 +129,7 @@ describe('localModelSettings', () => {
     expect(withoutKey.apiKey).toBeUndefined()
     expect(withKey.apiKey).toBe('local-secret')
     expect(listLocalModelConfigs()).toEqual([withoutKey, withKey])
-    expect(localStorage.getItem('wework.localModelSettings.v1')).toContain('local-secret')
+    expect(localStorage.getItem('wework.localModelSettings.v1')).toBeNull()
   })
 
   test('finds a custom model by its local and Codex catalog names', () => {
@@ -160,7 +159,7 @@ describe('localModelSettings', () => {
     expect(findLocalModelConfigByModelName()).toBeNull()
   })
 
-  test('persists a vision proxy reference and clears it when that model is deleted', () => {
+  test('retains vision proxy metadata in the native runtime projection', () => {
     const vision = saveLocalModelConfig({
       id: 'vision',
       displayName: 'Vision',
@@ -181,10 +180,8 @@ describe('localModelSettings', () => {
 
     expect(primary.visionModelConfigId).toBe('vision')
     expect(primary.codexCatalogModelId).toBe('wework-deepseek-v4-flash')
-    expect(deleteLocalModelConfig('vision')).toBe(true)
-    expect(listLocalModelConfigs()).toEqual([
-      expect.not.objectContaining({ visionModelConfigId: 'vision' }),
-    ])
+    replaceProviderModelConfigs([vision, primary])
+    expect(listLocalModelConfigs()[1].visionModelConfigId).toBe(vision.id)
   })
 
   test('rejects a missing, disabled, or self-referencing vision proxy', () => {
@@ -237,7 +234,7 @@ describe('localModelSettings', () => {
     expect(listLocalModelConfigs().find(config => config.id === 'vision')?.enabled).toBe(true)
   })
 
-  test('preserves persisted API keys in local storage', () => {
+  test('never loads restored plaintext credentials into the runtime catalog', () => {
     localStorage.setItem(
       'wework.localModelSettings.v1',
       JSON.stringify([
@@ -253,7 +250,10 @@ describe('localModelSettings', () => {
       ])
     )
 
-    expect(listLocalModelConfigs()[0].apiKey).toBe('legacy-api-key')
+    expect(listLocalModelConfigs()).toEqual([])
+    markLocalModelCatalogReady([])
+    reconcileLocalModelCatalogRuntime('runtime-2')
+    expect(listLocalModelConfigs()).toEqual([])
     expect(localStorage.getItem('wework.localModelSettings.v1')).toContain('legacy-api-key')
   })
 
@@ -331,174 +331,6 @@ describe('localModelSettings', () => {
       baseUrl: 'https://models.local/v1',
       requestPath: '/custom-responses',
     })
-  })
-
-  test('normalizes legacy request URL mode configs when reading storage', () => {
-    localStorage.setItem(
-      'wework.localModelSettings.v1',
-      JSON.stringify([
-        {
-          id: 'legacy-default',
-          displayName: 'Legacy Default',
-          modelId: 'gpt-local',
-          baseUrl: 'https://models.local/v1',
-          requestUrlMode: 'responses_path',
-          enabled: true,
-          updatedAt: '2026-01-01T00:00:00.000Z',
-        },
-        {
-          id: 'legacy-custom',
-          displayName: 'Legacy Custom',
-          modelId: 'custom-model',
-          baseUrl: 'https://models.local/api/respond',
-          requestUrlMode: 'custom_url',
-          enabled: true,
-          updatedAt: '2026-01-01T00:00:00.000Z',
-        },
-      ])
-    )
-
-    expect(listLocalModelConfigs()).toEqual([
-      expect.objectContaining({
-        id: 'legacy-default',
-        apiFormat: 'openai-responses',
-        baseUrl: 'https://models.local/v1',
-        requestPath: '/responses',
-      }),
-      expect.objectContaining({
-        id: 'legacy-custom',
-        baseUrl: 'https://models.local/api',
-        requestPath: '/respond',
-      }),
-    ])
-  })
-
-  test('migrates existing K3 configs to the built-in 256K catalog profile', () => {
-    localStorage.setItem(
-      'wework.localModelSettings.v1',
-      JSON.stringify([
-        {
-          id: 'existing-k3',
-          providerProfileId: 'kimi-coding',
-          displayName: 'K3',
-          modelId: 'k3',
-          baseUrl: 'https://api.kimi.com/coding/v1',
-          apiFormat: 'openai-chat-completions',
-          contextWindow: 256000,
-          webSearchMode: 'disabled',
-          imageGenerationEnabled: false,
-          enabled: true,
-          updatedAt: '2026-01-01T00:00:00.000Z',
-        },
-      ])
-    )
-
-    expect(listLocalModelConfigs()).toEqual([
-      expect.objectContaining({
-        id: 'existing-k3',
-        contextWindow: 262_144,
-        codexCatalogModelId: 'wework-kimi-k3',
-        catalogReady: true,
-      }),
-    ])
-  })
-
-  test('migrates Kimi Open Platform K3 configs to the buffered catalog profile', () => {
-    localStorage.setItem(
-      'wework.localModelSettings.v1',
-      JSON.stringify([
-        {
-          id: 'existing-kimi-k3',
-          providerProfileId: 'kimi',
-          displayName: 'Kimi K3',
-          modelId: 'kimi-k3',
-          baseUrl: 'https://api.moonshot.cn/v1',
-          apiFormat: 'openai-chat-completions',
-          contextWindow: 1_000_000,
-          webSearchMode: 'disabled',
-          imageGenerationEnabled: false,
-          enabled: true,
-          updatedAt: '2026-01-01T00:00:00.000Z',
-        },
-      ])
-    )
-
-    expect(listLocalModelConfigs()).toEqual([
-      expect.objectContaining({
-        id: 'existing-kimi-k3',
-        contextWindow: 1_048_576,
-        codexCatalogModelId: 'wework-kimi-k3',
-        catalogReady: true,
-      }),
-    ])
-  })
-
-  test('migrates managed DeepSeek Flash configs to the native Responses API', () => {
-    localStorage.setItem(
-      'wework.localModelSettings.v1',
-      JSON.stringify([
-        {
-          id: 'existing-deepseek',
-          providerProfileId: 'deepseek',
-          displayName: 'DeepSeek V4 Flash',
-          modelId: 'deepseek-v4-flash',
-          baseUrl: 'https://api.deepseek.com',
-          apiFormat: 'openai-chat-completions',
-          toolProfile: 'function',
-          requestPath: '/chat/completions',
-          contextWindow: 1_000_000,
-          webSearchMode: 'disabled',
-          imageGenerationEnabled: false,
-          enabled: true,
-          updatedAt: '2026-07-30T00:00:00.000Z',
-        },
-      ])
-    )
-
-    expect(listLocalModelConfigs()).toEqual([
-      expect.objectContaining({
-        id: 'existing-deepseek',
-        apiFormat: 'openai-responses',
-        toolProfile: 'custom',
-        requestPath: '/responses',
-        contextWindow: 1_048_576,
-        codexCatalogModelId: 'wework-deepseek-v4-flash',
-        catalogReady: true,
-        webSearchMode: 'live',
-      }),
-    ])
-  })
-
-  test('keeps existing MiniMax international configs on the global profile', () => {
-    localStorage.setItem(
-      'wework.localModelSettings.v1',
-      JSON.stringify([
-        {
-          id: 'existing-minimax',
-          providerProfileId: 'minimax',
-          displayName: 'MiniMax M2.7',
-          modelId: 'MiniMax-M2.7',
-          baseUrl: 'https://api.minimax.io/anthropic',
-          apiFormat: 'anthropic-messages',
-          toolProfile: 'function',
-          requestPath: '/v1/messages',
-          contextWindow: 204_800,
-          webSearchMode: 'disabled',
-          imageGenerationEnabled: false,
-          catalogReady: true,
-          enabled: true,
-          updatedAt: '2026-08-09T00:00:00.000Z',
-        },
-      ])
-    )
-
-    expect(listLocalModelConfigs()).toEqual([
-      expect.objectContaining({
-        id: 'existing-minimax',
-        providerProfileId: 'minimax-global',
-        baseUrl: 'https://api.minimax.io/anthropic',
-      }),
-    ])
   })
 
   test('validates optional context window before saving', () => {
@@ -631,61 +463,6 @@ describe('localModelSettings', () => {
       expect(listLocalModelConfigs()[0].catalogReady).toBe(false)
     } finally {
       now.mockRestore()
-    }
-  })
-
-  test('updates, deletes, clears, and emits change events', () => {
-    const listener = vi.fn()
-    window.addEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, listener)
-
-    try {
-      const saved = saveLocalModelConfig({
-        id: 'local-a',
-        displayName: 'Local A',
-        modelId: 'model-a',
-        baseUrl: 'http://localhost:1234/v1',
-        apiKey: 'local-secret',
-      })
-      const updated = saveLocalModelConfig({
-        id: saved.id,
-        displayName: 'Local A Updated',
-        modelId: 'model-a-new',
-        baseUrl: 'http://localhost:1234/v1',
-        webSearchMode: 'cached',
-        imageGenerationEnabled: true,
-        enabled: false,
-      })
-
-      expect(listLocalModelConfigs()).toHaveLength(1)
-      expect(updated).toMatchObject({
-        id: 'local-a',
-        displayName: 'Local A Updated',
-        modelId: 'model-a-new',
-        webSearchMode: 'cached',
-        imageGenerationEnabled: true,
-        enabled: false,
-      })
-
-      expect(deleteLocalModelConfig('local-a')).toBe(true)
-      expect(listLocalModelConfigs()).toEqual([])
-
-      saveLocalModelConfig({
-        id: 'local-b',
-        displayName: 'Local B',
-        modelId: 'model-b',
-        baseUrl: 'http://localhost:4321/v1',
-      })
-      clearLocalModelConfigs()
-
-      expect(listLocalModelConfigs()).toEqual([])
-      expect(listener).toHaveBeenCalledTimes(5)
-      expect(listener.mock.calls[0][0].detail.configs[0]).toMatchObject({
-        id: 'local-a',
-        apiKeyConfigured: true,
-      })
-      expect(listener.mock.calls[0][0].detail.configs[0]).not.toHaveProperty('apiKey')
-    } finally {
-      window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, listener)
     }
   })
 })

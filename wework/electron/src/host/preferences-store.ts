@@ -1,9 +1,12 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { durableWrite } from './durable-file.js'
 
 export class PreferencesStore {
   private operation = Promise.resolve()
   private closed = false
+  transform: ((value: Record<string, unknown>) => Promise<Record<string, unknown>>) | null = null
+  protectDamaged: ((name: string, content: string) => Promise<void>) | null = null
 
   constructor(private readonly dataDirectory: string) {}
 
@@ -13,19 +16,15 @@ export class PreferencesStore {
   }
 
   read(): Promise<Record<string, unknown>> {
-    return this.serial(() => this.readFile())
+    return this.serial(async () => this.sanitize(await this.readFile()))
   }
 
   update(patch: Record<string, unknown>): Promise<Record<string, unknown>> {
     return this.serial(async () => {
-      const preferences = { ...(await this.readFile()), ...patch }
+      const preferences = await this.sanitize({ ...(await this.readFile()), ...patch })
       const path = this.path()
       await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-      const temporary = `${path}.${process.pid}.tmp`
-      await writeFile(temporary, `${JSON.stringify(preferences, null, 2)}\n`, {
-        mode: 0o600,
-      })
-      await rename(temporary, path)
+      await durableWrite(path, `${JSON.stringify(preferences, null, 2)}\n`)
       return preferences
     })
   }
@@ -36,6 +35,14 @@ export class PreferencesStore {
 
   private path(): string {
     return join(this.dataDirectory, 'app-preferences.json')
+  }
+
+  private async sanitize(value: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (!this.transform) return value
+    const safe = await this.transform(value)
+    if (JSON.stringify(safe) !== JSON.stringify(value))
+      await durableWrite(this.path(), `${JSON.stringify(safe, null, 2)}\n`)
+    return safe
   }
 
   private async readFile(): Promise<Record<string, unknown>> {
@@ -50,10 +57,15 @@ export class PreferencesStore {
     }
     try {
       const value = JSON.parse(content) as unknown
-      return value && typeof value === 'object' && !Array.isArray(value)
-        ? (value as Record<string, unknown>)
-        : {}
+      if (!value || typeof value !== 'object' || Array.isArray(value))
+        throw new Error('Invalid preferences format')
+      return value as Record<string, unknown>
     } catch (error) {
+      if (this.protectDamaged) {
+        await this.protectDamaged('app-preferences.json', content)
+        await durableWrite(this.path(), '{}\n')
+        return {}
+      }
       await this.quarantineDamagedFile(error)
       return {}
     }
@@ -94,5 +106,5 @@ export class PreferencesStore {
 }
 
 function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return error instanceof Error ? error.name : 'Unknown error'
 }

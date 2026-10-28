@@ -160,8 +160,10 @@ function validateModel(value: unknown, path: string, provider: ModelProvider): P
 /** Validate and normalize a complete provider document, including cross-provider identities. */
 export function validateModelConfiguration(value: unknown): ModelConfiguration {
   const root = record(value, 'root')
-  knownFields(root, new Set(['version', 'providers']), 'root')
+  knownFields(root, new Set(['version', 'providers', 'credential_protocol']), 'root')
   if (root.version !== 1) fail('version', 'expected 1')
+  if (root.credential_protocol !== undefined && root.credential_protocol !== 3)
+    fail('credential_protocol', 'unsupported credential protocol')
   if (!Array.isArray(root.providers)) fail('providers', 'expected an array')
   const providerIds = new Set<string>()
   const modelIds = new Set<string>()
@@ -238,7 +240,11 @@ export function validateModelConfiguration(value: unknown): ModelConfiguration {
         fail('vision_model_config_id', 'a model cannot reference itself')
     }
   }
-  return { version: 1, providers }
+  return {
+    version: 1,
+    ...(root.credential_protocol === 3 ? { credential_protocol: 3 as const } : {}),
+    providers,
+  }
 }
 
 /** Parse bounded YAML without aliases and report syntax locations without secret excerpts. */

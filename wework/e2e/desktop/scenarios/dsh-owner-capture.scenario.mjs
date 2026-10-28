@@ -1,18 +1,12 @@
+import { desktopHostEnvelope } from '../modules/desktop-host-ipc.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-const HOST_INVOKE_PATH = '/wework/electron-host/v1/invoke'
 const MODEL_LABEL = 'Desktop E2E Chat'
-
-async function postInvoke(origin, capability, params) {
-  const endpoint = `${origin}${HOST_INVOKE_PATH}`
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
-    body: JSON.stringify({ capability, params }),
-  })
-  return { response, payload: await response.json() }
+async function postInvoke(target, capability, params) {
+  const payload = await desktopHostEnvelope(target.control, capability, params, target.label)
+  return { response: { ok: payload.ok }, payload }
 }
 
 async function invoke(origin, capability, params = {}) {
@@ -76,7 +70,7 @@ async function verifyMicrophoneDiagnostics(origin) {
 export function createDesktopScenario({ resultDir }) {
   return {
     async verify(control) {
-      const origin = await control.command('getLocationOrigin', 'body')
+      const origin = { control }
       const workbench = await invoke(origin, 'smartApps.createDirectory', {
         parentPath: resultDir,
         name: 'dsh-owner-capture-bridge',
@@ -111,7 +105,7 @@ export function createDesktopScenario({ resultDir }) {
         assert.ok(webUrl, 'Workbench DSH did not expose a URL')
         assert.equal(ownerLabel, `smart-app:${workbench.id}`)
 
-        const workbenchOrigin = new URL(webUrl).origin
+        const workbenchOrigin = { control, label: ownerLabel }
         const microphoneDiagnostics = {
           core: await verifyMicrophoneDiagnostics(origin),
           workbench: await verifyMicrophoneDiagnostics(workbenchOrigin),

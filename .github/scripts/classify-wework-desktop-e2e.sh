@@ -1398,7 +1398,11 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/scenarios/model-settings.scenario.mjs | \
+      wework/e2e/desktop/modules/credential-security-flow.mjs | \
+      wework/e2e/desktop/modules/credential-recovery-flow.mjs | \
+      wework/e2e/desktop/modules/desktop-host-ipc.mjs | \
       wework/src/components/settings/ProviderSettingsSection* | \
+      wework/src/components/settings/ProviderCredentialRecovery* | \
       wework/src/components/settings/ProviderEditor* | \
       wework/src/components/settings/ProviderModelFields* | \
       wework/src/components/settings/ModelSettingsPage* | \

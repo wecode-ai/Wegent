@@ -1,6 +1,13 @@
-import { createHash, generateKeyPairSync, randomUUID, sign as signBytes } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import {
+  createHash,
+  createPublicKey,
+  generateKeyPairSync,
+  randomUUID,
+  sign as signBytes,
+} from 'node:crypto'
+import { readFile, readdir, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import type { SecureValueStore } from './secure-value-store.js'
 
 import { cloudFetch } from './cloud-http.js'
 
@@ -62,8 +69,15 @@ export class CloudCredentialService {
 
   constructor(
     private readonly dataDirectory: string,
+    private readonly secrets: Pick<SecureValueStore, 'get' | 'update'>,
     private readonly request: typeof fetch = cloudFetch
   ) {}
+
+  initialize(): Promise<void> {
+    return this.serial(async () => {
+      await this.readCredential()
+    })
+  }
 
   /**
    * Cloud credential calls must never hang.
@@ -76,6 +90,7 @@ export class CloudCredentialService {
     try {
       return await this.request(endpoint, {
         ...init,
+        redirect: 'error',
         signal: AbortSignal.timeout(CLOUD_CREDENTIAL_REQUEST_TIMEOUT_MS),
       })
     } catch (error) {
@@ -83,7 +98,7 @@ export class CloudCredentialService {
         // The host has no locale, so report a stable code the renderer can show.
         throw new CloudCredentialError('request_timeout', 'Cloud credential request timed out')
       }
-      throw error
+      throw new CloudCredentialError('request_failed', 'Cloud credential request failed')
     }
   }
 
@@ -106,7 +121,7 @@ export class CloudCredentialService {
       const response = await this.requestWithTimeout(endpoint, { method: 'GET' })
       const payload = await responseJson(response)
       if (!response.ok) {
-        throw requestError(response.status, payload)
+        throw requestError(response.status)
       }
       const status = stringValue(payload.status)
       if (!isPollStatus(status)) {
@@ -121,7 +136,12 @@ export class CloudCredentialService {
       const accessToken = requiredString(payload.access_token, 'access token')
       const refreshToken = optionalString(payload.refresh_token)
       if (!refreshToken) {
-        await rm(this.path(), { force: true })
+        await this.secrets.update(values => {
+          delete values['wework-cloud.identity']
+          values['wework-cloud.legacy'] = JSON.stringify({ apiBaseUrl, accessToken })
+          values['wework-cloud.migrated'] = '3'
+        })
+        await this.removeLegacyFiles()
         return {
           status,
           accessToken,
@@ -150,6 +170,17 @@ export class CloudCredentialService {
   refreshAccessToken(apiBaseUrl: string): Promise<RefreshedAccessToken> {
     return this.serial(async () => {
       const normalizedApiBaseUrl = normalizeApiBaseUrl(apiBaseUrl)
+      await this.readCredential()
+      const legacy = await this.secrets.get('wework-cloud.legacy')
+      if (legacy) {
+        const token = JSON.parse(legacy) as { apiBaseUrl: string; accessToken: string }
+        if (token.apiBaseUrl !== normalizedApiBaseUrl)
+          throw new CloudCredentialError(
+            'credentials_unavailable',
+            'Cloud credentials belong to another endpoint'
+          )
+        return { accessToken: token.accessToken, tokenType: 'bearer', expiresIn: 0 }
+      }
       const credential = await this.readCredential()
       if (!credential || credential.apiBaseUrl !== normalizedApiBaseUrl) {
         throw new CloudCredentialError(
@@ -181,7 +212,7 @@ export class CloudCredentialService {
       })
       const payload = await responseJson(response)
       if (!response.ok) {
-        throw requestError(response.status, payload)
+        throw requestError(response.status)
       }
       return {
         accessToken: requiredString(payload.access_token, 'access token'),
@@ -193,7 +224,13 @@ export class CloudCredentialService {
 
   clear(): Promise<void> {
     return this.serial(async () => {
-      await rm(this.path(), { force: true })
+      await this.secrets.update(values => {
+        delete values['wework-cloud.identity']
+        delete values['wework-cloud.legacy']
+        values['wework-cloud.migrated'] = '3'
+        values['wework-cloud.mirrors-closed'] = '3'
+      })
+      await this.removeLegacyFiles()
     })
   }
 
@@ -211,21 +248,45 @@ export class CloudCredentialService {
   }
 
   private async readCredential(): Promise<StoredCloudCredential | null> {
+    if ((await this.secrets.get('wework-cloud.migrated')) !== '3') {
+      let credential: StoredCloudCredential | null = null
+      try {
+        credential = parseStoredCredential(await readFile(this.path(), 'utf8'))
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+      await this.secrets.update(values => {
+        // A different Host may have migrated, rotated or cleared this identity
+        // while this instance was reading the legacy file.
+        if (values['wework-cloud.migrated'] === '3') return
+        if (credential) values['wework-cloud.identity'] = JSON.stringify(credential)
+        values['wework-cloud.migrated'] = '3'
+      })
+    }
+    const source = await this.secrets.get('wework-cloud.identity')
+    const credential = source === null ? null : parseStoredCredential(source)
+    await this.removeLegacyFiles()
+    return credential
+  }
+
+  private async removeLegacyFiles(): Promise<void> {
     try {
-      const value = JSON.parse(await readFile(this.path(), 'utf8')) as unknown
-      return normalizeStoredCredential(value)
+      for (const name of await readdir(this.dataDirectory)) {
+        if (/^cloud-credentials\.json(?:\.[a-zA-Z0-9.-]+\.tmp)?$/.test(name))
+          await rm(join(this.dataDirectory, name), { force: true })
+      }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
       throw error
     }
   }
 
   private async writeCredential(credential: StoredCloudCredential): Promise<void> {
-    const path = this.path()
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-    const temporary = `${path}.${process.pid}.tmp`
-    await writeFile(temporary, `${JSON.stringify(credential, null, 2)}\n`, { mode: 0o600 })
-    await rename(temporary, path)
+    await this.secrets.update(values => {
+      values['wework-cloud.identity'] = JSON.stringify(credential)
+      if (credential.refreshToken) delete values['wework-cloud.legacy']
+      values['wework-cloud.migrated'] = '3'
+    })
   }
 
   private path(): string {
@@ -279,7 +340,13 @@ function base64url(value: string): string {
 function normalizeApiBaseUrl(value: string): string {
   const normalized = value.trim().replace(/\/+$/, '')
   const url = new URL(normalized)
-  if (!['http:', 'https:'].includes(url.protocol)) {
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
     throw new CloudCredentialError('request_failed', 'Cloud API URL is invalid')
   }
   return normalized
@@ -306,8 +373,25 @@ function normalizePublicKey(value: unknown): DevicePublicKey {
   }
 }
 
-function normalizeStoredCredential(value: unknown): StoredCloudCredential | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+function parseStoredCredential(source: string): StoredCloudCredential {
+  let value: unknown
+  try {
+    value = JSON.parse(source)
+  } catch {
+    throw new CloudCredentialError(
+      'credentials_unavailable',
+      'Cloud credential format requires recovery'
+    )
+  }
+  return normalizeStoredCredential(value)
+}
+
+function normalizeStoredCredential(value: unknown): StoredCloudCredential {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new CloudCredentialError(
+      'credentials_unavailable',
+      'Cloud credential format requires recovery'
+    )
   const record = value as Partial<StoredCloudCredential>
   if (
     record.version !== 2 ||
@@ -316,7 +400,20 @@ function normalizeStoredCredential(value: unknown): StoredCloudCredential | null
     typeof record.refreshToken !== 'string' ||
     !record.publicKey
   ) {
-    return null
+    throw new CloudCredentialError(
+      'credentials_unavailable',
+      'Cloud credential format requires recovery'
+    )
+  }
+  try {
+    const derived = normalizePublicKey(createPublicKey(record.privateKey).export({ format: 'jwk' }))
+    if (JSON.stringify(derived) !== JSON.stringify(normalizePublicKey(record.publicKey)))
+      throw new Error()
+  } catch {
+    throw new CloudCredentialError(
+      'credentials_unavailable',
+      'Cloud device identity requires recovery'
+    )
   }
   return {
     version: 2,
@@ -338,11 +435,8 @@ async function responseJson(response: Response): Promise<Record<string, unknown>
   }
 }
 
-function requestError(status: number, payload: Record<string, unknown>): CloudCredentialError {
-  const message =
-    optionalString(payload.detail) ??
-    optionalString(payload.error) ??
-    `Cloud credential request failed with HTTP ${status}`
+function requestError(status: number): CloudCredentialError {
+  const message = `Cloud credential request failed with HTTP ${status}`
   return new CloudCredentialError(
     status === 401 ? 'cloud_auth_expired' : 'request_failed',
     message,

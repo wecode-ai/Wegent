@@ -3,11 +3,14 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import vm from 'node:vm'
 
-async function loadClient(fetchImpl) {
+async function loadClient(bridge) {
   let factory
   const source = await readFile(new URL('./client.js', import.meta.url), 'utf8')
   const window = {
-    fetch: fetchImpl,
+    weworkElectronHost: bridge,
+    fetch() {
+      throw new Error('HTTP must not be used')
+    },
     __ModuleLoader__: {
       load(entry) {
         factory = entry.factory
@@ -19,68 +22,45 @@ async function loadClient(fetchImpl) {
   return factory()
 }
 
-function jsonResponse(status, value) {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => value,
-  }
-}
-
-test('provides one Renderer service backed by the same-origin host route', async () => {
+test('uses trusted preload IPC for every Renderer service', async () => {
   const requests = []
-  const client = await loadClient(async (url, init) => {
-    requests.push({ url, init })
-    if (init.method === 'GET') {
-      return jsonResponse(200, {
-        protocolVersion: 1,
-        capabilities: ['app.getVersion', 'rendererHealth.getState'],
-      })
-    }
-    const body = JSON.parse(init.body)
-    return jsonResponse(200, {
-      ok: true,
-      result: { capability: body.capability, params: body.params },
-    })
+  const client = await loadClient({
+    describe: async () => ({ protocolVersion: 1, capabilities: ['app.getVersion'] }),
+    invoke: async (capability, params) => {
+      requests.push({ capability, params })
+      return { ok: true, result: { capability, params } }
+    },
   })
   const generation = client.createWeworkDesktopClient()
-
-  assert.deepEqual(JSON.parse(JSON.stringify(await generation.service.describe())), {
-    protocolVersion: 1,
-    capabilities: ['app.getVersion', 'rendererHealth.getState'],
-  })
-  assert.deepEqual(
-    JSON.parse(JSON.stringify(await generation.service.shell.openExternal('https://example.com'))),
-    {
-      capability: 'shell.openExternal',
-      params: { url: 'https://example.com' },
-    }
-  )
-  assert.equal(requests[0].url, '/wework/electron-host/v1')
-  assert.equal(requests[0].init.credentials, 'same-origin')
-  assert.equal(requests[1].url, '/wework/electron-host/v1/invoke')
+  assert.equal((await generation.service.describe()).protocolVersion, 1)
+  await generation.service.shell.openExternal('https://example.com')
   await generation.service.deviceDiagnostics.microphone()
   await generation.service.deviceDiagnostics.microphone({ inputDeviceKind: 'built-in' })
-  assert.deepEqual(
-    requests.slice(2).map(({ init }) => JSON.parse(init.body)),
-    [
-      { capability: 'deviceDiagnostics.microphone', params: {} },
-      { capability: 'deviceDiagnostics.microphone', params: { inputDeviceKind: 'built-in' } },
-    ]
-  )
+  assert.deepEqual(JSON.parse(JSON.stringify(requests)), [
+    { capability: 'shell.openExternal', params: { url: 'https://example.com' } },
+    { capability: 'deviceDiagnostics.microphone', params: {} },
+    { capability: 'deviceDiagnostics.microphone', params: { inputDeviceKind: 'built-in' } },
+  ])
+})
+
+test('missing IPC never attempts an HTTP fallback', async () => {
+  const client = await loadClient(undefined)
+  await assert.rejects(() => client.createWeworkDesktopClient().service.app.getVersion(), {
+    code: 'host_unavailable',
+  })
 })
 
 test('preserves structured Host errors and rejects retained generation references', async () => {
-  const client = await loadClient(async () =>
-    jsonResponse(403, {
+  const client = await loadClient({
+    invoke: async () => ({
       ok: false,
       error: {
         code: 'capability_denied',
         message: 'Denied',
         details: { capability: 'window.close' },
       },
-    })
-  )
+    }),
+  })
   const failed = client.createWeworkDesktopClient()
   await assert.rejects(
     () => failed.service.window.close(),
@@ -100,7 +80,10 @@ test('preserves structured Host errors and rejects retained generation reference
 })
 
 test('registers and disposes the Renderer Cordis service with its generation', async () => {
-  const client = await loadClient(async () => jsonResponse(200, {}))
+  const client = await loadClient({
+    describe: async () => ({}),
+    invoke: async () => ({ ok: true }),
+  })
   let provided
   let disposeEffect
   client.apply({

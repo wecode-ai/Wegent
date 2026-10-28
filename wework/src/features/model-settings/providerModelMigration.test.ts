@@ -1,3 +1,7 @@
+import {
+  listLegacyLocalModelConfigs,
+  seedLegacyLocalModelConfig as saveLocalModelConfig,
+} from '@/test/model-config-fixtures'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   getProviderConfigurationState,
@@ -5,11 +9,7 @@ import {
   saveProviderConfiguration,
   type ModelProvider,
 } from './providerModelConfiguration'
-import {
-  listLegacyLocalModelConfigs,
-  listLocalModelConfigs,
-  saveLocalModelConfig,
-} from './localModelSettings'
+import { listLocalModelConfigs } from './localModelSettings'
 import { replaceProviderModelConfigs } from './providerModelState'
 
 const invoke = vi.hoisted(() => vi.fn())
@@ -47,7 +47,7 @@ beforeEach(() => {
   })
 })
 
-describe('Automatic legacy model migration', () => {
+describe('Native credential authority', () => {
   test('save waits for a superseding native refresh to publish the deleted model', async () => {
     providers = [
       {
@@ -92,80 +92,32 @@ describe('Automatic legacy model migration', () => {
     expect(listLocalModelConfigs()).toEqual([])
   })
 
-  test('concurrent catalog refreshes share the migration write', async () => {
-    saveLocalModelConfig({ id: 'old-a', modelId: 'a', baseUrl: 'https://relay.example/v1' })
-    const original = invoke.getMockImplementation()!
-    let finish!: () => void
-    const held = new Promise<void>(resolve => {
-      finish = resolve
-    })
-    invoke.mockImplementation(async (method, args) => {
-      if (method === 'modelConfiguration.save') await held
-      return original(method, args)
-    })
-    const first = reloadProviderConfiguration()
-    await vi.waitFor(() =>
-      expect(invoke.mock.calls.some(([method]) => method === 'modelConfiguration.save')).toBe(true)
-    )
-    const second = reloadProviderConfiguration()
-    await new Promise(resolve => setTimeout(resolve, 0))
-    finish()
-    await Promise.all([first, second])
-    expect(
-      invoke.mock.calls.filter(([method]) => method === 'modelConfiguration.save')
-    ).toHaveLength(1)
-    expect(listLegacyLocalModelConfigs()).toEqual([])
-  })
-
-  test('preserves IDs, credentials and all capabilities and writes only once', async () => {
-    const first = saveLocalModelConfig({
-      id: 'old-a',
-      modelId: 'a',
-      baseUrl: 'https://relay.example/v1',
-      apiKey: 'test-key',
-      contextWindow: 128000,
-      webSearchMode: 'cached',
-      imageGenerationEnabled: true,
-    })
+  test('never imports restored plaintext renderer records into the native configuration', async () => {
     saveLocalModelConfig({
-      id: 'old-b',
-      modelId: 'b',
-      baseUrl: first.baseUrl,
-      apiKey: first.apiKey,
+      id: 'restored',
+      modelId: 'a',
+      baseUrl: 'https://attacker.example/v1',
+      apiKey: 'old-secret-canary',
     })
-    await reloadProviderConfiguration()
-    expect(providers).toHaveLength(1)
-    expect(providers[0].models.map(model => model.id)).toEqual(['old-a', 'old-b'])
-    expect(providers[0].models[0]).toEqual(
-      expect.objectContaining({
-        context_window: 128000,
-        web_search_mode: 'cached',
-        image_generation_enabled: true,
-        catalog_entry: first.catalogEntry,
-      })
-    )
-    expect(providers[0].api_key).toBe('test-key')
+    providers = [
+      {
+        id: 'native',
+        name: 'Native',
+        base_url: 'https://approved.example/v1',
+        api_format: 'openai-responses',
+        api_key: 'wework-vault.opaque-reference',
+        models: [{ id: 'approved', model_id: 'a' }],
+      },
+    ]
+    await Promise.all([reloadProviderConfiguration(), reloadProviderConfiguration()])
+    expect(invoke.mock.calls.some(([method]) => method === 'modelConfiguration.save')).toBe(false)
+    expect(JSON.stringify(invoke.mock.calls)).not.toContain('old-secret-canary')
     expect(listLegacyLocalModelConfigs()).toEqual([])
-    expect(listLocalModelConfigs().map(model => model.id)).toEqual(['old-a', 'old-b'])
-    await reloadProviderConfiguration()
-    expect(
-      invoke.mock.calls.filter(([method]) => method === 'modelConfiguration.save')
-    ).toHaveLength(1)
+    expect(listLocalModelConfigs().map(model => model.id)).toEqual(['approved'])
+    expect(listLocalModelConfigs()[0].apiKey).toBe('wework-vault.opaque-reference')
   })
 
-  test('retains legacy data on a failed write and migrates after recovery', async () => {
-    saveLocalModelConfig({ id: 'old-a', modelId: 'a', baseUrl: 'https://relay.example/v1' })
-    failSave = true
-    await reloadProviderConfiguration()
-    expect(getProviderConfigurationState().error).toBe('Write failed')
-    expect(listLegacyLocalModelConfigs()).toHaveLength(1)
-    failSave = false
-    await reloadProviderConfiguration()
-    expect(getProviderConfigurationState().error).toBeNull()
-    expect(listLegacyLocalModelConfigs()).toEqual([])
-  })
-
-  test('retains legacy data until the saved revision is readable by the runtime', async () => {
+  test('does not acknowledge an inconsistent runtime revision or discard recovery input', async () => {
     saveLocalModelConfig({ id: 'old-a', modelId: 'a', baseUrl: 'https://relay.example/v1' })
     mismatch = true
     await reloadProviderConfiguration()
@@ -173,10 +125,15 @@ describe('Automatic legacy model migration', () => {
     expect(listLegacyLocalModelConfigs()).toHaveLength(1)
     mismatch = false
     await reloadProviderConfiguration()
+    expect(getProviderConfigurationState().error).toBeNull()
     expect(listLegacyLocalModelConfigs()).toEqual([])
-    expect(providers).toHaveLength(1)
-    expect(
-      invoke.mock.calls.filter(([method]) => method === 'modelConfiguration.save')
-    ).toHaveLength(1)
+    expect(invoke.mock.calls.some(([method]) => method === 'modelConfiguration.save')).toBe(false)
+  })
+
+  test('failed native mutations retain the last visible snapshot and report an error', async () => {
+    await reloadProviderConfiguration()
+    failSave = true
+    await expect(saveProviderConfiguration(revision, [])).rejects.toThrow('Write failed')
+    expect(getProviderConfigurationState().snapshot?.revision).toBe(revision)
   })
 })

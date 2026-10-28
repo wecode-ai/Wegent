@@ -1,3 +1,4 @@
+import { saveLocalModelConfig } from '@/test/model-config-fixtures'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
@@ -7,7 +8,6 @@ import { reloadProviderConfiguration } from '@/features/model-settings/providerM
 import { replaceProviderModelConfigs } from '@/features/model-settings/providerModelState'
 import { findLocalModelProviderProfile } from '@/features/model-settings/localModelProviders'
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
-import { saveLocalModelConfig } from '@/features/model-settings/localModelSettings'
 
 const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@/api/dsh/desktopHost', () => ({

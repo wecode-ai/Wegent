@@ -1,10 +1,32 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { CloudCredentialError, CloudCredentialService } from './cloud-credential-service.js'
 
 const roots: string[] = []
+const vaults = new Map<string, Map<string, string>>()
+function createService(root: string, request?: typeof fetch) {
+  let values = vaults.get(root)
+  if (!values) {
+    values = new Map()
+    vaults.set(root, values)
+  }
+  const entries = values
+  return new CloudCredentialService(
+    root,
+    {
+      get: async key => entries.get(key) ?? null,
+      update: async change => {
+        const next = Object.fromEntries(entries)
+        change(next)
+        entries.clear()
+        for (const [key, value] of Object.entries(next)) entries.set(key, value)
+      },
+    },
+    request
+  )
+}
 
 const electronMocks = vi.hoisted(() => ({ netFetch: vi.fn<typeof fetch>() }))
 
@@ -19,6 +41,43 @@ describe('CloudCredentialService', () => {
     electronMocks.netFetch.mockReset()
   })
 
+  test('eager initialization preserves device identity, removes the weak source, and cannot resurrect logout', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
+    roots.push(root)
+    const publicKey = await createService(root).devicePublicKey()
+    const stored = JSON.parse(vaults.get(root)!.get('wework-cloud.identity')!)
+    stored.apiBaseUrl = 'https://cloud.example/api'
+    stored.refreshToken = 'refresh-canary'
+    vaults.get(root)!.clear()
+    const path = join(root, 'cloud-credentials.json')
+    const source = JSON.stringify(stored)
+    await writeFile(path, source)
+    const request = vi.fn<typeof fetch>()
+    const failing = new CloudCredentialService(
+      root,
+      {
+        get: async () => null,
+        update: async () => {
+          throw new Error('vault locked')
+        },
+      },
+      request
+    )
+    await expect(failing.initialize()).rejects.toThrow('vault locked')
+    expect(await readFile(path, 'utf8')).toBe(source)
+    const service = createService(root, request)
+    await service.initialize()
+    expect(await service.devicePublicKey()).toEqual(publicKey)
+    expect(JSON.parse(vaults.get(root)!.get('wework-cloud.identity')!)).toEqual(stored)
+    await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(request).not.toHaveBeenCalled()
+    await service.clear()
+    await writeFile(path, source)
+    await createService(root, request).initialize()
+    expect(vaults.get(root)!.has('wework-cloud.identity')).toBe(false)
+    await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   test('polls the authorization session through the Chromium network stack', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
     roots.push(root)
@@ -26,7 +85,7 @@ describe('CloudCredentialService', () => {
       new Response(JSON.stringify({ status: 'pending' }), { status: 200 })
     )
 
-    const claimed = await new CloudCredentialService(root).claimAuthorization({
+    const claimed = await createService(root).claimAuthorization({
       apiBaseUrl: 'https://cloud.example.com/api/',
       sessionId: 'session-1',
       pollToken: 'poll-1',
@@ -35,7 +94,7 @@ describe('CloudCredentialService', () => {
     expect(claimed.status).toBe('pending')
     expect(electronMocks.netFetch).toHaveBeenCalledWith(
       'https://cloud.example.com/api/auth/wework/sessions/session-1/poll?poll_token=poll-1',
-      { method: 'GET', signal: expect.any(AbortSignal) }
+      { method: 'GET', redirect: 'error', signal: expect.any(AbortSignal) }
     )
   })
 
@@ -57,7 +116,7 @@ describe('CloudCredentialService', () => {
         )
       )
       .mockRejectedValueOnce(new DOMException('The operation was aborted', 'TimeoutError'))
-    const service = new CloudCredentialService(root, request)
+    const service = createService(root, request)
 
     await service.devicePublicKey()
     await service.claimAuthorization({
@@ -90,7 +149,7 @@ describe('CloudCredentialService', () => {
     ).resolves.toMatchObject({ accessToken: 'access-2' })
   })
 
-  test('stores credentials in a private file and refreshes with a device proof', async () => {
+  test('stores the complete identity in the protected repository and refreshes with a device proof', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
     roots.push(root)
     const request = vi
@@ -117,7 +176,7 @@ describe('CloudCredentialService', () => {
           { status: 200 }
         )
       )
-    const service = new CloudCredentialService(root, request)
+    const service = createService(root, request)
 
     const publicKey = await service.devicePublicKey()
     const claimed = await service.claimAuthorization({
@@ -140,16 +199,14 @@ describe('CloudCredentialService', () => {
     expect(refreshRequest.refresh_token).toBe('refresh-secret')
     expect(refreshRequest.proof.split('.')).toHaveLength(3)
     const credentialPath = join(root, 'cloud-credentials.json')
-    const stored = JSON.parse(await readFile(credentialPath, 'utf8'))
+    await expect(readFile(credentialPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    const stored = JSON.parse(vaults.get(root)!.get('wework-cloud.identity')!)
     expect(stored).toMatchObject({
       version: 2,
       apiBaseUrl: 'https://cloud.example.com/api',
       refreshToken: 'refresh-secret',
     })
     expect(stored.privateKey).toContain('PRIVATE KEY')
-    if (process.platform !== 'win32') {
-      expect((await stat(credentialPath)).mode & 0o777).toBe(0o600)
-    }
   })
 
   test('rejects the obsolete encrypted credential format', async () => {
@@ -167,7 +224,7 @@ describe('CloudCredentialService', () => {
       { mode: 0o600 }
     )
     const request = vi.fn<typeof fetch>()
-    const service = new CloudCredentialService(root, request)
+    const service = createService(root, request)
 
     await expect(service.refreshAccessToken('https://cloud.example.com/api')).rejects.toMatchObject(
       {
@@ -191,7 +248,7 @@ describe('CloudCredentialService', () => {
         { status: 200 }
       )
     )
-    const service = new CloudCredentialService(root, request)
+    const service = createService(root, request)
 
     await service.devicePublicKey()
     const claimed = await service.claimAuthorization({
@@ -239,7 +296,7 @@ describe('CloudCredentialService', () => {
           )
         )
       )
-    const service = new CloudCredentialService(root, request)
+    const service = createService(root, request)
     await service.devicePublicKey()
     await service.claimAuthorization({
       apiBaseUrl: 'https://cloud.example.com/api',
@@ -273,7 +330,7 @@ describe('CloudCredentialService', () => {
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ detail: 'Desktop login has expired' }), { status: 401 })
       )
-    const service = new CloudCredentialService(root, request)
+    const service = createService(root, request)
     await service.devicePublicKey()
     await service.claimAuthorization({
       apiBaseUrl: 'https://cloud.example.com/api',
@@ -288,4 +345,43 @@ describe('CloudCredentialService', () => {
       } satisfies Partial<CloudCredentialError>
     )
   })
+})
+
+test.each(['syntax', 'key-pair'])(
+  'an invalid protected cloud identity preserves the legacy recovery source: %s',
+  async damage => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cloud-recovery-'))
+    roots.push(root)
+    const service = createService(root)
+    await service.devicePublicKey()
+    const stored = vaults.get(root)!
+    const original = stored.get('wework-cloud.identity')!
+    const path = join(root, 'cloud-credentials.json')
+    await writeFile(path, original)
+    stored.set(
+      'wework-cloud.identity',
+      damage === 'syntax'
+        ? '{"privateKey":"private-damaged-canary"'
+        : JSON.stringify({ ...JSON.parse(original), privateKey: 'private-damaged-canary' })
+    )
+    await expect(service.initialize()).rejects.toThrow()
+    expect(await readFile(path, 'utf8')).toBe(original)
+  }
+)
+
+test('malformed legacy cloud credentials remain intact and parser excerpts never escape', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-cloud-recovery-'))
+  roots.push(root)
+  const source = 'private-legacy-canary'
+  const path = join(root, 'cloud-credentials.json')
+  await writeFile(path, source)
+  await expect(createService(root).initialize()).rejects.toMatchObject({
+    code: 'credentials_unavailable',
+  })
+  expect(await readFile(path, 'utf8')).toBe(source)
+  try {
+    await createService(root).initialize()
+  } catch (error) {
+    expect(String(error)).not.toContain(source)
+  }
 })

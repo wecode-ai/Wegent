@@ -1,10 +1,20 @@
 import assert from 'node:assert/strict'
+import { verifyCredentialSecurity } from '../modules/credential-security-flow.mjs'
+import {
+  activateCredentialRecoveryFixture,
+  seedCredentialRecovery,
+  verifyCredentialRecovery,
+} from '../modules/credential-recovery-flow.mjs'
 
 const selector = id => `[data-testid="${id}"]`
 
-export function createDesktopScenario({ captureScreenshot }) {
+export async function createDesktopScenario({ captureScreenshot, electronUserDataDirectory }) {
+  await seedCredentialRecovery(electronUserDataDirectory)
   return {
     async verify(control) {
+      await activateCredentialRecoveryFixture(control)
+      await verifyCredentialSecurity(control, electronUserDataDirectory)
+      await verifyCredentialRecovery(control)
       await control.command('navigate', 'body', { value: '/settings/connections' })
       await control.command('waitFor', selector('settings-cloud-disconnect-button'))
       await control.command('click', selector('settings-cloud-disconnect-button'))

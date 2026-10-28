@@ -21,8 +21,6 @@ Object.defineProperty(globalThis, 'ResizeObserver', {
   writable: true,
 })
 
-const electronHostInvokePath = '/wework/electron-host/v1/invoke'
-const nativeFetch = globalThis.fetch.bind(globalThis)
 let testAppPreferences: Record<string, unknown> = {}
 
 const testApps = [
@@ -317,38 +315,6 @@ export async function installDshUiTestContributions(
   await Promise.all(Object.keys(modules).map(module => importDshUiModule(module)))
 }
 
-function requestUrl(input: RequestInfo | URL): string {
-  return typeof input === 'string' || input instanceof URL ? String(input) : input.url
-}
-
-async function defaultElectronHostFetch(
-  input: RequestInfo | URL,
-  init?: RequestInit
-): Promise<Response> {
-  if (requestUrl(input) !== electronHostInvokePath) {
-    return nativeFetch(input, init)
-  }
-
-  const request = JSON.parse(String(init?.body ?? '{}')) as {
-    capability?: string
-    params?: { patch?: Record<string, unknown> }
-  }
-  if (request.capability === 'preferences.get') {
-    return Response.json({ ok: true, result: { ...testAppPreferences } })
-  }
-  if (request.capability === 'preferences.update') {
-    testAppPreferences = {
-      ...testAppPreferences,
-      ...(request.params?.patch ?? {}),
-    }
-    return Response.json({ ok: true, result: { ...testAppPreferences } })
-  }
-
-  return nativeFetch(input, init)
-}
-
-globalThis.fetch = defaultElectronHostFetch
-
 if (typeof window.ClipboardEvent === 'undefined') {
   window.ClipboardEvent = Event as unknown as typeof ClipboardEvent
 }
@@ -498,6 +464,25 @@ beforeEach(() => {
   installDefaultDshUiTestRuntime()
   installDefaultDshUiTestModules()
   testAppPreferences = {}
+  window.weworkElectronHost = {
+    describe: async () => ({ protocolVersion: 1 }),
+    invoke: async (capability, params) => {
+      if (capability === 'preferences.update')
+        testAppPreferences = {
+          ...testAppPreferences,
+          ...((params.patch as Record<string, unknown>) ?? {}),
+        }
+      if (capability === 'preferences.get' || capability === 'preferences.update')
+        return { ok: true, result: { ...testAppPreferences } }
+      return {
+        ok: false,
+        error: {
+          code: 'unsupported_test_capability',
+          message: 'Provide an explicit test fixture for this capability',
+        },
+      }
+    },
+  }
   Object.defineProperty(navigator, 'userAgent', {
     configurable: true,
     value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)',

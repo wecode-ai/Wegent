@@ -124,15 +124,6 @@ async function requestDesktopCloudAccessToken(apiBaseUrl: string): Promise<strin
   }
 }
 
-async function resolveAccessToken(
-  apiBaseUrl: string,
-  credentialMode: CloudCredentialMode,
-  existingToken: string | null
-): Promise<string | null> {
-  if (credentialMode === 'legacy_access_token') return existingToken
-  return requestDesktopCloudAccessToken(apiBaseUrl)
-}
-
 function resolveCloudRuntimeConfig(
   backendUrl: string,
   socketBaseUrlOverride?: string,
@@ -212,7 +203,7 @@ function snapshotFromConnection(
   return {
     status: e2eAccessToken
       ? 'connected'
-      : credentialMode === 'desktop_refresh'
+      : credentialMode === 'desktop_refresh' || !legacyToken
         ? 'restoring'
         : legacyToken && !legacyTokenExpired
           ? 'connected'
@@ -427,9 +418,6 @@ function persistSnapshot(snapshot: CloudConnectionSnapshot): void {
     socketBaseUrlOverride: snapshot.socketBaseUrlOverride,
     webUrl: snapshot.webUrl,
     credentialMode: snapshot.credentialMode ?? 'desktop_refresh',
-    token: snapshot.credentialMode === 'legacy_access_token' ? snapshot.token : undefined,
-    tokenExpiresAt:
-      snapshot.credentialMode === 'legacy_access_token' ? snapshot.tokenExpiresAt : undefined,
     user: snapshot.user,
     connectedAt: snapshot.connectedAt,
   }
@@ -658,11 +646,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       try {
         // Awaiting a resolved-token helper keeps the first suspension inside the
         // try block, so the guard below is always assigned before it is cleared.
-        const accessToken = await resolveAccessToken(
-          config.apiBaseUrl,
-          credentialMode,
-          snapshot.token
-        )
+        const accessToken = await requestDesktopCloudAccessToken(config.apiBaseUrl)
         if (!accessToken) {
           throw new DesktopCloudCredentialError(
             'credentials_unavailable',
@@ -737,7 +721,6 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     snapshot.credentialMode,
     snapshot.socketBaseUrl,
     snapshot.socketPath,
-    snapshot.token,
     t,
   ])
 
@@ -746,23 +729,27 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     void refreshUser()
   }, [refreshUser])
 
-  const disconnect = useCallback(() => {
+  const disconnect = useCallback(async () => {
     disconnectRequestedRef.current = true
     terminalDesktopCredentialExpiryRef.current = false
     refreshGenerationRef.current += 1
     refreshPromiseRef.current = null
-    clearStoredCloudConnection()
-    setSnapshot(DISCONNECTED_STATE)
-    void updateAppPreferences({ cloudConnection: null }).catch(error => {
-      console.error('[CloudConnection] Failed to clear desktop cloud connection', error)
-    })
-    void Promise.resolve()
-      .then(clearDesktopCloudCredentials)
-      .catch(error => {
-        console.error('[CloudConnection] Failed to clear desktop cloud credentials', error)
-      })
-    track('cloud_connection_changed', { connected: false })
-  }, [])
+    setSnapshot(current => ({ ...current, status: 'restoring', token: null, error: null }))
+    try {
+      await clearDesktopCloudCredentials()
+      await updateAppPreferences({ cloudConnection: null })
+      clearStoredCloudConnection()
+      setSnapshot(DISCONNECTED_STATE)
+      track('cloud_connection_changed', { connected: false })
+    } catch {
+      setSnapshot(current => ({
+        ...current,
+        status: 'error',
+        token: null,
+        error: t('workbench.cloud_connection_disconnect_failed'),
+      }))
+    }
+  }, [t])
 
   useEffect(() => {
     if (

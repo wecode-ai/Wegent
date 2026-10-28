@@ -33,6 +33,15 @@ export class ManagedExecutorRuntime {
   private readonly ownerToken = randomBytes(32).toString('base64url')
   private readonly process: RuntimeSupervisor
   private ownerSocket: Socket | null = null
+  private publishedCredentials: unknown[] = []
+  private readonly ownerRequests = new Map<
+    string,
+    {
+      resolve: (value: unknown) => void
+      reject: (error: Error) => void
+      timer: ReturnType<typeof setTimeout>
+    }
+  >()
 
   constructor(private readonly options: ManagedExecutorRuntimeOptions) {
     this.endpoint = localExecutorEndpoint()
@@ -59,8 +68,11 @@ export class ManagedExecutorRuntime {
           this.endpoint,
           this.ownerToken,
           this.options.onEvent ?? (() => undefined),
-          signal
+          signal,
+          message => this.ownerResponse(message)
         )
+        this.ownerSocket.once('close', () => this.failOwnerRequests())
+        await this.replaceCredentials(this.publishedCredentials)
       },
     })
     this.process.on('exit', () => {
@@ -90,6 +102,53 @@ export class ManagedExecutorRuntime {
     signal = AbortSignal.timeout(75_000)
   ): Promise<Result> {
     return requestExecutor<Result>(this.endpoint, this.token, method, params, signal)
+  }
+
+  async replaceCredentials(entries: unknown[]): Promise<void> {
+    const socket = this.ownerSocket
+    if (!socket || socket.destroyed) throw new Error('Credential owner channel is unavailable')
+    const result = await new Promise<unknown>((resolve, reject) => {
+      const id = randomUUID()
+      const timer = setTimeout(() => {
+        this.ownerRequests.delete(id)
+        reject(new Error('Credential owner request timed out'))
+      }, 30_000)
+      this.ownerRequests.set(id, { resolve, reject, timer })
+      socket.write(
+        JSON.stringify({
+          type: 'request',
+          id,
+          method: 'executor.credentials.replace',
+          params: { credential_protocol: 3, entries },
+        }) + '\n'
+      )
+    })
+    if (
+      !result ||
+      typeof result !== 'object' ||
+      (result as { credential_protocol?: number }).credential_protocol !== 3
+    ) {
+      throw new Error('Executor credential protocol is incompatible')
+    }
+    this.publishedCredentials = entries
+  }
+
+  private ownerResponse(message: Record<string, unknown>): void {
+    if (message.type !== 'response' || typeof message.id !== 'string') return
+    const pending = this.ownerRequests.get(message.id)
+    if (!pending) return
+    this.ownerRequests.delete(message.id)
+    clearTimeout(pending.timer)
+    if (message.ok === true) pending.resolve(message.result)
+    else pending.reject(new Error('Executor rejected protected credential publication'))
+  }
+
+  private failOwnerRequests(): void {
+    for (const pending of this.ownerRequests.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(new Error('Credential owner channel closed'))
+    }
+    this.ownerRequests.clear()
   }
 
   async stop(): Promise<void> {
@@ -345,7 +404,8 @@ function connectEventStream(
   endpoint: string,
   token: string,
   onEvent: (event: string, payload: Record<string, unknown>) => void,
-  signal: AbortSignal
+  signal: AbortSignal,
+  onMessage: (message: Record<string, unknown>) => void = () => {}
 ): Promise<Socket> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(endpoint)
@@ -401,6 +461,7 @@ function connectEventStream(
             resolve(socket)
             continue
           }
+          onMessage(message)
           if (message.type !== 'event' || typeof message.event !== 'string') continue
           const payload =
             message.payload &&

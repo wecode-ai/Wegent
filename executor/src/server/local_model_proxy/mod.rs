@@ -678,6 +678,36 @@ async fn handle_harness_messages(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, HttpError> {
+    let references = route_credential_references(&token);
+    super::model_credentials::protect(
+        &references,
+        handle_harness_messages_inner(token, headers, body),
+    )
+    .await
+}
+
+fn route_credential_references(token: &str) -> Vec<String> {
+    let registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    registry
+        .routes
+        .get(token)
+        .map(|route| {
+            let mut references = vec![route.upstream.api_key.clone()];
+            if let Some(sidecar) = &route.vision_sidecar {
+                references.push(sidecar.api_key.clone())
+            }
+            references
+        })
+        .unwrap_or_default()
+}
+
+async fn handle_harness_messages_inner(
+    token: String,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, HttpError> {
     let request_started_at = Instant::now();
     let upstream = {
         let mut registry = registry()
@@ -748,10 +778,7 @@ async fn handle_harness_messages(
                 &[
                     ("api_format", upstream.api_format.clone()),
                     ("upstream_status", status.as_u16().to_string()),
-                    (
-                        "upstream_body",
-                        super::truncate_log_value(&String::from_utf8_lossy(&response_body), 2048),
-                    ),
+                    ("upstream_body_bytes", response_body.len().to_string()),
                     (
                         "message",
                         normalized["error"]["message"]
@@ -902,6 +929,16 @@ fn token_route_token(token: String, body: &[u8]) -> Result<String, HttpError> {
 }
 
 async fn handle_for_token(
+    token: String,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, HttpError> {
+    let references = route_credential_references(&token);
+    super::model_credentials::protect(&references, handle_for_token_inner(token, headers, body))
+        .await
+}
+
+async fn handle_for_token_inner(
     token: String,
     headers: HeaderMap,
     body: Bytes,
@@ -1872,6 +1909,7 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
 
 fn proxy_client(proxy_url: Option<&str>) -> Result<reqwest::Client, HttpError> {
     proxy_client_builder(proxy_url)?
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(
             LOCAL_MODEL_PROXY_REQUEST_TIMEOUT_SECONDS,
         ))
@@ -1924,7 +1962,7 @@ async fn send_upstream_request_with_rate_limit_retry(
             request_url,
             request_body,
             incoming_headers,
-        )
+        )?
         .send()
         .await
         .map_err(|error| HttpError {
@@ -1962,17 +2000,42 @@ fn build_upstream_request(
     request_url: &str,
     request_body: &[u8],
     incoming_headers: &HeaderMap,
-) -> reqwest::RequestBuilder {
+) -> Result<reqwest::RequestBuilder, HttpError> {
+    let body_model = serde_json::from_slice::<Value>(request_body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    let key = super::model_credentials::resolve(
+        &upstream.api_key,
+        request_url,
+        body_model
+            .as_deref()
+            .or(upstream.model_id.as_deref())
+            .unwrap_or_default(),
+        &upstream.api_format,
+        upstream.proxy_url.as_deref(),
+    )
+    .map_err(|detail| HttpError {
+        status: StatusCode::FORBIDDEN,
+        detail,
+    })?;
     let mut request = client
         .post(request_url)
-        .bearer_auth(&upstream.api_key)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(reqwest::header::ACCEPT, "text/event-stream")
         .body(request_body.to_vec());
+    if !key.is_empty() {
+        request = request.bearer_auth(&key);
+    }
     if upstream.api_format == "anthropic-messages" {
-        request = request
-            .header("x-api-key", &upstream.api_key)
-            .header("anthropic-version", "2023-06-01");
+        request = request.header("anthropic-version", "2023-06-01");
+        if !key.is_empty() {
+            request = request.header("x-api-key", &key);
+        }
     }
     for name in FORWARDED_CODEX_REQUEST_HEADERS {
         if let Some(value) = incoming_headers.get(name) {
@@ -1982,7 +2045,7 @@ fn build_upstream_request(
     for (key, value) in &upstream.default_headers {
         request = request.header(key, value);
     }
-    request
+    Ok(request)
 }
 
 fn detect_upstream_error_code(response_body: &[u8]) -> Option<String> {
@@ -2552,6 +2615,7 @@ mod tests {
             br#"{"model":"gpt-5.6-sol"}"#,
             &incoming_headers,
         )
+        .expect("authorized upstream")
         .build()
         .expect("upstream request");
 

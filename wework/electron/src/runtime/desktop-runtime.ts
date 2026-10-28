@@ -61,6 +61,7 @@ export interface ManagedExecutorHandle {
   environment(): NodeJS.ProcessEnv
   request<Result>(method: string, params?: Record<string, unknown>): Promise<Result>
   pid(): number | null
+  replaceCredentials?(entries: unknown[]): Promise<void>
 }
 
 interface PreparedCoreDshLaunch {
@@ -89,6 +90,7 @@ export interface DesktopRuntimeDiagnostics {
 
 export class DesktopRuntime {
   private executor: ManagedExecutorHandle | null = null
+  private publishedModelCredentials: unknown[] = []
   private coreDsh: CoreDshHandle | null = null
   private desktopDeviceId: Promise<string> | null = null
   private coreDshPlugins: CoreDshPluginManager | null = null
@@ -100,6 +102,21 @@ export class DesktopRuntime {
   private restartOperation: { generation: number; promise: Promise<void> } | null = null
 
   constructor(private readonly options: DesktopRuntimeOptions) {}
+
+  async replaceModelCredentials(entries: unknown[]): Promise<void> {
+    try {
+      if (!this.executor?.replaceCredentials)
+        throw new Error('Executor credential protocol is unavailable')
+      await this.executor.replaceCredentials(entries)
+      this.publishedModelCredentials = entries
+    } catch {
+      this.publishedModelCredentials = []
+      await this.stop()
+      throw new Error(
+        'Executor credential publication failed; runtime stopped to revoke old credentials'
+      )
+    }
+  }
 
   start(): Promise<void> {
     if (this.started) return Promise.resolve()
@@ -289,6 +306,11 @@ export class DesktopRuntime {
     this.startupStep('executor-start', 'started')
     try {
       await executor.start()
+      if (this.publishedModelCredentials.length) {
+        if (!executor.replaceCredentials)
+          throw new Error('Executor credential protocol is unavailable')
+        await executor.replaceCredentials(this.publishedModelCredentials)
+      }
       if (this.lifecycleGeneration !== generation) {
         await executor.stop().catch(() => {})
         if (this.executor === executor) this.executor = null
@@ -296,6 +318,7 @@ export class DesktopRuntime {
       }
       this.startupStep('executor-start', 'completed')
     } catch (error) {
+      await executor.stop().catch(() => {})
       if (this.executor === executor) this.executor = null
       this.startupStep('executor-start', 'failed')
       throw error

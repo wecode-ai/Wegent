@@ -484,6 +484,10 @@ impl AppIpcServer {
     }
 
     pub async fn handle_line(&self, line: &str) -> Option<Value> {
+        self.handle_line_with_owner(line, false).await
+    }
+
+    async fn handle_line_with_owner(&self, line: &str, owner: bool) -> Option<Value> {
         if line.trim().is_empty() {
             return None;
         }
@@ -497,7 +501,23 @@ impl AppIpcServer {
                 };
 
                 match request_from_message(&message) {
-                    Ok((method, params)) => match self.dispatch(&method, params).await {
+                    Ok((method, params)) => match if method == "executor.credentials.replace" {
+                        if owner {
+                            crate::server::model_credentials::replace(params).map_err(|_| {
+                                AppIpcError::new(
+                                    "credential_publication_failed",
+                                    "Protected credentials could not be published",
+                                )
+                            })
+                        } else {
+                            Err(AppIpcError::new(
+                                "permission_denied",
+                                "Only the application owner may publish credentials",
+                            ))
+                        }
+                    } else {
+                        self.dispatch(&method, params).await
+                    } {
                         Ok(result) => {
                             response_message(request_id.as_deref().unwrap_or_default(), result)
                         }
@@ -1138,6 +1158,7 @@ impl AppIpcServer {
                 writer,
                 APP_IPC_BULK_WRITE_BUFFER_CAPACITY,
                 authentication.receive_events,
+                role == LocalEndpointRole::Owner,
             )
             .await
         };
@@ -1176,7 +1197,7 @@ impl AppIpcServer {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
-        self.serve_io_inner(reader, writer, bulk_write_buffer_capacity, true)
+        self.serve_io_inner(reader, writer, bulk_write_buffer_capacity, true, false)
             .await
     }
 
@@ -1186,6 +1207,7 @@ impl AppIpcServer {
         writer: W,
         bulk_write_buffer_capacity: usize,
         receive_events: bool,
+        owner: bool,
     ) -> Result<(), String>
     where
         R: AsyncRead + Unpin + Send + 'static,
@@ -1262,7 +1284,7 @@ impl AppIpcServer {
                         let timeout_seconds = app_ipc_request_timeout_seconds(method.as_deref());
                         let response = match tokio::time::timeout(
                             Duration::from_secs(timeout_seconds),
-                            server.handle_line(&request_line),
+                            server.handle_line_with_owner(&request_line, owner),
                         )
                         .await
                         {

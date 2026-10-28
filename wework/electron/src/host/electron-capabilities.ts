@@ -1,4 +1,5 @@
 import { registerModelConfigurationCapabilities } from './model-configuration-capabilities.js'
+import { publicCredentialKey } from './public-credential-key.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
 import {
@@ -142,6 +143,8 @@ export interface ElectronDesktopServices {
   relaunchApplication: () => void
   openRuntimeTask: (taskAddressId: string) => void
   secureStorage: SecureValueStore
+  modelConfiguration: import('./model-configuration-store.js').ModelConfigurationStore
+  publishModelCredentials: (entries: unknown[]) => Promise<void>
   cleanupStaleTemporaryImages: () => Promise<void>
   coreDshPlugins: () => CoreDshPluginService | null
   pluginDevelopment: () => PluginDevelopmentService | null
@@ -404,8 +407,9 @@ export function createElectronCapabilityRouter(
   registerModelConfigurationCapabilities(
     router,
     window,
-    desktopServices.secureStorage,
-    desktopServices.events
+    desktopServices.modelConfiguration,
+    desktopServices.events,
+    desktopServices.publishModelCredentials
   )
   registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
 
@@ -578,17 +582,17 @@ export function createElectronCapabilityRouter(
     browser.closeBackgroundPage(stringParam(params, 'id'))
   )
   router.register('secureStorage.get', params =>
-    desktopServices.secureStorage.get(stringParam(params, 'key'))
+    desktopServices.secureStorage.get(publicCredentialKey(params))
   )
   router.register('secureStorage.set', async params => {
     await desktopServices.secureStorage.set(
-      stringParam(params, 'key'),
+      publicCredentialKey(params),
       stringParam(params, 'value')
     )
     return { stored: true }
   })
   router.register('secureStorage.delete', async params => {
-    await desktopServices.secureStorage.delete(stringParam(params, 'key'))
+    await desktopServices.secureStorage.delete(publicCredentialKey(params))
     return { deleted: true }
   })
   router.register('clipboard.readWorkspacePaths', params =>

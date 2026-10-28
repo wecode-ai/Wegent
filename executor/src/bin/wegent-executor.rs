@@ -92,6 +92,7 @@ fn macos_max_files_per_process() -> Option<libc::rlim_t> {
 fn raise_open_files_soft_limit() {}
 
 fn main() {
+    wegent_executor::app::capture_local_owner_token();
     if env::args().nth(1).as_deref() == Some("--workbench-project-state") {
         if let Err(error) = wegent_executor::runtime_work::run_project_state_query() {
             eprintln!("{error}");

@@ -558,7 +558,8 @@ fn append_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
 }
 
 fn ignored_process_env_key(key: &str) -> bool {
-    key.starts_with("_PYI_")
+    key.eq_ignore_ascii_case("WEGENT_APP_IPC_OWNER_TOKEN")
+        || key.starts_with("_PYI_")
         || key.starts_with("_MEI_")
         || key.starts_with("BASH_FUNC_")
         || key == "_MEIPASS"
@@ -567,6 +568,28 @@ fn ignored_process_env_key(key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn child_environment_cannot_inherit_or_reintroduce_the_owner_token() {
+        let values = process_env(&[
+            (
+                "WEGENT_APP_IPC_OWNER_TOKEN".to_owned(),
+                "synthetic-owner-canary".to_owned(),
+            ),
+            (
+                "weGent_app_ipc_owner_token".to_owned(),
+                "other-canary".to_owned(),
+            ),
+            ("MODEL_TEST_VALUE".to_owned(), "keep".to_owned()),
+        ]);
+        assert!(!values
+            .keys()
+            .any(|key| key.eq_ignore_ascii_case("WEGENT_APP_IPC_OWNER_TOKEN")));
+        assert_eq!(
+            values.get("MODEL_TEST_VALUE").map(String::as_str),
+            Some("keep")
+        );
+    }
 
     #[cfg(windows)]
     #[test]

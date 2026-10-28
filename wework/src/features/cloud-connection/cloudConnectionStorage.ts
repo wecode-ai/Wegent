@@ -172,7 +172,6 @@ export function normalizeStoredCloudConnection(value: unknown): StoredCloudConne
   }
   const credentialMode =
     parsed.credentialMode ?? (parsed.token ? 'legacy_access_token' : 'desktop_refresh')
-  if (credentialMode === 'legacy_access_token' && !parsed.token) return null
   return {
     backendUrl: parsed.backendUrl,
     apiBaseUrl: parsed.apiBaseUrl,
@@ -190,7 +189,10 @@ export function normalizeStoredCloudConnection(value: unknown): StoredCloudConne
 }
 
 export function saveStoredCloudConnection(connection: StoredCloudConnection): void {
-  localStorage.setItem(CLOUD_CONNECTION_STORAGE_KEY, JSON.stringify(connection))
+  const metadata = { ...connection }
+  delete metadata.token
+  delete metadata.tokenExpiresAt
+  localStorage.setItem(CLOUD_CONNECTION_STORAGE_KEY, JSON.stringify(metadata))
 }
 
 export function clearStoredCloudConnection(): void {

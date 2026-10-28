@@ -128,6 +128,17 @@ pub(super) async fn replace_images_with_descriptions(
     })?;
     let context = request_context(&request);
     let mut jobs = Vec::new();
+    crate::server::model_credentials::resolve(
+        &sidecar.api_key,
+        &sidecar.request_url,
+        &sidecar.model_id,
+        &sidecar.api_format,
+        sidecar.proxy_url.as_deref(),
+    )
+    .map_err(|detail| super::HttpError {
+        status: axum::http::StatusCode::FORBIDDEN,
+        detail,
+    })?;
     collect_image_jobs(&request, &context, &mut jobs);
     if jobs.is_empty() {
         return Ok(body.to_vec());
@@ -362,6 +373,7 @@ fn description_cache_key(
     }
     let identity = [
         conversation_id,
+        sidecar.api_key.as_str(),
         sidecar.api_format.as_str(),
         sidecar.request_url.as_str(),
         sidecar.model_id.as_str(),
@@ -391,16 +403,26 @@ async fn describe_image(sidecar: &VisionSidecarUpstream, job: &ImageJob) -> Resu
     if remaining.is_zero() {
         return Err("vision model queue wait timed out".to_owned());
     }
+    let key = crate::server::model_credentials::resolve(
+        &sidecar.api_key,
+        &sidecar.request_url,
+        &sidecar.model_id,
+        &sidecar.api_format,
+        sidecar.proxy_url.as_deref(),
+    )?;
     let mut request = client
         .post(&sidecar.request_url)
-        .bearer_auth(&sidecar.api_key)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .timeout(remaining)
         .json(&body);
+    if !key.is_empty() {
+        request = request.bearer_auth(&key);
+    }
     if sidecar.api_format == "anthropic-messages" {
-        request = request
-            .header("x-api-key", &sidecar.api_key)
-            .header("anthropic-version", "2023-06-01");
+        if !key.is_empty() {
+            request = request.header("x-api-key", &key);
+        }
+        request = request.header("anthropic-version", "2023-06-01");
     }
     for (key, value) in &sidecar.default_headers {
         request = request.header(key, value);
