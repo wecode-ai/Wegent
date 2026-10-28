@@ -206,7 +206,7 @@ export function StandInNotificationProcessing({
               )}
               {(state?.summary || summary) && (
                 <p className="line-clamp-2 rounded-lg bg-muted/70 px-3 py-2 text-sm text-text-secondary">
-                  {state?.summary || summary}
+                  {state?.summary ? getStandInErrorMessage(state.summary) : summary}
                 </p>
               )}
               {(canStart ||

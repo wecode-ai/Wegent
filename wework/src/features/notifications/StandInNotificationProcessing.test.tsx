@@ -404,3 +404,31 @@ describe('notification inline handling', () => {
     )
   })
 })
+
+it('localizes the persisted failed-task summary before transcript loading', async () => {
+  const value = mergeStandInNotifications(
+    [assignment],
+    [
+      {
+        ...runtimeItem,
+        task: {
+          ...runtimeItem.task,
+          status: 'failed',
+          running: false,
+          error: 'Stand-in role no longer exists',
+        },
+      },
+    ]
+  )[0]
+  render(
+    <StandInNotificationProcessing
+      notification={value}
+      rowProps={rowProps}
+      services={services}
+      userId={1}
+      onChanged={onChanged}
+    />
+  )
+  expect(await screen.findByText('该分身角色已被删除，请重新选择角色。')).toBeVisible()
+  expect(screen.queryByText('Stand-in role no longer exists')).not.toBeInTheDocument()
+})
