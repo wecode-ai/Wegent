@@ -348,7 +348,10 @@ export async function loadBoundedRemoteFile(
     throw new RemoteFileError('network-or-cors', 'Remote file could not be read')
   }
   try {
-    assertResponse(response)
+    if (!response.ok) {
+      await response.body?.cancel()
+      assertResponse(response)
+    }
 
     const declaredSize = Number(response.headers.get('content-length') || 0)
     if (declaredSize > maxBytes) {
@@ -394,33 +397,38 @@ export async function loadBoundedRemoteFile(
 
 export interface PreparedRemotePdf {
   blob?: Blob
+  validatedUrl?: string
   mimeType: string
-  size: number
+  size?: number
   supportsRange: boolean
+  validation?: 'range-only'
 }
 
-async function readResponsePrefix(response: Response, maxBytes: number): Promise<Uint8Array> {
+const PDF_RANGE_PREFIX_BYTES = 16
+
+async function readExactRangeBody(response: Response, expectedBytes: number): Promise<Uint8Array> {
   if (!response.body) throw new RemoteFileError('network-or-cors', 'Remote file has no body')
   const reader = response.body.getReader()
-  const bytes = new Uint8Array(maxBytes)
+  const bytes = new Uint8Array(expectedBytes)
   let size = 0
   try {
-    while (size < maxBytes) {
+    while (true) {
       const { done, value } = await reader.read()
       if (done) break
-      const length = Math.min(value.byteLength, maxBytes - size)
-      bytes.set(value.subarray(0, length), size)
-      size += length
-      if (length < value.byteLength) {
+      if (size + value.byteLength > expectedBytes) {
         await reader.cancel()
-        break
+        throw new RemoteFileError('network-or-cors', 'Remote PDF range body exceeded its bounds')
       }
+      bytes.set(value, size)
+      size += value.byteLength
     }
-    if (size === maxBytes) await reader.cancel()
   } finally {
     reader.releaseLock()
   }
-  return bytes.subarray(0, size)
+  if (size !== expectedBytes) {
+    throw new RemoteFileError('network-or-cors', 'Remote PDF range body was incomplete')
+  }
+  return bytes
 }
 
 /**
@@ -440,10 +448,13 @@ export async function prepareRemotePdf(
       credentials: 'omit',
       redirect: 'error',
       referrerPolicy: 'no-referrer',
-      headers: { Range: 'bytes=0-' },
+      headers: { Range: `bytes=0-${PDF_RANGE_PREFIX_BYTES - 1}` },
       signal: timedSignal.signal,
     })
-    assertResponse(response)
+    if (!response.ok) {
+      await response.body?.cancel()
+      assertResponse(response)
+    }
 
     if (response.status !== 206) {
       const declaredSize = Number(response.headers.get('content-length') || 0)
@@ -454,24 +465,66 @@ export async function prepareRemotePdf(
       useBoundedFallback = true
     } else {
       const range = response.headers.get('content-range')
-      const match = range?.match(/^bytes\s+0-(\d+)\/(\d+)$/i)
-      let end = match ? Number(match[1]) : 0
-      const size = match ? Number(match[2]) : Number(response.headers.get('content-length') || 0)
+      const match = range?.match(/^bytes\s+(\d+)-(\d+)\/(\d+)$/i)
+      const declaredFragmentSize = response.headers.get('content-length')
       const mimeType = response.headers.get('content-type')?.split(';')[0].trim() || ''
-      const prefix = await readResponsePrefix(response, 16)
-      if (!match) end = prefix.length - 1
-      if (!Number.isSafeInteger(end) || end < 4) {
+      if (!match) {
+        if (Number(declaredFragmentSize) !== PDF_RANGE_PREFIX_BYTES) {
+          await response.body?.cancel()
+          throw new RemoteFileError('network-or-cors', 'Remote PDF range response is invalid')
+        }
+        const prefix = await readExactRangeBody(response, PDF_RANGE_PREFIX_BYTES)
+        assertFileSignature('pdf', prefix, mimeType)
+        return {
+          validatedUrl: url,
+          mimeType: mimeType || 'application/pdf',
+          supportsRange: true,
+          validation: 'range-only',
+        }
+      }
+      const start = match ? Number(match[1]) : Number.NaN
+      const end = match ? Number(match[2]) : Number.NaN
+      const size = match ? Number(match[3]) : Number.NaN
+      if (
+        !Number.isSafeInteger(start) ||
+        !Number.isSafeInteger(end) ||
+        !Number.isSafeInteger(size) ||
+        start !== 0 ||
+        end < start ||
+        end >= PDF_RANGE_PREFIX_BYTES ||
+        size <= end
+      ) {
+        await response.body?.cancel()
         throw new RemoteFileError('network-or-cors', 'Remote PDF range response is invalid')
       }
+      if (size < 5) {
+        await response.body?.cancel()
+        throw new RemoteFileError('unsupported-type', 'Remote PDF is shorter than its signature')
+      }
+      const expectedBytes = end + 1
+      if (declaredFragmentSize !== null && Number(declaredFragmentSize) !== expectedBytes) {
+        await response.body?.cancel()
+        throw new RemoteFileError('network-or-cors', 'Remote PDF range length is inconsistent')
+      }
+      if (expectedBytes !== Math.min(PDF_RANGE_PREFIX_BYTES, size)) {
+        await response.body?.cancel()
+        throw new RemoteFileError('network-or-cors', 'Remote PDF range response was incomplete')
+      }
+      const prefix = await readExactRangeBody(response, expectedBytes)
       assertFileSignature('pdf', prefix, mimeType)
 
-      // Content-Range is not always exposed by CORS. Since the request asks
-      // for bytes 0 through EOF, its exposed Content-Length is also a safe
-      // total. The body is still cancelled after the signature prefix.
-      if (!Number.isSafeInteger(size) || size <= end) {
-        throw new RemoteFileError('network-or-cors', 'Remote PDF size could not be verified')
+      if (size === expectedBytes) {
+        const boundedBytes = new Uint8Array(prefix.byteLength)
+        boundedBytes.set(prefix)
+        return {
+          blob: new Blob([boundedBytes.buffer], { type: mimeType || 'application/pdf' }),
+          mimeType: mimeType || 'application/pdf',
+          size,
+          supportsRange: false,
+        }
       }
       return {
+        validatedUrl: url,
         mimeType: mimeType || 'application/pdf',
         size,
         supportsRange: true,
@@ -497,7 +550,11 @@ export async function prepareRemotePdf(
 export async function probeRemoteVideo(
   url: string,
   signal: AbortSignal
-): Promise<{ size?: number; supportsRange: boolean }> {
+): Promise<{
+  size?: number
+  supportsRange: boolean
+  validation: 'verified' | 'native-fallback'
+}> {
   const timedSignal = createTimedSignal(signal)
   let response: Response
   try {
@@ -516,25 +573,32 @@ export async function probeRemoteVideo(
     }
     if (signal.aborted) throw error
     // Native media may still be playable when JavaScript cannot read it through CORS.
-    return { supportsRange: false }
+    return { supportsRange: false, validation: 'native-fallback' }
   }
   try {
-    if (response.status === 401 || response.status === 403) {
+    if (!response.ok) {
       await response.body?.cancel()
-      throw new RemoteFileError('access-denied', 'Remote video access was denied')
+      assertResponse(response)
     }
-    if (response.status === 404 || response.status === 410) {
+    if (response.status !== 200 && response.status !== 206) {
       await response.body?.cancel()
-      throw new RemoteFileError('source-missing', 'Remote video is unavailable')
+      throw new RemoteFileError('network-or-cors', 'Remote video returned an invalid response')
     }
 
     const range = response.headers.get('content-range')
     const rangeTotal = range?.match(/^bytes\s+0-0\/(\d+)$/i)?.[1]
-    const size =
-      (rangeTotal ? Number(rangeTotal) : Number(response.headers.get('content-length') || 0)) ||
-      undefined
+    if (response.status === 206 && !rangeTotal) {
+      await response.body?.cancel()
+      return { supportsRange: false, validation: 'native-fallback' }
+    }
+    const parsedSize = Number(rangeTotal || response.headers.get('content-length') || Number.NaN)
+    const size = Number.isSafeInteger(parsedSize) && parsedSize > 0 ? parsedSize : undefined
     const supportsRange = response.status === 206 && !!rangeTotal
     await response.body?.cancel()
+
+    if (response.status === 206 && !size) {
+      throw new RemoteFileError('network-or-cors', 'Remote video size could not be verified')
+    }
 
     if (!supportsRange && size && size > MAX_NON_RANGE_VIDEO_BYTES) {
       throw new RemoteFileError(
@@ -542,7 +606,11 @@ export async function probeRemoteVideo(
         'Large videos must support byte range requests'
       )
     }
-    return { size, supportsRange }
+    return {
+      size,
+      supportsRange,
+      validation: size ? 'verified' : 'native-fallback',
+    }
   } finally {
     timedSignal.cleanup()
   }

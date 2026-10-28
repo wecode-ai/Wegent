@@ -164,6 +164,91 @@ test.describe('External DingTalk document import', () => {
     })
   })
 
+  test('blocks embedded sources and keeps restricted file previews in the document dialog', async ({
+    page,
+    request,
+  }) => {
+    test.setTimeout(120_000)
+    await runScenario(request, 'restricted-preview', async context => {
+      const blockedEmbedRequests: string[] = []
+      page.on('request', browserRequest => {
+        if (browserRequest.url().startsWith('https://outside.example/')) {
+          blockedEmbedRequests.push(browserRequest.url())
+        }
+      })
+      await page.route('https://dingtalk-preview.invalid/**', async route => {
+        const isUnavailable = route.request().url().endsWith('/unavailable.txt')
+        await route.fulfill({
+          status: isUnavailable ? 404 : 200,
+          contentType: 'text/plain; charset=utf-8',
+          headers: { 'Access-Control-Allow-Origin': '*' },
+          body: isUnavailable ? 'missing' : 'DINGTALK-RESTRICTED-PREVIEW-CONTENT',
+        })
+      })
+      await configureMockImport(request, {
+        documentContents: {
+          [EXTERNAL_IMPORT_NODES.product]: `# Restricted preview
+
+<iframe src="https://outside.example/iframe"></iframe>
+
+<object data="https://outside.example/object"></object>
+
+<embed src="https://outside.example/embed">
+
+[preview.txt](https://dingtalk-preview.invalid/preview.txt)
+
+[unavailable.txt](https://dingtalk-preview.invalid/unavailable.txt)`,
+        },
+      })
+
+      await openKnowledgeBase(page, context.knowledgeBaseId)
+      await importThroughDialog(page, [EXTERNAL_IMPORT_NODES.product], {
+        sourceFolderPath: [EXTERNAL_IMPORT_NODES.folderRoot],
+      })
+      await page.getByTestId('dingtalk-import-done').click()
+      const document = await waitForDocument(
+        request,
+        context.token,
+        context.knowledgeBaseId,
+        'E2E_产品说明'
+      )
+
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await page.getByTestId(`document-row-${document.id}`).click()
+      await expect(page.getByRole('heading', { name: 'Restricted preview' })).toBeVisible({
+        timeout: 30_000,
+      })
+
+      await expect(page.getByTestId('document-embedded-content-blocked')).toHaveCount(3)
+      await expect(page.locator('iframe, object, embed')).toHaveCount(0)
+      expect(blockedEmbedRequests).toEqual([])
+      await expect(page.getByTestId('document-link-preview-card')).toHaveCount(2)
+
+      const originalUrl = page.url()
+      const originalPageCount = page.context().pages().length
+      const availableCard = page
+        .getByTestId('document-link-preview-card')
+        .filter({ hasText: 'preview.txt' })
+      await availableCard.getByTestId('document-link-preview-trigger').click()
+      await expect(page.getByTestId('document-link-preview-dialog')).toBeVisible()
+      await expect(page.getByText('DINGTALK-RESTRICTED-PREVIEW-CONTENT')).toBeVisible()
+      expect(page.url()).toBe(originalUrl)
+      expect(page.context().pages()).toHaveLength(originalPageCount)
+      await page
+        .getByTestId('document-link-preview-dialog')
+        .getByRole('button', { name: /close/i })
+        .click()
+
+      const unavailableCard = page
+        .getByTestId('document-link-preview-card')
+        .filter({ hasText: 'unavailable.txt' })
+      await unavailableCard.getByTestId('document-link-preview-trigger').click()
+      await expect(page.getByTestId('document-link-preview-error')).toBeVisible()
+      expect(page.url()).toBe(originalUrl)
+      expect(page.context().pages()).toHaveLength(originalPageCount)
+    })
+  })
+
   test('batch-imports a folder into a chosen target folder', async ({ page, request }) => {
     test.setTimeout(150_000)
     await runScenario(request, 'folder', async context => {

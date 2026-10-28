@@ -6,13 +6,17 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { DocumentContentViewer } from '@/features/knowledge/document/components/DocumentContentViewer'
-import { loadBoundedRemoteFile } from '@/features/knowledge/document/utils/boundedRemoteFile'
+import {
+  loadBoundedRemoteFile,
+  prepareRemotePdf,
+} from '@/features/knowledge/document/utils/boundedRemoteFile'
 
 const href = 'https://cdn.example.com/guide.pdf?Expires=9999999999&Signature=test'
 const markdown = `[Guide](${href})`
 const mockTranslate = (key: string) => key
 const mockRouter = { push: jest.fn() }
 let mockTheme = 'light'
+const originalIntersectionObserver = global.IntersectionObserver
 
 // Exercise the real preprocessing and Markdown tree instead of the global text-only mocks.
 jest.mock('react-markdown', () =>
@@ -48,11 +52,16 @@ jest.mock('@/features/knowledge/document/utils/boundedRemoteFile', () => ({
     mimeType: 'application/pdf',
     size: 8,
     supportsRange: true,
+    validatedUrl: 'https://cdn.example.com/guide.pdf?Expires=9999999999&Signature=test',
   }),
   probeRemoteVideo: jest.fn(),
 }))
 
 beforeAll(async () => {
+  Object.defineProperty(global, 'IntersectionObserver', {
+    configurable: true,
+    value: jest.fn(() => ({ observe: jest.fn(), disconnect: jest.fn() })),
+  })
   // Surface module-loading errors instead of leaving Next's dynamic fallback visible.
   await import('@/components/common/EnhancedMarkdown')
   Object.defineProperty(URL, 'createObjectURL', {
@@ -65,8 +74,17 @@ beforeAll(async () => {
   })
 })
 
+afterAll(() => {
+  Object.defineProperty(global, 'IntersectionObserver', {
+    configurable: true,
+    value: originalIntersectionObserver,
+  })
+})
+
 beforeEach(() => {
   mockTheme = 'light'
+  jest.mocked(loadBoundedRemoteFile).mockClear()
+  jest.mocked(prepareRemotePdf).mockClear()
 })
 
 const props: ComponentProps<typeof DocumentContentViewer> = {
@@ -91,7 +109,7 @@ const props: ComponentProps<typeof DocumentContentViewer> = {
 }
 
 it.each(['file', 'text', 'wiki'] as const)(
-  'keeps original links and direct image loading for non-DingTalk %s documents',
+  'keeps original links, images, and embeds for non-DingTalk %s documents',
   async source => {
     jest.mocked(loadBoundedRemoteFile).mockClear()
     render(
@@ -103,7 +121,7 @@ it.each(['file', 'text', 'wiki'] as const)(
           external_provider: source === 'wiki' ? 'wiki' : undefined,
           source_config: source === 'wiki' ? { external: { provider: 'wiki' } } : {},
         }}
-        content={`${markdown}\n\n![Image](https://cdn.example.com/image.jpeg)`}
+        content={`${markdown}\n\n![Image](https://cdn.example.com/image.jpeg)\n\n<iframe src="https://embed.example.com/player"></iframe>`}
       />
     )
     expect(await screen.findByAltText('Image')).toHaveAttribute(
@@ -113,9 +131,30 @@ it.each(['file', 'text', 'wiki'] as const)(
     expect(screen.getByRole('link', { name: 'Guide' })).toHaveAttribute('href', href)
     expect(screen.getByAltText('Image')).toHaveAttribute('data-testid', 'original-markdown-image')
     expect(screen.queryByTestId('document-link-preview-trigger')).not.toBeInTheDocument()
+    expect(document.querySelector('iframe')).toHaveAttribute(
+      'src',
+      'https://embed.example.com/player'
+    )
+    expect(screen.queryByTestId('document-embedded-content-blocked')).not.toBeInTheDocument()
     expect(loadBoundedRemoteFile).not.toHaveBeenCalled()
   }
 )
+
+it('blocks iframe, object, and embed elements only for DingTalk documents', async () => {
+  const { container } = render(
+    <DocumentContentViewer
+      {...props}
+      content={`<iframe src="https://outside.example/iframe"></iframe>
+
+<object data="https://outside.example/object"></object>
+
+<embed src="https://outside.example/embed">`}
+    />
+  )
+
+  expect(await screen.findAllByTestId('document-embedded-content-blocked')).toHaveLength(3)
+  expect(container.querySelector('iframe, object, embed')).toBeNull()
+})
 
 it.each(['light', 'dark'])('uses a theme-aware document surface in %s mode', async theme => {
   mockTheme = theme
@@ -136,15 +175,15 @@ it.each(['light', 'dark'])('uses a theme-aware document surface in %s mode', asy
 
 it('places standalone file cards outside paragraph elements', async () => {
   render(<DocumentContentViewer {...props} />)
-  const card = await screen.findByTestId('document-link-preview-card')
+  const card = screen.getByTestId('document-link-preview-card')
   expect(card.closest('p')).toBeNull()
-  await screen.findByTestId('pdf-cover-renderer')
+  expect(prepareRemotePdf).not.toHaveBeenCalled()
 })
 
 it('keeps an existing cover mounted when only its parent callbacks change', async () => {
   const { rerender } = render(<DocumentContentViewer {...props} />)
-  const card = await screen.findByTestId('document-link-preview-card')
-  await screen.findByTestId('pdf-cover-renderer')
+  const card = screen.getByTestId('document-link-preview-card')
+  expect(prepareRemotePdf).not.toHaveBeenCalled()
 
   rerender(<DocumentContentViewer {...props} onLoadMore={jest.fn()} />)
   expect(screen.getByTestId('document-link-preview-card')).toBe(card)
@@ -155,12 +194,15 @@ it('keeps an existing cover mounted when only its parent callbacks change', asyn
   await within(screen.getByTestId('document-link-preview-dialog')).findByTestId(
     'pdf-cover-renderer'
   )
+  expect(prepareRemotePdf).toHaveBeenCalledTimes(1)
 })
 
-it('renders an inline file as Markdown link text without nesting a card in the paragraph', async () => {
+it('renders an inline file as a protected trigger without exposing its raw URL', async () => {
   render(<DocumentContentViewer {...props} content={`Read ${markdown}`} />)
   const link = await screen.findByTestId('document-link-preview-trigger')
-  expect(link.textContent).toContain(markdown)
+  expect(link).toHaveTextContent('Guide')
+  expect(link).not.toHaveTextContent(href)
+  expect(link).not.toHaveTextContent('](')
   expect(link.closest('p')).not.toBeNull()
   expect(screen.queryByTestId('document-link-preview-card')).not.toBeInTheDocument()
 })
@@ -186,8 +228,8 @@ it('preserves normal hyperlinks for unrestricted, non-DingTalk documents', async
 it('renders a PDF whose Markdown label is its URL without leftover link syntax', async () => {
   const { container } = render(<DocumentContentViewer {...props} content={`[${href}](${href})`} />)
 
-  expect(await screen.findByTestId('document-link-preview-card')).toBeInTheDocument()
-  await screen.findByTestId('pdf-cover-renderer')
+  expect(screen.getByTestId('document-link-preview-card')).toBeInTheDocument()
+  expect(prepareRemotePdf).not.toHaveBeenCalled()
   expect(container.textContent).not.toContain('](')
   expect(container.querySelector('p [data-testid="document-link-preview-card"]')).toBeNull()
 })
@@ -201,10 +243,8 @@ it.each([
 ])('renders an image on its own line or wrapped in formatting: %s', async content => {
   const { container } = render(<DocumentContentViewer {...props} content={content} />)
 
-  expect(await screen.findByTestId('document-link-image-cover')).toHaveAttribute(
-    'src',
-    'blob:https://localhost/image-cover'
-  )
+  expect(screen.getByTestId('document-link-preview-card')).toBeInTheDocument()
+  expect(loadBoundedRemoteFile).not.toHaveBeenCalled()
   const card = screen.getByTestId('document-link-preview-card')
   expect(card.closest('p, strong, em, a, button')).toBeNull()
   expect(container.querySelectorAll('[data-testid="document-link-preview-card"]')).toHaveLength(1)
@@ -218,8 +258,9 @@ it('renders separate resources on consecutive lines without losing the surroundi
     />
   )
 
-  await screen.findByTestId('pdf-cover-renderer')
-  await screen.findByTestId('document-link-image-cover')
+  expect(screen.getAllByTestId('document-link-preview-card')).toHaveLength(2)
+  expect(prepareRemotePdf).not.toHaveBeenCalled()
+  expect(loadBoundedRemoteFile).not.toHaveBeenCalled()
   expect(screen.getAllByTestId('document-link-preview-card')).toHaveLength(2)
   expect(screen.getByText('Attachments')).toBeInTheDocument()
   expect(screen.getByText('End')).toBeInTheDocument()
@@ -254,15 +295,12 @@ it('preserves ordinary image and paragraph rendering outside restricted document
 
 it.each([1, 2, 3, 4, 5, 6])(
   'renders the synced image appended directly to a level-%i heading as a separate cover',
-  async level => {
+  level => {
     // The source document puts the image directly after the heading, without a newline.
     const content = `${'#'.repeat(level)} **图片**![北方降雨量 (1).jpeg](https://cdn.example.com/image.jpeg?Expires=9999999999&Signature=test "")`
     render(<DocumentContentViewer {...props} content={content} />)
 
-    expect(await screen.findByTestId('document-link-image-cover')).toHaveAttribute(
-      'src',
-      'blob:https://localhost/image-cover'
-    )
+    expect(loadBoundedRemoteFile).not.toHaveBeenCalled()
     const heading = screen.getByRole('heading', { level, name: '图片' })
     const card = screen.getByTestId('document-link-preview-card')
     expect(heading.nextElementSibling).toContainElement(card)

@@ -52,7 +52,10 @@ export function DocumentLinkPreview({ resource, onOpenChange }: DocumentLinkPrev
     }
     if (state.status === 'error') {
       return (
-        <div className="flex h-full min-h-64 flex-col items-center justify-center gap-3 p-6 text-center">
+        <div
+          className="flex h-full min-h-64 flex-col items-center justify-center gap-3 p-6 text-center"
+          data-testid="document-link-preview-error"
+        >
           <AlertCircle className="h-10 w-10 text-error" aria-hidden="true" />
           <p className="text-sm text-text-secondary">
             {t(`document.document.detail.linkPreview.errors.${state.code}`)}
@@ -100,7 +103,8 @@ export function DocumentLinkPreview({ resource, onOpenChange }: DocumentLinkPrev
       return (
         <FlyfishOfficePreview
           blob={state.blob}
-          url={state.blob ? undefined : resource.url}
+          url={state.validatedUrl}
+          validatedRemotePdf={!!state.validatedUrl}
           filename={resource.filename}
           restricted
           onError={() => fail('preview-failed')}

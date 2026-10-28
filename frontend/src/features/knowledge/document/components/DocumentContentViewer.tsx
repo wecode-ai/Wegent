@@ -383,7 +383,10 @@ export function DocumentContentViewer({
 function BlockedEmbeddedResource() {
   const { t } = useTranslation('knowledge')
   return (
-    <span className="inline-flex min-h-11 items-center rounded-md border border-border bg-surface px-2.5 py-1.5 text-text-muted">
+    <span
+      className="inline-flex min-h-11 items-center rounded-md border border-border bg-surface px-2.5 py-1.5 text-text-muted"
+      data-testid="document-embedded-content-blocked"
+    >
       {t('document.document.detail.linkPreview.embeddedBlocked')}
     </span>
   )

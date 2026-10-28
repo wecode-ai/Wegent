@@ -19,9 +19,11 @@ export type DocumentLinkPreviewState =
       status: 'ready'
       blob?: Blob
       blobUrl?: string
+      validatedUrl?: string
       mimeType: string
       size?: number
       supportsRange?: boolean
+      validation?: 'verified' | 'native-fallback'
     }
   | {
       status: 'error'
@@ -61,10 +63,14 @@ export function useDocumentLinkPreview(resource: DocumentLinkResource | null) {
       try {
         if (resource.kindHint === 'pdf') {
           const result = await prepareRemotePdf(resource.url, controller.signal, resource.filename)
+          if (!result.blob && !result.validatedUrl) {
+            throw new RemoteFileError('network-or-cors', 'Remote PDF source was not validated')
+          }
           if (sequence === sequenceRef.current) {
             setState({
               status: 'ready',
               blob: result.blob,
+              validatedUrl: result.validatedUrl,
               mimeType: result.mimeType,
               size: result.size,
               supportsRange: result.supportsRange,
@@ -80,6 +86,7 @@ export function useDocumentLinkPreview(resource: DocumentLinkResource | null) {
               mimeType: 'video/mp4',
               size: result.size,
               supportsRange: result.supportsRange,
+              validation: result.validation,
             })
           }
           return

@@ -3,14 +3,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { DocumentLinkPreview } from '@/features/knowledge/document/components/DocumentLinkPreview'
 import { DocumentLinkResource } from '@/features/knowledge/document/components/DocumentLinkResource'
 import {
   createDocumentLinkResource,
   type DocumentLinkResource as Resource,
 } from '@/features/knowledge/document/utils/documentLinkResource'
-import { loadBoundedRemoteFile } from '@/features/knowledge/document/utils/boundedRemoteFile'
+import {
+  loadBoundedRemoteFile,
+  prepareRemotePdf,
+  probeRemoteVideo,
+  RemoteFileError,
+} from '@/features/knowledge/document/utils/boundedRemoteFile'
 
 const mockOfficePreview = jest.fn(
   ({ blob, url }: { blob?: Blob; url?: string; onError?: (error: Error) => void }) => (
@@ -35,9 +40,21 @@ jest.mock('@/features/knowledge/document/utils/boundedRemoteFile', () => ({
     mimeType: 'application/pdf',
     size: 36 * 1024 * 1024,
     supportsRange: true,
+    validatedUrl: 'https://cdn.example.com/large.pdf',
   }),
-  probeRemoteVideo: jest.fn().mockResolvedValue({ size: 1024, supportsRange: true }),
-  RemoteFileError: class RemoteFileError extends Error {},
+  probeRemoteVideo: jest.fn().mockResolvedValue({
+    size: 1024,
+    supportsRange: true,
+    validation: 'verified',
+  }),
+  RemoteFileError: class RemoteFileError extends Error {
+    constructor(
+      public readonly code: string,
+      message: string
+    ) {
+      super(message)
+    }
+  },
 }))
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -65,22 +82,13 @@ const officeResource: Resource = {
   kindHint: 'office',
 }
 
-const imageResource: Resource = {
+const videoResource: Resource = {
   ...officeResource,
-  key: '1149:https://cdn.example.com/image.png',
-  url: 'https://cdn.example.com/image.png',
-  label: 'image.png',
-  filename: 'image.png',
-  kindHint: 'image',
-}
-
-const textResource: Resource = {
-  ...officeResource,
-  key: '1149:https://cdn.example.com/readme.md',
-  url: 'https://cdn.example.com/readme.md',
-  label: 'readme.md',
-  filename: 'readme.md',
-  kindHint: 'text',
+  key: '1149:https://cdn.example.com/video.mp4',
+  url: 'https://cdn.example.com/video.mp4',
+  label: 'video.mp4',
+  filename: 'video.mp4',
+  kindHint: 'video',
 }
 
 describe('signed resource expiry', () => {
@@ -106,12 +114,20 @@ describe('DocumentLinkResource', () => {
     })
   })
 
+  beforeEach(() => {
+    mockOfficePreview.mockClear()
+    jest.mocked(prepareRemotePdf).mockClear()
+    jest.mocked(loadBoundedRemoteFile).mockClear()
+    jest.mocked(probeRemoteVideo).mockClear()
+  })
+
   it('renders a PDF first-page card and opens the online preview', async () => {
     const onOpen = jest.fn()
     render(<DocumentLinkResource resource={pdfResource} onOpen={onOpen} />)
 
     expect(screen.getByTestId('document-link-preview-card')).toBeInTheDocument()
     expect(await screen.findByTestId('mock-office-cover')).toHaveTextContent(pdfResource.url)
+    expect(prepareRemotePdf).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('remote-pdf-preview')).not.toBeInTheDocument()
     expect(screen.getByText('点击查看在线预览')).toBeInTheDocument()
 
@@ -124,42 +140,47 @@ describe('DocumentLinkResource', () => {
 
     expect(screen.getByTestId('document-link-preview-card')).toBeInTheDocument()
     expect(await screen.findByTestId('mock-office-cover')).toHaveTextContent('blob-ready')
+    expect(loadBoundedRemoteFile).toHaveBeenCalledTimes(1)
     expect(screen.getByText('点击查看在线预览')).toBeInTheDocument()
   })
 
-  it('renders bounded image and text links as preview cards', async () => {
-    const { rerender } = render(
-      <DocumentLinkResource resource={imageResource} onOpen={jest.fn()} />
-    )
-    expect(await screen.findByTestId('document-link-image-cover')).toHaveAttribute(
-      'src',
-      'blob:https://localhost/image-cover'
-    )
+  it('renders a video first-frame element after the bounded probe succeeds', async () => {
+    render(<DocumentLinkResource resource={videoResource} onOpen={jest.fn()} />)
 
-    rerender(<DocumentLinkResource resource={textResource} onOpen={jest.fn()} />)
-    expect(await screen.findByText('# Preview content')).toBeInTheDocument()
-    expect(screen.getByTestId('document-link-preview-card')).toBeInTheDocument()
+    expect(await screen.findByTestId('document-link-video-cover')).toHaveAttribute(
+      'src',
+      videoResource.url
+    )
+    expect(probeRemoteVideo).toHaveBeenCalledTimes(1)
   })
 
-  it('does not allocate an image object URL after its cover has unmounted', async () => {
-    let resolveLoad: ((value: { blob: Blob; mimeType: string; size: number }) => void) | undefined
-    jest.mocked(loadBoundedRemoteFile).mockReturnValueOnce(
-      new Promise(resolve => {
-        resolveLoad = resolve
-      })
-    )
-    const createObjectUrl = jest.mocked(URL.createObjectURL)
-    createObjectUrl.mockClear()
-    const { unmount } = render(<DocumentLinkResource resource={imageResource} onOpen={jest.fn()} />)
-    await waitFor(() => expect(loadBoundedRemoteFile).toHaveBeenCalled())
-
-    unmount()
-    await act(async () => {
-      resolveLoad!({ blob: new Blob(['image']), mimeType: 'image/png', size: 5 })
-      await Promise.resolve()
+  it('keeps an offscreen card stable without loading or showing a loading state', () => {
+    const originalObserver = global.IntersectionObserver
+    const observe = jest.fn()
+    Object.defineProperty(global, 'IntersectionObserver', {
+      configurable: true,
+      value: jest.fn(() => ({ observe, disconnect: jest.fn() })),
     })
+    try {
+      const { rerender } = render(
+        <DocumentLinkResource resource={pdfResource} onOpen={jest.fn()} />
+      )
+      const card = screen.getByTestId('document-link-preview-card')
 
-    expect(createObjectUrl).not.toHaveBeenCalled()
+      rerender(<DocumentLinkResource resource={pdfResource} onOpen={jest.fn()} />)
+
+      expect(screen.getByTestId('document-link-preview-card')).toBe(card)
+      expect(observe).toHaveBeenCalledTimes(1)
+      expect(
+        screen.queryByText('document.document.detail.linkPreview.loading')
+      ).not.toBeInTheDocument()
+      expect(prepareRemotePdf).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(global, 'IntersectionObserver', {
+        configurable: true,
+        value: originalObserver,
+      })
+    }
   })
 
   it('uses the shared PDF renderer instead of an Edge-blocked iframe', async () => {
@@ -167,6 +188,22 @@ describe('DocumentLinkResource', () => {
 
     expect(await screen.findByTestId('mock-office-cover')).toHaveTextContent(pdfResource.url)
     expect(screen.queryByTestId('remote-pdf-preview')).not.toBeInTheDocument()
+  })
+
+  it('does not pass the raw PDF URL to the renderer after preflight fails', async () => {
+    jest
+      .mocked(prepareRemotePdf)
+      .mockRejectedValueOnce(new RemoteFileError('network-or-cors', 'Unverifiable range'))
+
+    render(<DocumentLinkPreview resource={pdfResource} onOpenChange={jest.fn()} />)
+
+    expect(
+      await screen.findByText('document.document.detail.linkPreview.errors.network-or-cors')
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-office-cover')).not.toBeInTheDocument()
+    expect(mockOfficePreview).not.toHaveBeenCalledWith(
+      expect.objectContaining({ url: pdfResource.url })
+    )
   })
 
   it('does not misreport a PDF renderer failure as a damaged file and allows retry', async () => {

@@ -107,6 +107,7 @@ describe('FlyfishOfficePreview', () => {
         filename="large.pdf"
         restricted
         coverOnly
+        validatedRemotePdf
       />
     )
 
@@ -134,6 +135,21 @@ describe('FlyfishOfficePreview', () => {
       rangeChunkSize: 64 * 1024,
       withCredentials: false,
     })
+  })
+
+  it('does not enable PDF streaming for an unvalidated remote URL', () => {
+    render(
+      <FlyfishOfficePreview
+        url="https://cdn.example.com/unvalidated.pdf"
+        filename="unvalidated.pdf"
+        restricted
+      />
+    )
+
+    const options = mockFileViewer.mock.calls[0][0].options as {
+      pdf: { streaming: boolean }
+    }
+    expect(options.pdf.streaming).toBe(false)
   })
 
   it.each([true, false])('shows loading until the PDF viewer is ready (cover: %s)', coverOnly => {

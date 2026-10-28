@@ -53,6 +53,7 @@ interface FlyfishOfficePreviewProps {
   onError?: (error: Error) => void
   restricted?: boolean
   coverOnly?: boolean
+  validatedRemotePdf?: boolean
 }
 
 export function FlyfishOfficePreview({
@@ -62,6 +63,7 @@ export function FlyfishOfficePreview({
   onError,
   restricted = false,
   coverOnly = false,
+  validatedRemotePdf = false,
 }: FlyfishOfficePreviewProps) {
   const { t } = useTranslation('common')
   const [pdfLoading, setPdfLoading] = useState(true)
@@ -111,12 +113,12 @@ export function FlyfishOfficePreview({
         toolbar: !coverOnly,
         navigation: !coverOnly,
         thumbnails: !coverOnly,
-        streaming: true,
+        streaming: validatedRemotePdf,
         rangeChunkSize: 64 * 1024,
         withCredentials: false,
       },
     }),
-    [coverOnly, restricted]
+    [coverOnly, restricted, validatedRemotePdf]
   )
 
   // The React viewer reloads its source when this callback changes. Keep it

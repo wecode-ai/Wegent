@@ -32,6 +32,7 @@ function videoResponse(status: number, headers: Record<string, string>) {
   const cancel = jest.fn().mockResolvedValue(undefined)
   return {
     response: {
+      ok: status >= 200 && status < 300,
       status,
       headers: {
         get: (name: string) => headers[name.toLowerCase()] ?? null,
@@ -140,6 +141,7 @@ describe('remote video range probe', () => {
     ).resolves.toEqual({
       size: MAX_NON_RANGE_VIDEO_BYTES * 2,
       supportsRange: true,
+      validation: 'verified',
     })
     expect(global.fetch).toHaveBeenCalledWith(
       'https://cdn.example.com/video.mp4',
@@ -157,6 +159,47 @@ describe('remote video range probe', () => {
     await expect(
       probeRemoteVideo('https://cdn.example.com/video.mp4', new AbortController().signal)
     ).rejects.toMatchObject({ code: 'video-range-required' })
+    expect(cancel).toHaveBeenCalled()
+  })
+
+  it.each([204, 429, 500, 503])(
+    'rejects an HTTP %i response instead of mounting media',
+    async status => {
+      const { response, cancel } = videoResponse(status, {})
+      global.fetch = jest.fn().mockResolvedValue(response)
+
+      await expect(
+        probeRemoteVideo('https://cdn.example.com/video.mp4', new AbortController().signal)
+      ).rejects.toMatchObject({ code: 'network-or-cors' })
+      expect(cancel).toHaveBeenCalled()
+    }
+  )
+
+  it('uses native playback when a 206 response hides Content-Range', async () => {
+    const { response, cancel } = videoResponse(206, { 'content-length': '1' })
+    global.fetch = jest.fn().mockResolvedValue(response)
+
+    await expect(
+      probeRemoteVideo('https://cdn.example.com/video.mp4', new AbortController().signal)
+    ).resolves.toEqual({ supportsRange: false, validation: 'native-fallback' })
+    expect(cancel).toHaveBeenCalled()
+  })
+
+  it('labels a CORS-unreadable video as a native fallback instead of verified', async () => {
+    global.fetch = jest.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+
+    await expect(
+      probeRemoteVideo('https://cdn.example.com/video.mp4', new AbortController().signal)
+    ).resolves.toEqual({ supportsRange: false, validation: 'native-fallback' })
+  })
+
+  it('does not report a non-range video with a hidden size as verified', async () => {
+    const { response, cancel } = videoResponse(200, {})
+    global.fetch = jest.fn().mockResolvedValue(response)
+
+    await expect(
+      probeRemoteVideo('https://cdn.example.com/video.mp4', new AbortController().signal)
+    ).resolves.toEqual({ supportsRange: false, validation: 'native-fallback' })
     expect(cancel).toHaveBeenCalled()
   })
 })
@@ -307,7 +350,7 @@ describe('bounded remote file loading', () => {
 
 describe('remote PDF preparation', () => {
   const originalFetch = global.fetch
-  const pdfPrefix = Uint8Array.from('%PDF-1.7', character => character.charCodeAt(0))
+  const pdfPrefix = Uint8Array.from('%PDF-1.7\nfixture', character => character.charCodeAt(0))
 
   afterEach(() => {
     global.fetch = originalFetch
@@ -333,10 +376,15 @@ describe('remote PDF preparation', () => {
         new AbortController().signal,
         'large.pdf'
       )
-    ).resolves.toEqual({ mimeType: 'application/pdf', size, supportsRange: true })
+    ).resolves.toEqual({
+      mimeType: 'application/pdf',
+      size,
+      supportsRange: true,
+      validatedUrl: 'https://cdn.example.com/large.pdf',
+    })
     expect(global.fetch).toHaveBeenCalledWith(
       'https://cdn.example.com/large.pdf',
-      expect.objectContaining({ headers: { Range: 'bytes=0-' } })
+      expect.objectContaining({ headers: { Range: 'bytes=0-15' } })
     )
   })
 
@@ -367,13 +415,12 @@ describe('remote PDF preparation', () => {
     })
   })
 
-  it('uses exposed Content-Length when CORS hides Content-Range', async () => {
-    const size = 36 * 1024 * 1024
+  it('accepts an exact bounded 206 prefix when CORS hides Content-Range', async () => {
     const range = fileResponse(
       pdfPrefix,
       {
         'content-type': 'application/pdf',
-        'content-length': String(size),
+        'content-length': String(pdfPrefix.length),
       },
       206
     )
@@ -385,8 +432,82 @@ describe('remote PDF preparation', () => {
         new AbortController().signal,
         'large.pdf'
       )
-    ).resolves.toEqual({ mimeType: 'application/pdf', size, supportsRange: true })
+    ).resolves.toEqual({
+      mimeType: 'application/pdf',
+      supportsRange: true,
+      validatedUrl: 'https://cdn.example.com/large.pdf',
+      validation: 'range-only',
+    })
     expect(global.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not treat a 206 fragment Content-Length as the total file size', async () => {
+    const range = fileResponse(
+      pdfPrefix,
+      {
+        'content-type': 'application/pdf',
+        'content-length': String(pdfPrefix.length),
+      },
+      206
+    )
+    global.fetch = jest.fn().mockResolvedValue(range.response)
+
+    await expect(
+      prepareRemotePdf(
+        'https://cdn.example.com/partial.pdf',
+        new AbortController().signal,
+        'partial.pdf'
+      )
+    ).resolves.toMatchObject({
+      supportsRange: true,
+      validatedUrl: 'https://cdn.example.com/partial.pdf',
+      validation: 'range-only',
+    })
+  })
+
+  it('reports a PDF shorter than its signature as unsupported instead of a CORS error', async () => {
+    const short = Uint8Array.from([0x25, 0x50, 0x44, 0x46])
+    const range = fileResponse(
+      short,
+      {
+        'content-type': 'application/pdf',
+        'content-length': String(short.length),
+        'content-range': `bytes 0-${short.length - 1}/${short.length}`,
+      },
+      206
+    )
+    global.fetch = jest.fn().mockResolvedValue(range.response)
+
+    await expect(
+      prepareRemotePdf(
+        'https://cdn.example.com/short.pdf',
+        new AbortController().signal,
+        'short.pdf'
+      )
+    ).rejects.toMatchObject({ code: 'unsupported-type' })
+  })
+
+  it('rejects a server that returns an oversized 206 body for the bounded range', async () => {
+    const bytes = new Uint8Array(32)
+    bytes.set(pdfPrefix)
+    const range = fileResponse(
+      bytes,
+      {
+        'content-type': 'application/pdf',
+        'content-length': String(bytes.length),
+        'content-range': `bytes 0-${bytes.length - 1}/${36 * 1024 * 1024}`,
+      },
+      206
+    )
+    global.fetch = jest.fn().mockResolvedValue(range.response)
+
+    await expect(
+      prepareRemotePdf(
+        'https://cdn.example.com/unbounded.pdf',
+        new AbortController().signal,
+        'unbounded.pdf'
+      )
+    ).rejects.toMatchObject({ code: 'network-or-cors' })
   })
 
   it('rejects a range response whose total size cannot be verified', async () => {
