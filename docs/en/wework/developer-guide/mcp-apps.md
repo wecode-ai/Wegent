@@ -12,6 +12,8 @@ Set `_meta.ui.resourceUri` on the tool definition and serve that resource throug
 
 The host also accepts `ui/resourceUri`, `openai/outputTemplate`, and resource references in result metadata. Legacy `text/html+skybridge` widgets use a `window.openai` adapter over the same host channel.
 
+An invocation loads an MCP App only when its record, tool definition, or result metadata declares a UI resource. Ordinary tools without a UI resource do not show app cards, including historical calls whose server or tool has been removed. Apps with a declared UI resource still report unavailable sources or resource-loading errors. Ordinary invocations cannot use app-only tool, resource, or context methods.
+
 ## Communication and lifecycle
 
 After the initialization handshake, apps receive tool arguments and results. The executor preserves JSON object insertion order when forwarding opaque app metadata, including manifests whose serialized bytes are checked by the app. The host preserves `content`, `structuredContent`, and `_meta` separately and does not add result metadata to model context.
@@ -36,4 +38,4 @@ The desktop workbench supports both inline conversation cards and right-side app
 pnpm --filter wework e2e:desktop --segment mcp-apps
 ```
 
-The desktop CI checkpoint uses real Electron, executor, Codex, and stdio MCP components; only model responses are simulated. It covers resource loading, initialization, private metadata delivery, app-only callbacks, model context, display transitions, source isolation, repeated non-read-only callbacks, scope denial, and cleanup.
+The desktop CI checkpoint uses real Electron, executor, Codex, and stdio MCP components; only model responses are simulated. It covers resource loading, initialization, private metadata delivery, app-only callbacks, model context, display transitions, source isolation, repeated non-read-only callbacks, scope denial, and cleanup. The ordinary-tool regression also disables the source server, restarts the real Codex service, and reopens the historical conversation to verify that no app error card appears and app-only requests remain denied.
