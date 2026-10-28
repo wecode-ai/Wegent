@@ -2459,6 +2459,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     }
     case 'performanceSnapshot': {
+      const { collectMemory = true } = JSON.parse(command.value ?? '{}') as {
+        collectMemory?: boolean
+      }
       const debugSnapshot = getWorkbenchDebugSnapshot()
       const currentRuntimeTask = debugSnapshot.workbench?.currentRuntimeTask
       const runtimeMessages = currentRuntimeTask
@@ -2480,10 +2483,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         document.querySelectorAll<HTMLElement>('[data-testid="assistant-message-content"]')
       )
       const [processMemory, rendererHeap] = await Promise.all([
-        navigator.platform.toLowerCase().includes('mac')
+        collectMemory && navigator.platform.toLowerCase().includes('mac')
           ? invokeDesktopHost('e2e.getProcessSnapshot')
           : null,
-        invokeDesktopHost('e2e.getRendererHeapUsage'),
+        collectMemory ? invokeDesktopHost('e2e.getRendererHeapUsage') : null,
       ])
       return JSON.stringify({
         timestamp: Date.now(),
@@ -3566,13 +3569,39 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
 }
 
 async function postDesktopControlResult(url: string, result: DesktopControlResult): Promise<void> {
-  const response = await fetch(`${url}/results`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-    body: JSON.stringify(result),
-  })
-  if (!response.ok) {
-    throw new Error(`Desktop E2E control result failed with ${response.status}`)
+  const startedAt = Date.now()
+  let lastTick = startedAt
+  let maxEventLoopLagMs = 0
+  let response: Response | undefined
+  const probe = window.setInterval(() => {
+    maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
+    lastTick = Date.now()
+  }, 100)
+  try {
+    response = await fetch(`${url}/results`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
+      body: JSON.stringify(result),
+    })
+    if (!response.ok) {
+      throw new Error(`Desktop E2E control result failed with ${response.status}`)
+    }
+  } finally {
+    window.clearInterval(probe)
+    logRuntimeTaskCreateStage(
+      'desktop-control-result-transport',
+      {
+        commandId: result.id,
+        clientId: result.clientId,
+        startedAt,
+        elapsedMs: Date.now() - startedAt,
+        maxEventLoopLagMs: Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100),
+        responseStatus: response?.status ?? null,
+        serverReceivedAt: response?.headers.get('X-Wework-Control-Received-At') ?? null,
+        visibility: document.visibilityState,
+      },
+      'debug'
+    )
   }
 }
 
@@ -3603,15 +3632,19 @@ async function postDesktopControlStarted(
     throw new Error(`Desktop E2E control start acknowledgement failed with ${response.status}`)
   }
   if (Date.now() - startedAt > 1000) {
-    logRuntimeTaskCreateStage('desktop-control-slow-start-acknowledgement', {
-      commandId: command.id,
-      action: command.action,
-      startedAt,
-      elapsedMs: Date.now() - startedAt,
-      maxEventLoopLagMs,
-      serverReceivedAt: response.headers.get('X-Wework-Control-Received-At'),
-      visibility: document.visibilityState,
-    })
+    logRuntimeTaskCreateStage(
+      'desktop-control-slow-start-acknowledgement',
+      {
+        commandId: command.id,
+        action: command.action,
+        startedAt,
+        elapsedMs: Date.now() - startedAt,
+        maxEventLoopLagMs,
+        serverReceivedAt: response.headers.get('X-Wework-Control-Received-At'),
+        visibility: document.visibilityState,
+      },
+      'debug'
+    )
   }
 }
 
@@ -3645,9 +3678,9 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       }
       const command = (await response.json()) as DesktopControlCommand
       const diagnostic = { commandId: command.id, action: command.action, clientId }
-      logRuntimeTaskCreateStage('desktop-control-received', diagnostic)
+      logRuntimeTaskCreateStage('desktop-control-received', diagnostic, 'debug')
       await postDesktopControlStarted(url, command, clientId)
-      logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic)
+      logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic, 'debug')
       let result: DesktopControlResult
       try {
         const value = await executeDesktopControlCommand(command)
@@ -3661,9 +3694,13 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
         }
       }
       try {
-        logRuntimeTaskCreateStage('desktop-control-executed', { ...diagnostic, ok: result.ok })
+        logRuntimeTaskCreateStage(
+          'desktop-control-executed',
+          { ...diagnostic, ok: result.ok },
+          'debug'
+        )
         await postDesktopControlResult(url, result)
-        logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic)
+        logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic, 'debug')
       } catch (error) {
         console.error(
           '[Wework] Desktop E2E result acknowledgement failed:',

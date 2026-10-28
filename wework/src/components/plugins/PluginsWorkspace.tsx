@@ -320,6 +320,61 @@ function selectPrimaryPublication(
   )
 }
 
+type PersonalMarketplaceRefreshResult =
+  | { complete: true; items: PluginMarketplaceItem[] }
+  | { complete: false }
+
+async function readPersonalMarketplaceForCloudRefresh(): Promise<PersonalMarketplaceRefreshResult> {
+  try {
+    const items = isElectronRuntime() ? await listPersonalMarketplacePluginsFromDisk(true) : []
+    return { complete: true, items }
+  } catch (error) {
+    console.warn(
+      '[Wework] personal marketplace refresh incomplete; retaining existing source rows',
+      error
+    )
+    return { complete: false }
+  }
+}
+
+function mergeCloudMarketplaceRefresh(
+  previousItems: PluginMarketplaceItem[],
+  cloudItems: PluginMarketplaceItem[],
+  installed: InstalledPlugin[],
+  personalRead: PersonalMarketplaceRefreshResult
+): PluginMarketplaceItem[] {
+  const localRows = previousItems.filter(isCodexCatalogItem)
+  const refreshedLocalRows = personalRead.complete
+    ? mergeDiskPersonalIntoLocalRows(
+        localRows.filter(item => marketplacePluginDistribution(item) !== 'personal'),
+        personalRead.items
+      )
+    : localRows
+  const items = mergeMarketplaceCatalog(cloudItems, refreshedLocalRows, installed)
+  if (personalRead.complete) return items
+  const previousById = new Map(previousItems.map(item => [String(item.id), item]))
+  return items.map(item => {
+    const previous = previousById.get(String(item.id))
+    const normalizedName = item.name.toLowerCase()
+    if (
+      item.accessRole !== 'owner' ||
+      previous?.accessRole !== 'owner' ||
+      marketplacePluginDistribution(item) !== 'personal' ||
+      marketplacePluginDistribution(previous) !== 'personal' ||
+      previous.name.toLowerCase() !== normalizedName ||
+      previous.localPersonalSource?.pluginName.toLowerCase() !== normalizedName
+    ) {
+      return item
+    }
+    return {
+      ...item,
+      version: previous.version,
+      sharedVersion: item.sharedVersion ?? item.version,
+      localPersonalSource: previous.localPersonalSource,
+    }
+  })
+}
+
 export function PluginsWorkspace({
   sidebarCollapsed = false,
   topBarLeftActions,
@@ -4038,8 +4093,11 @@ export function PluginsWorkspace({
     if (pluginMutationInFlight) return
     const deviceId = currentDeviceId
     const lifetime = deviceSyncLifetimeRef.current
+    const accountLifetime = publicationLifetime.current
     const inventoryAtStart = getPluginMarketplaceCache(marketplaceCacheKeyValue)
     const syncScopeIsCurrent = () =>
+      accountLifetime !== null &&
+      publicationLifetime.current === accountLifetime &&
       lifetime !== null &&
       deviceSyncLifetimeRef.current === lifetime &&
       marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue &&
@@ -4067,12 +4125,12 @@ export function PluginsWorkspace({
 
     const refreshCatalog = async () => {
       if (!syncIsCurrent()) return
-      const [cloud, installed, diskPersonalItems] = await Promise.all([
+      const [cloud, installed, personalRead] = await Promise.all([
         pluginApi.listMarketplacePlugins({
           deviceId,
         }),
         pluginApi.listInstalledPlugins(deviceId),
-        isElectronRuntime() ? listPersonalMarketplacePluginsFromDisk(true) : Promise.resolve([]),
+        readPersonalMarketplaceForCloudRefresh(),
       ])
       if (!syncIsCurrent()) return
       const nextInstalled = mergeInstalledPlugins(
@@ -4081,15 +4139,11 @@ export function PluginsWorkspace({
         deviceId,
         true
       ).map(toInstalledPluginItem)
-      const nextItems = mergeMarketplaceCatalog(
+      const nextItems = mergeCloudMarketplaceRefresh(
+        pluginMarketplaceStateRef.current.items,
         cloud.items,
-        mergeDiskPersonalIntoLocalRows(
-          pluginMarketplaceStateRef.current.items.filter(
-            item => isCodexCatalogItem(item) && marketplacePluginDistribution(item) !== 'personal'
-          ),
-          diskPersonalItems
-        ),
-        nextInstalled.map(plugin => plugin.raw)
+        nextInstalled.map(plugin => plugin.raw),
+        personalRead
       )
       const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
       if (cached) {
@@ -4292,21 +4346,16 @@ export function PluginsWorkspace({
         pluginApi.listMarketplacePlugins({
           deviceId: currentDeviceId || undefined,
         }),
-        isElectronRuntime() ? listPersonalMarketplacePluginsFromDisk(true) : Promise.resolve([]),
+        readPersonalMarketplaceForCloudRefresh(),
       ])
-        .then(([response, diskPersonalItems]) => {
+        .then(([response, personalRead]) => {
           if (disposed) return
           if (!pluginInventoryReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart)) return
-          const nextItems = mergeMarketplaceCatalog(
+          const nextItems = mergeCloudMarketplaceRefresh(
+            pluginMarketplaceStateRef.current.items,
             response.items,
-            mergeDiskPersonalIntoLocalRows(
-              pluginMarketplaceStateRef.current.items.filter(
-                item =>
-                  isCodexCatalogItem(item) && marketplacePluginDistribution(item) !== 'personal'
-              ),
-              diskPersonalItems
-            ),
-            installedPluginsRef.current.map(plugin => plugin.raw)
+            installedPluginsRef.current.map(plugin => plugin.raw),
+            personalRead
           )
           const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
           if (cached) {

@@ -1033,7 +1033,8 @@ async function resolveWeworkPersonalMarketplacePath(
   if (marketplace && isLocalMarketplacePath(marketplace.path)) {
     return normalizeMarketplaceSource(marketplace.path)
   }
-  const bundled = getInitializedBundledPluginMarketplace()
+  const bundled =
+    getInitializedBundledPluginMarketplace() ?? (await initializeBundledPluginMarketplace())
   if (bundled?.path && isLocalMarketplacePath(bundled.path)) {
     return normalizeMarketplaceSource(bundled.path)
   }

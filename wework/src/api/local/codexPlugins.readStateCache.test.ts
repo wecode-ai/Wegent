@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   requestLocalExecutor: vi.fn(),
   ensureLocalExecutorStarted: vi.fn(),
   ensureBundledPluginMarketplaceRegistered: vi.fn(),
+  initializeBundledPluginMarketplace: vi.fn(),
   getInitializedBundledPluginMarketplace: vi.fn(() => null),
   pauseBundledUpdates: vi.fn(),
   resumeBundledUpdates: vi.fn(),
@@ -33,11 +34,7 @@ vi.mock('@/lib/runtime-environment', () => ({
 vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: () => mocks.ensureLocalExecutorStarted(),
   ensureBundledPluginMarketplaceRegistered: () => mocks.ensureBundledPluginMarketplaceRegistered(),
-  initializeBundledPluginMarketplace: async () => ({
-    id: 'wework-personal',
-    path: '/tmp/wework-personal',
-    defaultPluginNames: [],
-  }),
+  initializeBundledPluginMarketplace: () => mocks.initializeBundledPluginMarketplace(),
   ensureBundledPluginInstalled: vi.fn().mockResolvedValue(undefined),
   withBundledPluginUpdatesPaused: (name: string, mutation: () => Promise<unknown>) => {
     mocks.pauseBundledUpdates(name)
@@ -304,6 +301,12 @@ describe('local codex plugin readState cache', () => {
     mocks.resumeBundledUpdates.mockReset()
     mocks.ensureLocalExecutorStarted.mockReset()
     mocks.ensureBundledPluginMarketplaceRegistered.mockReset()
+    mocks.initializeBundledPluginMarketplace.mockReset()
+    mocks.initializeBundledPluginMarketplace.mockResolvedValue({
+      id: 'wework-personal',
+      path: '/tmp/wework-personal',
+      defaultPluginNames: [],
+    })
     mocks.ensureLocalExecutorStarted.mockResolvedValue({ deviceId: 'local-device' })
     mocks.ensureBundledPluginMarketplaceRegistered.mockResolvedValue(undefined)
     mocks.requestLocalExecutor.mockImplementation(
@@ -715,6 +718,148 @@ describe('local codex plugin readState cache', () => {
       }
     )
   })
+
+  test.each(['success', 'failure', 'invalid-path'] as const)(
+    'waits for personal marketplace initialization before importing after an empty catalog: %s',
+    async outcome => {
+      const preview = {
+        valid: true,
+        archivePath: '/tmp/example-plugin.zip',
+        sha256: 'e'.repeat(64),
+        name: 'example-plugin',
+        displayName: 'Example Plugin',
+        version: '1.0.0',
+        description: 'Example plugin',
+        skillCount: 1,
+        mcpServerCount: 0,
+        executableCapabilities: [],
+        existing: false,
+        existingVersion: null,
+        issues: [],
+      }
+      const marketplace = {
+        id: 'wework-personal',
+        path: '/tmp/initialized-personal',
+        defaultPluginNames: [] as string[],
+      }
+      let finishInitialization!: (value: typeof marketplace) => void
+      let failInitialization!: (error: Error) => void
+      const initialization = new Promise<typeof marketplace>((resolve, reject) => {
+        finishInitialization = resolve
+        failInitialization = reject
+      })
+      let initializationRequested!: () => void
+      const requested = new Promise<void>(resolve => {
+        initializationRequested = resolve
+      })
+      mocks.initializeBundledPluginMarketplace.mockImplementation(() => {
+        initializationRequested()
+        return initialization
+      })
+      mocks.requestLocalExecutor.mockImplementation(async (method, params) => {
+        if (method === 'executor.plugins.store.list')
+          return { storePath: '/tmp/store', plugins: [] }
+        if (method === 'executor.plugins.links.list') return []
+        if (
+          method === 'codex.app_server_request' &&
+          (params.method === 'plugin/list' || params.method === 'plugin/installed')
+        ) {
+          return { marketplaces: [] }
+        }
+        if (method === 'executor.plugins.import_package') {
+          return {
+            pluginName: preview.name,
+            displayName: preview.displayName,
+            version: preview.version,
+            marketplacePath: marketplace.path,
+            pluginPath: `${marketplace.path}/plugins/${preview.name}`,
+            rollbackId: 'rollback-initialization',
+          }
+        }
+        if (method === 'runtime.codex.plugin.install_local_first') return { localCommitted: true }
+        if (method === 'executor.plugins.import_package.finalize') return null
+        throw new Error(`Unexpected executor method ${method}`)
+      })
+      const api = createLocalCodexPluginApi()
+      const earlyCatalog = await api.readState({ mergeAllMarketplaces: true })
+      expect(earlyCatalog.marketplaces).toEqual([])
+      expect(mocks.initializeBundledPluginMarketplace).not.toHaveBeenCalled()
+      const importing = api.importPluginPackage(preview, false).then(
+        value => ({ status: 'fulfilled' as const, value }),
+        (error: unknown) => ({ status: 'rejected' as const, error })
+      )
+      const initializationError = new Error('Bundled marketplace initialization failed')
+      try {
+        const first = await Promise.race([
+          requested.then(() => ({ status: 'waiting-for-initialization' as const })),
+          importing,
+        ])
+        expect(first).toEqual({ status: 'waiting-for-initialization' })
+        expect(
+          mocks.requestLocalExecutor.mock.calls.filter(([method]) =>
+            /^(executor\.plugins\.import_package|runtime\.codex\.plugin\.install)/.test(method)
+          )
+        ).toEqual([])
+
+        if (outcome === 'failure') failInitialization(initializationError)
+        else {
+          finishInitialization({
+            ...marketplace,
+            ...(outcome === 'invalid-path' ? { path: 'https://example.test/personal' } : {}),
+          })
+        }
+        const result = await importing
+        if (outcome === 'success') {
+          expect(result).toEqual({
+            status: 'fulfilled',
+            value: {
+              pluginName: preview.name,
+              displayName: preview.displayName,
+              version: preview.version,
+            },
+          })
+          expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+            'executor.plugins.import_package',
+            {
+              archivePath: preview.archivePath,
+              marketplacePath: marketplace.path,
+              expectedSha256: preview.sha256,
+              overwrite: false,
+            }
+          )
+          expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+            'runtime.codex.plugin.install_local_first',
+            {
+              marketplacePath: `${marketplace.path}/.agents/plugins/marketplace.json`,
+              pluginName: preview.name,
+            }
+          )
+          expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+            'executor.plugins.import_package.finalize',
+            { marketplacePath: marketplace.path, rollbackId: 'rollback-initialization' }
+          )
+        } else {
+          expect(result).toEqual({
+            status: 'rejected',
+            error:
+              outcome === 'failure'
+                ? initializationError
+                : expect.objectContaining({
+                    message: 'The wework-personal marketplace is unavailable',
+                  }),
+          })
+          expect(
+            mocks.requestLocalExecutor.mock.calls.filter(([method]) =>
+              /^(executor\.plugins\.import_package|runtime\.codex\.plugin\.install)/.test(method)
+            )
+          ).toEqual([])
+          expect(mocks.resumeBundledUpdates).not.toHaveBeenCalled()
+        }
+      } finally {
+        finishInitialization(marketplace)
+      }
+    }
+  )
 
   test('rolls back imported files when App Server installation fails', async () => {
     const preview = {

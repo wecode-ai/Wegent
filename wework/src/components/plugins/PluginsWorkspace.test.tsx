@@ -1365,6 +1365,59 @@ function mockSystemSkillsFetch(
   }
 }
 
+function mockPersonalRefreshInventory(pluginName = 'offline-notes') {
+  const personalPlugins = [
+    {
+      id: `${pluginName}@wework-personal`,
+      name: pluginName,
+      displayName: 'Offline Notes',
+      description: 'Existing personal source',
+      localVersion: '0.1.0',
+    },
+  ]
+  mockCodexAppServerInvoke({
+    deviceId: 'current-device',
+    marketplaces: [
+      {
+        name: 'wework-personal',
+        path: '/tmp/wework-personal',
+        plugins: personalPlugins,
+      },
+    ],
+  })
+  const originalInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()!
+  const diskError = new Error('Personal source executor unavailable')
+  let diskReadState: 'present' | 'unavailable' | 'malformed' | 'empty' = 'present'
+  vi.mocked(requestLocalExecutor).mockImplementation((method, params) => {
+    if (method !== 'executor.plugins.personal.list') return originalInvoke(method, params)
+    if (diskReadState === 'unavailable') return Promise.reject(diskError)
+    if (diskReadState === 'malformed') return Promise.resolve({ plugins: null })
+    return Promise.resolve({
+      marketplaceId: 'wework-personal',
+      marketplacePath: '/tmp/wework-personal',
+      plugins:
+        diskReadState === 'empty'
+          ? []
+          : [
+              {
+                name: pluginName,
+                version: '0.1.0',
+                displayName: 'Offline Notes',
+                description: 'Existing personal source',
+                pluginPath: `/tmp/wework-personal/plugins/${pluginName}`,
+              },
+            ],
+    })
+  })
+  return {
+    diskError,
+    setDiskReadState: (state: typeof diskReadState) => {
+      diskReadState = state
+      if (state === 'empty') personalPlugins.length = 0
+    },
+  }
+}
+
 const emptyPluginComponents = {
   skills: [],
   commands: [],
@@ -3192,6 +3245,350 @@ describe('PluginsWorkspace', () => {
     )
   })
 
+  test.each([
+    ['focus', 'unavailable', 'local'],
+    ['focus', 'malformed', 'local'],
+    ['focus', 'empty', 'local'],
+    ['sync', 'unavailable', 'local'],
+    ['sync', 'malformed', 'local'],
+    ['sync', 'empty', 'local'],
+    ['focus', 'unavailable', 'owned'],
+    ['focus', 'malformed', 'owned'],
+    ['focus', 'empty', 'owned'],
+    ['sync', 'unavailable', 'owned'],
+    ['sync', 'malformed', 'owned'],
+    ['sync', 'empty', 'owned'],
+    ['focus', 'recipient', 'owned'],
+    ['focus', 'different-id', 'owned'],
+    ['focus', 'legacy-case', 'owned'],
+    ['sync', 'legacy-case', 'owned'],
+  ] as const)(
+    'refreshes cloud state independently of a %s personal disk read that is %s (%s source)',
+    async (refreshKind, diskReadState, sourceKind) => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      let finishSync!: () => void
+      const syncGate = new Promise<void>(resolve => {
+        finishSync = resolve
+      })
+      const marketplace = mockSystemSkillsFetch({
+        marketplaceInstalled: true,
+        marketplaceDeviceState: refreshKind === 'sync' ? 'pending' : 'installed',
+        marketplaceCount: 2,
+        deviceAutoSyncSucceeds: true,
+        deviceAutoSyncGate: syncGate,
+        ...(sourceKind === 'owned'
+          ? {
+              marketplaceName: 'offline-notes',
+              marketplaceDisplayName: 'Offline Notes',
+              marketplaceVisibility: 'personal',
+              marketplaceSourceProvider: 'user',
+              marketplaceAccessRole: 'owner',
+            }
+          : {}),
+      })
+      const sourcePluginName = diskReadState === 'legacy-case' ? 'Offline-Notes' : 'offline-notes'
+      const personal = mockPersonalRefreshInventory(sourcePluginName)
+      const originalFetch = vi.mocked(fetch).getMockImplementation()!
+      let cloudChanged = false
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        const response = await originalFetch(input, init)
+        if (
+          !cloudChanged ||
+          new URL(String(input), 'http://localhost').pathname !== '/api/plugins/marketplace'
+        ) {
+          return response
+        }
+        const payload = (await response.json()) as { items: PluginMarketplaceItem[] }
+        return Response.json({
+          ...payload,
+          items: payload.items.map(item => ({
+            ...item,
+            description: 'Cloud catalog refreshed',
+            version: '2.0.0',
+            ...(item.id === 101 && diskReadState === 'recipient'
+              ? { accessRole: 'recipient' }
+              : {}),
+            ...(item.id === 101 && diskReadState === 'different-id' ? { id: 199 } : {}),
+            ...(item.id === 102
+              ? {
+                  installed: true,
+                  installedPluginId: 902,
+                  currentDeviceInstallation: {
+                    ...payload.items[0].currentDeviceInstallation!,
+                    state: 'installed',
+                  },
+                }
+              : {}),
+          })),
+        })
+      })
+      const warn = vi.spyOn(console, 'warn')
+      const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
+      writePluginInventory(cacheKey, 'current-device', { installedPlugins: [] })
+      const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      let unsubscribe: () => void = () => undefined
+      try {
+        await waitFor(() => {
+          expect(getPluginMarketplaceCache(cacheKey)?.deviceId).toBe('current-device')
+          const source = getPluginMarketplaceCache(cacheKey)?.marketplaceItems.find(
+            item => item.name === 'offline-notes'
+          )
+          expect(source).toBeDefined()
+          if (sourceKind === 'owned') {
+            expect(source?.localPersonalSource).toEqual({
+              marketplacePath: '/tmp/wework-personal',
+              pluginName: sourcePluginName,
+            })
+          }
+        })
+        const source = getPluginMarketplaceCache(cacheKey)!.marketplaceItems.find(
+          item => item.name === 'offline-notes'
+        )!
+        const refreshedSources: PluginMarketplaceItem[] = []
+        unsubscribe = subscribePluginMarketplaceCache(snapshot => {
+          const refreshed = snapshot?.marketplaceItems.find(item => item.id === 101)
+          if (
+            snapshot?.cacheKey === cacheKey &&
+            refreshed?.description === 'Cloud catalog refreshed'
+          ) {
+            refreshedSources.push(refreshed)
+          }
+        })
+        if (refreshKind === 'sync') {
+          await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
+        } else {
+          await waitFor(() =>
+            expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled()
+          )
+        }
+        personal.setDiskReadState(
+          diskReadState === 'recipient' ||
+            diskReadState === 'different-id' ||
+            diskReadState === 'legacy-case'
+            ? 'unavailable'
+            : diskReadState
+        )
+        cloudChanged = true
+        if (refreshKind === 'sync') await act(async () => finishSync())
+        else fireEvent.focus(window)
+
+        await waitFor(() => {
+          const inventory = getPluginMarketplaceCache(cacheKey)!
+          const refreshedCloud = inventory.marketplaceItems.find(
+            item => item.id === (diskReadState === 'different-id' ? 199 : 101)
+          )
+          expect(refreshedCloud?.description).toBe('Cloud catalog refreshed')
+          expect(inventory.marketplaceItems.find(item => item.id === 102)).toEqual(
+            expect.objectContaining({ installed: true, installedPluginId: 902 })
+          )
+          expect(inventory.installedPlugins.find(plugin => plugin.spec.pluginId === 101)).toEqual(
+            expect.objectContaining({
+              spec: expect.objectContaining({ installState: 'installed' }),
+            })
+          )
+          if (sourceKind === 'owned') {
+            if (
+              diskReadState === 'empty' ||
+              diskReadState === 'recipient' ||
+              diskReadState === 'different-id'
+            ) {
+              expect(refreshedCloud?.localPersonalSource).toBeUndefined()
+              expect(refreshedCloud?.version).toBe('2.0.0')
+            } else {
+              expect(refreshedCloud).toEqual(
+                expect.objectContaining({
+                  version: source.version,
+                  sharedVersion: '2.0.0',
+                  localPersonalSource: source.localPersonalSource,
+                })
+              )
+            }
+          } else {
+            const personalSource = inventory.marketplaceItems.find(
+              item => item.name === source.name
+            )
+            if (diskReadState === 'empty') expect(personalSource).toBeUndefined()
+            else {
+              expect(personalSource).toEqual(
+                expect.objectContaining({
+                  name: source.name,
+                  version: source.version,
+                  manifest: expect.objectContaining({
+                    marketplaceId: 'wework-personal',
+                    marketplacePath: '/tmp/wework-personal',
+                  }),
+                })
+              )
+            }
+          }
+        })
+        if (diskReadState !== 'empty') {
+          expect(warn).toHaveBeenCalledWith(
+            '[Wework] personal marketplace refresh incomplete; retaining existing source rows',
+            diskReadState === 'malformed'
+              ? expect.objectContaining({ message: 'Invalid personal plugin source inventory' })
+              : personal.diskError
+          )
+        }
+        if (
+          sourceKind === 'owned' &&
+          diskReadState !== 'empty' &&
+          diskReadState !== 'recipient' &&
+          diskReadState !== 'different-id'
+        ) {
+          expect(refreshedSources.length).toBeGreaterThan(0)
+          for (const refreshed of refreshedSources) {
+            expect(refreshed).toEqual(
+              expect.objectContaining({
+                version: source.version,
+                sharedVersion: '2.0.0',
+                localPersonalSource: source.localPersonalSource,
+              })
+            )
+          }
+        }
+      } finally {
+        unsubscribe()
+        finishSync()
+        view.unmount()
+        warn.mockRestore()
+      }
+    }
+  )
+
+  test.each([
+    ['focus', false],
+    ['focus', true],
+    ['sync', false],
+    ['sync', true],
+  ] as const)(
+    'discards a held %s cloud refresh after switching account (return to original=%s)',
+    async (refreshKind, returnToOriginal) => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      let finishSync!: () => void
+      const syncGate = new Promise<void>(resolve => {
+        finishSync = resolve
+      })
+      const marketplace = mockSystemSkillsFetch({
+        marketplaceInstalled: true,
+        marketplaceDeviceState: refreshKind === 'sync' ? 'pending' : 'installed',
+        deviceAutoSyncSucceeds: true,
+        deviceAutoSyncGate: syncGate,
+      })
+      mockPersonalRefreshInventory()
+      let accountLabel = 'initial-account'
+      const originalFetch = vi.mocked(fetch).getMockImplementation()!
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        const requestAccount = accountLabel
+        const response = await originalFetch(input, init)
+        if (new URL(String(input), 'http://localhost').pathname !== '/api/plugins/marketplace') {
+          return response
+        }
+        const payload = (await response.json()) as { items: PluginMarketplaceItem[] }
+        return Response.json({
+          ...payload,
+          items: payload.items.map(item => ({ ...item, description: requestAccount })),
+        })
+      })
+      const originalDiskRead = codexPlugins.listPersonalMarketplacePluginsFromDisk
+      let finishDiskRead!: () => void
+      const diskGate = new Promise<void>(resolve => {
+        finishDiskRead = resolve
+      })
+      let diskReadHeld = false
+      let holdNextDiskRead = false
+      const diskError = new Error('Old account disk read failed')
+      const diskRead = vi
+        .spyOn(codexPlugins, 'listPersonalMarketplacePluginsFromDisk')
+        .mockImplementation(async requireComplete => {
+          if (requireComplete && holdNextDiskRead) {
+            holdNextDiskRead = false
+            diskReadHeld = true
+            await diskGate
+            throw diskError
+          }
+          return originalDiskRead(requireComplete)
+        })
+      const warn = vi.spyOn(console, 'warn')
+      const oldCacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
+      writePluginInventory(oldCacheKey, 'current-device', { installedPlugins: [] })
+      const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      let unsubscribe: () => void = () => undefined
+      try {
+        await waitFor(() => {
+          const inventory = getPluginMarketplaceCache(oldCacheKey)
+          expect(inventory?.deviceId).toBe('current-device')
+          expect(
+            inventory?.marketplaceItems.find(item => item.name === 'offline-notes')
+          ).toBeDefined()
+        })
+        if (refreshKind === 'sync') {
+          await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
+        } else {
+          await waitFor(() =>
+            expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled()
+          )
+        }
+        accountLabel = 'stale-account-refresh'
+        holdNextDiskRead = true
+        if (refreshKind === 'sync') await act(async () => finishSync())
+        else fireEvent.focus(window)
+        await waitFor(() => expect(diskReadHeld).toBe(true))
+
+        accountLabel = 'new-account-refresh'
+        view.rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="another-account" />)
+        await waitFor(() =>
+          expect(
+            getPluginMarketplaceCache(
+              pluginMarketplaceCacheKey('/api', 'another-account')
+            )?.marketplaceItems.find(item => item.id === 101)?.description
+          ).toBe('new-account-refresh')
+        )
+        if (returnToOriginal) {
+          accountLabel = 'returned-account-refresh'
+          view.rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+        }
+        const currentCacheKey = returnToOriginal
+          ? oldCacheKey
+          : pluginMarketplaceCacheKey('/api', 'another-account')
+        await waitFor(() =>
+          expect(
+            getPluginMarketplaceCache(currentCacheKey)?.marketplaceItems.find(
+              item => item.id === 101
+            )?.description
+          ).toBe(accountLabel)
+        )
+        const observedDescriptions: Array<string | undefined> = []
+        unsubscribe = subscribePluginMarketplaceCache(snapshot => {
+          if (snapshot?.cacheKey === currentCacheKey) {
+            observedDescriptions.push(
+              snapshot.marketplaceItems.find(item => item.id === 101)?.description
+            )
+          }
+        })
+        await act(async () => finishDiskRead())
+        await waitFor(() =>
+          expect(warn).toHaveBeenCalledWith(
+            '[Wework] personal marketplace refresh incomplete; retaining existing source rows',
+            diskError
+          )
+        )
+        expect(
+          getPluginMarketplaceCache(currentCacheKey)?.marketplaceItems.find(item => item.id === 101)
+            ?.description
+        ).toBe(accountLabel)
+        expect(observedDescriptions).not.toContain('stale-account-refresh')
+      } finally {
+        unsubscribe()
+        finishSync()
+        finishDiskRead()
+        view.unmount()
+        diskRead.mockRestore()
+        warn.mockRestore()
+      }
+    }
+  )
+
   test('keeps marketplace install disabled until reconciliation settles', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     mockSystemSkillsFetch()
@@ -4576,6 +4973,58 @@ describe('PluginsWorkspace', () => {
     )
     expect(screen.getByTestId('plugin-detail-actions-101')).toBeInTheDocument()
     expectFetchRequest('/api/plugins/marketplace?device_id=current-device')
+  })
+
+  test('does not dispatch background synchronization while a foreground install is pending', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const marketplace = mockSystemSkillsFetch({ deviceAutoSyncSucceeds: true })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!
+    let release!: () => void
+    const pending = new Promise<void>(resolve => {
+      release = resolve
+    })
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes('/marketplace/101/install')) await pending
+      return originalFetch(input, init)
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
+    await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
+    await waitFor(() =>
+      expectFetchRequest('/api/plugins/marketplace/101/install?device_id=current-device', 'POST')
+    )
+    const key = pluginMarketplaceCacheKey('/api', 'cloud-token')
+    const cached = getPluginMarketplaceCache(key)!
+    await act(async () => {
+      setPluginMarketplaceCache({
+        ...cached,
+        marketplaceItems: cached.marketplaceItems.map(item => ({
+          ...item,
+          installed: false,
+          installedLocally: false,
+          installedPluginId: 101,
+          currentDeviceInstallation: {
+            deviceId: 'current-device',
+            desiredReleaseId: 1001,
+            actualReleaseId: null,
+            state: 'pending',
+            errorCode: null,
+            errorMessage: null,
+            attemptCount: 0,
+            lastSyncAt: null,
+            updatedAt: new Date().toISOString(),
+          },
+        })),
+      })
+    })
+    try {
+      expect(marketplace.getSyncDeviceCalls()).toBe(0)
+    } finally {
+      await act(async () => release())
+    }
+    await screen.findByTestId('plugin-marketplace-actions-101')
+    expect(marketplace.getSyncDeviceCalls()).toBe(0)
   })
 
   test('auto-syncs account installs onto the current device once per session', async () => {
