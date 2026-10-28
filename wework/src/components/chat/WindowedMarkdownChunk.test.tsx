@@ -23,7 +23,7 @@ function rect(top: number, width: number, height: number): DOMRect {
 
 function viewportHarness(top = 4_000, richHeight = 2_407) {
   const root = document.createElement('div')
-  root.dataset.scrollOrigin = 'bottom'
+  root.dataset.scrollOrigin = 'top'
   document.body.append(root)
   const geometry = { top, width: 736, richHeight, rootWidth: 1_200 }
   const intersections: Array<{

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, type RefObject } from 'react'
 
-import { getDistanceFromTop } from './bottomOriginScroll'
+import { getDistanceFromTop } from './conversationViewportScroll'
 import {
   createUserViewportAnchor,
   findUserViewportAnchor,
@@ -21,7 +21,6 @@ interface ReaderViewportAnchorOptions {
   selfScrollOffsetRef: RefObject<number>
   lastMeasuredLayoutRef: RefObject<string | null>
   lastScrollPositionRef: RefObject<number | null>
-  bottomOrigin: boolean
 }
 
 export function useReaderViewportAnchor({
@@ -31,15 +30,13 @@ export function useReaderViewportAnchor({
   selfScrollOffsetRef,
   lastMeasuredLayoutRef,
   lastScrollPositionRef,
-  bottomOrigin,
 }: ReaderViewportAnchorOptions) {
   const readProbeState = useCallback(
     () => ({
       anchor: userViewportAnchorRef.current,
       userSelfOffset: selfScrollOffsetRef.current,
-      bottomOrigin,
     }),
-    [bottomOrigin, selfScrollOffsetRef, userViewportAnchorRef]
+    [selfScrollOffsetRef, userViewportAnchorRef]
   )
   useEffect(() => () => stopConversationFrameProbe(readProbeState), [readProbeState])
 
@@ -73,13 +70,11 @@ export function useReaderViewportAnchor({
       // own doing exactly like the height change, so the belief is moved with it rather than counted
       // as the reader's scrolling, which would make the next correction ask for an offset that does
       // not exist.
-      const clampedScrollTop = bottomOrigin
-        ? Math.min(0, Math.max(-maximumOffset, believedScrollTop))
-        : Math.min(maximumOffset, Math.max(0, believedScrollTop))
+      const clampedScrollTop = Math.min(maximumOffset, Math.max(0, believedScrollTop))
       selfScrollOffsetRef.current += clampedScrollTop - believedScrollTop
       return scroller.scrollTop - clampedScrollTop
     },
-    [bottomOrigin, selfScrollOffsetRef, userViewportAnchorRef]
+    [selfScrollOffsetRef, userViewportAnchorRef]
   )
 
   // With native anchoring disabled, correction = ΔanchorOffset + ΔreaderScrollTop.
@@ -164,7 +159,7 @@ export function useReaderViewportAnchor({
     // separable, and keeping the sample lets the next layout change finish the correction instead of
     // adopting the clamped position as the one the reader chose.
     selfScrollOffsetRef.current += appliedScrollTop
-    lastScrollPositionRef.current = getDistanceFromTop(scroller, bottomOrigin)
+    lastScrollPositionRef.current = getDistanceFromTop(scroller)
     if (Math.abs(appliedScrollTop - correction) < 1 && !layoutChanged) {
       // The reader is settled again where this sample was taken, so the next layout change has to
       // measure from here rather than from a baseline that already includes this correction.
@@ -172,7 +167,6 @@ export function useReaderViewportAnchor({
     }
   }, [
     activeScrollRefRef,
-    bottomOrigin,
     captureUserViewportAnchor,
     contentRef,
     lastMeasuredLayoutRef,

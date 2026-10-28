@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { useChatStreamHandlers } from '@/features/tasks/components/chat/useChatStreamHandlers'
+import type { UseChatStreamHandlersOptions } from '@/features/tasks/components/chat/useChatStreamHandlers'
 import type { TaskDetail } from '@/types/api'
 import type React from 'react'
 
@@ -116,7 +117,7 @@ jest.mock('@/hooks/useTraceAction', () => ({
   }),
 }))
 
-function renderQueueableHook() {
+function renderQueueableHook(overrides: Partial<UseChatStreamHandlersOptions> = {}) {
   return renderHook(() =>
     useChatStreamHandlers({
       selectedTeam: { id: 5, name: 'Team', agent_type: 'chat' } as never,
@@ -148,6 +149,7 @@ function renderQueueableHook() {
       selectedContexts: [],
       resetContexts: mockResetContexts,
       additionalSkills: [],
+      ...overrides,
     })
   )
 }
@@ -169,6 +171,40 @@ describe('useChatStreamHandlers queue integration', () => {
     } as unknown as TaskDetail
     mockSendChatGuidance.mockResolvedValue({ success: true })
   })
+
+  it.each(['normal', 'model-override'] as const)(
+    'preserves the draft and attachments for %s submission until an agent is selected',
+    async mode => {
+      isMachineStreamingMock = false
+      currentTaskIdMock = null
+      selectedTaskDetailMock = null
+      const overrides: Partial<UseChatStreamHandlersOptions> = { selectedTeam: null }
+      const view = renderQueueableHook(overrides)
+      const send = () =>
+        mode === 'normal'
+          ? view.result.current.handleSendMessage()
+          : view.result.current.handleSendMessageWithModel('next question', {
+              name: 'ready-model',
+              provider: 'openai',
+              modelId: 'ready-model',
+              type: 'user',
+            })
+
+      await act(send)
+      expect(mockContextSendMessage).not.toHaveBeenCalled()
+      expect(mockSetTaskInputMessage).not.toHaveBeenCalled()
+      expect(mockResetAttachment).not.toHaveBeenCalled()
+      expect(mockResetContexts).not.toHaveBeenCalled()
+
+      overrides.selectedTeam = { id: 5, name: 'Ready agent', agent_type: 'chat' } as never
+      view.rerender()
+      await act(send)
+      expect(mockContextSendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ team_id: 5 }),
+        expect.anything()
+      )
+    }
+  )
 
   it('repairs a stale task id in the URL after a message is accepted', async () => {
     isMachineStreamingMock = false
