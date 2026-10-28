@@ -5,8 +5,6 @@ import { fileURLToPath } from 'node:url'
 import { portableDesktopRelease } from './lib/portable-desktop-release.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { UPGRADE_SUITE_VERSION } from '../e2e/desktop/upgrade-suite.mjs'
-import { buildLauncher } from '../electron/scripts/build-launcher.mjs'
-import { resolveDesktopPackageTargets } from './lib/desktop-package-target.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = resolve(
@@ -26,10 +24,7 @@ await mkdir(output, { recursive: true })
 await rm(join(output, 'pair.json'), { force: true })
 const builds = []
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
-await buildLauncher(
-  join(root, 'electron', 'resources'),
-  resolveDesktopPackageTargets(process.env).cargoTarget
-)
+await run(process.execPath, ['scripts/build-ai-verify-electron.mjs', '--prepare-only'], root)
 // Use one prepared dependency set, then independently package each version from source.
 for (const [version, dataSchema] of [
   [sourceVersion, 1],
