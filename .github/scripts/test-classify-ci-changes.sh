@@ -1357,6 +1357,17 @@ full_desktop_expected="${full_desktop_expected/collaboration-issue-comment-attac
 full_desktop_expected="${full_desktop_expected/model-settings,tray-lifecycle/model-settings,tray-lifecycle,mcp-apps,project-space-tool-discovery}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"collaboration-shared-core\"/\"segments\":\"collaboration-shared-core,runtime-input-answer-persistence\"}"
 
+for path in \
+  executor/src/agents/codex.rs \
+  executor/src/agents/codex/tests.rs \
+  executor/src/agents/claude_code.rs \
+  executor/src/agents/runtime_capabilities.rs \
+  executor/src/task_runtime/mcp.rs \
+  executor/src/task_runtime/mcp/context.rs; do
+  assert_desktop_case "Executor path retains full coverage including deferred discovery: $path" \
+    "$full_desktop_expected" "$path"
+done
+
 assert_desktop_case "latest conversation history runs its desktop regression" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true

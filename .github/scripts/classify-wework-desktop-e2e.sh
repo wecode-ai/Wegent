@@ -459,15 +459,6 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
-    executor/src/agents/codex.rs | executor/src/agents/codex/tests.rs | \
-      executor/src/agents/claude_code.rs | \
-      executor/src/agents/runtime_capabilities.rs | executor/src/task_runtime/mcp.rs | \
-      executor/src/task_runtime/mcp/*)
-      select_target "core:project-space-tool-discovery"
-      ;;
-  esac
-
-  case "$path" in
     wework/e2e/desktop/scenarios/project-space-tool-discovery.scenario.mjs)
       select_target "core:project-space-tool-discovery"
       return
