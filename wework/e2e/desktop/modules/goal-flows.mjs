@@ -38,6 +38,7 @@ import {
   GOAL_RESTART_BLOCKER_PROMPT,
   GOAL_RESTART_INITIAL_TEXT,
   GOAL_RESTART_PROMPT,
+  MODEL_REQUEST_TIMEOUT_MS,
   SUPERVISOR_COMPLETION_TEXT,
   SUPERVISOR_CORRECTION,
   SUPERVISOR_CORRECTION_COMPLETION_TEXT,
@@ -659,8 +660,8 @@ async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLo
 
   control.releaseGoalBusyPlanResponse()
   await withTimeout(
-    control.awaitScenarioRequestCount('goal_busy_handoff', 2),
-    DEFAULT_STEP_TIMEOUT_MS,
+    control.awaitScenarioRequestCount('goal_busy_handoff', 2, MODEL_REQUEST_TIMEOUT_MS),
+    MODEL_REQUEST_TIMEOUT_MS,
     'The queued Goal did not start after the planning turn completed'
   )
   const handoffExecutorLog = (
