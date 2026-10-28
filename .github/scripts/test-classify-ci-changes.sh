@@ -431,6 +431,8 @@ assert_case "ci:all label forces all modules" "$all_true" --all
 platform_e2e_expected="${all_false/platform_e2e=false/platform_e2e=true}"
 assert_case "docker changes run platform E2E" "$platform_e2e_expected" \
   "docker/docker-compose.yml"
+assert_case "knowledge provider lifecycle changes run platform E2E" "$platform_e2e_expected" \
+  ".github/scripts/run-knowledge-provider-e2e.sh"
 
 executor_dependency_expected="${platform_e2e_expected/executor=false/executor=true}"
 assert_case "executor dependency setup changes run executor and platform E2E" \
