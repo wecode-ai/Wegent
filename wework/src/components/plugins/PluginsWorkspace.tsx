@@ -517,6 +517,7 @@ export function PluginsWorkspace({
     tick: number
     accountKey: string
     deviceId: string
+    isCurrent: () => boolean
   } | null>(null)
   const [reconciliationScope, setReconciliationScope] = useState({ accountKey: '', deviceId: '' })
   const [reconciliationRequest, setReconciliationRequest] = useState(0)
@@ -1836,6 +1837,7 @@ export function PluginsWorkspace({
       tick: marketplaceRefreshTick + 1,
       accountKey: marketplaceCacheKeyValue,
       deviceId: currentDeviceId,
+      isCurrent: capturePluginScope(),
     }
     setBrowsingCategoryKey(null)
     skipLocalCatalogReconcileRef.current = false
@@ -3795,6 +3797,20 @@ export function PluginsWorkspace({
     ]).then(([localResult, cloudResult, installedResult, diskResult, membershipResult]) => {
       if (!isCurrent) return
       catalogSettled = true
+      // Prefer a background-refreshed local snapshot over the settle promise value.
+      // Stale-peek SWR resolves localPromise immediately with the peek; a concurrent
+      // refresh:true may already have written a newer localStateForMerge.
+      const localState =
+        localStateForMerge ?? (localResult.status === 'fulfilled' ? localResult.value : null)
+      const membershipDeviceId =
+        membershipResult.status === 'fulfilled' ? membershipResult.value.deviceId || '' : ''
+      // Use the settled device identity before React publishes the membership update.
+      const resolvedDeviceId =
+        localState?.deviceId ||
+        membershipDeviceId ||
+        currentDeviceIdRef.current ||
+        deviceIdHint ||
+        ''
       const manualRequest = manualReconciliationTickRef.current
       if (manualRequest && manualRequest.tick <= marketplaceRefreshTick) {
         manualReconciliationTickRef.current = null
@@ -3803,7 +3819,10 @@ export function PluginsWorkspace({
         manualRequest &&
         manualRequest.tick <= marketplaceRefreshTick &&
         manualRequest.accountKey === marketplaceCacheKeyValue &&
-        manualRequest.deviceId === currentDeviceIdRef.current
+        manualRequest.isCurrent() &&
+        (!manualRequest.deviceId ||
+          (manualRequest.deviceId === currentDeviceIdRef.current &&
+            manualRequest.deviceId === resolvedDeviceId))
       ) {
         if (
           cloudResult.status === 'fulfilled' &&
@@ -3813,7 +3832,7 @@ export function PluginsWorkspace({
         ) {
           setReconciliationScope({
             accountKey: manualRequest.accountKey,
-            deviceId: manualRequest.deviceId,
+            deviceId: resolvedDeviceId,
           })
           setReconciliationRequest(previous => previous + 1)
         } else {
@@ -3846,16 +3865,9 @@ export function PluginsWorkspace({
         return
       }
 
-      // Prefer a background-refreshed local snapshot over the settle promise value.
-      // Stale-peek SWR resolves localPromise immediately with the peek; a concurrent
-      // refresh:true may already have written a newer localStateForMerge.
-      const localState =
-        localStateForMerge ?? (localResult.status === 'fulfilled' ? localResult.value : null)
       const cloudItems = cloudResult.status === 'fulfilled' ? cloudResult.value.items : []
       const cloudInstalled =
         installedResult.status === 'fulfilled' ? installedResult.value.items : []
-      const membershipDeviceId =
-        membershipResult.status === 'fulfilled' ? membershipResult.value.deviceId || '' : ''
 
       if (localState) {
         setCurrentDeviceId(localState.deviceId)
@@ -3868,12 +3880,6 @@ export function PluginsWorkspace({
         setCurrentDeviceId(membershipDeviceId)
       }
 
-      const resolvedDeviceId =
-        localState?.deviceId ||
-        membershipDeviceId ||
-        currentDeviceIdRef.current ||
-        deviceIdHint ||
-        ''
       const initialCloudDeviceId = deviceIdHint || peekedLocalState?.deviceId || ''
       const needsDeviceScopedCloudPass =
         cloudMarketplaceAvailable &&

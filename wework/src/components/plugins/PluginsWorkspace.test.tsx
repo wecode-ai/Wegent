@@ -3589,6 +3589,142 @@ describe('PluginsWorkspace', () => {
     }
   )
 
+  test.each([
+    ['reconciles', 'initially unknown'],
+    ['reconciles', 'initially unknown (same batch)'],
+    ['reconciles', 'already bound'],
+    ['cancels', 'changed since request'],
+  ] as const)(
+    '%s a manual refresh when device membership settles: %s device',
+    async (outcome, initialDeviceScope) => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      const deviceId =
+        initialDeviceScope === 'changed since request'
+          ? 'replacement-device'
+          : 'first-refresh-device'
+      const initialDeviceId =
+        initialDeviceScope === 'already bound' || initialDeviceScope === 'changed since request'
+          ? 'first-refresh-device'
+          : ''
+      const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
+      const marketplace = mockSystemSkillsFetch({ deviceId, deviceAutoSyncSucceeds: true })
+      mockCodexAppServerInvoke({ deviceId })
+      setPluginMarketplaceCache({
+        cacheKey,
+        marketplaceItems: [],
+        installedPlugins: [],
+        marketplaces: [],
+        selectedMarketplaceKey: '',
+        deviceId: initialDeviceId,
+        fetchedAt: Date.now(),
+      })
+
+      let finishMembership!: (value: { marketplaces: [] }) => void
+      const membership = new Promise<{ marketplaces: [] }>(resolve => {
+        finishMembership = resolve
+      })
+      const previousInvoke = vi.mocked(requestLocalExecutor).getMockImplementation()!
+      vi.mocked(requestLocalExecutor).mockImplementation((command, args) => {
+        if (command === 'executor.plugins.store.list') {
+          return Promise.resolve({
+            storePath: '/tmp/store',
+            plugins: [],
+            supportsPluginReconciliation: true,
+          })
+        }
+        if (
+          command === 'codex.app_server_request' &&
+          (args as { method?: string }).method === 'plugin/installed'
+        ) {
+          return membership
+        }
+        return previousInvoke(command, args)
+      })
+
+      let finishCloudRefresh!: () => void
+      const cloudRefresh = new Promise<void>(resolve => {
+        finishCloudRefresh = resolve
+      })
+      const previousFetch = vi.mocked(fetch).getMockImplementation()!
+      let holdNextRefresh = false
+      let manualCloudRefreshStarted = false
+      vi.mocked(fetch).mockImplementation((...args) => {
+        if (holdNextRefresh && String(args[0]).split('?')[0].endsWith('/api/plugins/marketplace')) {
+          holdNextRefresh = false
+          manualCloudRefreshStarted = true
+          return cloudRefresh.then(() => previousFetch(...args))
+        }
+        return previousFetch(...args)
+      })
+
+      try {
+        render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+        await screen.findByTestId('plugin-marketplace-install-101')
+        const refresh = screen.getByTestId('plugins-refresh-button')
+        await waitFor(() => expect(refresh).toBeEnabled())
+        expect(getPluginMarketplaceCache(cacheKey)?.deviceId).toBe(initialDeviceId)
+        expect(marketplace.getSyncDeviceCalls()).toBe(0)
+
+        holdNextRefresh = true
+        await userEvent.click(refresh)
+        await waitFor(() => expect(manualCloudRefreshStarted).toBe(true))
+        if (initialDeviceScope === 'initially unknown (same batch)') {
+          await act(async () => {
+            finishMembership({ marketplaces: [] })
+            finishCloudRefresh()
+            await Promise.all([membership, cloudRefresh])
+          })
+        } else {
+          await act(async () => {
+            finishMembership({ marketplaces: [] })
+            await membership
+          })
+          expect(marketplace.getSyncDeviceCalls()).toBe(0)
+          expect(refresh).toHaveAttribute('data-reconciliation-revision', '0')
+
+          await act(async () => {
+            finishCloudRefresh()
+            await cloudRefresh
+          })
+        }
+        if (outcome === 'cancels') {
+          await waitFor(() => expect(refresh).toBeEnabled())
+          await waitFor(() =>
+            expect(fetch).toHaveBeenCalledWith(
+              `/api/plugins/marketplace?device_id=${deviceId}`,
+              expect.objectContaining({ method: 'GET' })
+            )
+          )
+          expect(marketplace.getSyncDeviceCalls()).toBe(0)
+          expect(refresh).toHaveAttribute('data-reconciliation-revision', '0')
+          expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
+          return
+        }
+        await waitFor(() =>
+          expect({
+            deviceId: getPluginMarketplaceCache(cacheKey)?.deviceId,
+            syncDeviceCalls: marketplace.getSyncDeviceCalls(),
+            reconciliationRevision: refresh.getAttribute('data-reconciliation-revision'),
+          }).toEqual({
+            deviceId,
+            syncDeviceCalls: 1,
+            reconciliationRevision: '1',
+          })
+        )
+        expect(refresh).toBeEnabled()
+        expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent(
+          '插件安装状态已核对并同步'
+        )
+      } finally {
+        await act(async () => {
+          finishMembership({ marketplaces: [] })
+          finishCloudRefresh()
+          await Promise.all([membership, cloudRefresh])
+        })
+      }
+    }
+  )
+
   test('keeps marketplace install disabled until reconciliation settles', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     mockSystemSkillsFetch()
@@ -3708,40 +3844,96 @@ describe('PluginsWorkspace', () => {
     }
   })
 
-  test('does not transfer a pending manual reconciliation to a different account', async () => {
-    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
-    mockSystemSkillsFetch()
-    mockCodexAppServerInvoke({ deviceId: 'current-device' })
-    const reconcile = vi
-      .spyOn(refreshReconciliation, 'reconcilePluginRefresh')
-      .mockResolvedValue(undefined)
-    try {
-      const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
-      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
-      const originalFetch = vi.mocked(fetch).getMockImplementation()!
-      let finish: (() => void) | undefined
-      let holdNext = true
-      vi.mocked(fetch).mockImplementation(async (...args) => {
-        if (holdNext && String(args[0]).includes('/plugins/marketplace')) {
-          holdNext = false
-          await new Promise<void>(resolve => {
-            finish = resolve
-          })
-        }
-        return originalFetch(...args)
+  test.each(['same account', 'different account', 'returned account'] as const)(
+    'keeps a pending manual reconciliation within its account scope: %s',
+    async accountScope => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch()
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      writePluginInventory(pluginMarketplaceCacheKey('/api', 'cloud-token'), 'current-device', {
+        installedPlugins: [],
       })
-      await userEvent.click(screen.getByTestId('plugins-refresh-button'))
-      await waitFor(() => expect(finish).toBeDefined())
-      view.rerender(
-        <PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="different-account-token" />
-      )
-      await act(async () => finish!())
-      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
-      expect(reconcile).not.toHaveBeenCalled()
-    } finally {
-      reconcile.mockRestore()
+      const reconcile = vi
+        .spyOn(refreshReconciliation, 'reconcilePluginRefresh')
+        .mockResolvedValue(undefined)
+      let finishRefresh!: () => void
+      const refreshGate = new Promise<void>(resolve => {
+        finishRefresh = resolve
+      })
+      let finishAccountLoad!: () => void
+      const accountGate = new Promise<void>(resolve => {
+        finishAccountLoad = resolve
+      })
+      try {
+        const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+        await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+        await waitFor(() =>
+          expect(getPluginMarketplaceCache('/api|cloud-token')?.deviceId).toBe('current-device')
+        )
+        const originalFetch = vi.mocked(fetch).getMockImplementation()!
+        let holdNext = true
+        let refreshStarted = false
+        let holdAccountLoad = false
+        let accountLoadStarted = false
+        vi.mocked(fetch).mockImplementation(async (...args) => {
+          if (String(args[0]).split('?')[0].endsWith('/api/plugins/marketplace')) {
+            if (holdNext) {
+              holdNext = false
+              refreshStarted = true
+              await refreshGate
+            } else if (holdAccountLoad) {
+              accountLoadStarted = true
+              await accountGate
+            }
+          }
+          return originalFetch(...args)
+        })
+        await userEvent.click(screen.getByTestId('plugins-refresh-button'))
+        await waitFor(() => expect(refreshStarted).toBe(true))
+        if (accountScope !== 'same account') {
+          holdAccountLoad = true
+          view.rerender(
+            <PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="different-account-token" />
+          )
+          await waitFor(() => expect(accountLoadStarted).toBe(true))
+          if (accountScope === 'returned account') {
+            holdAccountLoad = false
+            view.rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+          }
+        }
+        await act(async () => {
+          finishRefresh()
+          finishAccountLoad()
+          await Promise.all([refreshGate, accountGate])
+        })
+        await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).not.toBeDisabled())
+        if (accountScope === 'same account') {
+          await waitFor(() => expect(reconcile).toHaveBeenCalledOnce())
+          expect(screen.getByTestId('plugins-refresh-button')).toHaveAttribute(
+            'data-reconciliation-revision',
+            '1'
+          )
+          expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent(
+            '插件安装状态已核对并同步'
+          )
+        } else {
+          expect(reconcile).not.toHaveBeenCalled()
+          expect(screen.getByTestId('plugins-refresh-button')).toHaveAttribute(
+            'data-reconciliation-revision',
+            '0'
+          )
+          expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
+        }
+      } finally {
+        await act(async () => {
+          finishRefresh()
+          finishAccountLoad()
+          await Promise.all([refreshGate, accountGate])
+        })
+        reconcile.mockRestore()
+      }
     }
-  })
+  )
 
   test('automatically updates cloud plugins in bounded serial batches', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
