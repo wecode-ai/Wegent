@@ -733,3 +733,50 @@ async def test_cleanup_streaming_state_deletes_blocks_index():
 
     assert "chat:streaming:blocks_index:907" not in redis_client.hashes
     assert "chat:streaming:blocks:907" not in redis_client.lists
+
+
+@pytest.mark.asyncio
+async def test_block_whose_position_write_failed_is_not_duplicated():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_tool_block(subtask_id=908, tool_use_id="call_x", tool_name="X")
+
+    async def lose_the_position(*args):
+        raise ConnectionError("Redis went away")
+
+    # The connection drops right after call_a is pushed.
+    manager._index_block = lose_the_position
+    await manager.add_tool_block(subtask_id=908, tool_use_id="call_a", tool_name="A")
+    del manager._index_block
+    # Move call_a out of the tail that lookups scan.
+    for i in range(session_module.BLOCKS_INDEX_TAIL_SCAN + 2):
+        await manager.add_tool_block(
+            subtask_id=908, tool_use_id=f"call_{i}", tool_name="B"
+        )
+    redis_client.full_lrange_calls.clear()
+
+    await manager.update_tool_block_status(
+        subtask_id=908, tool_use_id="call_a", status="done"
+    )
+
+    assert redis_client.full_lrange_calls == ["chat:streaming:blocks:908"]
+    blocks = await manager.get_blocks(908)
+    assert len(blocks) == 12
+    assert [block["status"] for block in blocks[:2]] == ["pending", "done"]
+    assert redis_client.hashes["chat:streaming:blocks_index:908"]["call_a"] == b"1"
+
+
+@pytest.mark.asyncio
+async def test_pending_blocks_index_entry_without_a_block_is_dropped():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_tool_block(subtask_id=909, tool_use_id="call_a", tool_name="A")
+    # An append marked "ghost" pending, then never reached the list.
+    redis_client.hashes["chat:streaming:blocks_index:909"]["ghost"] = b"pending"
+
+    assert await manager.get_block(909, "ghost") is None
+    assert redis_client.hashes["chat:streaming:blocks_index:909"] == {"call_a": b"0"}
