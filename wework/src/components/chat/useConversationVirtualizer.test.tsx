@@ -47,9 +47,92 @@ function fixture(enabled = true) {
 afterEach(() => {
   document.body.replaceChildren()
   resetConversationDiagnosticsForTest()
+  vi.unstubAllGlobals()
 })
 
 describe('normal conversation virtualizer integration', () => {
+  test.each([6, 20])(
+    'initializes %i transcript rows after the hidden viewport becomes visible',
+    async count => {
+      const observers: Array<{ callback: ResizeObserverCallback; targets: Set<Element> }> = []
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          record: (typeof observers)[number]
+          constructor(callback: ResizeObserverCallback) {
+            this.record = { callback, targets: new Set() }
+            observers.push(this.record)
+          }
+          observe(target: Element) {
+            this.record.targets.add(target)
+          }
+          unobserve(target: Element) {
+            this.record.targets.delete(target)
+          }
+          disconnect() {
+            this.record.targets.clear()
+          }
+        }
+      )
+      let height = 0
+      const contentHeight = count * 70 + (count - 1) * 16 + 40
+      const viewport = document.createElement('div')
+      const list = document.createElement('div')
+      viewport.append(list)
+      document.body.append(viewport)
+      Object.defineProperties(viewport, {
+        clientHeight: { get: () => height },
+        clientWidth: { value: 800 },
+        scrollHeight: { get: () => (height === 0 ? 0 : contentHeight) },
+      })
+      viewport.getBoundingClientRect = () => new DOMRect(0, 0, 800, height)
+      list.getBoundingClientRect = () => new DOMRect(0, -viewport.scrollTop, 800, contentHeight)
+      viewport.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+        // Browsers do not emit a scroll event when a clamped write leaves zero unchanged.
+        const previous = viewport.scrollTop
+        viewport.scrollTop = Math.max(0, Math.min(Number(top), viewport.scrollHeight - height))
+        if (viewport.scrollTop !== previous)
+          queueMicrotask(() => viewport.dispatchEvent(new Event('scroll')))
+      })
+      const hook = renderHook(() =>
+        useConversationVirtualizer({
+          count,
+          enabled: true,
+          estimateSize: () => 70,
+          gap: 16,
+          paddingStart: 32,
+          paddingEnd: 8,
+          overscan: 2,
+          initialDistanceFromBottomPx: 0,
+          listRef: { current: list },
+          scrollElementRef: { current: viewport },
+        })
+      )
+      await act(async () => {
+        height = 638
+        for (const observer of observers) {
+          if (!observer.targets.has(viewport)) continue
+          observer.callback(
+            [
+              {
+                target: viewport,
+                borderBoxSize: [{ inlineSize: 800, blockSize: height }],
+                contentRect: viewport.getBoundingClientRect(),
+              } as unknown as ResizeObserverEntry,
+            ],
+            {} as ResizeObserver
+          )
+        }
+      })
+      expect(viewport.scrollTop).toBe(Math.max(0, contentHeight - height))
+      expect(hook.result.current.virtualizer.getTotalSize()).toBe(contentHeight)
+      const indexes = hook.result.current.virtualizer.getVirtualItems().map(row => row.index)
+      if (contentHeight <= height) expect(indexes).toEqual([0, 1, 2, 3, 4, 5])
+      else expect(indexes.at(-1)).toBe(count - 1)
+      hook.unmount()
+    }
+  )
+
   test('counts the prefix and footer once and uses public DOM coordinates', () => {
     const current = fixture()
     const engine = current.result.current.virtualizer
