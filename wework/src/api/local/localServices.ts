@@ -4547,7 +4547,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       async resolveLaunch(
         harnessId: LocalHarnessId,
         option: LocalHarnessModelOption | null,
-        scope?: string
+        scope?: string,
+        includeContext = true
       ) {
         if (!option) return null
         await ensureStatus()
@@ -4559,7 +4560,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
           }
         )
         const launch = harnessLaunchThroughMessagesProxy(harnessId, option, registration)
-        if (harnessId !== 'opencode') return launch
+        if (harnessId !== 'opencode' || !includeContext) return launch
         try {
           const context = await request<HarnessContextRegistration>(
             'runtime.harness_context.register',

@@ -8,7 +8,6 @@
 //! ([`crate::task_store::TableTemplates`]); the `kinds`, `background_executions`
 //! and `wiki_generations` tables are not sharded, so those statements carry
 //! literal table names.
-use crate::admin_subscription_monitor_errors::EXECUTION_COLUMNS;
 use crate::task_store_listing::subtask_context_columns;
 use crate::task_store_statements::{
     assistant_subtasks_by_task_statement, subtask_by_id_statement,
@@ -16,8 +15,8 @@ use crate::task_store_statements::{
 };
 
 pub(crate) use crate::task_store_statements::{
-    active_task_statement, owner_matches_task_id_statement, regular_active_task_statement,
-    task_by_id_statement, update_task_json_statement,
+    active_task_projection_statement, active_task_statement, owner_matches_task_id_statement,
+    regular_active_task_statement, update_task_json_statement,
 };
 
 /// `StatusUpdatingEmitter._resolve_owner_user_id`
@@ -84,12 +83,17 @@ pub(crate) fn update_subtask_running(tables: Tables) -> String {
 }
 
 /// `subtask_store.update_fields` flush for a terminal subtask update.
+///
+/// `with_result` follows the source's `if result is not None` guard
+/// (`db.py:136`): a terminal error that carries no collected result writes no
+/// `result` column and leaves the stored value untouched.
 pub(crate) fn update_subtask_terminal(
     tables: Tables,
+    with_result: bool,
     with_error: bool,
     with_executor: bool,
 ) -> String {
-    update_subtask_terminal_statement(tables.subtasks, with_error, with_executor)
+    update_subtask_terminal_statement(tables.subtasks, with_result, with_error, with_executor)
 }
 
 /// `_get_team_from_task_ref` / `CollaborationStrategyFactory`: the Task CRD's
@@ -152,25 +156,6 @@ pub(crate) fn subtasks_not_executor_deleted_by_task(tables: Tables) -> String {
 pub(crate) fn update_subtask_executor_deleted(tables: Tables) -> String {
     let table = tables.subtasks;
     format!("UPDATE {table} SET executor_deleted_at=?, updated_at=? WHERE {table}.id = ?")
-}
-
-/// `_find_execution_by_task_id`'s active-execution read.
-pub(crate) fn background_execution_running() -> String {
-    format!(
-        "SELECT {EXECUTION_COLUMNS} \nFROM background_executions \n\
-         WHERE background_executions.task_id = ? \
-         AND background_executions.status IN ('PENDING', 'RUNNING') \n\
-         ORDER BY background_executions.id DESC \n LIMIT 1"
-    )
-}
-
-/// `_find_execution_by_task_id`'s status-free fallback read.
-pub(crate) fn background_execution_latest() -> String {
-    format!(
-        "SELECT {EXECUTION_COLUMNS} \nFROM background_executions \n\
-         WHERE background_executions.task_id = ? \n\
-         ORDER BY background_executions.id DESC \n LIMIT 1"
-    )
 }
 
 /// The `wiki_generations` column projection `db.query(WikiGeneration)` renders,

@@ -183,7 +183,8 @@ jobs:
     name: Build Backend Rust E2E Runtime
     needs: changes
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
-    runs-on: ubuntu-latest
+    # Match the Noble containers consuming these dynamically linked binaries.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -961,7 +962,7 @@ jobs:
           uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
           uv run --no-sync python tests/e2e/dingtalk_notification_card_context.py
 
-      - name: Run subscription callback Python gateway E2E
+      - name: Run subscription callback Rust gateway E2E
         if: matrix.shardIndex == 1
         working-directory: ./backend
         env:
@@ -974,7 +975,7 @@ jobs:
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
           E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/subscription-callback-gateway
           E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          E2E_PYTHON_LOG: ${{ github.workspace }}/backend/backend.log
+          E2E_RUST_LOG: ${{ github.workspace }}/logs/backend/rust/info.log
           PYTHONPATH: ..:.
         run: |
           set -o pipefail

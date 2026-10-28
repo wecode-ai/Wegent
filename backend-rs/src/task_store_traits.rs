@@ -47,6 +47,8 @@ pub trait TaskStore:
     crate::task_store_create::TaskStoreCreate
     + crate::task_store_project_count::TaskStoreProjectCount
     + crate::task_store_public_share::TaskStorePublicShare
+    + crate::task_store_maintenance::TaskStoreMaintenance
+    + crate::task_store_background::TaskStoreBackground
 {
     /// `task_store.list_by_ids` for the running task ids reported by one
     /// device: `user_id` owns the tasks, `task_ids` are the reported ids. An
@@ -197,6 +199,16 @@ pub trait TaskStore:
         owner_user_id: i32,
     ) -> MysqlResult<Option<MysqlRow>>;
 
+    /// [`Self::get_active_task_owned`] on the caller's request transaction.
+    async fn get_active_task_owned_on(
+        &self,
+        _sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        owner_user_id: i32,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        self.get_active_task_owned(task_id, owner_user_id).await
+    }
+
     /// `task_store.get_task_by_states` with `states =
     /// TaskResource.is_active_query()` (`[STATE_ACTIVE,
     /// STATE_SUBSCRIPTION]`) and no owner filter (the internal
@@ -254,6 +266,16 @@ pub trait TaskStore:
     /// `db.refresh(subtask)`: re-read one subtask row by primary key.
     async fn refresh_subtask(&self, task_id: i64, subtask_id: i64)
     -> MysqlResult<Option<MysqlRow>>;
+
+    /// [`Self::refresh_subtask`] on the caller's request transaction.
+    async fn refresh_subtask_on(
+        &self,
+        _sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        subtask_id: i64,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        self.refresh_subtask(task_id, subtask_id).await
+    }
 
     /// `subtask_store.list_by_user` (limit 1): the newest subtask of one user.
     async fn get_latest_subtask_ref_for_user(&self, user_id: i32) -> MysqlResult<Option<MysqlRow>>;
@@ -322,6 +344,16 @@ pub trait TaskStore:
     async fn refresh_task(&self, task_id: i64, owner_user_id: i64)
     -> MysqlResult<Option<MysqlRow>>;
 
+    /// [`Self::refresh_task`] on the caller's request transaction.
+    async fn refresh_task_on(
+        &self,
+        _sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        owner_user_id: i64,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        self.refresh_task(task_id, owner_user_id).await
+    }
+
     /// `task_store.clear_project_for_owned_tasks`: detach one project's tasks
     /// owned by `owner_user_id` by setting `project_id = 0`, returning the
     /// number of rows the store updated. A single-table deployment runs one
@@ -380,6 +412,35 @@ pub trait TaskStore:
         owner_user_id: i64,
     ) -> MysqlResult<SubtaskListing>;
 
+    /// [`Self::list_subtasks_by_task_ordered`] on the caller's request
+    /// transaction.
+    async fn list_subtasks_by_task_ordered_on(
+        &self,
+        _sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        owner_user_id: i64,
+    ) -> MysqlResult<SubtaskListing> {
+        self.list_subtasks_by_task_ordered(task_id, owner_user_id)
+            .await
+    }
+
+    /// `TaskForkHistoryResolver.resolve_for_task` -> `resolve_lineage` ->
+    /// `_lineage_task`'s depth-0 read for the current task: the owner-guarded
+    /// primary-key projection the source issues before it breaks on
+    /// `fork is None`. Distinct from the qs23 owner guard even though the SQL
+    /// shape is the same.
+    ///
+    /// The default issues no statement so stores without a request transaction
+    /// (test doubles) are unchanged; the real stores override it.
+    async fn lineage_task_on(
+        &self,
+        _sql: &mut dyn crate::request_sql::RequestSql,
+        _task_id: i64,
+        _owner_user_id: i64,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        Ok(None)
+    }
+
     /// `task_store.get_active_non_deleted_task`: the active task of one id,
     /// before the caller's `_is_json_deleted` filter.
     async fn get_active_task_by_id(
@@ -421,11 +482,13 @@ pub trait TaskStore:
     ) -> MysqlResult<Option<MysqlRow>>;
 
     /// `subtask_store.list_by_task_unfiltered`: every subtask of `task_id`,
-    /// with the owner filter the resolved table requires.
+    /// with the owner filter the resolved table requires. A `None` owner is
+    /// the source's `owner_user_id=None` short-circuit: no owner guard and no
+    /// `user_id` predicate.
     async fn list_subtasks_by_task_unfiltered(
         &self,
         task_id: i64,
-        owner_user_id: i64,
+        owner_user_id: Option<i64>,
     ) -> MysqlResult<Vec<MysqlRow>>;
 
     /// `_queue_bulk_status_metrics`'s read plus `mark_task_subtasks_deleted`:
@@ -460,6 +523,19 @@ pub trait TaskStore:
         json: &str,
         updated_at: &str,
     ) -> MysqlResult<u64>;
+
+    /// [`Self::update_task_json`] on the caller's request transaction.
+    async fn update_task_json_on(
+        &self,
+        _sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        owner_user_id: i64,
+        json: &str,
+        updated_at: &str,
+    ) -> MysqlResult<u64> {
+        self.update_task_json(task_id, owner_user_id, json, updated_at)
+            .await
+    }
 
     /// `subtask_store.has_running_assistant`: whether `task_id` still has a
     /// `PENDING` or `RUNNING` assistant subtask, which blocks message editing.

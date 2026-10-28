@@ -385,3 +385,22 @@ pub async fn ordered_subtasks_by_task<M: brz_mysql::Mysql>(
 #[cfg(test)]
 #[path = "task_store_listing_tests.rs"]
 mod tests;
+
+/// [`ordered_subtasks_by_task`] on the caller's request transaction.
+pub async fn ordered_subtasks_by_task_on(
+    sql: &mut dyn crate::request_sql::RequestSql,
+    table: &str,
+    task_id: i64,
+) -> brz_mysql::MysqlResult<SubtaskListing> {
+    let rows = sql
+        .fetch_all_rows(
+            crate::request_sql::RouteKey::Task(task_id as u64),
+            &crate::task_store_statements::subtasks_by_message_ordered_statement(table),
+            vec![crate::task_store_statements::StatementArg::Int(task_id)],
+        )
+        .await?;
+    Ok(SubtaskListing {
+        rows,
+        contexts: None,
+    })
+}

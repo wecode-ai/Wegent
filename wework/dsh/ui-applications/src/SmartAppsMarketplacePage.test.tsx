@@ -81,6 +81,7 @@ vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
   harnessAppRoute: (id: string) => `/app/harness-${id}`,
   openHarnessAppTab: vi.fn(),
   registerHarnessAppTab: vi.fn(),
+  takeHarnessAppAdditionalProxyTokens: vi.fn().mockResolvedValue([]),
   takeHarnessAppContextToken: vi.fn().mockResolvedValue(null),
   takeHarnessAppProxyToken: vi.fn().mockResolvedValue(null),
   takeHarnessAppDecisionToken: vi.fn().mockResolvedValue(null),

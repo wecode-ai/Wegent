@@ -13,6 +13,7 @@ import type {
   ChatChunkPayload,
   ChatDonePayload,
   ChatErrorPayload,
+  ChatRecoveredPayload,
   ChatStartPayload,
   ChatBlockCreatedPayload,
   ChatBlockUpdatedPayload,
@@ -106,6 +107,7 @@ export function isRuntimeTaskStreamPayload(
     | ChatChunkPayload
     | ChatDonePayload
     | ChatErrorPayload
+    | ChatRecoveredPayload
     | ChatBlockCreatedPayload
     | ChatBlockUpdatedPayload
     | RuntimeGoalEventPayload
@@ -125,6 +127,7 @@ export function runtimeStreamTaskSubtaskIdentity(
     | ChatChunkPayload
     | ChatDonePayload
     | ChatErrorPayload
+    | ChatRecoveredPayload
     | ChatBlockCreatedPayload
     | ChatBlockUpdatedPayload
     | RuntimeSubagentActivityPayload,
@@ -157,7 +160,7 @@ export function warnAndDropRuntimeStreamEvent(
 }
 
 export function warnAndDropMismatchedRuntimeTerminalEvent(
-  event: "chat:done" | "chat:error",
+  event: "chat:done" | "chat:error" | "chat:recovered",
   address: RuntimeTaskAddress,
   payload: { taskId?: string; deviceId?: string; subtaskId?: string },
 ): void {
@@ -171,7 +174,7 @@ export function warnAndDropMismatchedRuntimeTerminalEvent(
 }
 
 export function logAcceptedRuntimeTerminalEvent(
-  event: "chat:done" | "chat:error",
+  event: "chat:done" | "chat:error" | "chat:recovered",
   address: RuntimeTaskAddress,
   payload: { taskId?: string; deviceId?: string; subtaskId?: string },
   details: Record<string, unknown>,
