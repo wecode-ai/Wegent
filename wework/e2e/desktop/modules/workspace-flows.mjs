@@ -1581,6 +1581,7 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const activityComposer = `${issuePanel} [data-testid="cloud-task-activity-composer"]`
+  await control.command('scrollIntoView', activityComposer)
   await control.command('waitFor', activityComposer, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { gunzipSync } from 'node:zlib'
 import { requestExecutor } from './executor-rpc.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
 
 const RESTORED = 'ISSUE_LARGE_TRANSCRIPT_RESTORED'
@@ -114,8 +116,15 @@ async function verifyCachedInitialRecovery({
   threadId,
 }) {
   const modal = scope('[data-testid="ai-chat-modal"]')
-  const start = proxy.requests.length
   await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
+  // Exit animations retain the mounted conversation; reopening early reuses it.
+  await waitForValue(
+    () => control.command('getElementCount', modal),
+    count => Number(count) === 0,
+    'The cached Issue conversation did not unmount before testing its initial load',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const start = proxy.requests.length
   proxy.rule = entry =>
     entry.method === 'POST' && entry.path === '/api/runtime-work/transcript'
       ? 'drop-response'
@@ -124,6 +133,12 @@ async function verifyCachedInitialRecovery({
     await control.command(
       'click',
       scope(`[data-testid="cloud-todo-open-task-conversation-${binding.id}"]`)
+    )
+    await waitForValue(
+      () => proxy.requests.slice(start),
+      requests => requests.some(entry => entry.dropped && entry.status === 200),
+      'The reopened Issue conversation did not reach the real transcript response fault',
+      DEFAULT_STEP_TIMEOUT_MS
     )
     await control.command('waitFor', `${modal} [data-testid="runtime-transcript-error"]`)
     assert.match(await control.command('getText', modal), new RegExp(RESTORED))

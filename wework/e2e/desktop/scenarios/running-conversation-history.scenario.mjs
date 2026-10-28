@@ -648,6 +648,11 @@ export function createDesktopScenario({
         await waitForTaskAddress(control, switchTaskId, uiTimeoutMs),
         uiTimeoutMs
       )
+      // Select the measured conversation so restart does not load another task first.
+      await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
       await restartDesktopApp(async () => {
         const indexPath = join(executorHome, 'runtime-work', 'index.json')
         const index = JSON.parse(await readFile(indexPath, 'utf8'))

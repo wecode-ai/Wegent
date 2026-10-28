@@ -73,8 +73,16 @@ export function createSubscriptionConfigRegression() {
     },
     attachServer(server) {
       server.on('upgrade', (request, socket) => {
-        if (!request.url?.startsWith('/backend-api/codex/responses')) return
+        if (request.url?.split('?', 1)[0] !== '/backend-api/codex/responses') return
+        let closingForFallback = false
+        socket.on('error', error => {
+          const peerDisconnected = ['ECONNRESET', 'EPIPE'].includes(error.code)
+          socket.destroy()
+          if (!(closingForFallback && peerDisconnected)) server.emit('error', error)
+        })
         // A model service may require HTTP; Codex handles 426 through its native fallback.
+        // The client can cancel the upgrade while this explicit fallback is closing.
+        closingForFallback = true
         socket.end(
           'HTTP/1.1 426 Upgrade Required\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'
         )
