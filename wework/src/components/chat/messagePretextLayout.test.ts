@@ -5,6 +5,10 @@ import {
   clearMessagePretextLayoutCache,
   getMessagePretextIntrinsicHeight,
 } from './messagePretextLayout'
+import {
+  getMessageFontMetricsRevision,
+  readMessageLayoutTypography,
+} from '../../../../packages/collaboration/src/conversation/messagePretextLayout'
 import { layout, prepare } from '@chenglou/pretext'
 
 vi.mock('@chenglou/pretext', () => ({
@@ -19,6 +23,44 @@ const mockedPrepare = vi.mocked(prepare)
 const mockedLayout = vi.mocked(layout)
 
 describe('messagePretextLayout', () => {
+  test('reads current fonts and the rendered paragraph line height', () => {
+    const element = document.createElement('div')
+    element.style.setProperty('--text-chat', '16px')
+    element.style.setProperty('--font-ui', 'Example Font')
+    element.style.setProperty('--font-weight-ui', '600')
+    element.innerHTML =
+      '<article data-testid="message-assistant"><p data-scroll-anchor style="line-height: 30px">Text</p></article>'
+    document.body.append(element)
+    expect(readMessageLayoutTypography(element)).toMatchObject({
+      font: '600 16px Example Font',
+      lineHeight: 30,
+    })
+    element.remove()
+  })
+
+  test('invalidates measurements when fonts load while every conversation is unmounted', () => {
+    const previous = Object.getOwnPropertyDescriptor(document, 'fonts')
+    const fonts = new EventTarget()
+    Object.defineProperty(document, 'fonts', { configurable: true, value: fonts })
+    try {
+      const revision = getMessageFontMetricsRevision()
+      const message: WorkbenchMessage = {
+        id: 'font-load',
+        role: 'assistant',
+        content: 'Font metrics',
+        status: 'done',
+        createdAt: '',
+      }
+      getMessagePretextIntrinsicHeight(message, 500)
+      fonts.dispatchEvent(new Event('loadingdone'))
+      expect(getMessageFontMetricsRevision()).toBe(revision + 1)
+      getMessagePretextIntrinsicHeight(message, 500)
+      expect(mockedPrepare).toHaveBeenCalledTimes(2)
+    } finally {
+      if (previous) Object.defineProperty(document, 'fonts', previous)
+      else Reflect.deleteProperty(document, 'fonts')
+    }
+  })
   beforeEach(() => {
     clearMessagePretextLayoutCache()
     mockedPrepare.mockImplementation((text: string, font: string, options: unknown) => ({
@@ -46,14 +88,14 @@ describe('messagePretextLayout', () => {
 
     expect(mockedPrepare).toHaveBeenCalledWith(
       message.content,
-      expect.stringContaining('13px Inter'),
+      expect.stringContaining('14px system-ui'),
       { whiteSpace: 'pre-wrap' }
     )
-    expect(mockedLayout).toHaveBeenCalledWith(expect.anything(), 512, 24)
+    expect(mockedLayout).toHaveBeenCalledWith(expect.anything(), 500, 24)
     expect(height).toBe(104)
   })
 
-  test('reuses cached measurements inside the same width bucket', () => {
+  test('caches exact widths while reusing width-independent preparation', () => {
     const message: WorkbenchMessage = {
       id: 'assistant-cached',
       role: 'assistant',
@@ -66,7 +108,80 @@ describe('messagePretextLayout', () => {
     expect(getMessagePretextIntrinsicHeight(message, 511)).toBe(104)
 
     expect(mockedPrepare).toHaveBeenCalledTimes(1)
-    expect(mockedLayout).toHaveBeenCalledTimes(1)
+    expect(mockedLayout).toHaveBeenCalledTimes(2)
+  })
+
+  test.each(['assistant', 'user'] as const)(
+    'reuses prepared %s text while recomputing height at a new width',
+    role => {
+      const message: WorkbenchMessage = {
+        id: `${role}-resize`,
+        role,
+        content: 'A paragraph that wraps differently when the conversation width changes',
+        status: 'done',
+        createdAt: '2026-07-02T10:00:00Z',
+      }
+      mockedLayout.mockImplementation((_prepared, width, lineHeight) => {
+        const lineCount = width < 520 ? 4 : 2
+        return { height: lineCount * lineHeight, lineCount }
+      })
+      const lineHeight = role === 'user' ? 20 : 24
+
+      expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(lineHeight * 4 + 32)
+      expect(getMessagePretextIntrinsicHeight(message, 700)).toBe(lineHeight * 2 + 32)
+
+      expect(mockedPrepare).toHaveBeenCalledTimes(1)
+      const prepared = mockedPrepare.mock.results[0]?.value
+      expect(mockedLayout).toHaveBeenNthCalledWith(
+        1,
+        prepared,
+        role === 'user' ? 368 : 500,
+        lineHeight
+      )
+      expect(mockedLayout).toHaveBeenNthCalledWith(
+        2,
+        prepared,
+        role === 'user' ? 528 : 700,
+        lineHeight
+      )
+    }
+  )
+
+  test('prepares updated message text instead of reusing the previous content', () => {
+    const message: WorkbenchMessage = {
+      id: 'assistant-updated',
+      role: 'assistant',
+      content: 'Original text',
+      status: 'done',
+      createdAt: '2026-07-02T10:00:00Z',
+    }
+
+    getMessagePretextIntrinsicHeight(message, 500)
+    getMessagePretextIntrinsicHeight({ ...message, content: 'Updated text' }, 700)
+
+    expect(mockedPrepare).toHaveBeenCalledTimes(2)
+    expect(mockedPrepare.mock.calls.map(([text]) => text)).toEqual([
+      'Original text',
+      'Updated text',
+    ])
+    expect(mockedLayout.mock.calls[1]?.[0]).toBe(mockedPrepare.mock.results[1]?.value)
+  })
+
+  test('invalidates prepared text together with cached heights', () => {
+    const message: WorkbenchMessage = {
+      id: 'assistant-reset',
+      role: 'assistant',
+      content: 'Prepare again after cache reset',
+      status: 'done',
+      createdAt: '2026-07-02T10:00:00Z',
+    }
+
+    getMessagePretextIntrinsicHeight(message, 500)
+    clearMessagePretextLayoutCache()
+    getMessagePretextIntrinsicHeight(message, 500)
+
+    expect(mockedPrepare).toHaveBeenCalledTimes(2)
+    expect(mockedLayout).toHaveBeenCalledTimes(2)
   })
 
   test('caps collapsed user text while keeping room for the collapse button', () => {
@@ -81,7 +196,7 @@ describe('messagePretextLayout', () => {
 
     const height = getMessagePretextIntrinsicHeight(message, 500)
 
-    expect(mockedLayout).toHaveBeenCalledWith(expect.anything(), 377, 20)
+    expect(mockedLayout).toHaveBeenCalledWith(expect.anything(), 368, 20)
     expect(height).toBe(244)
   })
 
@@ -167,11 +282,15 @@ describe('messagePretextLayout', () => {
 
     // Two prose segments at the mocked three lines each, plus ten unwrapped code lines and the
     // code block's own chrome — plus the assistant row's hover action and vertical buffer.
-    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(2 * 72 + 10 * 22 + 84 + 32)
+    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(2 * 72 + 10 * 21.6 + 84 + 32)
     expect(mockedPrepare).toHaveBeenCalledTimes(2)
     for (const [text] of mockedPrepare.mock.calls) {
       expect(text).not.toContain('const line0')
     }
+
+    expect(getMessagePretextIntrinsicHeight(message, 700)).toBe(2 * 72 + 10 * 21.6 + 84 + 32)
+    expect(mockedPrepare).toHaveBeenCalledTimes(2)
+    expect(mockedLayout).toHaveBeenCalledTimes(4)
   })
 
   test('treats an unclosed fence as code until the end of the message', () => {
@@ -183,7 +302,7 @@ describe('messagePretextLayout', () => {
       createdAt: '2026-07-02T10:00:00Z',
     }
 
-    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(72 + 2 * 22 + 84 + 32)
+    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(72 + 2 * 21.6 + 84 + 32)
   })
 
   test('closes a fence only with its own marker', () => {
@@ -195,7 +314,7 @@ describe('messagePretextLayout', () => {
       createdAt: '2026-07-02T10:00:00Z',
     }
 
-    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(72 + 2 * 22 + 84 + 32)
+    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(72 + 2 * 21.6 + 84 + 32)
     expect(mockedPrepare).toHaveBeenCalledTimes(1)
     expect(mockedPrepare.mock.calls[0]?.[0]).toContain('After')
   })

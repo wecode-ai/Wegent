@@ -108,7 +108,7 @@ The desktop workbench caches at most 10 ordinary panes and evicts them in least-
 
 Electron conversations use one `@tanstack/react-virtual` message-row virtualizer for every conversation size instead of switching implementations at a message-count threshold. While the user remains at the bottom, the virtualizer uses `anchorTo: 'end'` to follow the list end. After the user scrolls upward, it must switch to `anchorTo: 'start'` so streaming row growth cannot make TanStack Virtual keep rewriting the scroll position. Scroll snapshots are consistently represented as the distance from the viewport bottom to the list bottom. Its shared `ResizeObserver` measures mounted message rows. An active streaming message must remain in the virtual range even when it is outside the visible range and overscan, so its growth continues to reach TanStack Virtual's measurement pipeline; otherwise, replacing its estimated height with its real height when it remounts can corrupt the historical reading position. While the user remains at the bottom, height changes preserve the end distance. After the user scrolls upward, the list instead records the first visible text scroll anchor and its viewport offset, then restores that text anchor when streaming content is remeasured. This keeps bottom-follow behavior without allowing the text being read to drift upward during streaming. The rendered range keeps 2 rows of overscan on each side. Message rows no longer use `IntersectionObserver` as a second windowing layer; an individual oversized Markdown response retains independent chunk windowing to bound the DOM inside one visible message. Chunks whose rich Markdown is not mounted retain lightweight plain text so rapid scrolling cannot expose a height-only blank region. Remaining `IntersectionObserver` usage covers independent behavior such as bottom-follow state and attachment previews.
 
-The desktop conversation scroller uses a DOM bottom origin: `scrollTop` is `0` at the newest message and becomes negative while moving toward history. Business state, scroll snapshots, turn navigation, and E2E assertions use distance-from-bottom or content coordinates and must not depend directly on a top-origin `scrollTop`. TanStack Virtual still uses top offsets internally, but that conversion belongs exclusively in `useBottomOriginVirtualizer`; business components must not perform their own top-coordinate conversion. On a task switch, the hook writes the new conversation's bottom distance in the same layout commit so the UI never paints a top position and corrects it on the next frame.
+Desktop conversations use normal DOM coordinates: zero at the top and `scrollHeight - clientHeight` at the bottom. TanStack, scrollbar and navigation share this range without negative-offset conversion. `useConversationVirtualizer` owns virtual geometry; the controller owns follow, read and navigation policy. Row and Markdown caches validate width, typography and content. Ordinary scrolling does not automatically start diagnostic capture.
 
 In non-split mode, the pane-stack parent owns the shared workbench content width and passes that stable value to a newly selected task pane. A pane's own measurement is only a fallback for startup, zero-width measurements, and split mode. The new pane must decide whether to dock the environment information panel from the shared width on its first frame. Rendering the chat at width `0` first and then subtracting the 320px side panel on the next frame causes a visible horizontal flash in the messages and composer.
 
@@ -243,7 +243,7 @@ WEWORK_WEBVIEW_DEVTOOLS=1 /path/to/WeWork.app/Contents/MacOS/WeWork
 After DevTools opens, run this when the app becomes slow:
 
 ```js
-window.__WEWORK_PERF__.snapshot();
+window.__WEWORK_PERF__.snapshot()
 ```
 
 The snapshot includes the current URL, page visibility, DOM node count, memory snapshot, navigation timing, resource count, recent events, and Wework process-group data. macOS reparents Chromium XPC processes to PID 1; diagnostics use LaunchServices to associate the current Wework instance with its Web Content, GPU, and Networking processes.
@@ -264,7 +264,7 @@ The workbench's full-height sidebar and content-wide top bar should use ordinary
 Manual marks can also be added:
 
 ```js
-window.__WEWORK_PERF__.mark("before-open-task", { taskId: "..." });
+window.__WEWORK_PERF__.mark('before-open-task', { taskId: '...' })
 ```
 
 ## Disabling Diagnostics
@@ -272,8 +272,8 @@ window.__WEWORK_PERF__.mark("before-open-task", { taskId: "..." });
 Press the hidden shortcut to open the Developer Commands menu, then select **Disable Performance Diagnostics** to disable diagnostics and reload. The console can also disable it:
 
 ```js
-localStorage.removeItem("wework:perf-debug");
-location.reload();
+localStorage.removeItem('wework:perf-debug')
+location.reload()
 ```
 
 After diagnostics are disabled, `window.__WEWORK_PERF__` is not installed and React Profiler no longer wraps the app root.

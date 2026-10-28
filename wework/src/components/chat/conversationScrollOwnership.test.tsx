@@ -1,0 +1,189 @@
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react'
+import { afterEach, expect, test, vi } from 'vitest'
+import { ScrollableMessageArea } from './ScrollableMessageArea'
+import { useConversationScrollController } from '../../../../packages/collaboration/src/conversation/useConversationScrollController'
+import type { ConversationVirtualizer } from '../../../../packages/collaboration/src/conversation/useConversationVirtualizer'
+import type { WorkbenchMessage } from '@/types/workbench'
+
+vi.mock('@/lib/runtime-environment', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/runtime-environment')>()),
+  isDesktopRuntime: () => false,
+}))
+
+afterEach(() => vi.restoreAllMocks())
+const messages: WorkbenchMessage[] = [
+  {
+    id: 'before',
+    role: 'user',
+    content: 'Before gap',
+    status: 'done',
+    createdAt: '',
+    runtimeMessageIndex: 0,
+  },
+  {
+    id: 'after',
+    role: 'assistant',
+    content: 'After gap',
+    status: 'done',
+    createdAt: '',
+    runtimeMessageIndex: 2,
+  },
+]
+
+test('a stale gap request cannot clear a new request after switching away and back', async () => {
+  const resolve: Array<() => void> = []
+  const load = vi.fn(() => new Promise<void>(done => resolve.push(done)))
+  const { rerender } = render(
+    <ScrollableMessageArea conversationKey="gap-a" messages={messages} onLoadTranscriptGap={load} />
+  )
+  const button = () => screen.getByTestId('runtime-transcript-gap-marker').querySelector('button')!
+  fireEvent.click(button())
+  rerender(
+    <ScrollableMessageArea conversationKey="gap-b" messages={messages} onLoadTranscriptGap={load} />
+  )
+  rerender(
+    <ScrollableMessageArea conversationKey="gap-a" messages={messages} onLoadTranscriptGap={load} />
+  )
+  fireEvent.click(button())
+  expect(load).toHaveBeenCalledTimes(2)
+  await act(async () => resolve[0]())
+  expect(button()).toBeDisabled()
+  await act(async () => resolve[1]())
+  expect(button()).toBeEnabled()
+})
+
+test('bottom-button motion owns all layout growth until canceled by reader input', () => {
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1)
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {})
+  const viewport = document.createElement('div')
+  Object.defineProperties(viewport, {
+    clientHeight: { value: 200 },
+    scrollHeight: { value: 1000 },
+  })
+  viewport.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+    viewport.scrollTop = Number(top)
+  })
+  const ref = { current: viewport }
+  const hook = renderHook(() =>
+    useConversationScrollController({
+      messages,
+      externalScrollRef: ref,
+      conversationKey: 'motion-owner',
+    })
+  )
+  const engine = {
+    options: { followOnAppend: 'auto', scrollEndThreshold: 8 },
+    cancelScroll: vi.fn(),
+    setOptions: vi.fn(function (this: ConversationVirtualizer, options) {
+      this.options = options
+    }),
+    scrollToOffset: vi.fn(),
+  } as unknown as ConversationVirtualizer
+  hook.result.current.virtualizerRef.current = engine
+  viewport.scrollTop = 100
+  act(() => hook.result.current.handleScrollToBottom())
+  expect(hook.result.current.virtualAnchorToEnd).toBe(false)
+  expect(engine.options).toMatchObject({ followOnAppend: false, scrollEndThreshold: -1 })
+  act(() => hook.result.current.handleContentLayoutChange())
+  expect(hook.result.current.virtualAnchorToEnd).toBe(false)
+  expect(engine.scrollToOffset).not.toHaveBeenCalled()
+  fireEvent.wheel(viewport, { deltaY: -3 })
+  expect(engine.cancelScroll).toHaveBeenCalled()
+  expect(hook.result.current.virtualScrollAdjustmentEnabled).toBe(true)
+  hook.unmount()
+})
+
+test('scrollbar drag owns layout changes and returns to text anchoring after release', () => {
+  const viewport = document.createElement('div')
+  const content = document.createElement('div')
+  const interaction = document.createElement('div')
+  content.innerHTML =
+    '<article data-message-id="before"><p data-scroll-anchor>Before gap</p></article>'
+  viewport.append(content)
+  document.body.append(viewport, interaction)
+  Object.defineProperties(viewport, {
+    clientHeight: { value: 200 },
+    clientWidth: { value: 800 },
+    scrollHeight: { value: 1000 },
+  })
+  viewport.scrollTop = 100
+  viewport.getBoundingClientRect = () => new DOMRect(0, 0, 800, 200)
+  let contentTop = 150
+  content.querySelector('p')!.getBoundingClientRect = () =>
+    new DOMRect(0, contentTop - viewport.scrollTop, 600, 24)
+  const hook = renderHook(() =>
+    useConversationScrollController({
+      messages,
+      externalScrollRef: { current: viewport },
+      externalScrollInteractionRef: { current: interaction },
+      conversationKey: 'drag-owner',
+    })
+  )
+  hook.result.current.contentRef.current = content
+  const engine = {
+    options: { anchorTo: 'end', followOnAppend: 'auto', scrollEndThreshold: 8 },
+    cancelScroll: vi.fn(),
+    setOptions: vi.fn(function (this: ConversationVirtualizer, options) {
+      this.options = options
+    }),
+  } as unknown as ConversationVirtualizer
+  hook.result.current.virtualizerRef.current = engine
+  try {
+    viewport.scrollTop = 100
+    fireEvent.wheel(viewport, { deltaY: -1 })
+    fireEvent.pointerDown(interaction, { button: 0, buttons: 1 })
+    expect(hook.result.current.virtualAnchor).toBe('start')
+    expect(hook.result.current.virtualScrollAdjustmentEnabled).toBe(false)
+    expect(engine.options).toMatchObject({
+      anchorTo: 'start',
+      followOnAppend: false,
+      scrollEndThreshold: -1,
+    })
+    expect(engine.shouldAdjustScrollPositionOnItemSizeChange).toBeTypeOf('function')
+    contentTop += 100
+    act(() => hook.result.current.handleContentLayoutChange())
+    expect(viewport.scrollTop).toBe(100)
+    viewport.scrollTop = 200
+    fireEvent.scroll(viewport)
+    fireEvent.pointerUp(interaction, { button: 0 })
+    expect(hook.result.current.virtualAnchor).toBe('end')
+    expect(hook.result.current.virtualScrollAdjustmentEnabled).toBe(true)
+    expect(engine.shouldAdjustScrollPositionOnItemSizeChange).toBeUndefined()
+    contentTop += 30
+    act(() => hook.result.current.handleContentLayoutChange())
+    expect(viewport.scrollTop).toBe(230)
+  } finally {
+    hook.unmount()
+    viewport.remove()
+    interaction.remove()
+  }
+})
+
+test.each(['wheel', 'scrollbar'] as const)(
+  'a completed navigation cannot take ownership back from %s input',
+  input => {
+    const viewport = document.createElement('div')
+    const interaction = document.createElement('div')
+    Object.defineProperties(viewport, {
+      clientHeight: { value: 200 },
+      scrollHeight: { value: 1000 },
+    })
+    viewport.scrollTop = 800
+    const hook = renderHook(() =>
+      useConversationScrollController({
+        messages,
+        externalScrollRef: { current: viewport },
+        externalScrollInteractionRef: { current: interaction },
+        conversationKey: `navigation-interrupted-${input}`,
+      })
+    )
+    act(() => hook.result.current.handleTurnNavigationScrollTargetChange('target'))
+    if (input === 'wheel') fireEvent.wheel(viewport, { deltaY: -1 })
+    else fireEvent.pointerDown(interaction, { button: 0, buttons: 1 })
+    act(() => hook.result.current.handleTurnNavigationScrollTargetChange(null))
+    expect(hook.result.current.virtualAnchorToEnd).toBe(false)
+    expect(hook.result.current.virtualScrollAdjustmentEnabled).toBe(input === 'wheel')
+    expect(hook.result.current.virtualAnchor).toBe(input === 'wheel' ? 'end' : 'start')
+    hook.unmount()
+  }
+)

@@ -20,8 +20,6 @@ import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 
 export const BOTTOM_THRESHOLD = 48
 export const SCROLLED_TO_BOTTOM_THRESHOLD = 8
-export const STABLE_SCROLL_DELAYS = [0, 50, 150, 300, 600, 1000]
-export const STABLE_SCROLL_RELEASE_RETRIES = 12
 export const SCROLL_ANCHOR_SELECTOR = '[data-scroll-anchor]'
 export interface RuntimeTranscriptGap {
   start: number
@@ -40,14 +38,6 @@ export interface UserViewportAnchor {
   offsetFromScrollerTop: number
   textOffset: number | null
   scrollTopPx: number
-}
-
-export interface PendingLayoutScrollPosition {
-  conversationKey: string | null
-  scrollHeightPx: number
-  distanceFromBottomPx: number
-  distanceFromTopPx?: number
-  previousOverflowAnchor: string
 }
 
 export interface ScrollableMessageAreaProps extends Pick<
@@ -125,108 +115,4 @@ export interface ScrollableMessageAreaProps extends Pick<
   onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
   initialScrollPosition?: 'restore' | 'latest'
-  scrollOrigin?: 'top' | 'bottom'
-}
-
-export function areScrollableMessageAreaPropsEqual(
-  previous: ScrollableMessageAreaProps,
-  next: ScrollableMessageAreaProps
-): boolean {
-  const changed = [
-    previous.userMessageServices !== next.userMessageServices ? 'userMessageServices' : null,
-    previous.virtualize !== next.virtualize ? 'virtualize' : null,
-    previous.useContentVisibility !== next.useContentVisibility ? 'useContentVisibility' : null,
-    previous.onVirtualMeasurement !== next.onVirtualMeasurement ? 'onVirtualMeasurement' : null,
-    previous.renderVisualization !== next.renderVisualization ? 'renderVisualization' : null,
-    previous.messages !== next.messages ? 'messages' : null,
-    previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
-    previous.turns !== next.turns ? 'turns' : null,
-    previous.loading !== next.loading ? 'loading' : null,
-    previous.historyError !== next.historyError ? 'historyError' : null,
-    previous.isWaitingForAssistant !== next.isWaitingForAssistant ? 'isWaitingForAssistant' : null,
-    previous.hasMoreBefore !== next.hasMoreBefore ? 'hasMoreBefore' : null,
-    previous.loadingMoreBefore !== next.loadingMoreBefore ? 'loadingMoreBefore' : null,
-    previous.turnNavigation !== next.turnNavigation ? 'turnNavigation' : null,
-    previous.loadedTranscriptRanges !== next.loadedTranscriptRanges
-      ? 'loadedTranscriptRanges'
-      : null,
-    previous.className !== next.className ? 'className' : null,
-    previous.scrollerClassName !== next.scrollerClassName ? 'scrollerClassName' : null,
-    previous.contentClassName !== next.contentClassName ? 'contentClassName' : null,
-    previous.messageListClassName !== next.messageListClassName ? 'messageListClassName' : null,
-    previous.contentFooter !== next.contentFooter ? 'contentFooter' : null,
-    previous.contentFooterClassName !== next.contentFooterClassName
-      ? 'contentFooterClassName'
-      : null,
-    previous.stickyFooter !== next.stickyFooter ? 'stickyFooter' : null,
-    previous.stickyFooterClassName !== next.stickyFooterClassName ? 'stickyFooterClassName' : null,
-    previous.scrollButtonClassName !== next.scrollButtonClassName ? 'scrollButtonClassName' : null,
-    previous.scrollTestId !== next.scrollTestId ? 'scrollTestId' : null,
-    previous.externalScrollRef !== next.externalScrollRef ? 'externalScrollRef' : null,
-    previous.externalScrollInteractionRef !== next.externalScrollInteractionRef
-      ? 'externalScrollInteractionRef'
-      : null,
-    previous.turnNavigationPortalTarget !== next.turnNavigationPortalTarget
-      ? 'turnNavigationPortalTarget'
-      : null,
-    previous.conversationKey !== next.conversationKey ? 'conversationKey' : null,
-    previous.devices !== next.devices ? 'devices' : null,
-    previous.onRetryFailedMessage !== next.onRetryFailedMessage ? 'onRetryFailedMessage' : null,
-    previous.onSwitchModelForFailedMessage !== next.onSwitchModelForFailedMessage
-      ? 'onSwitchModelForFailedMessage'
-      : null,
-    previous.onLoadFileChangesDiff !== next.onLoadFileChangesDiff ? 'onLoadFileChangesDiff' : null,
-    previous.onRevertFileChanges !== next.onRevertFileChanges ? 'onRevertFileChanges' : null,
-    previous.onOpenFileChangesReview !== next.onOpenFileChangesReview
-      ? 'onOpenFileChangesReview'
-      : null,
-    previous.fileChangesDiffPreviewDisabledSubtaskId !==
-    next.fileChangesDiffPreviewDisabledSubtaskId
-      ? 'fileChangesDiffPreviewDisabledSubtaskId'
-      : null,
-    previous.onOpenWorkspaceFile !== next.onOpenWorkspaceFile ? 'onOpenWorkspaceFile' : null,
-    previous.onOpenLocalSkillFile !== next.onOpenLocalSkillFile ? 'onOpenLocalSkillFile' : null,
-    previous.onRequestUserInputSubmit !== next.onRequestUserInputSubmit
-      ? 'onRequestUserInputSubmit'
-      : null,
-    previous.onRequestUserInputIgnore !== next.onRequestUserInputIgnore
-      ? 'onRequestUserInputIgnore'
-      : null,
-    previous.onOpenAssistantPlan !== next.onOpenAssistantPlan ? 'onOpenAssistantPlan' : null,
-    previous.onOpenSubagent !== next.onOpenSubagent ? 'onOpenSubagent' : null,
-    previous.onEditLastUserMessage !== next.onEditLastUserMessage ? 'onEditLastUserMessage' : null,
-    previous.onForkMessage !== next.onForkMessage ? 'onForkMessage' : null,
-    previous.canEditLastUserMessage !== next.canEditLastUserMessage
-      ? 'canEditLastUserMessage'
-      : null,
-    previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
-      ? 'hideRequestUserInputBlocks'
-      : null,
-    previous.hiddenRequestUserInputIds !== next.hiddenRequestUserInputIds
-      ? 'hiddenRequestUserInputIds'
-      : null,
-    previous.onAddSelectionToConversation !== next.onAddSelectionToConversation
-      ? 'onAddSelectionToConversation'
-      : null,
-    previous.onAskSelectionInSidebar !== next.onAskSelectionInSidebar
-      ? 'onAskSelectionInSidebar'
-      : null,
-    previous.autoScrollSuspended !== next.autoScrollSuspended ? 'autoScrollSuspended' : null,
-    previous.searchTarget !== next.searchTarget ? 'searchTarget' : null,
-    previous.searchNavigationPaused !== next.searchNavigationPaused
-      ? 'searchNavigationPaused'
-      : null,
-    previous.onSearchNavigationFailure !== next.onSearchNavigationFailure
-      ? 'onSearchNavigationFailure'
-      : null,
-    previous.onLoadMoreBefore !== next.onLoadMoreBefore ? 'onLoadMoreBefore' : null,
-    previous.onLoadTurnNavigationItem !== next.onLoadTurnNavigationItem
-      ? 'onLoadTurnNavigationItem'
-      : null,
-    previous.onLoadTranscriptGap !== next.onLoadTranscriptGap ? 'onLoadTranscriptGap' : null,
-    previous.initialScrollPosition !== next.initialScrollPosition ? 'initialScrollPosition' : null,
-    previous.scrollOrigin !== next.scrollOrigin ? 'scrollOrigin' : null,
-  ].filter((key): key is string => key !== null)
-
-  return changed.length === 0
 }
