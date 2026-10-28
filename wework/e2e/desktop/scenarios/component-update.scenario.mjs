@@ -81,19 +81,23 @@ export async function createDesktopScenario({
       )
       return
     }
-    if (path === `/components-${packaged.channel}-${target.platform}-${target.arch}.json`) {
+    // Update preferences select the feed independently of the installed package channel.
+    const channel = ['stable', 'beta'].find(
+      channel => path === `/components-${channel}-${target.platform}-${target.arch}.json`
+    )
+    if (channel) {
       response.setHeader('content-type', 'application/json')
       response.end(
         JSON.stringify({
           schemaVersion: 1,
           appVersion: packaged.appVersion,
-          channel: packaged.channel,
+          channel,
           platform: target.platform,
           arch: target.arch,
           components,
           upgradePolicy: {
             schemaVersion: 1,
-            channel: packaged.channel,
+            channel,
             platform: target.platform,
             arch: target.arch,
             releases: [],
