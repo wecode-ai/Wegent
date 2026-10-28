@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 import { hashComponentPath } from '../../../scripts/lib/component-content-hash.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
@@ -258,7 +258,10 @@ function sha256(bytes) {
 
 function createTarArchive(source, archive) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn('tar', ['-czf', archive, '-C', source, '.'], {
+    // GNU tar treats an archive operand containing a drive letter as remote.
+    // Match the shared extractor: keep only the archive operand relative.
+    const child = spawn('tar', ['-czf', `./${basename(archive)}`, '-C', source, '.'], {
+      cwd: dirname(archive),
       env: {
         ...process.env,
         COPYFILE_DISABLE: '1',
