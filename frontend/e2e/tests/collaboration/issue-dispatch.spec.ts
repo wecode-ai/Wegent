@@ -107,33 +107,67 @@ test.describe('Issue Dispatch human assignment', () => {
     const suffix = `${Date.now()}`
     const fixture = await createProjectFixture(page, suffix, `Human dispatch ${suffix}`)
     const memberId = await addProjectMember(page, REGULAR_USER.username)
-    await page.goto(`${fixture.projectPath}/issues/${encodeURIComponent(fixture.issueId)}`)
-    await captureEvidence(page, testInfo, '01-issue-before-dispatch')
-
-    await page.getByTestId('cloud-todo-detail-assignee').click()
-    await page.getByTestId(`cloud-todo-detail-assignee-option-user:${memberId}`).click()
-    await expect(page.getByTestId('wework-assignment-notify-confirm')).toHaveCount(0)
-    await expect(page.getByTestId('cloud-todo-save')).toHaveText(/^(保存并通知|Save and notify)$/)
-    await page.getByTestId('cloud-todo-save').click()
-    await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
-    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
-      'data-value',
-      `user:${memberId}`
-    )
-    await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('inbox')
-
-    const notification = await waitForAssignmentNotification(request, fixture.issueId)
-    expect(notification.payload).toMatchObject({
-      action: 'open_issue',
-      projectId: fixture.projectId,
-      itemId: fixture.issueId,
-      issueId: fixture.issueId,
-      taskTitle: `Human dispatch ${suffix}`,
+    const attachmentsUrl = `**/api/v1/loop-items/${fixture.issueId}/attachments`
+    let releaseAttachments!: () => void
+    let observeAttachments!: () => void
+    const attachmentsGate = new Promise<void>(resolve => {
+      releaseAttachments = resolve
     })
-    expect(notification.payload.dispatchTaskId).toBeTruthy()
-    expect(notification.payload.humanAssignmentId).toBe(notification.payload.dispatchTaskId)
-    expect(notification.payload.instructions).toContain('Collect reproducible evidence')
-    await captureEvidence(page, testInfo, '02-human-assignment-recorded')
+    const attachmentsStarted = new Promise<void>(resolve => {
+      observeAttachments = resolve
+    })
+    // Delay, but do not mock, the real request so editing precedes detail hydration.
+    await page.route(attachmentsUrl, async route => {
+      observeAttachments()
+      await attachmentsGate
+      await route.continue()
+    })
+    try {
+      await page.goto(`${fixture.projectPath}/issues/${encodeURIComponent(fixture.issueId)}`)
+      await attachmentsStarted
+      await captureEvidence(page, testInfo, '01-issue-before-dispatch')
+
+      await page.getByTestId('cloud-todo-detail-assignee').click()
+      await page.getByTestId(`cloud-todo-detail-assignee-option-user:${memberId}`).click()
+      await expect(page.getByTestId('wework-assignment-notify-confirm')).toHaveCount(0)
+      await expect(page.getByTestId('cloud-todo-save')).toHaveText(/^(保存并通知|Save and notify)$/)
+      const assignmentSaved = page.waitForResponse(
+        response =>
+          response.request().method() === 'POST' &&
+          response.url().endsWith(`/${fixture.issueId}/assign`)
+      )
+      await page.getByTestId('cloud-todo-save').click()
+      const assignment = await assignmentSaved
+      expect(assignment.status()).toBe(200)
+      expect((await assignment.json()).assignee_user_id).toBe(Number(memberId))
+      const attachmentsLoaded = page.waitForResponse(response =>
+        response.url().endsWith(`/loop-items/${fixture.issueId}/attachments`)
+      )
+      releaseAttachments()
+      expect((await attachmentsLoaded).status()).toBe(200)
+      await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
+      await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+        'data-value',
+        `user:${memberId}`
+      )
+      await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('inbox')
+
+      const notification = await waitForAssignmentNotification(request, fixture.issueId)
+      expect(notification.payload).toMatchObject({
+        action: 'open_issue',
+        projectId: fixture.projectId,
+        itemId: fixture.issueId,
+        issueId: fixture.issueId,
+        taskTitle: `Human dispatch ${suffix}`,
+      })
+      expect(notification.payload.dispatchTaskId).toBeTruthy()
+      expect(notification.payload.humanAssignmentId).toBe(notification.payload.dispatchTaskId)
+      expect(notification.payload.instructions).toContain('Collect reproducible evidence')
+      await captureEvidence(page, testInfo, '02-human-assignment-recorded')
+    } finally {
+      releaseAttachments()
+      await page.unroute(attachmentsUrl)
+    }
   })
 
   test('silently creates and reassigns an Issue, preserving drafts after real backend rejection', async ({

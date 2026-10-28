@@ -212,6 +212,42 @@ describe("collaboration workspace controller", () => {
     expect(state.error).toBeNull();
   });
 
+  it("preserves an assignment made from the board cache while initial detail loading is pending", async () => {
+    state = { ...state, project, projects: [project] };
+    const api = createApi();
+    const attachments = deferred<CollaborationAttachment[]>();
+    api.attachments.list = vi.fn().mockReturnValue(attachments.promise);
+    const { commands } = createController(api);
+
+    const detailLoad = commands.loadSelectedIssue(issue.id);
+    await commands.loadProjectSnapshot(project.id);
+    expect(state.selectedIssue).toBeNull();
+    const reassigned = { ...issue, version: 2, assignee_user_id: 2 };
+    commands.replaceIssue(reassigned);
+    expect(state.issues).toEqual([reassigned]);
+
+    attachments.resolve([attachment]);
+    expect(await detailLoad).toEqual(reassigned);
+    expect(state.selectedIssue).toEqual(reassigned);
+    expect(state.attachments).toEqual([attachment]);
+  });
+
+  it("merges a late detail action against a newer board-cache Issue atomically", () => {
+    const reassigned = { ...issue, version: 2, assignee_user_id: 2 };
+    state = { ...state, issues: [reassigned] };
+    state = collaborationWorkspaceControllerReducer(state, {
+      type: "issue-loaded",
+      issue,
+      attachments: [attachment],
+      comments: [comment],
+      assignments: [],
+      executions: [],
+    });
+    expect(state.selectedIssue).toEqual(reassigned);
+    expect(state.issues).toEqual([reassigned]);
+    expect(state.comments).toEqual([comment]);
+  });
+
   it("shares an in-flight board load with refresh requests and fetches again after completion", async () => {
     state = { ...state, projects: [project] };
     const { api, commands } = createController();
