@@ -10,12 +10,12 @@ async function openCodePage(page: Page, teamId?: number): Promise<void> {
 }
 
 async function expectCodeModeSelected(page: Page, team: HistoryTeam): Promise<void> {
+  await expectSelected(page, team)
   await expect
     .poll(() => new URL(page.url()).searchParams.get('agent'), {
       message: 'Selecting a code-capable agent must keep the code page',
     })
     .toBe('code')
-  await expectSelected(page, team)
 }
 
 async function selectFromAllAgents(page: Page, team: HistoryTeam): Promise<void> {
