@@ -28,7 +28,7 @@ function previewTrigger(page: Page, filename: string): Locator {
     .getByTestId('document-link-preview-trigger')
 }
 
-async function expectPdfRange(response: Response): Promise<void> {
+async function expectPdfRange(page: Page, response: Response): Promise<void> {
   expect(response.status()).toBe(206)
   const requestRange = response
     .request()
@@ -40,33 +40,54 @@ async function expectPdfRange(response: Response): Promise<void> {
   expect(Number(start)).toBeGreaterThan(0)
   expect(Number(start)).toBe(Number(requestRange[1]))
   expect(Number(end)).toBe(Math.min(Number(requestRange[2]), Number(total) - 1))
-  expect((await response.body()).length).toBe(Number(end) - Number(start) + 1)
   expect(response.headers()['content-type']).toBe('application/pdf')
   expect(response.headers()['accept-ranges']).toBe('bytes')
   expect(response.headers()['access-control-allow-origin']).toBe('*')
   expect(response.headers()['access-control-expose-headers']).toContain('Content-Range')
+
+  // CI traces show PDF.js rendering successfully while its range requests end
+  // with ERR_ABORTED. Neither requestfinished nor CDP response.body() is a
+  // reliable way to inspect those bytes. Read the observed range from the real
+  // origin in the page, so CORS and the actual response body are still checked.
+  const received = await page.evaluate(
+    async ({ url, range }) => {
+      const result = await fetch(url, {
+        mode: 'cors',
+        credentials: 'omit',
+        cache: 'no-store',
+        headers: { Range: range },
+        signal: AbortSignal.timeout(15_000),
+      })
+      return {
+        status: result.status,
+        contentRange: result.headers.get('content-range'),
+        contentLength: result.headers.get('content-length'),
+        contentType: result.headers.get('content-type'),
+        byteLength: (await result.arrayBuffer()).byteLength,
+      }
+    },
+    { url: response.url(), range: response.request().headers().range }
+  )
+  expect(received).toEqual({
+    status: 206,
+    contentRange: response.headers()['content-range'],
+    contentLength: String(Number(end) - Number(start) + 1),
+    contentType: 'application/pdf',
+    byteLength: Number(end) - Number(start) + 1,
+  })
 }
 
 async function verifyPdfPreview(page: Page, dialog: Locator, origin: string): Promise<void> {
-  // A 206 response event only means headers arrived. PDF.js can cancel that
-  // transfer, leaving no response body for Playwright to inspect.
-  const [rangeRequest] = await Promise.all([
-    page.waitForEvent('requestfinished', {
-      // The 256 KiB/s throttle also slows the viewer's own multi-megabyte
-      // asset downloads (renderer chunk, pdf.worker.mjs) before PDF.js can
-      // issue its first range, so the default 15s action timeout cannot
-      // cover CI startup.
-      timeout: 45_000,
-      predicate: request =>
-        request.url() === `${origin}/preview.pdf` &&
-        /^bytes=[1-9]\d*-\d+$/.test(request.headers().range || ''),
-    }),
+  const [range] = await Promise.all([
+    page.waitForResponse(
+      response =>
+        response.url() === `${origin}/preview.pdf` &&
+        /^bytes=[1-9]\d*-\d+$/.test(response.request().headers().range || '')
+    ),
     previewTrigger(page, 'preview.pdf').click(),
   ])
   // A nonzero range cannot be the application's bytes=0-15 signature probe.
-  const range = await rangeRequest.response()
-  expect(range, 'PDF.js must complete a real nonzero range request').not.toBeNull()
-  await expectPdfRange(range!)
+  await expectPdfRange(page, range)
   const firstPage = dialog.locator('.pdfViewer .page[data-page-number="1"]')
   await expect(firstPage.locator('canvas')).toBeVisible({ timeout: 30_000 })
   await expect(
@@ -141,25 +162,24 @@ export async function verifyRestrictedFilePreviews(
   const dialog = page.getByTestId('document-link-preview-dialog')
   const network = await page.context().newCDPSession(page)
   try {
-    // Throttle real transfers, without intercepting responses, so PDF.js requests
-    // the distant xref before the full response finishes even on localhost.
+    // Throttle only the real PDF transfer so PDF.js requests its distant xref.
+    // Renderer chunks and workers must load at normal speed.
     await network.send('Network.enable')
     await network.send('Network.setCacheDisabled', { cacheDisabled: true })
-    await network.send('Network.emulateNetworkConditions', {
+    await network.send('Network.emulateNetworkConditionsByRule', {
       offline: false,
-      latency: 20,
-      downloadThroughput: 256 * 1024,
-      uploadThroughput: -1,
+      matchedNetworkConditions: [
+        {
+          urlPattern: `${origin}/preview.pdf`,
+          latency: 20,
+          downloadThroughput: 256 * 1024,
+          uploadThroughput: -1,
+        },
+      ],
     })
     await verifyPdfPreview(page, dialog, origin)
     expect(page.url()).toBe(originalUrl)
     await dialog.getByRole('button', { name: /close/i }).click()
-    await network.send('Network.emulateNetworkConditions', {
-      offline: false,
-      latency: 0,
-      downloadThroughput: -1,
-      uploadThroughput: -1,
-    })
     await verifyOfficePreview(page, dialog, origin)
     expect(page.url()).toBe(originalUrl)
     await dialog.getByRole('button', { name: /close/i }).click()
