@@ -54,7 +54,16 @@ function run(command, args, environment = process.env) {
 
 try {
   await run(pnpmCommand, ['run', 'prepare:electron'])
-  await run(pnpmCommand, ['--dir', 'electron', 'run', 'build:package'], buildEnvironment)
+  await run(
+    pnpmCommand,
+    [
+      '--dir',
+      'electron',
+      'run',
+      process.argv.includes('--prepare-only') ? 'prepare:package' : 'build:package',
+    ],
+    buildEnvironment
+  )
 } finally {
   await rm(buildCacheRoot, { recursive: true, force: true })
 }

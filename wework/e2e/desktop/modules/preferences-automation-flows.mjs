@@ -267,6 +267,10 @@ async function setExperimentalFeaturesEnabled(control, enabled) {
   const toggleSelector = '[data-testid="general-experimental-features-toggle"]'
   await control.command('click', '[data-testid="settings-button"]', { visible: true })
   await control.command('click', '[data-testid="settings-menu-button"]')
+  // The first settings visit loads the Core DSH settings module and its dependencies.
+  await control.command('waitFor', '[data-testid="general-settings-page"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.includes('general-experimental-features-toggle'),

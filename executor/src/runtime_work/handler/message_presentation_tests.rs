@@ -1,5 +1,39 @@
 use super::*;
 
+#[tokio::test]
+async fn stopped_active_goal_does_not_emit_a_terminal_result_or_discard_its_status() {
+    for error in [
+        crate::agents::CODEX_APP_SERVER_EXECUTOR_SHUTDOWN,
+        crate::agents::CODEX_APP_SERVER_ACTIVE_GOAL_INTERRUPTED,
+    ] {
+        let (mut handler, root) = isolated_runtime_work_handler("stopped-goal-result");
+        let (event_tx, mut event_rx) = broadcast::channel(32);
+        handler.event_tx = Some(event_tx);
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".into(),
+            "/tmp/project".into(),
+            "Active Goal".into(),
+        );
+        link.goal_status = Some("active".into());
+        handler.upsert_local_task(link);
+        let execution_id = start_test_execution(&handler, "task-1");
+        let before = handler.local_task_link("task-1").unwrap();
+        handler.handle_turn_result(
+            "task-1",
+            execution_id,
+            &ExecutionRequest::default(),
+            None,
+            Err(error.into()),
+        );
+        let after = handler.local_task_link("task-1").unwrap();
+        assert_eq!(after.goal_status.as_deref(), Some("active"));
+        assert_eq!(after.status, before.status);
+        assert_eq!(after.completed_at, before.completed_at);
+        assert!(event_rx.try_recv().is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
 #[test]
 fn active_codex_text_without_phase_stays_process_text_until_completion() {
     let (handler, root) = isolated_runtime_work_handler("unphased-live-text");

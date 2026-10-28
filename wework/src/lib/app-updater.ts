@@ -1,5 +1,6 @@
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from './runtime-environment'
+import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { getPlatform } from './platform'
 
 export type WeworkUpdateChannel = 'stable' | 'beta'
@@ -8,6 +9,8 @@ export interface WeworkUpdateInfo {
   currentVersion: string
   version: string
   body?: string
+  targetVersion?: string
+  path?: string[]
 }
 
 import type { WeworkUpdateDownloadProgress } from '../../electron/src/host/app-update-progress'
@@ -29,20 +32,13 @@ function errorMessage(error: unknown): string {
   return 'Unknown updater error'
 }
 
-function assertWeworkUpdaterSupported(): void {
-  const platform = getPlatform()
-  if (platform === 'linux') {
-    throw new Error('Wework updater is not available on Linux.')
-  }
-}
-
 export async function checkForWeworkUpdate(
   channel: WeworkUpdateChannel
 ): Promise<WeworkUpdateInfo | null> {
   if (!isElectronRuntime()) {
     throw new Error('Wework updater is only available in the desktop app.')
   }
-  assertWeworkUpdaterSupported()
+  if (getPlatform() === 'linux') throw new Error('Wework updater is not available on Linux.')
 
   try {
     const update = await invokeDesktopHost<WeworkUpdateInfo | null>('appUpdate.check', { channel })
@@ -85,6 +81,7 @@ export async function installDownloadedWeworkUpdate(): Promise<void> {
   }
 
   try {
+    await flushDesktopLocalStoragePersistence()
     await pendingUpdate.install()
   } catch (error) {
     pendingUpdate = null
