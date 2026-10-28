@@ -1465,8 +1465,30 @@ async function cancelMainWindowClose(): Promise<void> {
   if (decision) await applyWindowCloseDecision(decision)
 }
 
+const rendererStartupReady = createStartupReadyHandler(async (source: string) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  logStartupStep('renderer-startup-ready', 'completed', { source })
+  startupTelemetrySuccess.markRendererReady()
+  await holdStartupSplashForDesktopE2e()
+  // A quit request during startup owns the exit: never present the
+  // workbench while shutdown is already tearing the app down.
+  if (quitting || !mainWindow || mainWindow.isDestroyed()) return
+  if (!keepE2EWindowInBackground) mainWindow.show()
+  logStartupStep('main-window-show', 'completed')
+  await startupSplash?.close({
+    capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
+  })
+  logStartupStep('startup-splash-close', 'completed')
+  if (!keepE2EWindowInBackground) {
+    mainWindow.focus()
+    mainWindow.webContents.focus()
+  }
+  scheduleComputerUseStartup()
+})
+
 async function reactivateMainWindow(): Promise<void> {
-  if (focusStartupSplashIfActive()) await startupSplash?.whenClosed()
+  focusStartupSplashIfActive()
+  await rendererStartupReady.whenReady
   if (quitting) return
   const target = mainWindow
   if (!target || target.isDestroyed()) return
@@ -1773,6 +1795,7 @@ function requestApplicationShutdown(exit: () => void): void {
 function prepareApplicationShutdown(): Promise<void> {
   if (shutdownPromise) return shutdownPromise
   quitting = true
+  rendererStartupReady.cancel()
   shutdownPromise = shutdown()
   return shutdownPromise
 }
@@ -2104,26 +2127,7 @@ async function configureDesktopRuntime(): Promise<void> {
             if (target && !target.isDestroyed()) target.close()
           },
           dockVisible: () => dockVisible,
-          rendererStartupReady: createStartupReadyHandler(async source => {
-            if (!mainWindow || mainWindow.isDestroyed()) return
-            logStartupStep('renderer-startup-ready', 'completed', { source })
-            startupTelemetrySuccess.markRendererReady()
-            await holdStartupSplashForDesktopE2e()
-            // A quit request during startup owns the exit: never present the
-            // workbench while shutdown is already tearing the app down.
-            if (quitting || !mainWindow || mainWindow.isDestroyed()) return
-            if (!keepE2EWindowInBackground) mainWindow.show()
-            logStartupStep('main-window-show', 'completed')
-            await startupSplash?.close({
-              capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
-            })
-            logStartupStep('startup-splash-close', 'completed')
-            if (!keepE2EWindowInBackground) {
-              mainWindow.focus()
-              mainWindow.webContents.focus()
-            }
-            scheduleComputerUseStartup()
-          }),
+          rendererStartupReady,
           rendererStartupFailed: () => {
             logStartupStep('renderer-startup', 'failed')
             startupTelemetry.fail('renderer_initialize')

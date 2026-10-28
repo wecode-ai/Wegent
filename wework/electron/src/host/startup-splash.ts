@@ -104,17 +104,23 @@ export function startupSplashBlocksMainWindowActivation(
 
 export function createStartupReadyHandler<T>(
   completeStartup: (source: T) => Promise<void>
-): (source: T) => Promise<void> {
+): ((source: T) => Promise<void>) & { whenReady: Promise<void>; cancel: () => void } {
   let completion: Promise<void> | null = null
-  return source => {
+  let release!: () => void
+  const whenReady = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const ready = (source: T) => {
     completion ??= Promise.resolve()
       .then(() => completeStartup(source))
+      .then(release)
       .catch(error => {
         completion = null
         throw error
       })
     return completion
   }
+  return Object.assign(ready, { whenReady, cancel: release })
 }
 
 async function writePng(path: string, bytes: Buffer): Promise<void> {
@@ -162,11 +168,6 @@ export class StartupSplash {
       this.closePromise = null
     })
     return this.closePromise
-  }
-
-  whenClosed(): Promise<void> {
-    if (this.state === 'closed' || this.options.window.isDestroyed()) return Promise.resolve()
-    return new Promise(resolve => this.options.window.once('closed', resolve))
   }
 
   showError(pluginName: string | null = null): Promise<void> {
