@@ -578,8 +578,14 @@ jobs:
           filter: blob:none
           persist-credentials: false
 
-      - name: Set up Node workspace
-        uses: ./.github/actions/setup-node-workspace
+      - name: Set up Node.js for prebuilt desktop tests
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+
+      - name: Set up pnpm for native startup verification
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
 
       - name: Set up Python and uv
         uses: ./.github/actions/setup-python-uv-cache

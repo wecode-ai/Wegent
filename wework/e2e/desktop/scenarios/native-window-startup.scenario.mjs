@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { telemetryEvents } from '../modules/response-protocol.mjs'
 import { verifyStartupRecovery } from '../modules/startup-recovery.mjs'
+import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
 
 const SPLASH_CLOSE_TIMEOUT_MS = 10_000
 const SPLASH_CLOSE_POLL_INTERVAL_MS = 50
@@ -24,21 +25,6 @@ function parseStartupEvents(appLog) {
 
 function startupEventIndex(events, step, status) {
   return events.findIndex(event => event.step === step && event.status === status)
-}
-
-async function waitForClosedStartupSplash(control) {
-  const deadline = Date.now() + SPLASH_CLOSE_TIMEOUT_MS
-  let snapshot
-
-  do {
-    snapshot = JSON.parse(await control.command('getStartupSplashSnapshot', 'body'))
-    if (snapshot.state === 'closed') return snapshot
-    await delay(SPLASH_CLOSE_POLL_INTERVAL_MS)
-  } while (Date.now() < deadline)
-
-  assert.fail(
-    `The Electron startup splash did not close within ${SPLASH_CLOSE_TIMEOUT_MS}ms: ${JSON.stringify(snapshot)}`
-  )
 }
 
 async function waitForStartupLogs(resultDir) {

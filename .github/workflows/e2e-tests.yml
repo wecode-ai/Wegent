@@ -570,6 +570,7 @@ jobs:
         uses: ./.github/actions/setup-node-workspace
         with:
           setup-toolchain: "false"
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Restore Python dependency cache
         uses: ./.github/actions/setup-python-uv-cache
