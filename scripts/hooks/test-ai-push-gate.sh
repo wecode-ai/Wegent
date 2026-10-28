@@ -52,9 +52,44 @@ printf '%s %s\n' "$(basename "$0")" "$*" >> "$CALL_LOG"
 if [ "$(basename "$0")" = "pnpm" ]; then
     case "$*" in
         '--filter wework typecheck'|'--filter wework lint'|'--filter wework run lint:task-lifecycle')
-            # Keep static checks active long enough to expose an overlapping test start.
+            if [ "$*" = "--filter wework typecheck" ] && [ "${PUSH_GATE_TEST_REQUIRE_STATIC_ISOLATION:-0}" = "1" ]; then
+                rm -f "$CALL_LOG.wework-typecheck-complete"
+                sleep 1
+                touch "$CALL_LOG.wework-typecheck-complete"
+                if [ "${PUSH_GATE_TEST_STATIC_FAILURE:-0}" = "1" ]; then
+                    exit 7
+                fi
+            fi
             sleep 0.2
             printf 'completed pnpm %s\n' "$*" >> "$CALL_LOG"
+            ;;
+        '--filter wework exec vitest '*)
+            if [ "${PUSH_GATE_TEST_REQUIRE_STATIC_ISOLATION:-0}" = "1" ] &&
+                [ ! -f "$CALL_LOG.wework-typecheck-complete" ]; then
+                echo 'Renderer tests overlapped the unfinished TypeScript check' >&2
+                exit 1
+            fi
+            if [ "${PUSH_GATE_TEST_SERIAL_RENDERER:-0}" = "1" ]; then
+                case "$*" in
+                    *--shard=1/2*)
+                        printf 'start 1\n' >> "$CALL_LOG.renderer-order"
+                        sleep 1
+                        printf 'finish 1\n' >> "$CALL_LOG.renderer-order"
+                        touch "$CALL_LOG.renderer-first-complete"
+                        if [ "${PUSH_GATE_TEST_FAIL_FIRST_RENDERER:-0}" = "1" ]; then
+                            exit 9
+                        fi
+                        ;;
+                    *--shard=2/2*)
+                        printf 'start 2\n' >> "$CALL_LOG.renderer-order"
+                        if [ ! -f "$CALL_LOG.renderer-first-complete" ]; then
+                            echo 'The second renderer shard overlapped the first' >&2
+                            exit 8
+                        fi
+                        printf 'finish 2\n' >> "$CALL_LOG.renderer-order"
+                        ;;
+                esac
+            fi
             ;;
         '--filter wework run prepare:electron')
             rm -f "$CALL_LOG.electron-typecheck-complete"
@@ -64,7 +99,7 @@ if [ "$(basename "$0")" = "pnpm" ]; then
             sleep 0.2
             touch "$CALL_LOG.electron-typecheck-complete"
             ;;
-        '--dir wework/electron test')
+        '--dir wework/electron test'*)
             if [ ! -f "$CALL_LOG.electron-typecheck-complete" ]; then
                 echo 'Electron tests started before typechecking finished staging process-explorer' >&2
                 exit 1
@@ -221,11 +256,16 @@ WEWORK_LOCAL_SHA="2f77b34aae02d0e9d5254530b503655835072cc7"
 
 ensure_wework_node_modules
 
+if ! PUSH_GATE_TEST_REQUIRE_STATIC_ISOLATION=1 \
 AI_VERIFIED=1 \
 PATH="$TMP_DIR/bin:$PATH" \
 bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_TEST_OUT" 2>&1
 refs/heads/topic $WEWORK_LOCAL_SHA refs/heads/topic $WEWORK_REMOTE_SHA
 EOF
+then
+    cat "$WEWORK_TEST_OUT"
+    exit 1
+fi
 
 if ! grep -qE '^pnpm --filter wework typecheck$' "$CALL_LOG"; then
     echo "Expected Wework changes to run the Wework TypeScript check."
@@ -271,6 +311,25 @@ fi
 assert_renderer_tests_follow_static_checks
 
 : > "$CALL_LOG"
+rm -f "$CALL_LOG.wework-typecheck-complete"
+if PUSH_GATE_TEST_REQUIRE_STATIC_ISOLATION=1 \
+    PUSH_GATE_TEST_STATIC_FAILURE=1 \
+    AI_VERIFIED=1 \
+    PATH="$TMP_DIR/bin:$PATH" \
+    bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$TMP_DIR/wework-static-failure.out" 2>&1; then
+refs/heads/topic $WEWORK_LOCAL_SHA refs/heads/topic $WEWORK_REMOTE_SHA
+EOF
+    echo "Expected a failed Wework TypeScript check to block the push."
+    exit 1
+fi
+if ! grep -q 'TypeScript: FAILED' "$TMP_DIR/wework-static-failure.out" ||
+    ! grep -q 'Unit Tests: PASSED' "$TMP_DIR/wework-static-failure.out"; then
+    echo "Expected static failures to propagate while all unit tests still run in isolation."
+    cat "$TMP_DIR/wework-static-failure.out"
+    exit 1
+fi
+
+: > "$CALL_LOG"
 
 # Build a synthetic commit changing renderer-wide Vitest configuration. Full
 # renderer checks must stay inside src/ so Electron tests remain package-owned.
@@ -311,6 +370,66 @@ assert_renderer_tests_follow_static_checks
 
 : > "$CALL_LOG"
 
+# Both existing shards must run in order when the host requests isolation.
+if ! AI_VERIFIED=1 \
+WEWORK_PRE_PUSH_RENDERER_SHARD_CONCURRENCY=1 \
+PUSH_GATE_TEST_SERIAL_RENDERER=1 \
+PATH="$TMP_DIR/bin:$PATH" \
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$TMP_DIR/renderer-serial.out" 2>&1
+refs/heads/topic $WEWORK_FULL_LOCAL_SHA refs/heads/topic $WEWORK_FULL_BASE_SHA
+EOF
+then
+    echo "Expected the isolation budget to run both renderer shards without overlapping."
+    cat "$TMP_DIR/renderer-serial.out"
+    exit 1
+fi
+if [ "$(cat "$CALL_LOG.renderer-order")" != "$(printf 'start 1\nfinish 1\nstart 2\nfinish 2')" ]; then
+    echo "Expected both unchanged renderer shards to execute without overlapping."
+    cat "$CALL_LOG.renderer-order"
+    exit 1
+fi
+for shard in 1 2; do
+    if ! grep -qE "^pnpm --filter wework exec vitest run --dir src --pool=threads --maxWorkers 1 --testTimeout 15000 --shard=$shard/2$" "$CALL_LOG"; then
+        echo "Expected serialized execution to retain renderer shard $shard and its original budget."
+        exit 1
+    fi
+done
+: > "$CALL_LOG"
+
+# A failed first shard must still run the second shard and block the push.
+rm -f "$CALL_LOG.renderer-first-complete" "$CALL_LOG.renderer-order"
+if AI_VERIFIED=1 \
+    WEWORK_PRE_PUSH_RENDERER_SHARD_CONCURRENCY=1 \
+    PUSH_GATE_TEST_SERIAL_RENDERER=1 \
+    PUSH_GATE_TEST_FAIL_FIRST_RENDERER=1 \
+    PATH="$TMP_DIR/bin:$PATH" \
+    bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$TMP_DIR/renderer-serial-failure.out" 2>&1; then
+refs/heads/topic $WEWORK_FULL_LOCAL_SHA refs/heads/topic $WEWORK_FULL_BASE_SHA
+EOF
+    echo "Expected a failed serialized renderer shard to block the push."
+    exit 1
+fi
+if ! grep -q 'Unit Tests: FAILED' "$TMP_DIR/renderer-serial-failure.out" ||
+    ! grep -q -- '--shard=2/2' "$CALL_LOG"; then
+    echo "Expected serialized execution to preserve failures and run all remaining tests."
+    cat "$TMP_DIR/renderer-serial-failure.out"
+    exit 1
+fi
+: > "$CALL_LOG"
+if AI_VERIFIED=1 WEWORK_PRE_PUSH_RENDERER_SHARD_CONCURRENCY=0 PATH="$TMP_DIR/bin:$PATH" \
+    bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$TMP_DIR/renderer-invalid-budget.out" 2>&1; then
+refs/heads/topic $WEWORK_FULL_LOCAL_SHA refs/heads/topic $WEWORK_FULL_BASE_SHA
+EOF
+    echo "Expected an invalid isolation budget to fail rather than pass without tests."
+    exit 1
+fi
+if ! grep -q 'Invalid renderer shard concurrency' "$TMP_DIR/renderer-invalid-budget.out"; then
+    echo "Expected an explicit configuration error for an invalid isolation budget."
+    cat "$TMP_DIR/renderer-invalid-budget.out"
+    exit 1
+fi
+: > "$CALL_LOG"
+
 # Build an unreferenced synthetic commit that changes only Electron host code.
 # This keeps the regression fixture independent from repository history without
 # modifying the working tree or creating a branch.
@@ -344,8 +463,8 @@ if ! grep -qE '^pnpm --filter wework run prepare:electron$' "$CALL_LOG"; then
 fi
 
 if ! grep -qE '^pnpm --dir wework/electron typecheck$' "$CALL_LOG" ||
-    ! grep -qE '^pnpm --dir wework/electron test$' "$CALL_LOG"; then
-    echo "Expected Electron changes to run Electron-owned checks."
+    ! grep -qE '^pnpm --dir wework/electron test --maxWorkers 2$' "$CALL_LOG"; then
+    echo "Expected Electron changes to run Electron-owned checks within the default worker budget."
     echo "Calls:"
     cat "$CALL_LOG"
     exit 1
@@ -354,6 +473,19 @@ fi
 if grep -qE '^pnpm --filter wework (typecheck|test)$|^pnpm --filter wework exec vitest ' "$CALL_LOG"; then
     echo "Expected Electron-only changes to skip unrelated renderer checks."
     echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+: > "$CALL_LOG"
+WEWORK_PRE_PUSH_TEST_WORKERS=1 \
+AI_VERIFIED=1 \
+PATH="$TMP_DIR/bin:$PATH" \
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$TMP_DIR/electron-one-worker.out" 2>&1
+refs/heads/topic $ELECTRON_LOCAL_SHA refs/heads/topic $ELECTRON_BASE_SHA
+EOF
+if ! grep -qE '^pnpm --dir wework/electron test --maxWorkers 1$' "$CALL_LOG"; then
+    echo "Expected the configured worker budget to cover all Electron tests."
     cat "$CALL_LOG"
     exit 1
 fi
@@ -410,7 +542,7 @@ if grep -qE '^pnpm --filter wework test$' "$CALL_LOG"; then
     exit 1
 fi
 
-if ! grep -qE '^pnpm --dir wework/electron test$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --dir wework/electron test --maxWorkers 2$' "$CALL_LOG"; then
     echo "Expected merge-like Wework changes to retain Electron-owned tests."
     echo "Calls:"
     cat "$CALL_LOG"

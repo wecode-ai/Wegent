@@ -551,8 +551,11 @@ function mockSystemSkillsFetch(
     publicationRequestGate: Promise<void>
     publicationRequests: PluginPublicationRequestItem[]
     publicationRequestFailures: number
+    cloudToken: string
+    deviceId: string
   }> = {}
 ) {
+  const fixtureDeviceId = overrides.deviceId ?? 'current-device'
   let marketplaceUpdateAvailable = Boolean(overrides.marketplaceUpdateAvailable)
   let marketplaceLatestReleaseId = marketplaceUpdateAvailable ? 1002 : 1001
   let marketplaceUpdatePolicy = overrides.marketplaceUpdatePolicy ?? 'manual'
@@ -750,7 +753,7 @@ function mockSystemSkillsFetch(
     },
     status: { state: 'Available' },
   }
-  const buildDocumentsMarketplacePlugin = (deviceId = overrides.deviceId ?? 'current-device') => ({
+  const buildDocumentsMarketplacePlugin = (deviceId = fixtureDeviceId) => ({
     id: 101,
     remotePluginId: 'openai-documents',
     name: overrides.marketplaceName ?? 'documents',
@@ -850,7 +853,7 @@ function mockSystemSkillsFetch(
         }
       : null,
   })
-  const buildMarketplacePlugins = (deviceId = overrides.deviceId ?? 'current-device') =>
+  const buildMarketplacePlugins = (deviceId = fixtureDeviceId) =>
     Array.from({ length: Math.max(1, overrides.marketplaceCount ?? 1) }, (_, index) => {
       if (index === 0) return buildDocumentsMarketplacePlugin(deviceId)
       const sequence = index + 1
@@ -874,7 +877,7 @@ function mockSystemSkillsFetch(
         },
       }
     })
-  const buildInstalledMarketplacePlugin = (deviceId = overrides.deviceId ?? 'current-device') => {
+  const buildInstalledMarketplacePlugin = (deviceId = fixtureDeviceId) => {
     const marketplaceRow = buildDocumentsMarketplacePlugin(deviceId)
     return {
       apiVersion: 'agent.wecode.io/v1',
@@ -965,9 +968,17 @@ function mockSystemSkillsFetch(
     updatedAt: null,
   })
 
+  const previousFetch = fetch
   vi.stubGlobal(
     'fetch',
     vi.fn((url: string, init?: RequestInit) => {
+      // Late work from an earlier account must retain its own HTTP fixture.
+      if (
+        overrides.cloudToken &&
+        new Headers(init?.headers).get('Authorization') !== `Bearer ${overrides.cloudToken}`
+      ) {
+        return previousFetch(url, init)
+      }
       const requestUrl = new URL(url, 'http://localhost')
       if (requestUrl.pathname === '/api/v1/kinds/skills/upload') {
         return Promise.resolve({
@@ -1089,8 +1100,7 @@ function mockSystemSkillsFetch(
           status: 200,
           json: () =>
             Promise.resolve({
-              deviceId:
-                requestUrl.searchParams.get('device_id') || overrides.deviceId || 'current-device',
+              deviceId: requestUrl.searchParams.get('device_id') || fixtureDeviceId,
               acknowledgedCount: 1,
               acknowledgedInstalledPluginIds: [101],
             }),
@@ -1108,13 +1118,12 @@ function mockSystemSkillsFetch(
           status: 200,
           json: () =>
             Promise.resolve({
-              deviceId:
-                requestUrl.searchParams.get('device_id') || overrides.deviceId || 'current-device',
+              deviceId: requestUrl.searchParams.get('device_id') || fixtureDeviceId,
               pendingCount: 1,
               reconciled: requestUrl.searchParams.get('reconcile') === 'true',
               sync: {
                 success: deviceAutoSyncSucceeds,
-                device_id: overrides.deviceId ?? 'current-device',
+                device_id: fixtureDeviceId,
                 mode: 'replace',
                 skills: [],
                 plugins: deviceAutoSyncSucceeds
@@ -1142,7 +1151,7 @@ function mockSystemSkillsFetch(
                 skipped: 0,
                 results: [
                   {
-                    device_id: 'current-device',
+                    device_id: fixtureDeviceId,
                     success: deviceAutoSyncSucceeds,
                   },
                 ],
@@ -5129,19 +5138,51 @@ describe('PluginsWorkspace', () => {
     )
   })
 
+  test('keeps a late request from the previous account outside the current sync fixture', async () => {
+    let releaseSync!: () => void
+    const gate = new Promise<void>(resolve => {
+      releaseSync = resolve
+    })
+    const currentFixture = mockSystemSkillsFetch({
+      cloudToken: 'catalog-sync-account',
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'pending',
+      deviceAutoSyncSucceeds: true,
+      deviceAutoSyncGate: gate,
+    })
+    const latePreviousRequest = fetch(
+      '/api/plugins/installed/sync-device?device_id=current-device',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer cloud-token' },
+      }
+    )
+
+    try {
+      expect(currentFixture.getSyncDeviceCalls()).toBe(0)
+    } finally {
+      releaseSync()
+      await latePreviousRequest
+    }
+  })
+
   test('does not reconcile the current local catalog until device package sync finishes', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const deviceId = 'catalog-sync-device'
+    const cloudToken = 'catalog-sync-account'
     let releaseSyncGate: (() => void) | null = null
     const deviceAutoSyncGate = new Promise<void>(resolve => {
       releaseSyncGate = resolve
     })
     const marketplaceMock = mockSystemSkillsFetch({
+      cloudToken,
+      deviceId,
       marketplaceInstalled: true,
       marketplaceDeviceState: 'pending',
       deviceAutoSyncSucceeds: true,
       deviceAutoSyncGate,
     })
-    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    mockCodexAppServerInvoke({ deviceId })
 
     let resolveInstalled: ((value: unknown) => void) | null = null
     const pendingInstalled = new Promise(resolve => {
@@ -5168,10 +5209,9 @@ describe('PluginsWorkspace', () => {
     const createApi = vi
       .spyOn(codexPlugins, 'createLocalCodexPluginApi')
       .mockReturnValue(currentApi)
-
     let view: ReturnType<typeof render> | undefined
     try {
-      view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken={cloudToken} />)
 
       expect(await screen.findByText('Documents')).toBeInTheDocument()
       expect(readCurrentCatalog).not.toHaveBeenCalled()
@@ -5189,8 +5229,7 @@ describe('PluginsWorkspace', () => {
       })
 
       await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
-      expect(marketplaceMock.getReportDeviceCalls()).toBe(0)
-      expect(hasInFlightPluginDeviceSync('current-device')).toBe(true)
+      expect(hasInFlightPluginDeviceSync(deviceId)).toBe(true)
       expect(readCurrentCatalog).not.toHaveBeenCalled()
       expect(marketplaceMock.getReportDeviceCalls()).toBe(0)
 
@@ -5209,10 +5248,13 @@ describe('PluginsWorkspace', () => {
           refresh: true,
         })
       )
-      expect(hasInFlightPluginDeviceSync('current-device')).toBe(false)
+      expect(hasInFlightPluginDeviceSync(deviceId)).toBe(false)
     } finally {
-      view?.unmount()
-      releaseSyncGate?.()
+      await act(async () => {
+        view?.unmount()
+        resolveInstalled?.({ marketplaces: [] })
+        releaseSyncGate?.()
+      })
       readCurrentCatalog.mockRestore()
       createApi.mockRestore()
     }

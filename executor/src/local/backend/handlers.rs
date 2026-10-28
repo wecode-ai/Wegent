@@ -129,6 +129,9 @@ where
             let command_handler = Arc::clone(&command_handler);
             Box::pin(async move {
                 if let Some(command_key) = payload.get("command_key").and_then(Value::as_str) {
+                    if command_key == "task_artifact" {
+                        return Some(json!(crate::artifact_workspace::command(payload).await));
+                    }
                     if command_key == "environment_prepare" {
                         let args = payload
                             .get("args")
