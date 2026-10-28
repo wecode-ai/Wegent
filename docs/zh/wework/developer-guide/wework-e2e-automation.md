@@ -204,7 +204,7 @@ Lint、单元测试、平台 E2E 和桌面 E2E 的汇总 job 使用 `always() &&
 
 - `plugin-account-auth` 展开为密码同步、独占凭据迁移、OAuth、钉钉账号、对话扫码和 GitHub 六个 checkpoint。
 - `plugin-uninstall-resilience` 展开为写入争锁、响应丢失、结果未知、重启恢复和重装竞态五个 checkpoint。`plugin-write-coordination` 独立验证争锁期间 API 响应、提交后的 ACK 冲突及后续同步恢复；卸载恢复用例自行建立另一个仍有效的安装，覆盖目录刷新与待清理任务并存的情况。
-- `harness-apps` 展开为开发流程与安装运行生命周期两个 checkpoint。
+- `harness-apps` 展开为开发流程、安装运行生命周期和多模型路由三个 checkpoint。
 - `streaming-text` 展开为内容、工具详情、计时、滚动、消息顺序和子智能体六个 checkpoint。
 
 每个 checkpoint 都从隔离环境建立自己的前置数据。上述组名仍可用于 `--segment`，
@@ -257,6 +257,23 @@ ZIP fixture 改用 Python 标准库，因此不再恢复完整前端依赖缓存
 路径保留关键里程碑截图，每次运行仍保留日志、状态快照和其他有效诊断；上传前只清理
 无法帮助复现问题的 Chromium 临时缓存。PNG 等已压缩文件上传时禁用二次压缩，避免
 诊断归档延长流水线尾部。
+
+Backend Rust E2E 镜像的构建、桌面消费及预热必须使用相同的内容摘要：包括
+Cargo 清单、锁文件、源码、examples 和定义产物布局的 `e2e-tests.yml`。
+镜像必须同时包含 `wegent-backend-rs` 与 `attachment-s3-e2e`；缺少任一产物时
+恢复立即失败并清理临时容器，不允许回退到不完整缓存。
+`test-backend-rs-e2e-runtime.rb` 由 CI cache policy 检查调用，执行真实 workflow
+中的构建、发布和恢复脚本，验证该契约。
+
+`harness-app-models` 在 Core shard 6 通过真实传输门控暂停额外令牌交接，断言
+运行页签尚未发布，再覆盖关闭、重开、模型调用和路由释放。主进程的 running
+快照不代表 renderer 已完成交接；应用管理页的刷新、打开和重试不得绕过同一
+installation 的在途生命周期。失败时先检查 `harness-model-token-handoff.json`
+中的 delivery 数与 UI 快照，不通过延长等待或修改断言隐藏提前发布。
+管理页恢复的旧 running 快照可能留下已停止工作台的 URL。再次启动时，在创建新标签页前
+清除这类旧注册；已有标签页或在途操作仍持有注册，不能被滞后的管理页快照清除。
+该 checkpoint 同时断言启动瞬间没有旧 iframe，以及额外令牌交接完成前没有运行 iframe。
+
 merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再通过 `push main`
 重复运行同一套 Tests、Lint、Platform E2E 和 Wework E2E。保留 `ci:all` 标签后，后续 push 也会运行完整 Windows Core 分片。
 macOS 的 pre-push 检查通过 `caffeinate -is -w` 保持执行期间唤醒，hook 退出时自动释放，避免系统休眠造成测试超时。

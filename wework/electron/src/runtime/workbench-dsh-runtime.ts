@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import semver from 'semver'
@@ -56,6 +57,7 @@ export interface PrepareWorkbenchDshOptions {
   environment: NodeJS.ProcessEnv
   port: number
   modelBaseUrl?: string | null
+  additionalModels?: Array<{ modelKey: string; displayName: string; baseUrl: string }>
   contextBaseUrl?: string | null
   contextToken?: string | null
   decisionBaseUrl?: string | null
@@ -268,7 +270,7 @@ async function prepareInstanceBundle(
   await copyDirectoryContents(resolve(options.packagePath), destination)
   const packages = await materializeManifestPackages(options.manifest, destination)
   if (options.modelBaseUrl?.trim()) {
-    await writeModelSettings(dshHome, options.modelBaseUrl)
+    await writeModelSettings(dshHome, options.modelBaseUrl, options.additionalModels ?? [])
     await patchModelProvider(
       join(destination, options.manifest.entry.installPackage, 'cordis.patch.yml')
     )
@@ -568,7 +570,29 @@ export function injectModelProviderPatch(source: string): string {
   return `${patched.join('\n').replace(/\n+$/, '')}\n`
 }
 
-async function writeModelSettings(dshHome: string, baseUrl: string): Promise<void> {
+function additionalProviderId(modelKey: string): string {
+  return `wework-model-${createHash('sha256').update(modelKey).digest('hex').slice(0, 16)}`
+}
+
+async function writeModelSettings(
+  dshHome: string,
+  baseUrl: string,
+  additionalModels: NonNullable<PrepareWorkbenchDshOptions['additionalModels']>
+): Promise<void> {
+  const providers = additionalModels
+    .map(model =>
+      [
+        `    ${additionalProviderId(model.modelKey)}:`,
+        `      displayName: ${JSON.stringify(model.displayName)}`,
+        '      apiKeyEnv: WEWORK_HARNESS_API_KEY',
+        '      api: anthropic-messages',
+        `      baseURL: ${model.baseUrl.replace(/\/+$/, '')}`,
+        '      models:',
+        '        - id: wework-selected',
+        `          name: ${JSON.stringify(model.displayName)}`,
+      ].join('\n')
+    )
+    .join('\n')
   await writeFile(
     join(dshHome, 'settings.yaml'),
     `llm-pi-ai:
@@ -581,6 +605,7 @@ async function writeModelSettings(dshHome: string, baseUrl: string): Promise<voi
       models:
         - id: wework-selected
           name: Wework selected model
+${providers ? `${providers}\n` : ''}
 `,
     { mode: 0o600 }
   )

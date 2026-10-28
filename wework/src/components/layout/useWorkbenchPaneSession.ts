@@ -3004,10 +3004,18 @@ function summarizeWorkbenchMessages(messages: WorkbenchMessage[]): Record<string
 
 function debugRuntimePaneMessageFlow(event: string, details: Record<string, unknown>) {
   if (!event.startsWith('transcript-load-') && !isRuntimeDebugEnabled()) return
-  console.debug('[Wework] Runtime pane message flow', {
-    event,
-    ...details,
-  })
+  if (
+    event.startsWith('transcript-load-') &&
+    (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true')
+  ) {
+    logRuntimeTaskCreateStage(event, details)
+  }
+  if (isRuntimeDebugEnabled()) {
+    console.debug('[Wework] Runtime pane message flow', {
+      event,
+      ...details,
+    })
+  }
 }
 
 function isRuntimeDebugEnabled(): boolean {
