@@ -8,6 +8,9 @@ import {
 } from "@wegent/chat-core/model-execution";
 import type { ModelOptions, UnifiedModel } from "@wegent/chat-core/models";
 
+// Persist UI selection intent with the model so remounts do not change slider semantics.
+export const MODEL_SELECTION_OPTION = "modelSelection";
+
 export interface ModelControlOption {
   value: string;
   label: string;
@@ -891,6 +894,9 @@ export function normalizeModelOptions(
     permissionMode === "full-access"
   ) {
     normalized.permissionMode = permissionMode;
+  }
+  if (options[MODEL_SELECTION_OPTION]) {
+    normalized[MODEL_SELECTION_OPTION] = options[MODEL_SELECTION_OPTION];
   }
   return normalized;
 }

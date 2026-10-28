@@ -38,7 +38,7 @@ export function WeworkSchemeBridge() {
       destination.kind === 'task' ? 'task' : 'board',
       weworkDestinationRoute(
         destination,
-        destination.kind === 'board' && destination.commentId
+        destination.kind === 'board' && destination.itemId
           ? `${Date.now()}-${++focusRequestRef.current}`
           : undefined
       )

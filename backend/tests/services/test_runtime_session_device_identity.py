@@ -190,7 +190,7 @@ async def test_manual_session_rebind_reply_read_and_unbind_use_either_alias(
 
     for alias in [first_alias, other_alias]:
         owner, address = resolve_project_transcript(
-            s.db, s.member.id, transcript_request(s, alias)
+            s.db, s.owner.id, transcript_request(s, alias)
         )
         assert owner == s.owner.id
         assert address.local_task_id == s.root.runtime_task_id
@@ -205,7 +205,7 @@ async def test_manual_session_rebind_reply_read_and_unbind_use_either_alias(
         _execution(s.db, request, s.root)
     for alias in [first_alias, other_alias]:
         with pytest.raises(HTTPException) as denied:
-            resolve_project_transcript(s.db, s.member.id, transcript_request(s, alias))
+            resolve_project_transcript(s.db, s.owner.id, transcript_request(s, alias))
         assert denied.value.status_code == 404
 
 
@@ -348,7 +348,7 @@ def test_historical_duplicate_alias_bindings_resolve_the_newest_session(manual_s
 
     resolved = _execution(s.db, comment(s), s.root)
     owner, _ = resolve_project_transcript(
-        s.db, s.member.id, transcript_request(s, "native-device")
+        s.db, s.owner.id, transcript_request(s, "native-device")
     )
 
     assert resolved.runtime_device_id == newest.device_id
@@ -374,7 +374,7 @@ async def test_alias_transcript_rpc_uses_the_bound_owner_and_exact_task(manual_s
     request.runtime_handle = {"threadId": "private-session"}
     request.workspace_path = "/private-workspace"
 
-    await get_runtime_transcript(db=s.db, user_id=s.member.id, address=request)
+    await get_runtime_transcript(db=s.db, user_id=s.owner.id, address=request)
 
     s.rpc.assert_awaited_once_with(
         user_id=s.owner.id,
@@ -387,3 +387,23 @@ async def test_alias_transcript_rpc_uses_the_bound_owner_and_exact_task(manual_s
         timeout_seconds=30,
         allow_app_device_task_reading=True,
     )
+
+
+@pytest.mark.parametrize("search", [False, True])
+def test_manual_binding_never_grants_another_member_transcript_access(
+    manual_session, search
+):
+    from app.schemas.runtime_work import RuntimeTranscriptSearchRequest
+
+    s = manual_session
+    bind_manual(s, "electron-app")
+    values = transcript_request(s, "electron-app").model_dump(by_alias=True)
+    request = (
+        RuntimeTranscriptSearchRequest(**values, query="private")
+        if search
+        else transcript_request(s, "electron-app")
+    )
+    with pytest.raises(HTTPException) as denied:
+        resolve_project_transcript(s.db, s.member.id, request)
+    assert denied.value.status_code == 404
+    s.rpc.assert_not_awaited()

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import {
   CollaborationApp,
@@ -56,18 +56,22 @@ describe('CollaborationApp shared project creation', () => {
   }
 
   it('renders the shared home in English without Chinese text and in Chinese without raw keys', async () => {
-    const english = render(
-      <CollaborationApp api={homeApi()} host={homeHost()} locale="en" pollIntervalMs={0} />
-    )
-    await screen.findByRole('heading', { name: 'Project spaces' })
-    expect(english.container.textContent).not.toMatch(/\p{Script=Han}/u)
-    english.unmount()
-
-    const chinese = render(
-      <CollaborationApp api={homeApi()} host={homeHost()} locale="zh-CN" pollIntervalMs={0} />
-    )
-    await screen.findByRole('heading', { name: '项目空间' })
-    expect(chinese.container.textContent).not.toMatch(/\b(?:todo|common)\.[a-z0-9_.-]+\b/i)
+    for (const [locale, heading, invalidText] of [
+      ['en', 'Project spaces', /\p{Script=Han}/u],
+      ['zh-CN', '项目空间', /\b(?:todo|common)\.[a-z0-9_.-]+\b/i],
+    ] as const) {
+      const api = homeApi()
+      let view!: ReturnType<typeof render>
+      // The directory is a resolved mock promise; flush that render rather than polling timers.
+      await act(async () => {
+        view = render(
+          <CollaborationApp api={api} host={homeHost()} locale={locale} pollIntervalMs={0} />
+        )
+      })
+      expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument()
+      expect(view.container.textContent).not.toMatch(invalidText)
+      view.unmount()
+    }
   })
 
   it('uses the full shared cloud form and hides unavailable local and AITable capabilities', async () => {

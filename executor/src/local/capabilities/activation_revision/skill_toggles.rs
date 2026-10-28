@@ -10,7 +10,8 @@ pub(super) fn only_skill_toggles(
     before: &Snapshot,
     after: &Snapshot,
 ) -> Result<bool, CapabilitySyncError> {
-    if before.skills != after.skills || before.mcps != after.mcps {
+    if before.skills != after.skills || before.mcps != after.mcps || before.cleanup != after.cleanup
+    {
         return Ok(false);
     }
     let mut old_plugins = before.plugins.clone();

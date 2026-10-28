@@ -1013,6 +1013,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'issues',
         'comments',
         'assignments',
+        'assignmentReceipts',
         'attachments',
         'collaborators',
         'taskBindings',

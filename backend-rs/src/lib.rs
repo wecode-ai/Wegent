@@ -38,8 +38,9 @@ pub use attachments::s3_signing::{
     EMPTY_BODY_SHA256, SignedRequest, amz_timestamp_now, hex_sha256, sign_headers,
 };
 pub use attachments::upload::{
-    AttachmentUploadBackend, ImagePid, ImageUploadRequest, S3StorageBackend, StoreObjectRequest,
-    UploadBackendError,
+    AttachmentUploadBackend, ExternalAttachmentStorageResult, ExternalAttachmentUploadError,
+    ExternalAttachmentUploadRequest, ImagePid, ImageUploadRequest, S3StorageBackend,
+    StoreObjectRequest, UploadBackendError,
 };
 pub use brz_http_gateway::{
     BoxError, ConfigError, ExclusionRule, Gateway, GatewayBody, GatewayResponse,
@@ -106,6 +107,7 @@ mod conversion_callback;
 mod crd;
 mod decisions;
 mod delivery_storage;
+mod delivery_update;
 mod device_command;
 pub mod device_commands;
 pub mod device_identity;

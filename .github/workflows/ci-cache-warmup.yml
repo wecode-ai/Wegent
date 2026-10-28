@@ -517,7 +517,7 @@ jobs:
         id: runtime
         env:
           EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'shared/assets/**') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', '.github/runtime-images/backend-rs-e2e.Dockerfile') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \
@@ -525,9 +525,13 @@ jobs:
             .github/scripts/resolve-executor-e2e-runtime.sh
           executor_image="$(sed -n 's/^image=//p' "$runtime_output")"
           test -n "$executor_image"
+          backend_image="$(
+            SOURCE_DIGEST="$BACKEND_RS_SOURCE_DIGEST" \
+              .github/scripts/resolve-backend-rs-e2e-runtime.sh
+          )"
           {
             echo "executor-ref=$executor_image"
-            echo "backend-rs-ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-backend-rs-e2e:v1-$BACKEND_RS_SOURCE_DIGEST"
+            echo "backend-rs-ref=$backend_image"
           } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR

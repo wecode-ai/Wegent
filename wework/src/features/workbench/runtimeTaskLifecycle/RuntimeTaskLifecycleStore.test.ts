@@ -1724,6 +1724,72 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.task?.runtimeHandle?.lastTurnId).toBe('correction-turn')
   })
 
+  test.each([undefined, 1793108413001])(
+    'does not revive a completed continuation from its predecessor snapshot (completedAt: %s)',
+    completedAt => {
+      const store = new RuntimeTaskLifecycleStore('stale-continuation-snapshot')
+      const staleRunningTask = task({
+        status: 'running',
+        running: true,
+        threadStatus: 'idle',
+        turnStatus: 'inProgress',
+        updatedAt: 1793108412640,
+        completedAt: null,
+        runtimeHandle: { lastTurnId: 'initial-turn' },
+      })
+      store.syncRuntimeWork(runtimeWork(staleRunningTask))
+      store.turnStarted(address, 'initial-turn')
+      store.turnSettled(address, 'initial-turn', 'succeeded')
+      store.executorSettled(address)
+      store.sendRequested(address)
+      store.sendAccepted(address)
+      store.turnStarted(address, 'continuation-turn')
+      store.turnSettled(address, 'continuation-turn', 'succeeded')
+      store.syncTranscript(
+        address,
+        transcript({
+          running: false,
+          turns: [
+            { id: 'initial-turn', status: 'completed', items: [] },
+            { id: 'continuation-turn', status: 'completed', completedAt, items: [] },
+          ],
+        })
+      )
+      expect(store.getTask(address)?.derived.canSend).toBe(true)
+
+      store.syncRuntimeWork(runtimeWork(staleRunningTask))
+
+      expect(store.getTask(address)?.turn.latestId).toBe('continuation-turn')
+      expect(store.getTask(address)?.derived.canSend).toBe(true)
+    }
+  )
+
+  test('does not replace a live continuation identity with its predecessor snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('live-continuation-snapshot')
+    const runningTask = task({
+      status: 'running',
+      running: true,
+      turnStatus: 'inProgress',
+      runtimeHandle: { lastTurnId: 'initial-turn' },
+    })
+    store.syncRuntimeWork(runtimeWork(runningTask))
+    store.turnStarted(address, 'initial-turn')
+    store.turnSettled(address, 'initial-turn', 'succeeded')
+    store.executorSettled(address)
+    store.sendRequested(address)
+    store.sendAccepted(address)
+    store.turnStarted(address, 'continuation-turn')
+
+    store.syncRuntimeWork(runtimeWork(runningTask))
+
+    expect(store.getTask(address)?.turn).toMatchObject({
+      id: 'continuation-turn',
+      latestId: 'continuation-turn',
+      phase: 'streaming',
+    })
+    expect(store.getTask(address)?.derived.isBusy).toBe(true)
+  })
+
   test('retains the newer turn when a prior completion snapshot advances its timestamp', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const completed = task({

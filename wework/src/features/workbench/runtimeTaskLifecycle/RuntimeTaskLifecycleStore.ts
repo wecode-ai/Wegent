@@ -11,6 +11,7 @@ import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import {
   isRuntimeTaskAuthoritativeCompletion,
+  isRuntimeTaskConfirmedActive,
   normalizeRuntimeTaskSummary,
   shouldReplaceRuntimeTaskProjection,
   summarizeRuntimeTaskExecution,
@@ -445,12 +446,24 @@ export class RuntimeTaskLifecycleStore {
     const previous = machine.getSnapshot()
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
-      previous.turn.active &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
-      machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId) &&
-      previous.task?.completedAt != null
-    )
+      ((isRuntimeTaskConfirmedActive(canonicalEvent.task) &&
+        machine.isPriorSettledTurn(canonicalEvent.task.runtimeHandle.lastTurnId)) ||
+        (machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId) &&
+          (previous.turn.active
+            ? previous.task?.completedAt != null
+            : previous.turn.outcome !== null)))
+    ) {
+      logRuntimeTaskCreateStage('lifecycle-snapshot-skipped', {
+        taskId: canonicalAddress.taskId,
+        deviceId: canonicalAddress.deviceId,
+        reason: 'prior-turn',
+        receivedTurnId: canonicalEvent.task.runtimeHandle.lastTurnId,
+        activeTurnId: previous.turn.id,
+        latestTurnId: previous.turn.latestId,
+      })
       return false
+    }
     const key = previous.key
     const wasRunning = previous.derived.isRunning || this.previousRunningTaskKeys.has(key)
     if (

@@ -222,6 +222,16 @@ export function removeRuntimeTasks(
 }
 
 export function updateRuntimeWorkTask(
+  runtimeWork: RuntimeWorkListResponse,
+  address: RuntimeTaskAddress,
+  updates: Partial<RuntimeTaskSummary>
+): RuntimeWorkListResponse
+export function updateRuntimeWorkTask(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress,
+  updates: Partial<RuntimeTaskSummary>
+): RuntimeWorkListResponse | null
+export function updateRuntimeWorkTask(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   address: RuntimeTaskAddress,
   updates: Partial<RuntimeTaskSummary>

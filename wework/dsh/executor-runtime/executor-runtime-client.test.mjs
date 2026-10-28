@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { gzipSync } from 'node:zlib'
+import { once } from 'node:events'
 import { ExecutorRuntimeClient, ExecutorRuntimeError } from './executor-runtime-client.js'
 import { LocalEndpointTransport } from './local-endpoint-transport.js'
 
@@ -88,6 +89,35 @@ test('reconnects and renegotiates after the local endpoint disconnects', async (
     await waitFor(() => fixture.connectionCount() >= 2 && transport.authenticated)
     assert.deepEqual(await client.request('executor.health'), { healthy: true })
     assert.equal(client.describe().device_id, 'local-device')
+  } finally {
+    await client.stop()
+    await fixture.stop()
+  }
+})
+
+test('reports disconnection before negotiation as retryable readiness instead of permission denial', async () => {
+  const fixture = await executorFixture()
+  const transport = new LocalEndpointTransport({
+    endpoint: fixture.endpoint,
+    token: fixture.token,
+    reconnectDelayMs: 200,
+  })
+  const client = new ExecutorRuntimeClient({ transport })
+  try {
+    await client.start()
+    const disconnected = once(transport, 'close')
+    fixture.disconnect()
+    await disconnected
+    await assert.rejects(
+      async () => client.request('executor.health'),
+      error =>
+        error instanceof ExecutorRuntimeError &&
+        error.code === 'runtime_not_ready' &&
+        error.retryable
+    )
+    await waitFor(() => fixture.connectionCount() >= 2 && transport.authenticated)
+    assert.deepEqual(await client.request('executor.health'), { healthy: true })
+    assert.throws(() => client.request('untrusted.execute'), { code: 'method_not_allowed' })
   } finally {
     await client.stop()
     await fixture.stop()

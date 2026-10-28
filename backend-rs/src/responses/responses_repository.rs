@@ -393,6 +393,9 @@ mod sql_tests {
         assert_eq!(queries[0].sql, queries[1].sql);
         assert_eq!(queries[2].first_integer, Some(7));
         assert!(queries[3].sql.ends_with("ORDER BY message_id ASC"));
+        assert!(queries[3].sql.starts_with("SELECT id FROM"));
+        assert!(queries[3].sql.contains("WHERE task_id = ? AND user_id = ?"));
+        assert_eq!(queries[3].args, 2);
         assert!(queries[4].sql.contains("is_active IN (1) AND user_id = ?"));
     }
 }

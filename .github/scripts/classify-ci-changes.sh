@@ -46,6 +46,8 @@ classify_path() {
       return
       ;;
     .github/workflows/e2e-tests.yml | \
+      .github/scripts/run-attachment-replica-e2e.sh | \
+      .github/scripts/test-e2e-resource-reuse.mjs | \
       .github/scripts/archive-executor-e2e-runtime.sh | \
       .github/scripts/archive-frontend-e2e-build.sh | \
       .github/scripts/free-runner-disk-space-if-needed.sh | \

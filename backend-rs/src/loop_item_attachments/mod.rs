@@ -22,8 +22,8 @@
 //! `[]`.
 
 mod content;
-mod handler;
+pub(crate) mod handler;
 
 mod external;
-mod repository;
+pub(crate) mod repository;
 mod response;

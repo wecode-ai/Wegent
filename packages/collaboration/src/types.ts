@@ -185,7 +185,20 @@ export interface CollaborationIssue {
 
 export type CollaborationAssignmentTargetType = "human" | "agent";
 
+export interface CollaborationAssignmentReceipt {
+  id: string;
+  target_type: string;
+  target_id: string;
+  target_name: string | null;
+  receipt_tracking: boolean;
+  human_read_at: string | null;
+  stand_in_received_at: string | null;
+}
+
 export interface CollaborationAssignment {
+  receipt_tracking?: boolean;
+  human_read_at?: string | null;
+  stand_in_received_at?: string | null;
   id: string;
   issue_id: string;
   target_type: CollaborationAssignmentTargetType;
