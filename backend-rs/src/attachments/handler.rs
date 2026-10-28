@@ -73,7 +73,7 @@ fn request_url(request: &AnonymousRequest<'_>) -> String {
 /// `_build_content_disposition`: a latin-1-encodable filename gets a quoted
 /// `filename="..."` (backslash and quote escaped); any other filename uses
 /// RFC 5987 `filename*=UTF-8''<percent-encoded>`.
-fn build_content_disposition(disposition: &str, filename: &str) -> String {
+pub(crate) fn build_content_disposition(disposition: &str, filename: &str) -> String {
     if is_latin1(filename) {
         let escaped = filename.replace('\\', "\\\\").replace('"', "\\\"");
         return format!("{disposition}; filename=\"{escaped}\"");

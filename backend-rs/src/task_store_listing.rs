@@ -240,12 +240,23 @@ pub async fn owned_task_id_page<M: brz_mysql::Mysql>(
     let total = totals
         .first()
         .map_or(Ok(0), |row: &MysqlRow| row.get_required::<i64>("count_1"))?;
-    let rows = mysql
-        .fetch_all(
-            owned_task_ids_statement(TASKS_TABLE, skip > 0),
-            (user_id, limit, skip),
-        )
-        .await?;
+    // The statement omits `OFFSET ?` on the first page, so the bind list must
+    // omit `skip` too; an extra bind shifts the parameters and returns no rows.
+    let rows = if skip > 0 {
+        mysql
+            .fetch_all(
+                owned_task_ids_statement(TASKS_TABLE, true),
+                (user_id, limit, skip),
+            )
+            .await?
+    } else {
+        mysql
+            .fetch_all(
+                owned_task_ids_statement(TASKS_TABLE, false),
+                (user_id, limit),
+            )
+            .await?
+    };
     let ids = rows
         .iter()
         .map(|row: &MysqlRow| row.get_required::<i64>("id"))

@@ -976,7 +976,15 @@ test.describe('Task runtime consistency', () => {
 
   async function ensureTestTeamSelected(page: Page): Promise<void> {
     const messageInput = page.getByTestId('message-input')
-    if (await messageInput.isVisible({ timeout: 5000 }).catch(() => false)) {
+    // Every caller navigates with ?teamId=, so the composer is the primary
+    // signal that the URL-selected team resolved. `isVisible()` never waits,
+    // which dropped the flow into the manual picker before the workbench
+    // finished loading; `waitFor()` gives the URL-selected team its chance.
+    const resolved = await messageInput
+      .waitFor({ state: 'visible', timeout: 30_000 })
+      .then(() => true)
+      .catch(() => false)
+    if (resolved) {
       return
     }
 

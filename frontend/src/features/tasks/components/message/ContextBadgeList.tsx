@@ -5,7 +5,7 @@
 'use client'
 
 import React, { ReactNode } from 'react'
-import { Database, Loader2, MessageSquareText } from 'lucide-react'
+import { Database, FileDown, Loader2, MessageSquareText } from 'lucide-react'
 import AttachmentPreview from '../input/AttachmentPreview'
 import ImageGallery from './ImageGallery'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
@@ -18,8 +18,16 @@ import {
   formatCompactKnowledgeScope,
   formatKnowledgeScopeSummary,
 } from '@/features/knowledge/knowledgeContextPresentation'
-import { isAudioExtension, isImageExtension, isVideoExtension } from '@/apis/attachments'
+import {
+  formatFileSize,
+  isAudioExtension,
+  isImageExtension,
+  isVideoExtension,
+} from '@/apis/attachments'
 import { useAttachmentImage } from '@/hooks/useAttachmentImage'
+import { remoteWorkspaceApis } from '@/apis/remoteWorkspace'
+import { getToken } from '@/apis/user'
+import { useToast } from '@/hooks/use-toast'
 
 /**
  * Base preview component for context items (attachments, knowledge bases, etc.)
@@ -186,11 +194,81 @@ function ContextBadgeItem({
           documentCount={documentCount}
         />
       )
+    case 'remote_workspace_artifact':
+      return <RemoteWorkspaceArtifactBadge context={context} />
     case 'conversation':
       return <ConversationReferenceBadge context={context} />
     default:
       return null
   }
+}
+
+function RemoteWorkspaceArtifactBadge({ context }: { context: SubtaskContextBrief }) {
+  const { t } = useTranslation('tasks')
+  const { toast } = useToast()
+  const [isDownloading, setIsDownloading] = React.useState(false)
+  const canDownload = context.status === 'ready' && !!context.remote_task_id
+  const subtitle = [
+    t('remote_workspace.artifact.device_file'),
+    context.file_size === null || context.file_size === undefined
+      ? undefined
+      : formatFileSize(context.file_size),
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
+  const handleDownload = async () => {
+    if (!canDownload || !context.remote_task_id || isDownloading) return
+    setIsDownloading(true)
+    try {
+      const token = getToken()
+      const response = await fetch(
+        remoteWorkspaceApis.getArtifactFileUrl(context.remote_task_id, context.id, 'attachment'),
+        {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        }
+      )
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const url = URL.createObjectURL(await response.blob())
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = context.name
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Failed to download remote workspace artifact:', error)
+      toast({
+        variant: 'destructive',
+        title: t('remote_workspace.artifact.download_failed'),
+        description: t('remote_workspace.artifact.unavailable'),
+      })
+    } finally {
+      setIsDownloading(false)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className="flex max-w-full items-center gap-3 rounded-lg border border-border bg-muted p-3 text-left transition-colors hover:bg-muted/70 disabled:cursor-not-allowed disabled:opacity-60"
+      disabled={!canDownload || isDownloading}
+      onClick={handleDownload}
+      title={canDownload ? t('remote_workspace.artifact.download') : undefined}
+      data-testid={`remote-workspace-artifact-download-${context.id}`}
+    >
+      <span className="text-2xl text-primary">
+        {isDownloading ? <Loader2 className="animate-spin" /> : <FileDown />}
+      </span>
+      <span className="min-w-0 flex-1 overflow-hidden">
+        <span className="block truncate text-sm font-medium" title={context.name}>
+          {context.name}
+        </span>
+        <span className="block text-xs text-text-muted">{subtitle}</span>
+      </span>
+    </button>
+  )
 }
 
 /**
