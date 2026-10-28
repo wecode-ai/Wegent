@@ -160,7 +160,6 @@ export function useWorkbenchModels({
       enabled &&
       selectionReady &&
       hasCompletedModelLoad &&
-      selectedModelAvailable &&
       !configuredModelUnavailable &&
       (restoredSelectionKeyByScope[scopeKey] === selectionKey || selectionMatchesConfig),
     [
@@ -169,7 +168,6 @@ export function useWorkbenchModels({
       hasCompletedModelLoad,
       restoredSelectionKeyByScope,
       scopeKey,
-      selectedModelAvailable,
       selectionMatchesConfig,
       selectionKey,
       selectionReady,
@@ -513,6 +511,7 @@ export function useWorkbenchModels({
     refreshModels,
     selectedModel,
     selectedModelOptions,
+    selectedModelAvailable,
     isSelectionReady,
     isConfiguredModelUnavailable: configuredModelUnavailable,
     setSelectedModel,

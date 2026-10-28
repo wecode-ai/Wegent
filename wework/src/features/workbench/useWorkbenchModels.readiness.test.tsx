@@ -3,7 +3,7 @@ import { expect, test, vi } from 'vitest'
 import type { UnifiedModel } from '@/types/api'
 import { useWorkbenchModels } from './useWorkbenchModels'
 
-test('requires an available selected model after an empty catalog load', async () => {
+test('distinguishes restored default settings from an available model', async () => {
   const replacement: UnifiedModel = { name: 'replacement', type: 'public' }
   const api = { listModels: vi.fn().mockResolvedValue({ data: [] }) }
   const { result } = renderHook(() =>
@@ -13,13 +13,15 @@ test('requires an available selected model after an empty catalog load', async (
   await waitFor(() => expect(api.listModels).toHaveBeenCalledOnce())
   await waitFor(() => expect(result.current.isLoading).toBe(false))
   expect(result.current.selectedModel).toBeNull()
-  expect(result.current.isSelectionReady).toBe(false)
+  await waitFor(() => expect(result.current.isSelectionReady).toBe(true))
+  expect(result.current.selectedModelAvailable).toBe(false)
 
   api.listModels.mockResolvedValue({ data: [replacement] })
   act(() => result.current.refreshModels())
   await waitFor(() => expect(result.current.models).toEqual([replacement]))
   act(() => result.current.setSelectedModel(replacement))
   expect(result.current.isSelectionReady).toBe(true)
+  expect(result.current.selectedModelAvailable).toBe(true)
 })
 
 test('does not advertise send readiness before a deferred catalog has loaded', async () => {
