@@ -90,7 +90,7 @@ def test_worker_device_dispatch_uses_cross_process_message(
     assert message["host_id"]
 
 
-def test_app_device_routes_to_record_scoped_socket_room(
+async def test_app_device_routes_to_record_scoped_socket_room(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A desktop App alias must target the room joined at registration."""
@@ -109,19 +109,11 @@ def test_app_device_routes_to_record_scoped_socket_room(
         "app.services.device_service.device_service.get_device_by_device_id",
         lambda _db, **_kwargs: device,
     )
-    monkeypatch.setattr(
-        "app.db.session.SessionLocal",
-        lambda: MagicMock(
-            **{
-                "__enter__": lambda self: self,
-                "__exit__": lambda *_args: None,
-            }
-        ),
+    target_room = await ExecutionDispatcher()._resolve_device_route_id(
+        MagicMock(user={"id": 9}), device.name
     )
 
-    target = ExecutionRouter().route(MagicMock(user={"id": 9}), device_id=device.name)
-
-    assert target.room == "device:9:app-record-58"
+    assert target_room == "app-record-58"
 
 
 @pytest.mark.asyncio

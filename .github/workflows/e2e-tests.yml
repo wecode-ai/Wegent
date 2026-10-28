@@ -946,6 +946,7 @@ jobs:
 
       - name: Start local Executor device
         env:
+          E2E_EXECUTOR_USER: e2e-executor
           EXECUTOR_MODE: local
           WEGENT_BACKEND_URL: http://localhost:8000
           DEVICE_ID: e2e-platform-device-${{ matrix.shardIndex }}
@@ -959,6 +960,9 @@ jobs:
           LOCAL_HEARTBEAT_INTERVAL: "5"
           LOG_LEVEL: info
         run: |
+          if ! id e2e-executor >/dev/null 2>&1; then
+            useradd --create-home --shell /bin/bash e2e-executor
+          fi
           .github/scripts/start-local-e2e-executor.sh \
             .ci-artifacts/wegent-executor \
             executor/platform-executor.log \

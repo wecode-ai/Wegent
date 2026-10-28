@@ -117,7 +117,10 @@ class ExecutionDispatcher:
             await self._recover_executor_if_needed(request, device_id=device_id)
 
             # Route to execution target
-            target = self.router.route(request, device_id)
+            target = self.router.route(
+                request,
+                await self._resolve_device_route_id(request, device_id),
+            )
             logger.info(
                 f"[ExecutionDispatcher] Routed: task_id={request.task_id}, "
                 f"subtask_id={request.subtask_id}, device_id={device_id} -> {target}"
@@ -352,6 +355,27 @@ class ExecutionDispatcher:
             logger.error(
                 f"[ExecutionDispatcher] Failed to update subtask {subtask_id} to RUNNING: {e}"
             )
+
+    async def _resolve_device_route_id(
+        self, request: ExecutionRequest, device_id: Optional[str]
+    ) -> Optional[str]:
+        """Resolve a logical App device to its registered Socket.IO route."""
+        if not device_id or not request.user or request.user.get("id") is None:
+            return device_id
+
+        from app.services.device.identity import device_connection_route_id
+        from app.services.device_service import device_service
+
+        def resolve() -> Optional[str]:
+            with SessionLocal() as db:
+                device = device_service.get_device_by_device_id(
+                    db,
+                    user_id=request.user["id"],
+                    device_id=device_id,
+                )
+                return device_connection_route_id(device) if device else device_id
+
+        return await asyncio.to_thread(resolve)
 
     async def _set_subtask_executor(
         self,
