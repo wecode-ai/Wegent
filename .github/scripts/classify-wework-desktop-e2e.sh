@@ -115,6 +115,7 @@ core_segments=(
   temporary-chat
   workspace-attachments
   rendering-extensions
+  mcp-apps
   streaming-content
   streaming-tools
   streaming-timers
@@ -235,6 +236,8 @@ core_shards=(
   split-workbench
   collaboration-shared-core,runtime-input-answer-persistence,permission-modes
 )
+
+core_shards[1]+=',mcp-apps'
 
 validate_core_shards() {
   declare -A known_segments=()
@@ -1263,6 +1266,17 @@ classify_wework_path() {
 
     wework/e2e/desktop/modules/shared-skill-runtime.mjs)
       select_target "core:claude-runtime"
+      return
+      ;;
+
+    wework/src/features/mcp-apps/* | \
+      wework/src/api/mcpApps.ts | \
+      wework/electron/src/host/mcp-app-documents* | \
+      executor/src/agents/codex/mcp_apps.rs | \
+      executor/src/runtime_work/handler/mcp_apps.rs | \
+      wework/e2e/desktop/scenarios/mcp-apps.scenario.mjs | \
+      wework/e2e/utils/mcp-app-server.mjs)
+      select_target "core:mcp-apps"
       return
       ;;
 

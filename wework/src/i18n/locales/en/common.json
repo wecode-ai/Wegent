@@ -4977,6 +4977,8 @@
     "execution_tasks": "Execution tasks",
     "no_running_task": "No task is currently running",
     "no_linked_task": "No linked tasks",
+    "linked_task_archived": "This task has been archived. Restore it from archived tasks before opening it.",
+    "linked_task_unavailable": "Unable to open this task. It may have been deleted. Refresh and try again.",
     "no_execution_tasks": "No execution tasks yet",
     "issue_task_composer_empty": "Describe what this task should accomplish. Sending creates the task and links it to this issue.",
     "issue_task_composer_placeholder": "Describe the task to run",
@@ -5570,5 +5572,15 @@
     "crash_title": "Something went wrong in Wework",
     "crash_description": "An unexpected error prevented this page from displaying. Refresh the page to try again; unsaved changes may be lost. If the problem persists, open the debug panel to view the logs.",
     "reload": "Refresh page"
+  },
+  "mcp_apps": {
+    "title": "MCP App",
+    "unsupported_resource": "The app returned an unsupported UI resource.",
+    "cancel": "Cancel",
+    "retry": "Retry app",
+    "expand": "Expand or restore app",
+    "close": "Close app",
+    "send": "Send",
+    "unsupported_display_mode": "The app has no supported display mode."
   }
 }

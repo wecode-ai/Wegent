@@ -4974,6 +4974,8 @@
     "execution_tasks": "执行任务",
     "no_running_task": "当前没有正在执行的任务",
     "no_linked_task": "尚未关联任务",
+    "linked_task_archived": "该任务已归档，请先在归档任务中恢复后再查看。",
+    "linked_task_unavailable": "无法打开该任务，任务可能已被删除，请刷新后重试。",
     "no_execution_tasks": "尚无执行任务",
     "issue_task_composer_empty": "描述这个任务要完成什么，发送后会创建任务并关联当前 Issue。",
     "issue_task_composer_placeholder": "描述要执行的任务",
@@ -5567,5 +5569,15 @@
     "crash_title": "Wework 页面出现错误",
     "crash_description": "页面遇到异常，暂时无法显示。请刷新页面重试；尚未保存的内容可能会丢失。如果问题持续，请打开调试面板查看日志。",
     "reload": "刷新页面"
+  },
+  "mcp_apps": {
+    "title": "MCP 应用",
+    "unsupported_resource": "应用返回了不支持的界面资源。",
+    "cancel": "取消",
+    "retry": "重试应用",
+    "expand": "展开或还原应用",
+    "close": "关闭应用",
+    "send": "发送",
+    "unsupported_display_mode": "应用没有可用的显示模式。"
   }
 }
