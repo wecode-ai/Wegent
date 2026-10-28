@@ -760,10 +760,12 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
         retry: bool,
     ) -> Result<Value, AppIpcError> {
+        // These large futures must not inflate every enclosing stand-in state
+        // machine and exhaust Windows worker stacks during nested polling.
         let result = if retry {
-            self.send_message(payload).await
+            Box::pin(self.send_message(payload)).await
         } else {
-            self.create_task(payload).await
+            Box::pin(self.create_task(payload)).await
         };
         result.and_then(|result| {
             if result["success"] == false || result["accepted"] == false {

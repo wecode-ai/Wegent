@@ -323,7 +323,7 @@ export function createSharedWorkspaceHttpApi(
       },
       async listAgents(workspaceId, options) {
         const response = await get<{ items: unknown[] }>(
-          `/v1/workspaces/${encoded(workspaceId)}/agents`,
+          `/v1/workspaces/${encoded(workspaceId)}/agents?include_readiness=false`,
           options?.forceRefresh ? 0 : undefined,
         );
         return response.items.map((item) =>

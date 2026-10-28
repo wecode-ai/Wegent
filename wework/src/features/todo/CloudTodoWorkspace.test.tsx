@@ -681,8 +681,10 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
         }
         if (url.endsWith('/v1/resources?include_readiness=false'))
           return { agents: [], execution_environments: [] }
-        if (url.endsWith(`/v1/workspaces/${project.workspace_id}/agents`)) return { items: [] }
-        if (url.endsWith('/chat-agents')) return []
+        if (url.endsWith(`/v1/workspaces/${project.workspace_id}/agents?include_readiness=false`))
+          return { items: [] }
+        if (url.endsWith('/chat-agents') || url.endsWith('/chat-agents?include_archived=true'))
+          return []
         if (url.endsWith('/comments')) return []
         if (url.endsWith('/assignments')) return { items: [] }
         if (url.endsWith('/collaboration-groups')) return { items: [] }
