@@ -1,21 +1,33 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 
 import { expandDesktopCheckpoints } from '../../wework/e2e/desktop/checkpoints.mjs'
 import { balanceWindowsMatrix, checkpointSeconds } from './balance-wework-windows-e2e.mjs'
 
 const root = new URL('../../', import.meta.url)
-const output = execFileSync('bash', ['.github/scripts/classify-wework-desktop-e2e.sh', '--all'], {
-  cwd: root,
-  encoding: 'utf8',
-  env: { ...process.env, GITHUB_OUTPUT: '/dev/stdout' },
-})
-const matrixLine = output
-  .split('\n')
-  .find(line => line.startsWith('wework_desktop_core_e2e_matrix='))
-const original = JSON.parse(matrixLine.slice(matrixLine.indexOf('=') + 1))
+function classifiedCoreMatrix() {
+  const directory = mkdtempSync(join(tmpdir(), 'wework-core-matrix-'))
+  const output = join(directory, 'github-output')
+  try {
+    execFileSync('bash', ['.github/scripts/classify-wework-desktop-e2e.sh', '--all'], {
+      cwd: root,
+      env: { ...process.env, GITHUB_OUTPUT: output },
+    })
+    const matrixLine = readFileSync(output, 'utf8')
+      .split('\n')
+      .find(line => line.startsWith('wework_desktop_core_e2e_matrix='))
+    assert.ok(matrixLine, 'The classifier must emit its complete Core matrix')
+    return JSON.parse(matrixLine.slice(matrixLine.indexOf('=') + 1))
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+}
+
+const original = classifiedCoreMatrix()
 const segments = matrix => matrix.include.flatMap(shard => shard.segments.split(','))
 const checkpoints = matrix =>
   matrix.include.flatMap(shard => expandDesktopCheckpoints(shard.segments.split(',')))
