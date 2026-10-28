@@ -6,7 +6,7 @@ import {
   commitPluginInventoryInstallation,
 } from '@/features/plugins/pluginInventory'
 import type { KeyboardEvent, ReactNode } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { getToken } from '@/api/auth'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
@@ -43,7 +43,12 @@ import {
   linkedCloudInstalledPluginId,
   linkedCloudPluginId,
 } from './installedPluginMerge'
-import { pluginUninstallWarningDetails, uninstallPluginIdentities } from './pluginUninstall'
+import {
+  pluginUninstallScope,
+  pluginUninstallWarningDetails,
+  uninstallPluginIdentities,
+  type PluginUninstallScope,
+} from './pluginUninstall'
 import { humanizeMarketplaceUninstallError } from './marketplaceInstallError'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
@@ -93,6 +98,13 @@ function PluginManagementWorkspaceContent({
   onCreateWeworkPlugin,
 }: PluginManagementWorkspaceProps) {
   const { t } = useTranslation('common')
+  const mounted = useRef(false)
+  useLayoutEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const runtime = getRuntimeConfig()
   const resolvedCloudApiBaseUrl = cloudApiBaseUrl || runtime.apiBaseUrl
   const marketplaceCacheKeyValue = useMemo(
@@ -117,6 +129,7 @@ function PluginManagementWorkspaceContent({
   const [pendingUninstall, setPendingUninstall] = useState<{
     id: string | number
     name: string
+    scope: PluginUninstallScope
   } | null>(null)
   const [uninstallingPluginIds, setUninstallingPluginIds] = useState<Set<string | number>>(
     () => new Set()
@@ -291,7 +304,8 @@ function PluginManagementWorkspaceContent({
   }
 
   const requestUninstallPlugin = (id: string | number, name: string) => {
-    setPendingUninstall({ id, name })
+    const plugin = installedPlugins.find(item => String(item.id) === String(id))
+    setPendingUninstall({ id, name, scope: pluginUninstallScope(plugin?.raw ?? null) })
   }
 
   const confirmUninstallPlugin = () => {
@@ -303,6 +317,8 @@ function PluginManagementWorkspaceContent({
   }
 
   const uninstallInstalledPlugin = (id: string | number, pluginName: string) => {
+    const isCurrent = () => mounted.current
+    if (!isCurrent()) return
     const plugin = installedPlugins.find(item => String(item.id) === String(id))
     if (!plugin) {
       setUninstallingPluginIds(previous => {
@@ -317,16 +333,18 @@ function PluginManagementWorkspaceContent({
       })
       return
     }
-    void logoutLocalConnectorsForPlugin(plugin.raw)
-      .catch(() => undefined)
-      .then(() =>
-        uninstallPluginIdentities(plugin.raw, id, currentDeviceId || undefined, {
-          uninstallCloud: (pluginId, deviceId) =>
-            cloudPluginApi.uninstallInstalledPlugin(pluginId, deviceId),
-          uninstallLocal: pluginId => localPluginApi.uninstallInstalledPlugin(pluginId),
-        })
-      )
+    void uninstallPluginIdentities(plugin.raw, id, currentDeviceId || undefined, {
+      readLocalInstalled: () =>
+        localPluginApi.listInstalledPlugins({ refresh: true, requireComplete: true }),
+      readCloudInstalled: () => cloudPluginApi.readInstalledPluginsForUninstall(),
+      isCurrent,
+      logoutLocal: () => logoutLocalConnectorsForPlugin(plugin.raw),
+      uninstallCloud: (pluginId, deviceId) =>
+        cloudPluginApi.uninstallInstalledPlugin(pluginId, deviceId),
+      uninstallLocal: pluginId => localPluginApi.uninstallInstalledPlugin(pluginId),
+    })
       .then(outcome => {
+        if (!isCurrent()) return
         const marketplaceItem = findMarketplaceItemForInstalled(plugin, marketplaceItems)
         removePluginMarketplaceInstallation(marketplaceCacheKeyValue, {
           installedIds: [id, plugin.id, linkedCloudInstalledPluginId(plugin.raw)],
@@ -375,6 +393,7 @@ function PluginManagementWorkspaceContent({
         })
       })
       .catch((error: unknown) => {
+        if (!isCurrent()) return
         const rawErrorMessage = getErrorMessage(
           error,
           t('workbench.plugins_uninstall_failed', '卸载失败，请稍后重试')
@@ -391,6 +410,7 @@ function PluginManagementWorkspaceContent({
         track('operation_failed', { operation: 'plugin_uninstall' })
       })
       .finally(() => {
+        if (!isCurrent()) return
         setUninstallingPluginIds(previous => {
           const next = new Set(previous)
           next.delete(id)
@@ -593,6 +613,7 @@ function PluginManagementWorkspaceContent({
         {pendingUninstall && (
           <UninstallPluginDialog
             pluginName={pendingUninstall.name}
+            scope={pendingUninstall.scope}
             onCancel={() => setPendingUninstall(null)}
             onConfirm={confirmUninstallPlugin}
           />
@@ -808,6 +829,7 @@ function PluginManagementWorkspaceContent({
       {pendingUninstall && (
         <UninstallPluginDialog
           pluginName={pendingUninstall.name}
+          scope={pendingUninstall.scope}
           onCancel={() => setPendingUninstall(null)}
           onConfirm={confirmUninstallPlugin}
         />

@@ -9,6 +9,7 @@ import {
 } from '@/features/plugins/pluginMarketplaceCache'
 import { navigateTo } from '@/lib/navigation'
 import * as localPlugins from '@/api/local/codexPlugins'
+import * as connectorCleanup from '@/features/plugins/logoutLocalQrConnectors'
 import { ensureLocalExecutorAvailable, requestLocalExecutor } from '@/desktop/localExecutor'
 import '@/i18n'
 import { PluginManagementWorkspace } from './PluginManagementWorkspace'
@@ -772,6 +773,9 @@ describe('PluginManagementWorkspace cache', () => {
       'fetch',
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         if (init?.method === 'DELETE') return Promise.resolve(new Response(null, { status: 204 }))
+        if (String(input).endsWith('/plugins/installed')) {
+          return Promise.resolve(Response.json({ items: [installed.raw] }))
+        }
         return new Promise<Response>(() => {
           // A slow catalog refresh must not delay the committed uninstall state.
         })
@@ -790,4 +794,114 @@ describe('PluginManagementWorkspace cache', () => {
       expect.objectContaining({ installed: false, installedPluginId: null, enabled: false }),
     ])
   })
+
+  test.each(['none', 'current', 'unavailable', 'delete-failure', 'account-change', 'unmount'])(
+    'preflights a published local source before uninstall cleanup (%s)',
+    async outcome => {
+      const source = cachedInstalledPlugin().raw
+      source.metadata.labels = { id: 'author-source' }
+      source.spec.source = {
+        type: 'local',
+        providerKey: 'wework-personal',
+        marketplace: 'wework-personal',
+        pluginKey: 'dev-tools',
+      }
+      source.spec.origin = 'created'
+      source.spec.sourcePayload = { cloudPluginId: 901, cloudReleaseId: 6 }
+      const key = pluginMarketplaceCacheKey('/api', 'cloud-token')
+      setPluginMarketplaceCache({
+        cacheKey: key,
+        marketplaceItems: [],
+        installedPlugins: [source],
+        marketplaces: [],
+        selectedMarketplaceKey: '',
+        deviceId: 'device-1',
+        fetchedAt: Date.now(),
+      })
+      const api = localPlugins.createLocalCodexPluginApi()
+      const uninstallLocal = vi.fn().mockResolvedValue(undefined)
+      vi.spyOn(localPlugins, 'createLocalCodexPluginApi').mockReturnValue({
+        ...api,
+        listInstalledPlugins: vi.fn().mockResolvedValue({ items: [source], deviceId: 'device-1' }),
+        uninstallInstalledPlugin: uninstallLocal,
+      })
+      const logout = vi
+        .spyOn(connectorCleanup, 'logoutLocalConnectorsForPlugin')
+        .mockResolvedValue(undefined)
+      let finish!: (response: Response) => void
+      const request = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === 'DELETE') {
+          return Promise.resolve(
+            outcome === 'delete-failure'
+              ? Response.json({ detail: 'Forbidden' }, { status: 403 })
+              : new Response(null, { status: 204 })
+          )
+        }
+        if (String(input).endsWith('/plugins/installed')) {
+          return new Promise<Response>(resolve => {
+            finish = resolve
+          })
+        }
+        return Promise.resolve(Response.json({ items: [] }))
+      })
+      vi.stubGlobal('fetch', request)
+      const view = render(
+        <PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />
+      )
+      await userEvent.click(await screen.findByTestId('installed-plugin-actions-author-source'))
+      await userEvent.click(screen.getByTestId('installed-plugin-uninstall-author-source'))
+      expect(screen.getByTestId('uninstall-plugin-dialog')).toHaveTextContent(
+        '源码、已分享版本和分享范围会保留'
+      )
+      await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
+      await waitFor(() => expect(finish).toBeDefined())
+      expect(logout).not.toHaveBeenCalled()
+      expect(uninstallLocal).not.toHaveBeenCalled()
+      if (outcome === 'account-change') {
+        view.rerender(
+          <PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="another-account" />
+        )
+      } else if (outcome === 'unmount') view.unmount()
+      const accountPlugin = {
+        ...source,
+        metadata: { ...source.metadata, labels: { id: 208 } },
+        spec: { ...source.spec, pluginId: 901, releaseId: 6 },
+      }
+      await act(async () =>
+        finish(
+          outcome === 'unavailable'
+            ? Response.json({ detail: 'Unavailable' }, { status: 503 })
+            : Response.json({
+                items: outcome === 'current' || outcome === 'delete-failure' ? [accountPlugin] : [],
+              })
+        )
+      )
+      if (outcome === 'none' || outcome === 'current') {
+        await waitFor(() => expect(uninstallLocal).toHaveBeenCalledWith('author-source'))
+        expect(logout).toHaveBeenCalledOnce()
+        expect(getPluginMarketplaceCache(key)?.installedPlugins).toEqual([])
+      } else {
+        await waitFor(() => {
+          if (outcome === 'unavailable' || outcome === 'delete-failure') {
+            expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+              'data-notice-kind',
+              'error'
+            )
+          }
+        })
+        expect(logout).not.toHaveBeenCalled()
+        expect(uninstallLocal).not.toHaveBeenCalled()
+        if (outcome !== 'account-change') {
+          expect(getPluginMarketplaceCache(key)?.installedPlugins).toEqual([source])
+        }
+      }
+      const deletes = request.mock.calls.filter(([, init]) => init?.method === 'DELETE')
+      if (outcome === 'current' || outcome === 'delete-failure') {
+        expect(deletes).toEqual([
+          ['/api/plugins/installed/208', expect.objectContaining({ method: 'DELETE' })],
+        ])
+      } else expect(deletes).toEqual([])
+      view.unmount()
+    }
+  )
 })

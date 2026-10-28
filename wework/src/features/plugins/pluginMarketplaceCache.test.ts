@@ -602,6 +602,77 @@ describe('pluginMarketplaceCache', () => {
     ])
   })
 
+  test.each(['different-name', 'same-name'])(
+    'keeps account install IDs separate from catalog IDs during uninstall: %s',
+    naming => {
+      const key = 'identity-domains'
+      const target = installedItem('75', 'wegent', 'target')
+      target.raw.spec.pluginId = 2
+      const otherName = naming === 'same-name' ? 'target' : 'other'
+      const other = installedItem('88', 'wegent', otherName)
+      other.raw.spec.pluginId = 75
+      setPluginMarketplaceCache({
+        cacheKey: key,
+        marketplaceItems: [
+          item({ id: 2, name: 'target', installed: true, installedPluginId: 75 }),
+          item({ id: 75, name: otherName, installed: true, installedPluginId: 88 }),
+        ],
+        installedPlugins: [target.raw, other.raw],
+        marketplaces: [],
+        selectedMarketplaceKey: '',
+        deviceId: 'device-1',
+        fetchedAt: Date.now(),
+      })
+
+      const next = removePluginMarketplaceInstallation(key, {
+        installedIds: [75],
+        marketplaceItemIds: [2],
+        pluginKeys: ['target'],
+        marketplaceId: 'wegent',
+      })
+
+      expect(next?.installedPlugins).toEqual([other.raw])
+      expect(next?.marketplaceItems).toEqual([
+        expect.objectContaining({ id: 2, installed: false, installedPluginId: null }),
+        expect.objectContaining({ id: 75, installed: true, installedPluginId: 88 }),
+      ])
+    }
+  )
+
+  test('clears remote catalog aliases without confusing their installation IDs', () => {
+    const key = 'remote-identity-domains'
+    const target = installedItem('local-receipt', 'remote-market', 'target')
+    target.raw.spec.sourcePayload = { remotePluginId: 'remote-catalog-id' }
+    setPluginMarketplaceCache({
+      cacheKey: key,
+      marketplaceItems: [
+        item({
+          id: 'catalog-row',
+          remotePluginId: 'remote-catalog-id',
+          name: 'target',
+          installed: true,
+          installedPluginId: 'local-receipt',
+        }),
+      ],
+      installedPlugins: [target.raw],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'device-1',
+      fetchedAt: Date.now(),
+    })
+
+    const next = removePluginMarketplaceInstallation(key, {
+      installedIds: [],
+      marketplaceItemIds: ['remote-catalog-id'],
+      pluginKeys: [],
+    })
+    expect(next?.installedPlugins).toEqual([])
+    expect(next?.marketplaceItems[0]).toMatchObject({
+      installed: false,
+      installedPluginId: null,
+    })
+  })
+
   test('preserves case-distinct marketplace IDs when uninstalling by plugin key', () => {
     const key = pluginMarketplaceCacheKey('http://api', 'token-marketplace-case')
     const first = installedItem('59', 'market-a', 'shared-name')

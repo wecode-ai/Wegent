@@ -8,6 +8,12 @@ import { waitForSnapshot } from './conversation-layout.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
 import { verifyPersonalRecipientManagedInstall } from './plugin-personal-recipient-install.mjs'
+import {
+  prepareAuthorAccountInstall,
+  verifyAuthorAccountUninstall,
+  verifyAuthorSourceUninstall,
+  verifyRecipientUninstallDoesNotRemoveOwner,
+} from './plugin-personal-uninstall-flow.mjs'
 
 const slug = 'desktop-e2e-personal-version'
 const currentVersion = '1.0.0'
@@ -39,14 +45,47 @@ async function createPackage(root, version) {
   return archivePath
 }
 
+async function importPersonalSource(control, root, version, overwrite = false) {
+  const preview = JSON.parse(
+    await control.command('previewPluginImport', 'body', {
+      value: JSON.stringify({
+        archivePath: await createPackage(root, version),
+        marketplacePath: join(root, 'wework-personal'),
+      }),
+    })
+  )
+  await writeFile(
+    join(root, overwrite ? `import-preview-${version}.json` : 'import-preview.json'),
+    `${JSON.stringify(preview, null, 2)}\n`
+  )
+  assert.equal(
+    preview.valid,
+    true,
+    `Personal source import failed validation: ${JSON.stringify(preview.issues)}`
+  )
+  const imported = JSON.parse(
+    await control.command('importPluginPackage', 'body', {
+      value: JSON.stringify({ preview, overwrite }),
+    })
+  )
+  assert.equal(imported.version, version)
+}
+
 export async function verifyPersonalPluginVersionSubmission({
   cloudEnvironment,
   control,
-  restartDesktopApp,
+  restartDesktopApp: restartDesktopProcess,
   executorHome,
   codexHome,
   userDataDirectory,
 }) {
+  const restartDesktopApp = async options => {
+    await restartDesktopProcess(options)
+    // The control connection precedes the asynchronous Core workbench mount.
+    await control.command('waitFor', testId('new-chat-button'), {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  }
   await control.command('navigate', 'body', { value: '/' })
   const root = join(resultDir, 'personal-version-fixture')
   await mkdir(root, { recursive: true })
@@ -100,26 +139,7 @@ export async function verifyPersonalPluginVersionSubmission({
   assert.equal(accessBefore.allowCopy, true)
 
   // The cloud fixture owns the old release; native import creates the real editable source.
-  const preview = JSON.parse(
-    await control.command('previewPluginImport', 'body', {
-      value: JSON.stringify({
-        archivePath: await createPackage(root, nextVersion),
-        marketplacePath: join(root, 'wework-personal'),
-      }),
-    })
-  )
-  await writeFile(join(root, 'import-preview.json'), `${JSON.stringify(preview, null, 2)}\n`)
-  assert.equal(
-    preview.valid,
-    true,
-    `Personal source import failed validation: ${JSON.stringify(preview.issues)}`
-  )
-  const imported = JSON.parse(
-    await control.command('importPluginPackage', 'body', {
-      value: JSON.stringify({ preview, overwrite: false }),
-    })
-  )
-  assert.equal(imported.version, nextVersion)
+  await importPersonalSource(control, root, nextVersion)
   await control.command('navigate', 'body', { value: '/plugins' })
   await control.command('waitFor', testId('plugins-search-input'))
   await control.command('click', testId('plugins-distribution-tab-personal'))
@@ -148,7 +168,7 @@ export async function verifyPersonalPluginVersionSubmission({
   await control.command('clickWhenEnabled', testId('plugin-version-submit-confirm'), {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const after = await until(
+  let after = await until(
     () => request(pluginPath),
     plugin => plugin.version === nextVersion,
     'Submitting the new personal source did not advance the shared release'
@@ -168,6 +188,37 @@ export async function verifyPersonalPluginVersionSubmission({
     password: `Personal-version-E2E-${process.pid}-A1!`,
   })
   assert.ok(login.access_token, 'The real recipient login did not return an access token')
+  const recipientCloud = { backendUrl: cloudEnvironment.backendUrl, authToken: login.access_token }
+  const managedRecipient = await verifyPersonalRecipientManagedInstall({
+    cloudEnvironment,
+    control,
+    restartDesktopApp,
+    plugin: after,
+    recipientToken: login.access_token,
+    executorHome,
+    codexHome,
+    userDataDirectory,
+  })
+  const authorLifecycle = await verifyAuthorSourceUninstall({
+    control,
+    cloudEnvironment,
+    recipientCloud,
+    plugin: after,
+    access: accessBefore,
+    codexHome,
+    restartDesktopApp,
+    version: '1.1.1',
+    prepareSource: version => importPersonalSource(control, root, version, true),
+  })
+  after = authorLifecycle.plugin
+  const ownerAccount = await prepareAuthorAccountInstall({
+    control,
+    cloudEnvironment,
+    plugin: after,
+    executorHome,
+    source: authorLifecycle.source,
+  })
+  let crossAccountUninstall
   try {
     // Keep the real local source on disk: cloud recipient authority must override it.
     await restartDesktopApp({
@@ -196,6 +247,20 @@ export async function verifyPersonalPluginVersionSubmission({
       'The recipient inherited author actions from the local personal source'
     )
     await captureVerificationScreenshot(control, 'personal-plugin-recipient-read-only.png')
+    await expectHttpStatus(
+      cloudEnvironment.backendUrl,
+      `${pluginPath}/owner`,
+      login.access_token,
+      404
+    )
+    crossAccountUninstall = await verifyRecipientUninstallDoesNotRemoveOwner({
+      control,
+      cloudEnvironment,
+      recipientCloud,
+      plugin: after,
+      source: authorLifecycle.source,
+      ownerIdentity: ownerAccount.identity,
+    })
 
     const recipientRuntimeWork = () =>
       fetchJson(`${cloudEnvironment.backendUrl}/api/runtime-work`, {
@@ -240,15 +305,23 @@ export async function verifyPersonalPluginVersionSubmission({
       appEnvironmentOverrides: { WEWORK_E2E_CLOUD_TOKEN: cloudEnvironment.authToken },
     })
   }
-  const managedRecipient = await verifyPersonalRecipientManagedInstall({
-    cloudEnvironment,
+  await verifyAuthorAccountUninstall({
     control,
-    restartDesktopApp,
+    cloudEnvironment,
+    recipientCloud,
     plugin: after,
-    recipientToken: login.access_token,
+    source: authorLifecycle.source,
+    ownerIdentity: ownerAccount.identity,
     executorHome,
-    codexHome,
-    userDataDirectory,
+    access: accessBefore,
+  })
+  const ownerContract = await verifyOwnerApiContract({
+    control,
+    cloudEnvironment,
+    pluginPath,
+    pluginId: after.id,
+    recipientToken: login.access_token,
+    request,
   })
   const recipientAccess = await verifyRecipientAccessBoundary({
     backendUrl: cloudEnvironment.backendUrl,
@@ -280,6 +353,8 @@ export async function verifyPersonalPluginVersionSubmission({
         after,
         access: accessBefore,
         managedRecipient,
+        crossAccountUninstall,
+        ownerContract,
         recipientAccess,
         rejectedPackage,
         revokedAccess,
@@ -296,6 +371,7 @@ async function expectHttpStatus(backendUrl, path, token, status, method = 'GET',
     method,
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     ...(body ? { body: JSON.stringify(body) } : {}),
+    signal: AbortSignal.timeout(10_000),
   })
   assert.equal(response.status, status, `${method} ${path} returned an unexpected status`)
   return response.json()
@@ -317,6 +393,64 @@ async function verifyRecipientAccessBoundary({
   })
   assert.deepEqual(await request(`${pluginPath}/access`), expectedAccess)
   return { canRead: true, aclReadStatus: 404, aclWriteStatus: 404 }
+}
+
+async function verifyOwnerApiContract({
+  control,
+  cloudEnvironment,
+  pluginPath,
+  pluginId,
+  recipientToken,
+  request,
+}) {
+  await control.command('navigate', 'body', { value: '/' })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('plugins-workspace'),
+    'Owner API fixture changes require the plugin workspace to unmount'
+  )
+  const [original] = await cloudEnvironment.queryDatabase(
+    'SELECT visibility, status FROM plugins WHERE id = %s',
+    [Number(pluginId)]
+  )
+  assert.ok(original, 'The owner API fixture plugin is missing')
+  const verified = []
+  try {
+    for (const visibility of ['personal', 'workspace', 'public']) {
+      for (const status of ['published', 'unpublished', 'pending_review']) {
+        await cloudEnvironment.executeDatabase(
+          'UPDATE plugins SET visibility = %s, status = %s WHERE id = %s',
+          [visibility, status, Number(pluginId)]
+        )
+        assert.deepEqual(await request(`${pluginPath}/owner`), { pluginId: Number(pluginId) })
+        await expectHttpStatus(
+          cloudEnvironment.backendUrl,
+          `${pluginPath}/owner`,
+          recipientToken,
+          404
+        )
+        verified.push({ visibility, status, owner: 200, recipient: 404 })
+      }
+    }
+    await cloudEnvironment.executeDatabase('UPDATE plugins SET status = %s WHERE id = %s', [
+      'deleted',
+      Number(pluginId),
+    ])
+    await expectHttpStatus(
+      cloudEnvironment.backendUrl,
+      `${pluginPath}/owner`,
+      cloudEnvironment.authToken,
+      404
+    )
+    await expectHttpStatus(cloudEnvironment.backendUrl, `${pluginPath}/owner`, recipientToken, 404)
+    verified.push({ status: 'deleted', owner: 404, recipient: 404 })
+  } finally {
+    await cloudEnvironment.executeDatabase(
+      'UPDATE plugins SET visibility = %s, status = %s WHERE id = %s',
+      [original.visibility, original.status, Number(pluginId)]
+    )
+  }
+  return verified
 }
 
 async function uploadVersionFixture({ request, backendUrl, packageBytes, version }) {

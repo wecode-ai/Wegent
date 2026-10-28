@@ -108,6 +108,21 @@ for (const [platform, architecture] of [
   }
   const componentChannels = channel === 'stable' ? ['stable', 'beta'] : ['beta']
   for (const targetChannel of componentChannels) {
+    let upgradePolicy
+    try {
+      upgradePolicy = JSON.parse(
+        await readFile(
+          resolve(assets, `upgrade-policy-${targetChannel}-${platform}-${architecture}.json`),
+          'utf8'
+        )
+      )
+    } catch (error) {
+      if (
+        error.code !== 'ENOENT' ||
+        (process.env.WEWORK_REQUIRE_UPGRADE_POLICY === 'true' && platform !== 'linux')
+      )
+        throw error
+    }
     await writeFile(
       resolve(output, `components-${targetChannel}-${platform}-${architecture}.json`),
       `${JSON.stringify(
@@ -122,6 +137,7 @@ for (const [platform, architecture] of [
           capabilities: {
             componentizedHostUpdate: 1,
           },
+          ...(upgradePolicy ? { upgradePolicy } : {}),
           components,
         },
         null,

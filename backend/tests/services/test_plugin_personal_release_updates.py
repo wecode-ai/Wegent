@@ -232,12 +232,23 @@ def _renamed_plugin_package(name: str, version: str) -> bytes:
     return output.getvalue()
 
 
+@pytest.mark.parametrize(
+    "manifest_name",
+    [
+        "another-plugin",
+        "GitLab/Engineering",
+        "GitLab\\Engineering",
+        "GitLab:Engineering",
+        "GitLab\0Engineering",
+    ],
+)
 def test_personal_release_rejects_another_plugins_package_without_changing_source(
     test_db: Session,
     test_user: User,
     shared_personal_release: tuple[
         PluginMarketplaceService, PluginSubmissionInitResponse, list[User]
     ],
+    manifest_name: str,
 ) -> None:
     service, initial, _ = shared_personal_release
     plugin = test_db.get(Plugin, initial.pluginId)
@@ -245,7 +256,7 @@ def test_personal_release_rejects_another_plugins_package_without_changing_sourc
     original_access = service.get_plugin_access(
         test_db, plugin_id=plugin.id, user_id=test_user.id
     )
-    package = _renamed_plugin_package("another-plugin", "1.1.0")
+    package = _renamed_plugin_package(manifest_name, "1.1.0")
     updated = service.init_submission(
         test_db,
         user_id=test_user.id,
@@ -267,7 +278,11 @@ def test_personal_release_rejects_another_plugins_package_without_changing_sourc
         )
 
     assert rejected.value.status_code == 422
-    assert rejected.value.detail == "Personal plugin slug must match the manifest name"
+    assert rejected.value.detail == (
+        "Personal plugin slug must match the manifest name"
+        if manifest_name == "another-plugin"
+        else "Personal plugin manifest name must be a safe path component"
+    )
     test_db.expire_all()
     plugin = test_db.get(Plugin, initial.pluginId)
     assert plugin.name == original_name
@@ -279,3 +294,110 @@ def test_personal_release_rejects_another_plugins_package_without_changing_sourc
     release = test_db.get(PluginRelease, updated.releaseId)
     assert release.status == "rejected"
     assert release.scan_status == "failed"
+
+
+def test_first_personal_submission_accepts_the_manifest_normalized_upload_slug(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = PluginMarketplaceService()
+    _mock_package_storage(monkeypatch, {})
+    package = _renamed_plugin_package("GitLab Engineering", "1.0.0")
+    submission = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest.model_validate(
+            _submission_payload(package=package)
+        ),
+    )
+
+    _complete_submission(service, test_db, test_user.id, submission, package)
+
+    plugin = test_db.get(Plugin, submission.pluginId)
+    assert plugin.slug == "gitlab-engineering"
+    assert plugin.name == "GitLab Engineering"
+    assert plugin.latest_release_id == submission.releaseId
+
+
+@pytest.mark.parametrize(
+    "manifest_name", ["GitLab/Engineering", "GitLab\\Engineering", "GitLab:Engineering"]
+)
+def test_first_personal_submission_rejects_unsafe_normalized_manifest_names(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    manifest_name: str,
+) -> None:
+    service = PluginMarketplaceService()
+    _mock_package_storage(monkeypatch, {})
+    package = _renamed_plugin_package(manifest_name, "1.0.0")
+    submission = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest.model_validate(
+            _submission_payload(package=package)
+        ),
+    )
+    _upload_submission(
+        service,
+        test_db,
+        user_id=test_user.id,
+        submission_id=submission.submissionId,
+        package=package,
+    )
+
+    with pytest.raises(HTTPException, match="safe path component") as rejected:
+        service.complete_submission(
+            test_db, user_id=test_user.id, submission_id=submission.submissionId
+        )
+
+    assert rejected.value.status_code == 422
+    test_db.expire_all()
+    assert not test_db.get(Plugin, submission.pluginId).latest_release_id
+    release = test_db.get(PluginRelease, submission.releaseId)
+    assert release.status == "rejected"
+    assert release.scan_status == "failed"
+
+
+@pytest.mark.parametrize("mode", ["submission", "direct"])
+def test_personal_release_accepts_normalized_manifest_identity_and_preserves_access(
+    test_db: Session,
+    test_user: User,
+    shared_personal_release: tuple[
+        PluginMarketplaceService, PluginSubmissionInitResponse, list[User]
+    ],
+    mode: str,
+) -> None:
+    service, initial, _ = shared_personal_release
+    package = _renamed_plugin_package("GitLab Engineering", "1.1.0")
+    original_access = service.get_plugin_access(
+        test_db, plugin_id=initial.pluginId, user_id=test_user.id
+    )
+
+    if mode == "submission":
+        submission = service.init_submission(
+            test_db,
+            user_id=test_user.id,
+            request=PluginSubmissionInitRequest.model_validate(
+                _submission_payload("1.1.0", package=package)
+            ),
+        )
+        _complete_submission(service, test_db, test_user.id, submission, package)
+        release_id = submission.releaseId
+    else:
+        published = service.publish_personal_release(
+            test_db,
+            plugin_id=initial.pluginId,
+            owner_user_id=test_user.id,
+            package=package,
+        )
+        release_id = published.release.id
+
+    test_db.expire_all()
+    plugin = test_db.get(Plugin, initial.pluginId)
+    assert plugin.slug == "gitlab-engineering"
+    assert plugin.name == "GitLab Engineering"
+    assert plugin.latest_release_id == release_id
+    assert (
+        service.get_plugin_access(test_db, plugin_id=plugin.id, user_id=test_user.id)
+        == original_access
+    )

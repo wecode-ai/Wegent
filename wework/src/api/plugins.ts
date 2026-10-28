@@ -25,7 +25,7 @@ import type {
 import { sha256Hex } from './fileHash'
 import type { HttpClient } from './http'
 import { resolveApiUrl } from './resolveApiUrl'
-import { uninstallCloudPlugin } from './pluginUninstall'
+import { readInstalledPluginsForUninstall, uninstallCloudPlugin } from './pluginUninstall'
 
 export interface PluginShareUserSearchItem {
   id: number
@@ -122,6 +122,9 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
     listInstalledPlugins(deviceId?: string): Promise<InstalledPluginListResponse> {
       return client.get(`/plugins/installed${deviceQuery(deviceId)}`)
     },
+    readInstalledPluginsForUninstall(): Promise<InstalledPluginListResponse> {
+      return readInstalledPluginsForUninstall(client)
+    },
     syncInstalledPluginsToDevice(
       deviceId: string,
       reconcile = false
@@ -181,6 +184,9 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
       deviceId?: string
     ): Promise<InstalledPlugin> {
       return client.put(`/plugins/installed/${installedId}${deviceQuery(deviceId)}`, { releaseId })
+    },
+    getMarketplacePluginOwner(id: string | number): Promise<{ pluginId: number }> {
+      return client.get(`/plugins/marketplace/${id}/owner`)
     },
     getMarketplacePluginAccess(id: string | number): Promise<PluginAccessResponse> {
       return client.get(`/plugins/marketplace/${id}/access`)

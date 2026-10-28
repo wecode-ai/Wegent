@@ -8,7 +8,7 @@ import type { InstalledPlugin } from '@/types/api'
 
 const localPluginMocks = vi.hoisted(() => ({
   listInstalledPlugins: vi.fn(),
-  getAccess: vi.fn(),
+  getOwner: vi.fn(),
   createApi: vi.fn(),
   cloud: {
     apiBaseUrl: 'https://cloud.example.com/api',
@@ -140,10 +140,10 @@ describe('PluginCreateWorkspace', () => {
   beforeEach(() => {
     window.history.replaceState({}, '', '/plugins/create')
     localPluginMocks.listInstalledPlugins.mockReset()
-    localPluginMocks.getAccess.mockReset()
+    localPluginMocks.getOwner.mockReset()
     localPluginMocks.createApi.mockReset()
     localPluginMocks.createApi.mockReturnValue({
-      getMarketplacePluginAccess: localPluginMocks.getAccess,
+      getMarketplacePluginOwner: localPluginMocks.getOwner,
     })
     localPluginMocks.cloud = {
       apiBaseUrl: 'https://cloud.example.com/api',
@@ -182,7 +182,7 @@ describe('PluginCreateWorkspace', () => {
           )
         )
       }
-      expect(localPluginMocks.getAccess).not.toHaveBeenCalled()
+      expect(localPluginMocks.getOwner).not.toHaveBeenCalled()
     }
   )
 
@@ -196,8 +196,8 @@ describe('PluginCreateWorkspace', () => {
         items: [editableSource({ cloudPluginId: 42, cloudReleaseId: 8 })],
       })
       const failure = role === 'recipient' ? 'Plugin not found' : 'Cloud access unavailable'
-      if (role === 'owner') localPluginMocks.getAccess.mockResolvedValue({ pluginId: 42 })
-      else localPluginMocks.getAccess.mockRejectedValue(new Error(failure))
+      if (role === 'owner') localPluginMocks.getOwner.mockResolvedValue({ pluginId: 42 })
+      else localPluginMocks.getOwner.mockRejectedValue(new Error(failure))
       render(<PluginCreateWorkspace />)
       fireEvent.change(screen.getByTestId('plugin-create-prompt-input'), {
         target: { value: 'Update scheduling' },
@@ -208,7 +208,7 @@ describe('PluginCreateWorkspace', () => {
         'https://cloud.example.com/api',
         'owner-token'
       )
-      expect(localPluginMocks.getAccess).toHaveBeenCalledExactlyOnceWith(42)
+      expect(localPluginMocks.getOwner).toHaveBeenCalledExactlyOnceWith(42)
       if (role === 'owner') {
         await waitFor(() => expect(workbench.sendCurrentInput).toHaveBeenCalledOnce())
       } else {
@@ -233,7 +233,7 @@ describe('PluginCreateWorkspace', () => {
         if (phase === 'inventory') await pending
         return { items: [editableSource({ cloudPluginId: 42, cloudReleaseId: 8 })] }
       })
-      localPluginMocks.getAccess.mockImplementation(async () => {
+      localPluginMocks.getOwner.mockImplementation(async () => {
         if (phase === 'access') await pending
         return { pluginId: 42 }
       })
@@ -244,7 +244,7 @@ describe('PluginCreateWorkspace', () => {
       await userEvent.click(screen.getByTestId('plugin-create-submit-button'))
       await waitFor(() =>
         expect(
-          phase === 'inventory' ? localPluginMocks.listInstalledPlugins : localPluginMocks.getAccess
+          phase === 'inventory' ? localPluginMocks.listInstalledPlugins : localPluginMocks.getOwner
         ).toHaveBeenCalled()
       )
 
@@ -275,7 +275,7 @@ describe('PluginCreateWorkspace', () => {
     localPluginMocks.listInstalledPlugins.mockResolvedValue({
       items: [editableSource({ cloudPluginId: 42, cloudReleaseId: 8 })],
     })
-    localPluginMocks.getAccess.mockImplementation(async () => {
+    localPluginMocks.getOwner.mockImplementation(async () => {
       await pending
       return { pluginId: 42 }
     })
@@ -284,7 +284,7 @@ describe('PluginCreateWorkspace', () => {
       target: { value: 'Update scheduling' },
     })
     await userEvent.click(screen.getByTestId('plugin-create-submit-button'))
-    await waitFor(() => expect(localPluginMocks.getAccess).toHaveBeenCalled())
+    await waitFor(() => expect(localPluginMocks.getOwner).toHaveBeenCalled())
     unmount()
     await act(async () => {
       approve()

@@ -11,6 +11,7 @@ import identityModule from '../scripts/build-identity.cjs'
 const { DEFAULT_IDENTITY, resolveBuildIdentity } = identityModule
 const require = createRequire(import.meta.url)
 const builderConfigPath = require.resolve('../electron-builder.config.cjs')
+const launcherName = `wework-launcher${process.platform === 'win32' ? '.exe' : ''}`
 
 test('uses the public Electron identity by default', () => {
   expect(resolveBuildIdentity({})).toEqual(DEFAULT_IDENTITY)
@@ -233,6 +234,7 @@ process.stdout.write(JSON.stringify({
   expect(config.output).toBe('release-online-update')
   expect(config.compression).toBe('normal')
   expect(config.resources).toEqual([
+    { from: `resources/${launcherName}`, to: launcherName },
     { from: 'resources/components.json', to: 'components.json' },
     { from: '../resources/licenses', to: 'licenses' },
     { from: '../resources/icons', to: 'icons' },
@@ -268,6 +270,7 @@ process.stdout.write(JSON.stringify(config.extraResources.map(resource => resour
   )
 
   expect(config).toEqual([
+    launcherName,
     'harness-runtime',
     'bin',
     'codex',

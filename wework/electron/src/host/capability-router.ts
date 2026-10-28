@@ -13,6 +13,8 @@ export const HOST_CAPABILITIES = [
   'appUpdate.download',
   'appUpdate.downloadProgress',
   'appUpdate.install',
+  'appUpdate.previousRelease',
+  'appUpdate.rollback',
   'attachment.abort',
   'attachment.append',
   'attachment.begin',

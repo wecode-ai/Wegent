@@ -1461,7 +1461,15 @@ class PluginMarketplaceService:
     def _validate_personal_manifest_name(
         plugin: Plugin, parsed: PluginUploadInfo
     ) -> None:
-        if parsed.name != plugin.slug:
+        if parsed.name in {".", ".."} or any(
+            character in parsed.name for character in ("/", "\\", ":", "\0")
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Personal plugin manifest name must be a safe path component",
+            )
+        manifest_slug = re.sub(r"[^a-z0-9._-]+", "-", parsed.name.lower())
+        if manifest_slug != plugin.slug:
             raise HTTPException(
                 status_code=422,
                 detail="Personal plugin slug must match the manifest name",

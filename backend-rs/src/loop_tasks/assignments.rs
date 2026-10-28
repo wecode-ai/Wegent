@@ -80,7 +80,7 @@ pub(super) async fn list_assignments(
     current_user: &FlexibleUser,
 ) -> Result<IssueAssignmentListResponse, FastApiError> {
     require_issue_read(state, item_id, current_user).await?;
-    super::assignment_index::ensure_active_index(state, item_id).await?;
+    super::assignment_index::ensure_active_index(&state.mysql, item_id).await?;
     let comments = LoopItemRepository::new(&state.mysql)
         .list_active_assignment_comments(item_id)
         .await

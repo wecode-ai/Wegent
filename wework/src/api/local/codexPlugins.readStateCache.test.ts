@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, test, vi } from 'vitest'
-import type { InstalledPlugin } from '@/types/api'
+import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 // Exported by the bundled runtime: codex app-server generate-json-schema --experimental.
 import pluginListSchema from './fixtures/codex-0.156.1-PluginListParams.json'
 import { subscribeOperationResults, type OperationResult } from '@/telemetry/operationBus'
@@ -99,7 +99,191 @@ const createdPlugin: InstalledPlugin = {
   status: { state: 'enabled' },
 }
 
+const publishedSource: PluginMarketplaceItem = {
+  id: 71,
+  name: 'dev-tools',
+  displayName: 'Dev Tools',
+  description: 'Developer tools',
+  version: '1.1.1',
+  author: null,
+  visibility: 'personal',
+  featured: false,
+  installed: false,
+  installedPluginId: null,
+  installedLocally: false,
+  enabled: false,
+  sourceType: 'marketplace',
+  components: createdPlugin.spec.components,
+  manifest: {},
+  interface: null,
+  accessRole: 'owner',
+  ownerUserId: 1,
+  latestReleaseId: 82,
+  localPersonalSource: { marketplacePath: '/tmp/wework-personal', pluginName: 'dev-tools' },
+}
+
+function mockPublishedSourceInstall(
+  options: {
+    cloudPluginId?: number | null
+    failMethod?: string
+    afterRead?: (method: string) => void
+    managed?: boolean
+  } = {}
+) {
+  let installed = false
+  mocks.getInitializedBundledPluginMarketplace.mockReturnValue({
+    id: 'wework-personal',
+    path: '/tmp/wework-personal',
+    defaultPluginNames: [],
+  } as never)
+  mocks.requestLocalExecutor.mockImplementation(async (method, params) => {
+    if (method === options.failMethod) throw new Error('source inventory unavailable')
+    options.afterRead?.(method)
+    if (method === 'executor.plugins.personal.list')
+      return {
+        marketplaceId: 'wework-personal',
+        marketplacePath: '/tmp/wework-personal',
+        plugins: [
+          {
+            name: 'dev-tools',
+            version: '1.1.1',
+            pluginPath: '/tmp/wework-personal/plugins/dev-tools',
+          },
+        ],
+      }
+    if (method === 'executor.plugins.links.list')
+      return options.cloudPluginId === null
+        ? []
+        : [
+            {
+              localPluginName: 'dev-tools',
+              cloudPluginId: options.cloudPluginId ?? 71,
+              cloudReleaseId: 82,
+            },
+          ]
+    if (method === 'executor.plugins.store.list')
+      return {
+        storePath: '/tmp/store',
+        plugins: options.managed
+          ? [
+              {
+                name: 'dev-tools',
+                packageId: 'managed-dev-tools',
+                marketplace: 'wegent',
+                cloudPluginId: 71,
+                installedPluginId: 208,
+                enabled: true,
+                pluginPath: '/tmp/wework-personal/plugins/dev-tools',
+              },
+            ]
+          : [],
+      }
+    if (method === 'runtime.codex.plugin.install_local_first') {
+      installed = true
+      return { pluginKey: 'dev-tools@wework-personal', localCommitted: true }
+    }
+    if (method === 'codex.app_server_request' && params.method === 'plugin/installed')
+      return {
+        marketplaces: [
+          {
+            ...personalMarketplace,
+            plugins: installed
+              ? [
+                  {
+                    id: 'dev-tools@wework-personal',
+                    name: 'dev-tools',
+                    installed: true,
+                    enabled: true,
+                    localVersion: '1.1.1',
+                    source: { source: 'local', path: '/tmp/wework-personal/plugins/dev-tools' },
+                  },
+                ]
+              : [],
+          },
+        ],
+      }
+    if (method === 'codex.app_server_request' && params.method === 'plugin/read')
+      return {
+        plugin: { summary: { name: 'dev-tools', version: '1.1.1' } },
+      }
+    throw new Error(`Unexpected source install method ${method}/${params?.method}`)
+  })
+}
+
 describe('local codex plugin readState cache', () => {
+  test('reinstalls the exact published author source through the native local commit', async () => {
+    mockPublishedSourceInstall()
+    const installed = await createLocalCodexPluginApi().installPersonalPluginSource(
+      publishedSource,
+      () => true
+    )
+    expect(installed.spec.source.type).toBe('local')
+    expect(installed.spec.origin).toBe('created')
+    expect(installed.spec.version).toBe('1.1.1')
+    expect(installed.spec.sourcePayload?.cloudPluginId).toBe(71)
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'runtime.codex.plugin.install_local_first',
+      {
+        marketplacePath: '/tmp/wework-personal/.agents/plugins/marketplace.json',
+        pluginName: 'dev-tools',
+      }
+    )
+    expect(
+      mocks.requestLocalExecutor.mock.calls.some(
+        ([method, params]) =>
+          method === 'codex.app_server_request' && params.method === 'plugin/install'
+      )
+    ).toBe(false)
+    expect(
+      mocks.requestLocalExecutor.mock.calls.some(
+        ([method]) => method === 'executor.plugins.links.link'
+      )
+    ).toBe(false)
+  })
+
+  test.each([
+    { cloudPluginId: 99 },
+    { cloudPluginId: null },
+    { managed: true },
+    { failMethod: 'executor.plugins.personal.list' },
+    { failMethod: 'executor.plugins.links.list' },
+    { failMethod: 'executor.plugins.store.list' },
+  ])('refuses unproven author source identity before native installation: %j', async options => {
+    mockPublishedSourceInstall(options)
+    await expect(
+      createLocalCodexPluginApi().installPersonalPluginSource(publishedSource, () => true)
+    ).rejects.toThrow()
+    expect(
+      mocks.requestLocalExecutor.mock.calls.some(
+        ([method]) => method === 'runtime.codex.plugin.install_local_first'
+      )
+    ).toBe(false)
+  })
+
+  test.each([
+    'executor.plugins.personal.list',
+    'executor.plugins.links.list',
+    'executor.plugins.store.list',
+  ])(
+    'cancels source installation when the initiating account changes during %s',
+    async changedDuring => {
+      let current = true
+      mockPublishedSourceInstall({
+        afterRead: method => {
+          if (method === changedDuring) current = false
+        },
+      })
+      await expect(
+        createLocalCodexPluginApi().installPersonalPluginSource(publishedSource, () => current)
+      ).rejects.toThrow()
+      expect(
+        mocks.requestLocalExecutor.mock.calls.some(
+          ([method]) => method === 'runtime.codex.plugin.install_local_first'
+        )
+      ).toBe(false)
+    }
+  )
+
   test('uninstalls an orphaned personal plugin without reading its missing marketplace', async () => {
     mocks.requestLocalExecutor.mockResolvedValue({ localCommitted: true })
     await createLocalCodexPluginApi().uninstallInstalledPlugin('orphan@wework-personal')
@@ -3082,6 +3266,7 @@ describe('local codex plugin readState cache', () => {
   test('uninstalls Wework personal plugins through Executor in Electron without Codex marketplace refresh', async () => {
     mocks.runtime.electron = true
     let installed = true
+    const cloudLinks = [{ localPluginName: 'dev-tools', cloudPluginId: 71, cloudReleaseId: 82 }]
     mocks.requestLocalExecutor.mockImplementation(
       async (
         method: string,
@@ -3090,12 +3275,13 @@ describe('local codex plugin readState cache', () => {
           pluginName?: string
         }
       ) => {
-        if (method === 'executor.plugins.links.list') return []
+        if (method === 'executor.plugins.links.list') return cloudLinks
         if (method === 'executor.plugins.links.unlink') {
           expect(params).toEqual({
             marketplacePath: '/tmp/wework-personal',
             localPluginName: 'dev-tools',
           })
+          cloudLinks.splice(0)
           return null
         }
         if (method === 'runtime.codex.plugin.uninstall_local') {
@@ -3140,17 +3326,24 @@ describe('local codex plugin readState cache', () => {
 
     await api.uninstallInstalledPlugin('dev-tools@wework-personal')
 
-    expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(2)
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(1)
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
       'runtime.codex.plugin.uninstall_local',
       {
         pluginName: 'dev-tools',
       }
     )
-    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.links.unlink', {
-      marketplacePath: '/tmp/wework-personal',
-      localPluginName: 'dev-tools',
-    })
+    expect(mocks.requestLocalExecutor).not.toHaveBeenCalledWith(
+      'executor.plugins.links.unlink',
+      expect.anything()
+    )
+    expect(mocks.requestLocalExecutor).not.toHaveBeenCalledWith(
+      'executor.plugins.personal.delete',
+      expect.anything()
+    )
+    expect(cloudLinks).toEqual([
+      { localPluginName: 'dev-tools', cloudPluginId: 71, cloudReleaseId: 82 },
+    ])
     expect(
       mocks.requestLocalExecutor.mock.calls.some(
         ([method, params]) =>

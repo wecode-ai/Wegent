@@ -124,6 +124,13 @@ Every owner **Share/Publish** entry on the legacy `/plugins/manage` page only re
 - Show a read-only summary of the current server-side member/department ACL and `allowCopy`. **Manage sharing scope** saves grants separately while preserving the release-note draft; saving scope neither packages nor uploads a new version and does not advance the shared version.
 - Package, upload, and scan the new personal version only after an explicit **Check and submit** action. Advance the shared latest version and dismiss the notice only on success, preserving the current sharing scope and copy permission. On failure, preserve the previous shared version, Drawer, and release-note draft, and show an actionable error. This flow does not create an enterprise publication request.
 
+**Uninstall and source retention**:
+
+- Author source, publication links, and account installation state have separate lifecycles. Ordinary uninstall retains source, cloud Plugin/Release records, sharing grants, and the local publication link. Deleting the personal original removes its source and link. Runtime cleanup must not treat an author directory as disposable merely because its contents match a verified installation package.
+- Before uninstalling a cloud-linked plugin, read the current account's complete installation inventory and resolve the exact Plugin ID. Cancel an existing account installation before local runtime cleanup. A failed local installation or missing local summary still permits cancelling account installation through that Plugin ID. An independent original with a successfully confirmed absence of account membership can be uninstalled locally. Failed reads, account changes, and unconfirmed provenance prevent local cleanup and logout.
+- The existing confirmation distinguishes this device from all devices on the current account, and explains that source, shared versions, and other members remain unaffected. Both management entries use the same flow; stale disk installation IDs and name matching never establish current-account membership. Installation record IDs and Plugin IDs match within their own domains, so equal numeric values cannot clear another plugin's state.
+- Continuing an original uses `GET /plugins/marketplace/{plugin_id}/owner`, independently of shareability. Legacy public/workspace visibility, delisting, and pending review do not remove the author's edit authority. Nonowners and deleted originals receive the same unavailable result. Personal manifest names use the upload slug's normalization rule for identity validation without rewriting package contents.
+
 **Test IDs**:
 
 - `plugin-detail-share-{pluginId}`
@@ -556,6 +563,8 @@ New interactive elements must have stable `data-testid` values. Preserve existin
 23. Personal-version release notes are required and limited to `2000` characters. Closing the Drawer does not advance the version. An explicit successful submission advances the shared latest version, preserves ACL/copy permission, and dismisses the notice; failure preserves the old version and note draft.
 24. Saving sharing scope separately does not upload a new package even when a newer local version exists. Returning from scope management to the version Drawer preserves the note draft and shows the latest grants.
 25. Recipients cannot edit another user's original through the detail menu, an installed-plugin entry, or a direct `/plugins/create?edit=...` URL. Local source with an explicit cloud binding requires current-account ownership verification before dispatching an edit task; failure to read authoritative store/cloudLinks information prevents dispatch. The user's own locally created source and independent copies without cloud bindings remain locally editable.
+26. An already shared original without account membership can be uninstalled locally while preserving source bytes, publication links, ACL, shared Release, and recipient installations. Refresh, restart, and reinstall retain the same Plugin binding and support further version submissions.
+27. An original with account membership first cancels that account installation, then clears runtime state; source identical to the managed package is still retained. Account changes, stale installation IDs, network failures, and same-name plugins in distinct markets or Plugin IDs never remove another object.
 
 ### 12.2 Real desktop and design QA
 

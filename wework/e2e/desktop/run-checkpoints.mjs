@@ -12,6 +12,7 @@ import {
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
+import { UPGRADE_CHECKPOINTS, UPGRADE_PACKAGE_CHECKPOINTS } from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
@@ -20,13 +21,15 @@ import {
 } from './result-retention.mjs'
 import { prepareDesktopE2EBuild } from '../../scripts/lib/desktop-e2e-build.mjs'
 import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
+import { extractRuntimeArchive } from '../../scripts/lib/extract-runtime-archive.mjs'
 
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_RESOURCES = new Map([
-  // These macOS checkpoints move native windows and require a foreground renderer for cursor arrival.
+  // These macOS checkpoints need exclusive native focus or application activation.
   ['browser-toolbar-actions', ['macos-inspector-foreground']],
   ['tray-lifecycle', ['macos-inspector-foreground']],
+  ['window-lifecycle', ['macos-inspector-foreground']],
   ['browser-annotation-design', ['macos-inspector-foreground']],
   ['project-assignment-notification', ['macos-inspector-foreground']],
 ])
@@ -38,7 +41,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'voice-input': './scenarios/voice-input.scenario.mjs',
   'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
   'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
-  'plugin-toggle-persistence': './scenarios/plugin-toggle-persistence.scenario.mjs',
+  'plugin-toggle-persistence': './scenarios/plugin-installation.scenario.mjs',
   'goal-state-sync': './scenarios/goal-stopped-state.scenario.mjs',
   'collaboration-worktree-policy': './scenarios/collaboration-worktree-policy.scenario.mjs',
   'cloud-model-recovery': './scenarios/cloud-model-recovery.scenario.mjs',
@@ -111,6 +114,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
   'release-package-startup': './scenarios/release-package-startup.scenario.mjs',
   'app-update-full': './scenarios/app-update-full.scenario.mjs',
+  ...Object.fromEntries(
+    UPGRADE_CHECKPOINTS.map(id => [id, './scenarios/app-upgrade.scenario.mjs'])
+  ),
   'component-update': './scenarios/component-update.scenario.mjs',
   'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
   'native-window-chrome': './scenarios/native-window-chrome.scenario.mjs',
@@ -322,6 +328,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'split-workbench',
   'release-package-startup',
   'app-update-full',
+  ...UPGRADE_CHECKPOINTS,
   'component-update',
   'renderer-crash-recovery',
   'native-window-startup',
@@ -459,6 +466,12 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
+  if (UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint)) {
+    nextEnv.WEWORK_E2E_APP_BIN = env.WEWORK_E2E_UPGRADE_SOURCE_APP_BIN || env.WEWORK_E2E_APP_BIN
+    nextEnv.WEWORK_E2E_EXECUTOR_BIN =
+      env.WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN || env.WEWORK_E2E_EXECUTOR_BIN
+    nextEnv.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE = '1'
+  }
   if (checkpoint === 'collaboration-shared-core') {
     // Exercise timezone-less UTC API timestamps outside the UTC timezone.
     nextEnv.TZ = 'Asia/Shanghai'
@@ -466,6 +479,7 @@ function checkpointScenarioEnv(env, checkpoint) {
   if (
     checkpoint === 'application-menu' ||
     checkpoint === 'native-window-chrome' ||
+    checkpoint === 'window-lifecycle' ||
     checkpoint === 'browser-multi-tabs' ||
     checkpoint === 'core-task-flow' ||
     checkpoint === 'project-assignment-notification'
@@ -489,25 +503,28 @@ function checkpointScenarioEnv(env, checkpoint) {
   return nextEnv
 }
 
-async function runDesktopBuild() {
+async function runDesktopBuild({
+  command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
+  args = ['run', 'ai:verify:electron:build'],
+  environment = process.env,
+  label = 'Desktop build',
+  logPath = join(weworkDir, 'test-results', 'desktop-e2e', `desktop-build-${process.pid}.log`),
+} = {}) {
   const startedAt = Date.now()
-  const logPath = join(weworkDir, 'test-results', 'desktop-e2e', `desktop-build-${process.pid}.log`)
-  console.log(
-    `[desktop-e2e] Building the shared Electron application and executor. Full log: ${logPath}`
-  )
+  console.log(`[desktop-e2e] ${label} started. Full log: ${logPath}`)
   const heartbeat = setInterval(() => {
     console.log(
-      `[desktop-e2e] Desktop build still running: elapsed=${formatDuration(Date.now() - startedAt)}`
+      `[desktop-e2e] ${label} still running: elapsed=${formatDuration(Date.now() - startedAt)}`
     )
   }, HEARTBEAT_INTERVAL_MS)
 
   let result
   try {
     result = await runCommandToLog({
-      args: ['run', 'ai:verify:electron:build'],
-      command: process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
+      args,
+      command,
       cwd: weworkDir,
-      env: process.env,
+      env: environment,
       logPath,
     })
   } finally {
@@ -516,22 +533,57 @@ async function runDesktopBuild() {
 
   if (result.code !== 0) {
     console.error(
-      `[desktop-e2e] Desktop build failed: ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}. Full log: ${logPath}`
+      `[desktop-e2e] ${label} failed: ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}. Full log: ${logPath}`
     )
     if (result.tail.trim()) {
-      console.error(`[desktop-e2e] Desktop build output tail:\n${result.tail.trimEnd()}`)
+      console.error(`[desktop-e2e] ${label} output tail:\n${result.tail.trimEnd()}`)
     }
-    throw new Error(`Desktop E2E build exited with code ${result.code}`)
+    throw new Error(`${label} exited with code ${result.code}`)
   }
   console.log(
-    `[desktop-e2e] Desktop build passed: duration=${formatDuration(Date.now() - startedAt)}. Full log: ${logPath}`
+    `[desktop-e2e] ${label} passed: duration=${formatDuration(Date.now() - startedAt)}. Full log: ${logPath}`
   )
 }
 
-async function sharedBuildEnvironment(environment = process.env) {
+async function sharedBuildEnvironment(environment = process.env, selectedCheckpoints) {
+  let nextEnvironment = environment
+  const selected =
+    selectedCheckpoints ??
+    requestedParallelCheckpoints(requestedArgs) ??
+    requestedCheckpointRange(requestedArgs) ??
+    []
+  const upgradeRequested = selected.some(value => UPGRADE_PACKAGE_CHECKPOINTS.includes(value))
+  if (upgradeRequested && !environment.WEWORK_E2E_UPGRADE_PAIR) {
+    await runDesktopBuild({
+      command: process.execPath,
+      args: ['scripts/build-upgrade-fixtures.mjs'],
+      cwd: weworkDir,
+      environment,
+      label: 'Upgrade fixture build',
+      logPath: join(weworkDir, 'test-results', 'upgrade-fixtures-build.log'),
+    })
+    const pairPath = resolve(
+      environment.WEWORK_UPGRADE_FIXTURE_OUTPUT ||
+        join(weworkDir, 'test-results', 'upgrade-fixtures'),
+      'pair.json'
+    )
+    const pair = JSON.parse(await readFile(pairPath, 'utf8'))
+    nextEnvironment = {
+      ...environment,
+      ...(selected.every(value => UPGRADE_PACKAGE_CHECKPOINTS.includes(value))
+        ? {
+            WEWORK_E2E_APP_BIN: pair.from.executable,
+            WEWORK_E2E_EXECUTOR_BIN: pair.from.executor,
+          }
+        : {}),
+      WEWORK_E2E_UPGRADE_SOURCE_APP_BIN: pair.from.executable,
+      WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN: pair.from.executor,
+      WEWORK_E2E_UPGRADE_PAIR: pairPath,
+    }
+  }
   const [build, codexBinary] = await Promise.all([
     prepareDesktopE2EBuild({
-      environment,
+      environment: nextEnvironment,
       runBuild: runDesktopBuild,
       weworkDir,
     }),
@@ -541,7 +593,7 @@ async function sharedBuildEnvironment(environment = process.env) {
     `[desktop-e2e] shared build ready: app=${build.appBinary}, executor=${build.executorBinary}, codex=${codexBinary}`
   )
   return {
-    ...environment,
+    ...nextEnvironment,
     WEWORK_E2E_APP_BIN: build.appBinary,
     WEWORK_E2E_CODEX_BIN: codexBinary,
     WEWORK_E2E_EXECUTOR_BIN: build.executorBinary,
@@ -557,26 +609,6 @@ async function fileSha256(path) {
     stream.once('error', reject)
   })
   return hash.digest('hex')
-}
-
-async function extractArchive(archivePath, destination) {
-  await new Promise((resolvePromise, reject) => {
-    const child = spawn('tar', ['-xzf', archivePath, '-C', destination], {
-      stdio: ['ignore', 'inherit', 'inherit'],
-    })
-    child.once('error', reject)
-    child.once('exit', (code, signal) => {
-      if (code === 0) {
-        resolvePromise()
-        return
-      }
-      reject(
-        new Error(
-          `Core DSH runtime extraction failed: ${signal ? `signal=${signal}` : `exit=${code}`}`
-        )
-      )
-    })
-  })
 }
 
 async function prepareSharedHarnessRuntime(appBinary, parentDirectory) {
@@ -619,7 +651,7 @@ async function prepareSharedHarnessRuntime(appBinary, parentDirectory) {
 
     const extractedRoot = join(runtimeRoot, runtime.sourceFingerprint)
     await mkdir(extractedRoot, { recursive: true })
-    await extractArchive(archivePath, extractedRoot)
+    await extractRuntimeArchive(archivePath, extractedRoot)
     const identity = JSON.parse(await readFile(join(extractedRoot, 'runtime.json'), 'utf8'))
     if (
       identity.dshVersion !== runtime.dshVersion ||
@@ -661,12 +693,13 @@ function requestedParallelCheckpoints(args) {
   if (checkpoints.length === 0) {
     throw new Error('--parallel-segments requires at least one checkpoint')
   }
-  for (const checkpoint of checkpoints) {
+  const expanded = expandDesktopCheckpoints(checkpoints)
+  for (const checkpoint of expanded) {
     if (!DESKTOP_CHECKPOINTS.includes(checkpoint)) {
       throw new Error(`Unknown desktop E2E checkpoint: ${checkpoint}`)
     }
   }
-  return expandDesktopCheckpoints(checkpoints)
+  return expanded
 }
 
 function parallelCheckpointLimit() {
@@ -720,16 +753,19 @@ async function runRequestedArgs() {
 async function runParallelCheckpoints(checkpoints) {
   const sharedRuntimeDirectory = await mkdtemp(join(tmpdir(), 'wework-e2e-shared-'))
   try {
-    const baseEnvironment = await sharedBuildEnvironment()
-    const sharedHarnessRuntime =
-      baseEnvironment.WEWORK_E2E_HARNESS_RUNTIME_ROOT?.trim() ||
-      (await prepareSharedHarnessRuntime(
-        baseEnvironment.WEWORK_E2E_APP_BIN,
-        sharedRuntimeDirectory
-      ))
+    const baseEnvironment = await sharedBuildEnvironment(process.env, checkpoints)
+    const sharedHarnessRuntime = checkpoints.every(checkpoint =>
+      UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint)
+    )
+      ? null
+      : baseEnvironment.WEWORK_E2E_HARNESS_RUNTIME_ROOT?.trim() ||
+        (await prepareSharedHarnessRuntime(
+          baseEnvironment.WEWORK_E2E_APP_BIN,
+          sharedRuntimeDirectory
+        ))
     const sharedEnv = {
       ...baseEnvironment,
-      WEWORK_E2E_HARNESS_RUNTIME_ROOT: sharedHarnessRuntime,
+      ...(sharedHarnessRuntime ? { WEWORK_E2E_HARNESS_RUNTIME_ROOT: sharedHarnessRuntime } : {}),
       WEWORK_E2E_PORT_REGISTRY_DIR: sharedRuntimeDirectory,
     }
     const failures = []
@@ -802,7 +838,7 @@ async function runParallelCheckpoints(checkpoints) {
 }
 
 async function runCheckpoints(checkpoints) {
-  const sharedEnv = await sharedBuildEnvironment()
+  const sharedEnv = await sharedBuildEnvironment(process.env, checkpoints)
   const failures = []
 
   for (const checkpoint of checkpoints) {

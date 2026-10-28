@@ -217,16 +217,6 @@ async function readLocalPluginCloudLinks(marketplacePath: string): Promise<Local
   })
 }
 
-async function unlinkLocalPluginRelease(
-  marketplacePath: string,
-  localPluginName: string
-): Promise<void> {
-  await requestLocalExecutor('executor.plugins.links.unlink', {
-    marketplacePath,
-    localPluginName,
-  })
-}
-
 export interface PluginIdentityReference {
   marketplaceName: string
   pluginName: string
@@ -311,6 +301,11 @@ export interface LocalCodexPluginApi {
   reorderMarketplaces(ids: string[]): Promise<LocalCodexPluginsState>
   upsertMarketplace(data: { id?: string; path: string }): Promise<LocalCodexPluginsState>
   installAvailablePlugin(item: PluginMarketplaceItem): Promise<InstalledPlugin>
+  /** Reinstall an independently published source after the caller verifies the current owner. */
+  installPersonalPluginSource(
+    item: PluginMarketplaceItem,
+    isCurrent: () => boolean
+  ): Promise<InstalledPlugin>
   updateInstalledPlugin(
     id: string | number,
     data: InstalledPluginUpdateRequest
@@ -1052,10 +1047,7 @@ async function resolveWeworkPersonalMarketplacePath(
   throw new Error(`The ${WEWORK_PERSONAL_MARKETPLACE_ID} marketplace is unavailable`)
 }
 
-async function uninstallWeworkPersonalPluginLocally(
-  pluginName: string,
-  marketplacePath?: string
-): Promise<void> {
+async function uninstallWeworkPersonalPluginLocally(pluginName: string): Promise<void> {
   await withBundledPluginUpdatesPaused(pluginName, async () => {
     const commit = await requestLocalExecutor<LocalPluginInstallCommitResult>(
       'runtime.codex.plugin.uninstall_local',
@@ -1066,15 +1058,6 @@ async function uninstallWeworkPersonalPluginLocally(
     }
   })
   clearLocalCodexPluginsReadStateCache()
-  if (!marketplacePath) return
-  try {
-    await unlinkLocalPluginRelease(marketplacePath, pluginName)
-  } catch (error) {
-    throw new LocalPluginUninstallCleanupError(
-      getErrorMessage(error, 'Failed to unlink local plugin release'),
-      { cause: error }
-    )
-  }
 }
 
 async function ensurePluginInWeworkPersonal(options: {
@@ -1309,8 +1292,10 @@ function toDiskPersonalMarketplaceItem(
  * Does not wait for Codex app-server startup: Executor only reads disk and resolves
  * a default marketplace path when the in-memory bundled path is missing.
  */
-export async function listPersonalMarketplacePluginsFromDisk(): Promise<PluginMarketplaceItem[]> {
-  const listed = await readPersonalMarketplacePluginsFromDisk()
+export async function listPersonalMarketplacePluginsFromDisk(
+  requireComplete = false
+): Promise<PluginMarketplaceItem[]> {
+  const listed = await readPersonalMarketplacePluginsFromDisk(requireComplete)
   if (!listed) return []
   return listed.plugins.map(plugin =>
     toDiskPersonalMarketplaceItem(
@@ -1320,8 +1305,11 @@ export async function listPersonalMarketplacePluginsFromDisk(): Promise<PluginMa
   )
 }
 
-async function readPersonalMarketplacePluginsFromDisk(): Promise<PersonalMarketplaceListResult | null> {
+async function readPersonalMarketplacePluginsFromDisk(
+  requireComplete = false
+): Promise<PersonalMarketplaceListResult | null> {
   if (!isElectronRuntime()) {
+    if (requireComplete) throw new Error('Personal plugin source requires the desktop runtime')
     console.info('[Wework] personal marketplace disk list skipped', { reason: 'not-electron' })
     return null
   }
@@ -1330,10 +1318,12 @@ async function readPersonalMarketplacePluginsFromDisk(): Promise<PersonalMarketp
     'executor.plugins.personal.list',
     { marketplacePath }
   ).catch(error => {
+    if (requireComplete) throw error
     console.warn('[Wework] list personal marketplace from disk failed', error)
     return null
   })
   if (!listed || !Array.isArray(listed.plugins)) {
+    if (requireComplete) throw new Error('Invalid personal plugin source inventory')
     console.warn('[Wework] invalid personal marketplace disk list')
     return null
   }
@@ -1349,6 +1339,53 @@ async function readPersonalMarketplacePluginsFromDisk(): Promise<PersonalMarketp
     names: listed.plugins.map(plugin => plugin.name),
   })
   return listed
+}
+
+function requireCurrentPluginSourceScope(isCurrent: () => boolean) {
+  if (!isCurrent()) throw new Error('Plugin account changed; retry with the current account')
+}
+
+/** Display hints never authorize source installation: verify disk, registry and managed provenance. */
+async function resolvePersonalPluginSource(item: PluginMarketplaceItem, isCurrent: () => boolean) {
+  requireCurrentPluginSourceScope(isCurrent)
+  const source = item.localPersonalSource
+  const cloudPluginId = Number(item.id)
+  if (
+    item.accessRole !== 'owner' ||
+    !Number.isSafeInteger(cloudPluginId) ||
+    cloudPluginId <= 0 ||
+    !source ||
+    source.pluginName !== item.name ||
+    !isLocalMarketplacePath(source.marketplacePath)
+  )
+    throw new Error('Published plugin source identity is unavailable; refresh and retry')
+  const marketplacePath = normalizeMarketplaceSource(source.marketplacePath)
+  const listed = await readPersonalMarketplacePluginsFromDisk(true)
+  requireCurrentPluginSourceScope(isCurrent)
+  const candidates = listed?.plugins.filter(
+    plugin =>
+      plugin.name === source.pluginName &&
+      normalizeMarketplaceSource(plugin.marketplacePath || listed.marketplacePath) ===
+        marketplacePath
+  )
+  if (candidates?.length !== 1 || !isLocalMarketplacePath(candidates[0].pluginPath)) {
+    throw new Error('Published plugin source is unavailable; refresh and retry')
+  }
+  const links = await readLocalPluginCloudLinks(marketplacePath)
+  requireCurrentPluginSourceScope(isCurrent)
+  const linked = Array.isArray(links)
+    ? links.filter(link => link.localPluginName === source.pluginName)
+    : []
+  if (linked.length !== 1 || linked[0].cloudPluginId !== cloudPluginId) {
+    throw new Error('Published plugin source is linked to another plugin or has no author link')
+  }
+  const managed = await listWegentStorePluginsFromDisk(true)
+  requireCurrentPluginSourceScope(isCurrent)
+  const pluginPath = candidates[0].pluginPath.replace(/[\\/]+$/, '')
+  if (managed.some(plugin => catalogRecord(plugin.spec.manifest?.source).path === pluginPath)) {
+    throw new Error('Managed plugin packages cannot be installed as an author source')
+  }
+  return { marketplacePath, pluginName: source.pluginName, cloudPluginId }
 }
 
 function catalogItemId(
@@ -2891,6 +2928,38 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       clearLocalCodexPluginsReadStateCache()
       return readState({ marketplaceId: response.marketplaceName, refresh: true })
     },
+    async installPersonalPluginSource(item, isCurrent) {
+      const source = await resolvePersonalPluginSource(item, isCurrent)
+      requireCurrentPluginSourceScope(isCurrent)
+      const commit = await requestLocalExecutor<LocalPluginInstallCommitResult>(
+        'runtime.codex.plugin.install_local_first',
+        {
+          marketplacePath: codexMarketplaceManifestSource(source.marketplacePath),
+          pluginName: source.pluginName,
+        }
+      )
+      requireCurrentPluginSourceScope(isCurrent)
+      if (!commit.localCommitted)
+        throw new Error('Personal plugin source installation did not commit')
+      resumeBundledPluginUpdates(source.pluginName)
+      clearLocalCodexPluginsReadStateCache()
+      const state = await loadInstalledPluginsOnly({ shareInflight: false, requireComplete: true })
+      requireCurrentPluginSourceScope(isCurrent)
+      const installed = state.installedPlugins.find(
+        plugin =>
+          plugin.spec.source.type === 'local' &&
+          !isWegentManagedStorePlugin(plugin) &&
+          plugin.spec.source.pluginKey === source.pluginName &&
+          linkedCloudPluginId(plugin) === source.cloudPluginId &&
+          normalizeMarketplaceSource(String(plugin.spec.sourcePayload?.marketplacePath || '')) ===
+            source.marketplacePath
+      )
+      if (!installed)
+        throw new Error('Installed personal plugin source identity could not be confirmed')
+      const detail = await readDetailForInstalledPlugin(installed)
+      requireCurrentPluginSourceScope(isCurrent)
+      return detail
+    },
     async installAvailablePlugin(item) {
       // Install the selected shared-catalog entry. A scoped readState cache may
       // omit remote rows even though remote discovery already painted this item.
@@ -3061,13 +3130,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       if (requestedId.endsWith(localPersonalSuffix)) {
         const pluginName = requestedId.slice(0, -localPersonalSuffix.length)
         if (pluginName) {
-          const marketplacePath =
-            getInitializedBundledPluginMarketplace()?.path ||
-            cachedState?.marketplaces.find(
-              marketplace => marketplace.id === WEWORK_PERSONAL_MARKETPLACE_ID
-            )?.path ||
-            undefined
-          await uninstallWeworkPersonalPluginLocally(pluginName, marketplacePath)
+          await uninstallWeworkPersonalPluginLocally(pluginName)
           return
         }
       }
@@ -3124,16 +3187,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         requestedId.split('@')[0] ||
         requestedId
       if (marketplaceName === WEWORK_PERSONAL_MARKETPLACE_ID) {
-        const personalMarketplace = currentState.marketplaces.find(
-          marketplace =>
-            marketplace.id === WEWORK_PERSONAL_MARKETPLACE_ID &&
-            marketplace.path &&
-            isLocalMarketplacePath(marketplace.path)
-        )
-        if (!personalMarketplace?.path) {
-          throw new Error('Wework personal marketplace path is unavailable')
-        }
-        await uninstallWeworkPersonalPluginLocally(String(pluginName), personalMarketplace.path)
+        await uninstallWeworkPersonalPluginLocally(String(pluginName))
         return
       }
       const remotePluginId =
@@ -3196,24 +3250,6 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
             )
       }
       clearLocalCodexPluginsReadStateCache()
-      if (isPersonalMarketplaceId(marketplaceName)) {
-        const personalMarketplace = currentState.marketplaces.find(
-          marketplace =>
-            marketplace.id === WEWORK_PERSONAL_MARKETPLACE_ID &&
-            marketplace.path &&
-            isLocalMarketplacePath(marketplace.path)
-        )
-        if (personalMarketplace?.path) {
-          try {
-            await unlinkLocalPluginRelease(personalMarketplace.path, String(pluginName))
-          } catch (error) {
-            throw new LocalPluginUninstallCleanupError(
-              getErrorMessage(error, 'Failed to unlink local plugin release'),
-              { cause: error }
-            )
-          }
-        }
-      }
       const after = await loadInstalledPluginsOnly({ requireComplete: true })
       const stillInstalled = after.installedPlugins.some(plugin => {
         if (plugin.spec.installState !== 'installed') return false

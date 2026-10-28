@@ -110,7 +110,7 @@ function storePackageMatchesLocal(local: InstalledPlugin, store: InstalledPlugin
   )
 }
 
-function isIndependentPublishedSource(item: InstalledPlugin): boolean {
+export function isIndependentPublishedSource(item: InstalledPlugin): boolean {
   return (
     (item.spec.origin === 'created' || item.spec.source.type === 'local') &&
     !isWegentManagedStorePlugin(item) &&

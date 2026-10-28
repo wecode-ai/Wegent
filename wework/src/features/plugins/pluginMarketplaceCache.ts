@@ -530,10 +530,12 @@ export function removePluginMarketplaceInstallation(
     const labelId =
       labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : null
     const payload = item.spec.sourcePayload
-    const itemIds = normalizedInventoryIdentities([
+    const itemInstalledIds = normalizedInventoryIdentities([
       labelId as string | number | null,
-      item.spec.pluginId,
       payload?.cloudInstalledPluginId as string | number | null,
+    ])
+    const itemCatalogIds = normalizedInventoryIdentities([
+      item.spec.pluginId,
       payload?.cloudPluginId as string | number | null,
       payload?.remotePluginId as string | number | null,
     ])
@@ -551,25 +553,21 @@ export function removePluginMarketplaceInstallation(
         (typeof item.metadata.namespace === 'string' ? item.metadata.namespace : null)
     )
     const keyMatches =
-      intersects(itemKeys, pluginKeys) && (!marketplaceId || itemMarketplaceId === marketplaceId)
-    return !intersects(itemIds, installedIds) && !keyMatches
+      itemCatalogIds.size === 0 &&
+      intersects(itemKeys, pluginKeys) &&
+      (!marketplaceId || itemMarketplaceId === marketplaceId)
+    return (
+      !intersects(itemInstalledIds, installedIds) &&
+      !intersects(itemCatalogIds, marketplaceItemIds) &&
+      !keyMatches
+    )
   })
   const marketplaceItems = current.marketplaceItems.map(item => {
-    const itemIds = normalizedInventoryIdentities([
-      item.id,
-      item.installedPluginId,
-      item.remotePluginId,
-    ])
-    const itemKeys = normalizedInventoryIdentities([item.name, item.displayName])
-    const itemMarketplaceId = normalizedMarketplaceIdentity(
-      typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : null
-    )
-    const keyMatches =
-      intersects(itemKeys, pluginKeys) && (!marketplaceId || itemMarketplaceId === marketplaceId)
+    const itemInstalledIds = normalizedInventoryIdentities([item.installedPluginId])
+    const itemCatalogIds = normalizedInventoryIdentities([item.id, item.remotePluginId])
     if (
-      !intersects(itemIds, installedIds) &&
-      !intersects(itemIds, marketplaceItemIds) &&
-      !keyMatches
+      !intersects(itemInstalledIds, installedIds) &&
+      !intersects(itemCatalogIds, marketplaceItemIds)
     ) {
       return item
     }

@@ -259,7 +259,6 @@ pub struct LocalPluginCloudLink {
 #[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct LocalPluginCloudLinkRegistry {
-    #[serde(default)]
     cloud_links: Vec<LocalPluginCloudLink>,
 }
 
@@ -396,9 +395,19 @@ pub fn read_plugin_cloud_links(
     let resolved = Path::new(&request.marketplace_path)
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
-    Ok(load_plugin_cloud_links(&marketplace_root_from_path(
-        &resolved,
-    )))
+    read_plugin_cloud_links_strict(&marketplace_root_from_path(&resolved))
+}
+
+pub(crate) fn personal_plugin_has_cloud_link(
+    marketplace_root: &Path,
+    plugin_name: &str,
+) -> Result<bool, String> {
+    let marketplace_root = marketplace_root
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    Ok(read_plugin_cloud_links_strict(&marketplace_root)?
+        .iter()
+        .any(|link| link.local_plugin_name == plugin_name))
 }
 
 pub fn link_plugin_release(request: LinkPluginReleaseRequest) -> Result<(), String> {
@@ -1934,11 +1943,15 @@ fn package_plugin_directory(
     package_result
 }
 
+#[cfg(test)]
+#[path = "plugin_import_hash_tests.rs"]
+mod hash_tests;
+
 fn sha256_file(path: &Path) -> Result<String, String> {
     let mut file = fs::File::open(path)
         .map_err(|error| format!("Failed to open plugin package for verification: {error}"))?;
     let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
         let bytes_read = file
             .read(&mut buffer)
@@ -2821,31 +2834,25 @@ fn plugin_cloud_link_registry_path(marketplace_root: &Path) -> PathBuf {
 
 fn load_plugin_cloud_links(marketplace_root: &Path) -> Vec<LocalPluginCloudLink> {
     let path = plugin_cloud_link_registry_path(marketplace_root);
-    match fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice::<LocalPluginCloudLinkRegistry>(&bytes)
-            .map(|registry| registry.cloud_links)
-            .unwrap_or_else(|error| {
-                log_executor_event(
-                    "invalid plugin cloud link registry ignored",
-                    &[
-                        ("path", path.display().to_string()),
-                        ("error", error.to_string()),
-                    ],
-                );
-                Vec::new()
-            }),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => {
-            log_executor_event(
-                "plugin cloud link registry read failed",
-                &[
-                    ("path", path.display().to_string()),
-                    ("error", error.to_string()),
-                ],
-            );
-            Vec::new()
-        }
-    }
+    read_plugin_cloud_links_strict(marketplace_root).unwrap_or_else(|error| {
+        log_executor_event(
+            "plugin cloud link registry read failed",
+            &[("path", path.display().to_string()), ("error", error)],
+        );
+        Vec::new()
+    })
+}
+
+fn read_plugin_cloud_links_strict(
+    marketplace_root: &Path,
+) -> Result<Vec<LocalPluginCloudLink>, String> {
+    let path = plugin_cloud_link_registry_path(marketplace_root);
+    let Some(bytes) = read_optional_file(&path)? else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_slice::<LocalPluginCloudLinkRegistry>(&bytes)
+        .map(|registry| registry.cloud_links)
+        .map_err(|error| format!("Invalid plugin cloud link registry: {error}"))
 }
 
 fn write_plugin_cloud_links(

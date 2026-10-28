@@ -223,7 +223,7 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
         }
         const cloudPluginId = linkedCloudPluginId(source.raw)
         if (cloudPluginId !== null) {
-          await pluginApi.getMarketplacePluginAccess(cloudPluginId)
+          await pluginApi.getMarketplacePluginOwner(cloudPluginId)
           if (!isCurrent()) {
             attempt.cancel()
             return
