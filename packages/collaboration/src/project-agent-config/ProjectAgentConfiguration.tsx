@@ -10,6 +10,7 @@ import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type { CollaborationOwnedAgent, CollaborationProject } from "../types";
 import {
   createResourceAgentBindingInput,
+  isSelectableAgentResource,
   normalizeProjectAgent,
   type ProjectAgentConfigurationRecord,
 } from "./model";
@@ -231,7 +232,7 @@ export function ProjectAgentConfiguration({
               : agent.location !== "local";
           if (
             matchesLocation &&
-            (agent.status === "available" || agent.status === "unchecked") &&
+            isSelectableAgentResource(agent) &&
             (agent.team_id || agent.project_binding_input)
           )
             selectable.set(String(agent.team_id ?? agent.id), agent);
