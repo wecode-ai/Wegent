@@ -143,3 +143,39 @@ test('an admitted follow-up can clear async waiting before its new turn ID arriv
   expect(store.getTask(address)?.derived.isBusy).toBe(false)
   expect(store.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(false)
 })
+
+test('a new turn snapshot can confirm execution before the send acknowledgement arrives', () => {
+  const store = new RuntimeTaskLifecycleStore('new-turn-before-send-acknowledgement')
+  const address = { deviceId: 'device-1', taskId: 'task-1' }
+  const task: RuntimeTaskSummary = {
+    taskId: address.taskId,
+    title: 'Conversation',
+    workspacePath: '/repo',
+    runtime: 'codex',
+    continuable: true,
+    running: true,
+    status: 'running',
+    threadStatus: 'active',
+    turnStatus: 'inProgress',
+    updatedAt: 1000,
+    runtimeHandle: { lastTurnId: 'previous-turn' },
+  }
+  store.syncRuntimeTask(address, task)
+  store.turnStarted(address, 'previous-turn')
+  store.turnSettled(address, 'previous-turn', 'succeeded')
+  store.executorSettled(address)
+  store.sendRequested(address)
+
+  store.syncRuntimeTask(address, {
+    ...task,
+    updatedAt: 2000,
+    runtimeHandle: { lastTurnId: 'new-turn' },
+  })
+  store.sendRejected(address)
+
+  expect(store.getTask(address)?.turn.id).toBe('new-turn')
+  expect(store.getTask(address)?.derived.isBusy).toBe(true)
+  store.turnSettled(address, 'new-turn', 'succeeded')
+  store.executorSettled(address)
+  expect(store.getTask(address)?.derived.canSend).toBe(true)
+})

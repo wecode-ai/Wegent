@@ -44,6 +44,8 @@ Live timing measures the locally observed lifecycle interval. It retains the dis
 
 Send acknowledgement binds the optimistic turn to its native identity while retaining the start observed during the pending phase. Task titles are independent metadata: manual and generated names share one persistence and title-event publisher, so subscribed workbenches receive both kinds of changes.
 
+A delayed running snapshot of a settled turn cannot confirm an unaccepted send; rejection must allow the task to return to idle. Only an accepted send allows a running snapshot whose turn ID has not advanced to clear asynchronous waiting. A snapshot identifying a genuinely new turn may arrive before the send acknowledgement and preserves that confirmed execution.
+
 Paging and conversation-cache lifecycle own loaded native history. The provisional-output block limit cannot silently discard confirmed history. Goals project execution state; explicit transport gaps and recovery events belong to the synchronization layer.
 
 ## Viewport restoration

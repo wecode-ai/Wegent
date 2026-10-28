@@ -449,13 +449,14 @@ export class RuntimeTaskLifecycleStore {
       previous.turn.active &&
       previous.turn.id === null &&
       machine.getState().expectedExecutorRunning === true
-    const confirmsPendingSend =
+    const confirmsAcceptedSend =
       hasPendingSend &&
+      previous.turn.phase === 'awaiting' &&
       canonicalEvent.type === 'executor_snapshot_received' &&
       canonicalEvent.task.running === true
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
-      !confirmsPendingSend &&
+      !confirmsAcceptedSend &&
       (previous.turn.active
         ? previous.task !== null
         : previous.turn.outcome !== null && !isRuntimeGoalExecutionActive(canonicalEvent.task)) &&
@@ -475,7 +476,7 @@ export class RuntimeTaskLifecycleStore {
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
       canonicalEvent.task.running === true &&
-      !confirmsPendingSend &&
+      !confirmsAcceptedSend &&
       !isRuntimeGoalExecutionActive(canonicalEvent.task) &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
       machine.isSettledTurn(canonicalEvent.task.runtimeHandle.lastTurnId)
