@@ -536,17 +536,7 @@ async function runDesktopBuild() {
 }
 
 async function sharedBuildEnvironment(environment = process.env, selectedCheckpoints) {
-  const [build, codexBinary] = await Promise.all([
-    prepareDesktopE2EBuild({
-      environment,
-      runBuild: runDesktopBuild,
-      weworkDir,
-    }),
-    resolveDesktopCodexBinary(),
-  ])
-  console.log(
-    `[desktop-e2e] shared build ready: app=${build.appBinary}, executor=${build.executorBinary}, codex=${codexBinary}`
-  )
+  let nextEnvironment = environment
   const selected =
     selectedCheckpoints ??
     requestedParallelCheckpoints(requestedArgs) ??
@@ -568,18 +558,32 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
       'pair.json'
     )
     const pair = JSON.parse(await readFile(pairPath, 'utf8'))
-    return {
+    nextEnvironment = {
       ...environment,
-      WEWORK_E2E_CODEX_BIN: codexBinary,
-      WEWORK_E2E_APP_BIN: build.appBinary,
-      WEWORK_E2E_EXECUTOR_BIN: build.executorBinary,
+      ...(selected.every(value => UPGRADE_PACKAGE_CHECKPOINTS.includes(value))
+        ? {
+            WEWORK_E2E_APP_BIN: pair.from.executable,
+            WEWORK_E2E_EXECUTOR_BIN: pair.from.executor,
+          }
+        : {}),
       WEWORK_E2E_UPGRADE_SOURCE_APP_BIN: pair.from.executable,
       WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN: pair.from.executor,
       WEWORK_E2E_UPGRADE_PAIR: pairPath,
     }
   }
+  const [build, codexBinary] = await Promise.all([
+    prepareDesktopE2EBuild({
+      environment: nextEnvironment,
+      runBuild: runDesktopBuild,
+      weworkDir,
+    }),
+    resolveDesktopCodexBinary(),
+  ])
+  console.log(
+    `[desktop-e2e] shared build ready: app=${build.appBinary}, executor=${build.executorBinary}, codex=${codexBinary}`
+  )
   return {
-    ...environment,
+    ...nextEnvironment,
     WEWORK_E2E_APP_BIN: build.appBinary,
     WEWORK_E2E_CODEX_BIN: codexBinary,
     WEWORK_E2E_EXECUTOR_BIN: build.executorBinary,
