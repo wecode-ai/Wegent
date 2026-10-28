@@ -728,6 +728,9 @@ export async function createDesktopScenario({
       await check()
       console.log(`[desktop-e2e-account] end ${checkpoint}`)
       // Return to the visible plugin detail after a long background-only workflow.
+      await control.command('waitFor', '[data-testid="plugins-button"]', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       await control.command('click', '[data-testid="plugins-button"]')
       const pluginPage = JSON.parse(await control.command('snapshot', 'body'))
       if (pluginPage.testIds.includes('plugin-detail-back-button')) {
