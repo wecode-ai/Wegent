@@ -11,23 +11,66 @@ type ReceiptApi = Pick<
   'getIssueAssignmentReceipts' | 'acknowledgeIssueAssignment'
 > & { getLoopItem(issueId: string): Promise<unknown> }
 
+export interface IssueAssignmentReceiptState {
+  issueId: string
+  version: number
+  assigneeUserId?: number | null
+  rows: IssueAssignmentReceipt[]
+  error: boolean
+}
+
+function sameReceiptState(
+  previous: IssueAssignmentReceiptState | null,
+  next: IssueAssignmentReceiptState
+): boolean {
+  return (
+    previous?.issueId === next.issueId &&
+    previous.version === next.version &&
+    previous.assigneeUserId === next.assigneeUserId &&
+    previous.error === next.error &&
+    previous.rows.length === next.rows.length &&
+    previous.rows.every((row, index) => {
+      const other = next.rows[index]
+      return (
+        row.id === other.id &&
+        row.target_type === other.target_type &&
+        row.target_id === other.target_id &&
+        row.target_name === other.target_name &&
+        row.receipt_tracking === other.receipt_tracking &&
+        row.human_read_at === other.human_read_at &&
+        row.stand_in_received_at === other.stand_in_received_at
+      )
+    })
+  )
+}
+
 export function IssueAssignmentReceipts({
   api,
   issueId,
   version,
   currentUserId,
   assigneeUserId,
+  onStateChange,
 }: {
   api: ReceiptApi
   issueId: string
   version: number
   currentUserId?: string | number
   assigneeUserId?: number | null
+  onStateChange?(state: IssueAssignmentReceiptState): void
 }) {
-  const { t } = useTranslation('common')
   const containerRef = useRef<HTMLSpanElement>(null)
-  const [rows, setRows] = useState<IssueAssignmentReceipt[]>([])
-  const [error, setError] = useState(false)
+  const [state, setState] = useState<IssueAssignmentReceiptState | null>(null)
+  const scopedState =
+    state?.issueId === issueId &&
+    state.version === version &&
+    state.assigneeUserId === assigneeUserId
+      ? state
+      : null
+
+  useEffect(() => {
+    if (scopedState) onStateChange?.(scopedState)
+  }, [scopedState, onStateChange])
 
   useEffect(() => {
     if (assigneeUserId == null) return
@@ -37,6 +80,10 @@ export function IssueAssignmentReceipts({
       document.visibilityState !== 'hidden' &&
       !containerRef.current?.closest('[aria-hidden="true"], [hidden]')
     const refresh = async () => {
+      const publish = (rows: IssueAssignmentReceipt[], error: boolean) => {
+        const next = { issueId, version, assigneeUserId, rows, error }
+        setState(previous => (sameReceiptState(previous, next) ? previous : next))
+      }
       try {
         if (!visible()) return
         let receipts = await api.getIssueAssignmentReceipts(issueId)
@@ -53,11 +100,12 @@ export function IssueAssignmentReceipts({
           receipts = await api.getIssueAssignmentReceipts(issueId)
         }
         if (active) {
-          setRows(receipts)
-          setError(false)
+          publish(receipts, false)
         }
       } catch {
-        if (active) setError(true)
+        if (active) {
+          publish([], true)
+        }
       } finally {
         if (active) timer = setTimeout(refresh, 5000)
       }
@@ -76,6 +124,23 @@ export function IssueAssignmentReceipts({
       data-testid="issue-assignment-receipts"
       aria-live="polite"
     >
+      <IssueAssignmentReceiptStatus
+        rows={scopedState?.rows ?? []}
+        error={scopedState?.error ?? false}
+        assigneeUserId={assigneeUserId}
+      />
+    </span>
+  )
+}
+
+export function IssueAssignmentReceiptStatus({
+  rows,
+  error,
+  assigneeUserId,
+}: Pick<IssueAssignmentReceiptState, 'rows' | 'error' | 'assigneeUserId'>) {
+  const { t } = useTranslation('common')
+  return (
+    <>
       {assigneeUserId != null &&
         (error ? (
           <ReceiptIcon label={t('todo.assignment_receipt_sync_failed')} icon={CircleAlert} />
@@ -119,7 +184,7 @@ export function IssueAssignmentReceipts({
               </span>
             ))
         ))}
-    </span>
+    </>
   )
 }
 
