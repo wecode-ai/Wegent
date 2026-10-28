@@ -7,7 +7,7 @@ use std::{
     sync::{Mutex, MutexGuard, OnceLock},
 };
 
-use serde_json::json;
+use serde_json::{json, Value};
 use wegent_executor::{
     agents::{build_claude_command, build_codex_app_server_command, AgentCommandPlanner},
     protocol::ExecutionRequest,
@@ -49,6 +49,26 @@ impl Drop for EnvGuard {
     }
 }
 
+fn assert_stream_json_prompt(input: &str, prompt: &str) {
+    let frame = input
+        .strip_suffix('\n')
+        .expect("stdin must end with a newline");
+    assert_eq!(
+        input.lines().count(),
+        1,
+        "stdin must contain one JSON frame"
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(frame).unwrap(),
+        json!({
+            "type": "user",
+            "session_id": "",
+            "message": {"role": "user", "content": prompt},
+            "parent_tool_use_id": null,
+        })
+    );
+}
+
 #[test]
 fn claude_command_sends_text_prompt_through_stream_json_stdin() {
     let request = ExecutionRequest {
@@ -78,10 +98,7 @@ fn claude_command_sends_text_prompt_through_stream_json_stdin() {
             "claude-sonnet-4-6"
         ]
     );
-    assert_eq!(
-        spec.stdin_input().unwrap(),
-        "{\"message\":{\"content\":\"implement feature\",\"role\":\"user\"},\"parent_tool_use_id\":null,\"session_id\":\"\",\"type\":\"user\"}\n"
-    );
+    assert_stream_json_prompt(spec.stdin_input().unwrap(), "implement feature");
 }
 
 #[test]
@@ -98,10 +115,7 @@ fn claude_command_sends_leading_hyphen_prompt_through_stream_json_stdin() {
     assert_eq!(spec.args()[0], "-p");
     assert_eq!(spec.args()[1], "--input-format");
     assert_eq!(spec.args()[2], "stream-json");
-    assert_eq!(
-        spec.stdin_input().unwrap(),
-        "{\"message\":{\"content\":\"--- 转发的消息 ---\\n\\n[用户]:\\n测试\",\"role\":\"user\"},\"parent_tool_use_id\":null,\"session_id\":\"\",\"type\":\"user\"}\n"
-    );
+    assert_stream_json_prompt(spec.stdin_input().unwrap(), prompt);
 }
 
 #[test]
@@ -116,15 +130,13 @@ fn claude_command_sends_empty_prompt_through_stream_json_stdin() {
     assert_eq!(spec.args()[0], "-p");
     assert_eq!(spec.args()[1], "--input-format");
     assert_eq!(spec.args()[2], "stream-json");
-    assert_eq!(
-        spec.stdin_input().unwrap(),
-        "{\"message\":{\"content\":\"\",\"role\":\"user\"},\"parent_tool_use_id\":null,\"session_id\":\"\",\"type\":\"user\"}\n"
-    );
+    assert_stream_json_prompt(spec.stdin_input().unwrap(), "");
 }
 
 #[test]
 fn claude_command_maps_nested_model_env_to_process_environment() {
     let _lock = env_lock();
+    let _managed_home = EnvGuard::remove("WEGENT_CLAUDE_HOME");
     let home = unique_dir("claude-nested-model-home");
     let project_dir = unique_dir("claude-nested-model-project");
     let _home = EnvGuard::set("HOME", &home.display().to_string());
@@ -1009,6 +1021,7 @@ fn claude_command_uses_workspace_task_dir_for_chat_turn_state() {
 #[test]
 fn claude_project_task_uses_global_capability_dirs() {
     let _lock = env_lock();
+    let _managed_home = EnvGuard::remove("WEGENT_CLAUDE_HOME");
     let home = unique_dir("claude-project-home");
     let project_dir = unique_dir("claude-project-workspace");
     let _home = EnvGuard::set("HOME", &home.display().to_string());
@@ -1143,6 +1156,7 @@ fn claude_non_project_request_includes_local_tracking_headers() {
 #[test]
 fn claude_standalone_project_zero_keeps_global_capabilities_and_project_header() {
     let _lock = env_lock();
+    let _managed_home = EnvGuard::remove("WEGENT_CLAUDE_HOME");
     let home = unique_dir("claude-standalone-zero-home");
     let workspace_root = unique_dir("claude-standalone-zero-workspace");
     let _home = EnvGuard::set("HOME", &home.display().to_string());

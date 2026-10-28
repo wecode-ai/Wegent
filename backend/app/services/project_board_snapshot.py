@@ -96,6 +96,7 @@ class ProjectBoardSnapshotService:
         bindings = loop_item_service.list_project_task_bindings_for_access(
             db,
             access,
+            user_id=user_id,
             item_ids=item_ids,
         )
         members = cloud_project_service.list_members_for_access(db, access, user_id)

@@ -139,15 +139,15 @@ request-level、bot-level 以及 Wework 内置持久 MCP server 都应遵循这�
 
 ```toml
 [features]
-tool_call_mcp_elicitation = false
+tool_call_mcp_elicitation = true
 ```
 
 这些开关控制的不是同一件事：
 
 - `approvalPolicy.granular.mcp_elicitations: true` 允许插件业务表单从 MCP runtime 转发到 Wework UI。
 - `mcp_servers.<name>.default_tools_approval_mode = "approve"` 让普通 MCP tool call 不需要授权卡。
-- `features.tool_call_mcp_elicitation: false` 只表示不要把 Codex tool-call 授权卡包装成 MCP elicitation 表单；如果 tool approval mode 仍然要求审批，Codex 会通过普通 `item/tool/requestUserInput` 请求，并使用 `mcp_tool_call_approval_<call-id>` 问题 ID。
-- 完整访问模式会自动接受 `_meta.codex_approval_kind = "mcp_tool_call"` 的 MCP elicitation 审批，以及上述 `requestUserInput` 兼容审批，同时继续转发普通用户问题和插件业务表单。
+- `features.tool_call_mcp_elicitation: true` 让 Codex tool-call 审批使用独立的 MCP elicitation 通道。该通道按 server 和 request ID 关联，不占用普通 `item/tool/requestUserInput` 的回合等待槽，避免并发工具审批覆盖普通问题或把 `Allow` 误送为普通问题答案。
+- 完整访问模式会自动接受 `_meta.codex_approval_kind = "mcp_tool_call"` 的 MCP elicitation 审批；已有的单问题 `mcp_tool_call_approval_<call-id>` 审批识别保持不变，同时继续转发普通用户问题和插件业务表单。
 
 ## 实现边界
 
@@ -163,7 +163,7 @@ tool_call_mcp_elicitation = false
 对应代码边界：
 
 - Codex thread/turn 参数使用 granular approval policy，只打开 `mcp_elicitations`。
-- `features.tool_call_mcp_elicitation=false` 防止普通 MCP tool approval 被包装成业务表单。
+- `features.tool_call_mcp_elicitation=true` 将工具审批与普通问题的原生等待槽隔离；通过 `_meta.codex_approval_kind` 区分工具审批和业务表单，不改变权限策略。
 - request/bot MCP config 默认补 `default_tools_approval_mode = "approve"`，显式 `prompt` 优先。
 - 完整访问模式识别 `_meta.codex_approval_kind = "mcp_tool_call"` 的 MCP elicitation，或仅含一个 `mcp_tool_call_approval_<call-id>` 问题的 `requestUserInput`，直接返回对应的 `accept`/`Allow`，不向聊天界面发送该授权事件。
 - `mcp_servers.wegent_apps` 是 Wework Connector Apps 的内置持久 server，由 Wework 写入并在 configure/app sync 时刷新，同样默认 `approve`。

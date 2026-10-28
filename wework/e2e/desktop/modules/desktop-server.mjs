@@ -4103,7 +4103,8 @@ class DesktopE2EServer {
           body,
           MCP_ELICITATION_NAMESPACE,
           MCP_ELICITATION_TOOL_NAME,
-          timeoutScenario ? { scenario: timeoutScenario } : {}
+          timeoutScenario ? { scenario: timeoutScenario } : {},
+          `${MCP_ELICITATION_SEARCH_ID}-${round}`
         )
         this.writeSse(response, [
           responseCreated(responseId),

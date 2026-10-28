@@ -210,6 +210,54 @@ describe('RuntimeConversationQueueController', () => {
     ).toEqual(queue.map(item => item.id))
   })
 
+  test('sends the next message despite a late running snapshot from a completed predecessor', async () => {
+    const store = idleStore(taskA)
+    const staleRunningTask = {
+      ...store.getTask(taskA)!.task!,
+      status: 'running',
+      running: true,
+      turnStatus: 'inProgress',
+      completedAt: null,
+      runtimeHandle: { lastTurnId: 'first-turn' },
+    }
+    store.syncRuntimeTask(taskA, staleRunningTask)
+    store.turnStarted(taskA, 'first-turn')
+    store.turnSettled(taskA, 'first-turn', 'succeeded')
+    store.executorSettled(taskA)
+    store.sendRequested(taskA)
+    store.sendAccepted(taskA)
+    store.turnStarted(taskA, 'second-turn')
+    const item = message('third-message')
+    const send = acceptingTransport(store)
+    cacheRuntimeConversationQueuedMessages(taskA, [item])
+    attach(taskA, store, send)
+    await flushQueue()
+    expect(send).not.toHaveBeenCalled()
+
+    store.turnSettled(taskA, 'second-turn', 'succeeded')
+    store.syncTranscript(taskA, {
+      messages: [],
+      running: false,
+      turns: [
+        { id: 'first-turn', status: 'done', items: [] },
+        { id: 'second-turn', status: 'done', items: [] },
+      ],
+    })
+    // The list response arrives before the scheduled queue pump reads lifecycle state.
+    store.syncRuntimeTask(taskA, staleRunningTask)
+    await flushQueue()
+
+    expect(send).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ address: taskA, clientUserMessageId: item.id }),
+      expect.any(Object)
+    )
+    expect(getRuntimeConversationQueuedMessages(taskA)[0]).toMatchObject({
+      id: item.id,
+      status: 'sending',
+      awaitingTurnStart: true,
+    })
+  })
+
   test('shares the send claim across pane attachments and manual sends while acceptance is pending', async () => {
     const store = idleStore(taskA)
     const queue = [message('pending-1'), message('pending-2')]

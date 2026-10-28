@@ -161,6 +161,28 @@ describe('programmatic exec', () => {
 })
 
 describe('selectMcpTool', () => {
+  test('uses the current search namespace after a runtime rematerializes its MCP server', () => {
+    const request = {
+      input: [
+        { ...searchResult(namespace('sites', 'confirm_access')), call_id: 'earlier' },
+        { ...searchResult(namespace('mcp__sites', 'confirm_access')), call_id: 'current' },
+        { ...searchResult(namespace('another_site', 'confirm_access')), call_id: 'foreign' },
+      ],
+    }
+
+    expect(selectMcpTool(request, 'sites', 'confirm_access', {}, 'current')).toEqual({
+      namespace: 'mcp__sites',
+      name: 'confirm_access',
+      arguments: {},
+    })
+    expect(() => selectMcpTool(request, 'sites', 'confirm_access', {}, 'missing')).toThrow(
+      'tool_search did not return MCP namespace sites'
+    )
+    expect(() => selectMcpTool(request, 'sites', 'confirm_access', {}, 'foreign')).toThrow(
+      'tool_search did not return MCP namespace sites'
+    )
+  })
+
   test('selects a tool from a later result for the same namespace', () => {
     const request = {
       input: [

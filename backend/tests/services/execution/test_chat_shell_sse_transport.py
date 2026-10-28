@@ -15,6 +15,7 @@ import httpx
 import pytest
 from openai import APIConnectionError, AsyncOpenAI
 
+from app.services.execution import chat_shell_sse
 from app.services.execution.chat_shell_client import ChatShellClientPool
 from app.services.execution.dispatcher import ExecutionDispatcher
 from app.services.execution.router import CommunicationMode, ExecutionTarget
@@ -23,6 +24,62 @@ from shared.models import EventType, ExecutionEvent, ExecutionRequest
 _COMPLETED = b'data: {"type":"response.completed","response":{"output":[]}}\n\n'
 _DELTA = b'data: {"type":"response.output_text.delta","delta":"partial"}\n\n'
 _TEST_TIMEOUT_SECONDS = 30
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_during", [EventType.CHUNK.value, EventType.DONE.value])
+async def test_cancellation_during_emission_preserves_terminal_order(
+    cancel_during: str,
+) -> None:
+    emitting = asyncio.Event()
+    release_emission = asyncio.Event()
+    cancellation_observed = asyncio.Event()
+    wait_for_cancellation = chat_shell_sse._wait_for_sse_cancellation
+
+    async def observe_cancellation(*args):
+        source = await wait_for_cancellation(*args)
+        cancellation_observed.set()
+        return source
+
+    async def emit(event):
+        if event.type == cancel_during:
+            emitting.set()
+            try:
+                await release_emission.wait()
+            except asyncio.CancelledError:
+                # An emitter's dependency can consume task cancellation.
+                pass
+
+    emitter = AsyncMock()
+    emitter.emit.side_effect = emit
+
+    async with _environment(
+        lambda request: httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_DELTA + _COMPLETED,
+        )
+    ) as (dispatcher, request, target, _client, session):
+        with patch.object(
+            chat_shell_sse, "_wait_for_sse_cancellation", observe_cancellation
+        ):
+            dispatch = asyncio.create_task(
+                dispatcher._dispatch_sse(request, target, emitter)
+            )
+            await asyncio.wait_for(emitting.wait(), _TEST_TIMEOUT_SECONDS)
+            session.register_stream.return_value.set()
+            await asyncio.wait_for(cancellation_observed.wait(), _TEST_TIMEOUT_SECONDS)
+            release_emission.set()
+            await asyncio.wait_for(dispatch, _TEST_TIMEOUT_SECONDS)
+
+    assert [call.args[0].type for call in emitter.emit.call_args_list] == [
+        EventType.CHUNK.value,
+        (
+            EventType.CANCELLED.value
+            if cancel_during == EventType.CHUNK.value
+            else EventType.DONE.value
+        ),
+    ]
 
 
 @asynccontextmanager
@@ -158,15 +215,23 @@ async def test_cancelled_response_does_not_close_shared_client() -> None:
 @pytest.mark.asyncio
 async def test_cancel_during_chunk_delivery_cannot_emit_buffered_completion() -> None:
     delivery_started = asyncio.Event()
+    release_delivery = asyncio.Event()
     cancellation_consumed = asyncio.Event()
+    cancellation_observed = asyncio.Event()
+    wait_for_cancellation = chat_shell_sse._wait_for_sse_cancellation
     delivered = []
+
+    async def observe_cancellation(*args):
+        source = await wait_for_cancellation(*args)
+        cancellation_observed.set()
+        return source
 
     async def emit(event: ExecutionEvent) -> None:
         delivered.append(event.type)
         if event.type == EventType.CHUNK.value:
             delivery_started.set()
             try:
-                await asyncio.Future()
+                await release_delivery.wait()
             except asyncio.CancelledError:
                 # A delivery dependency can finish normally after consuming cancellation.
                 cancellation_consumed.set()
@@ -181,16 +246,26 @@ async def test_cancel_during_chunk_delivery_cannot_emit_buffered_completion() ->
     emitter = AsyncMock()
     emitter.emit.side_effect = emit
     async with _environment(handler) as (dispatcher, request, target, client, session):
-        task = asyncio.create_task(dispatcher._dispatch_sse(request, target, emitter))
-        try:
-            await asyncio.wait_for(delivery_started.wait(), timeout=2)
-            session.register_stream.return_value.set()
-            await asyncio.wait_for(asyncio.shield(task), timeout=2)
-        finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        with patch.object(
+            chat_shell_sse, "_wait_for_sse_cancellation", observe_cancellation
+        ):
+            task = asyncio.create_task(
+                dispatcher._dispatch_sse(request, target, emitter)
+            )
+            try:
+                await asyncio.wait_for(delivery_started.wait(), timeout=2)
+                session.register_stream.return_value.set()
+                await asyncio.wait_for(cancellation_observed.wait(), timeout=2)
+                assert not cancellation_consumed.is_set()
+                assert not task.done()
+                release_delivery.set()
+                await asyncio.wait_for(asyncio.shield(task), timeout=2)
+            finally:
+                release_delivery.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
 
-        assert cancellation_consumed.is_set()
+        assert not cancellation_consumed.is_set()
         assert delivered == [EventType.CHUNK.value, EventType.CANCELLED.value]
         assert not client.is_closed()
         session.unregister_stream.assert_awaited_once_with(request.subtask_id)

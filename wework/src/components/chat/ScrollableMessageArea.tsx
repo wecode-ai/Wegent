@@ -1,3 +1,4 @@
+import type { McpAppConversationServices } from '@/api/mcpApps'
 import {
   ScrollableMessageArea as SharedScrollableMessageArea,
   type ScrollableMessageAreaProps,
@@ -25,6 +26,7 @@ type SearchableMessageAreaProps = Omit<
   ScrollableMessageAreaProps,
   DesktopConversationPresentationProp
 > & {
+  mcpApp?: McpAppConversationServices
   workspacePath?: string
   imageTarget?: { deviceId: string; workspacePath: string } | null
   virtualize?: boolean
@@ -50,6 +52,7 @@ type SearchableMessageAreaProps = Omit<
 }
 
 export function ScrollableMessageArea({
+  mcpApp,
   workspacePath,
   imageTarget,
   virtualize,
@@ -126,7 +129,7 @@ export function ScrollableMessageArea({
     [visibleSearchPage, transcriptError, onRetryTranscript, props.loading, props.historyError, t]
   )
   return (
-    <DesktopToolServices imageTarget={imageTarget}>
+    <DesktopToolServices imageTarget={imageTarget} mcpApp={mcpApp}>
       <SharedScrollableMessageArea
         {...props}
         {...presentation}

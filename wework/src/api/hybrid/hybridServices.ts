@@ -986,9 +986,10 @@ export function createHybridWorkbenchServices(
   }
 
   const standInApiForDevice = async (deviceId: string) => {
-    const identity = await getLocalRuntimeSidebarIdentity()
     const api =
-      deviceId === identity?.deviceId ? localServices.standInApi : cloudServices.standInApi
+      (await runtimeApiForDevice(deviceId)) === localServices.runtimeWorkApi
+        ? localServices.standInApi
+        : cloudServices.standInApi
     if (!api) throw new Error('Executor settings are unavailable')
     return api
   }
@@ -1112,6 +1113,11 @@ export function createHybridWorkbenchServices(
     },
     compactRuntimeTask(data: RuntimeCompactRequest) {
       return routeByAddress(data.address).compactRuntimeTask(data)
+    },
+    requestMcpApp<T = unknown>(data: import('@/api/mcpApps').McpAppRequest): Promise<T> {
+      const api = routeByAddress(data.address)
+      if (!api.requestMcpApp) throw new Error('Executor does not support MCP Apps')
+      return api.requestMcpApp<T>(data)
     },
     cleanRuntimeBackgroundTerminals(address: RuntimeTaskAddress) {
       const api = routeByAddress(address)

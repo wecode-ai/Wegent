@@ -121,6 +121,28 @@ async def _wait_for_sse_cancellation(
         )
 
 
+async def _next_sse_event(
+    iterator: Any, cancel_task: asyncio.Task[str]
+) -> Optional[Any]:
+    """Race only the upstream read against cancellation, never event persistence."""
+    if cancel_task.done():
+        return None
+    read_task = asyncio.create_task(iterator.__anext__())
+    try:
+        done, _ = await asyncio.wait(
+            {read_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if cancel_task in done:
+            return None
+        return read_task.result()
+    except StopAsyncIteration:
+        return None
+    finally:
+        if not read_task.done():
+            read_task.cancel()
+        await asyncio.gather(read_task, return_exceptions=True)
+
+
 async def _cancel_sse_stream_open(
     stream_open_task: asyncio.Task[Any],
 ) -> None:
@@ -231,7 +253,6 @@ async def _dispatch_chat_shell_sse(
     cancel_source = ""
     terminal_event_type = ""
     stream_open_task: Optional[asyncio.Task[Any]] = None
-    stream_task: Optional[asyncio.Task[None]] = None
     cancel_task = asyncio.create_task(
         _wait_for_sse_cancellation(
             session_manager,
@@ -316,131 +337,109 @@ async def _dispatch_chat_shell_sse(
                     },
                 )
 
-                async def consume_stream() -> None:
-                    nonlocal event_count, terminal_event_type
-                    nonlocal emit_total_ms, emit_max_ms
-                    add_span_event(
-                        "sse.openai_event_iteration_start",
-                        {
-                            "task_id": str(request.task_id),
-                            "subtask_id": str(request.subtask_id),
-                        },
-                    )
-                    async for event in stream:
-                        if cancelled:
-                            break
-                        event_count += 1
-                        event_type = getattr(event, "type", None)
-                        if not event_type:
-                            continue
-
-                        if event_count <= 5 or event_type in (
-                            "response.completed",
-                            "error",
-                        ):
-                            logger.info(
-                                "[ExecutionDispatcher] SSE event #%d: type=%s, "
-                                "task_id=%d, subtask_id=%d",
-                                event_count,
-                                event_type,
-                                request.task_id,
-                                request.subtask_id,
-                            )
-                            add_span_event(
-                                "sse.openai_event_received",
-                                {
-                                    "event_type": event_type,
-                                    "event_number": event_count,
-                                    "task_id": str(request.task_id),
-                                    "subtask_id": str(request.subtask_id),
-                                },
-                            )
-
-                        event_data = (
-                            event.model_dump()
-                            if hasattr(event, "model_dump")
-                            else vars(event)
-                        )
-                        parsed_event = event_parser.parse(
-                            task_id=request.task_id,
-                            subtask_id=request.subtask_id,
-                            message_id=request.message_id,
-                            event_type=event_type,
-                            data=event_data,
-                        )
-
-                        if parsed_event:
-                            log_fn = (
-                                logger.debug
-                                if parsed_event.type
-                                == EventType.TOOL_ARGUMENT_DELTA.value
-                                else logger.info
-                            )
-                            log_fn(
-                                "[ExecutionDispatcher] Parsed SSE event -> "
-                                "internal event: task_id=%d, subtask_id=%d, "
-                                "request_id=%s, sse_event=%s, internal_event=%s",
-                                request.task_id,
-                                request.subtask_id,
-                                request_id,
-                                event_type,
-                                parsed_event.type,
-                            )
-                            emit_started = time.perf_counter()
-                            try:
-                                await emitter.emit(parsed_event)
-                            finally:
-                                emit_ms = (time.perf_counter() - emit_started) * 1000
-                                emit_total_ms += emit_ms
-                                emit_max_ms = max(emit_max_ms, emit_ms)
-
-                        # Delivery can consume CancelledError; cancellation still
-                        # owns the terminal state before another stream read.
-                        if cancelled:
-                            break
-
-                        if event_type in (
-                            ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
-                            ResponsesAPIStreamEvents.ERROR.value,
-                            ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
-                        ):
-                            terminal_event_type = event_type
-                            logger.info(
-                                "[ExecutionDispatcher] Terminal event received, "
-                                "breaking stream loop: task_id=%d, subtask_id=%d, "
-                                "event_type=%s, request_id=%s",
-                                request.task_id,
-                                request.subtask_id,
-                                event_type,
-                                request_id,
-                            )
-                            add_span_event(
-                                "sse.openai_terminal_event",
-                                {
-                                    "event_type": event_type,
-                                    "total_events": event_count,
-                                    "task_id": str(request.task_id),
-                                    "subtask_id": str(request.subtask_id),
-                                },
-                            )
-                            break
-
-                stream_task = asyncio.create_task(consume_stream())
-                done, _ = await asyncio.wait(
-                    {stream_task, cancel_task},
-                    return_when=asyncio.FIRST_COMPLETED,
+                add_span_event(
+                    "sse.openai_event_iteration_start",
+                    {
+                        "task_id": str(request.task_id),
+                        "subtask_id": str(request.subtask_id),
+                    },
                 )
-                if stream_task in done:
-                    await stream_task
-                    if terminal_event_type:
-                        await _drain_terminal_stream(
-                            stream,
-                            task_id=request.task_id,
-                            subtask_id=request.subtask_id,
-                            request_id=request_id,
-                            target_url=f"{base_url}/responses",
+                iterator = stream.__aiter__()
+                while True:
+                    event = await _next_sse_event(iterator, cancel_task)
+                    if event is None:
+                        break
+                    event_count += 1
+                    event_type = getattr(event, "type", None)
+                    if not event_type:
+                        continue
+
+                    if event_count <= 5 or event_type in (
+                        "response.completed",
+                        "error",
+                    ):
+                        logger.info(
+                            "[ExecutionDispatcher] SSE event #%d: type=%s, "
+                            "task_id=%d, subtask_id=%d",
+                            event_count,
+                            event_type,
+                            request.task_id,
+                            request.subtask_id,
                         )
-                else:
+                        add_span_event(
+                            "sse.openai_event_received",
+                            {
+                                "event_type": event_type,
+                                "event_number": event_count,
+                                "task_id": str(request.task_id),
+                                "subtask_id": str(request.subtask_id),
+                            },
+                        )
+
+                    event_data = (
+                        event.model_dump()
+                        if hasattr(event, "model_dump")
+                        else vars(event)
+                    )
+                    parsed_event = event_parser.parse(
+                        task_id=request.task_id,
+                        subtask_id=request.subtask_id,
+                        message_id=request.message_id,
+                        event_type=event_type,
+                        data=event_data,
+                    )
+
+                    if parsed_event:
+                        log_fn = (
+                            logger.debug
+                            if parsed_event.type == EventType.TOOL_ARGUMENT_DELTA.value
+                            else logger.info
+                        )
+                        log_fn(
+                            "[ExecutionDispatcher] Parsed SSE event -> "
+                            "internal event: task_id=%d, subtask_id=%d, "
+                            "request_id=%s, sse_event=%s, internal_event=%s",
+                            request.task_id,
+                            request.subtask_id,
+                            request_id,
+                            event_type,
+                            parsed_event.type,
+                        )
+                        emit_started = time.perf_counter()
+                        try:
+                            await emitter.emit(parsed_event)
+                        finally:
+                            emit_ms = (time.perf_counter() - emit_started) * 1000
+                            emit_total_ms += emit_ms
+                            emit_max_ms = max(emit_max_ms, emit_ms)
+
+                    if event_type in (
+                        ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
+                        ResponsesAPIStreamEvents.ERROR.value,
+                        ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value,
+                    ):
+                        terminal_event_type = event_type
+                        logger.info(
+                            "[ExecutionDispatcher] Terminal event received, "
+                            "breaking stream loop: task_id=%d, subtask_id=%d, "
+                            "event_type=%s, request_id=%s",
+                            request.task_id,
+                            request.subtask_id,
+                            event_type,
+                            request_id,
+                        )
+                        add_span_event(
+                            "sse.openai_terminal_event",
+                            {
+                                "event_type": event_type,
+                                "total_events": event_count,
+                                "task_id": str(request.task_id),
+                                "subtask_id": str(request.subtask_id),
+                            },
+                        )
+                        break
+
+                if not terminal_event_type and cancel_task.done():
                     cancel_source = await cancel_task
                     cancelled = True
                     logger.info(
@@ -450,8 +449,14 @@ async def _dispatch_chat_shell_sse(
                         request.subtask_id,
                         cancel_source,
                     )
-                    stream_task.cancel()
-                    await asyncio.gather(stream_task, return_exceptions=True)
+                elif terminal_event_type:
+                    await _drain_terminal_stream(
+                        stream,
+                        task_id=request.task_id,
+                        subtask_id=request.subtask_id,
+                        request_id=request_id,
+                        target_url=f"{base_url}/responses",
+                    )
 
                 if cancelled:
                     await emitter.emit(
@@ -540,15 +545,9 @@ async def _dispatch_chat_shell_sse(
     finally:
         if stream_open_task is not None and not stream_entered:
             await _cancel_sse_stream_open(stream_open_task)
-        pending_tasks = [
-            task
-            for task in (stream_task, cancel_task)
-            if task is not None and not task.done()
-        ]
-        for task in pending_tasks:
-            task.cancel()
-        if pending_tasks:
-            await asyncio.gather(*pending_tasks, return_exceptions=True)
+        if not cancel_task.done():
+            cancel_task.cancel()
+        await asyncio.gather(cancel_task, return_exceptions=True)
 
         await session_manager.unregister_stream(request.subtask_id)
         add_span_event(

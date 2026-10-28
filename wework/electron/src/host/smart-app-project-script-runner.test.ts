@@ -57,7 +57,9 @@ describe('runSmartAppProjectScripts', () => {
       expect(result.issues, failureLogs.join('\n')).toEqual([])
       expect(result.scripts.map(script => script.status)).toEqual(['passed', 'passed', 'passed'])
       await expect(readFile(join(host, 'pnpm-lock.yaml'))).rejects.toMatchObject({ code: 'ENOENT' })
-    }
+    },
+    // This integration case starts three real pnpm/Node process pairs sequentially.
+    15_000
   )
 
   test('runs typecheck, test, and build in a fixed order through managed pnpm', async () => {

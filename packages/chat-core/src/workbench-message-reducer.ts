@@ -35,6 +35,7 @@ export interface BaseWorkbenchProcessingBlock {
 export interface WorkbenchToolBlock extends BaseWorkbenchProcessingBlock {
   type: 'tool'
   toolName: string
+  mcpServer?: string
   toolInput?: Record<string, unknown>
   toolOutput?: unknown
   toolOutputTruncated?: boolean
