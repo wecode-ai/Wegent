@@ -13,7 +13,10 @@ import {
 import { TaskActivityView } from './TaskActivityView'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import type { Attachment, DeviceInfo } from '@/types/api'
-import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  getRuntimeTaskLifecycleKey,
+  RuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
 
 const createProjectRuntimeTask = vi.fn()
 const sendRuntimePaneMessage = vi.fn()
@@ -57,6 +60,7 @@ const { runtimeWorkMock, devicesMock, agentsMock, openExternalUrlMock, lifecycle
   }))
 
 const replyQueueStoreMock = vi.hoisted(() => ({ value: null as TaskReplyQueueStore | null }))
+const lifecycleStoreMock = vi.hoisted(() => ({ value: null as RuntimeTaskLifecycleStore | null }))
 vi.mock('./taskReplyQueue', () => ({
   get taskReplyQueueStore() {
     return replyQueueStoreMock.value
@@ -66,6 +70,7 @@ vi.mock('./taskReplyQueue', () => ({
 vi.mock('@/features/workbench/runtimeTaskLifecycle', async importOriginal => ({
   ...(await importOriginal<typeof import('@/features/workbench/runtimeTaskLifecycle')>()),
   useRuntimeTaskLifecycleStoreSnapshot: () => lifecycleSnapshotMock.value,
+  useRuntimeTaskLifecycleStore: () => lifecycleStoreMock.value,
   useRuntimeTaskLifecycle: (address: { deviceId: string; taskId: string } | undefined) =>
     address
       ? (lifecycleSnapshotMock.value.tasks.get(`${address.deviceId}:${address.taskId}`) ?? null)
@@ -261,6 +266,7 @@ describe('TaskActivityView', () => {
     runtimeWorkMock.value = null
     devicesMock.value = []
     lifecycleSnapshotMock.value = { tasks: new Map() }
+    lifecycleStoreMock.value = new RuntimeTaskLifecycleStore('task-activity-test')
     createProjectRuntimeTask.mockReset()
     sendRuntimePaneMessage.mockReset()
     sendRuntimePaneMessage.mockResolvedValue(true)
@@ -2739,6 +2745,106 @@ describe('TaskActivityView', () => {
     ).toHaveAttribute('data-status', 'running')
     expect(within(card).getByTestId('cloud-task-activity-reply-toggle-message-2')).toBeVisible()
   })
+
+  it.each(['local-runtime', 'unrelated-runtime'])(
+    'dispatches a queued alias reply only when its own %s lifecycle has settled',
+    async runtimeInstanceId => {
+      const user = userEvent.setup()
+      const native = { deviceId: 'electron-current', taskId: 'runtime-1' }
+      const alias = { ...native, deviceId: 'app-record-73' }
+      const store = lifecycleStoreMock.value!
+      const task = {
+        taskId: native.taskId,
+        title: 'Issue task',
+        workspacePath: '',
+        runtime: 'codex',
+      }
+      store.syncRuntimeTask(alias, { ...task, running: true, updatedAt: 1_000 })
+      store.syncRuntimeTask(native, {
+        ...task,
+        running: false,
+        status: 'done',
+        completedAt: 2_000,
+        updatedAt: 2_000,
+      })
+      store.syncDevices([
+        {
+          id: 0,
+          device_id: native.deviceId,
+          runtime_instance_id: 'local-runtime',
+          device_type: 'local',
+          name: 'Local',
+          status: 'online',
+          is_default: true,
+        },
+        {
+          id: 73,
+          device_id: 'registered-app',
+          socket_device_id: alias.deviceId,
+          runtime_instance_id: runtimeInstanceId,
+          device_type: 'app',
+          name: 'Registered app',
+          status: 'online',
+          is_default: false,
+        },
+      ])
+      lifecycleSnapshotMock.value = store.getSnapshot()
+      expect(lifecycleSnapshotMock.value.tasks.has(getRuntimeTaskLifecycleKey(alias))).toBe(false)
+      const client = {
+        subscribe: vi.fn(async () => ({
+          snapshot: {
+            messages: [
+              userMessage,
+              {
+                ...agentMessage,
+                rootMessageId: userMessage.messageId,
+                replyToMessageId: userMessage.messageId,
+                triggerMessageId: userMessage.messageId,
+                runtimeAddress: alias,
+              },
+            ],
+            latestSequence: 2,
+            currentUserId: '1',
+          },
+          unsubscribe: vi.fn(),
+        })),
+        send: vi.fn(async () => ({ ...userMessage, messageId: 'continued-comment' })),
+        executeTaskComment: vi.fn(async () => []),
+        startAgentResponse: vi.fn(),
+        failAgentResponse: vi.fn(),
+        dispose: vi.fn(),
+      } satisfies ProjectChatClient
+      render(
+        <TaskActivityView
+          client={client}
+          project={{ id: '11', name: 'Wework' } as never}
+          task={{ id: 'WEG-1', title: 'Issue task', status: 'in_progress' } as never}
+          issueTimeline
+          linear
+        />
+      )
+
+      await user.click(await screen.findByTestId('cloud-task-activity-reply-toggle-message-1'))
+      await user.type(
+        within(screen.getByTestId('issue-reply-composer')).getByTestId(
+          'cloud-task-activity-composer'
+        ),
+        'Continue the same task{Enter}'
+      )
+
+      if (runtimeInstanceId === 'local-runtime') {
+        await waitFor(() => expect(client.executeTaskComment).toHaveBeenCalledOnce())
+        expect(client.send).toHaveBeenCalledWith(
+          expect.objectContaining({ replyToMessageId: userMessage.messageId })
+        )
+      } else {
+        expect(client.send).not.toHaveBeenCalled()
+        expect(screen.getByTestId('conversation-queue-panel')).toHaveTextContent(
+          'Continue the same task'
+        )
+      }
+    }
+  )
 
   it('shows creation and allows replies when a completed run is persisted', async () => {
     const completedComment = {
