@@ -18,12 +18,7 @@ import {
 } from '@/features/todo/projectSpaceRoute'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { truncateRuntimeTaskTitle } from '@/features/workbench/workbenchRuntimeHelpers'
-import {
-  hydrateLocalWorkItems,
-  loadLocalWorkItems,
-  saveLocalWorkItems,
-  type LocalWorkItem,
-} from '@/features/todo/todoModel'
+import { hydrateLocalWorkItems, type LocalWorkItem } from '@/features/todo/todoModel'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
@@ -1039,34 +1034,10 @@ export function useWorkbenchCloudProjectContext({
     navigateTo(contentRoute)
   }, [boundCloudItem, boundCloudProject, workspaceTabs])
 
-  const finishLocalDelivery = useCallback(async () => {
-    if (!activeDeliveryItem) return
-    const items = await loadLocalWorkItems(userId)
-    const now = new Date().toISOString()
-    await saveLocalWorkItems(
-      userId,
-      items.map(item =>
-        item.id === activeDeliveryItem.id
-          ? {
-              ...item,
-              state: 'completed',
-              updatedAt: now,
-              events: [
-                ...item.events,
-                {
-                  id: `delivery-${now}`,
-                  type: 'confirmed' as const,
-                  summary: t('delivery.completed_activity', '任务已交付并完成'),
-                  createdAt: now,
-                },
-              ],
-            }
-          : item
-      )
-    )
+  const finishDelivery = useCallback(() => {
     setDeliveryDialogOpen(false)
-    navigateTo('/todo')
-  }, [activeDeliveryItem, userId, t])
+    openBoundProjectSpaceTask()
+  }, [openBoundProjectSpaceTask])
 
   const prepareSubmission = useCallback(
     async (description: string): Promise<CloudSubmissionContext> => {
@@ -1256,7 +1227,7 @@ export function useWorkbenchCloudProjectContext({
     composerCloudProject,
     defaultProject,
     deliveryDialogOpen,
-    finishLocalDelivery,
+    finishDelivery,
     handleSelectCloudProject,
     handleTodoBound,
     openDelivery,
