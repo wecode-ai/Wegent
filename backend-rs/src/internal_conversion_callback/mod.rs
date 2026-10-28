@@ -293,11 +293,37 @@ async fn completed(
     // same id names the result channel and the published message.
     let index_task_id = crate::wework_auth_tokens::uuid4_hex()?;
     let dispatch_payload = payload_with_attachment(payload, converted.id);
+    if state.background_jobs.is_enabled(INDEX_DOCUMENT_TASK) {
+        if let Err(error) = state
+            .background_jobs
+            .submit(
+                INDEX_DOCUMENT_TASK,
+                &dispatch_payload,
+                None,
+                Some(index_task_id.clone()),
+            )
+            .await
+        {
+            tracing::error!(document_id=request.document_id,%error,"Rust knowledge index dispatch failed");
+            crate::background_jobs::knowledge::index::dispatch_failed(
+                state,
+                request.document_id,
+                request.generation,
+            )
+            .await
+            .map_err(dependency_failure)?;
+            return Err(FastApiError::unhandled());
+        }
+        return Ok(ConversionCompletedResponse::completed(index_task_id));
+    }
     let Some(redis) = state.redis.as_ref() else {
-        tracing::error!(
-            document_id = request.document_id,
-            "knowledge index dispatch failed: the Redis broker is unavailable"
-        );
+        crate::background_jobs::knowledge::index::dispatch_failed(
+            state,
+            request.document_id,
+            request.generation,
+        )
+        .await
+        .map_err(dependency_failure)?;
         return Err(FastApiError::unhandled());
     };
     let task = CeleryTask {
@@ -305,6 +331,7 @@ async fn completed(
         queue: INDEX_DOCUMENT_QUEUE,
         task_id: &index_task_id,
         kwargs: &dispatch_payload,
+        expires_at: None,
     };
     match state.celery.dispatch(redis, &task).await {
         Ok(()) => {
@@ -315,28 +342,19 @@ async fn completed(
                 "knowledge index dispatched"
             );
         }
-        // A server error reply is the broker's response to this exact command,
-        // not an unavailable broker: the request has already committed its
-        // state transition and the source's observable success response is the
-        // recorded one. Keep the response stable and surface the rejection.
-        Err(error) if crate::celery_broker::is_rejected_command(&error) => {
-            tracing::error!(
-                %error,
-                document_id = request.document_id,
-                converted_attachment_id = converted.id,
-                index_task_id = %index_task_id,
-                "the Redis broker rejected a knowledge index dispatch command"
-            );
-        }
-        // `conversion_callback.py:334-359` marks the document FAILED and
-        // re-raises; the failure mutation is not migrated (no recorded
-        // evidence reaches this branch), so only the re-raised 500 remains.
         Err(error) => {
             tracing::error!(
                 %error,
                 document_id = request.document_id,
                 "knowledge index dispatch failed"
             );
+            crate::background_jobs::knowledge::index::dispatch_failed(
+                state,
+                request.document_id,
+                request.generation,
+            )
+            .await
+            .map_err(dependency_failure)?;
             return Err(FastApiError::unhandled());
         }
     }

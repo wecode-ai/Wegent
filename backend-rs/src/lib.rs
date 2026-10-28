@@ -28,6 +28,7 @@ extern crate self as wegent_backend_rs;
 use std::sync::Arc;
 
 pub use application::Application;
+pub use attachments::context_store::{SubtaskContextRow, get_context_optional_with_user};
 pub use attachments::external_media::{
     AttachmentDownload, ExternalMediaReference, ExternalMediaRelay, ExternalMediaRequest,
     ExternalPlayback, ExternalPlaybackResolver, MediaStream, NoExternalPlaybackResolver,
@@ -37,6 +38,7 @@ pub use attachments::minio_client::{MinioConfig, encode_object_path, ensure_buck
 pub use attachments::s3_signing::{
     EMPTY_BODY_SHA256, SignedRequest, amz_timestamp_now, hex_sha256, sign_headers,
 };
+pub use attachments::storage::get_attachment_binary_data;
 pub use attachments::upload::{
     AttachmentUploadBackend, ExternalAttachmentStorageResult, ExternalAttachmentUploadError,
     ExternalAttachmentUploadRequest, ImagePid, ImageUploadRequest, S3StorageBackend,
@@ -62,6 +64,7 @@ pub use startup::app::build as build_app_state;
 pub use startup::mysql::connect as connect_mysql;
 pub use startup::redis::cache_client as build_cache_client;
 pub use state::AppState;
+pub use workspace_archive::save::archive as archive_task_workspace;
 
 mod admin_connector_apps;
 mod admin_im_channels;
@@ -87,6 +90,7 @@ mod attachments_task_all;
 pub mod auth;
 mod auth_login;
 mod authenticate;
+pub mod background_jobs;
 mod board_snapshot;
 mod bots;
 mod celery_broker;
@@ -165,6 +169,8 @@ mod loop_tasks;
 mod market_subscriptions;
 mod marketplace_tags;
 mod mcp;
+pub mod task_store_background;
+pub mod task_store_maintenance;
 
 pub use mcp::interactive_form_question::{
     InteractiveFormQuestionNormalizer, InteractiveFormRegistry,
@@ -173,7 +179,10 @@ pub use mcp::knowledge_external::auth::{
     ExternalKnowledgeAuth, ExternalKnowledgeUser, PersonalApiKeyAuth,
 };
 mod mcp_identity;
+pub(crate) mod mcp_oauth_credentials;
+pub mod mcp_provider_registry;
 pub mod mcp_providers;
+pub(crate) mod mcp_user_service;
 pub mod media_policy;
 mod method_call_anon;
 mod method_login;
@@ -194,6 +203,7 @@ mod plugins_capabilities_probe;
 mod plugins_installed;
 mod plugins_marketplace;
 mod projects;
+pub(crate) mod provider_guidance;
 mod py_set_order;
 mod quota;
 mod remote_workspace_status;
@@ -239,6 +249,8 @@ mod subscriptions_item;
 mod subscriptions_list;
 pub use subscriptions_item::random_token_urlsafe;
 pub use subscriptions_list::workspaces as subscription_workspaces;
+/// Caller-owned SQL handle for one request-scoped transaction.
+pub mod request_sql;
 mod subtasks;
 mod system_execute_sql_for_single;
 mod tables;
@@ -284,11 +296,13 @@ mod admin_templates;
 mod teams;
 pub mod token_issuers;
 mod tokens_probe;
+mod transaction_outcome;
 mod url_metadata;
 mod url_metadata_extract;
 mod url_ssrf;
 mod user_git_accounts_sync_summary;
 mod user_login_probe;
+mod user_mcp_oauth;
 pub mod user_profile;
 pub mod user_reader;
 mod users_default_teams;
