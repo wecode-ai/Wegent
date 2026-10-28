@@ -218,15 +218,19 @@ impl Handler<AppAuthenticator> for LlmResponsesProxyRoute {
         request: Request<'a>,
         authenticator: &'a AppAuthenticator,
     ) -> Response {
-        let user: SessionUser = match brz_http_server::__private::authenticate_required(
+        let deadline = tokio::time::Instant::now() + super::REQUEST_TIMEOUT;
+        let authentication = brz_http_server::__private::authenticate_required(
             authenticator,
             AuthRequest::from_request(&request),
             request.response_arena(),
-        )
-        .await
-        {
-            Ok(user) => user,
-            Err(response) => return response,
+        );
+        let user: SessionUser = match tokio::time::timeout_at(deadline, authentication).await {
+            Ok(Ok(user)) => user,
+            Ok(Err(response)) => return response,
+            Err(_) => {
+                return super::httpx_request_error("authentication exceeded the request deadline")
+                    .into_http_error(request.response_arena());
+            }
         };
         let headers = InboundHeaders {
             headers: request.headers(),
@@ -237,6 +241,7 @@ impl Handler<AppAuthenticator> for LlmResponsesProxyRoute {
             &user.0,
             &headers,
             request.body(),
+            deadline,
         )
         .await
         {

@@ -23,7 +23,8 @@ use tokio::{
 };
 use wegent_backend_rs::{
     Application, Gateway, HybridConfig, OriginService, RouteTable, auth::AppAuthenticator, bind,
-    build_app_state, config::AuthConfig, http_server::ServerConfig, serve,
+    build_app_state, config::AuthConfig, http_server::ServerConfig, llm_proxy::LlmProxyCredentials,
+    serve,
 };
 
 const PATH: &str = "/api/runtime-work/llm-responses-proxy/responses";
@@ -31,11 +32,13 @@ const MODEL_DELAY: Duration = Duration::from_secs(121);
 const TEST_BUDGET: Duration = Duration::from_secs(160);
 const JWT_KEY: &str = "llm-proxy-e2e-signing-key";
 const PROVIDER_KEY: &str = "llm-proxy-e2e-provider-key";
-const FIRST_EVENT: &[u8] = b"event: response.output_text.delta\ndata: {\"delta\":\"first\"}\n\n";
-const LAST_EVENT: &[u8] = b"event: response.completed\ndata: {\"status\":\"completed\"}\n\n";
+pub(super) const FIRST_EVENT: &[u8] =
+    b"event: response.output_text.delta\ndata: {\"delta\":\"first\"}\n\n";
+pub(super) const LAST_EVENT: &[u8] =
+    b"event: response.completed\ndata: {\"status\":\"completed\"}\n\n";
 
 /// Seeds actual authentication rows and two user-owned Model CRDs.
-async fn seed_models(mysql: &MysqlService, provider_url: &str) {
+pub(super) async fn seed_models(mysql: &MysqlService, provider_url: &str) {
     for sql in [
         "CREATE TABLE users (
             id INT PRIMARY KEY, user_name VARCHAR(100), password_hash VARCHAR(100) DEFAULT '',
@@ -66,8 +69,8 @@ async fn seed_models(mysql: &MysqlService, provider_url: &str) {
     }
 }
 
-struct HttpApp {
-    url: String,
+pub(super) struct HttpApp {
+    pub(super) url: String,
     stops: [oneshot::Sender<()>; 2],
     tasks: [JoinHandle<()>; 2],
 }
@@ -75,8 +78,21 @@ struct HttpApp {
 impl HttpApp {
     /// Builds the real application and routes through the checked-in hybrid table.
     async fn start(mysql: MysqlService) -> Self {
+        Self::start_with(mysql, None, Duration::from_secs(600)).await
+    }
+
+    /// Allows scheduling fault injection around the real stored-key resolver.
+    /// A larger observer budget isolates the handler's deadline from server hygiene.
+    pub(super) async fn start_with(
+        mysql: MysqlService,
+        credentials: Option<Arc<dyn LlmProxyCredentials>>,
+        origin_budget: Duration,
+    ) -> Self {
         let mut state = build_app_state().await.unwrap();
         state.mysql = mysql;
+        if let Some(credentials) = credentials {
+            state.llm_proxy_credentials = credentials;
+        }
         state.auth = AuthConfig {
             jwt_key: JWT_KEY.into(),
             legacy_jwt_keys: Vec::new(),
@@ -90,14 +106,14 @@ impl HttpApp {
         assert_eq!(probe, 1);
         let state = Arc::new(state);
         let application = Application::build(Arc::clone(&state)).await.unwrap();
-        // Match the production origin's 600s request budget; the framework's
-        // unrelated 15s default cannot serve a genuine slow-upstream regression.
+        // The ordinary E2E uses the production 600s origin budget. Deadline
+        // contract cases give the observer extra time to see the handler's error.
         let server = wegent_backend_rs::http_server::Server::bind_with_authenticator_and_config(
             "127.0.0.1:0".parse().unwrap(),
             application.routes,
             AppAuthenticator::new(state),
             ServerConfig {
-                request_timeout: Duration::from_secs(600),
+                request_timeout: origin_budget,
                 ..Default::default()
             },
         )
@@ -153,7 +169,7 @@ impl HttpApp {
     }
 
     /// Drains both real listeners before disposing of the database.
-    async fn stop(self) {
+    pub(super) async fn stop(self) {
         for stop in self.stops {
             stop.send(()).unwrap();
         }
@@ -164,7 +180,7 @@ impl HttpApp {
 }
 
 /// Reads and validates the model request, including DB-resolved credentials/model ID.
-async fn model_request(stream: &mut TcpStream) -> String {
+pub(super) async fn model_request(stream: &mut TcpStream) -> String {
     let mut bytes = Vec::new();
     loop {
         let mut buffer = [0; 4096];
@@ -238,22 +254,30 @@ struct ProxyResult {
     completed_after: Duration,
 }
 
-/// Consumes the complete SSE stream through the public HTTP gateway, without retries.
-async fn proxy_request(http: &brz_http::Client, url: &str, mode: &str) -> Result<ProxyResult> {
+/// Builds a real authenticated model request without setting a business deadline.
+pub(super) fn proxy_builder(
+    http: &brz_http::Client,
+    url: &str,
+    mode: &str,
+) -> Result<brz_http::RequestBuilder> {
     let token = jsonwebtoken::encode(
         &jsonwebtoken::Header::default(),
         &json!({"sub": "llm-proxy-e2e", "exp": chrono::Utc::now().timestamp() + 300}),
         &jsonwebtoken::EncodingKey::from_secret(JWT_KEY.as_bytes()),
     )?;
-    let start = Instant::now();
-    let mut response = http.post(url)?
+    Ok(http.post(url)?
         .header("authorization", format!("Bearer {token}"))
         .header("x-wegent-model-type", "user")
         .header("x-wegent-model-namespace", "default")
         .header("x-wegent-model-user-id", "7")
         .header("content-type", "application/json")
-        .body(json!({"model": format!("slow-{mode}"), "input": "llm-proxy-timeout-e2e", "stream": true}).to_string())
-        .send().await?;
+        .body(json!({"model": format!("slow-{mode}"), "input": "llm-proxy-timeout-e2e", "stream": true}).to_string()))
+}
+
+/// Consumes the complete SSE stream through the public HTTP gateway, without retries.
+async fn proxy_request(http: &brz_http::Client, url: &str, mode: &str) -> Result<ProxyResult> {
+    let start = Instant::now();
+    let mut response = proxy_builder(http, url, mode)?.send().await?;
     let status = response.status().as_u16();
     let content_type = response
         .headers()
