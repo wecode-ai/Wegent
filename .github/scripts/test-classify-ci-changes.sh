@@ -520,6 +520,14 @@ assert_desktop_comparison_preserves_coverage() {
 
 assert_desktop_comparison_preserves_coverage
 
+assert_desktop_case "unbound project-space discovery is invoked by its core CI checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"project-space-tool-discovery"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/project-space-tool-discovery.scenario.mjs"
+
 assert_desktop_case "Issue navigation source changes retain existing coverage and select notification reads" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
@@ -1346,8 +1354,19 @@ wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","co
 wework_desktop_macos_inspector_e2e=true'
 full_desktop_expected="${full_desktop_expected/\"segments\":\"project-assignment-notification,resilience,project-member-overrides/\"segments\":\"project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides}"
 full_desktop_expected="${full_desktop_expected/collaboration-issue-comment-attachments,reply-predictions/collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions}"
-full_desktop_expected="${full_desktop_expected/model-settings,tray-lifecycle/model-settings,tray-lifecycle,mcp-apps}"
+full_desktop_expected="${full_desktop_expected/model-settings,tray-lifecycle/model-settings,tray-lifecycle,mcp-apps,project-space-tool-discovery}"
 full_desktop_expected="${full_desktop_expected/\"segments\":\"collaboration-shared-core\"/\"segments\":\"collaboration-shared-core,runtime-input-answer-persistence\"}"
+
+for path in \
+  executor/src/agents/codex.rs \
+  executor/src/agents/codex/tests.rs \
+  executor/src/agents/claude_code.rs \
+  executor/src/agents/runtime_capabilities.rs \
+  executor/src/task_runtime/mcp.rs \
+  executor/src/task_runtime/mcp/context.rs; do
+  assert_desktop_case "Executor path retains full coverage including deferred discovery: $path" \
+    "$full_desktop_expected" "$path"
+done
 
 assert_desktop_case "latest conversation history runs its desktop regression" \
   'wework_desktop_e2e=true
@@ -1803,10 +1822,10 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/modules/local-issue-assignee-recovery.mjs"
 
-assert_desktop_case "MCP result parsing selects both real permission scenarios" \
+assert_desktop_case "MCP result parsing selects discovery and both real permission scenarios" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"collaboration-issue-mcp-comments"},{"id":"core-7","name":"Core / shard 7","segments":"collaboration-remote-agent-dispatch"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"project-space-tool-discovery"},{"id":"core-6","name":"Core / shard 6","segments":"collaboration-issue-mcp-comments"},{"id":"core-7","name":"Core / shard 7","segments":"collaboration-remote-agent-dispatch"}]}
 wework_desktop_cloud_e2e=false
 wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=false

@@ -1,3 +1,4 @@
+import i18n from '@/i18n'
 import * as codexPlugins from './codexPlugins'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import {
@@ -92,10 +93,17 @@ describe('createLocalAppServices', () => {
     expect(ensure).not.toHaveBeenCalled()
     expect(available).not.toHaveBeenCalled()
 
-    request.mockRejectedValueOnce(new Error('invalid personal stand-in settings'))
-    await expect(services.standInApi!.personalSave(7, settings, 'selected-device')).rejects.toThrow(
-      'invalid personal stand-in settings'
-    )
+    const error = Object.assign(new Error('invalid personal stand-in settings'), {
+      code: 'stand_in_settings',
+    })
+    request.mockRejectedValueOnce(error)
+    await expect(
+      services.standInApi!.personalSave(7, settings, 'selected-device')
+    ).rejects.toMatchObject({
+      message: i18n.t('common:standIn.errors.stand_in_settings'),
+      code: error.code,
+      cause: error,
+    })
   })
 
   test('loads project plugins from disk without either online Codex catalog', async () => {

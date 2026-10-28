@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useState } from 'react'
 import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
 
@@ -74,7 +75,7 @@ export function useStandInWorkOrganization({
       onSelect(result)
       onRefresh?.()
     } catch (cause) {
-      setError(String(cause))
+      setError(getStandInErrorMessage(cause))
     } finally {
       setBusy(false)
     }
@@ -96,7 +97,7 @@ export function useStandInWorkOrganization({
       onSelect(result)
       onRefresh?.()
     } catch (cause) {
-      setError(String(cause))
+      setError(getStandInErrorMessage(cause))
     } finally {
       setBusy(false)
     }

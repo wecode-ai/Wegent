@@ -689,6 +689,7 @@ bash "$script_dir/test-wework-core-e2e-runtimes.sh"
 
 bash "$script_dir/test-build-macos-e2e-runtimes.sh"
 bash "$script_dir/test-macos-e2e-runtime-oci.sh"
+node --test "$script_dir/macos-e2e-source-digest.test.mjs"
 bash "$script_dir/test-wework-macos-e2e-build.sh"
 bash "$script_dir/test-wework-core-e2e-build-oci.sh"
 bash "$script_dir/test-restore-executor-e2e-runtime.sh"

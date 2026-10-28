@@ -71,6 +71,22 @@ beforeEach(() => {
   run.mockResolvedValue(runtimeItem.address)
 })
 describe('notification inline handling', () => {
+  it('lets the Executor resolve the connected identity for an unhandled assignment', async () => {
+    render(
+      <StandInNotificationProcessing
+        notification={assignment}
+        rowProps={rowProps}
+        services={services}
+        userId={1}
+        onChanged={onChanged}
+      />
+    )
+    fireEvent.click(screen.getByTestId('notification-stand-in-start-assignment'))
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledExactlyOnceWith('12', 'ISSUE-1', 1, 'cloud', 'device', undefined)
+    )
+  })
+
   it('keeps manual delegation available when automatic handling fails before task creation', async () => {
     const windowLabel = vi
       .spyOn(runtimeEnvironment, 'getDesktopWindowLabel')
@@ -116,7 +132,7 @@ describe('notification inline handling', () => {
           1,
           'cloud',
           'device',
-          'default'
+          undefined
         )
       )
       expect(notifyAssignment).toHaveBeenCalledOnce()
@@ -232,14 +248,35 @@ describe('notification inline handling', () => {
       'notifications.stand_in_running'
     )
   })
-  it('retains the draft and shows the real error on rejected send', async () => {
+  it('localizes the assignment rejection returned by manual delegation', async () => {
+    run.mockRejectedValueOnce(
+      Object.assign(new Error('This assignment has already been handled or is no longer active'), {
+        code: 'assignment_already_handled',
+      })
+    )
+    render(
+      <StandInNotificationProcessing
+        notification={assignment}
+        rowProps={rowProps}
+        services={services}
+        userId={1}
+        onChanged={onChanged}
+      />
+    )
+    fireEvent.click(screen.getByTestId('notification-stand-in-start-assignment'))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '本次分配已处理或已失效，请刷新任务并查看最新分配。'
+    )
+  })
+
+  it('retains the draft and shows the localized error on rejected send', async () => {
     send.mockResolvedValue({ accepted: false, error: 'Device offline' })
     render(view())
     fireEvent.click(screen.getByTestId('notification-stand-in-reply-open-assignment'))
     const input = screen.getByTestId('notification-stand-in-reply-assignment')
     fireEvent.change(input, { target: { value: 'Keep my draft' } })
     fireEvent.click(screen.getByTestId('notification-stand-in-send-assignment'))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Device offline')
+    expect(await screen.findByRole('alert')).toHaveTextContent('执行设备离线，请连接设备后重试。')
     expect(input).toHaveValue('Keep my draft')
     expect(onChanged).not.toHaveBeenCalled()
   })
@@ -266,7 +303,7 @@ describe('notification inline handling', () => {
     render(view('failed'))
     fireEvent.click(screen.getByTestId('notification-stand-in-retry-assignment'))
     await waitFor(() =>
-      expect(run).toHaveBeenCalledWith('12', 'ISSUE-1', 1, 'cloud', 'device', 'default')
+      expect(run).toHaveBeenCalledWith('12', 'ISSUE-1', 1, 'cloud', 'device', undefined)
     )
   })
 
@@ -279,7 +316,7 @@ describe('notification inline handling', () => {
       turns: [{ id: 'turn', items: [], status: 'failed', error: 'Workspace config is invalid' }],
     })
     render(view('failed'))
-    expect(await screen.findByText('Workspace config is invalid')).toBeVisible()
+    expect(await screen.findByText('所选工作目录在此执行设备上不可用，请重新选择。')).toBeVisible()
     expect(screen.queryByText(/Model reply is ready|模型回复已完成/)).not.toBeInTheDocument()
     expect(screen.getByTestId('notification-stand-in-retry-assignment')).toBeEnabled()
   })
@@ -366,4 +403,32 @@ describe('notification inline handling', () => {
       })
     )
   })
+})
+
+it('localizes the persisted failed-task summary before transcript loading', async () => {
+  const value = mergeStandInNotifications(
+    [assignment],
+    [
+      {
+        ...runtimeItem,
+        task: {
+          ...runtimeItem.task,
+          status: 'failed',
+          running: false,
+          error: 'Stand-in role no longer exists',
+        },
+      },
+    ]
+  )[0]
+  render(
+    <StandInNotificationProcessing
+      notification={value}
+      rowProps={rowProps}
+      services={services}
+      userId={1}
+      onChanged={onChanged}
+    />
+  )
+  expect(await screen.findByText('该分身角色已被删除，请重新选择角色。')).toBeVisible()
+  expect(screen.queryByText('Stand-in role no longer exists')).not.toBeInTheDocument()
 })
