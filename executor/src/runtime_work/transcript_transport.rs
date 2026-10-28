@@ -6,9 +6,9 @@
 use std::{
     collections::HashMap,
     fs::{self, File},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::local::app_ipc::AppIpcError;
+use crate::logging::{format_executor_log, write_executor_log_line};
 
 pub(super) const VERSION: u64 = 2;
 // Base64 plus metadata stays below the 512 KiB compression threshold and the
@@ -50,10 +51,13 @@ pub(super) fn snapshot_directory(root: &Path, payload: &Value) -> PathBuf {
 }
 
 pub(super) fn encode(directory: &Path, response: Value) -> Result<Value, AppIpcError> {
+    let started_at = Instant::now();
     let packed = pack(response);
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    serde_json::to_writer(&mut encoder, &packed).map_err(transport_error)?;
+    let packed_at = Instant::now();
+    let encoder = GzEncoder::new(Vec::new(), Compression::fast());
+    let encoder = write_packed_json(encoder, &packed)?;
     let bytes = encoder.finish().map_err(transport_error)?;
+    let compressed_at = Instant::now();
     let id = format!("{:x}", Sha256::digest(&bytes));
     if bytes.len() > CHUNK_BYTES {
         fs::create_dir_all(directory).map_err(transport_error)?;
@@ -71,12 +75,49 @@ pub(super) fn encode(directory: &Path, response: Value) -> Result<Value, AppIpcE
             }
         }
     }
+    log_snapshot_encoding(started_at, packed_at, compressed_at, bytes.len());
     Ok(chunk(
         &id,
         0,
         bytes.len(),
         &bytes[..bytes.len().min(CHUNK_BYTES)],
     ))
+}
+
+fn log_snapshot_encoding(
+    started_at: Instant,
+    packed_at: Instant,
+    compressed_at: Instant,
+    size: usize,
+) {
+    write_executor_log_line(&format_executor_log(
+        "runtime transcript snapshot encoded",
+        &[
+            (
+                "pack_ms",
+                packed_at.duration_since(started_at).as_millis().to_string(),
+            ),
+            (
+                "compression_ms",
+                compressed_at
+                    .duration_since(packed_at)
+                    .as_millis()
+                    .to_string(),
+            ),
+            (
+                "publication_ms",
+                compressed_at.elapsed().as_millis().to_string(),
+            ),
+            ("compressed_bytes", size.to_string()),
+        ],
+    ));
+}
+
+fn write_packed_json<W: Write>(writer: W, packed: &Value) -> Result<W, AppIpcError> {
+    // Batch JSON punctuation and escape fragments before feeding the compressor.
+    let mut buffered = BufWriter::new(writer);
+    serde_json::to_writer(&mut buffered, packed).map_err(transport_error)?;
+    buffered.into_inner().map_err(transport_error)
 }
 
 pub(super) fn read_chunk(directory: &Path, request: &Value) -> Result<Value, AppIpcError> {

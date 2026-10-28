@@ -323,12 +323,15 @@ async function findRolloutPath(directory, threadId) {
 async function waitForLongHistoryHydration(control, timeoutMs) {
   const startedAt = Date.now()
   let displayItemCount = 0
+  let latestSnapshot = null
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(
       await control.command('performanceSnapshot', 'body', {
+        value: JSON.stringify({ collectMemory: false }),
         timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
       })
     )
+    latestSnapshot = snapshot
     displayItemCount = snapshot.runtimeAssistantDisplayItemCount
     if (displayItemCount >= LONG_HISTORY_ITEM_COUNT) {
       return snapshot
@@ -336,7 +339,7 @@ async function waitForLongHistoryHydration(control, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(
-    `Timed out waiting for the long running transcript to hydrate: expected=${LONG_HISTORY_ITEM_COUNT}, observed=${displayItemCount}, elapsedMs=${Date.now() - startedAt}`
+    `Timed out waiting for the long running transcript to hydrate: expected=${LONG_HISTORY_ITEM_COUNT}, observed=${displayItemCount}, elapsedMs=${Date.now() - startedAt}, snapshot=${JSON.stringify(latestSnapshot)}`
   )
 }
 
