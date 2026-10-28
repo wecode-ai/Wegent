@@ -1,5 +1,6 @@
 import { access, readFile } from 'node:fs/promises'
 import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
+import { verifyPersonalPluginVersionSubmission } from './plugin-personal-version-flow.mjs'
 import { verifyCreatorAuthenticationToolkit } from './plugin-flows.mjs'
 import { basename, dirname } from 'node:path'
 
@@ -689,6 +690,8 @@ async function verifyCloudCheckpoint({
   cloudEnvironment,
   cloudHistorySearch,
   codexHome,
+  executorHome,
+  userDataDirectory,
   control,
   desktopScenario,
   executorLogPath,
@@ -765,6 +768,14 @@ async function verifyCloudCheckpoint({
     await verifyPluginWorkspacePublication({
       cloudEnvironment,
       control,
+    })
+    await verifyPersonalPluginVersionSubmission({
+      cloudEnvironment,
+      control,
+      restartDesktopApp,
+      executorHome,
+      codexHome,
+      userDataDirectory,
     })
     return
   }

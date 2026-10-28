@@ -103,7 +103,7 @@ Backend substates may be more granular, but GitLab MR creation, CI execution, an
 
 **Entry**: Open details from the plugin list or **Created by me**.
 
-Every owner **Share/Publish** entry on the legacy `/plugins/manage` page only redirects to the personal-plugin detail page. It must no longer open the legacy submission dialog or call the old `/plugins/submissions` endpoint. All non-technical authors use the single S1–S8 flow defined here.
+Every owner **Share/Publish** entry on the legacy `/plugins/manage` page only redirects to the personal-plugin detail page. It must no longer open the legacy submission dialog or call the old `/plugins/submissions` endpoint. Initial sharing and enterprise-wide submissions continue to use S1–S8; submitting a new version of an already shared personal plugin uses the separate Drawer below.
 
 **Header action order**:
 
@@ -117,6 +117,13 @@ Every owner **Share/Publish** entry on the legacy `/plugins/manage` page only re
 - During review, do not disable **Chat now**, **Continue editing**, targeted sharing, or capability toggles.
 - When a request exists, add the enterprise-publication progress card after **Available scope** without replacing existing information.
 
+**Personal shared-version updates**:
+
+- Only when the personal plugin owner has packable local source whose version is strictly higher than the existing personal cloud Release under SemVer, show a notice below the header: **Local v1.3.0 · Shared v1.2.0**, with **Submit new version**. Equal, lower, or invalid versions do not show the notice; recipients never see it.
+- Open a `480px` Drawer on the right, using the available width on narrow screens. Show the current shared version, the version being submitted, and required release notes. Notes must remain nonblank after trimming and contain at most `2000` characters.
+- Show a read-only summary of the current server-side member/department ACL and `allowCopy`. **Manage sharing scope** saves grants separately while preserving the release-note draft; saving scope neither packages nor uploads a new version and does not advance the shared version.
+- Package, upload, and scan the new personal version only after an explicit **Check and submit** action. Advance the shared latest version and dismiss the notice only on success, preserving the current sharing scope and copy permission. On failure, preserve the previous shared version, Drawer, and release-note draft, and show an actionable error. This flow does not create an enterprise publication request.
+
 **Test IDs**:
 
 - `plugin-detail-share-{pluginId}`
@@ -124,6 +131,9 @@ Every owner **Share/Publish** entry on the legacy `/plugins/manage` page only re
 - `plugin-detail-toggle-{pluginId}` (preserved)
 - `plugin-publication-card-{requestId}`
 - `plugin-publication-view-progress-{requestId}`
+- `plugin-version-submit-notice`, `plugin-version-submit-open`
+- `plugin-version-submit-drawer`, `plugin-version-submit-notes`, `plugin-version-submit-confirm`
+- `plugin-version-submit-current`, `plugin-version-submit-next`, `plugin-version-submit-scope`, `plugin-version-submit-allow-copy`, `plugin-version-submit-manage-access`
 
 ### S1. Share-scope selection dialog
 
@@ -399,7 +409,7 @@ When a personal plugin is edited from `v1.2.0` to `v1.3.0`:
 ## 7. Deletion, withdrawal, and failure boundaries
 
 | Scenario                                          | Required behavior                                                                                                           |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Upload or snapshot is incomplete                  | The temporary revision may be cancelled, and unreferenced objects are cleaned up                                            |
 | Submitted, no MR created                          | The request may be withdrawn while preserving audit events; withdrawal is disabled during `materializing`                   |
 | MR is not merged                                  | Withdrawal closes the MR first; if closing fails, withdrawal fails                                                          |
@@ -542,6 +552,10 @@ New interactive elements must have stable `data-testid` values. Preserve existin
 19. Each of the seven publication mutations returns `422` without an idempotency key; same key/resource/payload replay is exact, a key reused with different resource/payload returns `409`, and explicit reconciliation uses a new attempt.
 20. The root department is returned only with `include_organization=true` and subject to access control. Requesters and administrators both see return requirements through the dedicated `requiredChanges` field, and event responses do not leak arbitrary payloads.
 21. Upload/transport/infrastructure failures can idempotently retry the original revision; deterministic content failures require a fixed new revision; `code_changes_requested` is fixed in the same MR.
+22. A personal owner sees the version notice and Drawer entry only when the local SemVer exceeds the shared version; equal, lower, or invalid versions and recipients never show it.
+23. Personal-version release notes are required and limited to `2000` characters. Closing the Drawer does not advance the version. An explicit successful submission advances the shared latest version, preserves ACL/copy permission, and dismisses the notice; failure preserves the old version and note draft.
+24. Saving sharing scope separately does not upload a new package even when a newer local version exists. Returning from scope management to the version Drawer preserves the note draft and shows the latest grants.
+25. Recipients cannot edit another user's original through the detail menu, an installed-plugin entry, or a direct `/plugins/create?edit=...` URL. Local source with an explicit cloud binding requires current-account ownership verification before dispatching an edit task; failure to read authoritative store/cloudLinks information prevents dispatch. The user's own locally created source and independent copies without cloud bindings remain locally editable.
 
 ### 12.2 Real desktop and design QA
 

@@ -336,6 +336,7 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
         | 'visibility'
         | 'targets'
         | 'allowCopy'
+        | 'releaseNotes'
       >
     ): Promise<PluginSubmissionCompleteResponse> {
       const sha256 = await sha256Hex(file)

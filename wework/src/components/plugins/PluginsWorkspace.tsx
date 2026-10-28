@@ -11,6 +11,7 @@ import {
 } from '@/features/plugins/pluginDeviceApi'
 import { usePluginRefreshReconciliation } from './hooks/usePluginRefreshReconciliation'
 import { useInstalledPluginDetail } from './hooks/useInstalledPluginDetail'
+import { usePluginVersionSubmission } from './hooks/usePluginVersionSubmission'
 import { useOpenAiPluginCatalog } from '@/features/plugins/useOpenAiPluginCatalog'
 import { RefreshCw, Settings2 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
@@ -18,6 +19,7 @@ import {
   startTransition,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -165,6 +167,8 @@ import { useOptionalAppearance } from '@/features/appearance'
 import { resolvePluginLogo } from './plugin-assets'
 import {
   isCloudManagedInstalledPlugin,
+  isWegentManagedStorePlugin,
+  linkedCloudPluginId,
   linkedCloudInstalledPluginId,
   mergeInstalledPlugins,
   resolveProgressiveLocalInstalledRaw,
@@ -490,8 +494,21 @@ export function PluginsWorkspace({
   const [withdrawingPublicationId, setWithdrawingPublicationId] = useState<number | null>(null)
   const [pluginPublishError, setPluginPublishError] = useState<string | null>(null)
   const [pluginPublishShareRecovery, setPluginPublishShareRecovery] = useState(false)
+  const publicationLifetime = useRef<symbol | null>(null)
+  useLayoutEffect(() => {
+    const lifetime = Symbol('plugin-publication-scope')
+    publicationLifetime.current = lifetime
+    return () => {
+      if (publicationLifetime.current === lifetime) publicationLifetime.current = null
+    }
+  }, [marketplaceCacheKeyValue])
+  const capturePublicationScope = () => {
+    const lifetime = publicationLifetime.current
+    return () => lifetime !== null && publicationLifetime.current === lifetime
+  }
   const refreshPublicationRequests = useCallback(
     async (sourcePluginId?: number): Promise<PluginPublicationRequestItem[]> => {
+      const lifetime = publicationLifetime.current
       const pageSize = 100
       const first = await pluginApi.listPublicationRequests({
         sourcePluginId,
@@ -512,6 +529,7 @@ export function PluginsWorkspace({
       const details = await Promise.all(
         summaries.map(summary => pluginApi.getPublicationRequest(summary.id))
       )
+      if (lifetime === null || publicationLifetime.current !== lifetime) return []
       setPublicationRequests(previous => mergePublicationRequests(previous, details))
       return details.sort(comparePublicationRequests)
     },
@@ -914,9 +932,17 @@ export function PluginsWorkspace({
     plugin.raw.spec.source.pluginKey.toLowerCase().replace(/[^a-z0-9._-]+/g, '-')
 
   const findOwnedMarketplacePlugin = (plugin: InstalledPluginItem) => {
+    const associated = findMarketplaceItemForInstalled(plugin, pluginMarketplaceState.items)
+    if (associated?.accessRole) return associated.accessRole === 'owner' ? associated : undefined
+    if (
+      isWegentManagedStorePlugin(plugin.raw) ||
+      linkedCloudPluginId(plugin.raw) !== null ||
+      plugin.raw.spec.pluginId != null
+    )
+      return undefined
     const slug = createdPluginSlug(plugin)
     return pluginMarketplaceState.items.find(
-      item => item.accessRole === 'owner' && (item.name === slug || item.name === plugin.name)
+      item => item.accessRole === 'owner' && item.name === slug
     )
   }
 
@@ -934,59 +960,11 @@ export function PluginsWorkspace({
     return isSingleSkill ? 'skill' : 'plugin'
   }
 
-  const applySubmissionToInstalledPlugin = (
-    pluginId: string | number,
-    submission: { id: number; status: string; reviewNote?: string }
-  ) => {
-    setInstalledPlugins(previous =>
-      previous.map(candidate => {
-        if (String(candidate.id) !== String(pluginId)) return candidate
-        const updated: InstalledPlugin = {
-          ...candidate.raw,
-          spec: {
-            ...candidate.raw.spec,
-            sourcePayload: {
-              ...(candidate.raw.spec.sourcePayload ?? {}),
-              submissionId: submission.id,
-              submissionStatus: submission.status,
-              submissionReviewNote: submission.reviewNote ?? '',
-            },
-          },
-        }
-        return toInstalledPluginItem(updated)
-      })
-    )
-  }
-
-  const applyPublishedIdentityToInstalledPlugin = (
-    pluginId: string | number,
-    cloudPluginId: number,
-    cloudReleaseId: number | null
-  ) => {
-    setInstalledPlugins(previous =>
-      previous.map(candidate => {
-        if (String(candidate.id) !== String(pluginId)) return candidate
-        const updated: InstalledPlugin = {
-          ...candidate.raw,
-          spec: {
-            ...candidate.raw.spec,
-            sourcePayload: withPublishedPluginCloudLink(
-              candidate.raw.spec.sourcePayload,
-              cloudPluginId,
-              cloudReleaseId
-            ),
-          },
-        }
-        return toInstalledPluginItem(updated)
-      })
-    )
-  }
-
   const integratePersonalPublication = async (
     plugin: InstalledPluginItem,
-    completed: PluginSubmissionCompleteResponse
+    completed: PluginSubmissionCompleteResponse,
+    isCurrent: () => boolean = () => true
   ): Promise<number> => {
-    applySubmissionToInstalledPlugin(plugin.id, completed.submission)
     if (!completed.plugin) {
       throw new Error(
         t(
@@ -997,33 +975,69 @@ export function PluginsWorkspace({
     }
     const cloudPluginId = Number(completed.plugin.id)
     const cloudReleaseId = completed.plugin.latestReleaseId ?? null
-    try {
-      await localPluginApi.linkPersonalPluginRelease(plugin.raw, cloudPluginId, cloudReleaseId)
-    } catch {
-      // Cloud submit already succeeded; keep publish successful if local link lags.
+    if (
+      !deviceSyncLifetimeRef.current ||
+      !isCurrent() ||
+      marketplaceStateCacheKeyRef.current !== marketplaceCacheKeyValue
+    ) {
+      return cloudPluginId
     }
-    applyPublishedIdentityToInstalledPlugin(plugin.id, cloudPluginId, cloudReleaseId)
-    if (completed.plugin.latestReleaseId) {
-      setPluginMarketplaceState(previous => ({
-        ...previous,
-        items: [
+    const installedPlugins = installedPluginsRef.current.map(candidate => {
+      if (String(candidate.id) !== String(plugin.id)) return candidate.raw
+      return {
+        ...candidate.raw,
+        spec: {
+          ...candidate.raw.spec,
+          sourcePayload: withPublishedPluginCloudLink(
+            {
+              ...candidate.raw.spec.sourcePayload,
+              submissionId: completed.submission.id,
+              submissionStatus: completed.submission.status,
+              submissionReviewNote: completed.submission.reviewNote ?? '',
+            },
+            cloudPluginId,
+            cloudReleaseId
+          ),
+        },
+      }
+    })
+    const snapshot = writePluginInventory(
+      marketplaceCacheKeyValue,
+      currentDeviceIdRef.current,
+      {
+        installedPlugins,
+        marketplaceItems: [
           {
-            ...completed.plugin!,
+            ...completed.plugin,
             installed: true,
             installedPluginId: plugin.id,
             enabled: plugin.enabled,
             updateAvailable: false,
             currentDeviceInstallation: null,
           },
-          ...previous.items.filter(item => item.id !== completed.plugin!.id),
+          ...pluginMarketplaceStateRef.current.items.filter(
+            item => String(item.id) !== String(cloudPluginId)
+          ),
         ],
-        error: null,
-      }))
+      },
+      { mutation: true }
+    )
+    const nextInstalled = snapshot.installedPlugins.map(toInstalledPluginItem)
+    const nextMarketplace = { items: snapshot.marketplaceItems, isLoading: false, error: null }
+    installedPluginsRef.current = nextInstalled
+    pluginMarketplaceStateRef.current = nextMarketplace
+    setInstalledPlugins(nextInstalled)
+    setPluginMarketplaceState(nextMarketplace)
+    try {
+      await localPluginApi.linkPersonalPluginRelease(plugin.raw, cloudPluginId, cloudReleaseId)
+    } catch {
+      // Cloud submit already succeeded; keep publish successful if local link lags.
     }
     return cloudPluginId
   }
 
   const openPublishCreatedPlugin = async (plugin: InstalledPluginItem) => {
+    const isCurrent = capturePublicationScope()
     setPluginPublishError(null)
     setPluginPublishShareRecovery(false)
     setPluginPublishAccess(null)
@@ -1041,9 +1055,11 @@ export function PluginsWorkspace({
           : Promise.resolve(null),
         refreshPublicationRequests(ownedPersonalPluginId),
       ])
+      if (!isCurrent()) return
       setPluginPublishAccess(access)
       setPluginPublishTarget(plugin)
     } catch (error) {
+      if (!isCurrent()) return
       setPluginOperationNotice({
         id: 'publication-readiness-load-failed-' + String(plugin.id),
         kind: 'error',
@@ -1061,7 +1077,7 @@ export function PluginsWorkspace({
         },
       })
     } finally {
-      setPluginPublishPreparing(false)
+      if (isCurrent()) setPluginPublishPreparing(false)
     }
   }
 
@@ -1097,6 +1113,7 @@ export function PluginsWorkspace({
     plugin: InstalledPluginItem,
     request: PluginPublishRequest
   ) => {
+    const isCurrent = capturePublicationScope()
     setPluginPublishError(null)
     setPluginPublishShareRecovery(false)
     setIsUploadingPlugin(true)
@@ -1119,6 +1136,10 @@ export function PluginsWorkspace({
           targets: request.targets,
           allowCopy: request.targets.length > 0 && request.allowCopy,
         })
+        if (!isCurrent()) {
+          attempt.cancel()
+          return
+        }
         attempt.succeed()
         setPluginMarketplaceState(previous => ({
           ...previous,
@@ -1147,6 +1168,10 @@ export function PluginsWorkspace({
       }
 
       const file = await localPluginApi.packageCreatedPlugin(plugin.raw)
+      if (!isCurrent()) {
+        attempt.cancel()
+        return
+      }
       if (request.intent === 'enterprise') {
         let sourcePluginId =
           ownedListing?.visibility === 'personal' ? Number(ownedListing.id) : null
@@ -1161,7 +1186,19 @@ export function PluginsWorkspace({
             targets: [],
             allowCopy: false,
           })
-          sourcePluginId = await integratePersonalPublication(plugin, personalPublication)
+          if (!isCurrent()) {
+            attempt.cancel()
+            return
+          }
+          sourcePluginId = await integratePersonalPublication(
+            plugin,
+            personalPublication,
+            isCurrent
+          )
+          if (!isCurrent()) {
+            attempt.cancel()
+            return
+          }
         }
         const existingPublication = selectPrimaryPublication(
           matchingPublicationRequests(
@@ -1199,6 +1236,10 @@ export function PluginsWorkspace({
               request.operationAttemptId
             )
         attempt.succeed()
+        if (!isCurrent()) {
+          attempt.cancel()
+          return
+        }
         setPublicationRequests(previous => mergePublicationRequests(previous, [publication]))
         setMarketplaceRefreshTick(previous => previous + 1)
         setPluginPublishTarget(null)
@@ -1224,11 +1265,19 @@ export function PluginsWorkspace({
         targets: request.targets,
         allowCopy: request.allowCopy,
       })
+      if (!isCurrent()) {
+        attempt.cancel()
+        return
+      }
       attempt.succeed()
       if (completed.submission.status === 'approved') beginOperation('plugin.publish').succeed()
       else if (completed.submission.status === 'rejected')
         beginOperation('plugin.publish').fail('confirm')
-      await integratePersonalPublication(plugin, completed)
+      await integratePersonalPublication(plugin, completed, isCurrent)
+      if (!isCurrent()) {
+        attempt.cancel()
+        return
+      }
       setPluginPublishTarget(null)
       setPluginPublishAccess(null)
       if (request.intent === 'restricted') {
@@ -1256,6 +1305,10 @@ export function PluginsWorkspace({
         })
       }
     } catch (error) {
+      if (!isCurrent()) {
+        attempt.cancel()
+        return
+      }
       attempt.fail('request')
       const message = getErrorMessage(error, 'Failed to publish local plugin')
       const versionExists = /version already exists/i.test(message)
@@ -1278,23 +1331,26 @@ export function PluginsWorkspace({
         versionExists && canRecoverShareAfterVersionConflict(ownedListing ?? null)
       )
     } finally {
-      setIsUploadingPlugin(false)
+      if (isCurrent()) setIsUploadingPlugin(false)
     }
   }
 
   const openPluginShare = async (plugin: PluginMarketplaceItem) => {
+    const isCurrent = capturePublicationScope()
     setPluginSharePreparing(true)
     setPluginShareError(null)
     try {
       const access = await pluginApi.getMarketplacePluginAccess(plugin.id)
+      if (!isCurrent()) return
       setPluginShareState({ plugin, access })
     } catch (error) {
+      if (!isCurrent()) return
       setPluginMarketplaceState(previous => ({
         ...previous,
         error: error instanceof Error ? error.message : 'Failed to load plugin access',
       }))
     } finally {
-      setPluginSharePreparing(false)
+      if (isCurrent()) setPluginSharePreparing(false)
     }
   }
 
@@ -1324,6 +1380,7 @@ export function PluginsWorkspace({
 
   const savePluginShare = async (request: PluginAccessUpdateRequest) => {
     if (!pluginShareState) return
+    const isCurrent = capturePublicationScope()
     setPluginShareSaving(true)
     setPluginShareError(null)
     const attempt = beginOperation('plugin.share')
@@ -1332,6 +1389,10 @@ export function PluginsWorkspace({
         pluginShareState.plugin.id,
         request
       )
+      if (!isCurrent()) {
+        attempt.cancel()
+        return
+      }
       attempt.succeed()
       setPluginMarketplaceState(previous => ({
         ...previous,
@@ -1351,12 +1412,25 @@ export function PluginsWorkspace({
       }))
       setPluginShareState(null)
     } catch (error) {
+      if (!isCurrent()) {
+        attempt.cancel()
+        return
+      }
       attempt.fail('request')
       setPluginShareError(error instanceof Error ? error.message : 'Failed to save plugin access')
     } finally {
-      setPluginShareSaving(false)
+      if (isCurrent()) setPluginShareSaving(false)
     }
   }
+
+  const versionSubmission = usePluginVersionSubmission({
+    scopeKey: marketplaceCacheKeyValue,
+    pluginApi,
+    localPluginApi,
+    onPublished: integratePersonalPublication,
+    onNotice: setPluginOperationNotice,
+    onManageAccess: openPluginShare,
+  })
 
   const copyMarketplacePlugin = async (plugin: PluginMarketplaceItem) => {
     setPluginSharePreparing(true)
@@ -4673,6 +4747,7 @@ export function PluginsWorkspace({
             componentCount: marketplaceComponentCount(pendingInstall.item),
             requiredConnectionNames: pendingInstall.requiredConnectionNames,
           }}
+          confirmDisabled={isReconcilingPlugins}
           onCancel={() => setPendingInstall(null)}
           onConfirm={() => executeMarketplaceInstall()}
         />
@@ -4889,6 +4964,10 @@ export function PluginsWorkspace({
 
   if (selectedPlugin) {
     const ownedMarketplace = findOwnedMarketplacePlugin(selectedPlugin)
+    const associatedListing =
+      ownedMarketplace ??
+      findMarketplaceItemForInstalled(selectedPlugin, pluginMarketplaceState.items) ??
+      null
     const selectedPluginPublications = matchingPublicationRequests(
       publicationRequests,
       ownedMarketplace?.visibility === 'personal' ? Number(ownedMarketplace.id) : null,
@@ -4896,23 +4975,24 @@ export function PluginsWorkspace({
     )
     const selectedPublication = selectPrimaryPublication(selectedPluginPublications)
     const packableCreated =
-      findPackableCreatedPlugin(installedPlugins, [
-        selectedPlugin.raw.spec.source.pluginKey,
-        createdPluginSlug(selectedPlugin),
-        selectedPlugin.name,
-        ownedMarketplace?.name,
-        ownedMarketplace?.displayName,
-      ]) ?? (selectedPlugin.origin === 'created' ? selectedPlugin : null)
+      associatedListing && !marketplaceItemOwnsLocalCreatedPackage(associatedListing)
+        ? null
+        : (findPackableCreatedPlugin(installedPlugins, [
+            selectedPlugin.raw.spec.source.pluginKey,
+            createdPluginSlug(selectedPlugin),
+            selectedPlugin.name,
+            ownedMarketplace?.name,
+            ownedMarketplace?.displayName,
+          ]) ?? (isPackableCreatedPlugin(selectedPlugin) ? selectedPlugin : null))
     const ownerActions = resolvePluginOwnerActions({
       isLocalCreated: Boolean(packableCreated),
-      ownedListing: ownedMarketplace ?? null,
+      ownedListing: associatedListing,
     })
     const continueEditingKey = resolveContinueEditingPluginKey({
       packableCreated,
       currentPlugin: selectedPlugin,
       ownedListingName: ownedMarketplace?.name,
-      isPersonalOwner:
-        ownedMarketplace?.accessRole === 'owner' && ownedMarketplace.visibility === 'personal',
+      listing: associatedListing,
     })
     const submissionStatus =
       typeof selectedPlugin.raw.spec.sourcePayload?.submissionStatus === 'string'
@@ -4985,8 +5065,10 @@ export function PluginsWorkspace({
               ? () => void openPublicationProgress(selectedPublication.id)
               : undefined
           }
-          accessRole={ownedMarketplace?.accessRole}
-          pluginVisibility={ownedMarketplace?.visibility ?? null}
+          accessRole={associatedListing?.accessRole}
+          shareRecipient={associatedListing?.accessRole === 'recipient'}
+          versionSubmission={versionSubmission.actionFor(packableCreated, ownedMarketplace ?? null)}
+          pluginVisibility={associatedListing?.visibility ?? null}
           shareGrantUserCount={ownedMarketplace?.grantUserCount ?? 0}
           shareGrantNamespaceCount={ownedMarketplace?.grantNamespaceCount ?? 0}
           manageAccessLabel={t('workbench.plugins_manage_access', '管理权限')}
@@ -5049,6 +5131,7 @@ export function PluginsWorkspace({
           connectorAuthBusySlug={connectorActionSlug}
         />
         {pluginShareDialog}
+        {versionSubmission.drawer}
         {pluginPublishDialog}
         {publicationProgressDrawer}
         {pluginOperationNoticeOverlay}
@@ -5124,7 +5207,8 @@ export function PluginsWorkspace({
           selectedMarketplacePlugin.displayName,
           installedDetail?.raw.spec.source.pluginKey,
           installedDetail?.name,
-        ]) ?? (installedDetail?.origin === 'created' ? installedDetail : null))
+        ]) ??
+        (installedDetail && isPackableCreatedPlugin(installedDetail) ? installedDetail : null))
       : null
     const isOwnedPersonalListing =
       selectedMarketplacePlugin.accessRole === 'owner' &&
@@ -5159,7 +5243,7 @@ export function PluginsWorkspace({
       packableCreated,
       currentPlugin: installedDetail,
       ownedListingName: ownedListing?.name,
-      isPersonalOwner: ownedListing?.visibility === 'personal',
+      listing: selectedMarketplacePlugin,
     })
     const openMarketplaceOwnerShare = () => void openPluginShare(selectedMarketplacePlugin)
     const openMarketplaceOwnerPublish = () =>
@@ -5180,6 +5264,7 @@ export function PluginsWorkspace({
           backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
           usableOnThisDevice={isInstalled}
           accessRole={selectedMarketplacePlugin.accessRole}
+          versionSubmission={versionSubmission.actionFor(packableCreated, ownedListing)}
           pluginVisibility={selectedMarketplacePlugin.visibility}
           shareGrantUserCount={selectedMarketplacePlugin.grantUserCount ?? 0}
           shareGrantNamespaceCount={selectedMarketplacePlugin.grantNamespaceCount ?? 0}
@@ -5370,6 +5455,7 @@ export function PluginsWorkspace({
           connectorAuthBusySlug={connectorActionSlug}
         />
         {pluginShareDialog}
+        {versionSubmission.drawer}
         {pluginPublishDialog}
         {publicationProgressDrawer}
         {pluginOperationNoticeOverlay}

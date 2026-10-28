@@ -651,6 +651,8 @@ describe('pluginMarketplaceCache', () => {
     expect(sameMarketplaceItems(left, left)).toBe(true)
     expect(sameMarketplaceItems(left, right)).toBe(false)
     expect(marketplaceItemsSignature(left)).not.toBe(marketplaceItemsSignature(right))
+    const changedSharedVersion = [{ ...left[0], sharedVersion: '0.9.0' }]
+    expect(sameMarketplaceItems(left, changedSharedVersion)).toBe(false)
   })
 
   test('detects installedPluginId and display name changes via signature', () => {

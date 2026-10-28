@@ -452,6 +452,14 @@ classify_wework_path() {
       select_target "core:device-artifact-declaration"
       return
       ;;
+    wework/e2e/desktop/modules/plugin-personal-version-flow.mjs | \
+      wework/e2e/desktop/modules/plugin-personal-recipient-install.mjs | \
+      wework/src/components/plugins/PluginVersionSubmit* | \
+      wework/src/components/plugins/pluginVersionSubmission* | \
+      wework/src/components/plugins/hooks/usePluginVersionSubmission*)
+      select_target "cloud:plugin-workspace-publication"
+      return
+      ;;
     wework/e2e/desktop/scenarios/split-workbench.scenario.mjs)
       select_target "core:split-workbench"
       return

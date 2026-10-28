@@ -628,11 +628,7 @@ class PluginMarketplaceService:
                 status_code=409, detail="Source plugin is not a personal plugin"
             )
         parsed, security_report = self._analyze_package(package)
-        if parsed.name != plugin.slug:
-            raise HTTPException(
-                status_code=422,
-                detail="Personal plugin slug must match the manifest name",
-            )
+        self._validate_personal_manifest_name(plugin, parsed)
         try:
             result = self._publish_release(
                 db,
@@ -915,6 +911,7 @@ class PluginMarketplaceService:
             release = PluginRelease(
                 plugin_id=plugin.id,
                 version=request.version,
+                release_notes=request.releaseNotes or "",
                 manifest_json={},
                 interface_json={},
                 storage_key="pending",
@@ -1123,6 +1120,7 @@ class PluginMarketplaceService:
             package = plugin_package_storage.get(release.storage_key)
             self._validate_uploaded_package(release, package)
             parsed, security_report = self._analyze_package(package)
+            self._validate_personal_manifest_name(plugin, parsed)
             if parsed.version != release.version:
                 raise HTTPException(
                     status_code=422,
@@ -1458,6 +1456,16 @@ class PluginMarketplaceService:
             plugin.latest_release_id = release.id
         if unset_datetime(plugin.published_at) is None:
             plugin.published_at = now
+
+    @staticmethod
+    def _validate_personal_manifest_name(
+        plugin: Plugin, parsed: PluginUploadInfo
+    ) -> None:
+        if parsed.name != plugin.slug:
+            raise HTTPException(
+                status_code=422,
+                detail="Personal plugin slug must match the manifest name",
+            )
 
     def _analyze_package(
         self, package: bytes

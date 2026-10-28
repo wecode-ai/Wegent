@@ -72,7 +72,12 @@ import { preferWeworkPersonalInstalled } from '@/features/plugins/personalPlugin
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import { slimPluginComponentsForCache } from '@/features/plugins/slimPluginComponents'
 import { slimPluginManifestForCache } from '@/features/plugins/slimPluginManifest'
-import { mergeLocalInstalledWithStorePackages } from '@/components/plugins/installedPluginMerge'
+import {
+  linkedCloudInstalledPluginId,
+  linkedCloudPluginId,
+  isWegentManagedStorePlugin,
+  mergeLocalInstalledWithStorePackages,
+} from '@/components/plugins/installedPluginMerge'
 import { installedPluginMarketplaceId } from '@/components/plugins/pluginDistribution'
 
 const MAX_PERSONAL_PLUGIN_PACKAGE_BYTES = 50 * 1024 * 1024
@@ -2146,6 +2151,19 @@ function rememberInstalledPluginDetail(detailed: InstalledPlugin): void {
     ).trim() || ''
   let changed = false
   const installedPlugins = cachedState.installedPlugins.map(plugin => {
+    const marketplace = installedPluginMarketplaceId(plugin) ?? ''
+    if (
+      pluginMarketplaceIdentity(detailedKey, marketplace) !==
+      pluginMarketplaceIdentity(detailedKey, detailedMarketplace)
+    ) {
+      return plugin
+    }
+    const cloudId = linkedCloudPluginId(plugin)
+    if (cloudId !== linkedCloudPluginId(detailed)) return plugin
+    const installId = linkedCloudInstalledPluginId(plugin)
+    if (String(installId) !== String(linkedCloudInstalledPluginId(detailed))) {
+      return plugin
+    }
     const sameId = detailedId.length > 0 && String(installedPluginId(plugin) ?? '') === detailedId
     const sameKey =
       !sameId &&
@@ -2233,10 +2251,18 @@ async function readDetailForInstalledPlugin(plugin: InstalledPlugin): Promise<In
     },
     detail
   )
-  // Detail projection must retain membership ownership and cloud links.
+  // Detail expansion must not reinterpret a shared personal package as authored source.
+  const managedPackage = isWegentManagedStorePlugin(plugin)
+  detailed.spec.source = {
+    ...plugin.spec.source,
+    ...(managedPackage ? { type: 'marketplace' } : {}),
+  }
+  detailed.spec.origin = managedPackage
+    ? 'market'
+    : (plugin.spec.origin ?? (plugin.spec.source.type === 'local' ? 'created' : 'market'))
   detailed.spec.sourcePayload = {
-    ...payload,
     ...detailed.spec.sourcePayload,
+    ...payload,
   }
   // Write connector/localAuth stubs back into the durable peek so the next send
   // can skip plugin/read (v1 durable cache always emptied components).
@@ -2260,7 +2286,10 @@ async function loadInstalledPluginsOnly(
   const personalPath =
     bundled?.path && isLocalMarketplacePath(bundled.path) ? bundled.path.trim() : ''
   const cloudLinks = personalPath
-    ? await readLocalPluginCloudLinks(personalPath).catch(() => [] as LocalPluginCloudLink[])
+    ? await readLocalPluginCloudLinks(personalPath).catch((error: unknown) => {
+        if (options.requireComplete) throw error
+        return [] as LocalPluginCloudLink[]
+      })
     : []
   // Composer / auth gates only need membership. Never call plugin/list here — it
   // reconciles for ~10s and stalls Codex turns on the shared app-server.

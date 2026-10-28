@@ -570,6 +570,50 @@ describe('PluginManagementWorkspace cache', () => {
     expect(screen.queryByTestId('plugin-detail-toggle-267250')).not.toBeInTheDocument()
   })
 
+  test('does not expose publication or scope management for a stale locally labelled received package', async () => {
+    const installed = cachedInstalledPlugin()
+    installed.origin = 'created'
+    installed.raw.spec.origin = 'created'
+    installed.raw.spec.source.type = 'local'
+    installed.raw.spec.sourcePayload = { managedByWegent: true, cloudPluginId: 901 }
+    const listing = {
+      id: 901,
+      remotePluginId: 'cached-plugin',
+      name: 'cached-plugin',
+      displayName: installed.name,
+      description: '',
+      featured: false,
+      installed: true,
+      installedPluginId: installed.id,
+      enabled: true,
+      sourceType: 'marketplace' as const,
+      visibility: 'personal' as const,
+      ownerUserId: 2,
+      accessRole: 'recipient' as const,
+      latestReleaseId: 12,
+      components: installed.raw.spec.components,
+      manifest: {},
+    }
+    setPluginMarketplaceCache({
+      cacheKey: pluginMarketplaceCacheKey('/api', 'cloud-token'),
+      marketplaceItems: [listing],
+      installedPlugins: [installed.raw],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+      deviceId: 'device-1',
+      fetchedAt: Date.now(),
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => {}))
+    )
+    render(<PluginManagementWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(screen.getByTestId('installed-plugin-actions-cached-1'))
+    expect(screen.queryByTestId('installed-plugin-publish-cached-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('installed-plugin-share-cached-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('installed-plugin-uninstall-cached-1')).toBeInTheDocument()
+  })
+
   test('routes personal plugin publication to the canonical plugin workspace flow', async () => {
     const key = pluginMarketplaceCacheKey('/api', 'cloud-token')
     const installed = cachedInstalledPlugin()

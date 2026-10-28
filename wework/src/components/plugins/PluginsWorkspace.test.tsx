@@ -8,6 +8,7 @@ import {
   createLocalCodexPluginApi,
 } from '@/api/local/codexPlugins'
 import * as codexPlugins from '@/api/local/codexPlugins'
+import * as fileHash from '@/api/fileHash'
 import { clearLocalConnectorAuthHealthCache } from '@/api/local/localConnectorAuth'
 import {
   clearPluginDeviceAutoSyncAttempts,
@@ -34,7 +35,11 @@ import { PluginsWorkspace } from './PluginsWorkspace'
 import * as refreshReconciliation from '@/features/plugins/pluginRefreshReconciliation'
 import { CodexAuthorizationTimeoutError } from '@/features/plugins/codexConnectorAuthorization'
 import { PLUGIN_AUTO_UPDATE_COMPLETED_EVENT } from '@/features/plugins/PluginAutoUpdateCoordinator'
-import { selectComposerPluginApps, writePluginInventory } from '@/features/plugins/pluginInventory'
+import {
+  pluginInventoryReadIsCurrent,
+  selectComposerPluginApps,
+  writePluginInventory,
+} from '@/features/plugins/pluginInventory'
 
 const telemetryMocks = vi.hoisted(() => ({
   track: vi.fn(),
@@ -95,6 +100,7 @@ type CodexMarketplaceMock = {
 type CodexPluginMock = {
   id: string
   name: string
+  localVersion?: string
   remotePluginId?: string
   displayName?: string
   description?: string
@@ -125,7 +131,7 @@ function codexPluginSummary(plugin: CodexPluginMock, installed: boolean, enabled
   return {
     id: plugin.id,
     remotePluginId: plugin.remotePluginId ?? plugin.id,
-    localVersion: '1.0.0',
+    localVersion: plugin.localVersion ?? '1.0.0',
     name: plugin.name,
     installed,
     enabled,
@@ -3095,6 +3101,83 @@ describe('PluginsWorkspace', () => {
       await act(async () => {
         finish()
         await pending
+      })
+      reconcile.mockRestore()
+    }
+  })
+
+  test('disables an open install dialog until a pending reconciliation settles', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch()
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    let finishReconciliation!: () => void
+    const pendingReconciliation = new Promise<void>(resolve => {
+      finishReconciliation = resolve
+    })
+    const reconcile = vi
+      .spyOn(refreshReconciliation, 'reconcilePluginRefresh')
+      .mockReturnValue(pendingReconciliation)
+    let finishRefresh: (() => void) | undefined
+    try {
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await screen.findByTestId('plugin-marketplace-install-101')
+      await waitFor(() => expect(screen.getByTestId('plugins-refresh-button')).toBeEnabled())
+      const originalFetch = vi.mocked(fetch).getMockImplementation()!
+      let holdNextRefresh = true
+      vi.mocked(fetch).mockImplementation(async (...args) => {
+        if (holdNextRefresh && String(args[0]).split('?')[0].endsWith('/api/plugins/marketplace')) {
+          holdNextRefresh = false
+          await new Promise<void>(resolve => {
+            finishRefresh = resolve
+          })
+        }
+        return originalFetch(...args)
+      })
+
+      await userEvent.click(screen.getByTestId('plugins-refresh-button'))
+      await waitFor(() => expect(finishRefresh).toBeDefined())
+      await userEvent.click(screen.getByTestId('plugin-marketplace-install-101'))
+      const confirm = await screen.findByTestId('install-plugin-dialog-confirm')
+      expect(confirm).toBeEnabled()
+
+      await act(async () => finishRefresh!())
+      await waitFor(() => expect(reconcile).toHaveBeenCalledOnce())
+      expect(screen.getByTestId('plugins-refresh-button')).toHaveAttribute(
+        'data-reconciling',
+        'true'
+      )
+      expect(confirm).toBeDisabled()
+      await userEvent.click(confirm)
+      expect(screen.getByTestId('install-plugin-dialog')).toBeInTheDocument()
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(([url]) => String(url).includes('/plugins/marketplace/101/install'))
+      ).toBe(false)
+
+      await act(async () => {
+        finishReconciliation()
+        await pendingReconciliation
+      })
+      await waitFor(() => expect(confirm).toBeEnabled())
+      await userEvent.click(confirm)
+      await waitFor(() =>
+        expect(fetch).toHaveBeenCalledWith(
+          '/api/plugins/marketplace/101/install?device_id=current-device',
+          expect.objectContaining({ method: 'POST' })
+        )
+      )
+      await waitFor(() =>
+        expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
+      )
+      await waitFor(() =>
+        expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('已安装')
+      )
+    } finally {
+      await act(async () => {
+        finishRefresh?.()
+        finishReconciliation()
+        await pendingReconciliation
       })
       reconcile.mockRestore()
     }
@@ -6914,6 +6997,105 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugin-detail-menu-publish-101')).not.toBeInTheDocument()
   })
 
+  test.each(['marketplace', 'installed'])(
+    'keeps a received personal plugin read only from the %s entry',
+    async entry => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({
+        marketplaceInstalled: true,
+        marketplaceVisibility: 'personal',
+        marketplaceAccessRole: 'recipient',
+        marketplaceName: 'dev-tools',
+        marketplaceDisplayName: 'Dev Tools',
+      })
+      mockCodexAppServerInvoke({
+        deviceId: 'current-device',
+        installedPluginNames: ['dev-tools'],
+        marketplaces: [
+          {
+            name: 'wework-personal',
+            path: '/tmp/recipient/wework-personal',
+            plugins: [{ id: 'shared-local', name: 'dev-tools', displayName: 'Dev Tools' }],
+          },
+        ],
+      })
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      const entryId =
+        entry === 'marketplace' ? 'plugin-marketplace-row-101' : 'plugins-installed-strip-item-101'
+      await userEvent.click(await screen.findByTestId(entryId))
+      expect(screen.queryByTestId(/^plugin-detail-share-/)).not.toBeInTheDocument()
+      expect(screen.queryByTestId('plugin-detail-manage-access')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('plugin-version-submit-open')).not.toBeInTheDocument()
+      await userEvent.click(screen.getByRole('button', { name: '插件操作' }))
+      expect(screen.queryByTestId(/^plugin-detail-edit-/)).not.toBeInTheDocument()
+      expect(screen.queryByTestId(/^plugin-detail-delete-/)).not.toBeInTheDocument()
+      expect(screen.getByTestId(/^plugin-detail-uninstall-/)).toBeInTheDocument()
+    }
+  )
+
+  test('does not treat a display name equal to another owners plugin key as ownership', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceVisibility: 'personal',
+      marketplaceAccessRole: 'owner',
+      marketplaceName: 'target-b',
+      marketplaceDisplayName: 'Target B',
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      installedPluginNames: ['source-a'],
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          path: '/tmp/owner/wework-personal',
+          plugins: [{ id: 'source-a-local', name: 'source-a', displayName: 'target-b' }],
+        },
+      ],
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugins-installed-strip-item-source-a-local'))
+    expect(screen.queryByTestId('plugin-detail-manage-access')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId(/^plugin-detail-share-/))
+    expect(await screen.findByTestId('plugin-share-intent-dialog')).toBeInTheDocument()
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([input]) => String(input).includes('/marketplace/101/access'))
+    ).toBe(false)
+  })
+
+  test('ignores sharing readiness arriving after an account switch', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    let releaseAccess!: () => void
+    const pluginAccessGate = new Promise<void>(resolve => {
+      releaseAccess = resolve
+    })
+    mockSystemSkillsFetch({
+      marketplaceVisibility: 'personal',
+      marketplaceAccessRole: 'owner',
+      marketplaceName: 'dev-tools',
+      marketplaceDisplayName: 'Dev Tools',
+      pluginAccessGate,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    await userEvent.click(screen.getByTestId(/^plugin-detail-share-/))
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(([input]) => String(input).includes('/marketplace/101/access'))
+      ).toBe(true)
+    )
+    view.rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="another-account-token" />)
+    await act(async () => {
+      releaseAccess()
+    })
+    expect(screen.queryByTestId('plugin-share-dialog')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-share-intent-dialog')).not.toBeInTheDocument()
+  })
+
   test('waits for existing personal access before opening share and preserves its targets', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     let resolvePluginAccess!: () => void
@@ -6988,6 +7170,173 @@ describe('PluginsWorkspace', () => {
       })
     })
   })
+
+  test.each(['success', 'scan-failure', 'superseded', 'account-change'])(
+    'submits a new personal version explicitly and preserves scope (%s)',
+    async outcome => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({
+        marketplaceVisibility: 'personal',
+        marketplaceAccessRole: 'owner',
+        marketplaceName: 'dev-tools',
+        marketplaceDisplayName: 'Dev Tools',
+      })
+      mockCodexAppServerInvoke({
+        deviceId: 'current-device',
+        installedPluginNames: ['dev-tools'],
+        marketplaces: [
+          {
+            name: 'wework-personal',
+            displayName: 'Personal',
+            path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+            plugins: [
+              {
+                id: 'dev-tools-local',
+                name: 'dev-tools',
+                localVersion: '2.0.0',
+                displayName: 'Dev Tools',
+                description: 'Updated developer tools',
+              },
+            ],
+          },
+        ],
+      })
+      const initialCatalog = await (await fetch('/api/plugins/marketplace')).json()
+      const publishedPlugin = {
+        ...initialCatalog.items[0],
+        version: outcome === 'superseded' ? '3.0.0' : '2.0.0',
+        latestReleaseId: outcome === 'superseded' ? 1003 : 1002,
+      }
+      const previousFetch = vi.mocked(fetch).getMockImplementation()!
+      let submittedMetadata: Record<string, unknown> | undefined
+      vi.mocked(fetch).mockImplementation((input, init) => {
+        const path = new URL(String(input), 'http://localhost').pathname
+        if (path === '/api/plugins/submissions/init') {
+          submittedMetadata = JSON.parse(String(init?.body))
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              submissionId: 91,
+              pluginId: 101,
+              releaseId: 1002,
+              uploadUrl: '/plugin-upload',
+              expiresAt: '',
+            }),
+          } as Response)
+        }
+        if (path === '/plugin-upload' || path === '/api/plugins/submissions/91/cancel') {
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({}) } as Response)
+        }
+        if (path === '/api/plugins/submissions/91/complete') {
+          return Promise.resolve(
+            outcome === 'scan-failure'
+              ? ({
+                  ok: false,
+                  status: 422,
+                  text: async () => JSON.stringify({ detail: 'Package scan failed' }),
+                } as Response)
+              : ({
+                  ok: true,
+                  status: 200,
+                  json: async () => ({
+                    submission: {
+                      id: 91,
+                      pluginId: 101,
+                      releaseId: 1002,
+                      status: 'approved',
+                      reviewNote: '',
+                    },
+                    plugin: publishedPlugin,
+                  }),
+                } as Response)
+          )
+        }
+        return previousFetch(input, init)
+      })
+      const localApi = createLocalCodexPluginApi()
+      const packagePlugin = vi
+        .spyOn(localApi, 'packageCreatedPlugin')
+        .mockResolvedValue(new File(['new package'], 'dev-tools.zip'))
+      const hash = vi.spyOn(fileHash, 'sha256Hex').mockResolvedValue('a'.repeat(64))
+      const createApi = vi
+        .spyOn(codexPlugins, 'createLocalCodexPluginApi')
+        .mockReturnValue(localApi)
+      const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      try {
+        await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+        expect(await screen.findByTestId('plugin-version-submit-notice')).toHaveTextContent(
+          '本地 v2.0.0 · 已分享 v1.0.0'
+        )
+        await userEvent.click(screen.getByTestId('plugin-version-submit-open'))
+        expect(await screen.findByTestId('plugin-version-submit-current')).toHaveTextContent(
+          'v1.0.0'
+        )
+        expect(screen.getByTestId('plugin-version-submit-next')).toHaveTextContent('v2.0.0')
+        await userEvent.type(
+          screen.getByTestId('plugin-version-submit-notes'),
+          '  Add scheduling queries  '
+        )
+        if (outcome === 'account-change') {
+          view.rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="other-cloud-token" />)
+          await waitFor(() =>
+            expect(screen.queryByTestId('plugin-version-submit-drawer')).not.toBeInTheDocument()
+          )
+          expect(packagePlugin).not.toHaveBeenCalled()
+          expect(submittedMetadata).toBeUndefined()
+          return
+        }
+        const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
+        const beforeSubmission = getPluginMarketplaceCache(cacheKey)
+        await userEvent.click(screen.getByTestId('plugin-version-submit-confirm'))
+        if (outcome !== 'success') {
+          expect(await screen.findByRole('alert')).toHaveTextContent(
+            outcome === 'superseded' ? '共享版本已被更新' : 'Package scan failed'
+          )
+          expect(screen.getByTestId('plugin-version-submit-notes')).toHaveValue(
+            '  Add scheduling queries  '
+          )
+          expect(screen.getByTestId('plugin-version-submit-current')).toHaveTextContent('v1.0.0')
+          expect(screen.getByTestId('plugin-version-submit-open')).toBeEnabled()
+        } else {
+          expect(await screen.findByTestId('plugin-operation-notice')).toHaveTextContent(
+            '新版本 v2.0.0 已分享'
+          )
+          expect(screen.queryByTestId('plugin-version-submit-drawer')).not.toBeInTheDocument()
+          expect(screen.queryByTestId('plugin-version-submit-notice')).not.toBeInTheDocument()
+          const afterSubmission = getPluginMarketplaceCache(cacheKey)
+          expect(afterSubmission?.mutationRevision).toBeGreaterThan(
+            beforeSubmission?.mutationRevision ?? 0
+          )
+          expect(afterSubmission?.marketplaceItems.find(item => item.id === 101)).toMatchObject({
+            version: '2.0.0',
+            latestReleaseId: 1002,
+          })
+          expect(pluginInventoryReadIsCurrent(cacheKey, beforeSubmission)).toBe(false)
+        }
+        expect(submittedMetadata).toMatchObject({
+          version: '2.0.0',
+          purpose: 'restricted_share',
+          releaseNotes: 'Add scheduling queries',
+        })
+        expect(submittedMetadata).not.toHaveProperty('targets')
+        expect(submittedMetadata).not.toHaveProperty('allowCopy')
+        expect(
+          vi
+            .mocked(fetch)
+            .mock.calls.some(
+              ([input, init]) => String(input).includes('/access') && init?.method === 'PUT'
+            )
+        ).toBe(false)
+        expect(packagePlugin).toHaveBeenCalledOnce()
+      } finally {
+        view.unmount()
+        packagePlugin.mockRestore()
+        hash.mockRestore()
+        createApi.mockRestore()
+      }
+    }
+  )
 
   test('restores every request and keeps an earlier published enterprise version reachable', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }

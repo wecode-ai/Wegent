@@ -659,6 +659,7 @@ export function marketplaceItemsSignature(items: PluginMarketplaceItem[]): strin
         typeof item.manifest?.disabledReason === 'string' ? item.manifest.disabledReason : '',
         typeof item.manifest?.installPolicy === 'string' ? item.manifest.installPolicy : '',
         item.localPersonalSource?.marketplacePath ?? '',
+        item.sharedVersion ?? '',
         item.localPersonalSource?.pluginName ?? '',
         pluginComponentsSignature(item.components),
       ].join(':')

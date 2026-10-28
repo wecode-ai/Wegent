@@ -1,9 +1,10 @@
 import { X } from 'lucide-react'
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChatInput, type ProjectWorkControls } from '@/components/chat/ChatInput'
 import { ComposerSkillIcon } from '@/components/chat/composer/ComposerSkillIcon'
 import { DesktopEmptyTaskLauncher } from '@/components/layout/DesktopEmptyTaskLauncher'
 import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -11,6 +12,11 @@ import { navigateTo } from '@/lib/navigation'
 import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
 import { resolveProjectRuntimeWorkspaceTarget } from '@/lib/workspace-target'
 import { beginOperation } from '@/telemetry/operationBus'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { toInstalledPluginItem } from './installedPluginPresentation'
+import { createdPluginSlugFromKey, findPackableCreatedPlugin } from './pluginOwnerLocalPackage'
+import { linkedCloudPluginId } from './installedPluginMerge'
+import { createDefaultPluginApi } from './workspace/marketplaceWorkspaceHelpers'
 
 interface PluginCreateWorkspaceProps {
   sidebarCollapsed?: boolean
@@ -46,7 +52,38 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
   const [prompt, setPrompt] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
+  const cloud = useOptionalCloudConnection()
+  const profile = useMemo(
+    () => ({
+      apiBaseUrl: cloud.apiBaseUrl,
+      token: cloud.token,
+      userId: cloud.user?.id,
+      editPluginName,
+    }),
+    [cloud.apiBaseUrl, cloud.token, cloud.user?.id, editPluginName]
+  )
+  const pluginApi = useMemo(
+    () => createDefaultPluginApi(profile.apiBaseUrl, profile.token),
+    [profile]
+  )
+  const [submissionProfile, setSubmissionProfile] = useState(profile)
+  const lifetime = useRef<symbol | null>(null)
   const workspaceRef = useRef<HTMLElement>(null)
+
+  if (submissionProfile !== profile) {
+    setSubmissionProfile(profile)
+    setIsSubmitting(false)
+    setSubmitError(null)
+  }
+
+  useLayoutEffect(() => {
+    const current = Symbol('plugin-edit-submission')
+    lifetime.current = current
+    return () => {
+      if (lifetime.current === current) lifetime.current = null
+    }
+  }, [profile])
 
   const projectWork = useMemo<ProjectWorkControls>(
     () => ({
@@ -128,7 +165,9 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
 
   const submit = async (valueOverride?: string) => {
     const value = (valueOverride ?? prompt).trim()
-    if (!value || isSubmitting) return
+    const currentLifetime = lifetime.current
+    if (!value || isSubmitting || !currentLifetime) return
+    const isCurrent = () => lifetime.current === currentLifetime
 
     setIsSubmitting(true)
     setSubmitError(null)
@@ -137,7 +176,6 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
       namespace: 'codex',
       is_public: false,
     }
-    projectChat.setSelectedSkills([pluginCreatorSkill])
     const message = [
       editPluginName
         ? `Use the wework-plugin-creator skill to continue editing the plugin "${editPluginName}" in Wegent.`
@@ -158,11 +196,52 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
 
     const attempt = beginOperation('plugin.create_request')
     try {
+      if (editPluginName) {
+        const inventory = await localPluginApi.listInstalledPlugins({
+          requireComplete: true,
+          refresh: true,
+        })
+        if (!isCurrent()) {
+          attempt.cancel()
+          return
+        }
+        const source = findPackableCreatedPlugin(inventory.items.map(toInstalledPluginItem), [
+          editPluginName,
+        ])
+        const key = source?.raw.spec.source.pluginKey ?? ''
+        const requested = editPluginName.toLowerCase()
+        if (
+          !source ||
+          (key.toLowerCase() !== requested && createdPluginSlugFromKey(key) !== requested)
+        ) {
+          throw new Error(
+            t(
+              'workbench.plugins_edit_source_required',
+              '只能编辑自己创建或复制的个人插件，请先复制为我的插件。'
+            )
+          )
+        }
+        const cloudPluginId = linkedCloudPluginId(source.raw)
+        if (cloudPluginId !== null) {
+          await pluginApi.getMarketplacePluginAccess(cloudPluginId)
+          if (!isCurrent()) {
+            attempt.cancel()
+            return
+          }
+        }
+      }
+      projectChat.setSelectedSkills([pluginCreatorSkill])
       const sent = await sendCurrentInput(message, {
         forceNewTask: true,
         additionalSkills: [pluginCreatorSkill],
-        onError: setSubmitError,
+        onError: error => {
+          if (isCurrent()) setSubmitError(error)
+        },
       })
+      if (!isCurrent()) {
+        attempt.cancel()
+        return
+      }
       if (sent) {
         attempt.succeed()
         navigateTo('/')
@@ -170,10 +249,14 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
         attempt.fail('request')
       }
     } catch (error) {
+      if (!isCurrent()) {
+        attempt.cancel()
+        return
+      }
       attempt.fail('request')
       setSubmitError(error instanceof Error ? error.message : String(error))
     } finally {
-      setIsSubmitting(false)
+      if (isCurrent()) setIsSubmitting(false)
     }
   }
 

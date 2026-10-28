@@ -39,6 +39,7 @@ import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { InstalledPluginRow, type InstalledPluginItem } from './PluginManagementRows'
 import {
   isCloudManagedInstalledPlugin,
+  isWegentManagedStorePlugin,
   linkedCloudInstalledPluginId,
   linkedCloudPluginId,
 } from './installedPluginMerge'
@@ -411,10 +412,16 @@ function PluginManagementWorkspaceContent({
     plugin.raw.spec.source.pluginKey.toLowerCase().replace(/[^a-z0-9._-]+/g, '-')
 
   const findOwnedMarketplacePlugin = (plugin: InstalledPluginItem) => {
-    const slug = createdPluginSlug(plugin)
-    return marketplaceItems.find(
-      item => item.accessRole === 'owner' && (item.name === slug || item.name === plugin.name)
+    const associated = findMarketplaceItemForInstalled(plugin, marketplaceItems)
+    if (associated?.accessRole) return associated.accessRole === 'owner' ? associated : undefined
+    if (
+      isWegentManagedStorePlugin(plugin.raw) ||
+      linkedCloudPluginId(plugin.raw) !== null ||
+      plugin.raw.spec.pluginId != null
     )
+      return undefined
+    const slug = createdPluginSlug(plugin)
+    return marketplaceItems.find(item => item.accessRole === 'owner' && item.name === slug)
   }
 
   const openInstalledPluginDetail = (plugin: InstalledPluginItem) => {
@@ -439,7 +446,7 @@ function PluginManagementWorkspaceContent({
         plugin.raw.spec.source.pluginKey,
         createdPluginSlug(plugin),
         plugin.name,
-      ]) ?? (plugin.origin === 'created' ? plugin : null)
+      ]) ?? (isPackableCreatedPlugin(plugin) ? plugin : null)
     if (packableCreated?.origin === 'created') {
       setSelectedPluginId(packableCreated.id)
       return
@@ -510,8 +517,10 @@ function PluginManagementWorkspaceContent({
   if (selectedPlugin) {
     const isUninstalling = uninstallingPluginIds.has(selectedPlugin.id)
     const ownedMarketplace = findOwnedMarketplacePlugin(selectedPlugin)
+    const associatedListing =
+      ownedMarketplace ?? findMarketplaceItemForInstalled(selectedPlugin, marketplaceItems) ?? null
     const packableCreated =
-      ownedMarketplace && !marketplaceItemOwnsLocalCreatedPackage(ownedMarketplace)
+      associatedListing && !marketplaceItemOwnsLocalCreatedPackage(associatedListing)
         ? null
         : (findPackableCreatedPlugin(installedPlugins, [
             selectedPlugin.raw.spec.source.pluginKey,
@@ -519,17 +528,16 @@ function PluginManagementWorkspaceContent({
             selectedPlugin.name,
             ownedMarketplace?.name,
             ownedMarketplace?.displayName,
-          ]) ?? (selectedPlugin.origin === 'created' ? selectedPlugin : null))
+          ]) ?? (isPackableCreatedPlugin(selectedPlugin) ? selectedPlugin : null))
     const ownerActions = resolvePluginOwnerActions({
       isLocalCreated: Boolean(packableCreated),
-      ownedListing: ownedMarketplace ?? null,
+      ownedListing: associatedListing,
     })
     const continueEditingKey = resolveContinueEditingPluginKey({
       packableCreated,
       currentPlugin: selectedPlugin,
       ownedListingName: ownedMarketplace?.name,
-      isPersonalOwner:
-        ownedMarketplace?.accessRole === 'owner' && ownedMarketplace.visibility === 'personal',
+      listing: associatedListing,
     })
     const submissionStatus =
       typeof selectedPlugin.raw.spec.sourcePayload?.submissionStatus === 'string'
@@ -559,8 +567,9 @@ function PluginManagementWorkspaceContent({
           }
           primaryActionDisabled={isUninstalling}
           showUninstall={!isUninstalling}
-          accessRole={ownedMarketplace?.accessRole}
-          pluginVisibility={ownedMarketplace?.visibility ?? null}
+          accessRole={associatedListing?.accessRole}
+          pluginVisibility={associatedListing?.visibility ?? null}
+          shareRecipient={associatedListing?.accessRole === 'recipient'}
           shareGrantUserCount={ownedMarketplace?.grantUserCount ?? 0}
           shareGrantNamespaceCount={ownedMarketplace?.grantNamespaceCount ?? 0}
           manageAccessLabel={t('workbench.plugins_manage_access', '管理权限')}
@@ -728,10 +737,10 @@ function PluginManagementWorkspaceContent({
                           plugin.name,
                           ownedMarketplace?.name,
                           ownedMarketplace?.displayName,
-                        ]) ?? (plugin.origin === 'created' ? plugin : null))
+                        ]) ?? (isPackableCreatedPlugin(plugin) ? plugin : null))
                   const ownerActions = resolvePluginOwnerActions({
                     isLocalCreated: Boolean(packableCreated),
-                    ownedListing: ownedMarketplace ?? null,
+                    ownedListing: ownedMarketplace ?? listing,
                   })
                   return (
                     <div

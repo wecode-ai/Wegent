@@ -115,6 +115,7 @@ describe('local codex plugin readState cache', () => {
     mocks.runtime.electron = true
     mocks.knownDeviceId = 'local-device'
     mocks.requestLocalExecutor.mockReset()
+    mocks.getInitializedBundledPluginMarketplace.mockReturnValue(null)
     mocks.pauseBundledUpdates.mockReset()
     mocks.resumeBundledUpdates.mockReset()
     mocks.ensureLocalExecutorStarted.mockReset()

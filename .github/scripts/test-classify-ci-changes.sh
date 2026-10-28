@@ -1143,6 +1143,23 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "packages/collaboration/src/ports/SharedWorkspaceApi.ts" \
   "packages/collaboration/src/dto-mappers/workspaceDtoMappers.ts"
 
+for personal_version_path in \
+  wework/e2e/desktop/modules/plugin-personal-version-flow.mjs \
+  wework/e2e/desktop/modules/plugin-personal-recipient-install.mjs \
+  wework/src/components/plugins/PluginVersionSubmitDrawer.tsx \
+  wework/src/components/plugins/pluginVersionSubmission.ts \
+  wework/src/components/plugins/hooks/usePluginVersionSubmission.tsx; do
+  assert_desktop_case "Personal plugin versions retain cloud publication coverage: $personal_version_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-workspace-publication"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$personal_version_path"
+done
+
 assert_desktop_case "Creator resources select desktop and cloud delivery" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false
