@@ -1134,7 +1134,7 @@ impl RuntimeWorkRpcHandler {
             self.reconcile_and_resume_persisted_turns().await;
         }
         let stand_in_operation = self.stand_in_operation(method, &payload);
-        let result = self.dispatch_request(method, payload).await;
+        let result = self.dispatch_method(method, payload).await;
         if let Some((user, operation, properties)) = stand_in_operation {
             // Successful configuration diffs are recorded in the settings transaction.
             if operation != "configuration" || result.is_err() {

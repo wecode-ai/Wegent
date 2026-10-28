@@ -174,19 +174,34 @@ async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }
 
 export async function verifyMultiTagBoardDrag(control, options) {
   const { scoped, request, project } = options
-  const fixtureProject = await request(`/api/v1/workspaces/${project.workspace_id}/projects`, {
-    method: 'POST',
-    body: JSON.stringify({ name: `多标签拖放回归-${process.pid}` }),
-  })
-  try {
-    await verifyBoardFieldDrag(control, { ...options, project: fixtureProject })
-    await verifyTagMoves(control, { ...options, project: fixtureProject })
-  } finally {
-    const latest = await request(`/api/v1/cloud-projects/${fixtureProject.id}`)
-    await request(`/api/v1/cloud-projects/${fixtureProject.id}?version=${latest.version}`, {
-      method: 'DELETE',
+  const previousWindowSize = JSON.parse(
+    await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify({ width: 1024, height: 720 }),
     })
-    await reloadMainWindow(control, 'The tag drag fixture cleanup did not reload')
-    await openProjectBoard(control, scoped, project)
+  )
+  try {
+    const fixtureProject = await request(`/api/v1/workspaces/${project.workspace_id}/projects`, {
+      method: 'POST',
+      body: JSON.stringify({ name: `多标签拖放回归-${process.pid}` }),
+    })
+    try {
+      await verifyBoardFieldDrag(control, { ...options, project: fixtureProject })
+      await verifyTagMoves(control, { ...options, project: fixtureProject })
+      console.log('[desktop-e2e] PASS owner board field and tag drag at 1024x720')
+    } finally {
+      try {
+        const latest = await request(`/api/v1/cloud-projects/${fixtureProject.id}`)
+        await request(`/api/v1/cloud-projects/${fixtureProject.id}?version=${latest.version}`, {
+          method: 'DELETE',
+        })
+      } finally {
+        await reloadMainWindow(control, 'The tag drag fixture cleanup did not reload')
+        await openProjectBoard(control, scoped, project)
+      }
+    }
+  } finally {
+    await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify(previousWindowSize),
+    })
   }
 }

@@ -3,8 +3,14 @@ import { dirname, join } from 'node:path'
 
 export class PreferencesStore {
   private operation = Promise.resolve()
+  private closed = false
 
   constructor(private readonly dataDirectory: string) {}
+
+  close(): Promise<void> {
+    this.closed = true
+    return this.operation
+  }
 
   read(): Promise<Record<string, unknown>> {
     return this.serial(() => this.readFile())
@@ -77,6 +83,7 @@ export class PreferencesStore {
   }
 
   private serial<Result>(operation: () => Promise<Result>): Promise<Result> {
+    if (this.closed) return Promise.reject(new Error('Preferences are closed'))
     const result = this.operation.then(operation, operation)
     this.operation = result.then(
       () => undefined,

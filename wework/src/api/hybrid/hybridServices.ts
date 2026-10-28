@@ -726,10 +726,13 @@ export function createHybridWorkbenchServices(
     }
     throw new Error(`executor-not-found:${normalizedDeviceId}`)
   }
-  const mergeKnownDevices = (localDevices: DeviceInfo[], cloudDevices: DeviceInfo[]) =>
+  const mergeKnownDevices = (
+    localDevices: DeviceInfo[],
+    cloudDevices: DeviceInfo[]
+  ): DeviceInfo[] =>
     mergeDeviceLists(localDevices, [...currentAppDeviceRegistrations(), ...cloudDevices]).filter(
       device => !isAppDeviceRegistration(device)
-    )
+    ) as DeviceInfo[]
   const routeLocalSidebarMutation = async (
     deviceId: string,
     options: LocalRuntimeSidebarOptions | undefined,
@@ -979,9 +982,7 @@ export function createHybridWorkbenchServices(
           error
         )
       }
-      return mergeKnownDevices(localDevices, cloudDevices) as Awaited<
-        ReturnType<WorkbenchServices['deviceApi']['listDevices']>
-      >
+      return mergeKnownDevices(localDevices, cloudDevices)
     },
   }
 
@@ -1853,12 +1854,8 @@ export function createHybridWorkbenchServices(
       listTeams: cloudServices.teamApi.listTeams,
       async listDevices(requestOptions) {
         const devices = await listCloudDevices(requestOptions?.signal)
-        const registrations = currentAppDeviceRegistrations()
-        const registeredLocalDevices = rememberedLocalDevices.filter(local =>
-          registrations.some(device => workbenchDevicesShareRuntimeIdentity(local, device))
-        )
         // Publish proven aliases with the native record, without exposing App control targets.
-        return mergeKnownDevices(registeredLocalDevices, devices) as Awaited<
+        return mergeKnownDevices(rememberedLocalDevices, devices) as Awaited<
           ReturnType<WorkbenchServices['deviceApi']['listDevices']>
         >
       },

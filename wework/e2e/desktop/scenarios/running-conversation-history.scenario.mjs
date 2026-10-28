@@ -321,18 +321,22 @@ async function findRolloutPath(directory, threadId) {
 
 async function waitForLongHistoryHydration(control, timeoutMs) {
   const startedAt = Date.now()
+  let displayItemCount = 0
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(
       await control.command('performanceSnapshot', 'body', {
         timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
       })
     )
-    if (snapshot.activeRuntimeAssistant?.displayItemCount >= LONG_HISTORY_ITEM_COUNT) {
+    displayItemCount = snapshot.runtimeAssistantDisplayItemCount
+    if (displayItemCount >= LONG_HISTORY_ITEM_COUNT) {
       return snapshot
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error('Timed out waiting for the long running transcript to hydrate')
+  throw new Error(
+    `Timed out waiting for the long running transcript to hydrate: expected=${LONG_HISTORY_ITEM_COUNT}, observed=${displayItemCount}, elapsedMs=${Date.now() - startedAt}`
+  )
 }
 
 async function waitForTranscriptState(control, predicate, description, timeoutMs) {
@@ -692,13 +696,18 @@ export function createDesktopScenario({
         Date.now() - hydrationStartedAt < HYDRATION_RESPONSE_TIMEOUT_MS,
         'Hydrating a long running transcript blocked the renderer'
       )
-      const hydratedSnapshot = await waitForLongHistoryHydration(control, uiTimeoutMs)
+      // Restart recovery transfers the complete large history asynchronously.
+      // Each renderer response still has the separate three-second responsiveness limit.
+      const hydratedSnapshot = await waitForLongHistoryHydration(
+        control,
+        WORKBENCH_READY_TIMEOUT_MS
+      )
       assert.ok(
         hydratedSnapshot.runtimeConversationCache?.messageEntries >= 1,
         'The long running transcript was not restored into the conversation cache'
       )
       assert.ok(
-        hydratedSnapshot.activeRuntimeAssistant?.displayItemCount >= LONG_HISTORY_ITEM_COUNT,
+        hydratedSnapshot.runtimeAssistantDisplayItemCount >= LONG_HISTORY_ITEM_COUNT,
         'The restored conversation did not include the complete long tool history'
       )
       await assertLargeHistoryTransfer(executorHome, taskId, moved.address.threadId)
@@ -803,6 +812,8 @@ export function createDesktopScenario({
       assert.equal(anchorSearch.matches[0].itemId, PAGED_ASSISTANT_ITEM)
       const anchorMessageId = `runtime-view:${anchorSearch.matches[0].turnId}:assistant`
       const pageRequest = { address: pagedAddress, limit: 50 }
+      // A cold native history read includes hydration and transfer; UI controls
+      // keep their separate interaction budget and responsiveness assertions.
       const nativePage = await requestExecutor(
         control,
         'runtime.tasks.transcript',
@@ -810,7 +821,7 @@ export function createDesktopScenario({
           ...pageRequest,
           refresh: true,
         },
-        uiTimeoutMs
+        WORKBENCH_READY_TIMEOUT_MS
       )
       assert.equal(nativePage.hasMoreBefore, true, 'The fixture must exceed the native item budget')
       assert.ok(nativePage.beforeCursor?.startsWith('wework-codex-timeline:'))

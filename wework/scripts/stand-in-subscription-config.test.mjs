@@ -158,7 +158,7 @@ test('unknown upgrade errors remain hard failures', () => {
 })
 
 test.each(['/v1/responses', '/backend-api/codex/responses-other'])(
-  'does not take ownership of unrelated upgrade %s',
+  'closes every upgrade %s owned by the HTTP listener with an explicit 426',
   url => {
     const server = new EventEmitter()
     createSubscriptionConfigRegression().attachServer(server)
@@ -166,8 +166,29 @@ test.each(['/v1/responses', '/backend-api/codex/responses-other'])(
 
     server.emit('upgrade', { url }, socket)
 
-    assert.equal(socket.listenerCount('error'), 0)
-    assert.equal(socket.response, '')
+    assert.equal(socket.listenerCount('error'), 1)
+    assert.match(socket.response, /^HTTP\/1\.1 426 Upgrade Required/)
     assert.equal(socket.destroyed, false)
   }
 )
+
+test('a reset before the intentional 426 close remains a hard failure', () => {
+  const failure = Object.assign(new Error('unexpected early reset'), { code: 'ECONNRESET' })
+  class EarlyResetSocket extends UpgradeSocket {
+    on(event, listener) {
+      super.on(event, listener)
+      if (event === 'error') listener(failure)
+      return this
+    }
+  }
+  const server = new EventEmitter()
+  createSubscriptionConfigRegression().attachServer(server)
+  const socket = new EarlyResetSocket()
+
+  assert.throws(
+    () => server.emit('upgrade', { url: '/backend-api/codex/responses' }, socket),
+    error => error === failure
+  )
+  assert.equal(socket.destroyed, true)
+  assert.equal(socket.response, '')
+})

@@ -79,7 +79,10 @@ describe('desktop resource migration', () => {
     expect(aiVerifyBuildScript).toContain("['run', 'prepare:electron']")
     expect(aiVerifyBuildScript).not.toContain("['run', 'prepare:codex', '--materialize']")
     expect(aiVerifyBuildScript).not.toContain("['run', 'prepare:dws']")
-    expect(aiVerifyBuildScript).toContain("['--dir', 'electron', 'run', 'build:package']")
+    expect(aiVerifyBuildScript).toMatch(/'--dir',\s*'electron',\s*'run',/)
+    expect(aiVerifyBuildScript).toContain(
+      "process.argv.includes('--prepare-only') ? 'prepare:package' : 'build:package'"
+    )
     expect(aiVerifyBuildScript).toContain('resolveHarnessRuntimeAssetCacheEnvironment(')
     expect(aiVerifyBuildScript).toContain('isolateAiVerifyRuntimeEnvironment(process.env)')
     expect(aiVerifyBuildScript).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
