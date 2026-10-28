@@ -99,3 +99,35 @@ describe('normal conversation virtualizer integration', () => {
     current.unmount()
   })
 })
+
+test('reads back a clamped no-op initial write when the browser emits no scroll event', () => {
+  const viewport = document.createElement('div')
+  const list = document.createElement('div')
+  viewport.append(list)
+  document.body.append(viewport)
+  Object.defineProperties(viewport, {
+    clientHeight: { value: 800 },
+    clientWidth: { value: 800 },
+    scrollHeight: { value: 800 },
+  })
+  viewport.getBoundingClientRect = () => new DOMRect(0, 0, 800, 800)
+  list.getBoundingClientRect = () => new DOMRect(0, 0, 800, 400)
+  viewport.scrollTo = vi.fn(() => {
+    viewport.scrollTop = 0
+  })
+  const hook = renderHook(() =>
+    useConversationVirtualizer({
+      count: 6,
+      enabled: true,
+      estimateSize: () => 220,
+      initialRect: { width: 800, height: 800 },
+      initialDistanceFromBottomPx: 0,
+      listRef: { current: list },
+      scrollElementRef: { current: viewport },
+    })
+  )
+  expect(viewport.scrollTop).toBe(0)
+  expect(hook.result.current.virtualizer.scrollOffset).toBe(0)
+  expect(hook.result.current.virtualizer.getVirtualItems()[0]?.index).toBe(0)
+  hook.unmount()
+})

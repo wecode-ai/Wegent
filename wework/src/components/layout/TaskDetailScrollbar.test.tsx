@@ -151,8 +151,9 @@ test('lets scroll observers cover the dragged viewport before the next frame pai
   viewport.addEventListener('scroll', renderVisibleContent)
 
   fireEvent.pointerMove(track, { buttons: 1, pointerId: 1, clientY: 300 })
-  // Browser rendering runs pending scroll events before animation frame callbacks.
-  if (viewport.scrollTop !== renderedPosition) fireEvent.scroll(viewport)
+  // The custom scrollbar must publish its applied offset in the input turn,
+  // rather than depending on a later native event to render the visible rows.
+  expect(renderedPosition).toBe(viewport.scrollTop)
   flushFrame()
   expect(renderedPosition).toBeCloseTo(1006.0914)
   expect(renderedPosition).toBe(viewport.scrollTop)
