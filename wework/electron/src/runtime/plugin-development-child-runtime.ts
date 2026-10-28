@@ -80,8 +80,15 @@ export class PluginDevelopmentChildRuntime {
     this.watcher = watch(
       this.options.sourceRoot,
       { persistent: false, recursive: true },
-      (_event, filename) => {
-        if (isPluginDevelopmentSourceChange(filename)) this.scheduleReload()
+      (event, filename) => {
+        if (isPluginDevelopmentSourceChange(filename)) {
+          console.info('[plugin-development] source changed', {
+            event,
+            filename: filename?.toString() ?? null,
+            hmrGeneration: this.hmrGeneration,
+          })
+          this.scheduleReload()
+        }
       }
     )
     this.watcher.on('error', error => {
@@ -107,12 +114,18 @@ export class PluginDevelopmentChildRuntime {
         .catch(() => undefined)
         .then(async () => {
           if (this.options.isShuttingDown()) return
+          console.info('[plugin-development] hot reload started', {
+            hmrGeneration: this.hmrGeneration,
+          })
           await this.writeState('reloading')
           try {
             await this.options.restartCoreDsh()
             this.hmrGeneration += 1
             this.hmrUpdatedAt = new Date().toISOString()
             await this.writeState('ready')
+            console.info('[plugin-development] hot reload completed', {
+              hmrGeneration: this.hmrGeneration,
+            })
           } catch (reason) {
             const error = reason instanceof Error ? reason : new Error(String(reason))
             await this.writeState('error', error)

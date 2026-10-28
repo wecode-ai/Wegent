@@ -798,3 +798,5 @@ Windows 套接字缓冲区错误发生时，桌面 runner 立即保存一次端�
 Windows 隔离桌面 E2E 启动时禁用 Chromium 的 `TcpPortRandomizationWin`，使高频 loopback 连接使用系统常规端口分配。当前 Electron 44.7.0 / Chromium 152.0.7977.130 默认启用该特性；上游 [572515601](https://issuetracker.google.com/issues/572515601) 已确认在 Windows Server 2025 等环境中，即使连接数很低，随机端口分配也会产生 WSAENOBUFS。仓库日志同时记录原生 `ERR_NO_BUFFER_SPACE` 与 TCP 4231。启动参数合并保留场景已有的其他禁用特性，重复特性只保留一次；原有启动、模型 HTTP 错误和资源断言继续执行。
 
 Windows 桌面 E2E 测试步骤使用 40 分钟预算，早于作业的 60 分钟上限结束，为失败日志和诊断制品上传留出时间。此前 Core 分片 7 触发作业总时限时，GitHub 作业日志接口返回 404，整体日志压缩包中也没有该分片，无法从已销毁 runner 补回证据。步骤超时继续作为失败处理，现有 always 上传步骤保留。
+
+Executor RPC 的完成日志只代表 Executor 已返回结果，不代表 HTTP 响应已发送。DSH 另记响应的 `finish` 或提前 `close` 事件及流状态；桌面 E2E 每次调用使用唯一请求编号，失败时区分等待响应头与读取响应体，记录耗时和长度、编码元数据，不记录参数或正文。插件开发子进程记录源码变更事件、相对路径与重载代数，帮助区分未收到文件事件、重复重载及界面同步问题；诊断不增加重试或延长原有超时。
