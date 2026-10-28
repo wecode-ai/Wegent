@@ -32,7 +32,7 @@ pub(crate) fn terminal_result(event: &TaskCompletedEvent<'_>) -> TerminalResult 
     TerminalResult {
         status,
         silent,
-        summary: state::result_summary(event.result),
+        summary: super::directives::strip(state::result_summary(event.result)),
     }
 }
 

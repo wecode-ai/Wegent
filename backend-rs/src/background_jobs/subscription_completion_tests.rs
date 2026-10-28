@@ -64,6 +64,13 @@ fn the_terminal_status_mapping_matches_the_source() {
     assert!(result.silent);
     assert_eq!(result.summary.as_deref(), Some("done"));
 
+    let directives = json!({"value": "Build finished\n\n【静默】【@列表：900101】"});
+    let directive_result = terminal_result(&TaskCompletedEvent {
+        result: Some(&directives),
+        ..silent_event
+    });
+    assert_eq!(directive_result.summary.as_deref(), Some("Build finished"));
+
     let event = TaskCompletedEvent {
         task_id,
         user_id,
