@@ -182,7 +182,7 @@ export function useConversationScrollController({
   }, [])
   const save = useCallback(() => {
     const viewport = activeScrollRefRef.current.current
-    if (!viewport || messages.length === 0) return
+    if (!viewport || messages.length === 0 || latestRef.current.autoScrollSuspended) return
     const snapshot: ConversationScrollSnapshot =
       modeRef.current === 'follow'
         ? { pinnedToBottom: true, distanceFromBottomPx: 0 }
