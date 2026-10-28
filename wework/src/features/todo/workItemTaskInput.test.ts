@@ -1,50 +1,62 @@
-import { expect, test, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
 
-test('rebases the start transition after a concurrent delivery changes the Issue version', async () => {
-  const issues = {
-    get: vi
-      .fn()
-      .mockResolvedValueOnce({ id: 'ISSUE-1', status: 'pending', tags: [], version: 3 })
-      .mockResolvedValueOnce({ id: 'ISSUE-1', status: 'pending', tags: ['delivery'], version: 4 }),
-    update: vi
-      .fn()
-      .mockRejectedValueOnce(Object.assign(new Error('Version conflict'), { status: 409 }))
-      .mockResolvedValueOnce({}),
-  }
+const source = { id: 'issue-1', status: 'pending', tags: [], version: 3 }
+const conflict = { code: 'version_conflict' }
 
-  await expect(updateIssueWhenPersonalTaskStarts(issues, 'ISSUE-1')).resolves.toBeNull()
-  expect(issues.update.mock.calls).toEqual([
-    ['ISSUE-1', { version: 3, status: 'in_progress' }],
-    ['ISSUE-1', { version: 4, status: 'in_progress' }],
-  ])
-})
+function issuesFor(latest: Partial<typeof source>, error: unknown = conflict) {
+  const get = vi
+    .fn()
+    .mockResolvedValueOnce(source)
+    .mockResolvedValue({ ...source, ...latest })
+  const update = vi
+    .fn()
+    .mockRejectedValueOnce(error)
+    .mockResolvedValue({ ...source, ...latest })
+  return { get, update }
+}
 
-test('does not reopen an Issue completed concurrently with task creation', async () => {
-  const issues = {
-    get: vi
-      .fn()
-      .mockResolvedValueOnce({ id: 'ISSUE-1', status: 'pending', tags: [], version: 3 })
-      .mockResolvedValueOnce({ id: 'ISSUE-1', status: 'done', tags: [], version: 4 }),
-    update: vi
-      .fn()
-      .mockRejectedValueOnce(Object.assign(new Error('Version conflict'), { status: 409 })),
-  }
+const start = (issues: ReturnType<typeof issuesFor>) =>
+  updateIssueWhenPersonalTaskStarts(issues as unknown as SharedWorkspaceApi['issues'], source.id)
 
-  await expect(updateIssueWhenPersonalTaskStarts(issues, 'ISSUE-1')).resolves.toBeNull()
-  expect(issues.update).toHaveBeenCalledTimes(1)
-})
+describe('personal task Issue start', () => {
+  it('preserves a concurrent delivery when rebasing its start transition', async () => {
+    const issues = issuesFor({ version: 4 })
+    await expect(start(issues)).resolves.toBeNull()
+    expect(issues.update.mock.calls).toEqual([
+      [source.id, { version: 3, status: 'in_progress' }],
+      [source.id, { version: 4, status: 'in_progress' }],
+    ])
+  })
 
-test('reports a repeated conflict without unbounded mutation attempts', async () => {
-  const issues = {
-    get: vi.fn().mockResolvedValue({ id: 'ISSUE-1', status: 'pending', tags: [], version: 3 }),
-    update: vi
-      .fn()
-      .mockRejectedValue(Object.assign(new Error('Version conflict'), { status: 409 })),
-  }
+  it.each(['completed', 'done'])('does not overwrite a concurrent %s status edit', async status => {
+    const issues = issuesFor({ version: 4, status })
+    await expect(start(issues)).resolves.not.toBeNull()
+    expect(issues.update).toHaveBeenCalledTimes(1)
+  })
 
-  await expect(updateIssueWhenPersonalTaskStarts(issues, 'ISSUE-1')).resolves.toBe(
-    'Version conflict'
-  )
-  expect(issues.update).toHaveBeenCalledTimes(2)
+  it('does not rebase permission denials', async () => {
+    const issues = issuesFor({ version: 4 }, new Error('Forbidden'))
+    await expect(start(issues)).resolves.toBe('Forbidden')
+    expect(issues.get).toHaveBeenCalledTimes(1)
+    expect(issues.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not rebase an unrelated HTTP 409 response', async () => {
+    const issues = issuesFor(
+      { version: 4 },
+      Object.assign(new Error('Action unavailable'), { status: 409 })
+    )
+    await expect(start(issues)).resolves.toBe('Action unavailable')
+    expect(issues.get).toHaveBeenCalledTimes(1)
+    expect(issues.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports another conflict after rebasing instead of looping', async () => {
+    const issues = issuesFor({ version: 4 })
+    issues.update.mockRejectedValue(conflict)
+    await expect(start(issues)).resolves.not.toBeNull()
+    expect(issues.update).toHaveBeenCalledTimes(2)
+  })
 })

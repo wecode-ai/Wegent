@@ -12,6 +12,7 @@ import { isElectronRuntime } from '@/lib/runtime-environment'
 import { useAppVersion } from '@/hooks/useAppVersion'
 import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import {
   clearPendingWeworkReleaseNotes,
   readPendingWeworkReleaseNotes,
@@ -179,6 +180,23 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   )
 
   const isUpdateBusy = status === 'downloading' || status === 'installing'
+
+  useEffect(() => {
+    if (status !== 'installing') return
+    const timer = window.setInterval(() => {
+      void invokeDesktopHost<WeworkUpdateDownloadProgress>('appUpdate.downloadProgress')
+        .then(progress => {
+          if (progress?.phase !== 'failed') return
+          setError(
+            createAppUpdateError(new Error(progress.failure?.message || 'Update failed'), 'install')
+          )
+          setStatus('error')
+          setDownloadedUpdateVersion(null)
+        })
+        .catch(() => undefined)
+    }, 250)
+    return () => window.clearInterval(timer)
+  }, [status])
 
   const resetDownloadedUpdate = useCallback(() => {
     setDownloadedUpdateVersion(null)

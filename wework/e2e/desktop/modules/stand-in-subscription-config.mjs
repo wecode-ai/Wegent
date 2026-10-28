@@ -4,6 +4,7 @@ import { once } from 'node:events'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from './executor-rpc.mjs'
+import { rejectModelWebSocketUpgrade } from './reject-model-upgrade.mjs'
 
 const MODEL = 'gpt-5.5'
 const ACCOUNT = 'stand-in-config-e2e'
@@ -73,14 +74,9 @@ export function createSubscriptionConfigRegression() {
     },
     attachServer(server) {
       server.on('upgrade', (_request, socket) => {
-        socket.on('error', error => {
-          socket.destroy()
-          if (error.code !== 'ECONNRESET') throw error
-        })
+        // Registering an upgrade listener transfers ownership of every upgraded socket.
         // A model service may require HTTP; Codex handles 426 through its native fallback.
-        socket.end(
-          'HTTP/1.1 426 Upgrade Required\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'
-        )
+        rejectModelWebSocketUpgrade(server, socket)
       })
     },
     acceptsModelRequest(request, url, body) {

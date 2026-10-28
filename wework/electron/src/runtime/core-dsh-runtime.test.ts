@@ -248,6 +248,7 @@ describe('core DSH runtime', () => {
       role: 'core',
       sourceFingerprint: 'a'.repeat(64),
       corePluginsFingerprint: 'f'.repeat(64),
+      managedDependencyNames: expect.arrayContaining(['@wegent/dsh-app-wework']),
       managedBundles: expect.arrayContaining(['@deepseek-ai/dsh-experimental-voice-input-bundle']),
     })
     const profileModules = join(
@@ -482,50 +483,51 @@ describe('core DSH runtime', () => {
     await root.remove()
   })
 
-  test.each(['corePluginsFingerprint', 'managedPluginCopyVersion', 'managedBundles'])(
-    'upgrades a legacy stamp without %s',
-    async field => {
-      const root = await temporaryDirectory('core-dsh-legacy-stamp-')
-      const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
-      const dataDirectory = join(root.path, 'data')
-      const environment = {
-        PATH: '/usr/bin',
-        WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
-        WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
-        WEWORK_NODE_PATH: '/managed/node',
-      }
-      const launch = await prepareCoreDshLaunch({
-        runtimeRoot: runtime.root,
-        dataDirectory,
-        environment,
-        port: 3080,
-      })
-      const stampPath = join(launch.dshHome, 'profiles', 'wework-core', '.wework-runtime.json')
-      const legacy = JSON.parse(await readFile(stampPath, 'utf8')) as Record<string, unknown>
-      delete legacy[field]
-      await writeFile(stampPath, JSON.stringify(legacy))
-
-      await prepareCoreDshLaunch({
-        runtimeRoot: runtime.root,
-        dataDirectory,
-        environment,
-        port: 3081,
-      })
-
-      expect(JSON.parse(await readFile(stampPath, 'utf8'))).toEqual({
-        managedPluginCopyVersion: 1,
-        dshVersion: CORE_DSH_VERSION,
-        managedUiPlugins: true,
-        role: 'core',
-        sourceFingerprint: 'a'.repeat(64),
-        corePluginsFingerprint: 'f'.repeat(64),
-        managedBundles: expect.arrayContaining([
-          '@deepseek-ai/dsh-experimental-voice-input-bundle',
-        ]),
-      })
-      await root.remove()
+  test.each([
+    'corePluginsFingerprint',
+    'managedPluginCopyVersion',
+    'managedBundles',
+    'managedDependencyNames',
+  ])('upgrades a legacy stamp without %s', async field => {
+    const root = await temporaryDirectory('core-dsh-legacy-stamp-')
+    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+    const dataDirectory = join(root.path, 'data')
+    const environment = {
+      PATH: '/usr/bin',
+      WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+      WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
+      WEWORK_NODE_PATH: '/managed/node',
     }
-  )
+    const launch = await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment,
+      port: 3080,
+    })
+    const stampPath = join(launch.dshHome, 'profiles', 'wework-core', '.wework-runtime.json')
+    const legacy = JSON.parse(await readFile(stampPath, 'utf8')) as Record<string, unknown>
+    delete legacy[field]
+    await writeFile(stampPath, JSON.stringify(legacy))
+
+    await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment,
+      port: 3081,
+    })
+
+    expect(JSON.parse(await readFile(stampPath, 'utf8'))).toEqual({
+      managedPluginCopyVersion: 1,
+      dshVersion: CORE_DSH_VERSION,
+      managedUiPlugins: true,
+      role: 'core',
+      sourceFingerprint: 'a'.repeat(64),
+      corePluginsFingerprint: 'f'.repeat(64),
+      managedDependencyNames: expect.arrayContaining(['@wegent/dsh-app-wework']),
+      managedBundles: expect.arrayContaining(['@deepseek-ai/dsh-experimental-voice-input-bundle']),
+    })
+    await root.remove()
+  })
 
   test.each([false, true])(
     'restores an official bundle with current stamp: %s',
@@ -727,6 +729,45 @@ describe('core DSH runtime', () => {
       join(runtime.root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
     )
     await root.remove()
+  })
+
+  test('removes newer managed plugins on rollback while retaining user plugins', async () => {
+    const root = await temporaryDirectory('core-dsh-rollback-profile-')
+    try {
+      const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+      const options = {
+        runtimeRoot: runtime.root,
+        dataDirectory: join(root.path, 'data'),
+        environment: { WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot },
+      }
+      const launch = await prepareCoreDshRuntime(options)
+      const profile = join(launch.dshHome, 'profiles', 'wework-core')
+      const manifestPath = join(profile, 'package.json')
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+      for (const name of ['future-managed-plugin', 'user-plugin']) {
+        manifest.dependencies[name] = '1.0.0'
+        manifest.dsh.profile.bundles.push(name)
+        await mkdir(join(profile, 'node_modules', name), { recursive: true })
+        await writeFile(
+          join(profile, 'node_modules', name, 'package.json'),
+          JSON.stringify({ name, version: '1.0.0' })
+        )
+      }
+      await writeFile(manifestPath, JSON.stringify(manifest))
+      const stampPath = join(profile, '.wework-runtime.json')
+      const stamp = JSON.parse(await readFile(stampPath, 'utf8'))
+      stamp.managedDependencyNames.push('future-managed-plugin')
+      stamp.managedBundles.push('future-managed-plugin')
+      await writeFile(stampPath, JSON.stringify(stamp))
+      await prepareCoreDshRuntime(options)
+      const restored = JSON.parse(await readFile(manifestPath, 'utf8'))
+      expect(restored.dependencies['future-managed-plugin']).toBeUndefined()
+      expect(restored.dsh.profile.bundles).not.toContain('future-managed-plugin')
+      expect(restored.dependencies['user-plugin']).toBe('1.0.0')
+      expect(restored.dsh.profile.bundles).toContain('user-plugin')
+    } finally {
+      await root.remove()
+    }
   })
 
   test('preserves manually installed plugins and their build permissions', async () => {

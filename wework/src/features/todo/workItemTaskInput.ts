@@ -1,5 +1,5 @@
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import { persistIssueDetailFields, type SharedWorkspaceApi } from '@wegent/collaboration'
 
 export function workItemComposerReference(
   project: Pick<CloudProject, 'id' | 'project_key'>,
@@ -39,24 +39,10 @@ export async function updateIssueWhenPersonalTaskStarts(
   issueId: string
 ): Promise<string | null> {
   try {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const latestIssue = await issues.get(issueId)
-      const startUpdate = workItemStartedUpdate(latestIssue, latestIssue.tags)
-      if (!startUpdate) return null
-      try {
-        await issues.update(latestIssue.id, startUpdate)
-        return null
-      } catch (error) {
-        if (
-          attempt !== 0 ||
-          !(error instanceof Error) ||
-          !('status' in error) ||
-          error.status !== 409
-        )
-          throw error
-        // Delivery may advance the version while the task starts. Re-read its
-        // current state rather than replaying a stale status or tag payload.
-      }
+    const latestIssue = await issues.get(issueId)
+    const startUpdate = workItemStartedUpdate(latestIssue, latestIssue.tags)
+    if (startUpdate) {
+      await persistIssueDetailFields(latestIssue, { status: startUpdate.status }, issues)
     }
     return null
   } catch (error) {

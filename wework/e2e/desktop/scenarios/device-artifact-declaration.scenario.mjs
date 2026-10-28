@@ -58,7 +58,7 @@ export function createDesktopScenario({ captureScreenshot, workbenchReadyTimeout
         assert.equal(toolRequested, false, 'The artifact generation tool was requested twice')
         toolRequested = true
         const seed = `const fs=require('fs'),p=require('path'),root=process.env.WEGENT_TASK_WORKSPACE;if(!root||!process.env.WEGENT_BACKEND_TASK_ID)throw Error('Missing associated Backend Task');fs.mkdirSync(root,{recursive:true});fs.writeFileSync(p.join(root,'report.md'),${JSON.stringify(CONTENT)});`
-        const declare = `${seed}require('child_process').execFileSync(process.env.WEGENT_EXECUTOR_BINARY,['artifact','declare','--path','report.md'],{stdio:'inherit'});process.stdout.write(['WEWORK_ARTIFACT_DECLARED','report.md'].join(' ')+'\\n');`
+        const declare = `${seed}require('child_process').execFileSync(process.env.WEGENT_EXECUTOR_BINARY,['artifact','declare','--path','report.md'],{cwd:root,stdio:'inherit'});process.stdout.write(['WEWORK_ARTIFACT_DECLARED','report.md'].join(' ')+'\\n');`
         const encoded = Buffer.from(declare).toString('base64')
         const command = `node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`
         if (requestAdvertisesProgrammaticExec(body)) {
@@ -76,6 +76,14 @@ export function createDesktopScenario({ captureScreenshot, workbenchReadyTimeout
           events = functionCall('desktop-artifact-generate', tool.name, tool.arguments)
         }
       } else {
+        const outputs = body.input.filter(item =>
+          ['function_call_output', 'custom_tool_call_output'].includes(item.type)
+        )
+        assert.match(
+          JSON.stringify(outputs),
+          /\[WEGENT_ARTIFACT\]/,
+          `Real artifact declaration did not succeed: ${JSON.stringify(outputs).slice(0, 4000)}`
+        )
         assert.match(
           JSON.stringify(body.input),
           /WEWORK_ARTIFACT_DECLARED report\.md/,
