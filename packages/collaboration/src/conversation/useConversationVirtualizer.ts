@@ -41,9 +41,15 @@ export function useConversationVirtualizer({
 }: Options) {
   const [prefix, setPrefix] = useState(0)
   const readOffsetRef = useRef<((offset: number, scrolling: boolean) => void) | null>(null)
+  const [viewportReady, setViewportReady] = useState(
+    () => (scrollElementRef?.current?.clientHeight ?? 0) > 0
+  )
+  // A hidden pane has no scroll range and cannot establish an initial offset.
+  const enabled = options.enabled && viewportReady
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLElement>({
     ...options,
+    enabled,
     scrollMargin: prefix,
     paddingEnd: (options.paddingEnd ?? 0) + scrollTailHeight,
     getScrollElement: () => scrollElementRef?.current ?? null,
@@ -93,12 +99,12 @@ export function useConversationVirtualizer({
   })
 
   useLayoutEffect(() => {
-    if (virtualizerRef) virtualizerRef.current = options.enabled ? virtualizer : null
+    if (virtualizerRef) virtualizerRef.current = enabled ? virtualizer : null
     return () => {
       virtualizer.cancelScroll()
       if (virtualizerRef?.current === virtualizer) virtualizerRef.current = null
     }
-  }, [options.enabled, virtualizer, virtualizerRef])
+  }, [enabled, virtualizer, virtualizerRef])
 
   useEffect(() => {
     const list = listRef.current
@@ -111,6 +117,7 @@ export function useConversationVirtualizer({
         Math.round(rect.top - viewport.getBoundingClientRect().top + viewport.scrollTop)
       )
       setPrefix(prefix)
+      setViewportReady(ready => ready || viewport.clientHeight > 0)
     }
     update()
     const observer = new ResizeObserver(update)
