@@ -233,11 +233,9 @@ export function mergeRuntimeConversationItems(
   snapshotItems: RuntimeConversationItem[],
   preserveLocalTerminal = false,
 ): RuntimeConversationItem[] {
-  const positionedIds = new Set(
-    snapshotItems
-      .filter((item) => item.position !== undefined)
-      .map((item) => item.id),
-  );
+  const hasNativePositions =
+    localItems.some((item) => item.position !== undefined) ||
+    snapshotItems.some((item) => item.position !== undefined);
   const snapshotUserIds = new Map(
     snapshotItems.flatMap((item) =>
       item.type === "user_message" ? [[item.message.id, item.id] as const] : [],
@@ -248,10 +246,9 @@ export function mergeRuntimeConversationItems(
       item.type === "user_message" ? [[item.message.id, item] as const] : [],
     ),
   );
-  const reconciledLocalItems =
-    positionedIds.size > 0
-      ? localItems
-      : removeEquivalentAssistantTextItems(localItems, snapshotItems);
+  const reconciledLocalItems = hasNativePositions
+    ? localItems
+    : removeEquivalentAssistantTextItems(localItems, snapshotItems);
   const canonicalLocalItems = reconciledLocalItems.filter(
     (item) =>
       item.type !== "user_message" ||
@@ -299,13 +296,18 @@ function observedNativePositionAnchors<
   const anchors = new Map<string, number>();
   // Only original source sequences witness adjacency, never the merged union.
   for (const source of sources) {
+    const hasNativeBoundary = source.some(
+      (entry) => entry.id !== null && positions.has(entry.id),
+    );
     let nextPosition = Infinity;
     for (let index = source.length - 1; index >= 0; index--) {
       const id = source[index].id;
       if (id === null) continue;
       const position = positions.get(id);
       if (position !== undefined) nextPosition = position;
-      else if (nextPosition !== Infinity || !anchors.has(id))
+      // A later source can explicitly observe output after its last native
+      // boundary. Preserve that trailing placement instead of an older gap.
+      else if (hasNativeBoundary || !anchors.has(id))
         anchors.set(id, nextPosition);
     }
   }

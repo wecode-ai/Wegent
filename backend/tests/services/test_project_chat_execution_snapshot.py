@@ -425,6 +425,93 @@ def test_device_final_content_after_managed_snapshot(
         assert row.content == reconciled["content"]
 
 
+@pytest.mark.parametrize(
+    "mismatch",
+    [None, "turn", "execution", "failed", "cancelled", "sequence", "missing_turn"],
+)
+def test_final_content_after_runtime_status_reconciliation(
+    test_db, test_user, run, monkeypatch, mismatch
+):
+    from app.api.ws.device_namespace import _project_chat_runtime_event_sync
+    from app.models.delivery import ProjectChatAgent
+    from app.models.loop_item_execution import LoopItemExecution
+    from app.services.loop_item_executions.service import loop_item_execution_service
+
+    project, task, row = run
+    test_db.get(ProjectChatAgent, "12").created_by_user_id = test_user.id
+    monkeypatch.setattr(
+        "app.services.loop_item_executions.service.notify_execution_lifecycle",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.project_chat.push.push_project_chat_message",
+        lambda *args, **kwargs: None,
+    )
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        execution_environment="cloud",
+        execution_device_id="snapshot-device",
+        runtime_device_id="snapshot-device",
+        runtime_task_id="runtime-1",
+        status="running",
+        last_event_seq=10,
+    )
+    test_db.add(execution)
+    test_db.flush()
+    row.metadata_json = {
+        **row.metadata_json,
+        "execution_id": execution.id,
+        **({"runtime_turn_id": "turn-1"} if mismatch != "missing_turn" else {}),
+    }
+    test_db.commit()
+    loop_item_execution_service.reconcile_runtime_snapshot(
+        test_db, execution_id=execution.id, runtime_status="completed", running=False
+    )
+    if mismatch in {"failed", "cancelled"}:
+        execution.status = mismatch
+    elif mismatch == "execution":
+        row.metadata_json = {**row.metadata_json, "execution_id": execution.id + 1}
+    test_db.commit()
+    previous = (execution.version, task.version, row.content)
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr("app.api.ws.device_namespace.get_db_session", same_session)
+    with patch.object(project_chat_service, "_advance_task_to_review") as advance:
+        projected = _project_chat_runtime_event_sync(
+            "snapshot-device",
+            {
+                "event": "response.completed",
+                "payload": {
+                    "taskId": "runtime-1",
+                    "subtaskId": "wrong-turn" if mismatch == "turn" else "turn-1",
+                    "eventSeq": 10 if mismatch == "sequence" else 12,
+                    "data": {"value": "Complete answer from the real Runtime"},
+                },
+            },
+            user_id=test_user.id,
+        )
+        advance.assert_not_called()
+    test_db.expire_all()
+    assert (execution.version, task.version) == previous[:2]
+    if mismatch is None:
+        assert (
+            projected["message"]["content"] == "Complete answer from the real Runtime"
+        )
+        assert row.content == "Complete answer from the real Runtime"
+        assert execution.status == row.status == "completed"
+        assert execution.last_event_seq == 12
+    else:
+        assert projected is None or projected["message"] is None
+        assert row.content == previous[2]
+        assert execution.last_event_seq == 10
+
+
 def test_conflicting_terminal_report_cannot_replace_durable_outcome(
     test_db, test_user, run
 ):
