@@ -15,6 +15,7 @@ import {
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
 const CALENDAR = scoped('[data-testid="collaboration-calendar"]')
+const GRID_DAYS = `${CALENDAR} [data-testid^="collaboration-calendar-day-"]`
 const NEXT_MONTH = `${CALENDAR} [data-testid="collaboration-schedule-next"]`
 const TIMEOUT_MS = 10_000
 
@@ -25,8 +26,8 @@ function localDate(key) {
   return new Date(year, month - 1, day, 12)
 }
 
-function calendarControl(today, unavailableDates = new Set()) {
-  let month = new Date(today.getFullYear(), today.getMonth(), 1)
+function calendarControl(today, unavailableDates = new Set(), displayedMonthOffset = 0) {
+  let month = new Date(today.getFullYear(), today.getMonth() + displayedMonthOffset, 1)
   const calls = []
   const visibleDates = () => new Set(calendarDays(month, true).map(localDateKey))
   return {
@@ -34,6 +35,10 @@ function calendarControl(today, unavailableDates = new Set()) {
     visibleDates,
     async command(action, selector, options) {
       calls.push({ action, selector, options })
+      if (action === 'waitFor' && selector === GRID_DAYS) {
+        assert.deepEqual(options, { visible: true, timeoutMs: TIMEOUT_MS })
+        return ''
+      }
       if (action === 'clickWhenEnabled' || action === 'click') {
         assert.equal(selector, NEXT_MONTH, 'Navigate through the visible calendar toolbar')
         month = new Date(month.getFullYear(), month.getMonth() + 1, 1)
@@ -90,7 +95,7 @@ test.each(cases)(
       nextMonthCount
     )
     const waitedDates = control.calls
-      .filter(({ action }) => action === 'waitFor')
+      .filter(({ action, selector }) => action === 'waitFor' && selector !== GRID_DAYS)
       .map(({ selector }) => selector.match(/day-(\d{4}-\d{2}-\d{2})/)?.[1])
     assert.deepEqual(new Set(waitedDates), new Set([initialStart, calendarStart]))
     assert.ok(control.visibleDates().has(initialStart))
@@ -217,13 +222,42 @@ test.each([
       '2027-01-06 → 2027-01-09',
     ],
   },
+  ...[
+    {
+      today: '2026-10-26T12:00:00',
+      target: '2026-11-02',
+      ranges: [
+        '2026-10-26 → 2026-10-28',
+        '2026-11-02 → 2026-11-04',
+        '2026-11-02 → 2026-11-05',
+        '2026-11-04 → 2026-11-07',
+      ],
+    },
+    {
+      today: '2026-12-28T12:00:00',
+      target: '2027-01-04',
+      ranges: [
+        '2026-12-28 → 2026-12-30',
+        '2027-01-04 → 2027-01-06',
+        '2027-01-04 → 2027-01-07',
+        '2027-01-06 → 2027-01-09',
+      ],
+    },
+  ].map(fixture => ({ ...fixture, navigationCount: 1, displayedMonthOffset: -1 })),
 ])('keeps the target date visible when scheduling from $today', async fixture => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date(fixture.today))
-  const calendar = calendarControl(new Date(fixture.today))
+  const calendar = calendarControl(
+    new Date(fixture.today),
+    new Set(),
+    fixture.displayedMonthOffset ?? 0
+  )
   let rangeIndex = 0
   const control = {
     async command(action, selector, options) {
+      if (selector.endsWith('[data-testid^="collaboration-calendar-day-"]')) {
+        return calendar.command(action, GRID_DAYS, options)
+      }
       if (
         (action === 'getElementCount' || action === 'waitFor') &&
         selector.includes('collaboration-calendar-day-')
@@ -257,10 +291,35 @@ test.each([
   )
   expect(calendar.visibleDates().has(fixture.target)).toBe(true)
   expect(
-    calendar.calls.filter(({ action }) => action === 'waitFor').map(({ selector }) => selector)
+    calendar.calls
+      .filter(({ action, selector }) => action === 'waitFor' && selector !== GRID_DAYS)
+      .map(({ selector }) => selector)
   ).toEqual([
     `${CALENDAR} [data-testid="collaboration-calendar-day-${fixture.ranges[0].split(' → ')[0]}"]`,
     `${CALENDAR} [data-testid="collaboration-calendar-day-${fixture.target}"]`,
   ])
   expect(rangeIndex).toBe(3)
+})
+
+test('waits for mounted calendar days before deciding whether to change months', async () => {
+  const today = localDate('2026-05-18')
+  const calendar = calendarControl(today)
+  let mounted = false
+  const control = {
+    async command(action, selector, options) {
+      if (action === 'getElementCount' && !mounted) return '0'
+      if (action === 'waitFor') mounted = true
+      return calendar.command(action, selector, options)
+    },
+  }
+
+  await ensureCalendarScheduleDatesVisible({
+    control,
+    scoped,
+    keys: collaborationScheduleDates(today),
+    timeoutMs: TIMEOUT_MS,
+  })
+
+  assert.equal(calendar.calls.filter(({ selector }) => selector === NEXT_MONTH).length, 0)
+  assert.equal(calendar.calls[0].selector, GRID_DAYS)
 })

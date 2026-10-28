@@ -669,7 +669,12 @@ export interface MultiAttachmentUploadState {
 }
 
 // Subtask Context Types (unified context system)
-export type ContextType = 'attachment' | 'knowledge_base' | 'external_knowledge' | 'conversation'
+export type ContextType =
+  | 'attachment'
+  | 'knowledge_base'
+  | 'external_knowledge'
+  | 'remote_workspace_artifact'
+  | 'conversation'
 export type ContextStatus = 'pending' | 'uploading' | 'parsing' | 'ready' | 'failed' | 'empty'
 
 export interface SubtaskContextBrief {
@@ -681,6 +686,11 @@ export interface SubtaskContextBrief {
   file_extension?: string | null
   file_size?: number | null
   mime_type?: string | null
+  // Remote workspace artifact fields (the file itself remains on the device)
+  remote_task_id?: number | null
+  remote_path?: string | null
+  modified_at?: number | null
+  sha256?: string | null
   // Knowledge base fields (from type_data)
   knowledge_id?: number | null
   document_count?: number | null

@@ -35,21 +35,21 @@ describe('runSmartAppProjectScripts', () => {
       )
       const pnpmEntry = process.env.npm_execpath
       if (!pnpmEntry) throw new Error('Run this regression through pnpm test')
-      const pnpmIsScript = /\.[cm]?js$/.test(pnpmEntry)
+      // npm_execpath can name either a JavaScript entry or a standalone executable.
+      const nodeEntry = /\.[cm]?js$/i.test(pnpmEntry)
       const result = await runSmartAppProjectScripts({
         ...options(root),
         scripts: { typecheck: 'check', test: 'check', build: 'check' },
         resolveCommand: async () => ({
-          command: pnpmIsScript ? process.execPath : pnpmEntry,
-          argsPrefix: [...(pnpmIsScript ? [pnpmEntry] : []), '--pm-on-fail=error'],
+          command: nodeEntry ? process.execPath : pnpmEntry,
+          argsPrefix: [...(nodeEntry ? [pnpmEntry] : []), '--pm-on-fail=error'],
           environment: { PATH: process.env.PATH, CI: 'true' },
         }),
       })
-      const failedScript = result.scripts.find(script => script.status === 'failed')
-      const failureLog = failedScript
-        ? await readFile(join(root, failedScript.logPath), 'utf8')
-        : undefined
-      expect(result.issues, failureLog).toEqual([])
+      const logs = await Promise.all(
+        result.scripts.map(script => readFile(join(root, script.logPath), 'utf8'))
+      )
+      expect(result.issues, JSON.stringify({ node: process.execPath, pnpmEntry, logs })).toEqual([])
       expect(result.scripts.map(script => script.status)).toEqual(['passed', 'passed', 'passed'])
       await expect(readFile(join(host, 'pnpm-lock.yaml'))).rejects.toMatchObject({ code: 'ENOENT' })
     },

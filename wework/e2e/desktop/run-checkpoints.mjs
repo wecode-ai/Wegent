@@ -31,6 +31,8 @@ const CHECKPOINT_RESOURCES = new Map([
   ['project-assignment-notification', ['macos-inspector-foreground']],
 ])
 const CHECKPOINT_SCENARIO_MODULES = {
+  'collaboration-home-preload': './scenarios/collaboration-home-preload.scenario.mjs',
+  'device-artifact-declaration': './scenarios/device-artifact-declaration.scenario.mjs',
   'mcp-apps': './scenarios/mcp-apps.scenario.mjs',
   'notification-tab-navigation': './scenarios/notification-tab-navigation.scenario.mjs',
   'voice-input': './scenarios/voice-input.scenario.mjs',
@@ -195,6 +197,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'dsh-owner-capture': './scenarios/dsh-owner-capture.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'collaboration-home-preload',
+  'device-artifact-declaration',
   'mcp-apps',
   'notification-tab-navigation',
   'voice-input',
@@ -354,6 +358,7 @@ const COMPOSITE_CHECKPOINTS = DESKTOP_CHECKPOINT_GROUPS
 // renderer. Run them alone so Chromium's network service stays stable on the
 // four-vCPU desktop E2E runners.
 const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
+  'background-terminals',
   'release-package-startup',
   'collaboration-issue-task-discovery',
 ])

@@ -166,6 +166,32 @@ describe('PluginAutoUpdateCoordinator', () => {
     await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledTimes(2))
   })
 
+  test('preserves release events received while an update pass is finishing', async () => {
+    const emptyBatch = { updated: [], updatedCount: 0, remainingCount: 0 }
+    let finishFirstBatch!: () => void
+    const firstBatch = new Promise<typeof emptyBatch>(resolve => {
+      finishFirstBatch = () => resolve(emptyBatch)
+    })
+    mocks.autoUpdateInstalledPlugins
+      .mockResolvedValue(emptyBatch)
+      .mockImplementationOnce(() => firstBatch)
+
+    render(<PluginAutoUpdateCoordinator />)
+    await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledOnce())
+
+    await act(async () => {
+      for (const releaseId of [5, 6]) {
+        emit(PLUGIN_RELEASE_AVAILABLE_EVENT, { pluginId: 2, releaseId, version: '2.1.0' })
+      }
+    })
+    expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledOnce()
+
+    await act(async () => finishFirstBatch())
+
+    await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledTimes(2))
+    expect(mocks.syncInstalledPluginToDevice).not.toHaveBeenCalled()
+  })
+
   test('drains a retryable device failure through the existing failure limit path', async () => {
     mocks.autoUpdateInstalledPlugins
       .mockResolvedValueOnce({
