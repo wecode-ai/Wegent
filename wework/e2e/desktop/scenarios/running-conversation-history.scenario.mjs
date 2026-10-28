@@ -1,3 +1,7 @@
+import {
+  waitForTranscriptState,
+  waitForRestoredTranscript,
+} from '../modules/transcript-restoration.mjs'
 import { readRawRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
@@ -341,19 +345,6 @@ async function waitForLongHistoryHydration(control, timeoutMs) {
   throw new Error(
     `Timed out waiting for the long running transcript to hydrate: expected=${LONG_HISTORY_ITEM_COUNT}, observed=${displayItemCount}, elapsedMs=${Date.now() - startedAt}, snapshot=${JSON.stringify(latestSnapshot)}`
   )
-}
-
-async function waitForTranscriptState(control, predicate, description, timeoutMs, recordSample) {
-  const startedAt = Date.now()
-  let latest = null
-  while (Date.now() - startedAt < timeoutMs) {
-    latest = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    const matched = predicate(latest)
-    await recordSample?.({ matched, snapshot: latest })
-    if (matched) return latest
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  throw new Error(`${description}: ${JSON.stringify(latest?.pane?.transcript ?? null)}`)
 }
 
 function transcriptRaceRecorder(resultDir) {
@@ -944,12 +935,9 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', `[data-testid="${pagedRowId}"]`)
-      const restored = await waitForTranscriptState(
+      const restored = await waitForRestoredTranscript(
         control,
-        snapshot =>
-          snapshot.workbench?.currentRuntimeTask?.taskId === pagedTaskId &&
-          snapshot.pane?.transcript?.loading === false,
-        'The paginated conversation did not finish restoration',
+        pagedTaskId,
         WORKBENCH_READY_TIMEOUT_MS
       )
       assert.equal(restored.pane.transcript.hasMoreBefore, true)
@@ -975,6 +963,8 @@ export function createDesktopScenario({
       await reloadWorkbench(control)
       await control.command('waitFor', `[data-testid="${pagedRowId}"]`)
       await control.command('click', `[data-testid="${pagedRowId}"]`)
+      // Task-index readiness does not include the deliberately delayed transcript read.
+      await waitForRestoredTranscript(control, pagedTaskId, WORKBENCH_READY_TIMEOUT_MS)
       await control.command('waitFor', loadOlder)
       const originalSearchPane = JSON.parse(
         await control.command('getWorkbenchDebugSnapshot', 'body')
