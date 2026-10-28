@@ -16,6 +16,8 @@ sidebar_position: 1
 
 新增 30 个业务工具以及 `list_capabilities`、`describe_capability`、`invoke_capability` 三个发现/调用工具。工具目录来自同一份输入契约；普通 Codex、Claude 会话及个人安排自动接入，不需要用户另配 MCP 或个人 API Key。
 
+云端绑定会话的读取校验复用 `/runtime-work/transcript`，按其契约传递顶层 `deviceId`、`taskId` 和 `workspacePath`。列表及搜索通过 `coverage.unavailable_reasons` 区分后端参数错误、权限拒绝、连接异常和校验超时；结果不完整时不能推断会话不存在。回归覆盖严格请求解析、中文标题搜索，以及有权和无权会话同时命中的情况；既有 `workbench-control` CI checkpoint 增加真实云端创建与搜索链路。
+
 | 已接入领域 | 实际行为                                                                                                                                            |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 会话       | 当前设备的列表、分页、搜索、安全元数据及原生历史读取；创建、续聊、重命名、归档、取消与 guidance                                                     |

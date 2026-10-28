@@ -18,6 +18,8 @@ const PR = 'https://github.com/synthetic/control-e2e/pull/43'
 const SOURCE = `WEWORK_CONTROL_SOURCE_E2E: this conversation owns ${PR}`
 const CONTROLLER = 'WEWORK_CONTROL_CONTROLLER_E2E'
 const CREATED = 'WEWORK_CONTROL_CREATED_E2E'
+const CLOUD_CREATED = 'WEWORK_CONTROL_CLOUD_CREATED_E2E'
+const CLOUD_TITLE = '发个评论帮我@control-e2e CONTROL_CLOUD_E2E'
 const FOLLOW_UP =
   'WEWORK_CONTROL_CI_FAILED_E2E: PR checks failed; handle this in the original conversation.'
 
@@ -57,6 +59,10 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   let automationId
   let createdId
   let createdTaskId
+  let cloudCreatedId
+  let cloudCreatedTaskId
+  let cloud
+  let cloudProject
   let stage = 0
   let followUpRequests = 0
   let failure
@@ -177,9 +183,66 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         assert.equal(conversation?.model_selection.options.collaborationMode, 'plan')
       },
     ],
+    [
+      'create_conversation',
+      () => ({
+        message: CLOUD_CREATED,
+        title: CLOUD_TITLE,
+        project_space: { space_id: String(cloudProject.id), store: 'cloud' },
+      }),
+      value => {
+        const created = findValue(value, item => item.accepted === true && item.conversation_id)
+        assert.ok(created)
+        cloudCreatedId = created.conversation_id
+        cloudCreatedTaskId = created.taskId
+      },
+    ],
+    [
+      'search_conversations',
+      () => ({ query: CLOUD_TITLE }),
+      value => {
+        assert.ok(findValue(value, item => item.conversation_id === cloudCreatedId))
+        const coverage = findValue(value, item => item.scope === 'owning_device')
+        assert.equal(coverage?.unavailable_count, 0)
+      },
+    ],
+    [
+      'list_conversations',
+      () => ({ limit: 100 }),
+      value => {
+        assert.ok(findValue(value, item => item.conversation_id === cloudCreatedId))
+        const coverage = findValue(value, item => item.scope === 'owning_device')
+        assert.equal(coverage?.authorized_index_complete, true)
+      },
+    ],
   ]
 
   return {
+    requiresCloudEnvironment: true,
+    async prepareCloud(environment) {
+      cloud = environment
+      const request = async (path, body) => {
+        const response = await fetch(`${cloud.backendUrl}${path}`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${cloud.authToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(uiTimeoutMs),
+        })
+        assert.ok(response.ok, `${path}: ${response.status} ${await response.clone().text()}`)
+        return response.json()
+      }
+      await request('/api/admin/setup-complete', {})
+      const workspace = await request('/api/v1/workspaces', { name: `Control ${process.pid}` })
+      cloudProject = await request('/api/v1/cloud-projects', {
+        workspace_id: workspace.id,
+        name: `Control ${process.pid}`,
+        task_provider: 'local',
+        visibility: 'private',
+      })
+    },
     async handleHttp(request, response, url) {
       if (
         !active ||
@@ -214,6 +277,8 @@ export function createDesktopScenario({ uiTimeoutMs }) {
                   }).events,
                   responseCompleted(id),
                 ]
+        } else if (serialized.includes(CLOUD_CREATED)) {
+          events = [assistantMessage('WEWORK_CONTROL_CLOUD_READY'), responseCompleted(id)]
         } else if (serialized.includes(CREATED)) {
           events = [assistantMessage('WEWORK_CONTROL_CREATED_READY'), responseCompleted(id)]
         } else if (serialized.includes(FOLLOW_UP)) {
@@ -277,6 +342,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       return {
         sourceTaskId,
         createdTaskId,
+        cloudCreatedTaskId,
         stage,
         observed,
         followUpRequests,

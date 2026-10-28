@@ -681,16 +681,20 @@ async fn cloud_mutations_use_the_authorized_backend_and_preserve_deployment_pref
     let app = Router::new()
         .route(
             "/deployed/api/runtime-work/transcript",
-            post(move || {
-                let parallel = parallel.clone();
-                let barrier = barrier.clone();
-                async move {
-                    if parallel.load(Ordering::SeqCst) {
-                        barrier.wait().await;
+            post(
+                move |Json(address): Json<crate::task_runtime::RuntimeTaskAddress>| {
+                    assert_eq!(address.device_id, "control-test-device");
+                    assert!(address.task_id.starts_with("cloud-"));
+                    let parallel = parallel.clone();
+                    let barrier = barrier.clone();
+                    async move {
+                        if parallel.load(Ordering::SeqCst) {
+                            barrier.wait().await;
+                        }
+                        Json(json!({"messages":[]}))
                     }
-                    Json(json!({"messages":[]}))
-                }
-            }),
+                },
+            ),
         )
         .route(
             "/deployed/api/runtime-work/rename",
@@ -731,7 +735,7 @@ async fn cloud_mutations_use_the_authorized_backend_and_preserve_deployment_pref
         )
         .await
         .unwrap_err();
-    assert_eq!(error.code, "permission_or_backend_error");
+    assert_eq!(error.code, "permission_denied");
     assert!(!error.message.contains("synthetic-session-token"));
     assert_eq!(
         handler.store.get_task("cloud-target").unwrap().title,
@@ -761,6 +765,105 @@ async fn cloud_mutations_use_the_authorized_backend_and_preserve_deployment_pref
     .await
     .expect("Independent cloud permission checks must run concurrently");
     assert_eq!(authorized.len(), 5);
-    assert_eq!(unavailable, 0);
+    assert!(unavailable.is_empty());
+    server.abort();
+}
+
+#[tokio::test]
+async fn cloud_conversation_search_preserves_visible_titles_and_reports_failed_checks() {
+    use axum::{http::StatusCode, routing::post, Json, Router};
+    let _guard = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _env = EnvGuard::home(root.path().to_str().unwrap());
+    let _sidebar = EnvGuard::set("CODEX_HOME", root.path().to_str().unwrap());
+    let _native = EnvGuard::set("WEGENT_CODEX_HOME", root.path().to_str().unwrap());
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", "");
+    let _domain = EnvGuard::set("TASK_API_DOMAIN", "");
+    let invalid = Arc::new(AtomicBool::new(false));
+    let validation_error = invalid.clone();
+    let app = Router::new().route(
+        "/api/runtime-work/transcript",
+        post(
+            move |Json(address): Json<crate::task_runtime::RuntimeTaskAddress>| {
+                let invalid = validation_error.load(Ordering::SeqCst);
+                async move {
+                    assert_eq!(address.device_id, "control-test-device");
+                    let status = if address.task_id == "cloud-denied" {
+                        StatusCode::FORBIDDEN
+                    } else if invalid {
+                        StatusCode::UNPROCESSABLE_ENTITY
+                    } else {
+                        StatusCode::OK
+                    };
+                    (status, Json(json!({"messages":[]})))
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+    handler.codex_app_server =
+        CodexAppServerClient::isolated_for_test("/bin/false", root.path().join("native-home"));
+    let mut caller = seed(&handler, "caller");
+    caller.thread_id = None;
+    handler.store.upsert_task(caller);
+    let title = "发个评论帮我@control-e2e";
+    for task in ["cloud-visible", "cloud-denied"] {
+        let mut link = seed(&handler, task);
+        link.title = title.into();
+        link.runtime_handle["cloudProjectId"] = json!("project");
+        handler.store.upsert_task(link);
+    }
+    let mut ctx = context("caller");
+    ctx.request.backend_url = Some(url);
+    ctx.request.auth_token = Some("synthetic-session-token".into());
+    let visible_id = workbench_control::conversation_id("control-test-device", "cloud-visible");
+    let search = || json!({"query":title});
+    let result = handler
+        .control_operation(&ctx, "search_conversations", search())
+        .await
+        .unwrap();
+    assert_eq!(result["items"].as_array().unwrap().len(), 1);
+    assert_eq!(result["items"][0]["conversation_id"], visible_id);
+    assert_eq!(
+        result["coverage"]["unavailable_reasons"]["permission_denied"],
+        1
+    );
+    let listed = handler
+        .control_operation(&ctx, "list_conversations", json!({"limit":100}))
+        .await
+        .unwrap();
+    assert!(listed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["conversation_id"] == visible_id));
+    assert_eq!(listed["coverage"]["unavailable_count"], 1);
+    assert_eq!(listed["coverage"]["authorized_index_complete"], false);
+
+    invalid.store(true, Ordering::SeqCst);
+    let failed = handler
+        .control_operation(&ctx, "search_conversations", search())
+        .await
+        .unwrap();
+    assert!(failed["items"].as_array().unwrap().is_empty());
+    assert_eq!(failed["coverage"]["unavailable_count"], 2);
+    assert_eq!(
+        failed["coverage"]["unavailable_reasons"],
+        json!({"permission_denied":1,"backend_validation_error":1})
+    );
+    ctx.request.auth_token = None;
+    let disconnected = handler
+        .control_operation(&ctx, "search_conversations", search())
+        .await
+        .unwrap();
+    assert!(disconnected["items"].as_array().unwrap().is_empty());
+    assert_eq!(
+        disconnected["coverage"]["unavailable_reasons"]["cloud_unavailable"],
+        2
+    );
+    assert!(!disconnected.to_string().contains("synthetic-session-token"));
     server.abort();
 }

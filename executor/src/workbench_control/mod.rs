@@ -21,6 +21,7 @@ pub(crate) const INSTRUCTIONS: &str = concat!(
     "- Use wework_control for Wework conversation discovery, native history, cross-conversation continuation, confirmed PR bindings and personal schedules. Discovery and continuation cover the owning device.\n",
     "- Use get_conversation_creation_options before choosing creation settings. create_conversation accepts composer options and an explicit target device/model; remote creation uses existing Backend device policy. Never treat remote creation as remote history or continuation support.\n",
     "- Read get_current_context and discover capabilities when needed. Continue the exact conversation_id returned by the tools. Use a stable request_key per user instruction or CI failure (repository, PR, head SHA, run ID and attempt). Check get_operation after delivery; accepted is not completed.\n",
+    "- Inspect coverage.unavailable_reasons in conversation search and listings. Failed checks can mean invalid Backend requests, connectivity or permission errors, or timeouts; incomplete results do not prove a conversation is absent.\n",
     "- Use wework_space for project-space operations and existing GitHub tools for CI checks. Delegated project runs cannot acquire personal control. Do not use personal API keys, direct storage reads or UI clicks to bypass a control permission error."
 );
 

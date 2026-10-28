@@ -16,6 +16,8 @@ Updated again to `66e6e3e8a9fe94cf405960e12740cf56c1f9e704` on 2026-10-28, prese
 
 The Executor now exposes 30 application tools plus `list_capabilities`, `describe_capability` and `invoke_capability`. Personal Codex/Claude conversations and personal scheduled runs receive the managed MCP automatically, without a separate MCP setup or personal API key.
 
+Cloud-bound conversation checks reuse `/runtime-work/transcript` with its top-level `deviceId`, `taskId` and `workspacePath` fields. Listings and searches expose `coverage.unavailable_reasons` to distinguish invalid Backend requests, denied access, connectivity failures and authorization timeouts; incomplete results do not establish that a conversation is absent. Regressions cover strict request parsing, Chinese title search and mixed allowed/denied matches. The existing `workbench-control` CI checkpoint also covers creation and discovery through the real cloud Backend.
+
 Implemented operations cover owning-device conversation listing, pagination, search, safe metadata, native history, creation, continuation, rename, archive, cancellation and guidance; goals/supervisors can be read or cleared. Explicit PR/MR bindings are persisted on the Runtime and resolve as unique, missing or ambiguous. Schedule CRUD, version checks, enable/disable, immediate runs and run history reuse the existing scheduler. Five minutes is `{"type":"interval","value":5,"unit":"minutes"}`.
 
 ```mermaid

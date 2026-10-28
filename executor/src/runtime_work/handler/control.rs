@@ -3,6 +3,7 @@ use super::*;
 use crate::workbench_control::{self, ControlContext, ControlService};
 use futures_util::{stream, StreamExt};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 mod execution;
 mod new_conversation;
@@ -52,7 +53,8 @@ impl RuntimeWorkRpcHandler {
                     })
                     .filter(|link| !self.archived_link_is_deleted(link))
                     .collect();
-                let (authorized, _) = self.control_authorized_links(context, links).await;
+                let (authorized, mut unavailable_reasons) =
+                    self.control_authorized_links(context, links).await;
                 let authorized: HashSet<_> = authorized
                     .into_iter()
                     .map(|link| link.local_task_id)
@@ -70,8 +72,16 @@ impl RuntimeWorkRpcHandler {
                     }
                     visible.push(item);
                 }
+                let unavailable_count = total.saturating_sub(visible.len());
+                let classified: usize = unavailable_reasons.values().sum();
+                if unavailable_count > classified {
+                    unavailable_reasons.insert(
+                        "conversation_unavailable".into(),
+                        unavailable_count - classified,
+                    );
+                }
                 result["items"] = json!(visible);
-                result["coverage"] = json!({"scope":"owning_device","unavailable_count":total.saturating_sub(visible.len())});
+                result["coverage"] = json!({"scope":"owning_device","unavailable_count":unavailable_count,"unavailable_reasons":unavailable_reasons});
                 add_conversation_ids(&mut result, &self.device_id);
                 Ok(result)
             }
@@ -160,10 +170,9 @@ impl RuntimeWorkRpcHandler {
             self.control_backend(
                 context,
                 "/runtime-work/transcript",
-                json!({"address": {
+                json!({
                 "deviceId": self.device_id, "taskId": link.local_task_id,
-                "workspacePath":link.workspace_path,"runtime":link.runtime,
-            },"limit":1}),
+                "workspacePath":link.workspace_path,"limit":1}),
             )
             .await?;
         }
@@ -224,12 +233,27 @@ impl RuntimeWorkRpcHandler {
             .await
             .map_err(|_| AppIpcError::new("cloud_unavailable", "Wework backend request failed"))?;
         if !response.status().is_success() {
+            let code = if response.status().is_client_error() && path == "/runtime-work/create" {
+                "backend_request_rejected"
+            } else if response.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY {
+                "backend_validation_error"
+            } else if matches!(response.status().as_u16(), 401 | 403 | 404) {
+                "permission_denied"
+            } else if response.status().is_server_error() {
+                "backend_unavailable"
+            } else {
+                "backend_request_rejected"
+            };
+            log_executor_event(
+                "Wework control backend request failed",
+                &[
+                    ("path", path.to_owned()),
+                    ("http_status", response.status().as_u16().to_string()),
+                    ("code", code.to_owned()),
+                ],
+            );
             return Err(AppIpcError::new(
-                if response.status().is_client_error() && path == "/runtime-work/create" {
-                    "backend_request_rejected"
-                } else {
-                    "permission_or_backend_error"
-                },
+                code,
                 format!("Wework request returned {}", response.status()),
             ));
         }
@@ -266,7 +290,8 @@ impl RuntimeWorkRpcHandler {
                     .as_str()
                     .map_or(true, |key| link.runtime_project_key.as_deref() == Some(key))
         });
-        let (mut links, unavailable) = self.control_authorized_links(context, links).await;
+        let (mut links, unavailable_reasons) = self.control_authorized_links(context, links).await;
+        let unavailable: usize = unavailable_reasons.values().sum();
         links.sort_by(|a, b| {
             b.updated_at
                 .cmp(&a.updated_at)
@@ -292,7 +317,7 @@ impl RuntimeWorkRpcHandler {
             .collect();
         Ok(
             json!({"items":items,"has_more":has_more,"next_cursor":if has_more {items.last().map(|i| i["conversation_id"].clone())} else {None},
-            "coverage":{"device_id":self.device_id,"scope":"owning_device","unavailable_count":unavailable,"authorized_index_complete":unavailable == 0,"native_discovery":"same_as_runtime_ui"}}),
+            "coverage":{"device_id":self.device_id,"scope":"owning_device","unavailable_count":unavailable,"unavailable_reasons":unavailable_reasons,"authorized_index_complete":unavailable == 0,"native_discovery":"same_as_runtime_ui"}}),
         )
     }
 
@@ -300,24 +325,30 @@ impl RuntimeWorkRpcHandler {
         &self,
         context: &ControlContext,
         links: Vec<RuntimeTaskLink>,
-    ) -> (Vec<RuntimeTaskLink>, usize) {
+    ) -> (Vec<RuntimeTaskLink>, BTreeMap<String, usize>) {
         let total = links.len();
         let (mut authorized, cloud): (Vec<_>, Vec<_>) =
             links.into_iter().partition(|link| !cloud_bound(link));
         let mut checks = stream::iter(cloud.into_iter().map(|link| async move {
-            let allowed = self.authorize_control_target(context, &link).await.is_ok();
-            (link, allowed)
+            let result = self.authorize_control_target(context, &link).await;
+            (link, result)
         }))
         .buffer_unordered(8);
+        let mut unavailable_reasons = BTreeMap::new();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-        while let Ok(Some((link, allowed))) = tokio::time::timeout_at(deadline, checks.next()).await
+        while let Ok(Some((link, result))) = tokio::time::timeout_at(deadline, checks.next()).await
         {
-            if allowed {
-                authorized.push(link);
+            match result {
+                Ok(()) => authorized.push(link),
+                Err(error) => *unavailable_reasons.entry(error.code).or_insert(0) += 1,
             }
         }
-        let unavailable = total - authorized.len();
-        (authorized, unavailable)
+        let unavailable: usize = unavailable_reasons.values().sum();
+        let timed_out = total - authorized.len() - unavailable;
+        if timed_out > 0 {
+            unavailable_reasons.insert("authorization_timeout".into(), timed_out);
+        }
+        (authorized, unavailable_reasons)
     }
 
     fn control_task_view(&self, mut link: RuntimeTaskLink) -> Value {
