@@ -1,8 +1,48 @@
 import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises'
+import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test, expect, vi, onTestFinished } from 'vitest'
 import { watchDevelopmentBuild } from './lib/development-build-watch.mjs'
+
+vi.mock('node:fs', async importOriginal => {
+  const actual = await importOriginal()
+  return { ...actual, watch: vi.fn(actual.watch) }
+})
+
+test('rebuilds input edits reported only as a directory-self notification', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'development-build-self-'))
+  const source = path.join(root, 'entry.js')
+  await writeFile(source, 'one')
+  let notify
+  const close = vi.fn()
+  vi.mocked(fs.watch).mockImplementationOnce((_directory, _options, callback) => {
+    notify = callback
+    return { on: vi.fn(), close }
+  })
+  let published
+  const onError = vi.fn()
+  const build = vi.fn(async () => {
+    published = await readFile(source, 'utf8')
+  })
+  const watcher = await watchDevelopmentBuild({
+    directories: [root],
+    files: [],
+    build,
+    onError,
+    debounceMs: 20,
+  })
+  onTestFinished(async () => {
+    await watcher.close()
+    await rm(root, { recursive: true, force: true })
+  })
+  expect(published).toBe('one')
+  await writeFile(source, 'two')
+  notify('rename', path.basename(root))
+  await expect.poll(() => published).toBe('two')
+  expect(build).toHaveBeenCalledTimes(2)
+  expect(onError).not.toHaveBeenCalled()
+})
 
 test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules/checkout'])(
   'builds changes under %s, recovers from failure, and ignores output',
