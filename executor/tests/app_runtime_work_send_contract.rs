@@ -41,17 +41,39 @@ mod runtime_capability_startup;
 mod runtime_temporary_chat_persistence;
 
 struct EnvLockGuard {
+    // Restore the environment before deleting fixtures and releasing the lock.
+    _environment: Vec<EnvGuard>,
+    _root: tempfile::TempDir,
     _guard: OwnedMutexGuard<()>,
 }
 
 async fn env_lock() -> EnvLockGuard {
     static LOCK: OnceLock<Arc<AsyncMutex<()>>> = OnceLock::new();
+    let guard = LOCK
+        .get_or_init(|| Arc::new(AsyncMutex::new(())))
+        .clone()
+        .lock_owned()
+        .await;
+    let root = tempfile::tempdir().unwrap();
+    let mut environment = Vec::new();
+    for (key, directory) in [
+        ("HOME", "home"),
+        ("CODEX_HOME", "codex"),
+        ("WEGENT_EXECUTOR_HOME", "executor"),
+        ("WEGENT_WORKBENCH_HOME", "workbench"),
+        ("WEGENT_CAPABILITIES_HOME", "capabilities"),
+    ] {
+        let path = root.path().join(directory);
+        fs::create_dir_all(&path).unwrap();
+        environment.push(EnvGuard::set(key, path.to_str().unwrap()));
+    }
+    environment.push(EnvGuard::remove("WEGENT_CODEX_HOME"));
+    environment.push(EnvGuard::remove("CODEX_SQLITE_HOME"));
+    environment.push(EnvGuard::set("WEWORK_CODEX_SUBSCRIPTION_ENABLED", "false"));
     EnvLockGuard {
-        _guard: LOCK
-            .get_or_init(|| Arc::new(AsyncMutex::new(())))
-            .clone()
-            .lock_owned()
-            .await,
+        _environment: environment,
+        _root: root,
+        _guard: guard,
     }
 }
 
@@ -61,6 +83,12 @@ struct EnvGuard {
 }
 
 impl EnvGuard {
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
+
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);

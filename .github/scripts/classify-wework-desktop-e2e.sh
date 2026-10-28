@@ -8,6 +8,7 @@ core_segments=(
   workspace-tabs
   notification-tab-navigation
   collaboration-shared-core
+  project-space-tool-discovery
   collaboration-deliveries
   collaboration-delivery-editing
   collaboration-issue-task-discovery
@@ -244,7 +245,7 @@ core_shards=(
   collaboration-shared-core,runtime-input-answer-persistence
 )
 
-core_shards[1]+=',mcp-apps'
+core_shards[1]+=',mcp-apps,project-space-tool-discovery'
 
 validate_core_shards() {
   declare -A known_segments=()
@@ -458,6 +459,10 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/e2e/desktop/scenarios/project-space-tool-discovery.scenario.mjs)
+      select_target "core:project-space-tool-discovery"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-home-preload.scenario.mjs)
       select_target "core:collaboration-home-preload"
       return
@@ -1046,6 +1051,7 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/modules/mcp-tool-results.mjs)
+      select_target "core:project-space-tool-discovery"
       select_target "core:collaboration-issue-mcp-comments"
       select_target "core:collaboration-remote-agent-dispatch"
       return
