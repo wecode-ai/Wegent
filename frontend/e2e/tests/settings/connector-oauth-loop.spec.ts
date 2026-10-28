@@ -172,9 +172,10 @@ test.describe('Connector app OAuth loop', () => {
   test('keeps another user without the caller grant', async ({ request }) => {
     const regularToken = await loginToken(request, REGULAR_USER)
 
+    // `/api/apps/installed` only publishes apps the caller can use, so the
+    // second user sees no entry until they authorize the app themselves.
     const installed = await installedApp(request, regularToken)
-    expect(installed?.connection.status).toBe('disconnected')
-    expect(installed?.tool_summaries ?? []).toEqual([])
+    expect(installed).toBeUndefined()
 
     // The admin's own grant survives the second caller's read.
     const admin = await installedApp(request, adminToken)
