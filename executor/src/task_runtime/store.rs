@@ -80,6 +80,8 @@ pub enum TaskRuntimeError {
     Database(#[from] rusqlite::Error),
     #[error("invalid task data: {0}")]
     Invalid(String),
+    #[error("invalid task data: Project-scoped agents can only receive work from their project")]
+    StandInProjectConnections,
     #[error("project not found")]
     ProjectNotFound,
     #[error("task not found")]

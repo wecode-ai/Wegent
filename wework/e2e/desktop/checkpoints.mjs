@@ -2,6 +2,7 @@ import { UPGRADE_CHECKPOINTS, UPGRADE_CHECKPOINT_GROUP } from './upgrade-suite.m
 
 export const DESKTOP_CHECKPOINTS = [
   'mcp-apps',
+  'project-space-tool-discovery',
   'remote-device-onboarding',
   'workspace-tabs',
   'notification-tab-navigation',

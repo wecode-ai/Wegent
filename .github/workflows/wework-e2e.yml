@@ -1248,11 +1248,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+      - name: Compute macOS runtime source digests
+        id: macos-source
+        run: |
+          executor_digest="$(node .github/scripts/macos-e2e-source-digest.mjs executor)"
+          backend_digest="$(node .github/scripts/macos-e2e-source-digest.mjs backend-rs)"
+          echo "executor=$executor_digest" >> "$GITHUB_OUTPUT"
+          echo "backend-rs=$backend_digest" >> "$GITHUB_OUTPUT"
+
       - name: Resolve shared macOS Wework E2E build
         id: macos-build
         env:
-          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs', 'executor/vendor/**') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
+          EXECUTOR_SOURCE_DIGEST: ${{ steps.macos-source.outputs.executor }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ steps.macos-source.outputs.backend-rs }}
         run: |
           mkdir -p .ci-artifacts
           reference_output="$(mktemp)"
@@ -1381,21 +1389,21 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-executor
-          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-executor-runtime-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs', 'executor/vendor/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-executor-runtime-v1-${{ steps.macos-source.outputs.executor }}
 
       - name: Restore macOS arm64 Rust backend runtime
         if: steps.macos-build.outputs.cache-hit != 'true'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-backend-rs
-          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-backend-rs-runtime-v1-${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-backend-rs-runtime-v1-${{ steps.macos-source.outputs.backend-rs }}
 
       - name: Restore macOS arm64 runtimes from OCI
         if: steps.macos-build.outputs.cache-hit != 'true'
         env:
-          EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs', 'executor/vendor/**') }}
+          EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ steps.macos-source.outputs.executor }}
           EXECUTOR_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-head-${{ github.event.pull_request.head.sha || github.sha }}
-          BACKEND_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-v1-${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
+          BACKEND_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-v1-${{ steps.macos-source.outputs.backend-rs }}
           BACKEND_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-head-${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           runtime_root="$HOME/.cache/wegent/wework-macos-e2e-runtimes"

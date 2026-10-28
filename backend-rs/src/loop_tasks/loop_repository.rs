@@ -36,6 +36,7 @@ pub struct BindingMetadata {
     pub dispatch_id: Option<String>,
     pub dispatch_round_id: Option<String>,
     pub assignment_id: Option<String>,
+    pub issue_assignment_id: Option<String>,
     pub change_requests: Option<serde_json::Value>,
 }
 
