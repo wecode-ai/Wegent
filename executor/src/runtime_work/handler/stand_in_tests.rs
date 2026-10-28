@@ -3,6 +3,78 @@ use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
 #[tokio::test]
+async fn round_work_validates_the_issue_event_without_replacing_member_identity() {
+    let bindings = Arc::new(AtomicUsize::new(0));
+    let calls = bindings.clone();
+    let router = Router::new()
+        .route("/api/v1/loop-items/issue/assignments", get(|| async {
+            Json(json!({"items":[{"id":"issue-event","status":"active","created_at":"2099-01-01T00:00:00Z"}]}))
+        }))
+        .route("/api/v1/loop-items/issue/tasks", get(move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!([{"human_assignment_id":"human","device_id":"other","task_id":"stand-in-human-review"}])) }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let config = json!({"id":"review","projectId":"project","projectStore":"cloud","userId":7,"enabledAfter":"2000-01-01T00:00:00Z"});
+    let mut issue = json!({"id":"issue","assignee_user_id":7,"human_task_binding":{
+        "humanAssignmentId":"human","assignmentId":"member-work", "dispatchRoundId":"round-1","issueAssignmentId":"issue-event"
+    }});
+    handler.start_cloud_stand_in(&config, &issue).await.unwrap();
+    assert_eq!(bindings.load(Ordering::SeqCst), 1);
+    assert_eq!(issue["human_task_binding"]["assignmentId"], "member-work");
+    issue["human_task_binding"]["issueAssignmentId"] = json!("superseded-event");
+    handler.start_cloud_stand_in(&config, &issue).await.unwrap();
+    assert_eq!(bindings.load(Ordering::SeqCst), 1);
+    issue["human_task_binding"]
+        .as_object_mut()
+        .unwrap()
+        .remove("issueAssignmentId");
+    assert_eq!(
+        handler
+            .start_cloud_stand_in(&config, &issue)
+            .await
+            .unwrap_err()
+            .code,
+        "invalid_assignment"
+    );
+    assert_eq!(bindings.load(Ordering::SeqCst), 1);
+    assert!(handler.local_task_links(true).is_empty());
+    server.abort();
+}
+
+#[tokio::test]
+async fn stand_in_entry_futures_leave_room_on_windows_worker_stacks() {
+    let handler = RuntimeWorkRpcHandler::new("measurement", "unused");
+    fn future_size<F: Future>(_: impl FnOnce() -> F) -> usize {
+        std::mem::size_of::<F>()
+    }
+    // Match Clippy's large-future boundary before nested polling amplifies it.
+    for (entry, bytes) in [
+        ("manual", future_size(|| handler.run_stand_in(json!({})))),
+        (
+            "assignment",
+            future_size(|| handler.handle_stand_in_assignment(json!({}))),
+        ),
+        ("scheduler", future_size(|| handler.poll_local_stand_ins())),
+    ] {
+        assert!(
+            bytes < 16 * 1024,
+            "{entry} future uses {bytes} inline bytes"
+        );
+    }
+}
+
+#[tokio::test]
 async fn omitted_manual_identity_uses_a_connected_role_and_rejects_no_connection() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
@@ -816,4 +888,29 @@ async fn personal_settings_project_view_retains_the_requested_storage_kind() {
         .unwrap();
     assert_eq!(cloud["projectStore"], "cloud");
     assert_eq!(cloud["projectId"], "future-project");
+}
+
+#[test]
+fn project_scoped_agent_connections_return_actionable_settings_code_without_saving() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let initial = store.personal_stand_in(7, "mac").unwrap();
+    let saved = store.save_personal_stand_in(7, "mac", initial).unwrap();
+    let mut draft = saved.clone();
+    draft["roles"][0]["agentId"] = json!("project-agent");
+    draft["roles"][0]["agentProject"] = json!({"id":"project","store":"cloud"});
+    draft["roles"][0]["connections"] = json!([{
+        "providerId":"example","id":"group","kind":"group","profile":"work","name":"Group",
+        "policy":{"automatic":true,"askBeforeAct":true}
+    }]);
+    let error = handler
+        .personal_stand_in_settings(json!({"userId":7,"settings":draft}), true)
+        .unwrap_err();
+    assert_eq!(error.code, "stand_in_project_connections");
+    assert!(error
+        .message
+        .contains("only receive work from their project"));
+    assert_eq!(store.personal_stand_in(7, "mac").unwrap(), saved);
 }

@@ -13,13 +13,17 @@ function serializeDiagnostic(entry: Record<string, unknown>): string {
   }
 }
 
-export function logRuntimeTaskCreateStage(stage: string, details: Record<string, unknown>): void {
+export function logRuntimeTaskCreateStage(
+  stage: string,
+  details: Record<string, unknown>,
+  level: 'info' | 'debug' = 'info'
+): void {
   const entry = {
     timestamp: new Date().toISOString(),
     stage,
     ...details,
   }
-  console.info(LOG_PREFIX, serializeDiagnostic(entry))
+  console[level](LOG_PREFIX, serializeDiagnostic(entry))
 }
 
 export function summarizeRuntimeQueue(messages: readonly RuntimePaneQueuedMessage[]) {
