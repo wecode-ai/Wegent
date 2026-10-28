@@ -72,6 +72,13 @@ export interface ChatErrorPayload {
   durationMs?: number;
 }
 
+export interface ChatRecoveredPayload {
+  taskId?: string;
+  subtaskId?: string;
+  deviceId?: string;
+  turnId: string;
+}
+
 export interface ChatStartPayload {
   taskId?: string;
   subtaskId?: string;
@@ -262,6 +269,7 @@ export interface ChatStreamHandlers {
   onChatChunk?: (payload: ChatChunkPayload) => void;
   onChatDone?: (payload: ChatDonePayload) => void;
   onChatError?: (payload: ChatErrorPayload) => void;
+  onChatRecovered?: (payload: ChatRecoveredPayload) => void;
   onBlockCreated?: (payload: ChatBlockCreatedPayload) => void;
   onBlockUpdated?: (payload: ChatBlockUpdatedPayload) => void;
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void;

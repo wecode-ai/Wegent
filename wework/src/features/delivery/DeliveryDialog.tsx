@@ -1,7 +1,7 @@
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, FileText, Folder, GitBranch, MessageSquare, Paperclip, Plus, X } from 'lucide-react'
+import { FileText, Folder, GitBranch, MessageSquare, Paperclip, Plus, X } from 'lucide-react'
 import type { WorkbenchMessage } from '@/types/workbench'
 import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 import type { LocalWorkItem } from '@/features/todo/todoModel'
@@ -68,13 +68,9 @@ export function DeliveryDialog({
   const [submitting, setSubmitting] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [completed, setCompleted] = useState(false)
   const activeDialogRef = useDialogKeyboard<HTMLDivElement>(() => {
     if (!submitting) onCancel()
-  }, !completed)
-  const completedDialogRef = useDialogKeyboard<HTMLDivElement>(() => {
-    if (!submitting) onDelivered()
-  }, completed)
+  })
   const selectedCount = chatScope === 'conversation' ? messages.length : selectedMessages.length
   const chatMessages = useMemo(
     () =>
@@ -168,7 +164,6 @@ export function DeliveryDialog({
         setUploadProgress({ done: files.length + index + 1, total: totalAssets })
       }
       await deliveryApi.finalizeDelivery(delivery.id)
-      setCompleted(true)
       track('delivery_completed', {
         asset_count:
           totalAssets === 0 ? '0' : totalAssets === 1 ? '1' : totalAssets <= 5 ? '2-5' : '6+',
@@ -188,40 +183,12 @@ export function DeliveryDialog({
           ? submitError.message
           : t('delivery.failed', '交付失败，请重试')
       )
+      return
     } finally {
       setSubmitting(false)
       setUploadProgress(null)
     }
-  }
-
-  if (completed) {
-    return createPortal(
-      <div className="fixed inset-0 z-system flex items-center justify-center bg-black/30">
-        <div
-          ref={completedDialogRef}
-          role="dialog"
-          aria-modal="true"
-          aria-label={t('delivery.completed', '交付完成')}
-          data-testid="delivery-complete-dialog"
-          className="w-[360px] rounded-xl border border-border bg-background p-6 text-center shadow-lg"
-        >
-          <span className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-green-500/10 text-green-600">
-            <Check className="h-5 w-5" />
-          </span>
-          <h2 className="heading-sm mt-4">{t('delivery.completed', '交付完成')}</h2>
-          <p className="mt-2 text-sm text-text-secondary">{t('delivery.completed_hint')}</p>
-          <button
-            type="button"
-            data-testid="delivery-complete-confirm"
-            onClick={onDelivered}
-            className="mt-5 h-8 rounded-md bg-text-primary px-4 text-sm font-medium text-background"
-          >
-            {t('delivery.back_to_todo', '返回 TODO')}
-          </button>
-        </div>
-      </div>,
-      document.body
-    )
+    onDelivered()
   }
 
   return createPortal(

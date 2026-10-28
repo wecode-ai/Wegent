@@ -6,10 +6,24 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.api.endpoints.internal import callback
 from shared.models.responses_api import ResponsesAPIStreamEvents
+
+
+@pytest.fixture
+def reference_app(test_app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
+    """Mount the retained Python handler only for its HTTP contract tests."""
+    monkeypatch.setattr(test_app.router, "routes", list(test_app.router.routes))
+    test_app.add_api_route(
+        "/api/internal/callback",
+        callback.handle_callback,
+        methods=["POST"],
+        response_model=callback.CallbackResponse,
+    )
+    return test_app
 
 
 class _SessionContext:
@@ -65,14 +79,14 @@ def _patch_emitters(monkeypatch, state):
         ),
     ],
 )
-async def test_single_callback_http_route_reaches_python_handler(
-    test_app, monkeypatch, event_type, data
+async def test_retained_single_callback_preserves_http_contract(
+    reference_app, monkeypatch, event_type, data
 ):
     emitter = _patch_emitters(monkeypatch, {"open": False})
     monkeypatch.setattr(callback, "_get_task_status_user_id", lambda *args: 7)
 
     async with AsyncClient(
-        transport=ASGITransport(app=test_app), base_url="http://test"
+        transport=ASGITransport(app=reference_app), base_url="http://test"
     ) as client:
         response = await client.post(
             "/api/internal/callback",

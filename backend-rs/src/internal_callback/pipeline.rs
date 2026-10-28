@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::http_compat::FastApiError;
 use crate::responses::create::{dispatch, executor_client, request, routing, seam};
-use crate::responses::dispatch::DispatchJob;
+use crate::responses::dispatch::DefaultDispatchJob;
 use crate::state::AppState;
 use crate::task_store::PipelineStageAdvance;
 
@@ -54,6 +54,7 @@ pub(super) async fn dispatch_next(
         );
         if let Some(redis) = state.redis.as_ref() {
             let ctx = super::completion::Completion {
+                app: Some(state),
                 mysql: &state.mysql,
                 redis,
                 tables: super::tables(state),
@@ -99,6 +100,12 @@ async fn dispatch_execution(
         &request::BuildExecutionRequestInput {
             user_id: advance.user_id,
             user_name: &advance.user_name,
+            // The pipeline callback carries no `users.git_info` row; its
+            // request keeps the source's all-null identity.
+            user_git_info: &serde_json::Value::Null,
+            // `pipeline_advance.py` loads the request `User` row and passes
+            // `user=user` into `trigger_ai_response_unified`.
+            user_preferences: Some(&advance.user_preferences),
             task_id: advance.task_id,
             assistant_subtask_id: advance.pair.assistant_subtask_id,
             user_subtask_id: advance.pair.user_subtask_id,
@@ -112,6 +119,8 @@ async fn dispatch_execution(
             team_member_prompt: advance.member.get("prompt").and_then(Value::as_str),
             bot_ids: &bot_ids,
             message: &advance.message,
+            // No API reasoning selection on this job path.
+            reasoning: None,
             enable_tools: true,
             enable_web_search: false,
             enable_deep_thinking: true,
@@ -126,6 +135,10 @@ async fn dispatch_execution(
             task_project_id: advance.project_id,
             executor_name: &advance.pair.executor.name,
             executor_namespace: &advance.pair.executor.namespace,
+            executor_deleted: false,
+            new_session: false,
+            knowledge_base_refs: &[],
+            knowledge_base_names: &[],
         },
     )
     .await?;
@@ -179,25 +192,26 @@ async fn dispatch_execution(
     }
     if routing::supports_streaming(&target) {
         let url = target.url.as_deref().ok_or_else(FastApiError::internal)?;
+        let job = crate::responses::dispatch::ChatShellJob {
+            task_id: execution.task_id,
+            subtask_id: execution.subtask_id,
+            consumer: crate::responses::dispatch::ConsumerState::from_app(state),
+            target_url: url.to_string(),
+            request: execution,
+            request_id,
+        };
         state
             .responses_dispatch
-            .submit(DispatchJob::ChatShell {
-                url: format!("{}/v1/responses", url.trim_end_matches('/')),
-                request_id,
-                body: serde_json::to_value(dispatch::assemble(&execution, true, false))
-                    .map_err(|_| FastApiError::internal())?,
-            })
-            .await;
+            .submit(DefaultDispatchJob::ChatShell(Box::new(job)));
     } else {
         let url = target.url.as_deref().ok_or_else(FastApiError::internal)?;
         state
             .responses_dispatch
-            .submit(DispatchJob::Executor {
+            .submit(DefaultDispatchJob::Executor {
                 url: executor_client::executor_responses_url(url),
                 body: serde_json::to_value(dispatch::assemble(&execution, false, true))
                     .map_err(|_| FastApiError::internal())?,
-            })
-            .await;
+            });
     }
     Ok(())
 }
@@ -213,37 +227,4 @@ fn user_message(advance: &PipelineStageAdvance) -> Value {
 fn dependency(error: brz_mysql::MysqlError) -> FastApiError {
     tracing::error!(%error, "pipeline advancement database failure");
     FastApiError::internal()
-}
-
-/// Read the committed task status on the writer after callback persistence.
-pub(super) async fn task_status(
-    state: &AppState,
-    task_id: i64,
-) -> Result<Option<String>, FastApiError> {
-    let tables = state
-        .task_store
-        .message_edit_tables(task_id)
-        .await
-        .map_err(dependency)?;
-    state
-        .mysql
-        .route(crate::task_routing::ByTaskId(task_id as u64))
-        .with_transaction(async |transaction| {
-            let row: Option<MysqlRow> = transaction
-                .fetch_optional(
-                    crate::task_store::task_for_update_first_statement(&tables.tasks),
-                    (task_id,),
-                )
-                .await?;
-            Ok(row
-                .and_then(|row| super::completion::task_column::<Json<Value>>(&row, "json"))
-                .and_then(|json| {
-                    json.0
-                        .pointer("/status/status")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned)
-                }))
-        })
-        .await
-        .map_err(dependency)
 }

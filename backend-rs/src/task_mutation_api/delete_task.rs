@@ -322,7 +322,7 @@ async fn cleanup_executor_runtime(
 ) -> Result<(), FastApiError> {
     let rows = state
         .task_store
-        .list_subtasks_by_task_unfiltered(task_id, owner_user_id)
+        .list_subtasks_by_task_unfiltered(task_id, Some(owner_user_id))
         .await
         .map_err(|error| internal(&error))?;
 
