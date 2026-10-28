@@ -33,6 +33,7 @@ test('detects directory moves and new sources while excluding emitted output', a
   const original = path.join(root, 'original')
   const moved = path.join(root, 'moved')
   const output = path.join(root, 'output')
+  const observedDirectories = []
   try {
     await mkdir(original)
     await writeFile(path.join(original, 'entry.js'), 'one')
@@ -40,6 +41,7 @@ test('detects directory moves and new sources while excluding emitted output', a
       directories: [root],
       files: [],
       excluded: filename => filename.startsWith(output),
+      onDirectory: filename => observedDirectories.push(filename),
     })
     await rename(original, moved)
     expect(changed(original, root)).toBe(true)
@@ -50,6 +52,8 @@ test('detects directory moves and new sources while excluding emitted output', a
     expect(changed(output, root)).toBe(false)
     await writeFile(path.join(moved, 'another.js'), 'two')
     expect(changed(moved, root)).toBe(true)
+    expect(observedDirectories).toEqual(expect.arrayContaining([root, original, moved]))
+    expect(observedDirectories).not.toContain(output)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

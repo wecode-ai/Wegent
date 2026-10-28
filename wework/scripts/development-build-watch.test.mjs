@@ -4,9 +4,11 @@ import path from 'node:path'
 import { test, expect, vi, onTestFinished } from 'vitest'
 import { watchDevelopmentBuild } from './lib/development-build-watch.mjs'
 
-test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules/checkout'])(
-  'builds changes under %s, recovers from failure, and ignores output',
-  async checkout => {
+const checkouts = ['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules/checkout']
+
+test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [checkout, input])))(
+  'builds changes under %s with %s inputs, recovers from failure, and ignores output',
+  async (checkout, input) => {
     const startedAt = Date.now()
     const phases = []
     const record = phase => {
@@ -44,8 +46,8 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
       if (snapshot === 'two') recoveredBuild.resolve()
     })
     const watcher = await watchDevelopmentBuild({
-      directories: [root],
-      files: [],
+      directories: input === 'directory' ? [root] : [],
+      files: input === 'file' ? [source] : [],
       ignored: [output],
       build,
       onError,
@@ -55,7 +57,7 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
     onTestFinished(async () => {
       await watcher.close()
       await rm(temporary, { recursive: true, force: true })
-      console.info('[development-build-watch-phases]', { checkout, phases })
+      console.info('[development-build-watch-phases]', { checkout, input, phases })
     })
     expect(published).toBe('one')
     await saveSource('invalid')
@@ -75,6 +77,51 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
     expect(snapshots).toEqual(['one', 'invalid', 'two'])
   }
 )
+
+test('observes new nested directories and their recreation', async () => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'build-watch-directories-')))
+  const nested = path.join(root, 'source', 'nested')
+  const source = path.join(nested, 'entry.js')
+  const snapshots = []
+  const first = Promise.withResolvers()
+  const removed = Promise.withResolvers()
+  const restored = Promise.withResolvers()
+  const onError = vi.fn()
+  let watcher
+  onTestFinished(async () => {
+    await watcher?.close()
+    await rm(root, { recursive: true, force: true })
+  })
+  watcher = await watchDevelopmentBuild({
+    directories: [root],
+    files: [],
+    debounceMs: 20,
+    onError,
+    build: async () => {
+      let snapshot
+      try {
+        snapshot = await readFile(source, 'utf8')
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+        snapshot = 'missing'
+      }
+      snapshots.push(snapshot)
+      if (snapshot === 'one') first.resolve()
+      if (snapshot === 'missing' && snapshots.length > 1) removed.resolve()
+      if (snapshot === 'two') restored.resolve()
+    },
+  })
+  await mkdir(nested, { recursive: true })
+  await writeFile(source, 'one')
+  await first.promise
+  await rm(path.join(root, 'source'), { recursive: true })
+  await removed.promise
+  await mkdir(nested, { recursive: true })
+  await writeFile(source, 'two')
+  await restored.promise
+  expect(snapshots).toEqual(['missing', 'one', 'missing', 'two'])
+  expect(onError).not.toHaveBeenCalled()
+})
 
 test('rebuilds unchanged CSS assets and publishes subsequent asset edits with fresh Vite instances', async () => {
   const { build: viteBuild } = await import('vite')
