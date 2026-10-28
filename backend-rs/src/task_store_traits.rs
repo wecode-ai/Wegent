@@ -113,12 +113,12 @@ pub trait TaskStore:
     ) -> MysqlResult<Vec<MysqlRow>>;
 
     /// `list_personal_task_candidates_after`: one page of the owner's personal
-    /// task candidates with the keyset cursor.
+    /// task candidates, newest ID first, within the 10,000-task history window.
     async fn list_personal_task_candidates(
         &self,
         user_id: i64,
         limit: i64,
-        cursor: Option<(chrono::NaiveDateTime, i64)>,
+        cursor: Option<i64>,
         client_origin: Option<&str>,
     ) -> MysqlResult<Vec<MysqlRow>>;
 
