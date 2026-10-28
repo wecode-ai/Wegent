@@ -4157,7 +4157,18 @@
     "connector_connections_empty": "No app connections",
     "connector_connections_load_failed": "Could not load app connections. Please retry later.",
     "connector_refresh": "Refresh connection",
-    "connector_refresh_failed": "Could not refresh the connection"
+    "connector_refresh_failed": "Could not refresh the connection",
+    "app_update_extracting": "Extracting the new application",
+    "app_update_runtime": "Preparing the new runtime",
+    "app_update_verified_path": "Verified upgrade path: {{path}} (confirm each step)",
+    "app_update_path_unavailable": "No verified upgrade path is available for this version. Check again later.",
+    "app_update_rollback_action": "Roll back to v{{version}}",
+    "app_update_rollback_title": "Roll back Wework?",
+    "app_update_rollback_description": "Wework will close and switch to the previous healthy version, v{{version}}.",
+    "app_update_rollback_restore_description": "Rolling back to v{{version}} requires restoring pre-update data. New local data will be preserved separately. Repositories and cloud records are unaffected.",
+    "app_update_rollback_confirm": "Roll back and restart",
+    "app_update_rollback_failed": "Rollback failed. See the update log.",
+    "app_update_rollback_load_failed": "Unable to read the previous release."
   },
   "delivery": {
     "action": "Deliver",

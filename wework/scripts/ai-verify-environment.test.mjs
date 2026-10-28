@@ -17,6 +17,12 @@ describe('buildAiVerifyEnvironment', () => {
         WEGENT_CLAUDE_HOME: '/personal/claude',
         CLAUDE_CONFIG_DIR: '/personal/claude-config',
         CODEX_SQLITE_HOME: '/personal/codex-state',
+        WEWORK_RELEASE_SUPERVISED: 'personal-release',
+        WEWORK_RELEASE_ROOT: '/personal/releases',
+        WEWORK_ACTIVE_RELEASE_ID: 'personal-release',
+        WEWORK_COMPONENT_DATA_DIRECTORY: '/personal/releases/slots/personal-release',
+        WEWORK_E2E_RELEASE_FAILURE_VERSION: '1.0.0',
+        WEWORK_E2E_ROLLBACK_FAILURE: 'after-journal',
       })
     ).toEqual({ PATH: '/usr/bin' })
   })

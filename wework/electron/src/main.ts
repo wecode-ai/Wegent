@@ -2,6 +2,7 @@ import './host/process-output-bootstrap.js'
 import { MCP_APP_SCHEME } from './host/mcp-app-documents.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
+import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
 import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
 
 import {
@@ -25,7 +26,6 @@ import {
   type Session,
   type WebContents,
 } from 'electron'
-import electronUpdater from 'electron-updater'
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -108,6 +108,7 @@ import {
   type ApplicationMenuCapabilityState,
 } from './host/application-menu.js'
 import { AppUpdateService } from './host/app-update-service.js'
+import { ReleaseStore } from './runtime/release-store.js'
 import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
 import {
@@ -132,7 +133,6 @@ import {
   resolveWorkbenchPaths,
 } from './runtime/workbench-environment.js'
 import { migrateDesktopControlRegistry } from './runtime/workbench-desktop-data.js'
-import { packagedUpdaterCache, restoreNativeUpdaterCache } from './host/app-update-cache.js'
 import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-startup.js'
 import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
@@ -180,6 +180,8 @@ const packageMetadata = createRequire(import.meta.url)('../package.json') as {
   weworkAppId?: string
   weworkProductName?: string
   weworkUpdateBaseUrl?: string
+  weworkDataSchema?: number
+  weworkReadableDataSchemas?: number[]
 } & BrandRuntimeMetadata
 if (packageMetadata.weworkProductName?.trim()) app.setName(packageMetadata.weworkProductName.trim())
 const packagedApplication = isEffectivePackagedApplication(app.isPackaged, process.env)
@@ -197,7 +199,6 @@ const isolatedSurfacePolicies = loadTrustedIsolatedSurfacePolicies(
   resolve(packageRoot, 'dist/isolated-surfaces.json')
 )
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
-const { autoUpdater } = electronUpdater
 const execFileAsync = promisify(execFile)
 const keepE2EWindowInBackground = keepDesktopE2EInBackground(process.env, process.platform)
 const updateBaseUrl =
@@ -225,6 +226,12 @@ function logStartupStep(
   status: 'started' | 'completed' | 'failed',
   details: Record<string, unknown> = {}
 ): void {
+  recordReleaseDiagnostic('startup-step', {
+    step,
+    status,
+    elapsedMs: Math.round(performance.now() - startupStartedAt),
+    errorType: details.errorType,
+  })
   console.info('[startup]', {
     step,
     status,
@@ -363,7 +370,15 @@ const desktopHostEvents = new DesktopHostEventBroker()
 const startupTelemetry = new StartupTelemetryLifecycle({
   id: randomUUID(),
   now: () => performance.now(),
-  publish: (type, payload) => desktopHostEvents.publish(type, payload),
+  publish: (type, payload) => {
+    desktopHostEvents.publish(type, payload)
+    if (type === 'startup.succeeded' && process.env.WEWORK_ACTIVE_RELEASE_ID) {
+      const releases = new ReleaseStore(join(app.getPath('userData'), 'releases'))
+      void releases
+        .confirm(process.env.WEWORK_ACTIVE_RELEASE_ID)
+        .catch(error => console.error('[release] failed to confirm startup', error))
+    }
+  },
 })
 const startupTelemetrySuccess = new StartupTelemetrySuccessGate(startupTelemetry)
 startupTelemetry.start()
@@ -436,6 +451,10 @@ app.on('web-contents-created', (_event, contents) => {
       console.info(redactLog(message).slice(0, 1024))
     }
     if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
+      recordReleaseDiagnostic('renderer-error', {
+        message: redactLog(message).slice(0, 4096),
+        sourcePath: URL.canParse(sourceId) ? redactLog(new URL(sourceId).pathname) : undefined,
+      })
       console.warn('[renderer-error]', {
         webContentsId: contents.id,
         message: redactLog(message).slice(0, 4096),
@@ -470,33 +489,36 @@ const logRetention = new LogRetentionService({
   directories: runtimeLogDirectories,
   onResult: reportLogCleanup,
 })
-autoUpdater.logger = appUpdateLogger
 const appUpdates = new AppUpdateService({
-  updater: autoUpdater,
-  currentVersion: () => app.getVersion(),
-  isPackaged: () => packagedApplication,
+  store: new ReleaseStore(join(app.getPath('userData'), 'releases')),
+  dataDirectory: app.getPath('userData'),
+  currentVersion: app.getVersion(),
+  executable: process.execPath,
+  resources: process.resourcesPath,
+  runtimeRoot:
+    process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || packagedHarnessRuntimePaths().cache,
+  dataSchema: packageMetadata.weworkDataSchema ?? 1,
+  readableDataSchemas: packageMetadata.weworkReadableDataSchemas ?? [1],
+  isPackaged: packagedApplication,
   log: event => appUpdateLogger.info(event),
-  prepareUpdate: async (version, channel, onProgress) => {
-    if (!componentUpdates) throw new Error('Component update manager is not initialized.')
-    await componentUpdates.stageUpdateForApp(version, channel, onProgress)
-    if (desktopDataPaths) {
-      const cache = packagedUpdaterCache(
-        process.env.HOME?.trim() || app.getPath('home'),
-        process.resourcesPath,
-        process.env
-      )
-      if (restoreNativeUpdaterCache(cache, desktopDataPaths.desktop)) {
-        appUpdateLogger.info({ event: 'legacy-updater-cache-bridge-removed', directory: cache })
-      }
-    }
-  },
-  prepareInstall: async () => {
+  shutdown: async () => {
     await prepareApplicationShutdown()
+    await Promise.all([preferences?.close(), rendererStorage?.close()])
     await appUpdateLogger
       .flush()
       .catch(error =>
         console.error('[app-update] failed to flush updater log before installation', error)
       )
+  },
+  restart: () => {
+    app.relaunch()
+    app.exit(0)
+  },
+  onInstallFailure: (error, stopping) => {
+    if (!stopping) return
+    dialog.showErrorBox('Wework', error instanceof Error ? error.message : 'Update failed')
+    app.relaunch()
+    app.exit(1)
   },
   updateBaseUrl,
 })
@@ -1721,13 +1743,19 @@ async function shutdown(): Promise<void> {
   computerUse = null
   const development = pluginDevelopment
   pluginDevelopment = null
-  await Promise.allSettled([
+  const stoppedServices = await Promise.allSettled([
     browserBridge?.stop(),
     controlBridge?.stop(),
     computerUseService?.stop(),
     development?.stop(),
     desktopRuntime?.stop(),
   ])
+  const stopFailures = stoppedServices.filter(result => result.status === 'rejected')
+  if (stopFailures.length)
+    throw new AggregateError(
+      stopFailures.map(result => result.reason),
+      'Desktop services did not stop cleanly'
+    )
   await pluginDevelopmentChildRuntime?.writeState('stopped')
 }
 
@@ -2147,13 +2175,24 @@ async function configureDesktopRuntime(): Promise<void> {
           dismissPopout: () => popoutWindow?.hide(),
           dismissSystemDragPanel: () => systemDragWindow?.hide(),
           getSystemDragContext: () => systemDragContext,
-          runtimeDiagnostics: () =>
-            desktopRuntime?.diagnostics() ?? {
+          runtimeDiagnostics: () => ({
+            ...(desktopRuntime?.diagnostics() ?? {
               coreDshPid: null,
               developmentPlugin: null,
               executorPid: null,
               workbenchRuntimes: [],
+            }),
+            release: {
+              id: process.env.WEWORK_ACTIVE_RELEASE_ID ?? null,
+              hostExecutable: process.execPath,
+              runtimeRoot: startupRuntimeEnvironment?.WEWORK_HARNESS_RUNTIME_ROOT,
+              coreDshPath: startupRuntimeEnvironment?.WEWORK_HARNESS_RESOURCE_ROOT,
+              corePluginsPath: startupRuntimeEnvironment?.WEWORK_CORE_PLUGIN_ROOT,
+              executorPath: startupRuntimeEnvironment?.WEWORK_EXECUTOR_PATH,
+              codexPath: startupRuntimeEnvironment?.CODEX_BINARY_PATH,
+              dwsPath: startupRuntimeEnvironment?.DWS_BINARY_PATH,
             },
+          }),
           scheduleCoreDshRestart,
           setSystemDragContext: context => {
             systemDragContext = context
@@ -2450,7 +2489,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
         }),
       log: event => appUpdateLogger.info(event),
       resourcesRoot: componentResourcesRoot,
-      dataDirectory: app.getPath('userData'),
+      dataDirectory: process.env.WEWORK_COMPONENT_DATA_DIRECTORY?.trim() || app.getPath('userData'),
       updateBaseUrl,
       currentAppVersion: app.getVersion(),
     },

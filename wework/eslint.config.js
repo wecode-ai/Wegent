@@ -20,6 +20,13 @@ export default defineConfig([
     'test-results',
   ]),
   {
+    files: ['e2e/desktop/**/*.mjs'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.browser },
+    },
+    rules: { 'no-undef': 'error' },
+  },
+  {
     files: ['**/*.{ts,tsx}'],
     extends: [
       js.configs.recommended,
