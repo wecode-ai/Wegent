@@ -1,3 +1,4 @@
+import { createOrdinaryMcpRegression } from './ordinary-mcp-regression.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -28,11 +29,14 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
   captureScreenshot,
 }) {
+  const ordinaryMcp = createOrdinaryMcpRegression({ uiTimeoutMs, modelResponseTimeoutMs })
   let calls = 0
   let activeCase = { callId, tool: 'show_app', prompt, completion }
   return {
+    prepareApp: ordinaryMcp.prepareApp,
     codexConfigToml: `\n[mcp_servers.counter]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(fileURLToPath(new URL('../../utils/mcp-app-server.mjs', import.meta.url)))}]\n`,
     async handleHttp(request, response, url) {
+      if (await ordinaryMcp.handleHttp(request, response, url)) return true
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)
@@ -346,6 +350,7 @@ export function createDesktopScenario({
       } while (Date.now() < releaseDeadline)
       assert.ok(released, 'Leaving the task must release its app document')
       assert.ok(calls >= 8)
+      await ordinaryMcp.verify(control)
     },
   }
 }
