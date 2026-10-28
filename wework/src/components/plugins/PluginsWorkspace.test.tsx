@@ -535,7 +535,7 @@ function mockSystemSkillsFetch(
     marketplaceConnectorAccountAuth: boolean
     marketplaceHasSkill: boolean
     marketplaceVisibility: 'personal' | 'workspace' | 'public'
-    marketplaceSourceProvider: 'codex' | 'wegent'
+    marketplaceSourceProvider: 'codex' | 'wegent' | 'user'
     marketplaceAccessRole: 'catalog' | 'owner' | 'recipient'
     marketplaceName: string
     marketplaceDisplayName: string
@@ -6830,13 +6830,18 @@ describe('PluginsWorkspace', () => {
     expect(document.querySelector('img[src="./assets/github-small.svg"]')).toBeNull()
   })
 
-  test.each(['install', 'trial'] as const)(
-    'requires unofficial plugin confirmation before %s and preserves cancellation',
-    async action => {
+  test.each([
+    ['install', 'workspace', 'wegent'],
+    ['trial', 'workspace', 'wegent'],
+    ['install', 'public', 'user'],
+    ['trial', 'public', 'user'],
+  ] as const)(
+    'requires unofficial plugin confirmation before %s for %s from %s and preserves cancellation',
+    async (action, visibility, sourceProvider) => {
       window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
       mockSystemSkillsFetch({
-        marketplaceVisibility: 'workspace',
-        marketplaceSourceProvider: 'wegent',
+        marketplaceVisibility: visibility,
+        marketplaceSourceProvider: sourceProvider,
       })
       mockCodexAppServerInvoke({ deviceId: 'current-device' })
       sessionStorage.clear()

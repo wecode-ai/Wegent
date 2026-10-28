@@ -5,19 +5,31 @@ import '@/i18n'
 import type { PluginDistribution } from '../pluginDistribution'
 import { InstallPluginDialog } from './InstallPluginDialog'
 
-test.each<PluginDistribution>(['official', 'public', 'workspace', 'personal', 'external'])(
-  'shows a warning and focuses cancel only for unofficial distribution %s',
-  async distribution => {
+test.each<[PluginDistribution, boolean]>([
+  ['official', true],
+  ['public', true],
+  ['public', false],
+  ['workspace', false],
+  ['personal', false],
+  ['external', false],
+])(
+  'shows a warning and focuses cancel for distribution %s with official provenance %s',
+  async (distribution, official) => {
     const onCancel = vi.fn()
     const onConfirm = vi.fn()
     render(
       <InstallPluginDialog
-        plugin={{ id: 'sample', name: 'Sample', componentCount: 1, logoDistribution: distribution }}
+        plugin={{
+          id: 'sample',
+          name: 'Sample',
+          componentCount: 1,
+          logoDistribution: distribution,
+          isOfficial: official,
+        }}
         onCancel={onCancel}
         onConfirm={onConfirm}
       />
     )
-    const official = distribution === 'official' || distribution === 'public'
     expect(Boolean(screen.queryByTestId('plugin-install-unofficial-warning'))).toBe(!official)
     expect(
       screen.getByTestId(

@@ -1,7 +1,6 @@
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginDistribution } from '../pluginDistribution'
-import { isOfficialPluginDistribution } from '../pluginDistribution'
 import { PluginInstallWarning } from '../PluginInstallWarning'
 import { PluginSourceAvatar } from '../PluginSourceAvatar'
 
@@ -14,6 +13,7 @@ export interface InstallPluginDialogTarget {
   logoContrastPad?: boolean
   useLogoInitial?: boolean
   logoDistribution?: PluginDistribution
+  isOfficial?: boolean
   componentCount: number
   requiredConnectionNames?: string[]
 }
@@ -26,7 +26,7 @@ interface InstallPluginDialogProps {
 
 export function InstallPluginDialog({ plugin, onCancel, onConfirm }: InstallPluginDialogProps) {
   const { t } = useTranslation('common')
-  const unofficial = !isOfficialPluginDistribution(plugin.logoDistribution ?? 'external')
+  const unofficial = !plugin.isOfficial
   const dialogRef = useDialogKeyboard<HTMLElement>(
     onCancel,
     true,

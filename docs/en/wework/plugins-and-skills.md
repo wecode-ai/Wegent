@@ -8,7 +8,7 @@ A Skill gives AI task-specific instructions and resources. A plugin can package 
 
 Open **Plugins** to inspect installed plugins and manage their capabilities. Review a plugin's tools and permissions before enabling it for a workspace.
 
-When installing an unofficial plugin from Enterprise, Personal, or an external marketplace, the confirmation dialog warns that it may execute code, access local files, or send data to external services. Only continue if you trust its source. Focus starts on **Cancel**, and Escape closes the dialog. Trying an uninstalled unofficial plugin also requires confirmation before installation and placing the example in a new conversation. OpenAI official and Wework official plugins retain their existing installation flow. Personal ZIP imports show the same source warning in the preview dialog.
+When installing an unofficial plugin from Enterprise, Personal, or an external marketplace, including public community submissions, the confirmation dialog warns that it may execute code, access local files, or send data to external services. Public visibility does not establish official provenance. Only continue if you trust its source. Focus starts on **Cancel**, and Escape closes the dialog. Trying an uninstalled unofficial plugin also requires confirmation before installation and placing the example in a new conversation. OpenAI official and Wework official plugins retain their existing installation flow. Personal ZIP imports show the same source warning in the preview dialog.
 
 ## Conversation picker and app authorization
 
