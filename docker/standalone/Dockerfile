@@ -161,7 +161,8 @@ ARG APP_VERSION=dev
 
 WORKDIR /app
 
-RUN dnf install -y gcc ca-certificates openssl-devel pkgconf-pkg-config \
+# turbojpeg-sys builds libjpeg-turbo from source with CMake.
+RUN dnf install -y gcc gcc-c++ cmake ca-certificates openssl-devel pkgconf-pkg-config \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain stable \
     && dnf clean all \

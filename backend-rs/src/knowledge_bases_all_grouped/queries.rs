@@ -889,3 +889,39 @@ mod tests {
         assert_eq!(accounts[0].git_login.as_deref(), Some("zhangsan"));
     }
 }
+
+#[cfg(test)]
+mod namespace_literal_tests {
+    use super::*;
+
+    /// `get_namespace_id_by_name`: the inlined name keeps its UTF-8 scalar
+    /// values (a byte-to-char rendering would send `微博运营部` as mojibake).
+    #[tokio::test]
+    async fn namespace_by_name_exact_renders_the_utf8_literal() {
+        use crate::sql_test_support::KindQueryCapture;
+        let mysql = KindQueryCapture::default();
+        let row = namespace_by_name_exact(&mysql, "微博运营部").await.unwrap();
+        assert!(row.is_none());
+        let queries = mysql.queries();
+        assert_eq!(queries.len(), 1);
+        assert!(
+            queries[0].sql.contains("namespace.name = '微博运营部'"),
+            "{}",
+            queries[0].sql
+        );
+        assert!(!queries[0].sql.contains("å"), "{}", queries[0].sql);
+
+        let mysql = KindQueryCapture::default();
+        namespace_by_name_exact(&mysql, "q'w\\e\0r\ns\rt\u{1a}u微博")
+            .await
+            .unwrap();
+        let queries = mysql.queries();
+        assert!(
+            queries[0]
+                .sql
+                .contains("namespace.name = 'q\\'w\\\\e\\0r\\ns\\rt\\Zu微博'"),
+            "{}",
+            queries[0].sql
+        );
+    }
+}

@@ -70,8 +70,16 @@ pub fn web_search_enabled() -> bool {
 
 /// The create flow's post-resolution dispatch inputs.
 pub struct DispatchInput<'a> {
+    /// `openapi_responses.py:755` / `:1122-1123`'s `created_at`, captured
+    /// after the session setup and reused by every response branch.
+    pub created_at: i64,
     pub user_id: i64,
     pub user_name: &'a str,
+    /// The request user's `users.git_info`, classified into the Git identity
+    /// and `git_auth_transport` by `build_execution_request`.
+    pub user_git_info: &'a Value,
+    /// The request user's `users.preferences`, read by `_build_skill_data`.
+    pub user_preferences: Option<&'a str>,
     pub request_id: &'a str,
     pub team: &'a super::resolution::KindRow,
     pub bot: &'a super::resolution::KindRow,
@@ -96,9 +104,16 @@ pub struct DispatchInput<'a> {
     pub executor_namespace: &'a str,
     /// `enable_tools`: `enable_chat_bot or current/inherited KB refs`.
     pub enable_tools: bool,
+    /// The request's normalized knowledge-base refs
+    /// (`_get_current_knowledge_base_refs`).
+    pub knowledge_base_refs: &'a [super::schema::KbToolRef],
+    /// The legacy `knowledge_base_names` fallback parameter.
+    pub knowledge_base_names: &'a [super::schema::KbToolRef],
     /// `enable_chat_bot` (`wegent_chat_bot` in the request tools).
     pub enable_chat_bot: bool,
     pub enable_web_search: bool,
+    /// The API `reasoning` selection (`ReasoningConfig`).
+    pub reasoning: Option<&'a super::reasoning::ReasoningConfig>,
 }
 
 /// `_create_non_streaming_response_unified` / `_create_streaming_response_
@@ -107,11 +122,17 @@ pub async fn dispatch_create(
     state: &AppState,
     input: &DispatchInput<'_>,
 ) -> Result<HttpResponse<BodyStream>, FastApiError> {
-    let request = build_execution_request(
+    // The caller captured `created_at` at the source's point (after setup,
+    // before the user/team reloads and this builder), so the response
+    // timestamp never includes their work.
+    let created_at = input.created_at;
+    let request = match build_execution_request(
         state,
         &BuildExecutionRequestInput {
             user_id: input.user_id,
             user_name: input.user_name,
+            user_git_info: input.user_git_info,
+            user_preferences: input.user_preferences,
             task_id: input.setup.task_id,
             assistant_subtask_id: input.setup.assistant_subtask_id,
             user_subtask_id: input.setup.user_subtask_id,
@@ -122,8 +143,11 @@ pub async fn dispatch_create(
             bot_ids: input.bot_ids,
             message: input.input_text,
             enable_tools: input.enable_tools,
+            knowledge_base_refs: input.knowledge_base_refs,
+            knowledge_base_names: input.knowledge_base_names,
             enable_web_search: input.enable_web_search,
             enable_deep_thinking: input.enable_chat_bot,
+            reasoning: input.reasoning,
             task_json: input.task_json,
             request_id: input.request_id,
             message_id: input.message_id,
@@ -131,9 +155,27 @@ pub async fn dispatch_create(
             task_project_id: input.task_project_id,
             executor_name: input.executor_name,
             executor_namespace: input.executor_namespace,
+            executor_deleted: input.setup.assistant_executor_deleted,
+            new_session: false,
         },
     )
-    .await?;
+    .await
+    {
+        Ok(request) => request,
+        Err(error) => {
+            // The source's `try` around `build_execution_request` persists a
+            // terminal FAILED result before every raise
+            // (`openapi_responses.py:788-853`, `:1085-1219`).
+            persist_build_failure(
+                state,
+                input.setup.task_id,
+                input.setup.assistant_subtask_id,
+                build_failure_message(&error),
+            )
+            .await;
+            return Err(error);
+        }
+    };
 
     let shell_type = request_shell_type(&request);
     let chat_shell = chat_shell_url();
@@ -148,7 +190,11 @@ pub async fn dispatch_create(
         model_protocol,
     });
 
-    let created_at = chrono::Utc::now().timestamp();
+    // `ExecutionDispatcher.dispatch`: `_recover_executor_if_needed`
+    // (`dispatcher.py:117`) reads the assistant subtask with its contexts
+    // before `_update_subtask_to_running` (`:166`). The read is the first of
+    // the two identical pairs the recorded create flow issues.
+    super::recover_executor::recover_executor_if_needed(state, &request).await;
     // `_update_subtask_to_running` (`dispatcher.py:166`): every dispatch mode
     // flips the assistant subtask to RUNNING before it is dispatched, and the
     // committed change re-derives the Task CRD's status.
@@ -156,15 +202,26 @@ pub async fn dispatch_create(
     if !routing::supports_streaming(&target) {
         // Non-SSE: fire-and-forget the executor dispatch and return `queued`.
         if let Some(url) = target.url.as_deref() {
-            enqueue_executor_dispatch(state, url, &request).await;
+            enqueue_executor_dispatch(state, url, &request);
         }
-        // A just-created assistant subtask carries `result = null`, so
-        // `build_response_output` yields no items.
+        // `openapi_responses.py:936-942`: the source also queries the task's
+        // subtasks here and renders the output from the current assistant turn.
+        // A just-created subtask carries `result = null`, so the `queued`
+        // output stays empty, but the read is request behavior.
+        let output = current_assistant_output(
+            state,
+            input.setup.task_id,
+            input.user_id,
+            input.setup.assistant_subtask_id,
+            "in_progress",
+            "",
+        )
+        .await?;
         let object = ResponseObject::queued(
             input.setup.task_id,
             created_at,
             input.model_string,
-            Vec::new(),
+            output,
             input.previous_response_id.clone(),
         );
         return json_response(&object);
@@ -188,13 +245,35 @@ pub async fn dispatch_create(
     }
 
     if input.background {
-        enqueue_chat_shell_dispatch(state, &target.url, &request, input.request_id).await;
-        let object = ResponseObject::in_progress(
+        enqueue_chat_shell_dispatch(state, target.url.as_deref(), request, input.request_id);
+        // `openapi_responses.py:985-1006`: after starting the background work
+        // the source queries the task's subtasks (`_query_subtasks`) and renders
+        // the in-progress response from the current assistant turn. The
+        // just-created subtask carries `result = null`, so the output is empty,
+        // but the read and its filtered turn are still request behavior.
+        let output = current_assistant_output(
+            state,
             input.setup.task_id,
+            input.user_id,
+            input.setup.assistant_subtask_id,
+            "in_progress",
+            "",
+        )
+        .await?;
+        let (pending_user_input, pending_user_input_payload) =
+            super::response_object::extract_pending_user_input_state();
+        let object = ResponseObject {
+            id: format!("resp_{}", input.setup.task_id),
+            object: "response",
             created_at,
-            input.model_string,
-            input.previous_response_id.clone(),
-        );
+            status: "in_progress",
+            error: None,
+            model: input.model_string.to_string(),
+            output,
+            pending_user_input: pending_user_input.then_some(true),
+            pending_user_input_payload,
+            previous_response_id: input.previous_response_id.clone(),
+        };
         return json_response(&object);
     }
 
@@ -208,49 +287,33 @@ pub async fn dispatch_create(
             "LLM request failed: Chat Shell SSE dispatch requires a target URL",
         ));
     };
-    let collected =
-        super::sse_sync::collect(state, url, &request, input.request_id, request.message_id)
-            .await
-            .map_err(|message| {
-                FastApiError::detail(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("LLM request failed: {message}"),
-                )
-            })?;
+    let consumer = super::sse_sync::ConsumerContext::from_app(state);
+    let collected = super::sse_sync::collect(
+        &consumer,
+        url,
+        &request,
+        input.request_id,
+        request.message_id,
+    )
+    .await
+    .map_err(|message| {
+        FastApiError::detail(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("LLM request failed: {message}"),
+        )
+    })?;
 
     // `_query_subtasks` + `_filter_current_assistant_turn`: only the assistant
     // subtask this request created contributes output items.
-    let subtasks = super::super::responses_repository::list_subtasks_for_user_ordered(
-        state.task_store.as_ref(),
+    let output = current_assistant_output(
+        state,
         input.setup.task_id,
-        i32::try_from(input.user_id).unwrap_or(i32::MAX),
+        input.user_id,
+        input.setup.assistant_subtask_id,
+        "completed",
+        &collected.content,
     )
-    .await
-    .map_err(|error| {
-        tracing::error!(%error, "responses sync subtask read failed");
-        FastApiError::internal()
-    })?;
-    let active: Vec<_> = subtasks
-        .into_iter()
-        .filter(|subtask| subtask.id == input.setup.assistant_subtask_id)
-        .collect();
-    let output = super::super::output_builder::build_response_output(
-        &active,
-        &state.auth,
-        Some(super::super::output_builder::ActiveAssistant {
-            subtask_id: input.setup.assistant_subtask_id,
-            status: "completed",
-            content: &collected.content,
-        }),
-    )
-    .map_err(|error| {
-        tracing::error!(?error, "responses sync output build failed");
-        FastApiError::internal()
-    })?;
-    let output: Vec<Value> = output
-        .iter()
-        .map(|item| serde_json::to_value(item).unwrap_or(Value::Null))
-        .collect();
+    .await?;
 
     let object = ResponseObject {
         id: format!("resp_{}", input.setup.task_id),
@@ -267,6 +330,91 @@ pub async fn dispatch_create(
     json_response(&object)
 }
 
+/// `_query_subtasks` (`openapi_responses.py:900-909`) plus
+/// `_filter_current_assistant_turn` (`openapi_responses.py:223-227`): list the
+/// task's subtasks on a fresh session and keep only the assistant turn this
+/// request created. Only that subtask contributes output items
+/// (`build_response_output`).
+async fn current_assistant_output(
+    state: &AppState,
+    task_id: i64,
+    user_id: i64,
+    assistant_subtask_id: i64,
+    status: &'static str,
+    content: &str,
+) -> Result<Vec<Value>, FastApiError> {
+    let subtasks = super::super::responses_repository::list_subtasks_for_user_ordered(
+        state.task_store.as_ref(),
+        task_id,
+        i32::try_from(user_id).unwrap_or(i32::MAX),
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "responses subtask read failed");
+        FastApiError::internal()
+    })?;
+    let active: Vec<_> = subtasks
+        .into_iter()
+        .filter(|subtask| subtask.id == assistant_subtask_id)
+        .collect();
+    let output = super::super::output_builder::build_response_output(
+        &active,
+        &state.auth,
+        Some(super::super::output_builder::ActiveAssistant {
+            subtask_id: assistant_subtask_id,
+            status,
+            content,
+        }),
+    )
+    .map_err(|error| {
+        tracing::error!(?error, "responses output build failed");
+        FastApiError::internal()
+    })?;
+    Ok(output
+        .iter()
+        .map(|item| serde_json::to_value(item).unwrap_or(Value::Null))
+        .collect())
+}
+
+/// The `error_message` the source persists before it raises
+/// (`openapi_responses.py:788-853`): `str(e)` for its `ValueError` and generic
+/// branches, and `_exception_message(e)` for `HTTPException`, which is the
+/// error's `detail` (`:257-261`). The same value is what the client receives.
+fn build_failure_message(error: &FastApiError) -> &str {
+    error.detail_message().unwrap_or("Internal Server Error")
+}
+
+/// `_persist_terminal_failure` (`openapi_responses.py:367-388`): collect the
+/// terminal result, then persist the FAILED subtask/task state and clean the
+/// streaming state up. The callback pipeline runs the same collect + persist
+/// work (`internal_callback/pipeline.rs`), so reuse those helpers.
+async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, message: &str) {
+    let Some(redis) = state.redis.as_ref() else {
+        return;
+    };
+    let ctx = completion::Completion {
+        app: Some(state),
+        mysql: &state.mysql,
+        redis,
+        tables: crate::internal_callback::tables(state),
+        executor_manager: &state.executor_manager,
+    };
+    let result =
+        completion::collect_completed_result(&ctx, subtask_id, "FAILED", None, Some(message), None)
+            .await;
+    completion::persist_completed_result(
+        &ctx,
+        task_id,
+        subtask_id,
+        "FAILED",
+        result.as_ref(),
+        Some(message),
+        None,
+        None,
+    )
+    .await;
+}
+
 /// `ExecutionDispatcher._update_subtask_to_running`
 /// (`app/services/execution/dispatcher.py:335-355`): mark the dispatched
 /// assistant subtask RUNNING and re-derive the Task CRD. The source's
@@ -277,6 +425,7 @@ async fn mark_subtask_running(state: &AppState, subtask_id: i64) {
         return;
     };
     let ctx = completion::Completion {
+        app: Some(state),
         mysql: &state.mysql,
         redis,
         tables: crate::internal_callback::tables(state),
@@ -285,38 +434,43 @@ async fn mark_subtask_running(state: &AppState, subtask_id: i64) {
     completion::mark_subtask_running(&ctx, subtask_id).await;
 }
 
-/// `_dispatch_http_callback`: enqueue the fire-and-forget executor-manager
-/// dispatch on the startup-owned worker.
-async fn enqueue_executor_dispatch(state: &AppState, target_url: &str, request: &ExecutionRequest) {
+/// `_dispatch_http_callback`: admit the fire-and-forget executor-manager
+/// dispatch on the startup-owned supervisor.
+fn enqueue_executor_dispatch(state: &AppState, target_url: &str, request: &ExecutionRequest) {
     let payload = dispatch::assemble(request, false, true);
     let body = serde_json::to_value(&payload).unwrap_or(Value::Null);
     let url = super::executor_client::executor_responses_url(target_url);
     state
         .responses_dispatch
-        .submit(crate::responses::dispatch::DispatchJob::Executor { url, body })
-        .await;
+        .submit(crate::responses::dispatch::DefaultDispatchJob::Executor { url, body });
 }
 
-/// Enqueue the fire-and-forget chat-shell dispatch for the streaming response.
-async fn enqueue_chat_shell_dispatch(
+/// Admit the fire-and-forget chat-shell consumer for the background response.
+///
+/// The job carries the resolved request and the consumer handles; the
+/// supervisor runs `sse_sync::collect` after the response is returned.
+fn enqueue_chat_shell_dispatch(
     state: &AppState,
-    target: &Option<String>,
-    request: &ExecutionRequest,
+    target_url: Option<&str>,
+    request: ExecutionRequest,
     request_id: &str,
 ) {
-    let Some(url) = target.clone() else {
+    let Some(url) = target_url else {
         return;
     };
-    let payload = dispatch::assemble(request, true, false);
-    let body = serde_json::to_value(&payload).unwrap_or(Value::Null);
+    let job = crate::responses::dispatch::ChatShellJob {
+        task_id: request.task_id,
+        subtask_id: request.subtask_id,
+        consumer: crate::responses::dispatch::ConsumerState::from_app(state),
+        target_url: url.to_string(),
+        request,
+        request_id: request_id.to_string(),
+    };
     state
         .responses_dispatch
-        .submit(crate::responses::dispatch::DispatchJob::ChatShell {
-            url: format!("{}/v1/responses", url.trim_end_matches('/')),
-            request_id: request_id.to_string(),
-            body,
-        })
-        .await;
+        .submit(crate::responses::dispatch::DefaultDispatchJob::ChatShell(
+            Box::new(job),
+        ));
 }
 
 /// A JSON response whose media type matches the source's `JSONResponse`.
@@ -365,5 +519,74 @@ mod tests {
         // The source defaults, used when the deployment sets neither URL.
         assert_eq!(routing::DEFAULT_CHAT_SHELL_URL, "http://127.0.0.1:8100");
         assert_eq!(DEFAULT_EXECUTOR_MANAGER_URL, "http://localhost:8001");
+    }
+
+    #[test]
+    fn the_persisted_message_is_the_raised_detail() {
+        // `_persist_terminal_failure` writes `str(e)` / the HTTPException
+        // detail, which is the same message the client receives.
+        let error = FastApiError::detail(
+            brz_http_server::StatusCode::BAD_REQUEST,
+            "Model sample-model not found",
+        );
+        assert_eq!(
+            build_failure_message(&error),
+            "Model sample-model not found"
+        );
+        assert_eq!(
+            error.detail_message(),
+            Some("Model sample-model not found"),
+            "the persisted error_message and the response detail are the same value"
+        );
+        assert_eq!(
+            build_failure_message(&FastApiError::internal()),
+            "Internal Server Error"
+        );
+    }
+
+    #[test]
+    fn the_build_failure_persists_before_the_create_dispatch() {
+        // A build failure must run the terminal-failure chain and re-raise
+        // before routing or dispatch starts.
+        let source = include_str!("seam.rs");
+        let persist = source
+            .find("            persist_build_failure(\n                state,")
+            .expect("build-failure persistence");
+        let raise = source
+            .find("            return Err(error);")
+            .expect("build-failure re-raise");
+        let route = source
+            .find("routing::route(&RouteInputs")
+            .expect("create dispatch routing");
+        assert!(
+            persist < raise && raise < route,
+            "a build failure must persist and re-raise before the create dispatch"
+        );
+    }
+
+    #[test]
+    fn the_build_failure_reuses_the_callback_completion_chain() {
+        let source = include_str!("seam.rs");
+        let collect = source
+            .find("completion::collect_completed_result(")
+            .expect("collect step");
+        let persist = source
+            .find("completion::persist_completed_result(")
+            .expect("persist step");
+        assert!(collect < persist, "collect must precede persist");
+        assert!(
+            source[collect..persist].contains("Some(message)"),
+            "the collect step must receive the raised message"
+        );
+        let tail = &source[persist..];
+        let end = tail.find(".await;").expect("persist call end");
+        assert!(
+            tail[..end].contains("Some(message)"),
+            "the persist step must receive the raised message"
+        );
+        assert!(
+            tail[..end].contains("result.as_ref()"),
+            "the persist step must forward the collected result option, not a fabricated object"
+        );
     }
 }
