@@ -112,7 +112,6 @@ interface TemporaryChatPanelProps {
   composerHeader?: ReactNode
   onRestoreConversation?: () => void
   initialScrollPosition?: 'restore' | 'latest'
-  scrollOrigin?: 'top' | 'bottom'
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
 }
 
@@ -143,7 +142,6 @@ export function TemporaryChatPanel({
   composerHeader,
   onRestoreConversation,
   initialScrollPosition = 'restore',
-  scrollOrigin = 'bottom',
   onOpenRuntimeTask,
   active = true,
 }: TemporaryChatPanelProps) {
@@ -980,7 +978,6 @@ export function TemporaryChatPanel({
         hiddenRequestUserInputIds={hiddenRequestUserInputIds}
         hideRequestUserInputBlocks={Boolean(pendingRequest) && !readOnly}
         initialScrollPosition={initialScrollPosition}
-        scrollOrigin={scrollOrigin}
       />
     </TemporaryConversationLayout>
   )

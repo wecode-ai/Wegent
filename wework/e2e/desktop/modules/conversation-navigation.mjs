@@ -198,7 +198,7 @@ async function assertConversationTextOccurrences(control, expectedOccurrences) {
       `The conversation rendered "${text}" ${countTextOccurrences(
         transcriptText,
         text
-      )} times instead of ${expectedCount}`
+      )} times instead of ${expectedCount}; transcriptLength=${transcriptText.length}`
     )
   }
 }
@@ -1552,6 +1552,7 @@ async function waitForSuccessfulMatrixSubmission(control, selector, prompt, time
 }
 
 export {
+  activeTranscriptSelector,
   sendPrompt,
   sendPromptWithButton,
   assertConversationMessageState,

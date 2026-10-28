@@ -1,10 +1,7 @@
 import {
-  cacheConversationScrollSnapshot,
-  cacheConversationVirtualMeasurements,
+  migrateConversationViewport,
   clearConversationViewportCache,
   evictConversationViewport,
-  getConversationScrollSnapshot,
-  getConversationVirtualMeasurements,
   getConversationViewportCacheStats,
 } from '@wegent/collaboration/conversation/conversationViewportCache'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
@@ -187,15 +184,7 @@ function migrateRuntimeConversation(previousKey: string, nextKey: string): void 
   moveEntry(interruptedGuidanceIdsByConversation, previousKey, nextKey, mergeSets)
   moveEntry(goalSnapshotVersionsByConversation, previousKey, nextKey, Math.max)
   reconcileAcceptedQueuedMessages(nextKey, turnsByConversation.get(nextKey) ?? [])
-  const scroll = getConversationScrollSnapshot(previousKey)
-  if (scroll && !getConversationScrollSnapshot(nextKey)) {
-    cacheConversationScrollSnapshot(nextKey, scroll)
-  }
-  const measurements = getConversationVirtualMeasurements(previousKey)
-  if (measurements && !getConversationVirtualMeasurements(nextKey)) {
-    cacheConversationVirtualMeasurements(nextKey, measurements)
-  }
-  evictConversationViewport(previousKey)
+  migrateConversationViewport(previousKey, nextKey)
 }
 
 function moveEntry<T>(

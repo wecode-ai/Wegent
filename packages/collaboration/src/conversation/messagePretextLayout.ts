@@ -1,16 +1,51 @@
 import { layout, prepare } from '@chenglou/pretext'
+import type { PreparedText } from '@chenglou/pretext'
 import type { Attachment } from '@wegent/chat-core/runtime'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import { isImageAttachment } from '../issue-detail/attachmentPresentation'
 import { COLLAPSED_PROCESSING_HEIGHT } from './blocks/ToolBlocksDisplay'
+import { DEFAULT_CODE_FONT_SIZE, DEFAULT_UI_FONT_SIZE } from '../theme/typography'
 
 const DEFAULT_LAYOUT_WIDTH = 720
 const MIN_TEXT_WIDTH = 160
-const ASSISTANT_FONT =
-  '13px Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-const USER_FONT = '13px Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-const ASSISTANT_LINE_HEIGHT = 24
-const USER_LINE_HEIGHT = 20
+export interface MessageLayoutTypography {
+  font: string
+  userFont: string
+  lineHeight: number
+  userLineHeight: number
+  codeLineHeight: number
+}
+
+export function readMessageLayoutTypography(element?: HTMLElement | null): MessageLayoutTypography {
+  const style = element ? getComputedStyle(element) : null
+  const size =
+    Number.parseFloat(style?.getPropertyValue('--text-chat') ?? '') || DEFAULT_UI_FONT_SIZE
+  const userSize = Number.parseFloat(style?.getPropertyValue('--text-base') ?? '') || size
+  const family =
+    style?.getPropertyValue('--font-ui').trim() || style?.fontFamily || 'system-ui, sans-serif'
+  const weight = style?.getPropertyValue('--font-weight-ui').trim() || style?.fontWeight || '400'
+  const rootSize =
+    typeof document === 'undefined'
+      ? 16
+      : Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
+  const paragraph = element?.querySelector<HTMLElement>(
+    '[data-testid="message-assistant"] p[data-scroll-anchor]'
+  )
+  const paragraphLineHeight = paragraph
+    ? Number.parseFloat(getComputedStyle(paragraph).lineHeight)
+    : 0
+  return {
+    font: `${weight} ${size}px ${family}`,
+    userFont: `${weight} ${userSize}px ${family}`,
+    lineHeight: paragraphLineHeight || rootSize * 1.5,
+    userLineHeight: rootSize * 1.25,
+    codeLineHeight:
+      (Number.parseFloat(style?.getPropertyValue('--text-code') ?? '') || DEFAULT_CODE_FONT_SIZE) *
+      1.8,
+  }
+}
+
+const DEFAULT_TYPOGRAPHY = readMessageLayoutTypography()
 const USER_CONTENT_HORIZONTAL_PADDING = 32
 const USER_MAX_WIDTH_RATIO = 0.8
 const HOVER_ACTION_HEIGHT = 20
@@ -23,71 +58,98 @@ const DOCUMENT_ATTACHMENT_HEIGHT = 34
 const FAILED_ASSISTANT_CARD_HEIGHT = 128
 const FINAL_ARTIFACT_CARD_HEIGHT = 76
 const MESSAGE_VERTICAL_BUFFER = 12
-const WIDTH_BUCKET_SIZE = 32
 const MAX_LAYOUT_CACHE_SIZE = 1200
 const STREAMING_MESSAGE_INTRINSIC_HEIGHT = 220
 // `MarkdownCodeBlock` renders fenced code in a horizontally scrolling `<pre>`: `--text-code` at
 // `line-height: 1.8`, a 40px header, 24px of padding and 20px of margin.
-const CODE_LINE_HEIGHT = 22
 const CODE_BLOCK_CHROME_HEIGHT = 84
 const FENCE_OPEN_PATTERN = /^ {0,3}(`{3,}|~{3,})/
 const FENCE_CLOSE_PATTERN = /^ {0,3}(`{3,}|~{3,})[ \t]*$/
 
-let pretextMeasurementAvailable = true
 const messageLayoutHeightCache = new Map<string, number>()
-let messageObjectLayoutHeightCache = new WeakMap<WorkbenchMessage, Map<number, number>>()
+let messageObjectLayoutHeightCache = new WeakMap<WorkbenchMessage, Map<string, number>>()
+let messagePreparedTextCache = new WeakMap<WorkbenchMessage, Map<string, PreparedText>>()
+const messageSignatureCache = new WeakMap<WorkbenchMessage, string>()
+const blockSignatureCache = new WeakMap<object, string>()
+let fontMetricsRevision = 0
+let observedFonts: FontFaceSet | undefined
+
+export function getMessageFontMetricsRevision(): number {
+  const fonts = typeof document === 'undefined' ? undefined : document.fonts
+  if (fonts && fonts !== observedFonts) {
+    observedFonts = fonts
+    fonts.addEventListener('loadingdone', () => {
+      fontMetricsRevision += 1
+      clearMessagePretextLayoutCache()
+    })
+  }
+  return fontMetricsRevision
+}
 
 export function getMessagePretextIntrinsicHeight(
   message: WorkbenchMessage,
-  containerWidth: number
+  containerWidth: number,
+  typography: MessageLayoutTypography = DEFAULT_TYPOGRAPHY
 ): number {
   if (message.status === 'streaming') {
     return STREAMING_MESSAGE_INTRINSIC_HEIGHT
   }
 
   const width = normalizeLayoutWidth(containerWidth)
-  const objectCachedHeight = messageObjectLayoutHeightCache.get(message)?.get(width)
+  const layoutKey = `${width}|${JSON.stringify(typography)}`
+  const objectCachedHeight = messageObjectLayoutHeightCache.get(message)?.get(layoutKey)
   if (objectCachedHeight !== undefined) return objectCachedHeight
 
-  const cacheKey = getMessageLayoutCacheKey(message, width)
+  const cacheKey = `${getMessageLayoutSignature(message)}|${layoutKey}`
   const cachedHeight = messageLayoutHeightCache.get(cacheKey)
   if (cachedHeight !== undefined) {
-    setObjectCachedLayoutHeight(message, width, cachedHeight)
+    setObjectCachedLayoutHeight(message, layoutKey, cachedHeight)
     return cachedHeight
   }
 
   const height =
     message.role === 'user'
-      ? estimateUserMessageHeight(message, width)
-      : estimateAssistantMessageHeight(message, width)
+      ? estimateUserMessageHeight(message, width, typography)
+      : estimateAssistantMessageHeight(message, width, typography)
 
   setCachedLayoutHeight(cacheKey, height)
-  setObjectCachedLayoutHeight(message, width, height)
+  setObjectCachedLayoutHeight(message, layoutKey, height)
   return height
 }
 
 export function clearMessagePretextLayoutCache() {
   messageLayoutHeightCache.clear()
   messageObjectLayoutHeightCache = new WeakMap()
-  pretextMeasurementAvailable = true
+  messagePreparedTextCache = new WeakMap()
 }
 
-function setObjectCachedLayoutHeight(message: WorkbenchMessage, width: number, height: number) {
+function setObjectCachedLayoutHeight(message: WorkbenchMessage, width: string, height: number) {
   const cachedByWidth = messageObjectLayoutHeightCache.get(message)
   if (cachedByWidth) {
+    if (cachedByWidth.size >= 8) cachedByWidth.delete(cachedByWidth.keys().next().value!)
     cachedByWidth.set(width, height)
     return
   }
   messageObjectLayoutHeightCache.set(message, new Map([[width, height]]))
 }
 
-function estimateUserMessageHeight(message: WorkbenchMessage, containerWidth: number): number {
+function estimateUserMessageHeight(
+  message: WorkbenchMessage,
+  containerWidth: number,
+  typography: MessageLayoutTypography
+): number {
   const contentWidth = Math.max(
     MIN_TEXT_WIDTH,
     Math.floor(containerWidth * USER_MAX_WIDTH_RATIO) - USER_CONTENT_HORIZONTAL_PADDING
   )
   const textHeight = message.content
-    ? measurePretextHeight(message.content, USER_FONT, contentWidth, USER_LINE_HEIGHT)
+    ? measurePretextHeight(
+        message,
+        message.content,
+        contentWidth,
+        typography.userLineHeight,
+        typography.userFont
+      )
     : 0
   const collapsedTextHeight = shouldCollapseUserMessage(message.content)
     ? Math.min(textHeight, COLLAPSED_USER_TEXT_HEIGHT) + USER_COLLAPSE_BUTTON_HEIGHT
@@ -99,13 +161,17 @@ function estimateUserMessageHeight(message: WorkbenchMessage, containerWidth: nu
   return Math.max(MIN_USER_ROW_HEIGHT, contentHeight + HOVER_ACTION_HEIGHT)
 }
 
-function estimateAssistantMessageHeight(message: WorkbenchMessage, containerWidth: number): number {
+function estimateAssistantMessageHeight(
+  message: WorkbenchMessage,
+  containerWidth: number,
+  typography: MessageLayoutTypography
+): number {
   if (message.status === 'failed' && !message.content.trim()) {
     return FAILED_ASSISTANT_CARD_HEIGHT + HOVER_ACTION_HEIGHT
   }
 
   const textHeight = message.content.trim()
-    ? measureAssistantMarkdownHeight(message.content, containerWidth)
+    ? measureAssistantMarkdownHeight(message, containerWidth, typography)
     : 0
   // A finished turn renders its process section collapsed: one summary row, however many blocks it ran.
   // The per-block rows only exist once the reader opens it, and that re-measure is a real layout change,
@@ -130,13 +196,23 @@ function estimateAssistantMessageHeight(message: WorkbenchMessage, containerWidt
  * answer actually renders at, which is what pushed the conversation's content height down (and the
  * scrollbar with it) while the reader scrolled up through it.
  */
-function measureAssistantMarkdownHeight(source: string, containerWidth: number): number {
+function measureAssistantMarkdownHeight(
+  message: WorkbenchMessage,
+  containerWidth: number,
+  typography: MessageLayoutTypography
+): number {
   let height = 0
-  for (const block of splitMarkdownCodeBlocks(source)) {
+  for (const block of splitMarkdownCodeBlocks(message.content)) {
     height +=
       block.kind === 'code'
-        ? Math.max(1, block.lineCount) * CODE_LINE_HEIGHT + CODE_BLOCK_CHROME_HEIGHT
-        : measurePretextHeight(block.content, ASSISTANT_FONT, containerWidth, ASSISTANT_LINE_HEIGHT)
+        ? Math.max(1, block.lineCount) * typography.codeLineHeight + CODE_BLOCK_CHROME_HEIGHT
+        : measurePretextHeight(
+            message,
+            block.content,
+            containerWidth,
+            typography.lineHeight,
+            typography.font
+          )
   }
   return height
 }
@@ -190,22 +266,38 @@ function countLines(text: string): number {
 }
 
 function measurePretextHeight(
+  message: WorkbenchMessage,
   text: string,
-  font: string,
   width: number,
-  lineHeight: number
+  lineHeight: number,
+  font: string
 ): number {
-  if (!pretextMeasurementAvailable) {
-    return estimateFallbackTextHeight(text, width, lineHeight)
-  }
-
   try {
-    const prepared = prepare(text, font, { whiteSpace: 'pre-wrap' })
+    const prepared = getPreparedMessageText(message, text, font)
     return layout(prepared, Math.max(MIN_TEXT_WIDTH, width), lineHeight).height
   } catch {
-    pretextMeasurementAvailable = false
     return estimateFallbackTextHeight(text, width, lineHeight)
   }
+}
+
+function getPreparedMessageText(
+  message: WorkbenchMessage,
+  text: string,
+  font: string
+): PreparedText {
+  let preparedBlocks = messagePreparedTextCache.get(message)
+  const key = `${font}|${text}`
+  const cached = preparedBlocks?.get(key)
+  if (cached) return cached
+
+  const prepared = prepare(text, font, { whiteSpace: 'pre-wrap' })
+  if (!preparedBlocks) {
+    preparedBlocks = new Map()
+    messagePreparedTextCache.set(message, preparedBlocks)
+  }
+  // Preparation is width-independent; keep it with the message, not each width's height.
+  preparedBlocks.set(key, prepared)
+  return prepared
 }
 
 function estimateFallbackTextHeight(text: string, width: number, lineHeight: number): number {
@@ -235,15 +327,13 @@ function shouldCollapseUserMessage(content: string): boolean {
 
 function normalizeLayoutWidth(width: number): number {
   const normalizedWidth = Number.isFinite(width) && width > 0 ? width : DEFAULT_LAYOUT_WIDTH
-  return Math.max(
-    MIN_TEXT_WIDTH,
-    Math.round(normalizedWidth / WIDTH_BUCKET_SIZE) * WIDTH_BUCKET_SIZE
-  )
+  return Math.max(MIN_TEXT_WIDTH, Math.round(normalizedWidth))
 }
 
-function getMessageLayoutCacheKey(message: WorkbenchMessage, width: number): string {
-  return [
-    width,
+export function getMessageLayoutSignature(message: WorkbenchMessage): string {
+  const cached = messageSignatureCache.get(message)
+  if (cached) return cached
+  const signature = [
     message.id,
     message.role,
     message.status,
@@ -258,21 +348,19 @@ function getMessageLayoutCacheKey(message: WorkbenchMessage, width: number): str
       ? `${message.fileChanges.status}:${message.fileChanges.file_count}:${message.fileChanges.additions}:${message.fileChanges.deletions}`
       : '',
   ].join('|')
+  messageSignatureCache.set(message, signature)
+  return signature
 }
 
 function getBlockSignature(message: WorkbenchMessage): string {
   return (message.blocks ?? [])
     .map(block => {
-      if (block.type === 'thinking' || block.type === 'text' || block.type === 'plan') {
-        return `${block.id}:${block.type}:${block.status}:${block.content.length}`
-      }
-      if (block.type === 'file_changes') {
-        return `${block.id}:${block.type}:${block.status}:${block.fileChanges.file_count}:${block.fileChanges.diff?.length ?? 0}`
-      }
-      if (block.type === 'subagent') {
-        return `${block.id}:${block.type}:${block.status}:${block.agentStatus ?? ''}:${block.output?.length ?? 0}:${block.summary?.length ?? 0}:${block.children?.length ?? 0}`
-      }
-      return `${block.id}:${block.type}:${block.status}:${String(block.toolOutput ?? '').length}`
+      const cached = blockSignatureCache.get(block)
+      if (cached) return cached
+      // Equal lengths do not imply equal wrapping, cards or rendered controls.
+      const signature = stableTextHash(JSON.stringify(block))
+      blockSignatureCache.set(block, signature)
+      return signature
     })
     .join(',')
 }
