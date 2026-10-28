@@ -3,6 +3,56 @@ use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
 #[tokio::test]
+async fn round_work_validates_the_issue_event_without_replacing_member_identity() {
+    let bindings = Arc::new(AtomicUsize::new(0));
+    let calls = bindings.clone();
+    let router = Router::new()
+        .route("/api/v1/loop-items/issue/assignments", get(|| async {
+            Json(json!({"items":[{"id":"issue-event","status":"active","created_at":"2099-01-01T00:00:00Z"}]}))
+        }))
+        .route("/api/v1/loop-items/issue/tasks", get(move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!([{"human_assignment_id":"human","device_id":"other","task_id":"stand-in-human-review"}])) }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let config = json!({"id":"review","projectId":"project","projectStore":"cloud","userId":7,"enabledAfter":"2000-01-01T00:00:00Z"});
+    let mut issue = json!({"id":"issue","assignee_user_id":7,"human_task_binding":{
+        "humanAssignmentId":"human","assignmentId":"member-work", "dispatchRoundId":"round-1","issueAssignmentId":"issue-event"
+    }});
+    handler.start_cloud_stand_in(&config, &issue).await.unwrap();
+    assert_eq!(bindings.load(Ordering::SeqCst), 1);
+    assert_eq!(issue["human_task_binding"]["assignmentId"], "member-work");
+    issue["human_task_binding"]["issueAssignmentId"] = json!("superseded-event");
+    handler.start_cloud_stand_in(&config, &issue).await.unwrap();
+    assert_eq!(bindings.load(Ordering::SeqCst), 1);
+    issue["human_task_binding"]
+        .as_object_mut()
+        .unwrap()
+        .remove("issueAssignmentId");
+    assert_eq!(
+        handler
+            .start_cloud_stand_in(&config, &issue)
+            .await
+            .unwrap_err()
+            .code,
+        "invalid_assignment"
+    );
+    assert_eq!(bindings.load(Ordering::SeqCst), 1);
+    assert!(handler.local_task_links(true).is_empty());
+    server.abort();
+}
+
+#[tokio::test]
 async fn omitted_manual_identity_uses_a_connected_role_and_rejects_no_connection() {
     let root = tempfile::tempdir().unwrap();
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");

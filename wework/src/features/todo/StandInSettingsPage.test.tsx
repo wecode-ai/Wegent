@@ -204,7 +204,9 @@ describe('Personal stand-in settings', () => {
     render(<StandInSettingsPage {...props} initialProfileId="default" onDeleted={onDeleted} />)
     await user.click(await screen.findByTestId('stand-in-role-delete'))
     await user.click(screen.getByTestId('stand-in-role-delete-confirm'))
-    expect(await screen.findByText('Error: task changed')).toBeInTheDocument()
+    expect(
+      await screen.findByText('分身操作失败，请稍后重试；如仍失败，请查看执行设备日志。')
+    ).toBeInTheDocument()
     expect(onDeleted).not.toHaveBeenCalled()
     expect(screen.getByTestId('stand-in-role-delete-confirm')).toBeInTheDocument()
   })
@@ -604,7 +606,9 @@ describe('Personal stand-in settings', () => {
     await user.type(name, '代码审查')
     expect(personalSave).not.toHaveBeenCalled()
     await user.click(screen.getByTestId('stand-in-save'))
-    expect(await screen.findByRole('alert')).toHaveTextContent('version_conflict')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '分身设置已在其他位置更新，请刷新后重新修改。'
+    )
     expect(name).toHaveValue('代码审查')
     await user.click(screen.getByTestId('stand-in-save'))
     await screen.findByTestId('stand-in-saved')
@@ -640,7 +644,9 @@ describe('Personal stand-in settings', () => {
     expect(personalSave).not.toHaveBeenCalled()
     expect(screen.getByTestId('stand-in-pending-save')).toHaveTextContent('开启并保存后')
     await user.click(screen.getByTestId('stand-in-save'))
-    expect(await screen.findByRole('alert')).toHaveTextContent('version_conflict')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '分身设置已在其他位置更新，请刷新后重新修改。'
+    )
     expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
   })
 
@@ -688,7 +694,7 @@ describe('Personal stand-in settings', () => {
     personalGet.mockRejectedValueOnce(new Error('Executor offline'))
     const user = userSetup()
     render(<StandInSettingsPage {...props} />)
-    expect(await screen.findByRole('alert')).toHaveTextContent('Executor offline')
+    expect(await screen.findByRole('alert')).toHaveTextContent('执行设备离线，请连接设备后重试。')
     await user.click(screen.getByTestId('stand-in-reload'))
     expect(await screen.findByTestId('stand-in-agent')).toBeInTheDocument()
     await waitFor(() => expect(personalGet).toHaveBeenCalledTimes(2))

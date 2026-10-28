@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use super::assignment_index::{ensure_active_index, index_id};
 use super::assignments::{internal, require_issue_read};
 use super::auth::FlexibleUser;
-use super::loop_repository::{AssignmentMetadata, LoopItemRepository};
+use super::loop_repository::{AssignmentMetadata, BindingMetadata, LoopItemRepository};
 use crate::{http_compat::FastApiError, state::AppState};
 
 #[derive(Deserialize)]
@@ -178,7 +178,7 @@ async fn require_personal_binding(
                 .metadata
                 .as_ref()
                 .and_then(|metadata| metadata.0.value.as_ref())
-                .and_then(|metadata| metadata.assignment_id.as_deref())
+                .and_then(binding_assignment_event_id)
                 == Some(assignment_id)
     }) {
         Ok(())
@@ -188,6 +188,19 @@ async fn require_personal_binding(
             "A recipient-owned task binding is required",
         ))
     }
+}
+
+fn binding_assignment_event_id(metadata: &BindingMetadata) -> Option<&str> {
+    let id = if metadata
+        .dispatch_round_id
+        .as_deref()
+        .is_some_and(|round| round != "direct")
+    {
+        metadata.issue_assignment_id.as_deref()
+    } else {
+        metadata.assignment_id.as_deref()
+    };
+    id.filter(|id| !id.is_empty())
 }
 
 fn require_recipient(target_type: &str, target_id: &str, user_id: i32) -> Result<(), FastApiError> {
@@ -204,6 +217,22 @@ fn require_recipient(target_type: &str, target_id: &str, user_id: i32) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn round_binding_receipts_require_the_issue_event_and_preserve_member_identity() {
+        let mut metadata = BindingMetadata {
+            dispatch_round_id: Some("round-1".into()),
+            assignment_id: Some("member-work".into()),
+            issue_assignment_id: Some("issue-event".into()),
+            ..Default::default()
+        };
+        assert_eq!(binding_assignment_event_id(&metadata), Some("issue-event"));
+        assert_eq!(metadata.assignment_id.as_deref(), Some("member-work"));
+        metadata.issue_assignment_id = None;
+        assert_eq!(binding_assignment_event_id(&metadata), None);
+        metadata.dispatch_round_id = Some("direct".into());
+        assert_eq!(binding_assignment_event_id(&metadata), Some("member-work"));
+    }
 
     #[test]
     fn receipts_cannot_be_written_by_an_assigner_or_for_an_agent() {

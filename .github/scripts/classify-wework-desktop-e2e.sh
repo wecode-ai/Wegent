@@ -912,7 +912,7 @@ classify_wework_path() {
       select_target "core:stand-in-workspace"
       return
       ;;
-    wework/e2e/desktop/scenarios/stand-in-assignment-notifications.scenario.mjs)
+    wework/e2e/desktop/scenarios/stand-in-assignment-notifications.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-suite.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-recovery.scenario.mjs|wework/e2e/desktop/modules/stand-in-round-assignment.mjs)
       select_target "core:stand-in-assignment-notifications"
       return
       ;;

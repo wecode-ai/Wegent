@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useRef, useState } from 'react'
 import { Plus, Search, X } from 'lucide-react'
 import type { StandInRole, StandInSourceConnection } from '@/api/personalStandIn'
@@ -81,7 +82,7 @@ export function StandInSourceConnections({
       setNextCursor(result.hasMore ? result.nextCursor : undefined)
       setSearched(true)
     } catch (cause) {
-      if (sequence === searchSequence.current) setError(String(cause))
+      if (sequence === searchSequence.current) setError(getStandInErrorMessage(cause))
     } finally {
       setBusy(false)
     }

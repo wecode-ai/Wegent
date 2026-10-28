@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import type { StandInGeneratedEventMap } from '@/telemetry/generated/standInEvents'
 import type {
   SharedWorkspaceApi,
@@ -214,7 +215,26 @@ export interface StandInExecutorApi {
   ): Promise<WorkspaceStandInSettings>
 }
 
-export function createStandInExecutorApi(request: Request): StandInExecutorApi {
+export function createStandInExecutorApi(transport: Request): StandInExecutorApi {
+  const request: Request = async (method, payload, deviceId) => {
+    try {
+      return await transport(method, payload, deviceId)
+    } catch (error) {
+      console.warn('[Stand-in] Executor request failed', {
+        method,
+        deviceId,
+        projectId: payload.projectId,
+        issueId: payload.issueId ?? payload.itemId,
+        assignmentId: payload.assignmentId,
+        userId: payload.userId ?? payload.recipientUserId,
+        roleId: payload.standInId ?? payload.roleId,
+        code: error && typeof error === 'object' && 'code' in error ? error.code : undefined,
+      })
+      throw Object.assign(new Error(getStandInErrorMessage(error), { cause: error }), {
+        code: error && typeof error === 'object' && 'code' in error ? error.code : undefined,
+      })
+    }
+  }
   return {
     configureTelemetry: async (userId, deviceId, enabled, enabledSince) => {
       await request(
@@ -351,7 +371,7 @@ export function bindProjectStandInApi(
 ): NonNullable<SharedWorkspaceApi['standIn']> {
   const resolveDevice = async (deviceId?: string) => {
     const target = deviceId || (await currentIdentity())?.deviceId
-    if (!target) throw new Error('Current Executor identity is unavailable')
+    if (!target) throw new Error(getStandInErrorMessage({ code: 'stand_in_unavailable' }))
     return target
   }
   return {
