@@ -20,7 +20,7 @@ async function withWorkspace(run) {
   }
 }
 
-function runIdentity({ cwd, workspace = cwd, executor = process.execPath }) {
+function runIdentity({ cwd, workspace = cwd, executor = process.execPath, env = {} }) {
   const windows = process.platform === 'win32'
   const command = replyPredictionShellIdentityCommand()
   const result = spawnSync(
@@ -33,6 +33,7 @@ function runIdentity({ cwd, workspace = cwd, executor = process.execPath }) {
         ...process.env,
         WEGENT_EXECUTOR_BINARY: executor,
         WEGENT_TASK_WORKSPACE: workspace,
+        ...env,
       },
       timeout: 5_000,
     }
@@ -61,11 +62,44 @@ test('workspace identity uses the real directory rather than its symlink spellin
   })
 })
 
+test('checks shell identity without launching another lifecycle-controlled sidecar', async () => {
+  await withWorkspace(async ({ root, workspace }) => {
+    const preload = join(root, 'reject-child-executor.cjs')
+    await writeFile(
+      preload,
+      `require('node:child_process').spawnSync = () => { throw new Error('An identity check must not launch a sidecar') }`
+    )
+    const result = runIdentity({
+      cwd: workspace,
+      env: {
+        WEGENT_APP_LIFECYCLE_FD: '9999',
+        NODE_OPTIONS: `--require=${JSON.stringify(preload)}`,
+      },
+    })
+
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stdout.trim(), ENV_OK)
+  })
+})
+
+test.skipIf(process.platform === 'win32')(
+  'rejects a file without executable permission',
+  async () => {
+    await withWorkspace(async ({ root, workspace }) => {
+      const executor = join(root, 'non-executable')
+      await writeFile(executor, 'not executable', { mode: 0o644 })
+      const result = runIdentity({ cwd: workspace, executor })
+
+      assert.notEqual(result.status, 0)
+      assert.ok(!result.stdout.includes(ENV_OK))
+    })
+  }
+)
+
 test.each([
   'missing executor',
   'unknown executor',
   'directory executor',
-  'invalid executable',
   'missing workspace',
   'wrong cwd',
 ])('does not report a verified parent shell with %s', async invalid => {
@@ -74,10 +108,6 @@ test.each([
     if (invalid === 'missing executor') options.executor = ''
     if (invalid === 'unknown executor') options.executor = join(root, 'missing-executor')
     if (invalid === 'directory executor') options.executor = workspace
-    if (invalid === 'invalid executable') {
-      options.executor = join(root, 'invalid-executor.exe')
-      await writeFile(options.executor, 'not a real executable', { mode: 0o755 })
-    }
     if (invalid === 'missing workspace') options.workspace = ''
     if (invalid === 'wrong cwd') options.workspace = root
     const result = runIdentity(options)
