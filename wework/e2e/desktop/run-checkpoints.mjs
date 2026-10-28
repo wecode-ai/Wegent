@@ -496,25 +496,28 @@ function checkpointScenarioEnv(env, checkpoint) {
   return nextEnv
 }
 
-async function runDesktopBuild() {
+async function runDesktopBuild({
+  command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
+  args = ['run', 'ai:verify:electron:build'],
+  environment = process.env,
+  label = 'Desktop build',
+  logPath = join(weworkDir, 'test-results', 'desktop-e2e', `desktop-build-${process.pid}.log`),
+} = {}) {
   const startedAt = Date.now()
-  const logPath = join(weworkDir, 'test-results', 'desktop-e2e', `desktop-build-${process.pid}.log`)
-  console.log(
-    `[desktop-e2e] Building the shared Electron application and executor. Full log: ${logPath}`
-  )
+  console.log(`[desktop-e2e] ${label} started. Full log: ${logPath}`)
   const heartbeat = setInterval(() => {
     console.log(
-      `[desktop-e2e] Desktop build still running: elapsed=${formatDuration(Date.now() - startedAt)}`
+      `[desktop-e2e] ${label} still running: elapsed=${formatDuration(Date.now() - startedAt)}`
     )
   }, HEARTBEAT_INTERVAL_MS)
 
   let result
   try {
     result = await runCommandToLog({
-      args: ['run', 'ai:verify:electron:build'],
-      command: process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
+      args,
+      command,
       cwd: weworkDir,
-      env: process.env,
+      env: environment,
       logPath,
     })
   } finally {
@@ -523,15 +526,15 @@ async function runDesktopBuild() {
 
   if (result.code !== 0) {
     console.error(
-      `[desktop-e2e] Desktop build failed: ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}. Full log: ${logPath}`
+      `[desktop-e2e] ${label} failed: ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}. Full log: ${logPath}`
     )
     if (result.tail.trim()) {
-      console.error(`[desktop-e2e] Desktop build output tail:\n${result.tail.trimEnd()}`)
+      console.error(`[desktop-e2e] ${label} output tail:\n${result.tail.trimEnd()}`)
     }
-    throw new Error(`Desktop E2E build exited with code ${result.code}`)
+    throw new Error(`${label} exited with code ${result.code}`)
   }
   console.log(
-    `[desktop-e2e] Desktop build passed: duration=${formatDuration(Date.now() - startedAt)}. Full log: ${logPath}`
+    `[desktop-e2e] ${label} passed: duration=${formatDuration(Date.now() - startedAt)}. Full log: ${logPath}`
   )
 }
 
@@ -544,14 +547,14 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
     []
   const upgradeRequested = selected.some(value => UPGRADE_PACKAGE_CHECKPOINTS.includes(value))
   if (upgradeRequested && !environment.WEWORK_E2E_UPGRADE_PAIR) {
-    const result = await runCommandToLog({
+    await runDesktopBuild({
       command: process.execPath,
       args: ['scripts/build-upgrade-fixtures.mjs'],
       cwd: weworkDir,
-      env: environment,
+      environment,
+      label: 'Upgrade fixture build',
       logPath: join(weworkDir, 'test-results', 'upgrade-fixtures-build.log'),
     })
-    if (result.code !== 0) throw new Error(`Upgrade fixture build failed: ${result.tail}`)
     const pairPath = resolve(
       environment.WEWORK_UPGRADE_FIXTURE_OUTPUT ||
         join(weworkDir, 'test-results', 'upgrade-fixtures'),
