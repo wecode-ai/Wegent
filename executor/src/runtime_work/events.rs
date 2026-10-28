@@ -46,6 +46,10 @@ const MAX_TOOL_OUTPUT_DELTA_BYTES: usize = 64 * 1024;
 const MAX_TOOL_OUTPUT_BUFFER_BYTES: usize = 512 * 1024;
 static LAST_RUNTIME_EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+#[path = "retry_status.rs"]
+mod retry_status;
+use retry_status::{codex_error_will_retry, codex_notification_resumes_turn};
+
 pub(super) fn next_runtime_event_sequence() -> u64 {
     let wall_clock = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -65,33 +69,6 @@ pub(super) fn next_runtime_event_sequence() -> u64 {
             Err(current) => previous = current,
         }
     }
-}
-
-fn codex_error_will_retry(params: &Value) -> bool {
-    params
-        .get("willRetry")
-        .or_else(|| params.get("will_retry"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
-fn codex_retry_message(params: &Value) -> String {
-    params
-        .get("error")
-        .and_then(|error| error.get("message"))
-        .or_else(|| params.get("message"))
-        .and_then(Value::as_str)
-        .unwrap_or("Reconnecting")
-        .to_owned()
-}
-
-fn reconnecting_model_kind(request: &ExecutionRequest) -> Option<String> {
-    string_field(&request.model_config, "wework_model_kind")
-        .or_else(|| string_field(&request.model_config, "weworkModelKind"))
-}
-
-fn codex_notification_resumes_turn(method: &str) -> bool {
-    method.starts_with("item/") || method.starts_with("turn/")
 }
 
 pub(crate) fn is_context_compaction_request(request: &ExecutionRequest) -> bool {
@@ -304,6 +281,8 @@ pub(crate) struct CodexNotificationEventMapper {
     tool_output_deltas: BTreeMap<String, String>,
     goal_status: Option<String>,
     reconnecting_block_id: Option<String>,
+    proxy_retry_wait_ids: BTreeSet<String>,
+    native_retry_waits: BTreeMap<String, Value>,
     completed_context_compaction_ids: BTreeSet<String>,
 }
 
@@ -340,8 +319,10 @@ impl CodexNotificationEventMapper {
             request,
         };
         let notification = codex_notification(&message);
-        if codex_notification_resumes_turn(&notification.method) {
-            self.clear_reconnecting(&emit_context);
+        if codex_notification_resumes_turn(&notification.method)
+            || (notification.method == "error" && !codex_error_will_retry(notification.params))
+        {
+            self.clear_resumed_native_retry(&emit_context, notification.params);
         }
         if codex_stream_debug_enabled()
             && notification.method == "item/agentMessage/delta"
@@ -711,7 +692,21 @@ impl CodexNotificationEventMapper {
                 );
             }
             "error" if codex_error_will_retry(notification.params) => {
-                self.emit_reconnecting(&emit_context, notification.params);
+                let thread_id = stream_thread_id(notification.params).unwrap_or_default();
+                self.native_retry_waits
+                    .insert(thread_id, notification.params.clone());
+                self.refresh_reconnecting(&emit_context);
+            }
+            crate::server::local_model_proxy::retry_notifications::METHOD => {
+                let Some(wait_id) = string_field(notification.params, "waitId") else {
+                    return;
+                };
+                if notification.params["waiting"] == true {
+                    self.proxy_retry_wait_ids.insert(wait_id);
+                } else {
+                    self.proxy_retry_wait_ids.remove(&wait_id);
+                }
+                self.refresh_reconnecting(&emit_context);
             }
             _ => {
                 log_unhandled_codex_raw_message(
@@ -749,54 +744,6 @@ impl CodexNotificationEventMapper {
             context.local_task_id,
             context.request,
             params,
-        );
-    }
-
-    fn emit_reconnecting(&mut self, context: &EventEmitContext<'_>, params: &Value) {
-        if self.reconnecting_block_id.is_some() {
-            return;
-        }
-        let id = format!(
-            "reconnecting-{}-{}",
-            context.local_task_id, context.request.subtask_id
-        );
-        self.reconnecting_block_id = Some(id.clone());
-        emit_response_event(
-            context.event_tx,
-            context.device_id,
-            "response.block.created",
-            context.local_task_id,
-            context.request,
-            json!({
-                "block": {
-                    "id": id,
-                    "type": "tool",
-                    "tool_name": "runtime_reconnecting",
-                    "tool_input": {
-                        "message": codex_retry_message(params),
-                        "model_kind": reconnecting_model_kind(context.request),
-                    },
-                    "status": "streaming",
-                    "timestamp": now_ms(),
-                }
-            }),
-        );
-    }
-
-    fn clear_reconnecting(&mut self, context: &EventEmitContext<'_>) {
-        let Some(id) = self.reconnecting_block_id.take() else {
-            return;
-        };
-        emit_response_event(
-            context.event_tx,
-            context.device_id,
-            "response.block.updated",
-            context.local_task_id,
-            context.request,
-            json!({
-                "block_id": id,
-                "updates": { "status": "done" }
-            }),
         );
     }
 
@@ -2944,6 +2891,12 @@ mod tests {
         assert_eq!(
             created["payload"]["data"]["block"]["tool_input"]["model_kind"],
             "codex-official"
+        );
+        let updated = event_rx.try_recv().expect("retry attempt update");
+        assert_eq!(updated["event"], "response.block.updated");
+        assert_eq!(
+            updated["payload"]["data"]["updates"]["tool_input"]["message"],
+            "Reconnecting... 2/5"
         );
         assert!(event_rx.try_recv().is_err());
 

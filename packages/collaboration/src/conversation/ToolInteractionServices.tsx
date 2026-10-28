@@ -1,5 +1,7 @@
 import { createContext, useContext, type ReactNode } from "react";
+import type { ToolBlock } from "./blocks/types";
 export interface ToolInteractionServices {
+  renderMcpApp?: (block: ToolBlock) => ReactNode;
   openProxySettings?: () => void;
   onOutputAction?: (action: "copy" | "open_file") => void;
   readImageFile?: (path: string) => Promise<Blob>;

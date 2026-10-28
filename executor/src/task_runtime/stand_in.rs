@@ -65,6 +65,7 @@ impl LocalTaskStore {
                 .ok_or(TaskRuntimeError::ProjectNotFound)?;
         }
         let mut personal = read_personal(&connection, user_id, &device)?;
+        let previous_personal = personal.clone();
         let before = personal["roles"]
             .as_array()
             .unwrap()
@@ -120,6 +121,12 @@ impl LocalTaskStore {
         personal["userId"] = json!(user_id);
         personal["version"] = json!(personal["version"].as_i64().unwrap_or(0) + 1);
         write_personal(&connection, &personal)?;
+        super::stand_in_telemetry::configuration_changes(
+            &connection,
+            user_id,
+            &previous_personal,
+            &personal,
+        );
         connection.commit()?;
         Ok(project_role(&value, user_id, project_id, &kind))
     }

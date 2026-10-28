@@ -1,3 +1,4 @@
+import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import {
   useCallback,
   useContext,
@@ -77,6 +78,7 @@ export function StandInSettingsPage({
   onOpenPersonalSettings?(roleId: string, deviceId: string): void
   ref?: Ref<StandInSettingsHandle>
 }) {
+  useStandInOpened('settings', initialProfileId === '@primary' ? 'primary' : 'role')
   const { t } = useTranslation('common')
   const cloudConnection = useContext(CloudConnectionContext)
   const canLoadPersonalAgents = cloudConnection?.isConnected ?? true

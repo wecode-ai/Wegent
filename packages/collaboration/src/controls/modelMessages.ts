@@ -32,6 +32,9 @@ export const modelMessages: Record<"zh-CN" | "en", Record<string, string>> = {
     "workbench.model_disabled_unavailable": "该模型当前不可用",
     "workbench.model_picker_title": "选择模型",
     "workbench.model_recommended_set": "推荐模型集",
+    "workbench.model_fixed": "固定模型",
+    "workbench.model_set_slider_hint": "调整档位会切换模型及推理强度",
+    "workbench.fixed_model_slider_hint": "仅调整当前模型的推理强度",
     "workbench.model_set": "模型集",
     "workbench.model_source_cloud": "云端模型",
     "workbench.model_source_custom": "自定义模型",
@@ -95,6 +98,11 @@ export const modelMessages: Record<"zh-CN" | "en", Record<string, string>> = {
     "workbench.model_disabled_unavailable": "This model is unavailable",
     "workbench.model_picker_title": "Choose model",
     "workbench.model_recommended_set": "Recommended model set",
+    "workbench.model_fixed": "Fixed model",
+    "workbench.model_set_slider_hint":
+      "Adjusting the slider changes the model and reasoning effort",
+    "workbench.fixed_model_slider_hint":
+      "Adjusts reasoning effort for this model only",
     "workbench.model_set": "Model set",
     "workbench.model_source_cloud": "Cloud models",
     "workbench.model_source_custom": "Custom models",

@@ -3364,6 +3364,87 @@ describe('PluginsWorkspace', () => {
     })
   })
 
+  test.each([false, true])(
+    'defers background device synchronization until a foreground install settles (auto-update=%s)',
+    async autoUpdate => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      const marketplace = mockSystemSkillsFetch({
+        marketplaceDeviceState: 'pending',
+        deviceAutoSyncSucceeds: true,
+        marketplaceUpdateAvailable: autoUpdate,
+        marketplaceUpdatePolicy: 'auto',
+        autoUpdateBatchSizes: [1],
+      })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      let finishInstall!: () => void
+      const installGate = new Promise<void>(resolve => {
+        finishInstall = resolve
+      })
+      const fetchImplementation = vi.mocked(fetch).getMockImplementation()!
+      let installResponseReady = false
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        const response = await fetchImplementation(input, init)
+        if (String(input).includes('/plugins/marketplace/101/install') && init?.method === 'POST') {
+          installResponseReady = true
+          await installGate
+        }
+        return response
+      })
+      const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      try {
+        await screen.findByTestId('plugin-marketplace-install-101')
+        await installPluginFromMarketCard('plugin-marketplace-install-101')
+        await waitFor(() =>
+          expect(fetch).toHaveBeenCalledWith(
+            '/api/plugins/marketplace/101/install?device_id=current-device',
+            expect.objectContaining({ method: 'POST' })
+          )
+        )
+        const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
+        await waitFor(() => expect(installResponseReady).toBe(true))
+        const installed = await (
+          await fetch('/api/plugins/installed?device_id=current-device')
+        ).json()
+        const inventory = getPluginMarketplaceCache(cacheKey)!
+        await act(async () => {
+          writePluginInventory(cacheKey, 'current-device', {
+            installedPlugins: installed.items,
+            marketplaceItems: inventory.marketplaceItems.map(item =>
+              item.id !== 101
+                ? item
+                : {
+                    ...item,
+                    installed: true,
+                    installedLocally: false,
+                    installedPluginId: 101,
+                    currentDeviceInstallation: {
+                      deviceId: 'current-device',
+                      desiredReleaseId: 1001,
+                      actualReleaseId: null,
+                      state: 'pending',
+                      errorCode: null,
+                      errorMessage: null,
+                      attemptCount: 0,
+                      lastSyncAt: null,
+                      updatedAt: new Date().toISOString(),
+                    },
+                  }
+            ),
+          })
+        })
+        expect(marketplace.getSyncDeviceCalls()).toBe(0)
+        expect(marketplace.getAutoUpdateBatchCalls()).toBe(0)
+        await act(async () => finishInstall())
+        if (autoUpdate)
+          await waitFor(() => expect(marketplace.getAutoUpdateBatchCalls()).toBeGreaterThan(0))
+        else await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(1))
+      } finally {
+        await act(async () => finishInstall())
+        view.unmount()
+      }
+    }
+  )
+
   test('installs an account-managed plugin without opening a second local login', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     mockSystemSkillsFetch({

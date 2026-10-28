@@ -3065,8 +3065,14 @@ mod tests {
             }
         }));
         assert_eq!(
-            structured.text,
-            "{\"business_value\":{\"image_url\":\"data:image/png;base64,bm90LWEtYmxvY2s=\",\"type\":\"input_image\"},\"width\":1280}"
+            serde_json::from_str::<Value>(&structured.text).unwrap(),
+            json!({
+                "width": 1280,
+                "business_value": {
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,bm90LWEtYmxvY2s="
+                }
+            })
         );
         assert_eq!(structured.images.len(), 1);
         assert_eq!(

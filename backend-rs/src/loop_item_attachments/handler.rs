@@ -67,7 +67,7 @@ async fn loop_item_attachments(
 /// `can_view_item` passes maintainers unconditionally; every other resolved
 /// role passes when the item's effective security is `open`, or when the
 /// caller is related to the item.
-pub(super) async fn require_item_view_access(
+pub(crate) async fn require_item_view_access(
     state: &AppState,
     item: &AttachmentTaskRow,
     user_id: i32,

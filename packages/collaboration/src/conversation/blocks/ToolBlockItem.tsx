@@ -14,6 +14,7 @@ import {
 } from './ToolFileChanges'
 import { getBlockLabel } from './toolBlockLabels'
 import { renderBlockDetail, hasBlockDetail, getWorkspaceFilePath } from './ToolBlockDetails'
+import { isRuntimeRateLimitWaitBlock } from '@wegent/chat-core/runtime-conversation-turns'
 
 const RECONNECTING_DISPLAY_DELAY_MS = 10_000
 
@@ -142,6 +143,17 @@ export function ToolBlockItem({
   }
 
   if (block.toolName === 'runtime_reconnecting') {
+    if (isRuntimeRateLimitWaitBlock(block)) {
+      return (
+        <div
+          className="min-w-0 truncate py-1 text-sm text-text-muted"
+          data-testid="runtime-rate-limit-wait-status"
+          role="status"
+        >
+          {t('tool_activity.rate_limit_wait')}
+        </div>
+      )
+    }
     if (!showReconnectingStatus) return null
     const isChatGPTModel = block.toolInput?.model_kind === 'codex-official'
     if (isChatGPTModel) {

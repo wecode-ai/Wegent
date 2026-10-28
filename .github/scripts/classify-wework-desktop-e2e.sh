@@ -9,6 +9,7 @@ core_segments=(
   notification-tab-navigation
   collaboration-shared-core
   collaboration-deliveries
+  collaboration-delivery-editing
   collaboration-issue-task-discovery
   collaboration-app-queue-identity
   collaboration-runtime-reconciliation
@@ -28,6 +29,7 @@ core_segments=(
   stand-in-action-confirmation
   stand-in-list-confirmation
   stand-in-profile
+  stand-in-telemetry
   stand-in-workspace
   stand-in-controls
   stand-in-project-enable
@@ -113,6 +115,7 @@ core_segments=(
   temporary-chat
   workspace-attachments
   rendering-extensions
+  mcp-apps
   streaming-content
   streaming-tools
   streaming-timers
@@ -222,15 +225,17 @@ cloud_shards=(
 core_shards=(
   core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,streaming-conversation-switching,task-status-sync,goal-state-sync,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login,notification-tab-navigation
   project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle
-  window-lifecycle,model-routing,collaboration-app-queue-identity,stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,permission-modes,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
+  window-lifecycle,model-routing,collaboration-app-queue-identity,stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,permission-modes,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
   collaboration-board-sorting,component-update,environment-panel-scroll,running-conversation-history,workspace-tabs,collaboration-board-move-recovery,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy
   claude-runtime,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery
-  harness-app-lifecycle,task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,office-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import,collaboration-deliveries
+  harness-app-lifecycle,task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,office-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import,collaboration-deliveries,collaboration-delivery-editing
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference
   conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome
   split-workbench
   collaboration-shared-core,runtime-input-answer-persistence
 )
+
+core_shards[1]+=',mcp-apps'
 
 validate_core_shards() {
   declare -A known_segments=()
@@ -410,6 +415,7 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:stand-in-action-confirmation"
   select_target "core:stand-in-list-confirmation"
   select_target "core:stand-in-profile"
+  select_target "core:stand-in-telemetry"
   select_target "core:stand-in-workspace"
   select_target "core:stand-in-controls"
   select_target "core:stand-in-project-enable"
@@ -891,6 +897,7 @@ classify_wework_path() {
       select_target "core:stand-in-action-confirmation"
       select_target "core:stand-in-list-confirmation"
       select_target "core:stand-in-profile"
+      select_target "core:stand-in-telemetry"
       select_target "core:stand-in"
       select_target "core:stand-in-workspace"
       return
@@ -918,6 +925,7 @@ classify_wework_path() {
       select_target "core:stand-in-action-confirmation"
       select_target "core:stand-in-list-confirmation"
       select_target "core:stand-in-profile"
+      select_target "core:stand-in-telemetry"
       select_target "core:stand-in-workspace"
       select_target "core:stand-in-controls"
       select_target "core:stand-in-project-enable"
@@ -1252,6 +1260,17 @@ classify_wework_path() {
       return
       ;;
 
+    wework/src/features/mcp-apps/* | \
+      wework/src/api/mcpApps.ts | \
+      wework/electron/src/host/mcp-app-documents* | \
+      executor/src/agents/codex/mcp_apps.rs | \
+      executor/src/runtime_work/handler/mcp_apps.rs | \
+      wework/e2e/desktop/scenarios/mcp-apps.scenario.mjs | \
+      wework/e2e/utils/mcp-app-server.mjs)
+      select_target "core:mcp-apps"
+      return
+      ;;
+
     wework/src/components/layout/BackgroundTerminalsSummary* | \
       wework/src/components/layout/backgroundTerminals* | \
       wework/src/components/layout/workspace-panels/BackgroundTerminalPanel* | \
@@ -1309,7 +1328,7 @@ classify_wework_path() {
       select_target "core:codex-notification-isolation"
       return
       ;;
-    wework/e2e/desktop/scenarios/executor-stream-recovery.scenario.mjs)
+    wework/e2e/desktop/scenarios/executor-stream-recovery.scenario.mjs|wework/e2e/desktop/scenarios/executor-retry-status.scenario.mjs)
       select_target "core:executor-stream-recovery"
       return
       ;;
@@ -1711,10 +1730,13 @@ classify_path() {
       docker/device/Dockerfile)
       select_cloud_worktree_checkpoints
       ;;
-    wework/e2e/desktop/scenarios/collaboration-deliveries.scenario.mjs | \
+    wework/e2e/desktop/modules/delivery-cloud-editing.mjs | \
+      wework/e2e/desktop/scenarios/collaboration-delivery-editing.scenario.mjs | \
+      wework/e2e/desktop/scenarios/collaboration-deliveries.scenario.mjs | \
       packages/collaboration/src/issue-detail/IssueDelivery* | \
       packages/collaboration/src/issue-detail/deliveryMessages*)
       select_target "core:collaboration-deliveries"
+      select_target "core:collaboration-delivery-editing"
       ;;
     packages/collaboration/src/platform/WorkspaceResourceConfiguration* | \
       packages/collaboration/src/project-agent-config/* | \
@@ -1730,6 +1752,7 @@ classify_path() {
       select_target "cloud:cloud-device-lifecycle"
       if [[ "$path" == packages/collaboration/src/dto-mappers/workspaceDtoMappers* ]]; then
         select_target "core:collaboration-deliveries"
+        select_target "core:collaboration-delivery-editing"
       fi
       ;;
     packages/collaboration/*)
@@ -1752,6 +1775,7 @@ classify_path() {
         "$path" == packages/collaboration/src/issue-detail/createSharedIssueDetailPort* ||
         "$path" == packages/collaboration/src/SharedIssueDetailEditor* ]]; then
         select_target "core:collaboration-deliveries"
+        select_target "core:collaboration-delivery-editing"
       fi
       ;;
     executor/src/server/codex_model_catalog*.rs)
@@ -1840,15 +1864,18 @@ build_matrix() {
   if [[ "${selected[plugins:all]:-false}" == "true" ]]; then
     append_matrix_entry plugins Plugins e2e:desktop:plugins
   else
-    for segment in "${plugin_segments[@]}"; do
-      if [[ "${selected[plugins:$segment]:-false}" == "true" ]]; then
-        append_matrix_entry \
-          "plugins-$segment" \
-          "Plugins / $segment" \
-          e2e:desktop:plugins \
-          "$segment"
+    local selected_plugins=()
+    local plugin_segment
+    for plugin_segment in "${plugin_segments[@]}"; do
+      if [[ "${selected[plugins:$plugin_segment]:-false}" == "true" ]]; then
+        selected_plugins+=("$plugin_segment")
       fi
     done
+    if ((${#selected_plugins[@]} > 0)); then
+      local joined_plugins
+      joined_plugins="$(IFS=,; printf '%s' "${selected_plugins[*]}")"
+      append_matrix_entry plugins Plugins e2e:desktop:plugins "$joined_plugins"
+    fi
   fi
 
   local cloud_shard_index

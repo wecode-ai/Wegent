@@ -18,6 +18,7 @@ mod image_budget;
 mod long_context;
 mod passthrough_stream;
 mod request_policy;
+pub(crate) mod retry_notifications;
 mod vision;
 
 use std::{
@@ -711,6 +712,7 @@ async fn handle_harness_messages(
         &request_url,
         &request_body,
         &headers,
+        None,
     )
     .await?;
     let status = upstream_response.status();
@@ -1001,6 +1003,7 @@ async fn handle_for_token(
         &request_url,
         &request_body,
         &headers,
+        retry_notifications::RetryWait::for_request(&body),
     )
     .await?;
     let status = upstream_response.status();
@@ -1912,6 +1915,7 @@ async fn send_upstream_request_with_rate_limit_retry(
     request_url: &str,
     request_body: &[u8],
     incoming_headers: &HeaderMap,
+    mut retry_wait: Option<retry_notifications::RetryWait>,
 ) -> Result<reqwest::Response, HttpError> {
     for retry_count in 0..=MAX_RATE_LIMIT_RETRIES {
         let response = build_upstream_request(
@@ -1934,6 +1938,9 @@ async fn send_upstream_request_with_rate_limit_retry(
         }
 
         let delay = rate_limit_retry_delay(response.headers(), retry_count);
+        if let Some(wait) = retry_wait.as_mut() {
+            wait.waiting();
+        }
         log_executor_event(
             "local model proxy rate limited; retrying",
             &[
@@ -4397,15 +4404,21 @@ mod tests {
             },
         );
 
+        let (retry_tx, mut retry_rx) = tokio::sync::mpsc::unbounded_channel();
+        let _retry_subscription =
+            retry_notifications::subscribe("rate-limit-success-thread", Some(&retry_tx));
+        bind_thread(&token, "rate-limit-success-thread").expect("bind retry thread");
         let response = handle(
             proxy_headers(&token),
-            Bytes::from_static(br#"{"model":"m","input":"hi","stream":true}"#),
+            Bytes::from_static(br#"{"model":"m","input":"hi","stream":true,"client_metadata":{"thread_id":"rate-limit-success-thread"}}"#),
         )
         .await
         .expect("proxy response");
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(request_count.load(Ordering::SeqCst), 3);
+        assert_eq!(retry_rx.try_recv().unwrap()["params"]["waiting"], true);
+        assert_eq!(retry_rx.try_recv().unwrap()["params"]["waiting"], false);
 
         unregister(&token);
         server.abort();

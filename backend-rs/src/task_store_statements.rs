@@ -198,13 +198,11 @@ pub fn workspace_by_ref_statement(table: &str) -> String {
     )
 }
 
-/// `SubtaskStore.list_by_task_for_user_ordered`: the rows of `table` filtered
-/// by `task_id` and `user_id`, ordered by `message_id`.
-pub fn subtasks_by_owner_statement(table: &str) -> String {
+/// `SubtaskStore.list_by_task_for_user_ordered`: sort only ids so a large
+/// JSON result never enters MySQL's filesort buffer.
+pub fn subtask_ids_by_owner_statement(table: &str) -> String {
     format!(
-        "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, executor_name, \
-        executor_deleted_at, prompt, message_id, parent_id, status, progress, result, error_message, \
-        created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id \n    \
+        "SELECT id \n    \
         FROM `{table}` \n    \
         WHERE task_id = ? AND user_id = ? \n    \
         ORDER BY message_id ASC"
