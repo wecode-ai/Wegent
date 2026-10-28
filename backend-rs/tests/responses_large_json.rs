@@ -6,6 +6,10 @@
 mod fixture;
 #[path = "support/responses_http.rs"]
 mod http_e2e;
+#[path = "support/llm_proxy_deadlines.rs"]
+mod llm_proxy_deadlines;
+#[path = "support/llm_proxy_timeouts.rs"]
+mod llm_proxy_timeouts;
 
 use std::{path::Path, sync::Arc};
 use wegent_backend_rs::task_store::DefaultTaskStore;

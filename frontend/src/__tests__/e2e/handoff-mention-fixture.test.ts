@@ -17,25 +17,31 @@ function deferred() {
   return { promise, resolve }
 }
 
-function fixture() {
+function fixture({ serverOffset = 0, naiveTimestamps = false, precision = Math.round } = {}) {
+  const timestamp = (offset: number) => {
+    const value = new Date(
+      precision((Date.now() + serverOffset + offset) / 1_000) * 1_000
+    ).toISOString()
+    return naiveTimestamps ? value.slice(0, -1) : value
+  }
   const tasks: ProjectTask[] = [
     {
       task_id: 421,
       task_title: 'Project handoff target',
       task_status: 'COMPLETED',
-      updated_at: '2026-10-28T05:01:39.000Z',
+      updated_at: timestamp(-2_000),
     },
     {
       task_id: 423,
       task_title: 'Project filler one',
       task_status: 'COMPLETED',
-      updated_at: '2026-10-28T05:01:37.000Z',
+      updated_at: timestamp(-1_000),
     },
     {
       task_id: 425,
       task_title: 'Project filler two',
       task_status: 'COMPLETED',
-      updated_at: '2026-10-28T05:01:38.000Z',
+      updated_at: timestamp(0),
     },
   ]
   return {
@@ -43,15 +49,17 @@ function fixture() {
     taskIds: [421, 423, 425],
     visibleTasks: [{ taskId: 421, title: tasks[0].task_title }],
     waitForCompleted: jest.fn(async (_taskId: number): Promise<void> => {}),
-    touchTask: jest.fn(async (_task: { taskId: number; title: string }): Promise<void> => {}),
-    readProjectTasks: jest.fn(async () => tasks),
+    touchTask: jest.fn(async (task: { taskId: number; title: string }): Promise<void> => {
+      tasks.find(item => item.task_id === task.taskId)!.updated_at = timestamp(0)
+    }),
+    readProjectTasks: jest.fn(async () => tasks.map(task => ({ ...task }))),
   }
 }
 
 describe('project handoff mention fixture preparation', () => {
   beforeEach(() => {
     jest.useFakeTimers()
-    jest.setSystemTime(1250)
+    jest.setSystemTime(Date.parse('2026-10-28T08:44:08.250Z'))
   })
 
   afterEach(() => {
@@ -59,7 +67,7 @@ describe('project handoff mention fixture preparation', () => {
     jest.restoreAllMocks()
   })
 
-  it('waits for concurrent completions and the shared second boundary before touching once', async () => {
+  it('waits for every completion and a full precision interval before touching once', async () => {
     const input = fixture()
     const completions = input.taskIds.map(() => deferred())
     input.waitForCompleted.mockImplementation(taskId => {
@@ -78,10 +86,13 @@ describe('project handoff mention fixture preparation', () => {
     await jest.advanceTimersByTimeAsync(2_000)
     expect(input.touchTask).not.toHaveBeenCalled()
 
+    input.tasks[2].updated_at = new Date(Math.round(Date.now() / 1_000) * 1_000).toISOString()
     completions[2].resolve()
-    await jest.advanceTimersByTimeAsync(750)
-    expect(input.touchTask).not.toHaveBeenCalled()
+    await jest.advanceTimersByTimeAsync(0)
     expect(input.readProjectTasks).not.toHaveBeenCalled()
+    expect(input.touchTask).not.toHaveBeenCalled()
+    await jest.advanceTimersByTimeAsync(1_099)
+    expect(input.touchTask).not.toHaveBeenCalled()
 
     await jest.advanceTimersByTimeAsync(1)
     await preparing
@@ -94,7 +105,6 @@ describe('project handoff mention fixture preparation', () => {
   it('allows two visible controls in the same second when every filler is older', async () => {
     const input = fixture()
     input.visibleTasks.push({ taskId: 425, title: input.tasks[2].task_title })
-    input.tasks[2].updated_at = '2026-10-28T05:01:39.900Z'
     const preparing = prepareProjectMentionTasks(input)
 
     await jest.runAllTimersAsync()
@@ -105,19 +115,77 @@ describe('project handoff mention fixture preparation', () => {
     expect(input.readProjectTasks).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    { name: 'rounded', precision: Math.round },
+    { name: 'truncated', precision: Math.floor },
+  ])(
+    'handles MySQL $name completion timestamps after the half-second mark',
+    async ({ precision }) => {
+      jest.setSystemTime(Date.parse('2026-10-28T08:44:08.586Z'))
+      const startedAt = Date.now()
+      const input = fixture({ precision })
+      const result = prepareProjectMentionTasks(input).then(
+        () => null,
+        error => error
+      )
+
+      await jest.runAllTimersAsync()
+
+      expect(await result).toBeNull()
+      expect(input.touchTask).toHaveBeenCalledTimes(1)
+      expect(input.readProjectTasks).toHaveBeenCalledTimes(1)
+      expect(Date.now() - startedAt).toBe(1_100)
+      expect(Date.parse(input.tasks[0].updated_at!)).toBeGreaterThan(
+        Date.parse(input.tasks[2].updated_at!)
+      )
+    }
+  )
+
+  it.each([
+    { serverOffset: 5 * 60_000, naiveTimestamps: false },
+    { serverOffset: -5 * 60_000, naiveTimestamps: false },
+    { serverOffset: 8 * 3_600_000, naiveTimestamps: true },
+    { serverOffset: 0, naiveTimestamps: true },
+  ])(
+    'preserves relative ordering across server clock and timezone differences: %o',
+    async options => {
+      jest.setSystemTime(Date.parse('2026-10-28T08:44:08.586Z'))
+      const input = fixture(options)
+      const result = prepareProjectMentionTasks(input).then(
+        () => null,
+        error => error
+      )
+
+      await jest.runAllTimersAsync()
+
+      expect(await result).toBeNull()
+      expect(input.touchTask).toHaveBeenCalledTimes(1)
+      expect(input.readProjectTasks).toHaveBeenCalledTimes(1)
+      expect(Date.parse(input.tasks[0].updated_at!)).toBeGreaterThan(
+        Date.parse(input.tasks[2].updated_at!)
+      )
+    }
+  )
+
   it.each<[string, (tasks: ProjectTask[]) => void, RegExp]>([
     [
       'a target and a filler tied at second precision despite different milliseconds',
       tasks => {
-        tasks[0].updated_at = '2026-10-28T05:01:38.999Z'
-        tasks[2].updated_at = '2026-10-28T05:01:38.001Z'
+        tasks[2].updated_at = new Date(Date.parse(tasks[0].updated_at!) + 200).toISOString()
       },
       /must sort ahead of every filler/,
     ],
     [
       'an older target',
       tasks => {
-        tasks[0].updated_at = '2026-10-28T05:01:36.000Z'
+        tasks[0].updated_at = '2026-10-28T08:44:06.000Z'
+      },
+      /must sort ahead of every filler/,
+    ],
+    [
+      'a filler updated asynchronously after the ordering barrier',
+      tasks => {
+        tasks[2].updated_at = new Date(Date.parse(tasks[0].updated_at!) + 2_000).toISOString()
       },
       /must sort ahead of every filler/,
     ],
@@ -180,9 +248,10 @@ describe('project handoff mention fixture preparation', () => {
   ])('rejects %s without touching again to manufacture a pass', async (_name, damage, message) => {
     const input = fixture()
     // Damage only the final projection; expected identities and titles stay intact.
+    const originalRead = input.readProjectTasks.getMockImplementation()!
     input.readProjectTasks.mockImplementation(async () => {
       damage(input.tasks)
-      return input.tasks
+      return originalRead()
     })
     const result = prepareProjectMentionTasks(input).then(
       () => null,
@@ -197,7 +266,7 @@ describe('project handoff mention fixture preparation', () => {
     expect(input.readProjectTasks).toHaveBeenCalledTimes(1)
   })
 
-  it('propagates a completion failure before starting the precision barrier or touches', async () => {
+  it('propagates a completion failure before starting the precision interval or touching', async () => {
     const input = fixture()
     const failure = new Error('Fixture task failed to complete')
     input.waitForCompleted.mockRejectedValueOnce(failure)

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { createTaskDeliveryIssueRegression } from '../modules/task-delivery-issue.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `交付快照验收-${process.pid}`
@@ -17,11 +18,14 @@ async function metrics(control, selector) {
   return result[0]
 }
 
-export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, captureScreenshot }) {
+export function createDesktopScenario(options) {
+  const { uiTimeoutMs, workbenchReadyTimeoutMs, captureScreenshot } = options
+  const taskDelivery = createTaskDeliveryIssueRegression(options)
   let project
   let issue
   const batches = []
   return {
+    handleHttp: taskDelivery.handleHttp,
     async verify(control) {
       console.log('[delivery-e2e] Starting real delivery snapshot assertions')
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
@@ -144,6 +148,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
       await control.command('waitFor', panel, { text: '项目讨论答复' })
       await control.command('click', scoped('[data-testid="todo-detail-delivery-close"]'))
       console.log(`[delivery-e2e] Verified three persisted batches for ${issue.id}`)
+      await taskDelivery.verify(control, { project, issue })
     },
     diagnostics() {
       return {

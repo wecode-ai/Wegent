@@ -41,6 +41,19 @@ function pluginApi(overrides: Partial<LocalCodexPluginApi> = {}): LocalCodexPlug
 }
 
 describe('PluginImportDialog', () => {
+  test('warns about unofficial packages even when they only contain skills', async () => {
+    desktopHostMock.mockResolvedValue({ canceled: false, filePaths: ['/tmp/skills.zip'] })
+    const api = pluginApi({
+      previewPluginImport: vi
+        .fn()
+        .mockResolvedValue({ ...validPreview, executableCapabilities: [] }),
+    })
+    render(<PluginImportDialog pluginApi={api} onCancel={vi.fn()} onImported={vi.fn()} />)
+    await userEvent.click(screen.getByTestId('plugin-import-select'))
+    expect(await screen.findByTestId('plugin-install-unofficial-warning')).toBeInTheDocument()
+    expect(api.importPluginPackage).not.toHaveBeenCalled()
+  })
+
   test('cancels with Escape without importing a package', async () => {
     const onCancel = vi.fn()
     const api = pluginApi()

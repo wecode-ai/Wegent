@@ -202,6 +202,7 @@ import {
 import { withPublishedPluginCloudLink } from './publishedPluginIdentity'
 import {
   installedPluginMarketplaceId,
+  isOfficialMarketplacePlugin,
   marketplaceItemMarketplaceId,
   marketplacePluginDistribution,
 } from './pluginDistribution'
@@ -1731,7 +1732,7 @@ export function PluginsWorkspace({
     onComplete: () => {
       authoritativeInventoryRefreshRef.current = true
       setReconciliationRevision(previous => previous + 1)
-      refreshLocalMarketplace()
+      refreshLocalMarketplace({ reloadCatalog: true })
       setPluginOperationNotice({
         id: 'plugin-reconciliation-complete',
         kind: 'success',
@@ -1771,9 +1772,9 @@ export function PluginsWorkspace({
     setMarketplaceRefreshTick(previous => previous + 1)
   }
 
-  const refreshLocalMarketplace = () => {
+  const refreshLocalMarketplace = (options?: { reloadCatalog: boolean }) => {
     setBrowsingCategoryKey(null)
-    skipLocalCatalogReconcileRef.current = true
+    skipLocalCatalogReconcileRef.current = !options?.reloadCatalog
     setMarketplaceRefreshTick(previous => previous + 1)
   }
 
@@ -2108,16 +2109,18 @@ export function PluginsWorkspace({
 
     // Open the confirm dialog immediately. Do not wait on plugin/read, connector-apps,
     // or health probes — that made Install feel broken (no UI for seconds).
-    if (!promptAfterInstall) {
+    const requiresConfirmation = !promptAfterInstall || !isOfficialMarketplacePlugin(item)
+    if (requiresConfirmation) {
       setPendingInstall({
         item,
         requiredConnectionNames: requiredConnectionNames(item),
+        promptAfterInstall,
       })
     }
 
     void prepareMarketplaceInstallItem(item)
       .then(async preparedItem => {
-        if (promptAfterInstall) {
+        if (!requiresConfirmation) {
           executeMarketplaceInstall({
             item: preparedItem,
             requiredConnectionNames: [],
@@ -2131,6 +2134,7 @@ export function PluginsWorkspace({
           return {
             item: preparedItem,
             requiredConnectionNames: names,
+            promptAfterInstall: previous.promptAfterInstall,
           }
         })
       })
@@ -3755,18 +3759,6 @@ export function PluginsWorkspace({
         diskPersonalItemsForMerge = diskResult.value
       }
 
-      if (localResult.status === 'rejected' && cloudResult.status === 'rejected') {
-        const error = localResult.reason instanceof Error ? localResult.reason : cloudResult.reason
-        if (!hasCachedCatalog) {
-          setPluginMarketplaceState({
-            items: [],
-            isLoading: false,
-            error: error instanceof Error ? error.message : 'Failed to load plugin marketplace',
-          })
-        }
-        return
-      }
-
       // Prefer a background-refreshed local snapshot over the settle promise value.
       // Stale-peek SWR resolves localPromise immediately with the peek; a concurrent
       // refresh:true may already have written a newer localStateForMerge.
@@ -4245,12 +4237,14 @@ export function PluginsWorkspace({
         applyLiveCodexCatalog(localState)
       })
       .catch(() => {
-        if (!cancelled)
+        if (!cancelled) {
+          setPluginMarketplaceState(previous => ({ ...previous, isLoading: false }))
           setPluginOperationNotice({
             id: 'plugin-catalog-load',
             kind: 'error',
             message: t('workbench.plugins_load_failed', '加载插件失败'),
           })
+        }
       })
       .finally(() => {
         if (!cancelled) setIsMarketplaceRefreshing(false)
@@ -4823,6 +4817,7 @@ export function PluginsWorkspace({
             logoContrastPad: pendingInstallLogo?.contrastPad,
             useLogoInitial: pendingInstallLogo?.source === 'fallback',
             logoDistribution: marketplacePluginDistribution(pendingInstall.item),
+            isOfficial: isOfficialMarketplacePlugin(pendingInstall.item),
             componentCount: marketplaceComponentCount(pendingInstall.item),
             requiredConnectionNames: pendingInstall.requiredConnectionNames,
           }}
