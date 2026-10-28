@@ -63,7 +63,14 @@ async function sampleScrollbarDrag(control, ratios) {
         sample.visibleRichChunkCount > 0 &&
         sample.hasVisibleText
     ),
-    'Dragging exposed an unrendered or blank Markdown viewport'
+    `Dragging exposed an unrendered or blank Markdown viewport: ${JSON.stringify(
+      drag.samples.filter(
+        sample =>
+          sample.visiblePlaceholderCount !== 0 ||
+          sample.visibleRichChunkCount === 0 ||
+          !sample.hasVisibleText
+      )
+    )}`
   )
   return drag
 }

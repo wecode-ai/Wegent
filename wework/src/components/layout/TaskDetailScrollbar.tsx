@@ -20,16 +20,6 @@ export function TaskDetailScrollbar({
   const { t } = useTranslation('common')
   const thumbRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ pointerId: number; offset: number; clientY: number } | null>(null)
-  const dragFrameRef = useRef<number | null>(null)
-  const pendingPointerRef = useRef<{ clientY: number; offset: number } | null>(null)
-
-  const cancelDragFrame = useCallback(() => {
-    if (dragFrameRef.current !== null) cancelAnimationFrame(dragFrameRef.current)
-    dragFrameRef.current = null
-    pendingPointerRef.current = null
-  }, [])
-
-  useLayoutEffect(() => cancelDragFrame, [cancelDragFrame])
 
   const update = useCallback(
     (pointer?: { clientY: number; offset: number }) => {
@@ -96,12 +86,6 @@ export function TaskDetailScrollbar({
     }
   }, [update, scrollbarRef, viewportRef])
 
-  const flushPointer = () => {
-    const pending = pendingPointerRef.current
-    cancelDragFrame()
-    if (pending) update(pending)
-  }
-
   return (
     <div
       ref={scrollbarRef}
@@ -118,7 +102,6 @@ export function TaskDetailScrollbar({
       onPointerDown={event => {
         if (event.button !== 0 || !thumbRef.current) return
         event.preventDefault()
-        cancelDragFrame()
         const thumb = thumbRef.current
         const offset = thumb.contains(event.target as Node)
           ? event.clientY - thumb.getBoundingClientRect().top
@@ -131,25 +114,20 @@ export function TaskDetailScrollbar({
         const drag = dragRef.current
         if (drag?.pointerId !== event.pointerId) return
         drag.clientY = event.clientY
-        pendingPointerRef.current = { clientY: event.clientY, offset: drag.offset }
-        if (dragFrameRef.current === null) {
-          dragFrameRef.current = requestAnimationFrame(flushPointer)
-        }
+        // Scroll observers run before rAF; commit input before that phase can pass.
+        update(drag)
       }}
       onPointerUp={event => {
         if (dragRef.current?.pointerId !== event.pointerId) return
-        flushPointer()
         dragRef.current = null
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
           event.currentTarget.releasePointerCapture(event.pointerId)
         }
       }}
       onLostPointerCapture={() => {
-        cancelDragFrame()
         dragRef.current = null
       }}
       onPointerCancel={() => {
-        cancelDragFrame()
         dragRef.current = null
       }}
       onKeyDown={event => {

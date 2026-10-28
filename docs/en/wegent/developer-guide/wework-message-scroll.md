@@ -24,14 +24,16 @@ flowchart TD
   Navigation -->|Retarget only when the offset changes| Viewport
   Controller -->|Streaming and scroll to bottom| Spring[Single follow spring]
   Controller -->|While dragging| Pointer[Scrollbar pointer and current range]
-  Pointer --> Viewport
+  Pointer -->|Commit during the input event| Viewport
   Pointer --> Thumb[Update thumb geometry in the same frame]
+  Viewport -->|Native scroll precedes rAF| Coverage[Cover virtual rows and visible Markdown]
+  Coverage --> Paint[Browser paint]
   Engine -->|Actually applied offset| TextAnchor[Text anchor]
   TextAnchor -->|Residual displacement only| Viewport
   Spring --> Viewport
 ```
 
-Each drag frame uses current geometry to update the viewport position and thumb transform together, without waiting for a later `scroll` event to paint the thumb. Short-conversation regressions must first establish that content fits within the viewport; message count alone does not establish this prerequisite.
+Drag input uses current geometry to update the viewport position and thumb transform immediately. Do not wait for a later `scroll` event to paint the thumb or defer the scroll write to another rAF. Browsers dispatch native `scroll` before rAF; virtual rows and Markdown chunks must cover the new viewport before paint. Writing the scroll position inside rAF misses that phase and can expose placeholders or blank content for one frame. Short-conversation regressions must first establish that content fits within the viewport; message count alone does not establish this prerequisite.
 
 Implementation invariants:
 

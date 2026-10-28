@@ -24,14 +24,16 @@ flowchart TD
   Navigation -->|目标偏移变化才重新定位| Viewport
   Controller -->|流式与回到底部| Spring[唯一跟随弹簧]
   Controller -->|拖动期间| Pointer[滚动条指针与当前范围]
-  Pointer --> Viewport
+  Pointer -->|输入事件中立即写入| Viewport
   Pointer --> Thumb[同一帧同步滑块几何]
+  Viewport -->|原生 scroll 早于 rAF| Coverage[补齐虚拟行与可见 Markdown]
+  Coverage --> Paint[浏览器绘制]
   Engine -->|实际生效位移| TextAnchor[文字锚点]
   TextAnchor -->|仅剩余位移| Viewport
   Spring --> Viewport
 ```
 
-拖动的每帧更新使用同一份当前几何，同时写入视口位置与滑块变换；不能等后续 `scroll` 事件才绘制滑块。短会话回归场景必须先确认内容不溢出视口，消息条数本身不能证明这一前提。
+拖动输入使用同一份当前几何，立即写入视口位置与滑块变换；不能等后续 `scroll` 事件才绘制滑块，也不能另加 rAF 延迟滚动写入。浏览器在 rAF 之前派发原生 `scroll`，虚拟行与 Markdown 分块必须在绘制前补齐新视口；rAF 内才写入滚动会错过该阶段，产生一帧占位或空白。短会话回归场景必须先确认内容不溢出视口，消息条数本身不能证明这一前提。
 
 实现约束：
 

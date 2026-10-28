@@ -107,7 +107,7 @@ test('maps track clicks and continuous dragging to the normal conversation scrol
   expect(viewport.scrollTop).toBe(1200)
 })
 
-test('coalesces pointer moves into one scroll write per frame and flushes the release position', () => {
+test('commits each delivered pointer position without adding another frame of delay', () => {
   const { viewport, track } = renderConversation()
   const writes = vi.spyOn(viewport, 'scrollTop', 'set')
   fireEvent.pointerDown(track, { button: 0, pointerId: 1, clientY: 200 })
@@ -116,19 +116,17 @@ test('coalesces pointer moves into one scroll write per frame and flushes the re
   for (let clientY = 210; clientY <= 300; clientY += 10) {
     fireEvent.pointerMove(track, { buttons: 1, pointerId: 1, clientY })
   }
-  expect(writes).not.toHaveBeenCalled()
-  expect(frames.size).toBe(1)
-  flushFrame()
-  expect(writes).toHaveBeenCalledOnce()
+  expect(writes).toHaveBeenCalledTimes(10)
+  expect(frames.size).toBe(0)
   expect(viewport.scrollTop).toBeCloseTo(1006.0914)
 
   fireEvent.pointerMove(track, { buttons: 1, pointerId: 1, clientY: 397 })
   fireEvent.pointerUp(track, { pointerId: 1 })
   expect(viewport.scrollTop).toBe(1200)
-  expect(writes).toHaveBeenCalledTimes(2)
+  expect(writes).toHaveBeenCalledTimes(11)
   expect(frames.size).toBe(0)
   flushFrame()
-  expect(writes).toHaveBeenCalledTimes(2)
+  expect(writes).toHaveBeenCalledTimes(11)
 })
 
 test('paints the thumb in the frame that applies a pointer position', () => {
@@ -140,6 +138,24 @@ test('paints the thumb in the frame that applies a pointer position', () => {
   flushFrame()
   expect(viewport.scrollTop).toBeCloseTo(1006.0914)
   expect(Number.parseFloat(thumb.style.transform.replace('translateY(', ''))).toBeCloseTo(247.75)
+})
+
+test('lets scroll observers cover the dragged viewport before the next frame paints', () => {
+  const { viewport, track } = renderConversation()
+  fireEvent.pointerDown(track, { button: 0, pointerId: 1, clientY: 200 })
+  let renderedPosition = viewport.scrollTop
+  const renderVisibleContent = () => {
+    renderedPosition = viewport.scrollTop
+  }
+  viewport.addEventListener('scroll', renderVisibleContent)
+
+  fireEvent.pointerMove(track, { buttons: 1, pointerId: 1, clientY: 300 })
+  // Browser rendering runs pending scroll events before animation frame callbacks.
+  if (viewport.scrollTop !== renderedPosition) fireEvent.scroll(viewport)
+  flushFrame()
+  expect(renderedPosition).toBeCloseTo(1006.0914)
+  expect(renderedPosition).toBe(viewport.scrollTop)
+  viewport.removeEventListener('scroll', renderVisibleContent)
 })
 
 test('keeps the grabbed thumb point under the pointer while measured content changes', () => {
@@ -163,15 +179,16 @@ test('keeps the grabbed thumb point under the pointer while measured content cha
   expect(viewport.scrollTop).toBe(releasedTop)
 })
 
-test.each(['cancel', 'capture loss', 'unmount'])('discards a pending drag on %s', reason => {
+test.each(['cancel', 'capture loss', 'unmount'])('stops further drag writes on %s', reason => {
   const { viewport, track, unmount } = renderConversation()
   fireEvent.pointerDown(track, { button: 0, pointerId: 1, clientY: 200 })
   fireEvent.pointerMove(track, { buttons: 1, pointerId: 1, clientY: 3 })
   if (reason === 'unmount') unmount()
   else if (reason === 'cancel') fireEvent.pointerCancel(track, { pointerId: 1 })
   else fireEvent.lostPointerCapture(track, { pointerId: 1 })
+  fireEvent.pointerMove(track, { buttons: 1, pointerId: 1, clientY: 397 })
   flushFrame()
-  expect(viewport.scrollTop).toBe(600)
+  expect(viewport.scrollTop).toBe(0)
   expect(frames.size).toBe(0)
 })
 
