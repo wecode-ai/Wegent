@@ -1369,7 +1369,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     cloudProjectMentionCandidates,
     defaultProject,
     deliveryDialogOpen,
-    finishLocalDelivery,
+    finishDelivery,
     handleSelectCloudProject,
     openBoundProjectSpaceTask,
     openDelivery,
@@ -6189,7 +6189,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               messages={paneSession.messages}
               deliveryApi={services.deliveryApi}
               onCancel={closeDeliveryDialog}
-              onDelivered={() => void finishLocalDelivery()}
+              onDelivered={finishDelivery}
             />
           )}
       </>
