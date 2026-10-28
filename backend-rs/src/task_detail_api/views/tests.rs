@@ -212,6 +212,48 @@ fn context_with(context_type: &str, type_data: Value) -> ContextRow {
     }
 }
 
+#[test]
+fn non_artifact_contexts_preserve_explicit_null_artifact_fields() {
+    for kind in ["attachment", "knowledge_base"] {
+        let brief = context_brief(&context_with(kind, json!({})));
+        let value = serde_json::to_value(brief).unwrap();
+
+        for field in ["remote_task_id", "remote_path", "modified_at", "sha256"] {
+            assert_eq!(value.get(field), Some(&Value::Null), "{kind}.{field}");
+        }
+    }
+}
+
+#[test]
+fn artifact_context_preserves_download_card_metadata() {
+    let brief = context_brief(&context_with(
+        "remote_workspace_artifact",
+        json!({
+            "task_id": 42,
+            "relative_path": "outputs/report.pdf",
+            "file_extension": ".pdf",
+            "file_size": 10,
+            "mime_type": "application/pdf",
+            "modified_at": 123,
+            "sha256": "a".repeat(64),
+            "source": {"workspace_root": "/private/workspace"},
+        }),
+    ));
+
+    let value = serde_json::to_value(brief).unwrap();
+
+    assert_eq!(value["remote_task_id"], 42);
+    assert_eq!(value["remote_path"], "outputs/report.pdf");
+    assert_eq!(value["file_extension"], ".pdf");
+    assert_eq!(value["file_size"], 10);
+    assert_eq!(value["mime_type"], "application/pdf");
+    assert_eq!(value["modified_at"], 123);
+    assert_eq!(value["sha256"], "a".repeat(64));
+    assert_eq!(value["task_id"], Value::Null);
+    assert_eq!(value["task_updated_at"], Value::Null);
+    assert!(value.get("source").is_none());
+}
+
 /// A conversation reference carries the referenced task identity; every other
 /// context type leaves those fields null.
 #[test]
@@ -225,6 +267,8 @@ fn conversation_context_exposes_reference_identity() {
     let brief = context_brief(&row);
     assert_eq!(brief.task_id.get(), "42");
     assert_eq!(brief.task_updated_at.get(), "\"2026-10-20T19:15:03\"");
+    assert_eq!(brief.remote_task_id.get(), "null");
+    assert_eq!(brief.remote_path.get(), "null");
 
     let attachment = context_with("attachment", json!({"task_id": 42}));
     assert_eq!(conversation_task_id(&attachment), None);

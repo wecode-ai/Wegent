@@ -3551,6 +3551,8 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
         local_connector_auth::INSTRUCTIONS,
         github_cli::INSTRUCTIONS,
+        external_work::SOURCE_CONTENT_INSTRUCTIONS,
+        crate::artifact_cli::AGENT_INSTRUCTIONS,
     ]
     .into_iter()
     .filter(|instructions| !instructions.is_empty())
@@ -4077,10 +4079,10 @@ fn build_codex_launch_config_with_route_scope(
 fn build_codex_launch_config_for_prepared_request(
     prepared: &PreparedCodexExecutionRequest,
 ) -> Result<CodexLaunchConfig, String> {
-    cleanup_generated_files_on_error(
-        &prepared.generated_files,
-        build_codex_launch_config(&prepared.request),
-    )
+    let config =
+        crate::artifact_workspace::bind(&prepared.request, prepared.request.cwd().map(Path::new))
+            .and_then(|()| build_codex_launch_config(&prepared.request));
+    cleanup_generated_files_on_error(&prepared.generated_files, config)
 }
 
 fn cleanup_generated_files_on_error<T>(
@@ -6250,10 +6252,6 @@ fn insert_codex_developer_instructions(
             &request.system_prompt,
         )
     };
-    if request.extra.get("enable_tools").and_then(Value::as_bool) != Some(false) {
-        instructions.push_str("\n\n");
-        instructions.push_str(external_work::SOURCE_CONTENT_INSTRUCTIONS);
-    }
     if crate::runtime_work::stand_in_requires_confirmation(request) {
         instructions.push_str("\n\nWework stand-in action confirmation:\nWework collects one-time execution approval through native tool approval controls in the work list and conversation input area. Prepare the exact action and invoke its tool so Wework can display that approval. Do not ask the user to type yes, confirm, or equivalent in chat before invoking the tool, and do not replace native approval with a prose question. A chat reply never grants execution permission. For a genuine business ambiguity, use request_user_input with explicit choices. Explain proposed replies in plain language without exposing internal policy field names. Keep all existing tool approval requirements in force.");
     }

@@ -40,7 +40,7 @@ import {
   createAppliedRuntimeGuidanceMessage,
   createOptimisticRuntimeGuidanceMessage,
 } from './runtimeGuidanceMessages'
-import { updateRuntimeGoalContinuation } from '@/lib/runtime-goal'
+import { reconcileRuntimeGoal, updateRuntimeGoalContinuation } from '@/lib/runtime-goal'
 import {
   cacheBoundedEntry,
   cacheRuntimeConversationQueuedMessagesByKey,
@@ -156,16 +156,6 @@ function invalidateRuntimeGoalSnapshots(address: RuntimeTaskAddress): void {
   const key = runtimeConversationKey(address)
   goalSnapshotVersionsByConversation.set(key, nextRuntimeGoalSnapshotVersion)
   nextRuntimeGoalSnapshotVersion += 1
-}
-
-function reconcileRuntimeGoal(
-  current: RuntimeGoal | null,
-  next: RuntimeGoal | null
-): RuntimeGoal | null {
-  if (!next || !current) return next
-  // Native Goals replace optimistic drafts even when their timestamps are rounded to seconds.
-  if (current.threadId === 'pending' && next.threadId !== 'pending') return next
-  return next.updatedAt < current.updatedAt ? current : next
 }
 
 export function applyRuntimeConversationGoalContinuation(

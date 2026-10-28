@@ -486,7 +486,7 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-      options: --add-host=host.docker.internal:host-gateway
+      options: --add-host=host.docker.internal:host-gateway ${{ matrix.shardIndex == 1 && '--cap-add=NET_ADMIN' || '' }}
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
     defaults:
@@ -781,6 +781,10 @@ jobs:
           PROJECT_TASK_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           PYTHONPATH: ..:.
         run: uv run --no-sync python tests/integration/project_task_detachment_mysql.py
+
+      - name: Prepare isolated DingTalk HTTPS download fixture
+        if: matrix.shardIndex == 1
+        run: bash .github/scripts/setup-dingtalk-oauth-e2e.sh
 
       - name: Start backend server
         env:
@@ -1169,6 +1173,37 @@ jobs:
         run: |
           uv run --no-sync python tests/e2e/knowledge_remote_index.py
           uv run --no-sync python tests/e2e/knowledge_milvus_e2e.py
+
+      - name: Run DingTalk OAuth import and authorization E2E
+        if: matrix.shardIndex == 1
+        timeout-minutes: 10
+        working-directory: ./backend
+        env:
+          DINGTALK_OAUTH_E2E: "1"
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/0
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "false"
+          KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          E2E_QDRANT_URL: http://qdrant:6333
+          E2E_BOOTSTRAP_ADMIN_USER: admin
+          PYTHONPATH: ..:.
+        run: |
+          uv run --no-sync python e2e_checks/check_dingtalk_provider.py
+          uv run --no-sync pytest e2e_checks/dingtalk_oauth -n 0 \
+            --junitxml=reports/dingtalk-oauth-e2e.xml
+
+      - name: Upload DingTalk OAuth E2E results
+        if: always() && matrix.shardIndex == 1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dingtalk-oauth-e2e-results
+          path: |
+            backend/reports/dingtalk-oauth-e2e.xml
+            backend/reports/dingtalk-oauth-e2e/*.json
+          if-no-files-found: error
 
       - name: Verify Chat Shell is running
         run: |
@@ -1741,8 +1776,16 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: uv run pytest e2e_tests/ --no-cov -v
 
+      - name: Verify retired artifact revision against real MySQL
+        working-directory: ./backend
+        env:
+          WEGENT_MIGRATION_TEST_DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
+          PYTHONPATH: ${{ github.workspace }}
+        run: uv run pytest tests/models/test_wework_file_delivery_migration.py -n 0 --no-cov
+
       - name: Run Executor E2E tests
         env:
+          DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
           PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}
           E2E_BASE_URL: http://localhost:3000
           E2E_API_URL: http://localhost:8000
@@ -1777,6 +1820,7 @@ jobs:
             --env E2E_CODEX_MODEL_SERVER_URL \
             --env E2E_LOCAL_CLAUDE_MODEL_SERVER_URL \
             --env E2E_CLAUDE_EXECUTOR_IMAGE \
+            --env DATABASE_URL \
             --env E2E_DEVICE_ID \
             --env CI \
             "$PLATFORM_E2E_IMAGE" \

@@ -40,6 +40,10 @@ export function collaborationScheduleDates(today = new Date()) {
 
 export async function ensureCalendarScheduleDatesVisible({ control, scoped, keys, timeoutMs }) {
   const calendar = scoped('[data-testid="collaboration-calendar"]')
+  await control.command('waitFor', `${calendar} [data-testid^="collaboration-calendar-day-"]`, {
+    visible: true,
+    timeoutMs,
+  })
   const selectors = [keys.initialStart, keys.calendarStart].map(
     key => `${calendar} [data-testid="collaboration-calendar-day-${key}"]`
   )

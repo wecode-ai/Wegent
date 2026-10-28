@@ -170,6 +170,96 @@ async function loseRealResponse(route: Route) {
   await route.abort('failed')
 }
 
+test('late initial snapshot cannot undo an Issue assignment and refreshed board', async ({
+  page,
+  projectFixture: { project, path },
+}) => {
+  const issuePath = `/api/v1/cloud-projects/${project.id}/loop-items`
+  const issue = await webApi<Resource>(page, issuePath, {
+    method: 'POST',
+    body: { title: 'Assignment wins over late home preload', status: 'inbox', priority: 'none' },
+  })
+  const members = await webApi<Array<{ user_id: number }>>(
+    page,
+    `/api/v1/cloud-projects/${project.id}/members`
+  )
+  expect(members.length).toBeGreaterThan(0)
+  const assignee = members[0].user_id
+  await webApi(page, `/api/v1/loop-items/${issue.id}`, {
+    method: 'PATCH',
+    body: { version: issue.version, assignee_user_id: null },
+  })
+  let release!: () => void
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
+  let fetched = false
+  let delivered = false
+  const snapshotUrl = (url: URL) =>
+    url.pathname === `/api/v1/cloud-projects/${project.id}/board-snapshot`
+  const holdFirstSnapshot = async (route: Route) => {
+    if (fetched) return route.continue()
+    const response = await route.fetch()
+    expect(response.ok()).toBe(true)
+    fetched = true
+    await held
+    await route.fulfill({ response })
+    delivered = true
+  }
+  await page.route(snapshotUrl, holdFirstSnapshot)
+  try {
+    await page.goto(path)
+    await expect.poll(() => fetched).toBe(true)
+    // Settings needs project metadata, not the blocked initial board snapshot.
+    // Keep the same controller/document while opening the real Issue editor.
+    const origin = await page.evaluate(() => performance.timeOrigin)
+    await page.evaluate(
+      path => window.history.pushState(null, '', path),
+      `${path}/issues/${issue.id}?view=manage`
+    )
+    await page.getByTestId('cloud-todo-detail-assignee').click()
+    await page.getByTestId(`cloud-todo-detail-assignee-option-user:${assignee}`).click()
+    await page.getByTestId('cloud-todo-save').click()
+    await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
+    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+      'data-value',
+      `user:${assignee}`
+    )
+    const current = await webApi<Resource & { assignee_user_id: number }>(
+      page,
+      `/api/v1/loop-items/${issue.id}`
+    )
+    expect(current.assignee_user_id).toBe(assignee)
+    const finished = page.waitForEvent('requestfinished', request =>
+      snapshotUrl(new URL(request.url()))
+    )
+    release()
+    await finished
+    await expect.poll(() => delivered).toBe(true)
+    await page.evaluate(
+      () =>
+        new Promise<void>(resolve =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+        )
+    )
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin)
+    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+      'data-value',
+      `user:${assignee}`
+    )
+    await page.evaluate(path => window.history.pushState(null, '', `${path}?view=board`), path)
+    await expect(page.getByTestId(`cloud-todo-card-assignee-${issue.id}`)).not.toHaveText('')
+    await page.getByTestId(`collaboration-issue-${issue.id}`).click()
+    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+      'data-value',
+      `user:${assignee}`
+    )
+  } finally {
+    release()
+    await page.unrouteAll({ behavior: 'wait' })
+  }
+})
+
 test('settings skip the board snapshot, retry the real candidate catalog, and restore the board', async ({
   page,
   projectFixture: { project, path },
