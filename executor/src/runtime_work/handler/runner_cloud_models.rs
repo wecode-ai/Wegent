@@ -15,10 +15,13 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| cloud_error("Connect to the cloud before using a cloud model"))?;
         let response = crate::agents::backend_url::backend_http_client()
             .map_err(|_| cloud_error("Cannot configure the backend connection"))?
-            .get(format!(
-                "{}/api/models/unified",
-                connection.backend_url.trim_end_matches('/')
-            ))
+            .get(
+                crate::agents::runtime_capabilities::api_url(
+                    &connection.backend_url,
+                    "/api/models/unified",
+                )
+                .map_err(|_| cloud_error("Invalid backend API URL"))?,
+            )
             .query(&[
                 ("scope", "all"),
                 ("include_config", "false"),
@@ -147,10 +150,11 @@ fn materialize_cloud_payload(
         let protocol = cloud_protocol(model)
             .ok_or_else(|| cloud_error("The cloud model protocol is unavailable"))?;
         let claude = identity["runtime"] == "claude_code";
-        let base_url = format!(
-            "{}/api/runtime-work/llm-responses-proxy",
-            backend_url.trim_end_matches('/')
-        );
+        let base_url = crate::agents::runtime_capabilities::api_url(
+            backend_url,
+            "/api/runtime-work/llm-responses-proxy",
+        )
+        .map_err(|_| cloud_error("Invalid backend gateway URL"))?;
         let headers = json!({
             "X-Wegent-Model-Type": reference["type"],
             "X-Wegent-Model-Namespace": reference["namespace"],

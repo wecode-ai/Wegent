@@ -2464,6 +2464,7 @@ export function createRuntimeWorkApiFromIpc(
   const syncedModelCatalogKeys = new Set<string>()
   const modelCatalogSyncInFlight = new Map<string, Promise<boolean>>()
   const modelCatalogSyncQueues = new Map<string, Promise<void>>()
+  const creationProfileSyncs = new Map<string, Promise<void>>()
   const normalizeRequest = async <T extends object>(
     data: T
   ): Promise<T & Record<string, unknown>> =>
@@ -2524,7 +2525,9 @@ export function createRuntimeWorkApiFromIpc(
     return request(method, { ...data })
   }
 
-  const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
+  const prepareConfiguredRuntimeModel = async (
+    data: RuntimeModelPrepareRequest
+  ): Promise<boolean> => {
     const selectedModel = findLocalModelConfigByModelName(data.modelId)
     if (!options.syncConfiguredModelCatalog) return true
     if (!selectedModel?.catalogEntry) return true
@@ -2707,6 +2710,51 @@ export function createRuntimeWorkApiFromIpc(
         modelCatalogSyncInFlight.delete(deviceCatalogKey)
       }
     }
+  }
+
+  const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
+    if (!(await prepareConfiguredRuntimeModel(data))) return false
+    const deviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+    const previous = creationProfileSyncs.get(deviceId) ?? Promise.resolve()
+    const sync = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const configuredModels = listLocalModelConfigs().filter(
+          model => model.enabled && model.catalogReady
+        )
+        // Publish trusted profiles through device IPC; managed MCP accepts only model identities.
+        // Refresh on preparation so edits, removals and Executor restarts cannot reuse stale credentials.
+        const profiles = await Promise.all(
+          configuredModels.flatMap(model =>
+            (['codex', 'claude_code'] as const).map(async runtime => ({
+              runtime,
+              modelName: localModelName(model),
+              label: model.displayName,
+              modelConfig: await applyRuntimeModelOptions(
+                localRuntimeModelConfig(
+                  runtime,
+                  requireLocalCodexCatalog,
+                  localModelName(model),
+                  'runtime'
+                ),
+                undefined,
+                resolveProxy
+              ),
+            }))
+          )
+        )
+        await requestWithLocalDevice('runtime.models.sync_creation_profiles', {
+          deviceId,
+          profiles,
+        })
+      })
+    creationProfileSyncs.set(deviceId, sync)
+    try {
+      await sync
+    } finally {
+      if (creationProfileSyncs.get(deviceId) === sync) creationProfileSyncs.delete(deviceId)
+    }
+    return true
   }
 
   return {
@@ -3230,6 +3278,14 @@ export function createRuntimeWorkApiFromIpc(
         requestWithLocalDevice,
         adaptListResponse
       )
+      if (
+        !runtimeWorkspacePath(resolvedData) &&
+        !resolvedData.standaloneChatWorkspace &&
+        !resolvedData.runtimeProjectKey &&
+        !resolvedData.workspaceSourceTask
+      ) {
+        throw new Error('workspacePath is required')
+      }
       logRuntimeTaskCreateStage('local-device-resolved', {
         taskId: resolvedData.taskId ?? null,
         requestedDeviceId: data.deviceId ?? null,
@@ -4316,6 +4372,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         // interfaces) so they appear in the picker even when the Codex
         // subscription is off.
         await traceModelLoading(traceId, 'catalog.ensure_status', ensureStatus)
+        await runtimeWorkApi.prepareRuntimeModel({ deviceId: await getLocalDeviceId() })
         localCodexSubscriptionEnabled = (await getAppPreferences()).localCodexSubscriptionEnabled
       } catch (error) {
         console.warn('[Wework] Failed to read the local model environment', error)

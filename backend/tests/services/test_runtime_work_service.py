@@ -17,6 +17,81 @@ from app.models.project import Project
 from app.models.task import TaskResource
 
 
+@pytest.mark.asyncio
+async def test_device_compiled_creation_keeps_native_models_on_target(
+    test_db, test_user, monkeypatch
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service as service
+
+    project = _local_path_project(test_db, test_user.id)
+    monkeypatch.setattr(
+        service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    compiled_identities = []
+
+    def build_identity(**kwargs):
+        compiled_identities.append(kwargs["request"])
+        return SimpleNamespace(
+            to_dict=lambda: {"user_id": test_user.id, "model_config": {}}
+        )
+
+    monkeypatch.setattr(service, "_build_runtime_execution_request", build_identity)
+    rpc = AsyncMock(
+        return_value={
+            "accepted": True,
+            "success": True,
+            "taskId": "intent-task",
+            "runtime": "codex",
+            "workspacePath": "/repo/Wegent",
+        }
+    )
+    monkeypatch.setattr(service.runtime_rpc_service, "call", rpc)
+    result = await service.create_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            schemaVersion=2,
+            compileOnDevice=True,
+            projectId=project.id,
+            taskId="intent-task",
+            runtime="codex",
+            message="Create with options",
+            modelId="local-model:target",
+            modelType="runtime",
+            modelSelection={
+                "modelName": "local-model:target",
+                "modelType": "runtime",
+                "options": {"reasoningEffort": "high"},
+            },
+            runtimePermissionMode="plan",
+            initialSupervisor={
+                "mode": "suggest",
+                "intervalSeconds": 30,
+                "modelSelection": {
+                    "modelName": "local-model:review",
+                    "modelType": "runtime",
+                },
+            },
+        ),
+    )
+    assert result.accepted is True
+    assert compiled_identities[0].model_id is None
+    assert compiled_identities[0].model_selection is None
+    assert rpc.await_args.kwargs["method"] == "runtime.tasks.create_from_intent"
+    payload = rpc.await_args.kwargs["payload"]
+    assert payload["schemaVersion"] == 2
+    assert payload["modelSelection"]["modelName"] == "local-model:target"
+    assert payload["runtimePermissionMode"] == "plan"
+    assert payload["initialSupervisor"]["modelConfig"] == {}
+    assert (
+        payload["initialSupervisor"]["modelSelection"]["modelName"]
+        == "local-model:review"
+    )
+
+
 def _project(test_db, user_id: int, name: str = "Wegent") -> Project:
     project = Project(
         user_id=user_id,
@@ -2003,10 +2078,12 @@ async def test_delete_archived_conversations_bulk_groups_by_device(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("queue_if_busy", [False, True])
 async def test_send_runtime_message_preserves_executor_queue_status(
     test_db,
     test_user,
     monkeypatch,
+    queue_if_busy,
 ):
     from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
     from app.services import runtime_work_service
@@ -2044,12 +2121,15 @@ async def test_send_runtime_message_preserves_executor_queue_status(
                 localTaskId="codex-1",
             ),
             message="continue",
+            queueIfBusy=queue_if_busy,
         ),
     )
 
     assert response.accepted is True
     assert response.status == "queued"
     assert response.queue_position == 2
+    payload = runtime_work_service.runtime_rpc_service.call.await_args.kwargs["payload"]
+    assert payload.get("queueIfBusy", False) is queue_if_busy
 
 
 @pytest.mark.asyncio

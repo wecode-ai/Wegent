@@ -627,6 +627,7 @@ class RuntimeSendRequest(BaseModel):
 
     address: RuntimeTaskAddress
     message: str = Field(..., min_length=1)
+    queue_if_busy: bool = Field(default=False, alias="queueIfBusy")
     client_user_message_id: Optional[str] = Field(
         default=None,
         alias="clientUserMessageId",
@@ -924,6 +925,7 @@ class RuntimeTaskCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     schema_version: Literal[1, 2, 3] = Field(default=1, alias="schemaVersion")
+    compile_on_device: bool = Field(default=False, alias="compileOnDevice")
     force_start: Optional[bool] = Field(default=None, alias="forceStart")
     wegent_team_id: Optional[int] = Field(
         default=None,
@@ -1050,6 +1052,10 @@ class RuntimeTaskCreateRequest(BaseModel):
             )
         if self.wegent_team_id is not None and self.schema_version < 3:
             raise ValueError("wegentTeamId requires RuntimeTaskCreateRequest V3")
+        if self.compile_on_device and (
+            self.schema_version != 2 or self.wegent_team_id is not None
+        ):
+            raise ValueError("compileOnDevice requires a direct V2 runtime intent")
         return self
 
 

@@ -42,6 +42,7 @@ pub mod stream;
 pub mod task_runtime;
 mod url_origin;
 pub mod version;
+pub(crate) mod workbench_control;
 mod workspace_paths;
 pub use workspace_paths::metadata::migrate as migrate_workspace_metadata;
 

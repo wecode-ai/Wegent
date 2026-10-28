@@ -195,6 +195,10 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.create" => {
                 boxed_rpc(move || async move { self.create_task(payload).await })
             }
+            "runtime.tasks.create_from_intent" => boxed_rpc(move || async move {
+                let payload = self.compile_creation_intent(payload).await?;
+                self.create_task(payload).await
+            }),
             "runtime.collaboration.dispatch" => {
                 boxed_rpc(move || async move { self.create_collaboration_dispatch(payload).await })
             }
@@ -340,6 +344,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.hooks.test" => boxed_rpc(move || async move { self.test_hook(payload).await }),
             "runtime.runner.catalog" => {
                 boxed_rpc(move || async move { self.runner_catalog().await })
+            }
+            "runtime.models.sync_creation_profiles" => {
+                boxed_rpc(move || async move { self.sync_creation_model_profiles(payload) })
             }
             "runtime.codex.models.list" => {
                 boxed_rpc(move || async move { self.list_codex_models(payload).await })

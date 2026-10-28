@@ -2121,7 +2121,9 @@ describe('createLocalAppServices', () => {
 
     const models = await services.modelApi.listModels()
 
-    expect(request).not.toHaveBeenCalled()
+    expect(request.mock.calls).toEqual([
+      ['runtime.models.sync_creation_profiles', { deviceId: 'local-device', profiles: [] }],
+    ])
     expect(
       models.data.some(
         model =>

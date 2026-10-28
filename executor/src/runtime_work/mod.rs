@@ -30,7 +30,7 @@ mod notification_mapping;
 mod remote_projects;
 mod response;
 mod runtime_handle_messages;
-mod store;
+pub(crate) mod store;
 mod task_create_contract;
 mod transcript;
 pub(crate) use transcript::codex_file_change_content;
@@ -68,7 +68,8 @@ pub(crate) fn runtime_features() -> serde_json::Value {
                 "skills": true,
                 "standaloneWorkspace": true,
                 "workspaceInheritance": true,
-                "worktree": true
+                "worktree": true,
+                "intentCompilation": true
             }
         },
         "interactiveSessions": {

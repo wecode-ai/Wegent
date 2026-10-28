@@ -659,6 +659,7 @@ async def revert_runtime_file_changes(
     )
 
 
+@trace_async(span_name="runtime_work.send", tracer_name="backend.runtime_work")
 async def send_runtime_message(
     *,
     db: Session,
@@ -675,6 +676,8 @@ async def send_runtime_message(
         **_runtime_task_address_payload(address),
         "message": request.message,
     }
+    if request.queue_if_busy:
+        payload["queueIfBusy"] = True
     _apply_runtime_user_message_identity(payload, request)
     attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
     if attachments:
@@ -1360,6 +1363,7 @@ async def create_runtime_task(
     return await _dispatch_compiled_runtime_task(
         user_id=user_id,
         compiled=compiled,
+        compile_on_device=request.compile_on_device,
     )
 
 
@@ -1367,6 +1371,7 @@ async def _dispatch_compiled_runtime_task(
     *,
     user_id: int,
     compiled: CompiledRuntimeTaskCreate,
+    compile_on_device: bool = False,
 ) -> RuntimeTaskCreateResponse:
     """Dispatch one already compiled runtime task."""
 
@@ -1374,7 +1379,11 @@ async def _dispatch_compiled_runtime_task(
         result = await runtime_rpc_service.call(
             user_id=user_id,
             device_id=compiled.target.device_id,
-            method="runtime.tasks.create",
+            method=(
+                "runtime.tasks.create_from_intent"
+                if compile_on_device
+                else "runtime.tasks.create"
+            ),
             payload=compiled.payload,
             timeout_seconds=RUNTIME_CREATE_TIMEOUT_SECONDS,
         )
@@ -1447,10 +1456,21 @@ def _compile_runtime_task_create(
 ) -> CompiledRuntimeTaskCreate:
     """Compile one already resolved runtime target."""
 
+    identity_request = request
+    if request.compile_on_device and request.model_type == RUNTIME_MODEL_TYPE:
+        # Native model credentials and provider configuration belong to the target device.
+        identity_request = request.model_copy(
+            update={
+                "model_id": None,
+                "model_type": None,
+                "model_options": {},
+                "model_selection": None,
+            }
+        )
     execution_request = _build_runtime_execution_request(
         db=db,
         user_id=user_id,
-        request=request,
+        request=identity_request,
         target=target,
     )
     return CompiledRuntimeTaskCreate(
@@ -1543,12 +1563,18 @@ def _runtime_task_create_payload(
             exclude_none=True,
         )
     if request.initial_supervisor:
-        payload["initialSupervisor"] = _materialize_initial_supervisor(
-            db=db,
-            user_id=user_id,
-            runtime=runtime,
-            supervisor=request.initial_supervisor,
+        payload["initialSupervisor"] = (
+            request.initial_supervisor.model_dump(by_alias=True, exclude_none=True)
+            if request.compile_on_device
+            else _materialize_initial_supervisor(
+                db=db,
+                user_id=user_id,
+                runtime=runtime,
+                supervisor=request.initial_supervisor,
+            )
         )
+        if request.compile_on_device:
+            payload["initialSupervisor"]["modelConfig"] = {}
     if request.side_source:
         payload["sideSource"] = request.side_source.model_dump(
             by_alias=True,

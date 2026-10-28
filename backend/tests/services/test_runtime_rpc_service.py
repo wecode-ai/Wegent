@@ -539,6 +539,71 @@ async def test_runtime_rpc_service_sends_v2_to_capable_executor(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("capable", [False, True])
+async def test_device_creation_intent_requires_capability_and_account_proxy(
+    monkeypatch, capable
+):
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(
+            return_value=_runtime_route(
+                runtime_features={
+                    "runtimeTaskCreate": {
+                        "schemaVersions": [1, 2],
+                        "features": {"intentCompilation": capable},
+                    }
+                }
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_load_remote_runtime_proxy_url",
+        lambda user_id: "http://account-proxy.invalid",
+    )
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+    payload = {
+        "schemaVersion": 2,
+        "runtime": "codex",
+        "message": "Create",
+        "executionRequest": {"model_config": {}},
+        "initialSupervisor": {"modelConfig": {}},
+    }
+    if not capable:
+        with pytest.raises(module.RuntimeRpcError) as error:
+            await module.RuntimeRpcService().call(
+                user_id=7,
+                device_id="device-1",
+                method="runtime.tasks.create_from_intent",
+                payload=payload,
+            )
+        assert error.value.code == "unsupported_runtime_task_create_features"
+        sio_call.assert_not_awaited()
+        return
+    await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.create_from_intent",
+        payload=payload,
+    )
+    emitted = sio_call.await_args.args[1]
+    assert emitted["method"] == "runtime.tasks.create_from_intent"
+    assert emitted["payload"]["creationProxyPolicy"] == {
+        "url": "http://account-proxy.invalid"
+    }
+    for config in [
+        emitted["payload"]["executionRequest"]["model_config"],
+        emitted["payload"]["initialSupervisor"]["modelConfig"],
+    ]:
+        assert config["proxy"]["url"] == "http://account-proxy.invalid"
+        assert config["runtime_config"]["codex"]["proxy_configured"] is True
+
+
+@pytest.mark.asyncio
 async def test_runtime_rpc_service_losslessly_downgrades_plain_v2(monkeypatch):
     from app.services.device import runtime_rpc_service as module
 

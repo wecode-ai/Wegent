@@ -444,6 +444,8 @@ fn managed_wework_mcp_required(request: &ExecutionRequest) -> bool {
             .is_some_and(|value| !value.trim().is_empty());
     notifications_available
         || crate::task_runtime::mcp::stand_in_identity(request).is_some()
+        || crate::workbench_control::ControlContext::from_request(request)
+            .is_some_and(|context| crate::workbench_control::available(&context))
         || crate::task_runtime::mcp::encoded_space_context_grant(request).is_some()
 }
 
@@ -451,6 +453,16 @@ fn inject_managed_wework_mcps(
     request: &ExecutionRequest,
     mcp_servers: &mut BTreeMap<String, Value>,
 ) -> Result<(), String> {
+    mcp_servers.remove(crate::workbench_control::SERVER_NAME);
+    if let Some(config) = crate::task_runtime::mcp::control_mcp_client_config(request)? {
+        mcp_servers.insert(
+            crate::workbench_control::SERVER_NAME.to_owned(),
+            json!({
+                "type": "http", "url": config.url, "headers": config.headers,
+                "timeout": crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS * 1000,
+            }),
+        );
+    }
     if let Some(config) = crate::task_runtime::mcp::stand_in_mcp_client_config(request)? {
         mcp_servers.insert(
             crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME.into(),
@@ -2255,6 +2267,7 @@ fn ensure_object<'a>(object: &'a mut Map<String, Value>, key: &str) -> &'a mut M
 fn collect_request_mcp_servers(request: &ExecutionRequest) -> BTreeMap<String, Value> {
     let mut servers = extract_claude_options(request, &BTreeMap::new()).mcp_servers;
     preserve_explicit_mcp_approval_modes(request, &mut servers);
+    servers.remove(crate::workbench_control::SERVER_NAME);
     servers
 }
 
@@ -2495,7 +2508,7 @@ fn request_api_base_url(_request: &ExecutionRequest) -> String {
     request_backend_url_or_default(_request)
 }
 
-fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
+pub(crate) fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
     let mut backend =
         url::Url::parse(backend_url.trim()).map_err(|_| "invalid backend API URL".to_owned())?;
     let base_path = backend.path().trim_end_matches('/');
@@ -2646,6 +2659,8 @@ fn toml_json_value(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     mod codex;
+    #[path = "workbench_control.rs"]
+    mod workbench_control;
 
     use super::*;
     use std::io::{Cursor, Write};
