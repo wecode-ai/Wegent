@@ -28,4 +28,22 @@ describe('logRuntimeTaskCreateStage', () => {
     circular.self = circular
     expect(() => logRuntimeTaskCreateStage('local-payload-built', circular)).not.toThrow()
   })
+
+  it('can retain control stages through debug-panel capture', () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+    try {
+      logRuntimeTaskCreateStage('desktop-control-executed', { commandId: 'click-1' }, 'debug')
+      expect(debug).toHaveBeenCalledWith(
+        '[Wework] Runtime task create diagnostic',
+        expect.any(String)
+      )
+      expect(JSON.parse(debug.mock.calls[0][1] as string)).toMatchObject({
+        stage: 'desktop-control-executed',
+        commandId: 'click-1',
+      })
+      expect(infoMock).not.toHaveBeenCalled()
+    } finally {
+      debug.mockRestore()
+    }
+  })
 })

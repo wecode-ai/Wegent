@@ -6,6 +6,7 @@ import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
 import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { createHybridWorkbenchServices } from './hybridServices'
+import { mergeDeviceLists, getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 
 const extensionCommandRouting = vi.hoisted(() =>
   vi.fn((commandKey: string) => commandKey === 'extension_command')
@@ -1763,6 +1764,35 @@ describe('createHybridWorkbenchServices', () => {
     const devices = await services.deviceApi.listDevices()
 
     expect(devices.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
+  })
+
+  it('publishes current app aliases to the background device refresh', async () => {
+    const services = createServices()
+    mocks.localListDevices.mockResolvedValue([
+      { device_id: 'native-device', runtime_instance_id: 'runtime-current', device_type: 'local' },
+    ])
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        device_id: 'app-record-current',
+        app_device_id: 'native-device',
+        runtime_instance_id: 'runtime-current',
+        device_type: 'app',
+      },
+      {
+        device_id: 'app-record-old',
+        app_device_id: 'native-device',
+        runtime_instance_id: 'runtime-old',
+        device_type: 'app',
+      },
+    ])
+    const local = await services.deviceApi.listDevices()
+    const background = await services.cloudBackgroundApi!.listDevices!()
+    const refreshed = mergeDeviceLists(local, background)
+
+    expect(refreshed).toHaveLength(1)
+    const aliases = getUnambiguousWorkbenchDeviceAliases(refreshed)
+    expect(aliases.get('app-record-current')).toBe('native-device')
+    expect(aliases.has('app-record-old')).toBe(false)
   })
 
   it('loads current cloud devices for cloud project execution configuration', async () => {

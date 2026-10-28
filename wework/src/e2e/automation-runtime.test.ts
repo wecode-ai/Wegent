@@ -310,6 +310,7 @@ describe('Electron desktop E2E automation', () => {
   })
 
   test('does not turn an acknowledgement failure into a failed UI action', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
     const button = document.createElement('button')
     button.dataset.testid = 'control-acknowledgement-button'
     const clicked = vi.fn()
@@ -356,7 +357,19 @@ describe('Electron desktop E2E automation', () => {
         actionSucceeded: true,
         error: 'Failed to fetch',
       })
+      const transport = debug.mock.calls
+        .filter(call => call[0] === '[Wework] Runtime task create diagnostic')
+        .map(call => JSON.parse(String(call[1])))
+        .find(entry => entry.stage === 'desktop-control-result-transport')
+      expect(transport).toMatchObject({
+        commandId: 'acknowledgement-click',
+        responseStatus: null,
+        serverReceivedAt: null,
+        elapsedMs: expect.any(Number),
+        maxEventLoopLagMs: expect.any(Number),
+      })
     } finally {
+      debug.mockRestore()
       button.remove()
     }
   })

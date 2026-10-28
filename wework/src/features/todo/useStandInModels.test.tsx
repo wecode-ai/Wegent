@@ -147,7 +147,7 @@ describe('stand-in shared model catalog', () => {
     const { result } = renderHook(() => useStandInModels(services, settings))
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.models[0]).toBe(cloud)
-    expect(result.current.error).toContain('Device offline')
+    expect(result.current.error).toBe('执行设备离线，请连接设备后重试。')
     expect(result.current.defaultIdentity).toEqual(cloudRunnerModelIdentity(cloud, 'codex'))
   })
 })
