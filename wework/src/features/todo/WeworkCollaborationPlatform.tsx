@@ -1,4 +1,5 @@
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
+import { requireIssueTaskAvailable } from './issueTaskAvailability'
 import { useStandInProjects } from './useStandInProjects'
 import { StandInIcon } from '@wegent/collaboration'
 import { bindProjectStandInApi } from '@/api/standIn'
@@ -416,6 +417,16 @@ export function WeworkSharedProject({
   const latestProjectRef = useRef(project)
   const previousProjectPropRef = useRef(project)
   const taskComposerSequenceRef = useRef(0)
+  const closeTaskConversation = useCallback(() => {
+    taskComposerSequenceRef.current += 1
+    setTaskComposer(null)
+  }, [])
+  useEffect(
+    () => () => {
+      taskComposerSequenceRef.current += 1
+    },
+    []
+  )
   const acceptedDispatchTaskActions = useRef(new Set<string>())
   const [pinnedProgressIssueId, setPinnedProgressIssueId] = useState<string | null>(null)
   if (location.issueId && pinnedProgressIssueId !== null) setPinnedProgressIssueId(null)
@@ -606,6 +617,7 @@ export function WeworkSharedProject({
       }) as unknown as CloudProject,
     [project]
   )
+  const taskOwnerUserId = project.project_store === 'local' ? 0 : userId
   const deviceNamesById = useMemo(
     () => ({
       ...getWorkbenchDeviceNamesById(devices ?? []),
@@ -771,6 +783,7 @@ export function WeworkSharedProject({
   const openNewTaskConversation = useCallback(
     async (issue: CollaborationIssue, dispatch?: IssueTaskDispatchInput) => {
       if (!runtimePort) throw new Error('当前工作台无法打开个人任务')
+      const requestSequence = ++taskComposerSequenceRef.current
       try {
         dispatch ??= await resolveHumanTaskDispatch(
           detailServices?.projectChatClient,
@@ -779,6 +792,7 @@ export function WeworkSharedProject({
           userId
         )
       } catch (cause) {
+        if (requestSequence !== taskComposerSequenceRef.current) return
         notify(
           t('workbench.issue_task_dispatch_lookup_failed', {
             reason: cause instanceof Error ? cause.message : String(cause),
@@ -787,12 +801,13 @@ export function WeworkSharedProject({
         )
         return
       }
+      if (requestSequence !== taskComposerSequenceRef.current) return
       clearNotice()
       const humanTaskBinding = issue.human_task_binding ?? null
       const currentProject = latestProjectRef.current
       setTaskComposer({
         issue,
-        conversationKey: `${issue.id}:new:${++taskComposerSequenceRef.current}`,
+        conversationKey: `${issue.id}:new:${requestSequence}`,
         dispatch,
         humanTaskBinding,
         taskRequest: {
@@ -847,28 +862,48 @@ export function WeworkSharedProject({
   )
   const openBoundTaskConversation = useCallback(
     async (issue: CollaborationIssue, address: RuntimeTaskAddress) => {
-      const latestBinding = scopedApi.taskBindings
-        ? (await scopedApi.taskBindings.list(issue.id, String(project.id))).find(
-            binding => binding.deviceId === address.deviceId && binding.taskId === address.taskId
-          )
-        : undefined
-      const resolvedAddress = latestBinding
-        ? workspaceExecutionAddress(latestBinding, runtimeWork, issue.id, project.project_store)
-        : {
-            ...address,
-            issueExecution: { projectId: String(project.id), issueId: issue.id },
-            ...(project.project_store === 'backend'
-              ? { projectSession: { projectId: String(project.id), issueId: issue.id } }
-              : {}),
-          }
-      setTaskComposer({
-        issue,
-        address: resolvedAddress,
-        conversationKey: `${issue.id}:${resolvedAddress.deviceId}:${resolvedAddress.taskId}`,
-      })
-      projectHost.navigate({ ...projectHost.location, issueId: issue.id })
+      const requestSequence = ++taskComposerSequenceRef.current
+      try {
+        const latestBinding = (
+          await scopedApi.taskBindings?.list(issue.id, String(project.id))
+        )?.find(
+          binding => binding.deviceId === address.deviceId && binding.taskId === address.taskId
+        )
+        const availableBinding = await requireIssueTaskAvailable(
+          latestBinding,
+          taskOwnerUserId,
+          services.standInApi,
+          key => t(key)
+        )
+        if (requestSequence !== taskComposerSequenceRef.current) return
+        const resolvedAddress = workspaceExecutionAddress(
+          availableBinding,
+          runtimeWork,
+          issue.id,
+          project.project_store
+        )
+        setTaskComposer({
+          issue,
+          address: resolvedAddress,
+          conversationKey: `${issue.id}:${resolvedAddress.deviceId}:${resolvedAddress.taskId}`,
+        })
+        projectHost.navigate({ ...projectHost.location, issueId: issue.id })
+      } catch (error) {
+        if (requestSequence !== taskComposerSequenceRef.current) return
+        notify(error instanceof Error ? error.message : t('todo.linked_task_unavailable'), 'error')
+      }
     },
-    [project.id, project.project_store, projectHost, runtimeWork, scopedApi.taskBindings]
+    [
+      notify,
+      project.id,
+      project.project_store,
+      projectHost,
+      runtimeWork,
+      scopedApi.taskBindings,
+      services.standInApi,
+      t,
+      taskOwnerUserId,
+    ]
   )
 
   /** Open the personal task an assignment notification hands to this reader. */
@@ -963,7 +998,7 @@ export function WeworkSharedProject({
             : workItemComposerReference(project, taskComposer.issue)
         }
         initialAddress={taskComposer.address}
-        onClose={() => setTaskComposer(null)}
+        onClose={closeTaskConversation}
         onAddressChange={address => {
           setTaskComposer(current =>
             current?.conversationKey === taskComposer.conversationKey
@@ -1080,10 +1115,10 @@ export function WeworkSharedProject({
               conversation={taskComposer?.issue.id === issue.id ? conversationPanel : null}
               conversationKey={taskComposer?.conversationKey}
               onClose={() => {
-                setTaskComposer(null)
+                closeTaskConversation()
                 onClose()
               }}
-              onCloseConversation={() => setTaskComposer(null)}
+              onCloseConversation={closeTaskConversation}
             >
               {closeDrawers => (
                 <TodoEditor
@@ -1163,7 +1198,7 @@ export function WeworkSharedProject({
                         : undefined
                   }
                   onEscape={
-                    taskComposer?.issue.id === issue.id ? () => setTaskComposer(null) : closeDrawers
+                    taskComposer?.issue.id === issue.id ? closeTaskConversation : closeDrawers
                   }
                   onUpdated={updated => onChange(updated as unknown as CollaborationIssue)}
                   onRead={updated => onRead(updated as unknown as CollaborationIssue)}

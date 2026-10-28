@@ -98,6 +98,7 @@ const mocks = vi.hoisted(() => {
 
   const localServices = {
     standInApi: {
+      readTask: vi.fn().mockResolvedValue({ success: true }),
       personalSave: vi.fn(),
       save: vi.fn(),
       organizeWork: vi.fn(),
@@ -188,6 +189,7 @@ const mocks = vi.hoisted(() => {
   }
   const cloudServices = {
     standInApi: {
+      readTask: vi.fn().mockResolvedValue({ success: true }),
       personalSave: vi.fn(),
       save: vi.fn(),
       organizeWork: vi.fn(),
@@ -496,6 +498,12 @@ describe('stand-in save routing', () => {
   it.each(['local-device', 'remote-device'])(
     'routes saves by the selected Executor %s rather than the stored device field',
     async deviceId => {
+      mocks.localListDevices.mockResolvedValue([
+        { id: 0, device_id: 'local-device', device_type: 'local', status: 'online' },
+      ])
+      mocks.cloudListDevices.mockResolvedValue([
+        { id: 1, device_id: 'remote-device', device_type: 'remote', status: 'online' },
+      ])
       mocks.localSidebarIdentity.mockResolvedValue({
         deviceId: 'local-device',
         runtimeInstanceId: 'local-runtime',
@@ -568,6 +576,40 @@ describe('qualified local sidebar routing', () => {
     provenance: 'local-ipc' as const,
   }
   const request = { deviceId: identity.deviceId, projects: [] }
+
+  it('reads a local task through IPC when its binding uses the cloud app registration alias', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      {
+        id: 0,
+        device_id: identity.deviceId,
+        runtime_instance_id: identity.runtimeInstanceId,
+        device_type: 'local',
+        status: 'online',
+      },
+    ])
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 73,
+        device_id: 'app-record-73',
+        app_device_id: identity.deviceId,
+        runtime_instance_id: identity.runtimeInstanceId,
+        device_type: 'app',
+        status: 'online',
+      },
+    ])
+    mocks.localServices.standInApi.readTask.mockClear()
+    mocks.cloudServices.standInApi.readTask.mockClear()
+
+    await expect(createServices().standInApi!.readTask('app-record-73', 'task')).resolves.toEqual({
+      success: true,
+    })
+
+    expect(mocks.localServices.standInApi.readTask).toHaveBeenCalledExactlyOnceWith(
+      'app-record-73',
+      'task'
+    )
+    expect(mocks.cloudServices.standInApi.readTask).not.toHaveBeenCalled()
+  })
 
   it('activates through qualified local IPC and rejects the same activation after replacement', async () => {
     const services = createServices()

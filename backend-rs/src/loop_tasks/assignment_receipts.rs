@@ -167,7 +167,7 @@ async fn require_personal_binding(
     .await
     .map_err(internal)?;
     let bindings = LoopItemRepository::new(&state.mysql)
-        .list_task_bindings(item_id)
+        .list_task_bindings(item_id, user.id)
         .await
         .map_err(internal)?;
     if bindings.iter().any(|binding| {

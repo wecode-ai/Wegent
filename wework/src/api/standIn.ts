@@ -183,7 +183,7 @@ export interface StandInExecutorApi {
   readTask(
     deviceId: string,
     taskId: string
-  ): Promise<{ success: boolean; task?: RuntimeTaskSummary }>
+  ): Promise<{ success: boolean; task?: RuntimeTaskSummary; code?: string; error?: string }>
   catalog(deviceId: string): Promise<{ models: RunnerModel[] }>
   run(
     projectId: string,
