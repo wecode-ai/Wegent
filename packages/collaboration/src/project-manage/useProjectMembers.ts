@@ -165,7 +165,10 @@ export function useProjectMembers<
       }
       if (options.reloadMembers) {
         const next = await api.listMembers(scope.projectId)
-        if (projectScopeRef.current === scope) setMembers(next)
+        if (projectScopeRef.current === scope) {
+          setMembers(next)
+          setLoadError(null)
+        }
       }
     } catch (cause) {
       if (projectScopeRef.current === scope) {

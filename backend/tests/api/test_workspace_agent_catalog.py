@@ -86,17 +86,22 @@ def test_workspace_catalog_batches_external_identity_permissions_and_rechecks_re
     workspace = _kind(test_user.id, "CollaborationWorkspace", "external-catalog", {})
     test_db.add(workspace)
     test_db.flush()
-    group_ids = []
     for index in range(size):
         group = Namespace(name=f"external-{index}", owner_user_id=test_admin_user.id)
         test_db.add(group)
         test_db.flush()
-        group_ids.append(group.id)
         team = _kind(test_admin_user.id, "Team", f"agent-{index}", {}, group.name)
         test_db.add(team)
         test_db.flush()
         for resource_type, resource_id, entity_type, entity_id, grant_role in [
             ("Namespace", group.id, "test_department", "department", role),
+            (
+                "Namespace",
+                group.id,
+                "test_department",
+                "other-department",
+                "Maintainer",
+            ),
             ("Team", team.id, "workspace", str(workspace.id), "Developer"),
         ]:
             test_db.add(
@@ -121,13 +126,14 @@ def test_workspace_catalog_batches_external_identity_permissions_and_rechecks_re
         external_entity_resolver, "_resolver_instances", {"test_department": resolver}
     )
     workspace_id, user_id = workspace.id, test_user.id
-    for allowed in [group_ids, []]:
-        resolver.get_resource_ids_by_entity.reset_mock()
-        resolver.get_resource_ids_by_entity.return_value = allowed
+    for allowed in [["department"], []]:
+        resolver.match_entity_bindings.reset_mock()
+        resolver.match_entity_bindings.return_value = allowed
         with Session(bind=test_db.get_bind()) as db:
             rows = WorkspaceAgentService().list_agents(
                 db, workspace_id, user_id, include_readiness=False
             )
         assert len(rows) == size
         assert {row["can_edit"] for row in rows} == {bool(allowed) and editable}
-        resolver.get_resource_ids_by_entity.assert_called_once()
+        resolver.match_entity_bindings.assert_called_once()
+        resolver.get_resource_ids_by_entity.assert_not_called()

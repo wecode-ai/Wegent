@@ -392,7 +392,7 @@ describe('ProjectManageView project scope', () => {
     expect(findByTestId(tree, 'cloud-member-search')).toBeTruthy()
   })
 
-  it('reloads the authoritative member list after adding a member', async () => {
+  it.each([false, true])('reloads members after adding, with initial failure: %s', async failed => {
     vi.useFakeTimers()
     vi.stubGlobal('window', globalThis)
     const api = createApi()
@@ -419,7 +419,10 @@ describe('ProjectManageView project scope', () => {
       email: null,
     }
     vi.mocked(api.listMembers)
-      .mockResolvedValueOnce([owner])
+      .mockImplementationOnce(async () => {
+        if (failed) throw new Error('Member service unavailable')
+        return [owner]
+      })
       .mockResolvedValueOnce([owner, addedMember])
     vi.mocked(api.searchUsers).mockResolvedValue({ users: [user] })
     vi.mocked(api.addMember).mockResolvedValue(addedMember)
@@ -429,6 +432,8 @@ describe('ProjectManageView project scope', () => {
       let tree = renderView(api, host, currentProject, vi.fn())
       await flushPromises()
       tree = renderView(api, host, currentProject, vi.fn())
+
+      expect(Boolean(findByTestId(tree, 'cloud-project-members-error'))).toBe(failed)
 
       findByTestId(tree, 'cloud-project-members-toggle').props.onClick()
       tree = renderView(api, host, currentProject, vi.fn())
@@ -451,6 +456,7 @@ describe('ProjectManageView project scope', () => {
       expect(api.addMember).toHaveBeenCalledWith('project-a', 2, 'Viewer')
       expect(api.listMembers).toHaveBeenCalledTimes(2)
       expect(findByTestId(tree, 'cloud-project-member-2')).toBeTruthy()
+      expect(findByTestId(tree, 'cloud-project-members-error')).toBeNull()
     } finally {
       vi.unstubAllGlobals()
       vi.useRealTimers()

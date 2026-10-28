@@ -14,7 +14,6 @@ export function usePanelData<T>(load: (() => Promise<T>) | undefined, enabled = 
   }>({ load, loading: true })
   const revision = useRef(0)
   const currentLoad = useRef(load)
-  currentLoad.current = load
   const setData = useCallback(
     (update: SetStateAction<T | undefined>) => {
       if (!load || !enabled || currentLoad.current !== load) return

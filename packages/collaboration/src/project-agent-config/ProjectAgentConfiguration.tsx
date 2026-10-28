@@ -591,7 +591,7 @@ export function ProjectAgentConfiguration({
           <button
             className={styles.addButton}
             data-testid="project-agent-add"
-            disabled={loading}
+            disabled={loading || loadError !== null}
             onClick={() => {
               setMode(defaultMode);
               setSelectedTeamId("");

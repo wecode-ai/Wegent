@@ -248,8 +248,13 @@ describe("ProjectAgentConfiguration", () => {
       container.querySelector('[data-testid="project-agent-list"]'),
     ).toBeNull();
     expect(
-      container.querySelector('[data-testid="project-agent-config-empty"]'),
+      container.querySelector('[data-testid="project-agent-list-empty"]'),
     ).toBeNull();
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="project-agent-add"]',
+      )!.disabled,
+    ).toBe(true);
     await click("project-agent-config-retry");
     expect(
       container.querySelector('[data-testid="project-agent-list"]'),
@@ -258,6 +263,11 @@ describe("ProjectAgentConfiguration", () => {
       container.querySelector('[data-testid="project-agent-config-error"]'),
     ).toBeNull();
     expect(api.resources!.list).not.toHaveBeenCalled();
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="project-agent-add"]',
+      )!.disabled,
+    ).toBe(false);
   });
 
   async function renderHosted(
