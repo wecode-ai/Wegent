@@ -248,6 +248,9 @@ Goal 重载后也保留任务已知轮次，
 个人任务启动与交付提交并发产生 Issue 版本冲突时，重新读取一次最新状态再决定是否
 转为进行中；不能重放旧版本或覆盖已经完成的 Issue。网页重开流式会话时，先检查流状态
 再读取消息，避免流在两步之间完成后返回旧的空白消息快照。
+分身派发在共用创建与续写边界固定大型 Future 到堆上，避免异步调用层级将其逐层内联，
+导致 Windows Tokio 工作线程以 `0xC00000FD` 栈溢出退出。手动运行、分配通知及后台调度
+入口的回归门禁采用 Clippy 的 [16 KiB 大型 Future 边界](https://doc.rust-lang.org/stable/clippy/lint_configuration.html#future-size-threshold)；现有真实桌面场景验证完整执行流程。
 长历史加载轮询使用 `performanceSnapshot` 的 `collectMemory: false`，避免每次轮询强制
 GC；最终内存验证仍使用默认完整采样。超时诊断保留最后一次采样结果。
 权限模式场景独占 Core shard 11，保留真实 MCP 到期时间，避免串行 Windows 分片先执行

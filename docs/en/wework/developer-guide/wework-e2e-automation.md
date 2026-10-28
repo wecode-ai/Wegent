@@ -259,6 +259,12 @@ If delivery finalization races the personal-task start transition, re-read the
 Issue once after a version conflict and recompute the update, preserving completed
 Issues. Web task joins resolve streaming state before reading messages so a stream
 finishing during restoration cannot leave an old blank message snapshot.
+Stand-in dispatch pins large create/send futures on the heap at their shared
+boundary, keeping nested async state machines from overflowing Windows Tokio
+worker stacks with exit code `0xC00000FD`. Regressions enforce Clippy's
+[16 KiB large-future boundary](https://doc.rust-lang.org/stable/clippy/lint_configuration.html#future-size-threshold)
+for manual, assignment, and scheduler entry points; existing
+real desktop scenarios cover the complete execution flow.
 Long history hydration polls use `performanceSnapshot` with `collectMemory: false`
 to avoid forced GC on every poll; final memory assertions retain full sampling.
 Timeout diagnostics include the last snapshot. Permission modes use dedicated
