@@ -164,7 +164,7 @@ fn materialize_cloud_payload(
         if !claude {
             config.as_object_mut().expect("config is an object").extend(
                 json!({
-                    "codex_catalog_model_id":model.pointer("/config/codex_catalog_model_id").and_then(Value::as_str).unwrap_or("wework-gpt-5.6-sol"),
+                    "codex_catalog_model_id":model.pointer("/config/codex_catalog_model_id").and_then(Value::as_str).unwrap_or("gpt-6.1-sol"),
                     "codex_responses_compat_proxy":true,"tool_profile":"custom",
                     "native_tool_search":model.pointer("/config/native_tool_search").and_then(Value::as_bool).unwrap_or(protocol=="openai-responses"),
                     "native_namespace_tools":model.pointer("/config/native_namespace_tools").and_then(Value::as_bool).unwrap_or(protocol=="openai-responses"),

@@ -2422,7 +2422,57 @@ fn codex_launch_config_reserves_the_output_budget_from_the_auto_compact_limit() 
     assert_eq!(config.get("model_context_window"), Some(&json!(1_000_000)));
     assert_eq!(
         config.get("model_auto_compact_token_limit"),
-        Some(&json!(616_000))
+        Some(&json!(492_800))
+    );
+}
+
+#[test]
+fn codex_launch_config_keeps_the_model_budget_over_a_compatibility_catalog() {
+    let _environment = environment::LaunchEnvironment::new();
+    let request = ExecutionRequest {
+        prompt: Value::String("review the current branch".to_owned()),
+        model_config: json!({
+            "model_id": "moonshot-kimi-k3.1-pro",
+            "codex_catalog_model_id": "gpt-6.1-sol",
+            "codex_responses_compat_proxy": true,
+            "model_context_window": 1_048_576,
+            "max_output_tokens": 96_000,
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params
+        .get("config")
+        .and_then(Value::as_object)
+        .expect("thread config should be present");
+
+    assert_eq!(
+        codex_request_model(&request).as_deref(),
+        Some("gpt-6.1-sol")
+    );
+    assert_eq!(config.get("model_context_window"), Some(&json!(1_048_576)));
+    let requested_limit = config
+        .get("model_auto_compact_token_limit")
+        .and_then(Value::as_i64)
+        .expect("auto-compact limit should be present");
+    assert_eq!(requested_limit, 762_060);
+    // gpt-6.1-sol caps the override at 90% of its 872k catalog window (784,800).
+    // The 80% input-budget limit stays below that cap, so Codex does not clamp it.
+    assert!(requested_limit < 872_000 * 9 / 10);
+}
+
+#[test]
+fn auto_compact_limit_uses_80_percent_of_the_input_budget() {
+    assert_eq!(
+        codex_auto_compact_token_limit(&json!({"max_output_tokens": 128_000}), 1_000_000),
+        Some(697_600)
+    );
+    assert_eq!(
+        codex_auto_compact_token_limit(&json!({"max_output_tokens": 128_000}), 400_000),
+        Some(217_600)
     );
 }
 
@@ -2430,14 +2480,14 @@ fn codex_launch_config_reserves_the_output_budget_from_the_auto_compact_limit() 
 fn auto_compact_limit_requires_a_usable_output_budget() {
     let cases = [
         // The configured output ceiling leaves an input budget.
-        (json!({"max_output_tokens": 384_000}), Some(616_000)),
+        (json!({"max_output_tokens": 384_000}), Some(492_800)),
         // An output budget that consumes the whole window leaves nothing to compact for.
         (json!({"max_output_tokens": 1_000_000}), None),
         (json!({"max_output_tokens": 1_200_000}), None),
         // Without a configured output ceiling the provider keeps its own default.
         (json!({}), None),
         (json!({"max_output_tokens": 0}), None),
-        (json!({"maxOutputTokens": "384000"}), Some(616_000)),
+        (json!({"maxOutputTokens": "384000"}), Some(492_800)),
     ];
 
     for (model_config, expected) in cases {

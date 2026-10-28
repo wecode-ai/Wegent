@@ -63,6 +63,7 @@ const KIMI_CODEX_MODELS: &str = include_str!("../../../shared/assets/codex-model
 const DEEPSEEK_CODEX_MODELS: &str =
     include_str!("../../../shared/assets/codex-models/deepseek.json");
 const OPENAI_CODEX_MODELS: &str = include_str!("../../../shared/assets/codex-models/openai.json");
+const WEWORK_CODEX_MODELS: &str = include_str!("../../../shared/assets/codex-models/wework.json");
 
 fn default_base_instructions() -> String {
     DEFAULT_BASE_INSTRUCTIONS.replace(
@@ -419,6 +420,7 @@ fn builtin_model_entries() -> Vec<Value> {
         ("Kimi", KIMI_CODEX_MODELS),
         ("DeepSeek", DEEPSEEK_CODEX_MODELS),
         ("OpenAI", OPENAI_CODEX_MODELS),
+        ("Wework", WEWORK_CODEX_MODELS),
     ]
     .into_iter()
     .flat_map(|(group, source)| catalog_entries_from_resource(group, source))

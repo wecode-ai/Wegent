@@ -124,7 +124,41 @@ def test_build_codex_runtime_model_config_infers_deepseek_responses_catalog(
     assert config["codex_catalog_model_id"] == expected_catalog_model_id
 
 
-def test_build_codex_runtime_model_config_does_not_infer_deepseek_chat_catalog(
+def test_kimi_k3_1_pro_responses_uses_its_own_catalog_and_token_limits(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.core.config import settings
+
+    model = _model_kind(
+        0,
+        name="moonshot-kimi-k3.1-pro",
+        model_id="moonshot-kimi-k3.1-pro",
+        protocol="openai-responses",
+    )
+    model.json["spec"]["modelConfig"]["context_window"] = 1_048_576
+    model.json["spec"]["modelConfig"]["max_output_tokens"] = 96_000
+    test_db.add(model)
+    test_db.commit()
+    monkeypatch.setattr(settings, "WEGENT_BACKEND_PUBLIC_URL", "https://wegent.example")
+
+    direct = _build_codex_runtime_model_config(
+        model.name,
+        db=test_db,
+        user_id=test_user.id,
+    )
+    assert direct["codex_catalog_model_id"] == "wework-kimi-k3-1-pro"
+
+    expanded = build_wework_runtime_model_config(
+        test_db, model_name=model.name, creator=test_user
+    )
+    assert expanded["codex_catalog_model_id"] == "wework-kimi-k3-1-pro"
+    assert expanded["model_context_window"] == 1_048_576
+    assert expanded["max_output_tokens"] == 96_000
+
+
+def test_build_codex_runtime_model_config_infers_deepseek_chat_catalog(
     test_db: Session,
     test_user: User,
 ) -> None:
@@ -143,7 +177,7 @@ def test_build_codex_runtime_model_config_does_not_infer_deepseek_chat_catalog(
         user_id=test_user.id,
     )
 
-    assert "codex_catalog_model_id" not in config
+    assert config["codex_catalog_model_id"] == "wework-deepseek-v4-pro"
 
 
 def test_build_codex_runtime_model_config_preserves_explicit_catalog(

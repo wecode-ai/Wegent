@@ -15,6 +15,10 @@ Models are grouped by endpoint and share its URL and key. Select “Edit” to c
 
 Codex tasks without an explicit context length use the model Catalog's context window. The maximum context and auto-compaction threshold are separate settings: with a 500,000-token context, a 95% effective context ratio, and no explicit auto-compaction threshold, the usable window is about 475k and the default auto-compaction threshold is about 450k.
 
+When the model also configures a maximum output, Codex auto-compacts at 80% of the usable input budget (context minus maximum output). For example, a 1,048,576-token context with a 96,000-token output budget gives a usable input budget of about 952.6k and an auto-compaction point of about 762.1k.
+
+The context compaction threshold under **Settings → Context** (default 75%) only controls when the context indicator shows the manual compaction hint; it does not change Codex's automatic compaction threshold. Codex derives that threshold from the task model's Catalog window, its actual output budget, and the model configuration. A cloud model without a dedicated Catalog entry uses the shared GPT compatibility profile for capability metadata. Its configured context window and maximum output still override the profile defaults, subject to Codex's catalog and compaction caps.
+
 When adding or editing models, select “Test connection” at the bottom of the dialog to test the current connection and selected models without saving. Leaving the API key blank while editing uses the saved key. The test checks authentication and tool calling. Successful tests show “Connected”; expand failed tests for details, correct the settings, and test again. Testing does not change saved settings.
 
 Canceling does not save changes; discarding unsaved changes requires confirmation. Deleting an endpoint also removes its models, while keeping existing conversations.

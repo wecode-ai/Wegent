@@ -45,11 +45,20 @@ describe('runtimeContextUsage', () => {
     expect(modelContextWindowFromConfig(model({ contextWindow: 'bad-value' }))).toBeNull()
   })
 
-  test('overrides runtime reported context window with configured model window', () => {
+  test('does not raise a smaller runtime reported context window', () => {
     expect(
       applyModelContextWindowOverride(baseUsage, model({ model_context_window: 1_000_000 }))
         .modelContextWindow
-    ).toBe(1_000_000)
+    ).toBe(258_400)
+  })
+
+  test('uses the smaller of the runtime window and the model input budget', () => {
+    expect(
+      applyModelContextWindowOverride(
+        { ...baseUsage, modelContextWindow: 996_147 },
+        model({ context_window: 1_048_576, max_output_tokens: 96_000 })
+      ).modelContextWindow
+    ).toBe(952_576)
   })
 
   test('reads max output tokens from supported model config keys', () => {
@@ -76,7 +85,7 @@ describe('runtimeContextUsage', () => {
   test('measures reported usage against the reserved input token budget', () => {
     expect(
       applyModelContextWindowOverride(
-        baseUsage,
+        { ...baseUsage, modelContextWindow: 996_147 },
         model({ context_window: 1_000_000, max_output_tokens: 384_000 })
       ).modelContextWindow
     ).toBe(616_000)

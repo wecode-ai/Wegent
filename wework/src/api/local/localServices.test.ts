@@ -3617,7 +3617,7 @@ describe('createLocalAppServices', () => {
           new_session: false,
           model_config: expect.objectContaining({
             model_id: 'shared-model',
-            codex_catalog_model_id: 'wework-gpt-5.6-sol',
+            codex_catalog_model_id: 'gpt-6.1-sol',
             base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
             api_key: 'cloud-login-token',
             default_headers: {

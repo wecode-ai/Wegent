@@ -129,21 +129,72 @@ async fn bundled_catalog_export_reports_failures_without_substituting_models() {
 fn catalog_includes_verified_builtin_kimi_profiles() {
     let catalog = catalog();
     let models = catalog["models"].as_array().expect("models array");
-    assert!(models.len() >= 2);
-    assert_eq!(models[0]["slug"], KIMI_K3_MODEL);
-    assert!(models[0]["base_instructions"]
+    let k3 = models
+        .iter()
+        .find(|model| model["slug"] == KIMI_K3_MODEL)
+        .expect("Kimi K3 entry");
+    assert!(k3["base_instructions"]
         .as_str()
         .is_some_and(
             |instructions| instructions.len() > 10_000 && !instructions.contains("based on GPT-5")
         ));
-    assert_eq!(models[0]["context_window"], 1_048_576);
-    assert_eq!(models[0]["auto_compact_token_limit"], 786_432);
-    assert_eq!(models[0]["default_reasoning_level"], "low");
-    assert_eq!(models[0]["supports_parallel_tool_calls"], false);
-    assert_eq!(models[0]["supports_search_tool"], true);
-    assert_eq!(models[1]["slug"], KIMI_K27_MODEL);
-    assert_eq!(models[1]["context_window"], 262_144);
-    assert_eq!(models[1]["supports_search_tool"], true);
+    assert_eq!(k3["context_window"], 1_048_576);
+    assert_eq!(k3["auto_compact_token_limit"], Value::Null);
+    assert_eq!(k3["default_reasoning_level"], "low");
+    assert_eq!(k3["supports_parallel_tool_calls"], false);
+    assert_eq!(k3["supports_search_tool"], true);
+
+    let k27 = models
+        .iter()
+        .find(|model| model["slug"] == KIMI_K27_MODEL)
+        .expect("Kimi K2.7 entry");
+    assert_eq!(k27["context_window"], 262_144);
+    assert_eq!(k27["supports_search_tool"], true);
+
+    let kimi_k31_pro = models
+        .iter()
+        .find(|model| model["slug"] == "wework-kimi-k3-1-pro")
+        .expect("Kimi K3.1 Pro entry");
+    assert_eq!(kimi_k31_pro["context_window"], 1_048_576);
+    assert_eq!(kimi_k31_pro["max_context_window"], 1_048_576);
+    assert_eq!(kimi_k31_pro["auto_compact_token_limit"], Value::Null);
+}
+
+#[test]
+fn catalog_includes_wework_long_context_profiles() {
+    let catalog = catalog();
+    let models = catalog["models"].as_array().expect("models array");
+    for (slug, context_window) in [
+        ("wework-deepseek-v4-1-flash", 1_000_000),
+        ("wework-glm-5-3", 1_048_576),
+        ("wework-qwen-3-8-max", 1_048_576),
+        ("wework-gpt-6-luna", 1_000_000),
+    ] {
+        let model = models
+            .iter()
+            .find(|model| model["slug"] == slug)
+            .unwrap_or_else(|| panic!("{slug} entry"));
+        assert_eq!(model["context_window"], context_window);
+        assert_eq!(model["max_context_window"], context_window);
+        assert_eq!(model["auto_compact_token_limit"], Value::Null);
+        assert_eq!(model["apply_patch_tool_type"], "freeform");
+    }
+}
+
+#[test]
+fn catalog_includes_an_exact_gpt_6_astra_profile() {
+    let catalog = catalog();
+    let model = catalog["models"]
+        .as_array()
+        .expect("models array")
+        .iter()
+        .find(|model| model["slug"] == "gpt-6-astra")
+        .expect("GPT-6 Astra entry");
+
+    assert_eq!(model["context_window"], 272_000);
+    assert_eq!(model["max_context_window"], 872_000);
+    assert_eq!(model["auto_compact_token_limit"], Value::Null);
+    assert_eq!(model["apply_patch_tool_type"], "freeform");
 }
 
 #[test]

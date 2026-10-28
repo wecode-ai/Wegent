@@ -848,6 +848,7 @@ async function verifyLocalModelRouting({
     enabled: true,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   const selectedModelLabel = await control.command('getText', modelSelector)
   assert.ok(
     selectedModelLabel,

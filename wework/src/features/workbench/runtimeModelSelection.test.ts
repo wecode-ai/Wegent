@@ -317,53 +317,77 @@ describe('runtimeModelSelection', () => {
     )
   })
 
-  test.each([
-    ['deepseek-v4-pro', 'openai-chat-completions'],
-    ['different-upstream-model', 'openai-responses'],
-  ])('does not infer a DeepSeek catalog from model=%s with protocol=%s', (modelId, protocol) => {
-    const cloudModel: UnifiedModel = {
-      name: 'deepseek-v4-pro',
-      type: 'public',
-      modelId,
-      namespace: 'default',
-      resourceUserId: 0,
-      provider: 'cloud',
-      config: { protocol },
-    }
-
-    expect(selectedModelExecutionFields(cloudModel, {}).modelOptions).not.toHaveProperty(
-      'weworkCloudModelCodexCatalogModelId'
-    )
-  })
-
-  test.each(['gpt-5.6-sol', 'gpt-6-astra', 'custom-responses-model'])(
-    'enables native Codex tools by default for Responses cloud model %s',
-    modelId => {
+  test.each(['openai-responses', 'openai-chat-completions', 'anthropic-messages'])(
+    'does not infer a catalog for an unregistered model with protocol=%s',
+    protocol => {
       const cloudModel: UnifiedModel = {
-        name: 'shared-gpt-model',
-        modelId,
-        type: 'user',
+        name: 'unregistered-model',
+        type: 'public',
+        modelId: 'different-upstream-model',
         namespace: 'default',
-        resourceUserId: 42,
-        provider: 'openai',
-        runtime: { family: 'openai.openai-responses' },
-        config: {},
+        resourceUserId: 0,
+        provider: 'cloud',
+        config: { protocol },
       }
 
-      expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
-        modelId: 'shared-gpt-model',
-        modelType: 'user',
-        modelOptions: {
-          collaborationMode: 'default',
-          weworkCloudModelNamespace: 'default',
-          weworkCloudModelResourceUserId: '42',
-          weworkCloudModelUpstreamApiFormat: 'openai-responses',
-          weworkCloudModelNativeToolSearch: 'true',
-          weworkCloudModelNativeNamespaceTools: 'true',
-        },
-      })
+      expect(selectedModelExecutionFields(cloudModel, {}).modelOptions).not.toHaveProperty(
+        'weworkCloudModelCodexCatalogModelId'
+      )
     }
   )
+
+  test.each(['openai-chat-completions', 'anthropic-messages'])(
+    'selects the DeepSeek catalog for a cloud model with protocol=%s',
+    protocol => {
+      const cloudModel: UnifiedModel = {
+        name: 'deepseek-v4-pro',
+        type: 'public',
+        modelId: 'deepseek-v4-pro',
+        namespace: 'default',
+        resourceUserId: 0,
+        provider: 'cloud',
+        config: { protocol },
+      }
+
+      expect(selectedModelExecutionFields(cloudModel, {}).modelOptions).toEqual(
+        expect.objectContaining({
+          weworkCloudModelUpstreamApiFormat: protocol,
+          weworkCloudModelCodexCatalogModelId: 'wework-deepseek-v4-pro',
+        })
+      )
+    }
+  )
+
+  test.each([
+    ['gpt-5.6-sol', null],
+    ['gpt-6-astra', 'gpt-6-astra'],
+    ['custom-responses-model', null],
+  ])('enables native Codex tools by default for Responses cloud model %s', (modelId, catalogId) => {
+    const cloudModel: UnifiedModel = {
+      name: 'shared-gpt-model',
+      modelId,
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'openai',
+      runtime: { family: 'openai.openai-responses' },
+      config: {},
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'shared-gpt-model',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-responses',
+        weworkCloudModelNativeToolSearch: 'true',
+        weworkCloudModelNativeNamespaceTools: 'true',
+        ...(catalogId ? { weworkCloudModelCodexCatalogModelId: catalogId } : {}),
+      },
+    })
+  })
 
   test.each([
     {
@@ -447,6 +471,35 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+      },
+    })
+  })
+
+  test('selects the Kimi K3 Codex catalog for a cloud responses model', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'commercial-kimi',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        protocol: 'openai-responses',
+        base_url: 'https://api.moonshot.cn/v1',
+        model_id: 'moonshot-kimi-k3',
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'commercial-kimi',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-responses',
+        weworkCloudModelNativeToolSearch: 'true',
+        weworkCloudModelNativeNamespaceTools: 'true',
+        weworkCloudModelCodexCatalogModelId: 'wework-kimi-k3',
       },
     })
   })

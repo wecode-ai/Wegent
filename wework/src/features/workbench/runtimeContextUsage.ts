@@ -73,8 +73,21 @@ export function applyModelContextWindowOverride(
   usage: RuntimeContextUsage,
   model?: UnifiedModel | null
 ): RuntimeContextUsage {
-  const contextWindow = modelInputTokenBudget(model)
-  if (!contextWindow || usage.modelContextWindow === contextWindow) {
+  const configuredWindow = modelInputTokenBudget(model)
+  if (!configuredWindow) {
+    return usage
+  }
+
+  // The runtime can report a smaller window than the model config allows, for
+  // example when a cloud model is served by a compatibility catalog profile.
+  // Never raise that window: the ratio must match the budget Codex actually
+  // compacts against.
+  const runtimeWindow =
+    Number.isFinite(usage.modelContextWindow) && usage.modelContextWindow > 0
+      ? usage.modelContextWindow
+      : null
+  const contextWindow = runtimeWindow ? Math.min(runtimeWindow, configuredWindow) : configuredWindow
+  if (usage.modelContextWindow === contextWindow) {
     return usage
   }
 

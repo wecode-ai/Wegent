@@ -134,6 +134,7 @@ describe('Stand-in configuration composer', () => {
         model => model.runtime === 'codex' && model.label === `${region}:Kimi-K3`
       )!
       await userEvent.click(screen.getByTestId(`model-option-${runnerModelKey(selected)}`))
+      await userEvent.keyboard('{Escape}')
       expect(screen.getByTestId('model-selector-button')).toHaveTextContent(`${region}:Kimi-K3`)
       await userEvent.click(screen.getByTestId('stand-in-save'))
       expect(save).toHaveBeenCalledWith(

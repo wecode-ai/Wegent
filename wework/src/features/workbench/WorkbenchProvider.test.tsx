@@ -8624,7 +8624,7 @@ describe('WorkbenchProvider runtime tasks', () => {
               outputTokens: 300,
               reasoningOutputTokens: 0,
             },
-            modelContextWindow: 258_400,
+            modelContextWindow: 996_147,
           },
         },
         deviceId: 'device-1',

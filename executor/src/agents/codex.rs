@@ -4399,17 +4399,25 @@ fn codex_model_max_output_tokens(model_config: &Value) -> Option<i64> {
         .filter(|value| *value > 0)
 }
 
+/// Percentage of the usable input budget at which Codex must compact.
+///
+/// The remaining 5% leaves room for the next request's system/tool overhead so a
+/// conversation does not grow all the way to the upstream context-length limit.
+const CODEX_AUTO_COMPACT_PERCENT: i64 = 80;
+
 /// Token threshold at which Codex must compact before the upstream rejects the turn.
 ///
 /// Upstream providers count the completion budget against the same window as the input,
 /// and the configured output ceiling travels with every request, so the usable input
-/// budget is `context_window - max_output_tokens`. Without this override Codex derives its
-/// auto-compaction threshold from the raw context window (90%, and 95% as a hard cap),
-/// which stays far above the input budget and lets conversations grow until the upstream
-/// fails the turn with a context-length error.
+/// budget is `context_window - max_output_tokens`. Compacting at 95% of that budget keeps
+/// the threshold below the upstream limit while avoiding the raw-window behavior (90% of
+/// the full window, 95% as a hard cap) that grows past the usable input budget.
 fn codex_auto_compact_token_limit(model_config: &Value, context_window: i64) -> Option<i64> {
     let max_output_tokens = codex_model_max_output_tokens(model_config)?;
-    (max_output_tokens < context_window).then(|| context_window - max_output_tokens)
+    (max_output_tokens < context_window).then(|| {
+        let input_budget = context_window - max_output_tokens;
+        input_budget * CODEX_AUTO_COMPACT_PERCENT / 100
+    })
 }
 
 fn configured_codex_provider(
