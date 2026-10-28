@@ -94,6 +94,8 @@ export function ProjectAgentConfiguration({
   >([]);
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadRevision, setLoadRevision] = useState(0);
   const [candidateLoading, setCandidateLoading] = useState(true);
   const [candidateError, setCandidateError] = useState<string | null>(null);
   const [candidateRevision, setCandidateRevision] = useState(0);
@@ -163,6 +165,7 @@ export function ProjectAgentConfiguration({
     setComposerOpen(false);
     setEditingAgentId(null);
     setError(null);
+    setLoadError(null);
     let active = true;
     setLoading(true);
     void api.agents
@@ -179,7 +182,7 @@ export function ProjectAgentConfiguration({
       })
       .catch((cause) => {
         if (!active) return;
-        setError(
+        setLoadError(
           errorMessage(
             cause,
             translateRef.current(
@@ -196,7 +199,7 @@ export function ProjectAgentConfiguration({
     return () => {
       active = false;
     };
-  }, [api, project.id, canManage, scope]);
+  }, [api, project.id, canManage, scope, loadRevision]);
 
   useEffect(() => {
     if (
@@ -562,11 +565,16 @@ export function ProjectAgentConfiguration({
     <section className={styles.section} data-testid="project-agent-config">
       <div className={styles.header}>
         <div>
-          <h2 className={styles.title}>
-            {scope === "workspace"
-              ? translate("todo.workspace_agents", "空间智能体")
-              : translate("todo.project_agents", "项目智能体")}
-          </h2>
+          <div className={styles.titleRow}>
+            <h2 className={styles.title}>
+              {scope === "workspace"
+                ? translate("todo.workspace_agents", "空间智能体")
+                : translate("todo.project_agents", "项目智能体")}
+            </h2>
+            {!loading && !loadError ? (
+              <span className={styles.count}>{agents.length}</span>
+            ) : null}
+          </div>
           <p className={styles.description}>
             {scope === "workspace"
               ? translate(
@@ -603,16 +611,24 @@ export function ProjectAgentConfiguration({
         <p className={styles.empty} data-testid="project-agent-config-loading">
           {translate("common.loading", "加载中…")}
         </p>
+      ) : loadError ? (
+        <div
+          role="alert"
+          className={styles.error}
+          data-testid="project-agent-config-error"
+        >
+          {loadError}
+          <button
+            type="button"
+            className={styles.retryButton}
+            data-testid="project-agent-config-retry"
+            onClick={() => setLoadRevision((value) => value + 1)}
+          >
+            {translate("common.retry", "重试")}
+          </button>
+        </div>
       ) : (
         <>
-          <div className={styles.sectionHeading}>
-            <h3>
-              {scope === "workspace"
-                ? translate("todo.configured_workspace_agents", "已添加智能体")
-                : translate("todo.configured_project_agents", "已配置智能体")}
-            </h3>
-            <span>{agents.length}</span>
-          </div>
           {agents.length ? (
             <div className={styles.list} data-testid="project-agent-list">
               {agents.map((agent) => (

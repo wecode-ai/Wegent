@@ -63,6 +63,8 @@ export function ProjectMembersSection<
   const {
     members,
     loading,
+    loadError,
+    retryLoad,
     membersOpen,
     setMembersOpen,
     memberComposerRef,
@@ -100,7 +102,7 @@ export function ProjectMembersSection<
               <h2 className="heading-base text-text-primary">
                 {host.translate('todo.project_members', '项目成员')}
               </h2>
-              {!loading && (
+              {!loading && !loadError && (
                 <span
                   className="rounded-md bg-muted px-2 py-0.5 text-xs text-text-secondary"
                   data-testid="cloud-project-member-count"
@@ -411,6 +413,23 @@ export function ProjectMembersSection<
             })}
           </div>
         </div>
+        {loadError && (
+          <div
+            role="alert"
+            className="my-4 flex items-center gap-3 text-sm text-destructive"
+            data-testid="cloud-project-members-error"
+          >
+            <span>{loadError}</span>
+            <button
+              type="button"
+              className="min-h-11 rounded-md px-3 text-text-primary hover:bg-hover md:min-h-8"
+              data-testid="cloud-project-members-retry"
+              onClick={retryLoad}
+            >
+              {host.translate('common.retry', '重试')}
+            </button>
+          </div>
+        )}
         {loading && (
           <p
             role="status"
@@ -420,7 +439,7 @@ export function ProjectMembersSection<
             {host.translate('todo.project_members_loading', '正在加载成员…')}
           </p>
         )}
-        {!loading && !members.length && (
+        {!loading && !loadError && !members.length && (
           <p
             className="py-8 text-center text-sm text-text-muted"
             data-testid="cloud-project-members-empty"
@@ -428,7 +447,7 @@ export function ProjectMembersSection<
             {host.translate('todo.project_members_empty', '暂无项目成员')}
           </p>
         )}
-        {!loading && members.length > 0 && (
+        {members.length > 0 && (
           <footer className="mt-4 flex flex-col gap-1 text-xs leading-relaxed text-text-muted">
             {inherited && (
               <p data-testid="cloud-project-members-inheritance-note">

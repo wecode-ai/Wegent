@@ -53,6 +53,8 @@ export function useProjectMembers<
 }) {
   const [members, setMembers] = useState<Member[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loadRevision, setLoadRevision] = useState(0)
   const [membersOpen, setMembersOpen] = useState(false)
   const [memberQuery, setMemberQuery] = useState('')
   const [memberResults, setMemberResults] = useState<User[]>([])
@@ -66,6 +68,7 @@ export function useProjectMembers<
   if (renderedProjectId !== projectId) {
     setRenderedProjectId(projectId)
     setMembers([])
+    setLoadError(null)
     setLoading(true)
     setMembersOpen(false)
     setMemberQuery('')
@@ -80,6 +83,7 @@ export function useProjectMembers<
   useEffect(() => {
     if (!enabled) return
     let active = true
+    setLoadError(null)
     setLoading(true)
     void api.listMembers(projectId).then(
       next => {
@@ -87,16 +91,16 @@ export function useProjectMembers<
         setMembers(next)
         setLoading(false)
       },
-      cause => {
+      () => {
         if (!active) return
         setLoading(false)
-        reportError(cause, host.translate('todo.load_project_failed', '加载项目失败'))
+        setLoadError(host.translate('todo.load_collaboration_data_failed', '加载协作数据失败'))
       }
     )
     return () => {
       active = false
     }
-  }, [api, enabled, host, projectId, reportError])
+  }, [api, enabled, host, projectId, loadRevision])
 
   useEffect(() => {
     if (!membersOpen || typeof document === 'undefined') return
@@ -261,6 +265,8 @@ export function useProjectMembers<
   return {
     members,
     loading,
+    loadError,
+    retryLoad: () => setLoadRevision(value => value + 1),
     membersOpen,
     setMembersOpen,
     memberComposerRef,

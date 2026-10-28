@@ -15,9 +15,9 @@ import type {
   CollaborationWorkspace,
   CollaborationWorkspaceMember,
 } from "../types";
+import { WorkspaceMembersConfiguration } from './WorkspaceMembersConfiguration'
 import {
   WorkspaceCollaborationGroupsConfiguration,
-  WorkspaceMembersConfiguration,
   type WorkspaceResourceCommands,
 } from "./WorkspaceResourceConfiguration";
 
