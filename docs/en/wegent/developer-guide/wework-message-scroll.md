@@ -16,7 +16,10 @@ flowchart TD
   Measure --> Engine
   Engine --> Viewport[Normal DOM viewport]
   Controller[Follow / read / navigate / drag] -->|Ordinary follow and read policy| Engine
-  Controller -->|Restore and navigation commands| Viewport
+  Controller -->|Reading restore| Viewport
+  Controller --> Navigation[Navigation offset and animation lifecycle]
+  Layout[Layout notifications] --> Navigation
+  Navigation -->|Retarget only when the offset changes| Viewport
   Controller -->|Streaming and scroll to bottom| Spring[Single follow spring]
   Controller -->|While dragging| Pointer[Scrollbar pointer and current range]
   Pointer --> Viewport
@@ -30,7 +33,7 @@ Implementation invariants:
 - The message content container uses a forward flex column. Never push short conversations down with `justify-end` or a leading spacer. TanStack end anchoring controls overflow scroll positions, not document-flow alignment. Virtual and nonvirtual lists share the same layout.
 - `useConversationVirtualizer` uses TanStack `anchorTo: 'end'` and `followOnAppend` for ordinary prepends, appends and row-size compensation. Navigation uses start anchoring. Reading disables append follow and end tolerance; even a few pixels of upward movement must pause following.
 - There is no reverse-coordinate adapter, scrollHeight-delta prepend guess or delayed positioning retry chain. Sample a semantic anchor before history loads; nonvirtual short conversations preserve actual text displacement too.
-- Navigation loading and mounted targets share cancellation: a new click, viewport input, or external scrollbar input cancels the previous target. Stale asynchronous results cannot reposition the viewport or clear newer loading state. Scroll commands and completion checks use the same target offset, including top spacing and range limits.
+- Navigation loading and mounted targets share cancellation: a new click, viewport input, or external scrollbar input cancels the previous target. Stale asynchronous results cannot reposition the viewport or clear newer loading state. Scroll commands and completion checks use the same target offset, including top spacing and range limits. Layout notifications retarget only when the offset changes; initial observations and unrelated resizes cannot interrupt native smooth scrolling.
 - A scrollbar drag gives the pointer exclusive viewport ownership, disabling row-size compensation, text anchoring and bottom follow. Measured content changes remap the grabbed thumb point using the current range. Release samples the current position and returns to reading or bottom follow. Drag frames save numeric snapshots without scanning text anchors.
 - The waiting indicator is a virtual row. `scrollMargin` accounts for the preceding history button. `paddingEnd` includes content footers and the sticky composer; subtract their height from the list sizer because these real footers already participate in document flow.
 - Every row measurement uses `resizeItem` with `Math.round(getBoundingClientRect().height)`. Synchronous Markdown layout and one ResizeObserver call the same function; they do not also use TanStack `measureElement`. Hidden zero-size rows cannot overwrite valid heights.

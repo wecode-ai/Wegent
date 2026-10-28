@@ -20,11 +20,7 @@ import type {
   TurnVisibilityBounds,
   NavigationMessage,
 } from './turnNavigationTypes'
-import {
-  getContentPositionForViewportY,
-  getDistanceFromBottom,
-  scrollToContentPosition,
-} from './conversationViewportScroll'
+import { getContentPositionForViewportY, getDistanceFromBottom } from './conversationViewportScroll'
 export function buildUserTurnsForNavigation(
   messages: NavigationMessage[],
   navigation?: RuntimeTurnNavigationItem[]
@@ -249,14 +245,6 @@ export function getMarkerToneClass(
   if (!loaded) return 'bg-text-muted/35 opacity-60'
 
   return 'bg-text-muted/55 opacity-70'
-}
-
-export function scrollToMessageAnchor(
-  scroller: HTMLDivElement,
-  anchor: HTMLElement,
-  behavior: ScrollBehavior = 'auto'
-) {
-  scrollToContentPosition(scroller, getMessageAnchorTargetTop(scroller, anchor), behavior)
 }
 
 export function findMessageAnchor(

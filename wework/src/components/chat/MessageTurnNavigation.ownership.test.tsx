@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import { MessageTurnNavigation } from '@wegent/collaboration/conversation'
 import {
+  allResizeCallbacks,
   installScrollTestEnvironment,
   mockRect,
   mockScrollRelativeRect,
@@ -89,6 +90,7 @@ describe('MessageTurnNavigation ownership', () => {
     expect(onLoading).toHaveBeenLastCalledWith(true)
     return {
       scroll,
+      content,
       interaction,
       scrollTo,
       onTarget,
@@ -151,6 +153,56 @@ describe('MessageTurnNavigation ownership', () => {
       fireEvent.pointerDown(fixture.interaction, { button: 0, buttons: 1 })
       expect(fixture.scrollTo).toHaveBeenLastCalledWith({ top: 1404, behavior: 'auto' })
       expect(fixture.onTarget).toHaveBeenLastCalledWith(null)
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  function startSmoothNavigation() {
+    const fixture = setup()
+    fixture.scrollTo.mockImplementation(({ top, behavior }: ScrollToOptions) => {
+      if (behavior !== 'smooth') fixture.scroll.scrollTop = Number(top)
+    })
+    fireEvent.click(screen.getAllByTestId('message-turn-navigation-marker')[1])
+    expect(fixture.scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 1404, behavior: 'smooth' })
+    const notifyResize = () => {
+      act(() => {
+        for (const callback of [...allResizeCallbacks]) callback([], {} as ResizeObserver)
+      })
+    }
+    return { ...fixture, notifyResize }
+  }
+
+  test('unchanged layout notifications preserve the native turn navigation animation', () => {
+    const fixture = startSmoothNavigation()
+    try {
+      fixture.notifyResize()
+      expect(fixture.scrollTo).toHaveBeenCalledTimes(1)
+      fixture.scroll.scrollTop = 700
+      fixture.notifyResize()
+      expect(fixture.scroll.scrollTop).toBe(700)
+      expect(fixture.scrollTo).toHaveBeenCalledTimes(1)
+      expect(fixture.onTarget).toHaveBeenLastCalledWith('latest')
+      fixture.scroll.scrollTop = 1404
+      fireEvent(fixture.scroll, new Event('scrollend'))
+      expect(fixture.onTarget).toHaveBeenLastCalledWith(null)
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  test('a changed layout retargets native turn navigation and then releases ownership', () => {
+    const fixture = startSmoothNavigation()
+    try {
+      fixture.scroll.scrollTop = 700
+      mockScrollRelativeRect(fixture.content.firstElementChild!, fixture.scroll, 1550, 60)
+      fixture.notifyResize()
+      expect(fixture.scrollTo).toHaveBeenCalledTimes(2)
+      expect(fixture.scrollTo).toHaveBeenLastCalledWith({ top: 1454, behavior: 'auto' })
+      act(() => vi.advanceTimersByTime(16))
+      expect(fixture.onTarget).toHaveBeenLastCalledWith(null)
+      fixture.notifyResize()
+      expect(fixture.scrollTo).toHaveBeenCalledTimes(2)
     } finally {
       fixture.cleanup()
     }

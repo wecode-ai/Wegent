@@ -20,7 +20,6 @@ import {
   getMarkerWidthPx,
   findUnloadedMarkerBetween,
   getMarkerToneClass,
-  scrollToMessageAnchor,
   findMessageAnchor,
   findLoadedNavigationMessageId,
   getMessageAnchorTargetTop,
@@ -138,7 +137,8 @@ export function MessageTurnNavigation({
         behavior,
         ...getScrollMetrics(scroller, initialAnchor),
       })
-      scrollToMessageAnchor(scroller, initialAnchor, behavior)
+      let targetTop = getMessageAnchorTargetTop(scroller, initialAnchor)
+      scrollToContentPosition(scroller, targetTop, behavior)
       logTurnNavigation('scroll-initial-complete', {
         messageId,
         behavior,
@@ -172,7 +172,10 @@ export function MessageTurnNavigation({
       const observer = new ResizeObserver(() => {
         const anchor = findMessageAnchor(contentRef, messageId)
         if (!anchor || settled) return
-        scrollToMessageAnchor(scroller, anchor, 'auto')
+        const nextTargetTop = getMessageAnchorTargetTop(scroller, anchor)
+        if (Math.abs(nextTargetTop - targetTop) < 1) return
+        targetTop = nextTargetTop
+        scrollToContentPosition(scroller, targetTop, 'auto')
         if (frame) cancelSafeAnimationFrame(frame)
         frame = requestSafeAnimationFrame(check)
       })

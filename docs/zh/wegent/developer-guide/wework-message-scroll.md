@@ -16,7 +16,10 @@ flowchart TD
   Measure --> Engine
   Engine --> Viewport[正向滚动视口]
   Controller[跟随 / 阅读 / 导航 / 拖动] -->|普通跟随与阅读策略| Engine
-  Controller -->|恢复与导航命令| Viewport
+  Controller -->|阅读恢复| Viewport
+  Controller --> Navigation[导航目标偏移与动画生命周期]
+  Layout[布局通知] --> Navigation
+  Navigation -->|目标偏移变化才重新定位| Viewport
   Controller -->|流式与回到底部| Spring[唯一跟随弹簧]
   Controller -->|拖动期间| Pointer[滚动条指针与当前范围]
   Pointer --> Viewport
@@ -30,7 +33,7 @@ flowchart TD
 - 消息内容容器使用正向 flex 列，不能用 `justify-end` 或顶部占位将短会话推到底部。TanStack 的末端锚定只控制溢出内容的滚动位置，不改变消息在文档流中的排列。虚拟和非虚拟列表保持相同布局。
 - `useConversationVirtualizer` 使用 TanStack 的 `anchorTo: 'end'` 和 `followOnAppend` 处理普通前插、追加与行测量补偿。导航期间使用起点锚定。暂停阅读时关闭追加跟随和末端容差，向上移动几像素也不能重新吸到底部。
 - 不维护反向坐标适配器，不依据总高度差猜测前插补偿，不用固定延迟链重试定位。历史加载前采样语义锚点；没有虚拟列表的短会话也按实际文字位移恢复位置。
-- 导航加载和已挂载目标共享取消生命周期：新点击、视口输入或外部滚动条输入会取消旧目标，旧异步结果不能重新定位或清除新加载状态。定位命令和完成检查共用包含顶部留白、范围限制的同一个目标偏移。
+- 导航加载和已挂载目标共享取消生命周期：新点击、视口输入或外部滚动条输入会取消旧目标，旧异步结果不能重新定位或清除新加载状态。定位命令和完成检查共用包含顶部留白、范围限制的同一个目标偏移。布局通知只有改变目标偏移时才重新定位；首次观察通知和无关尺寸变化不能打断原生平滑动画。
 - 按住滚动条期间由指针独占视口，暂停行高补偿、文字锚点及底部跟随。内容实测高度变化时，按最新范围保持滑块抓取点；松手后采样当前位置并交回阅读或底部跟随。拖动帧只存数值快照，不扫描文字锚点。
 - 等待指示器是虚拟行。列表前的加载按钮通过 `scrollMargin` 计入偏移，列表后的内容页脚和 sticky composer 通过 `paddingEnd` 计入可滚动末尾；真实页脚已在文档流中，列表 sizer 必须扣除这部分高度，避免重复计数。
 - 所有行测量统一调用 `resizeItem`，使用 `Math.round(getBoundingClientRect().height)`。同步 Markdown 布局和同一个 ResizeObserver 走相同函数；不再同时调用 TanStack `measureElement`。隐藏行的零尺寸不能覆盖有效测量。
