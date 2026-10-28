@@ -164,6 +164,11 @@ export class StartupSplash {
     return this.closePromise
   }
 
+  whenClosed(): Promise<void> {
+    if (this.state === 'closed' || this.options.window.isDestroyed()) return Promise.resolve()
+    return new Promise(resolve => this.options.window.once('closed', resolve))
+  }
+
   showError(pluginName: string | null = null): Promise<void> {
     if (this.showErrorPromise) return this.showErrorPromise
     const target = this.options.window

@@ -16,6 +16,7 @@ async function waitForRoute(control, expected, timeoutMs) {
 export async function createDesktopScenario({ appIdentifier, captureScreenshot, uiTimeoutMs }) {
   let restartDesktopApp
   return {
+    appEnvironment: { WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '6000' },
     setRestartDesktopApp(restart) {
       restartDesktopApp = restart
     },

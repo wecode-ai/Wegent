@@ -339,6 +339,22 @@ describe('StartupSplash', () => {
     expect(startupSplashBlocksMainWindowActivation(snapshot('closed'))).toBe(false)
   })
 
+  test('holds navigation until controlled startup completion closes the splash', async () => {
+    const { show, splash, target } = createFixture()
+    await show()
+    const ready = vi.fn()
+    const pending = splash.whenClosed().then(ready)
+    await Promise.resolve()
+    expect(ready).not.toHaveBeenCalled()
+    expect(target.requestNativeClose()).toBe(false)
+    await Promise.resolve()
+    expect(ready).not.toHaveBeenCalled()
+    await splash.close()
+    await pending
+    expect(ready).toHaveBeenCalledOnce()
+    await splash.whenClosed()
+  })
+
   test('does not capture or write files during a production close', async () => {
     const { show, splash, target, writePng } = createFixture()
     await show()
