@@ -25,6 +25,7 @@ import { handleClaudeBackgroundRequest } from './mock-claude-background'
 import { handleClaudeCompactionRequest } from './mock-claude-compaction'
 import { handleEmbeddingRequest } from './mock-embedding'
 import { handleMineruRequest } from './mock-mineru'
+import { handleConnectorOAuthRequest } from './mock-connector-oauth-provider'
 import { handleProviderMcpHttpRequest, providerMcpToolCallCount } from './mock-provider-mcp'
 import {
   deferredToolSearchCall,
@@ -645,6 +646,10 @@ const server = http.createServer((req, res) => {
     }
     if (contextToken) {
       console.log(`Context token: ${contextToken}`)
+    }
+
+    if (handleConnectorOAuthRequest(req, res, body)) {
+      return
     }
 
     if (handleProviderMcpHttpRequest(req, res, body, PORT)) {
