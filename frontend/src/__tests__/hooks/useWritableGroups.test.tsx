@@ -118,6 +118,28 @@ describe('useWritableGroups', () => {
     expect(result.current.groups.map(group => group.name)).toEqual(['developer'])
   })
 
+  it('clears groups when a refresh fails so stale permissions are not selectable', async () => {
+    ;(listGroups as jest.Mock)
+      .mockResolvedValueOnce({
+        total: 1,
+        items: [makeGroup('developer', 'Developer')],
+      })
+      .mockRejectedValueOnce(new Error('refresh failed'))
+
+    const { result } = renderHook(() => useWritableGroups())
+
+    await waitFor(() => {
+      expect(result.current.groups.map(group => group.name)).toEqual(['developer'])
+    })
+
+    await act(async () => {
+      await result.current.reload()
+    })
+
+    expect(result.current.groups).toEqual([])
+    expect(result.current.error?.message).toBe('refresh failed')
+  })
+
   it('refreshes groups when a dialog is reopened', async () => {
     ;(listGroups as jest.Mock).mockResolvedValue({
       total: 1,

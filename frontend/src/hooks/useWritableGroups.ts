@@ -55,6 +55,8 @@ export function useWritableGroups(enabled = true): UseWritableGroupsResult {
       loadedRef.current = true
     } catch (cause) {
       if (requestIdRef.current !== requestId) return
+      // Never leave previously loaded groups selectable after a failed refresh.
+      setGroups([])
       setError(cause instanceof Error ? cause : new Error('Failed to load groups'))
       loadedRef.current = false
     } finally {
