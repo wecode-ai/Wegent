@@ -885,7 +885,8 @@ export function createDesktopScenario({
       assert.equal(anchorSearch.matches[0].itemId, PAGED_ASSISTANT_ITEM)
       const anchorMessageId = `runtime-view:${anchorSearch.matches[0].turnId}:assistant`
       const pageRequest = { address: pagedAddress, limit: 50 }
-      // A cold native history read includes hydration and transfer; UI controls
+      // Every native page includes hydration and transfer of the 1,250-item fixture,
+      // including reads without refresh while the turn is running. UI controls
       // keep their separate interaction budget and responsiveness assertions.
       const nativePage = await requestExecutor(
         control,
@@ -906,7 +907,7 @@ export function createDesktopScenario({
         control,
         'runtime.tasks.transcript',
         pageRequest,
-        uiTimeoutMs
+        WORKBENCH_READY_TIMEOUT_MS
       )
       assert.equal(cachedPage.hasMoreBefore, true, 'The live cache hid older native items')
       assert.equal(
@@ -921,7 +922,7 @@ export function createDesktopScenario({
           ...pageRequest,
           beforeCursor: cachedPage.beforeCursor,
         },
-        uiTimeoutMs
+        WORKBENCH_READY_TIMEOUT_MS
       )
       assert.ok(olderPage.messages.length > 0, 'The older native page was not loaded')
       assert.notEqual(
