@@ -1148,6 +1148,8 @@ jobs:
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
 
       - name: Run E2E tests (Sharded)
+        # The chromium project auto-discovers every browser spec under
+        # frontend/e2e/tests, including skill-management-scope.spec.ts.
         working-directory: ./frontend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test

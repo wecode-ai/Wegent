@@ -409,7 +409,10 @@ export default function SkillManagementModal({
   return (
     <>
       <Dialog open={open} onOpenChange={onClose}>
-        <DialogContent className="sm:max-w-[800px] max-h-[80vh] flex flex-col bg-surface">
+        <DialogContent
+          className="sm:max-w-[800px] max-h-[80vh] flex flex-col bg-surface"
+          data-testid="skill-management-dialog"
+        >
           <DialogHeader>
             <DialogTitle>{t('settings:skills.libraryTitle')}</DialogTitle>
             <DialogDescription>{t('settings:skills.libraryDescription')}</DialogDescription>
@@ -422,7 +425,10 @@ export default function SkillManagementModal({
               <div className="space-y-4">
                 {/* Add Button */}
                 <div className="flex justify-end">
-                  <UnifiedAddButton onClick={handleCreateSkill}>
+                  <UnifiedAddButton
+                    onClick={handleCreateSkill}
+                    data-testid="manage-skills-upload-button"
+                  >
                     {t('common:skills.upload_skill')}
                   </UnifiedAddButton>
                 </div>
@@ -677,7 +683,12 @@ export default function SkillManagementModal({
             >
               {t('common:actions.cancel')}
             </Button>
-            <Button variant="destructive" onClick={handleConfirmDelete} disabled={isDeleting}>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              disabled={isDeleting}
+              data-testid="confirm-delete-skill-button"
+            >
               {isDeleting ? (
                 <div className="flex items-center">
                   <svg
