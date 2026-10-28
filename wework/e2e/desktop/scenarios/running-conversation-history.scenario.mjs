@@ -321,18 +321,22 @@ async function findRolloutPath(directory, threadId) {
 
 async function waitForLongHistoryHydration(control, timeoutMs) {
   const startedAt = Date.now()
+  let displayItemCount = 0
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(
       await control.command('performanceSnapshot', 'body', {
         timeoutMs: HYDRATION_RESPONSE_TIMEOUT_MS,
       })
     )
-    if (snapshot.runtimeAssistantDisplayItemCount >= LONG_HISTORY_ITEM_COUNT) {
+    displayItemCount = snapshot.runtimeAssistantDisplayItemCount
+    if (displayItemCount >= LONG_HISTORY_ITEM_COUNT) {
       return snapshot
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error('Timed out waiting for the long running transcript to hydrate')
+  throw new Error(
+    `Timed out waiting for the long running transcript to hydrate: expected=${LONG_HISTORY_ITEM_COUNT}, observed=${displayItemCount}, elapsedMs=${Date.now() - startedAt}`
+  )
 }
 
 async function waitForTranscriptState(control, predicate, description, timeoutMs) {
@@ -687,7 +691,12 @@ export function createDesktopScenario({
         Date.now() - hydrationStartedAt < HYDRATION_RESPONSE_TIMEOUT_MS,
         'Hydrating a long running transcript blocked the renderer'
       )
-      const hydratedSnapshot = await waitForLongHistoryHydration(control, uiTimeoutMs)
+      // Restart recovery transfers the complete large history asynchronously.
+      // Each renderer response still has the separate three-second responsiveness limit.
+      const hydratedSnapshot = await waitForLongHistoryHydration(
+        control,
+        WORKBENCH_READY_TIMEOUT_MS
+      )
       assert.ok(
         hydratedSnapshot.runtimeConversationCache?.messageEntries >= 1,
         'The long running transcript was not restored into the conversation cache'
