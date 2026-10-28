@@ -19,57 +19,91 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::mcp::{
-    InitializeResult, McpError, ToolsListResult, UpstreamTool, decode_body, initialize_body,
-    initialized_notification_body, status_error, tools_list_body,
+    InitializeResult, McpError, ToolCall, ToolsListResult, UpstreamTool, decode_body,
+    initialize_body, initialized_notification_body, status_error,
 };
 
 /// Source `sse_client` read window; the session is long-lived, so the bound
 /// applies to each read rather than to the whole exchange.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// One open HTTP+SSE MCP session: the subscribed stream plus the message
+/// endpoint that carries every JSON-RPC request of the session.
+struct SseSession {
+    client: HttpClient,
+    reader: SseReader,
+    message_url: String,
+    headers: Vec<(String, String)>,
+    protocol_version: Option<String>,
+    next_id: i64,
+}
+
+impl SseSession {
+    async fn open(url: &str, headers: &[(String, String)]) -> Result<Self, McpError> {
+        let client = HttpClient::builder()
+            .connect_timeout(REQUEST_TIMEOUT)
+            .read_timeout(REQUEST_TIMEOUT)
+            .build()
+            .map_err(|error| McpError::Transport(error.to_string()))?;
+        let mut reader = open_stream(&client, url, headers).await?;
+        let message_url = wait_for_endpoint(&mut reader, url).await?;
+
+        post_message(&client, &message_url, &initialize_body(), headers, None).await?;
+        let initialize: InitializeResult = wait_for_result(&mut reader, &json!(0)).await?;
+        let protocol_version = initialize.protocol_version;
+        post_message(
+            &client,
+            &message_url,
+            &initialized_notification_body(),
+            headers,
+            protocol_version.as_deref(),
+        )
+        .await?;
+
+        Ok(Self {
+            client,
+            reader,
+            message_url,
+            headers: headers.to_vec(),
+            protocol_version,
+            next_id: 1,
+        })
+    }
+
+    /// Send one request and read its reply from the event stream.
+    async fn request(&mut self, method: &str, params: Option<Value>) -> Result<Value, McpError> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let mut body = json!({"jsonrpc": "2.0", "id": id, "method": method});
+        if let Some(params) = params {
+            body["params"] = params;
+        }
+        post_message(
+            &self.client,
+            &self.message_url,
+            &body,
+            &self.headers,
+            self.protocol_version.as_deref(),
+        )
+        .await?;
+        wait_for_result::<Value>(&mut self.reader, &json!(id)).await
+    }
+}
+
 /// List every tool from the HTTP+SSE MCP server at `url`.
 pub async fn list_tools_with_headers(
     url: &str,
     headers: &[(String, String)],
 ) -> Result<Vec<UpstreamTool>, McpError> {
-    let client = HttpClient::builder()
-        .connect_timeout(REQUEST_TIMEOUT)
-        .read_timeout(REQUEST_TIMEOUT)
-        .build()
-        .map_err(|error| McpError::Transport(error.to_string()))?;
-    let mut stream = open_stream(&client, url, headers).await?;
-    let message_url = wait_for_endpoint(&mut stream, url).await?;
-
-    post_message(&client, &message_url, &initialize_body(), headers, None).await?;
-    let initialize: InitializeResult = wait_for_result(&mut stream, &json!(0)).await?;
-    let protocol_version = initialize.protocol_version;
-
-    post_message(
-        &client,
-        &message_url,
-        &initialized_notification_body(),
-        headers,
-        protocol_version.as_deref(),
-    )
-    .await?;
-
+    let mut session = SseSession::open(url, headers).await?;
     let mut tools: Vec<UpstreamTool> = Vec::new();
     let mut cursor: Option<String> = None;
     let mut seen_cursors: Vec<String> = Vec::new();
-    let mut request_id: i64 = 1;
     loop {
-        let body = tools_list_body(request_id, cursor.as_deref());
-        let id = json!(request_id);
-        request_id += 1;
-        post_message(
-            &client,
-            &message_url,
-            &body,
-            headers,
-            protocol_version.as_deref(),
-        )
-        .await?;
-        let result: ToolsListResult = wait_for_result(&mut stream, &id).await?;
+        let params = cursor.as_deref().map(|cursor| json!({ "cursor": cursor }));
+        let result: ToolsListResult =
+            serde_json::from_value(session.request("tools/list", params).await?)
+                .map_err(|error| McpError::Transport(error.to_string()))?;
         for tool in result.tools {
             tools.push(tool.into_upstream_tool());
         }
@@ -86,6 +120,23 @@ pub async fn list_tools_with_headers(
             }
         }
     }
+}
+
+/// Call one tool over the HTTP+SSE transport.
+pub async fn call_tool_with_headers(
+    url: &str,
+    headers: &[(String, String)],
+    name: &str,
+    arguments: &Value,
+) -> Result<ToolCall, McpError> {
+    let mut session = SseSession::open(url, headers).await?;
+    let result = session
+        .request(
+            "tools/call",
+            Some(json!({"name": name, "arguments": arguments})),
+        )
+        .await?;
+    Ok(ToolCall::from_result(&result))
 }
 
 /// `GET` the app URL and subscribe to its event stream.

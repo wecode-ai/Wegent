@@ -36,6 +36,10 @@ pub struct ToolSummary {
     pub title: Option<String>,
     pub description: String,
     pub raw_tool_name: Option<String>,
+    /// `summary["inputSchema"]`: the cache keeps it so a cached surface can
+    /// still drive a tool call, but `ConnectorToolSummary` does not expose it.
+    #[serde(skip)]
+    pub input_schema: Option<brz_json::OpaqueJson>,
 }
 
 /// `ConnectorInstalledApp`.

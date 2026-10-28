@@ -99,6 +99,9 @@ class McpAppSpec:
     include_root_metadata: bool = True
     allow_user_token: bool = False
     transport_methods: tuple[str, ...] = tuple(MCP_TRANSPORT_METHODS)
+    # The public `/api`-prefixed transport is Rust-owned; only the internal
+    # unprefixed alias the executors already point at stays mounted here.
+    rust_owned_public_path: bool = False
 
 
 class StreamableMcpServer(Protocol):
@@ -787,6 +790,11 @@ _CONNECTORS_MCP_SPEC = McpAppSpec(
     server=connectors_mcp_app,
     token_context=connector_mcp_token_info,
     log_prefix="Connectors",
+    # `GET`/`POST /api/mcp/connectors/sse` are Rust-owned
+    # (`backend-rs/src/mcp/connectors.rs`). `BACKEND_INTERNAL_URL` still points
+    # at this process and the executor configs use the unprefixed
+    # `/mcp/connectors/sse`, so only that alias stays mounted here.
+    rust_owned_public_path=True,
 )
 
 MCP_APP_SPECS = (
@@ -1002,6 +1010,10 @@ def register_mcp_apps(app: FastAPI, mount_prefix: str = "") -> None:
     """Register all MCP sub-apps on the FastAPI instance."""
     normalized_prefix = _normalize_prefix(mount_prefix)
     for spec in MCP_APP_SPECS:
+        if normalized_prefix and spec.rust_owned_public_path:
+            # The public transport is implemented by backend-rs, so mounting it
+            # here would register the same API in two owners.
+            continue
         effective_spec = _apply_mount_prefix(spec, normalized_prefix)
         mcp_app = _build_mcp_app(effective_spec)
 

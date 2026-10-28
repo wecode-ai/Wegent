@@ -21,6 +21,6 @@ mod handler;
 pub mod mcp;
 pub(crate) mod mcp_sse;
 pub mod models;
-mod refresh;
+pub(crate) mod refresh;
 mod refresh_endpoint;
 pub mod service;

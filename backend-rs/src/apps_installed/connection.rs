@@ -11,9 +11,14 @@
 //! `expired`.
 use chrono::{NaiveDateTime, Utc};
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::db::KindRow;
 use super::models::{ConnectionResponse, ToolSummary};
+
+/// `connector_runtime.TOOL_CACHE_TTL_SECONDS`: how long a discovered surface
+/// stays fresh before the next listing rediscovers it.
+const TOOL_CACHE_TTL_SECONDS: i64 = 600;
 
 /// `spec["toolSummaries"]` entries written by the Python connector runtime
 /// after a successful discovery; they keep expired connections visible.
@@ -26,6 +31,10 @@ struct CachedToolSummary {
     description: String,
     #[serde(default, rename = "rawToolName")]
     raw_tool_name: Option<String>,
+    /// `summary["inputSchema"]`: kept so a cached surface can still drive a
+    /// tool call.
+    #[serde(default, rename = "inputSchema")]
+    input_schema: Option<brz_json::OpaqueJson>,
 }
 
 /// Parsed `spec` of one `ConnectorConnection` Kind (`_row_to_connection`).
@@ -138,6 +147,7 @@ impl ConnectorConnection {
                     title: tool.title,
                     description: tool.description,
                     raw_tool_name: tool.raw_tool_name,
+                    input_schema: tool.input_schema,
                 })
                 .collect(),
             tools_discovered_at: spec
@@ -175,6 +185,53 @@ impl ConnectorConnection {
             crate::subscriptions_item::crypto::decrypt_sensitive_data(encrypted).ok()?;
         (!decrypted.is_empty() && decrypted != encrypted).then_some(decrypted)
     }
+
+    /// `_cached_tools`: the cached tool surface while it is still fresh, or
+    /// `None` when discovery has to run again.
+    pub(crate) fn cached_tool_entries(&self, allowlist: &[String]) -> Option<Vec<Value>> {
+        if self.tool_summaries.is_empty() {
+            return None;
+        }
+        let discovered_at = self.tools_discovered_at?;
+        let age = Utc::now().naive_utc() - discovered_at;
+        if age > chrono::TimeDelta::seconds(TOOL_CACHE_TTL_SECONDS) {
+            return None;
+        }
+        Some(
+            self.tool_summaries
+                .iter()
+                .filter_map(|summary| {
+                    let raw_name = summary
+                        .raw_tool_name
+                        .as_deref()
+                        .filter(|name| !name.is_empty())?;
+                    if !allowlist.is_empty() && !allowlist.iter().any(|tool| tool == raw_name) {
+                        return None;
+                    }
+                    let mut entry = serde_json::json!({
+                        "name": summary.name,
+                        "description": summary.description,
+                        "inputSchema": summary
+                            .input_schema
+                            .as_ref()
+                            .map(brz_json::OpaqueJson::to_value)
+                            .unwrap_or_else(default_input_schema),
+                    });
+                    if let Some(title) = summary.title.as_deref().filter(|title| !title.is_empty())
+                    {
+                        entry["title"] = Value::String(title.to_string());
+                    }
+                    Some(entry)
+                })
+                .collect(),
+        )
+    }
+}
+
+/// `{"type": "object", "properties": {}}`: the schema the source substitutes
+/// for a tool that declares none.
+pub(crate) fn default_input_schema() -> Value {
+    serde_json::json!({"type": "object", "properties": {}})
 }
 
 /// `ConnectorConnectionService.is_usable`: a connected grant, or an expired one
@@ -408,6 +465,61 @@ mod tests {
             "lastError": {"message": ""},
         })));
         assert_eq!(shape.last_error, None);
+    }
+
+    fn cached(discovered_at: String) -> ConnectorConnection {
+        ConnectorConnection::from_row(&row(serde_json::json!({
+            "status": "connected",
+            "toolsDiscoveredAt": discovered_at,
+            "toolSummaries": [
+                {
+                    "name": "dingtalk__list",
+                    "title": "List",
+                    "description": "List bases",
+                    "rawToolName": "list",
+                    "inputSchema": {"type": "object", "properties": {}},
+                },
+                {"name": "dingtalk__delete", "rawToolName": "delete"},
+            ],
+        })))
+    }
+
+    /// `_cached_tools`: a fresh surface is served without another discovery.
+    #[test]
+    fn a_fresh_cache_is_served() {
+        let entries = cached(iso(Utc::now().naive_utc()))
+            .cached_tool_entries(&[])
+            .expect("fresh cache");
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0]["name"], serde_json::json!("dingtalk__list"));
+        assert_eq!(entries[0]["title"], serde_json::json!("List"));
+        assert_eq!(
+            entries[0]["inputSchema"],
+            serde_json::json!({"type": "object", "properties": {}})
+        );
+        // A summary without a schema still exposes the source's default.
+        assert_eq!(
+            entries[1]["inputSchema"],
+            serde_json::json!({"type": "object", "properties": {}})
+        );
+    }
+
+    /// `TOOL_CACHE_TTL_SECONDS`: an older surface must be rediscovered.
+    #[test]
+    fn a_stale_cache_is_ignored() {
+        let stale = iso(Utc::now().naive_utc() - Duration::seconds(TOOL_CACHE_TTL_SECONDS + 1));
+        assert!(cached(stale).cached_tool_entries(&[]).is_none());
+    }
+
+    /// The administrator's allowlist still bounds a cached surface.
+    #[test]
+    fn a_cached_surface_respects_the_allowlist() {
+        let entries = cached(iso(Utc::now().naive_utc()))
+            .cached_tool_entries(&["list".to_string()])
+            .expect("fresh cache");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["name"], serde_json::json!("dingtalk__list"));
     }
 
     /// An expired grant stays usable while a refresh token can renew it, and

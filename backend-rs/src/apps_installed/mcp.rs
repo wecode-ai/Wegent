@@ -137,19 +137,6 @@ pub(super) fn initialized_notification_body() -> serde_json::Value {
     })
 }
 
-/// One `tools/list` request, carrying `cursor` only on a continuation pass.
-pub(super) fn tools_list_body(request_id: i64, cursor: Option<&str>) -> serde_json::Value {
-    let mut request = json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "tools/list",
-    });
-    if let Some(cursor_value) = cursor {
-        request["params"] = json!({ "cursor": cursor_value });
-    }
-    request
-}
-
 /// List the tools of `app.transport`'s MCP server, dispatching to the protocol
 /// the source's `_mcp_session` selects: `sse_client` for the legacy
 /// HTTP+SSE transport and `streamablehttp_client` for everything else.
@@ -164,8 +151,8 @@ pub async fn list_tools_for_transport(
     list_tools_with_headers(url, headers).await
 }
 
-/// List every tool from the streamable-HTTP MCP server at `url`, sending
-/// `headers` on every JSON-RPC request of the session.
+/// One open streamable-HTTP MCP session, from `initialize` through the last
+/// request the caller needs.
 ///
 /// A fresh Breeze client and endpoint are created per discovery pass,
 /// mirroring the source's per-discovery
@@ -176,61 +163,146 @@ pub async fn list_tools_for_transport(
 /// The source `ConnectorRuntimeService._server_config` builds the session
 /// headers (decrypted provider headers plus the caller's user context) once
 /// per app and passes them to every request of the MCP client session.
-pub async fn list_tools_with_headers(
-    url: &str,
-    headers: &[(String, String)],
-) -> Result<Vec<UpstreamTool>, McpError> {
-    let client = HttpClient::builder()
-        .connect_timeout(REQUEST_TIMEOUT)
-        .read_timeout(REQUEST_TIMEOUT)
-        .build()
-        .map_err(|error| McpError::Transport(error.to_string()))?;
-    let endpoint: Endpoint = client
-        .endpoint(url)
-        .map_err(|error| McpError::Transport(error.to_string()))?;
+pub struct StreamableSession {
+    endpoint: Endpoint,
+    headers: Vec<(String, String)>,
+    protocol_version: Option<String>,
+    next_id: i64,
+}
 
-    let initialize = initialize_body();
-    let initialize_request = session_request(&endpoint, &initialize, headers);
-    let initialize_result: InitializeResult = decode_payload(
-        initialize_request
-            .send()
-            .await
-            .map_err(|error| McpError::Transport(error.to_string()))?,
-    )
-    .await?;
-    let protocol_version = initialize_result.protocol_version;
+impl StreamableSession {
+    /// Run the `initialize` handshake and send `notifications/initialized`.
+    pub async fn open(url: &str, headers: &[(String, String)]) -> Result<Self, McpError> {
+        let client = HttpClient::builder()
+            .connect_timeout(REQUEST_TIMEOUT)
+            .read_timeout(REQUEST_TIMEOUT)
+            .build()
+            .map_err(|error| McpError::Transport(error.to_string()))?;
+        let endpoint: Endpoint = client
+            .endpoint(url)
+            .map_err(|error| McpError::Transport(error.to_string()))?;
 
-    let notification = initialized_notification_body();
-    let mut notification_request = session_request(&endpoint, &notification, headers);
-    if let Some(version) = protocol_version.as_deref() {
-        notification_request = notification_request.header("mcp-protocol-version", version);
-    }
-    let notification_response = notification_request
-        .send()
-        .await
-        .map_err(|error| McpError::Transport(error.to_string()))?;
-    // A 202 with an empty body completes the notification; the body is
-    // consumed to EOF for the HTTP profile contract.
-    let _ = notification_response.bytes().await;
-
-    let mut tools: Vec<UpstreamTool> = Vec::new();
-    let mut cursor: Option<String> = None;
-    let mut seen_cursors: Vec<String> = Vec::new();
-    let mut request_id: i64 = 1;
-    loop {
-        let request = tools_list_body(request_id, cursor.as_deref());
-        request_id += 1;
-        let mut list_request = session_request(&endpoint, &request, headers);
-        if let Some(version) = protocol_version.as_deref() {
-            list_request = list_request.header("mcp-protocol-version", version);
-        }
-        let result: ToolsListResult = decode_payload(
-            list_request
+        let initialize_request = session_request(&endpoint, &initialize_body(), headers);
+        let initialize_result: InitializeResult = decode_payload(
+            initialize_request
                 .send()
                 .await
                 .map_err(|error| McpError::Transport(error.to_string()))?,
         )
         .await?;
+        let protocol_version = initialize_result.protocol_version;
+
+        let mut notification_request =
+            session_request(&endpoint, &initialized_notification_body(), headers);
+        if let Some(version) = protocol_version.as_deref() {
+            notification_request = notification_request.header("mcp-protocol-version", version);
+        }
+        let notification_response = notification_request
+            .send()
+            .await
+            .map_err(|error| McpError::Transport(error.to_string()))?;
+        // A 202 with an empty body completes the notification; the body is
+        // consumed to EOF for the HTTP profile contract.
+        let _ = notification_response.bytes().await;
+
+        Ok(Self {
+            endpoint,
+            headers: headers.to_vec(),
+            protocol_version,
+            next_id: 1,
+        })
+    }
+
+    /// Send one request and return its raw `result` payload.
+    pub async fn request(
+        &mut self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, McpError> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let mut body = json!({"jsonrpc": "2.0", "id": id, "method": method});
+        if let Some(params) = params {
+            body["params"] = params;
+        }
+        let mut request = session_request(&self.endpoint, &body, &self.headers);
+        if let Some(version) = self.protocol_version.as_deref() {
+            request = request.header("mcp-protocol-version", version);
+        }
+        decode_payload(
+            request
+                .send()
+                .await
+                .map_err(|error| McpError::Transport(error.to_string()))?,
+        )
+        .await
+    }
+}
+
+/// One `tools/call` result (`CallToolResult`).
+#[derive(Debug, Clone)]
+pub struct ToolCall {
+    /// `result.content`: the raw MCP content blocks.
+    pub content: serde_json::Value,
+    /// `result.structuredContent`, only when the upstream returned an object.
+    pub structured_content: Option<serde_json::Value>,
+    /// `result.isError`.
+    pub is_error: bool,
+}
+
+impl ToolCall {
+    /// Read one `tools/call` result payload.
+    pub fn from_result(result: &serde_json::Value) -> Self {
+        Self {
+            content: result.get("content").cloned().unwrap_or_else(|| json!([])),
+            structured_content: result
+                .get("structuredContent")
+                .filter(|value| value.is_object())
+                .cloned(),
+            is_error: result
+                .get("isError")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        }
+    }
+}
+
+/// Call one tool on the app's MCP server and return its result payload.
+pub async fn call_tool_for_transport(
+    transport: &str,
+    url: &str,
+    headers: &[(String, String)],
+    name: &str,
+    arguments: &serde_json::Value,
+) -> Result<ToolCall, McpError> {
+    if transport == "sse" {
+        return super::mcp_sse::call_tool_with_headers(url, headers, name, arguments).await;
+    }
+    let mut session = StreamableSession::open(url, headers).await?;
+    let result = session
+        .request(
+            "tools/call",
+            Some(json!({"name": name, "arguments": arguments})),
+        )
+        .await?;
+    Ok(ToolCall::from_result(&result))
+}
+
+/// List every tool from the streamable-HTTP MCP server at `url`, sending
+/// `headers` on every JSON-RPC request of the session.
+pub async fn list_tools_with_headers(
+    url: &str,
+    headers: &[(String, String)],
+) -> Result<Vec<UpstreamTool>, McpError> {
+    let mut session = StreamableSession::open(url, headers).await?;
+    let mut tools: Vec<UpstreamTool> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut seen_cursors: Vec<String> = Vec::new();
+    loop {
+        let params = cursor.as_deref().map(|cursor| json!({ "cursor": cursor }));
+        let result: ToolsListResult =
+            serde_json::from_value(session.request("tools/list", params).await?)
+                .map_err(|error| McpError::Transport(error.to_string()))?;
         for tool in result.tools {
             tools.push(tool.into_upstream_tool());
         }

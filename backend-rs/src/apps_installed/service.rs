@@ -24,7 +24,7 @@ use super::mcp::{self, UpstreamTool};
 use super::models::{InstalledApp, InstalledResponse, ToolSummary, connected_no_auth};
 
 /// Runtime view of one connector app (`ConnectorApp` dataclass).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConnectorApp {
     #[allow(dead_code)]
     pub id: i64,
@@ -484,6 +484,7 @@ where
             title: tool.title.clone(),
             description: tool.description.clone(),
             raw_tool_name: Some(tool.raw_tool_name.clone()),
+            input_schema: None,
         });
     }
 
@@ -718,6 +719,7 @@ mod tests {
                 title: None,
                 description: String::new(),
                 raw_tool_name: Some("list_bases".to_string()),
+                input_schema: None,
             }],
             tools_discovered_at: None,
             last_error: None,
@@ -756,6 +758,7 @@ mod tests {
                 title: None,
                 description: String::new(),
                 raw_tool_name: Some("cached".to_string()),
+                input_schema: None,
             }],
             tools_discovered_at: None,
             last_error: None,
@@ -765,6 +768,7 @@ mod tests {
             title: None,
             description: String::new(),
             raw_tool_name: Some("live".to_string()),
+            input_schema: None,
         }];
 
         let item = installed_app_projection(&app, Some(&stored), Some(&live)).unwrap();
