@@ -14,12 +14,26 @@ const anonymousTelemetryPolicy: TelemetryPolicy = {
 }
 
 /**
- * Desktop E2E builds must be able to exercise a distribution-installed policy,
- * otherwise the identified path can never run end to end. The build flag is
- * static, so production bundles compile the fixture branch away and always
- * export the anonymous policy above.
+ * Resolves the policy the app reports with. Desktop E2E builds may point at a
+ * distribution fixture; the build flag is static, so production bundles compile
+ * that branch away and always resolve the anonymous policy above.
+ *
+ * The fixture is read on every access instead of once at module evaluation: the
+ * E2E runtime configuration is delivered by the desktop shell and can arrive
+ * after this module is imported, which is also why `posthogHost` is read when
+ * the client initializes rather than at import time.
  */
-export const telemetryPolicy: TelemetryPolicy =
-  import.meta.env.VITE_WEWORK_E2E === 'true'
-    ? resolveE2ETelemetryPolicy(getDesktopE2ERuntimeConfig().telemetryPolicy)
-    : anonymousTelemetryPolicy
+function resolveTelemetryPolicy(): TelemetryPolicy {
+  if (import.meta.env.VITE_WEWORK_E2E !== 'true') return anonymousTelemetryPolicy
+  return resolveE2ETelemetryPolicy(getDesktopE2ERuntimeConfig().telemetryPolicy)
+}
+
+export const telemetryPolicy: TelemetryPolicy = {
+  get personProfiles() {
+    return resolveTelemetryPolicy().personProfiles
+  },
+  get sendClientIp() {
+    return resolveTelemetryPolicy().sendClientIp
+  },
+  identityFor: user => resolveTelemetryPolicy().identityFor(user),
+}
