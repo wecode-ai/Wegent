@@ -83,12 +83,47 @@ where
     }
 
     match probe_upstream(mysql, app, user).await {
-        Ok(()) => {
+        Ok(tools) => {
             let discovered_at = Utc::now().to_rfc3339();
-            let _ = refresh::write_discovery_state(mysql, &row, Some(&discovered_at), None).await;
+            let summaries = tool_summaries(app, &tools);
+            let _ = refresh::write_discovery_state(
+                mysql,
+                &row,
+                &refresh::DiscoveryState {
+                    discovered_at: Some(&discovered_at),
+                    tool_summaries: Some(&summaries),
+                    last_error: None,
+                    expired: false,
+                },
+            )
+            .await;
         }
-        Err(message) => {
-            let _ = refresh::write_discovery_state(mysql, &row, None, Some(&message)).await;
+        Err(ProbeError::Unauthorized(message)) => {
+            // The upstream rejected the stored credential: an entry point for
+            // re-authorization must appear even though the token has not
+            // reached its `expiresAt` yet.
+            tracing::warn!(connector = %app.slug, %message, "connector rejected its credential");
+            let _ = refresh::write_discovery_state(
+                mysql,
+                &row,
+                &refresh::DiscoveryState {
+                    last_error: Some(&message),
+                    expired: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+        }
+        Err(ProbeError::Transport(message)) => {
+            let _ = refresh::write_discovery_state(
+                mysql,
+                &row,
+                &refresh::DiscoveryState {
+                    last_error: Some(&message),
+                    ..Default::default()
+                },
+            )
+            .await;
         }
     }
 
@@ -100,20 +135,65 @@ where
 }
 
 /// Probe the app's MCP endpoint once with the stored credential.
-async fn probe_upstream<M>(mysql: &M, app: &ConnectorApp, user: &UserRow) -> Result<(), String>
+///
+/// The transport decides the protocol: `sse` apps only serve a `GET` event
+/// stream, so probing them with the streamable-HTTP `POST initialize` exchange
+/// would report a healthy upstream as unavailable.
+async fn probe_upstream<M>(
+    mysql: &M,
+    app: &ConnectorApp,
+    user: &UserRow,
+) -> Result<Vec<mcp::UpstreamTool>, ProbeError>
 where
     M: Mysql,
 {
     if app.transport == "http" {
-        return Ok(());
+        // HTTP-transport apps carry inline definitions instead of an MCP
+        // session; the recorded deployment exposes none.
+        return Ok(Vec::new());
     }
     let headers = service::session_headers(mysql, app, user)
         .await
-        .map_err(|error| error.to_string())?;
-    mcp::list_tools_with_headers(&app.mcp_url, &headers)
+        .map_err(|error| ProbeError::Transport(error.to_string()))?;
+    mcp::list_tools_for_transport(&app.transport, &app.mcp_url, &headers)
         .await
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+        .map_err(ProbeError::from)
+}
+
+/// `_cache_tool_summaries`: the cached surface the settings view renders.
+fn tool_summaries(app: &ConnectorApp, tools: &[mcp::UpstreamTool]) -> Vec<serde_json::Value> {
+    let allowlist = &app.tool_allowlist;
+    tools
+        .iter()
+        .filter(|tool| allowlist.is_empty() || allowlist.contains(&tool.name))
+        .map(|tool| {
+            serde_json::json!({
+                "name": format!("{}__{}", app.slug, tool.name),
+                "title": tool.title,
+                "description": tool.description.clone().unwrap_or_default(),
+                "rawToolName": tool.name,
+                "inputSchema": tool.input_schema.as_ref().map(brz_json::OpaqueJson::to_value),
+            })
+        })
+        .collect()
+}
+
+/// Why a probe could not list the upstream's tools.
+#[derive(Debug)]
+enum ProbeError {
+    /// The upstream answered `401`/`403`: the stored grant is rejected.
+    Unauthorized(String),
+    /// Any other transport, status, or configuration failure.
+    Transport(String),
+}
+
+impl From<mcp::McpError> for ProbeError {
+    fn from(error: mcp::McpError) -> Self {
+        match error {
+            mcp::McpError::Unauthorized(message) => Self::Unauthorized(message),
+            mcp::McpError::Transport(message) => Self::Transport(message),
+        }
+    }
 }
 
 fn map_refresh_error(error: RefreshError) -> FastApiError {
@@ -160,5 +240,101 @@ mod tests {
     fn provider_failures_map_to_internal() {
         let error = map_refresh_error(RefreshError::Provider("boom".to_string()));
         assert_eq!(error.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    fn app(slug: &str, allowlist: serde_json::Value) -> ConnectorApp {
+        let spec = serde_json::json!({
+            "name": slug,
+            "mcpUrl": "https://mcp.example.invalid/mcp",
+            "enabled": true,
+            "authType": "oauth2",
+            "transport": "streamable-http",
+            "visibility": "all",
+            "description": "d",
+            "allowedRoles": [],
+            "toolAllowlist": allowlist,
+        });
+        let row = db::KindRow {
+            kinds_id: 1,
+            kinds_user_id: 0,
+            kinds_kind: "ConnectorApp".to_string(),
+            kinds_name: slug.to_string(),
+            kinds_namespace: "system".to_string(),
+            kinds_json: brz_mysql::Json(
+                serde_json::json!({"kind": "ConnectorApp", "spec": spec}).into(),
+            ),
+            kinds_is_active: true,
+            kinds_created_at: chrono::NaiveDateTime::default(),
+            kinds_updated_at: chrono::NaiveDateTime::default(),
+        };
+        service::row_to_app(&row)
+    }
+
+    fn tool(name: &str) -> mcp::UpstreamTool {
+        mcp::UpstreamTool {
+            name: name.to_string(),
+            title: Some(format!("{name} title")),
+            description: Some(format!("{name} description")),
+            input_schema: None,
+            annotations: None,
+        }
+    }
+
+    /// The summary shape `_cache_tool_summaries` writes, so the Python view
+    /// reads the same cache the Rust write produced.
+    #[test]
+    fn summaries_mirror_the_python_cache_entry() {
+        let app = app("dingtalk_docs", serde_json::json!([]));
+        let summaries = tool_summaries(&app, &[tool("read_doc")]);
+
+        assert_eq!(
+            summaries,
+            vec![serde_json::json!({
+                "name": "dingtalk_docs__read_doc",
+                "title": "read_doc title",
+                "description": "read_doc description",
+                "rawToolName": "read_doc",
+                "inputSchema": null,
+            })]
+        );
+    }
+
+    /// A successful probe replaces the cached surface: tools the upstream no
+    /// longer serves must disappear instead of surviving behind a fresh
+    /// `toolsDiscoveredAt`.
+    #[test]
+    fn summaries_follow_the_current_tool_surface() {
+        let app = app("dingtalk_docs", serde_json::json!([]));
+        let summaries = tool_summaries(&app, &[tool("write_doc")]);
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0]["rawToolName"], serde_json::json!("write_doc"));
+    }
+
+    /// The administrator's allowlist still bounds the cached surface.
+    #[test]
+    fn summaries_respect_the_tool_allowlist() {
+        let app = app("dingtalk_docs", serde_json::json!(["read_doc"]));
+        let summaries = tool_summaries(&app, &[tool("read_doc"), tool("delete_doc")]);
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(
+            summaries[0]["name"],
+            serde_json::json!("dingtalk_docs__read_doc")
+        );
+    }
+
+    /// Only a rejected credential flips the connection; other failures keep it
+    /// connected so a transient outage does not demand re-authorization.
+    #[test]
+    fn only_authorization_failures_are_unauthorized() {
+        assert!(matches!(
+            ProbeError::from(mcp::McpError::Unauthorized("401".to_string())),
+            ProbeError::Unauthorized(_)
+        ));
+        assert!(matches!(
+            ProbeError::from(mcp::McpError::Transport("boom".to_string())),
+            ProbeError::Transport(_)
+        ));
     }
 }

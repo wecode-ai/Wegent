@@ -19,6 +19,7 @@ pub(crate) mod connection;
 pub mod db;
 mod handler;
 pub mod mcp;
+pub(crate) mod mcp_sse;
 pub mod models;
 mod refresh;
 mod refresh_endpoint;

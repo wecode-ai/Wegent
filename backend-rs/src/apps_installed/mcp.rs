@@ -38,42 +38,45 @@ pub struct UpstreamTool {
 
 /// One JSON-RPC response envelope.
 #[derive(Debug, Deserialize)]
-struct JsonRpcResponse<T> {
+pub(super) struct JsonRpcResponse<T> {
     result: Option<T>,
 }
 
 /// The `initialize` result payload.
 #[derive(Debug, Deserialize)]
-struct InitializeResult {
+pub(super) struct InitializeResult {
     #[serde(default, rename = "protocolVersion")]
-    protocol_version: Option<String>,
+    pub(super) protocol_version: Option<String>,
 }
 
 /// One `tools/list` result payload.
 #[derive(Debug, Deserialize)]
-struct ToolsListResult {
+pub(super) struct ToolsListResult {
     #[serde(default)]
-    tools: Vec<ToolDefinition>,
+    pub(super) tools: Vec<ToolDefinition>,
     #[serde(default, rename = "nextCursor")]
-    next_cursor: Option<String>,
+    pub(super) next_cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct ToolDefinition {
-    name: String,
+pub(super) struct ToolDefinition {
+    pub(super) name: String,
     #[serde(default)]
-    title: Option<String>,
+    pub(super) title: Option<String>,
     #[serde(default)]
-    description: Option<String>,
+    pub(super) description: Option<String>,
     #[serde(default, rename = "inputSchema")]
-    input_schema: Option<brz_json::OpaqueJson>,
+    pub(super) input_schema: Option<brz_json::OpaqueJson>,
     #[serde(default)]
-    annotations: Option<brz_json::OpaqueJson>,
+    pub(super) annotations: Option<brz_json::OpaqueJson>,
 }
 
 /// Errors while listing tools from one connector app.
 #[derive(Debug)]
 pub enum McpError {
+    /// The upstream answered `401`/`403`: the stored grant is no longer
+    /// accepted, which is a different outcome from a transport failure.
+    Unauthorized(String),
     /// Transport, status, body, or decode failure.
     Transport(String),
 }
@@ -81,9 +84,84 @@ pub enum McpError {
 impl std::fmt::Display for McpError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Unauthorized(message) => {
+                write!(formatter, "MCP server rejected the credential: {message}")
+            }
             Self::Transport(message) => write!(formatter, "MCP transport failure: {message}"),
         }
     }
+}
+
+/// Classify a non-success status: an authorization answer means the stored
+/// credential was rejected, every other status is a transport failure.
+pub(super) fn status_error(status: u16) -> McpError {
+    if status == 401 || status == 403 {
+        McpError::Unauthorized(format!("MCP server returned status {status}"))
+    } else {
+        McpError::Transport(format!("MCP server returned status {status}"))
+    }
+}
+
+impl ToolDefinition {
+    /// Project one `tools/list` entry into the connector view.
+    pub(super) fn into_upstream_tool(self) -> UpstreamTool {
+        UpstreamTool {
+            name: self.name,
+            title: self.title,
+            description: self.description,
+            input_schema: self.input_schema,
+            annotations: self.annotations,
+        }
+    }
+}
+
+/// The `initialize` request the source's MCP client sends first.
+pub(super) fn initialize_body() -> serde_json::Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": HANDSHAKE_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "mcp", "version": "0.1.0"},
+        },
+    })
+}
+
+/// The `notifications/initialized` message sent after the handshake.
+pub(super) fn initialized_notification_body() -> serde_json::Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized",
+    })
+}
+
+/// One `tools/list` request, carrying `cursor` only on a continuation pass.
+pub(super) fn tools_list_body(request_id: i64, cursor: Option<&str>) -> serde_json::Value {
+    let mut request = json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "tools/list",
+    });
+    if let Some(cursor_value) = cursor {
+        request["params"] = json!({ "cursor": cursor_value });
+    }
+    request
+}
+
+/// List the tools of `app.transport`'s MCP server, dispatching to the protocol
+/// the source's `_mcp_session` selects: `sse_client` for the legacy
+/// HTTP+SSE transport and `streamablehttp_client` for everything else.
+pub async fn list_tools_for_transport(
+    transport: &str,
+    url: &str,
+    headers: &[(String, String)],
+) -> Result<Vec<UpstreamTool>, McpError> {
+    if transport == "sse" {
+        return super::mcp_sse::list_tools_with_headers(url, headers).await;
+    }
+    list_tools_with_headers(url, headers).await
 }
 
 /// List every tool from the streamable-HTTP MCP server at `url`, sending
@@ -111,16 +189,7 @@ pub async fn list_tools_with_headers(
         .endpoint(url)
         .map_err(|error| McpError::Transport(error.to_string()))?;
 
-    let initialize = json!({
-        "jsonrpc": "2.0",
-        "id": 0,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": HANDSHAKE_PROTOCOL_VERSION,
-            "capabilities": {},
-            "clientInfo": {"name": "mcp", "version": "0.1.0"},
-        },
-    });
+    let initialize = initialize_body();
     let initialize_request = session_request(&endpoint, &initialize, headers);
     let initialize_result: InitializeResult = decode_payload(
         initialize_request
@@ -131,10 +200,7 @@ pub async fn list_tools_with_headers(
     .await?;
     let protocol_version = initialize_result.protocol_version;
 
-    let notification = json!({
-        "jsonrpc": "2.0",
-        "method": "notifications/initialized",
-    });
+    let notification = initialized_notification_body();
     let mut notification_request = session_request(&endpoint, &notification, headers);
     if let Some(version) = protocol_version.as_deref() {
         notification_request = notification_request.header("mcp-protocol-version", version);
@@ -152,14 +218,7 @@ pub async fn list_tools_with_headers(
     let mut seen_cursors: Vec<String> = Vec::new();
     let mut request_id: i64 = 1;
     loop {
-        let mut request = json!({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": "tools/list",
-        });
-        if let Some(cursor_value) = cursor.as_deref() {
-            request["params"] = json!({ "cursor": cursor_value });
-        }
+        let request = tools_list_body(request_id, cursor.as_deref());
         request_id += 1;
         let mut list_request = session_request(&endpoint, &request, headers);
         if let Some(version) = protocol_version.as_deref() {
@@ -173,13 +232,7 @@ pub async fn list_tools_with_headers(
         )
         .await?;
         for tool in result.tools {
-            tools.push(UpstreamTool {
-                name: tool.name,
-                title: tool.title,
-                description: tool.description,
-                input_schema: tool.input_schema,
-                annotations: tool.annotations,
-            });
+            tools.push(tool.into_upstream_tool());
         }
         cursor = result.next_cursor;
         match cursor.as_deref() {
@@ -225,17 +278,23 @@ where
         .await
         .map_err(|error| McpError::Transport(error.to_string()))?;
     if !status.is_success() {
-        return Err(McpError::Transport(format!(
-            "MCP server returned status {status}"
-        )));
+        return Err(status_error(status.as_u16()));
     }
+    decode_body(&body)
+}
+
+/// Decode one buffered JSON-RPC response body into its `result` payload.
+pub(super) fn decode_body<T>(body: &[u8]) -> Result<T, McpError>
+where
+    T: for<'de> Deserialize<'de>,
+{
     if body.is_empty() {
         return Err(McpError::Transport(
             "MCP response body is empty".to_string(),
         ));
     }
     let payload: JsonRpcResponse<T> =
-        serde_json::from_slice(&body).map_err(|error| McpError::Transport(error.to_string()))?;
+        serde_json::from_slice(body).map_err(|error| McpError::Transport(error.to_string()))?;
     let result = payload
         .result
         .ok_or_else(|| McpError::Transport("MCP response carries no result".to_string()))?;

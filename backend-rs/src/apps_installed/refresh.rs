@@ -35,6 +35,9 @@ const REFRESH_TIMEOUT: Duration = Duration::from_secs(30);
 /// `CONNECTOR_CONNECTION_NAMESPACE` used by `save_oauth_connection`.
 const CONNECTION_NAMESPACE: &str = "system";
 
+/// The app slug that refreshes through the first-party GitHub OAuth app.
+const GITHUB_SLUG: &str = "github";
+
 /// One reason a stored grant could not be renewed.
 #[derive(Debug)]
 pub(crate) enum RefreshError {
@@ -62,6 +65,16 @@ impl std::fmt::Display for RefreshError {
     }
 }
 
+/// `GITHUB_TOKEN_URL`: the dedicated GitHub grant endpoint
+/// (`ConnectorOAuthService.refresh_connection`).
+pub(crate) const GITHUB_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
+
+/// `settings.GITHUB_OAUTH_CLIENT_ID`.
+const GITHUB_CLIENT_ID_ENV: &str = "GITHUB_OAUTH_CLIENT_ID";
+/// The first-party OAuth app key setting (`settings.GITHUB_OAUTH_CLIENT_*`).
+const GITHUB_CLIENT_KEY_ENV: &str = "GITHUB_OAUTH_CLIENT_SECRET";
+/// The token-request field carrying [`GITHUB_CLIENT_KEY_ENV`].
+const GITHUB_CLIENT_KEY_FIELD: &str = "client_secret";
 /// `_stored_dynamic_client(app)`: the dynamically registered OAuth client.
 #[derive(Debug, Deserialize)]
 struct StoredClient {
@@ -69,6 +82,64 @@ struct StoredClient {
     client_id: String,
     #[serde(default)]
     resource: Option<String>,
+}
+
+/// `settings.GITHUB_OAUTH_CLIENT_ID` and `settings.GITHUB_OAUTH_CLIENT_KEY`.
+///
+/// GitHub is the one app authorized by a fixed first-party OAuth app instead of
+/// dynamic client registration, so no `oauthClientEncrypted` record is stored
+/// for it. Every other app refreshes through its stored registration.
+pub(crate) struct OAuthConfig {
+    pub(crate) github_client_id: String,
+    pub(crate) github_client_key: String,
+    pub(crate) github_token_endpoint: String,
+}
+
+impl OAuthConfig {
+    /// Read the source-compatible environment.
+    pub(crate) fn from_env() -> Self {
+        let read = |name: &str| crate::config::env_or_dotenv(name).unwrap_or_default();
+        Self {
+            github_client_id: read(GITHUB_CLIENT_ID_ENV),
+            github_client_key: read(GITHUB_CLIENT_KEY_ENV),
+            github_token_endpoint: GITHUB_TOKEN_URL.to_string(),
+        }
+    }
+}
+
+/// The token request for one app: the dedicated GitHub app or the stored DCR
+/// registration.
+enum TokenRequest {
+    Dynamic(StoredClient),
+    GitHub {
+        client_id: String,
+        client_key: String,
+    },
+}
+
+impl TokenRequest {
+    fn endpoint<'a>(&'a self, config: &'a OAuthConfig) -> &'a str {
+        match self {
+            Self::Dynamic(client) => client.token_endpoint.as_str(),
+            Self::GitHub { .. } => config.github_token_endpoint.as_str(),
+        }
+    }
+
+    /// The refresh body, in the order the source sends it.
+    fn form<'a>(&'a self, refresh_token: &'a str) -> Vec<(&'a str, &'a str)> {
+        match self {
+            Self::Dynamic(client) => refresh_form(client, refresh_token),
+            Self::GitHub {
+                client_id,
+                client_key,
+            } => vec![
+                ("client_id", client_id.as_str()),
+                (GITHUB_CLIENT_KEY_FIELD, client_key.as_str()),
+                ("grant_type", "refresh_token"),
+                ("refresh_token", refresh_token),
+            ],
+        }
+    }
 }
 
 /// The fields of one token response the source reads.
@@ -92,17 +163,33 @@ pub(crate) async fn refresh<M>(
 where
     M: Mysql,
 {
+    let config = OAuthConfig::from_env();
+    refresh_with(mysql, app, user_id, &config).await
+}
+
+/// [`refresh`] with the OAuth application configuration supplied by the
+/// caller, so tests exercise the real exchanges without touching the process
+/// environment.
+pub(crate) async fn refresh_with<M>(
+    mysql: &M,
+    app: &ConnectorApp,
+    user_id: i64,
+    config: &OAuthConfig,
+) -> Result<ConnectorConnection, RefreshError>
+where
+    M: Mysql,
+{
     let row = db::find_connector_connection(mysql, &app.slug, user_id)
         .await
         .map_err(RefreshError::Database)?
         .ok_or(RefreshError::Unavailable)?;
     let previous = ConnectorConnection::from_row(&row);
     let refresh_token = previous.refresh_token().ok_or(RefreshError::Unavailable)?;
-    let client = stored_client(app)?;
-    let form = refresh_form(&client, &refresh_token);
+    let request = token_request(app, config)?;
+    let form = request.form(&refresh_token);
     // A rejected request and a rejected payload both mean the stored grant is
     // unusable, so both must clear it before reporting the rejection.
-    let payload = match request_tokens(&client.token_endpoint, &form).await {
+    let payload = match request_tokens(request.endpoint(config), &form).await {
         Ok(payload) => payload,
         Err(RefreshError::Rejected) => {
             reject(mysql, &row).await?;
@@ -137,6 +224,22 @@ fn stored_client(app: &ConnectorApp) -> Result<StoredClient, RefreshError> {
         return Err(RefreshError::Unavailable);
     }
     serde_json::from_str::<StoredClient>(&plain).map_err(|_| RefreshError::Unavailable)
+}
+
+/// `_require_github_config` and the source's branch on `connection.slug`:
+/// GitHub refreshes through the first-party OAuth app, every other app through
+/// its stored dynamic registration.
+fn token_request(app: &ConnectorApp, config: &OAuthConfig) -> Result<TokenRequest, RefreshError> {
+    if app.slug == GITHUB_SLUG {
+        if config.github_client_id.is_empty() || config.github_client_key.is_empty() {
+            return Err(RefreshError::Unavailable);
+        }
+        return Ok(TokenRequest::GitHub {
+            client_id: config.github_client_id.clone(),
+            client_key: config.github_client_key.clone(),
+        });
+    }
+    stored_client(app).map(TokenRequest::Dynamic)
 }
 
 /// The refresh request body, in the order the source sends it.
@@ -305,31 +408,62 @@ where
         .map_err(RefreshError::Database)
 }
 
+/// The discovery outcome to persist on a stored connection.
+///
+/// A successful pass mirrors `ConnectorConnectionService.save_tool_summaries`
+/// and replaces the cached surface; a failed pass keeps the cached surface and
+/// records the error, and a rejected credential additionally flips the
+/// connection to `expired` so the desktop offers re-authorization.
+#[derive(Debug, Default)]
+pub(crate) struct DiscoveryState<'a> {
+    pub(crate) discovered_at: Option<&'a str>,
+    pub(crate) tool_summaries: Option<&'a [Value]>,
+    pub(crate) last_error: Option<&'a str>,
+    pub(crate) expired: bool,
+}
+
 /// Persist the discovery outcome on a stored connection without touching the
 /// stored grant.
 pub(crate) async fn write_discovery_state<M>(
     mysql: &M,
     row: &KindRow,
-    discovered_at: Option<&str>,
-    last_error: Option<&str>,
+    state: &DiscoveryState<'_>,
 ) -> Result<(), RefreshError>
 where
     M: Mysql,
 {
     let mut document = row.kinds_json.0.to_value();
+    apply_discovery_state(&mut document, state)?;
+    write_json(mysql, row.kinds_id, &document).await
+}
+
+/// The document mutation behind [`write_discovery_state`].
+fn apply_discovery_state(
+    document: &mut Value,
+    state: &DiscoveryState<'_>,
+) -> Result<(), RefreshError> {
     let spec = document
         .get_mut("spec")
         .and_then(Value::as_object_mut)
         .ok_or(RefreshError::Unavailable)?;
-    if let Some(discovered_at) = discovered_at {
+    if state.expired {
+        spec.insert("status".to_string(), json!("expired"));
+    }
+    if let Some(discovered_at) = state.discovered_at {
         spec.insert(
             "toolsDiscoveredAt".to_string(),
             Value::String(discovered_at.to_string()),
         );
     }
+    if let Some(tool_summaries) = state.tool_summaries {
+        spec.insert(
+            "toolSummaries".to_string(),
+            Value::Array(tool_summaries.to_vec()),
+        );
+    }
     spec.insert(
         "lastError".to_string(),
-        match last_error {
+        match state.last_error {
             Some(message) => json!({
                 "message": message.chars().take(500).collect::<String>(),
                 "at": Utc::now().to_rfc3339(),
@@ -337,7 +471,7 @@ where
             None => Value::Null,
         },
     );
-    write_json(mysql, row.kinds_id, &document).await
+    Ok(())
 }
 
 /// `db.refresh(connection.row)` after the commit.
@@ -425,6 +559,197 @@ mod tests {
             client_id: "client-1".to_string(),
             resource: Some("https://mcp.example.invalid/doc".to_string()),
         }
+    }
+
+    fn app_row(slug: &str, spec: Value) -> ConnectorApp {
+        let row = KindRow {
+            kinds_id: 7,
+            kinds_user_id: 0,
+            kinds_kind: "ConnectorApp".to_string(),
+            kinds_name: slug.to_string(),
+            kinds_namespace: "system".to_string(),
+            kinds_json: brz_mysql::Json(
+                Value::Object(
+                    [
+                        (
+                            "kind".to_string(),
+                            Value::String("ConnectorApp".to_string()),
+                        ),
+                        ("spec".to_string(), spec),
+                    ]
+                    .into_iter()
+                    .collect(),
+                )
+                .into(),
+            ),
+            kinds_is_active: true,
+            kinds_created_at: chrono::NaiveDateTime::default(),
+            kinds_updated_at: chrono::NaiveDateTime::default(),
+        };
+        super::super::service::row_to_app(&row)
+    }
+
+    fn github_app() -> ConnectorApp {
+        app_row(
+            GITHUB_SLUG,
+            json!({
+                "name": "GitHub",
+                "mcpUrl": "https://api.githubcopilot.com/mcp/",
+                "enabled": true,
+                "authType": "oauth2",
+                "transport": "streamable-http",
+                "visibility": "all",
+                "description": "GitHub",
+                "allowedRoles": [],
+                "toolAllowlist": []
+            }),
+        )
+    }
+
+    fn github_config() -> OAuthConfig {
+        OAuthConfig {
+            github_client_id: "gh-client".to_string(),
+            github_client_key: "gh-secret".to_string(),
+            github_token_endpoint: GITHUB_TOKEN_URL.to_string(),
+        }
+    }
+
+    /// GitHub refreshes through the first-party OAuth app: it stores no
+    /// dynamic registration, so the DCR lookup must not be attempted.
+    #[test]
+    fn github_uses_the_first_party_client() {
+        let config = github_config();
+        let request = token_request(&github_app(), &config).expect("GitHub is configured");
+        assert_eq!(request.endpoint(&config), GITHUB_TOKEN_URL);
+        assert_eq!(
+            request.form("ghr_token"),
+            vec![
+                ("client_id", "gh-client"),
+                (GITHUB_CLIENT_KEY_FIELD, "gh-secret"),
+                ("grant_type", "refresh_token"),
+                ("refresh_token", "ghr_token"),
+            ]
+        );
+    }
+
+    /// `_require_github_config`: an unconfigured deployment cannot refresh.
+    #[test]
+    fn github_without_configuration_is_unavailable() {
+        let config = OAuthConfig {
+            github_client_id: String::new(),
+            github_client_key: "gh-secret".to_string(),
+            github_token_endpoint: GITHUB_TOKEN_URL.to_string(),
+        };
+        assert!(matches!(
+            token_request(&github_app(), &config),
+            Err(RefreshError::Unavailable)
+        ));
+    }
+
+    /// Every other app still requires its stored dynamic registration.
+    #[test]
+    fn other_apps_require_a_stored_registration() {
+        let app = app_row(
+            "dingtalk_docs",
+            json!({
+                "name": "DingTalk Docs",
+                "mcpUrl": "https://mcp.example.invalid/doc",
+                "enabled": true,
+                "authType": "oauth2",
+                "transport": "streamable-http",
+                "visibility": "all",
+                "description": "d",
+                "allowedRoles": [],
+                "toolAllowlist": []
+            }),
+        );
+        assert!(matches!(
+            token_request(&app, &github_config()),
+            Err(RefreshError::Unavailable)
+        ));
+    }
+
+    fn connection_document() -> Value {
+        json!({
+            "spec": {
+                "status": "connected",
+                "accessTokenEncrypted": "access",
+                "refreshTokenEncrypted": "refresh",
+                "toolSummaries": [{"name": "old__tool", "rawToolName": "tool"}],
+                "toolsDiscoveredAt": "2026-01-01T00:00:00+00:00",
+                "lastError": null,
+            }
+        })
+    }
+
+    /// A rejected credential must surface as `expired` while keeping the grant
+    /// and the last known tool surface.
+    #[test]
+    fn a_rejected_credential_marks_the_connection_expired() {
+        let mut document = connection_document();
+        apply_discovery_state(
+            &mut document,
+            &DiscoveryState {
+                last_error: Some("MCP server returned status 401"),
+                expired: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(document["spec"]["status"], json!("expired"));
+        assert_eq!(document["spec"]["refreshTokenEncrypted"], json!("refresh"));
+        assert_eq!(
+            document["spec"]["lastError"]["message"],
+            json!("MCP server returned status 401")
+        );
+        assert_eq!(
+            document["spec"]["toolSummaries"][0]["name"],
+            json!("old__tool")
+        );
+    }
+
+    /// A recovered upstream replaces the cached surface with the tools it just
+    /// returned and clears the previous failure.
+    #[test]
+    fn a_recovered_upstream_replaces_the_cached_surface() {
+        let mut document = connection_document();
+        document["spec"]["status"] = json!("expired");
+        document["spec"]["lastError"] = json!({"message": "boom", "at": "2026-01-01T00:00:00"});
+        let summaries = vec![json!({
+            "name": "dingtalk_docs__new_tool",
+            "title": null,
+            "description": "d",
+            "rawToolName": "new_tool",
+            "inputSchema": {"type": "object"},
+        })];
+
+        apply_discovery_state(
+            &mut document,
+            &DiscoveryState {
+                discovered_at: Some("2026-10-28T10:00:00+00:00"),
+                tool_summaries: Some(&summaries),
+                last_error: None,
+                expired: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            document["spec"]["toolSummaries"],
+            json!([{
+                "name": "dingtalk_docs__new_tool",
+                "title": null,
+                "description": "d",
+                "rawToolName": "new_tool",
+                "inputSchema": {"type": "object"},
+            }])
+        );
+        assert_eq!(
+            document["spec"]["toolsDiscoveredAt"],
+            json!("2026-10-28T10:00:00+00:00")
+        );
+        assert_eq!(document["spec"]["lastError"], json!(null));
     }
 
     fn connection(refresh_token_encrypted: Option<&str>) -> ConnectorConnection {

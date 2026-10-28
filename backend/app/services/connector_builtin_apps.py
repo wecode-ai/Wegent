@@ -105,13 +105,18 @@ BUILTIN_CONNECTOR_APPS: tuple[BuiltinConnectorApp, ...] = (
 
 
 def _endpoint_taken(db: Session, mcp_url: str) -> bool:
-    """Whether an enabled app already points at this upstream."""
+    """Whether an enabled system app already points at this upstream.
+
+    Only owner ``CONNECTOR_APP_USER_ID`` is published in the system catalog, so
+    another owner's app at the same URL must not hide the built-in one.
+    """
     normalized = mcp_url.rstrip("/").casefold()
     rows = (
         db.query(Kind)
         .filter(
             Kind.kind == CONNECTOR_APP_KIND,
             Kind.namespace == CONNECTOR_APP_NAMESPACE,
+            Kind.user_id == CONNECTOR_APP_USER_ID,
             Kind.is_active,
         )
         .all()

@@ -113,6 +113,46 @@ def test_upstream_already_published_is_not_duplicated(
     assert len(created) == len(BUILTIN_CONNECTOR_APPS) - 1
 
 
+def test_same_url_owned_by_another_user_does_not_hide_the_builtin(
+    test_db: Session, test_user: User
+) -> None:
+    """Only the system owner publishes apps, so its catalog drives de-duplication."""
+    from app.models.kind import Kind
+    from app.services.connector_apps import (
+        CONNECTOR_APP_KIND,
+        CONNECTOR_APP_NAMESPACE,
+    )
+
+    definition = BUILTIN_CONNECTOR_APPS[0]
+    test_db.add(
+        Kind(
+            kind=CONNECTOR_APP_KIND,
+            namespace=CONNECTOR_APP_NAMESPACE,
+            name=f"{definition.slug}-foreign",
+            user_id=test_user.id,
+            is_active=True,
+            json={"spec": {"mcpUrl": definition.mcp_url}},
+        )
+    )
+    test_db.commit()
+
+    created = ensure_builtin_connector_apps(test_db)
+
+    assert definition.slug in created
+    system_row = (
+        test_db.query(Kind)
+        .filter(
+            Kind.kind == CONNECTOR_APP_KIND,
+            Kind.namespace == CONNECTOR_APP_NAMESPACE,
+            Kind.name == definition.slug,
+            Kind.user_id == 0,
+            Kind.is_active,
+        )
+        .one()
+    )
+    assert system_row.json["spec"]["mcpUrl"] == definition.mcp_url
+
+
 def test_backfills_existing_builtin_apps_to_lazy_mode(test_db: Session) -> None:
     ensure_builtin_connector_apps(test_db)
     app = connector_app_service.get_app_by_slug(test_db, "dingtalk_docs")
