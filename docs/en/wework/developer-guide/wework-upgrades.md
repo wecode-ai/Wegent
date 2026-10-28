@@ -81,6 +81,9 @@ absolute project paths, so sharing host and container caches triggers reinstalla
 startup. Main-branch platform E2E jobs populate the container cache. Windows desktop shards consume
 packaged dependencies directly; native startup verification installs Electron separately. Parallel
 Rust tests use checked-in executable script fixtures to avoid `ETXTBSY` from inherited writer handles.
+Persisting a board execution address precedes native session readiness. Confirm that the execution
+reaches its model within the runtime startup budget before starting the separate ten-second UI
+assertion budget.
 
 `wework/upgrade-policy.json` declares the current target's floor and `sourceVersions`. The initial protocol release may have no incoming edges; subsequent releases must verify at least one. A source may remain fixed rather than tracking the immediately preceding release.
 
