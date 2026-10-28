@@ -354,10 +354,8 @@ class StatusUpdatingEmitter(ResultEmitter):
             block_id = event.data.get("block_id") if event.data else None
             updates = event.data.get("updates") if event.data else None
             if block_id and isinstance(updates, dict):
-                blocks = await session_manager.get_blocks(self._subtask_id)
-                existing_block = next(
-                    (block for block in blocks if block.get("id") == str(block_id)),
-                    None,
+                existing_block = await session_manager.get_block(
+                    self._subtask_id, str(block_id)
                 )
                 if existing_block is not None:
                     existing_block.update(updates)

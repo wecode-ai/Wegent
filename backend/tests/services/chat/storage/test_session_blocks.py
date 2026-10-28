@@ -8,15 +8,19 @@ import json
 
 import pytest
 
+from app.services.chat.storage import session as session_module
 from app.services.chat.storage.session import SessionManager
+from shared.models.blocks import create_text_block
 
 
 class FakeRedisClient:
     def __init__(self):
         self.lists = {}
         self.values = {}
+        self.hashes = {}
         self.expirations = {}
         self.lset_calls = []
+        self.full_lrange_calls = []
         self.pipeline_execute_count = 0
 
     async def get(self, key):
@@ -39,17 +43,52 @@ class FakeRedisClient:
         for key in keys:
             self.values.pop(key, None)
             self.lists.pop(key, None)
+            self.hashes.pop(key, None)
         return len(keys)
+
+    async def exists(self, key):
+        return int(key in self.values or key in self.lists or key in self.hashes)
 
     async def rpush(self, key, value):
         self.lists.setdefault(key, []).append(value)
         return len(self.lists[key])
 
+    async def llen(self, key):
+        return len(self.lists.get(key, []))
+
+    async def lindex(self, key, index):
+        values = self.lists.get(key, [])
+        if -len(values) <= index < len(values):
+            return values[index]
+        return None
+
     async def lrange(self, key, start, end):
         values = self.lists.get(key, [])
+        if start == 0 and end == -1:
+            self.full_lrange_calls.append(key)
         if end == -1:
             return values[start:]
         return values[start : end + 1]
+
+    async def hset(self, key, field=None, value=None, mapping=None):
+        fields = dict(mapping or {})
+        if field is not None:
+            fields[field] = value
+        # Redis returns hash values as bytes with decode_responses=False.
+        self.hashes.setdefault(key, {}).update(
+            {name: str(item).encode() for name, item in fields.items()}
+        )
+        return len(fields)
+
+    async def hget(self, key, field):
+        return self.hashes.get(key, {}).get(field)
+
+    async def hdel(self, key, *fields):
+        hash_value = self.hashes.get(key, {})
+        removed = sum(1 for field in fields if hash_value.pop(field, None) is not None)
+        if key in self.hashes and not hash_value:
+            del self.hashes[key]
+        return removed
 
     async def lset(self, key, index, value):
         self.lset_calls.append((key, index, value))
@@ -102,6 +141,14 @@ class FakePipeline:
         self.commands.append(("delete", *keys))
         return self
 
+    def hset(self, key, field=None, value=None, mapping=None):
+        self.commands.append(("hset", key, field, value, mapping))
+        return self
+
+    def hdel(self, key, *fields):
+        self.commands.append(("hdel", key, *fields))
+        return self
+
     async def execute(self):
         self.redis_client.pipeline_execute_count += 1
         results = []
@@ -123,6 +170,14 @@ class FakePipeline:
                 )
             elif name == "delete":
                 results.append(await self.redis_client.delete(*command[1:]))
+            elif name == "hset":
+                results.append(
+                    await self.redis_client.hset(
+                        command[1], command[2], command[3], mapping=command[4]
+                    )
+                )
+            elif name == "hdel":
+                results.append(await self.redis_client.hdel(command[1], *command[2:]))
         self.commands = []
         return results
 
@@ -499,3 +554,182 @@ async def test_finalize_and_get_blocks_preserves_legitimate_pending_tool_blocks(
             "tool_output": {"status": "waiting_for_user_response"},
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_block_upserts_do_not_reload_the_whole_list(monkeypatch):
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+    # Text block ids are millisecond timestamps; keep them distinct in a tight loop.
+    text_ids = iter(range(1_000_000))
+    monkeypatch.setattr(
+        session_module,
+        "create_text_block",
+        lambda content="": create_text_block(
+            content=content, block_id=f"text-{next(text_ids)}"
+        ),
+    )
+
+    await manager.add_text_content(subtask_id=901, content="intro")
+    for i in range(200):
+        await manager.add_tool_block(
+            subtask_id=901,
+            tool_use_id=f"call_{i}",
+            tool_name="Bash",
+            tool_input={"command": f"echo {i}"},
+        )
+        await manager.update_tool_block_status(
+            subtask_id=901,
+            tool_use_id=f"call_{i}",
+            status="generating_arguments",
+        )
+        await manager.update_tool_block_status(
+            subtask_id=901,
+            tool_use_id=f"call_{i}",
+            status="done",
+            tool_output=f"out {i}",
+        )
+        await manager.add_thinking_content(subtask_id=901, content=f"step {i}")
+        await manager.add_text_content(subtask_id=901, content=f"text {i}")
+
+    # Every lookup goes through the blocks index or the list tail.
+    assert redis_client.full_lrange_calls == []
+
+    blocks = await manager.finalize_and_get_blocks(901)
+    tool_blocks = [block for block in blocks if block["type"] == "tool"]
+
+    assert len(blocks) == 1 + 200 * 3
+    assert len(tool_blocks) == 200
+    assert all(block["status"] == "done" for block in blocks)
+    assert tool_blocks[150]["tool_output"] == "out 150"
+    assert blocks[-1]["content"] == "text 199"
+
+
+@pytest.mark.asyncio
+async def test_blocks_index_is_rebuilt_for_a_list_written_without_it():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+    blocks_key = "chat:streaming:blocks:902"
+    redis_client.lists[blocks_key] = [
+        json.dumps({"id": "call_a", "type": "tool", "tool_use_id": "call_a"}),
+        json.dumps({"id": "call_b", "type": "tool", "tool_use_id": "call_b"}),
+    ]
+
+    await manager.update_tool_block_status(
+        subtask_id=902, tool_use_id="call_b", status="done", tool_output="ok"
+    )
+    await manager.add_tool_block(subtask_id=902, tool_use_id="call_a", tool_name="Read")
+
+    blocks = await manager.get_blocks(902)
+
+    assert [block["id"] for block in blocks] == ["call_a", "call_b"]
+    assert blocks[0]["tool_name"] == "Read"
+    assert blocks[1]["status"] == "done"
+    assert blocks[1]["tool_output"] == "ok"
+    assert redis_client.hashes["chat:streaming:blocks_index:902"] == {
+        "call_a": b"0",
+        "call_b": b"1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_stale_blocks_index_entry_is_repaired():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_tool_block(subtask_id=903, tool_use_id="call_a", tool_name="A")
+    await manager.add_tool_block(subtask_id=903, tool_use_id="call_b", tool_name="B")
+    # Point call_b at the wrong slot.
+    redis_client.hashes["chat:streaming:blocks_index:903"]["call_b"] = b"0"
+
+    await manager.update_tool_block_status(
+        subtask_id=903, tool_use_id="call_b", status="done"
+    )
+
+    blocks = await manager.get_blocks(903)
+
+    assert [block["status"] for block in blocks] == ["pending", "done"]
+    assert redis_client.hashes["chat:streaming:blocks_index:903"]["call_b"] == b"1"
+
+
+@pytest.mark.asyncio
+async def test_block_appended_before_it_is_indexed_is_found_at_the_tail():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_tool_block(subtask_id=904, tool_use_id="call_a", tool_name="A")
+    # A concurrent writer has pushed call_b but not indexed it yet.
+    redis_client.lists["chat:streaming:blocks:904"].append(
+        json.dumps({"id": "call_b", "type": "tool", "tool_use_id": "call_b"})
+    )
+    redis_client.full_lrange_calls.clear()
+
+    await manager.update_tool_block_status(
+        subtask_id=904, tool_use_id="call_b", status="done"
+    )
+
+    blocks = await manager.get_blocks(904)
+
+    assert len(blocks) == 2
+    assert blocks[1]["status"] == "done"
+    assert redis_client.full_lrange_calls == ["chat:streaming:blocks:904"]
+    assert redis_client.hashes["chat:streaming:blocks_index:904"]["call_b"] == b"1"
+
+
+@pytest.mark.asyncio
+async def test_get_block_returns_one_block_with_its_content():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_text_content(subtask_id=905, content="Hello")
+    await manager.add_tool_block(subtask_id=905, tool_use_id="call_a", tool_name="A")
+    text_id = json.loads(redis_client.lists["chat:streaming:blocks:905"][0])["id"]
+
+    text_block = await manager.get_block(905, text_id)
+
+    assert text_block["content"] == "Hello"
+    assert text_block["status"] == "done"
+    assert "_content_key" not in text_block
+    assert (await manager.get_block(905, "call_a"))["tool_name"] == "A"
+    assert await manager.get_block(905, "missing") is None
+
+
+@pytest.mark.asyncio
+async def test_tool_block_with_a_different_block_id_is_still_updated():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_block(
+        subtask_id=906,
+        block={"id": "block_1", "type": "tool", "tool_use_id": "call_x"},
+    )
+
+    await manager.update_tool_block_status(
+        subtask_id=906, tool_use_id="call_x", status="done"
+    )
+
+    blocks = await manager.get_blocks(906)
+
+    assert len(blocks) == 1
+    assert blocks[0]["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_streaming_state_deletes_blocks_index():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_tool_block(subtask_id=907, tool_use_id="call_a", tool_name="A")
+    assert "chat:streaming:blocks_index:907" in redis_client.hashes
+
+    await manager.cleanup_streaming_state(907)
+
+    assert "chat:streaming:blocks_index:907" not in redis_client.hashes
+    assert "chat:streaming:blocks:907" not in redis_client.lists

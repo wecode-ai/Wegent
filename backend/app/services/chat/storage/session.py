@@ -48,6 +48,9 @@ STREAMING_TTL = 3600
 # Internal field stored in Redis block metadata. It is stripped before returning
 # blocks to callers so API consumers still see the existing block shape.
 BLOCK_CONTENT_KEY_FIELD = "_content_key"
+# A block appended by a concurrent writer is indexed right after its RPUSH, so
+# an index miss also checks this many blocks at the tail of the list.
+BLOCKS_INDEX_TAIL_SCAN = 8
 UNRESOLVED_PREVIEW_TOOL_BLOCK_STATUSES = {"pending", "generating_arguments"}
 UNRESOLVED_PREVIEW_TOOL_BLOCK_MESSAGE = "Tool call was not executed before the turn completed. The turn may have hit the tool-call limit."
 UNRESOLVED_PREVIEW_TOOL_BLOCK_GENERIC_MESSAGE = (
@@ -809,11 +812,16 @@ class SessionManager:
     # Uses Redis atomic operations for high performance:
     # - accumulated_content: APPEND for O(1) content addition
     # - blocks: RPUSH for O(1) block addition
+    # - blocks_index: HASH of block id -> list index for O(1) block lookup
     # - current_text_block_id: separate key for O(1) read/write
 
     def _get_blocks_key(self, subtask_id: int) -> str:
         """Generate Redis key for blocks list."""
         return f"{STREAMING_KEY_PREFIX}blocks:{subtask_id}"
+
+    def _get_blocks_index_key(self, subtask_id: int) -> str:
+        """Generate Redis key for the block id -> list index hash."""
+        return f"{STREAMING_KEY_PREFIX}blocks_index:{subtask_id}"
 
     def _get_current_text_block_key(self, subtask_id: int) -> str:
         """Generate Redis key for current text block ID."""
@@ -880,6 +888,165 @@ class SessionManager:
         for block in blocks:
             block.pop(BLOCK_CONTENT_KEY_FIELD, None)
         return blocks
+
+    @staticmethod
+    def _parse_block(block_json: Any) -> Optional[Dict[str, Any]]:
+        """Parse one serialized block, returning None for missing or bad data."""
+        if block_json is None:
+            return None
+        try:
+            block = json.loads(block_json)
+        except (TypeError, ValueError):
+            return None
+        return block if isinstance(block, dict) else None
+
+    async def _hydrate_block(
+        self, redis_client: Any, block: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Fill one block's content from its content key and strip the key."""
+        content_key = block.pop(BLOCK_CONTENT_KEY_FIELD, None)
+        if isinstance(content_key, str):
+            block["content"] = self._decode_redis_text(
+                await redis_client.get(content_key)
+            )
+        return block
+
+    async def _index_block(
+        self, redis_client: Any, subtask_id: int, block_id: str, index: int
+    ) -> None:
+        """Record where a block sits in the blocks list."""
+        index_key = self._get_blocks_index_key(subtask_id)
+        async with redis_client.pipeline(transaction=False) as pipe:
+            pipe.hset(index_key, block_id, index)
+            pipe.expire(index_key, STREAMING_TTL)
+            await pipe.execute()
+
+    async def _rebuild_blocks_index(
+        self, redis_client: Any, subtask_id: int, block_id: str
+    ) -> tuple[Optional[int], Optional[Dict[str, Any]]]:
+        """Index the whole blocks list once and return the requested block."""
+        index_key = self._get_blocks_index_key(subtask_id)
+        blocks_raw = await redis_client.lrange(self._get_blocks_key(subtask_id), 0, -1)
+        if not blocks_raw:
+            # Drop entries left over from a list that expired before its index.
+            await redis_client.delete(index_key)
+            return None, None
+
+        mapping: Dict[str, int] = {}
+        found: tuple[Optional[int], Optional[Dict[str, Any]]] = (None, None)
+        for index, block_json in enumerate(blocks_raw):
+            block = self._parse_block(block_json)
+            if block is None or block.get("id") is None:
+                continue
+            # A repeated id maps to its last block, as appends index it.
+            candidate_id = str(block["id"])
+            mapping[candidate_id] = index
+            if candidate_id == block_id:
+                found = (index, block)
+
+        async with redis_client.pipeline(transaction=False) as pipe:
+            if mapping:
+                pipe.hset(index_key, mapping=mapping)
+            if block_id not in mapping:
+                pipe.hdel(index_key, block_id)
+            pipe.expire(index_key, STREAMING_TTL)
+            await pipe.execute()
+        logger.info(
+            f"[SessionManager] Rebuilt blocks index for subtask {subtask_id}: "
+            f"count={len(blocks_raw)}"
+        )
+        return found
+
+    async def _find_block(
+        self, redis_client: Any, subtask_id: int, block_id: Any
+    ) -> tuple[Optional[int], Optional[Dict[str, Any]]]:
+        """Return the list index and raw metadata of a block, or (None, None).
+
+        Looks the block up through the blocks index. Reading the whole list
+        here made every upsert O(n) and a long run O(n²).
+        """
+        blocks_key = self._get_blocks_key(subtask_id)
+        index_key = self._get_blocks_index_key(subtask_id)
+        field = str(block_id)
+
+        raw_index = await redis_client.hget(index_key, field)
+        if raw_index is not None:
+            index = int(raw_index)
+            block = self._parse_block(await redis_client.lindex(blocks_key, index))
+            if block is not None and str(block.get("id")) == field:
+                return index, block
+            # The entry is stale, e.g. the list was cleaned up underneath it.
+            return await self._rebuild_blocks_index(redis_client, subtask_id, field)
+
+        if not await redis_client.exists(index_key):
+            # The list predates the index, or its first block is not indexed yet.
+            return await self._rebuild_blocks_index(redis_client, subtask_id, field)
+
+        length = await redis_client.llen(blocks_key)
+        if not length:
+            return None, None
+        start = max(0, length - BLOCKS_INDEX_TAIL_SCAN)
+        tail = await redis_client.lrange(blocks_key, start, length - 1)
+        for offset in range(len(tail) - 1, -1, -1):
+            block = self._parse_block(tail[offset])
+            if block is not None and str(block.get("id")) == field:
+                await self._index_block(redis_client, subtask_id, field, start + offset)
+                return start + offset, block
+        return None, None
+
+    async def get_block(
+        self, subtask_id: int, block_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get one block by id without loading the whole blocks list.
+
+        Args:
+            subtask_id: Subtask ID
+            block_id: Block ID
+
+        Returns:
+            The block with its content filled in, or None if it does not exist
+        """
+        try:
+            redis_client = await self._cache._get_client()
+            try:
+                _, block = await self._find_block(redis_client, subtask_id, block_id)
+                if block is None:
+                    return None
+                return await self._hydrate_block(redis_client, block)
+            finally:
+                await redis_client.aclose()
+        except Exception as e:
+            logger.error(
+                f"[SessionManager] Failed to get block {block_id} for subtask {subtask_id}: {e}"
+            )
+            return None
+
+    async def _find_tool_block(
+        self, redis_client: Any, subtask_id: int, tool_use_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Find a tool block by tool_use_id, with its content filled in."""
+        _, block = await self._find_block(redis_client, subtask_id, tool_use_id)
+        if (
+            block is not None
+            and block.get("type") == "tool"
+            and block.get("tool_use_id") == tool_use_id
+        ):
+            return await self._hydrate_block(redis_client, block)
+
+        # Tool blocks are keyed by tool_use_id. One keyed otherwise, or a
+        # missing block, falls back to a full scan.
+        blocks = await self._load_blocks_from_client(
+            redis_client, self._get_blocks_key(subtask_id)
+        )
+        return next(
+            (
+                candidate
+                for candidate in blocks
+                if candidate.get("type") == "tool"
+                and candidate.get("tool_use_id") == tool_use_id
+            ),
+            None,
+        )
 
     async def add_stream_content(
         self,
@@ -966,8 +1133,8 @@ class SessionManager:
         """Update tool block status, output, and/or input.
 
         This is a convenience wrapper around add_block() for tool blocks.
-        It retrieves the existing block, updates the specified fields, and
-        calls add_block() with upsert semantics.
+        It looks up the existing block by tool_use_id, updates the specified
+        fields, and calls add_block() with upsert semantics.
 
         Args:
             subtask_id: Subtask ID
@@ -980,16 +1147,13 @@ class SessionManager:
             server_label: Optional MCP server label
         """
         try:
-            # Get existing blocks to find the tool block
-            blocks = await self.get_blocks(subtask_id)
-            existing_block = None
-            for block in blocks:
-                if (
-                    block.get("type") == "tool"
-                    and block.get("tool_use_id") == tool_use_id
-                ):
-                    existing_block = block
-                    break
+            redis_client = await self._cache._get_client()
+            try:
+                existing_block = await self._find_tool_block(
+                    redis_client, subtask_id, tool_use_id
+                )
+            finally:
+                await redis_client.aclose()
 
             if existing_block:
                 # Update existing block
@@ -1056,18 +1220,13 @@ class SessionManager:
                 block["timestamp"] = int(time.time() * 1000)
 
             blocks_key = self._get_blocks_key(subtask_id)
+            index_key = self._get_blocks_index_key(subtask_id)
             redis_client = await self._cache._get_client()
             try:
                 # Check if block with this id already exists (upsert logic)
-                blocks_raw = await redis_client.lrange(blocks_key, 0, -1)
-                existing_index = None
-                existing_block = None
-                for i, block_json in enumerate(blocks_raw):
-                    candidate = json.loads(block_json)
-                    if candidate.get("id") == block_id:
-                        existing_index = i
-                        existing_block = candidate
-                        break
+                existing_index, existing_block = await self._find_block(
+                    redis_client, subtask_id, block_id
+                )
 
                 if existing_index is not None:
                     # Update existing block
@@ -1098,6 +1257,7 @@ class SessionManager:
                             blocks_key, existing_index, json.dumps(block_to_store)
                         )
                         pipe.expire(blocks_key, STREAMING_TTL)
+                        pipe.expire(index_key, STREAMING_TTL)
                         await pipe.execute()
                     logger.debug(
                         f"[SessionManager] Updated block for subtask {subtask_id}: "
@@ -1108,7 +1268,10 @@ class SessionManager:
                     async with redis_client.pipeline(transaction=False) as pipe:
                         pipe.rpush(blocks_key, json.dumps(block))
                         pipe.expire(blocks_key, STREAMING_TTL)
-                        await pipe.execute()
+                        results = await pipe.execute()
+                    await self._index_block(
+                        redis_client, subtask_id, str(block_id), results[0] - 1
+                    )
                     logger.debug(
                         f"[SessionManager] Added block for subtask {subtask_id}: "
                         f"id={block_id}, type={block.get('type')}"
@@ -1161,6 +1324,9 @@ class SessionManager:
                         pipe.append(content_key, content)
                         pipe.expire(content_key, STREAMING_TTL)
                         pipe.expire(blocks_key, STREAMING_TTL)
+                        pipe.expire(
+                            self._get_blocks_index_key(subtask_id), STREAMING_TTL
+                        )
                         pipe.expire(text_block_key, STREAMING_TTL)
                         results = await pipe.execute()
                     logger.debug(
@@ -1180,7 +1346,10 @@ class SessionManager:
                         pipe.append(content_key, content)
                         pipe.expire(content_key, STREAMING_TTL)
                         pipe.expire(blocks_key, STREAMING_TTL)
-                        await pipe.execute()
+                        results = await pipe.execute()
+                    await self._index_block(
+                        redis_client, subtask_id, block["id"], results[0] - 1
+                    )
                     logger.debug(
                         f"[SessionManager] Created text block for subtask {subtask_id}: "
                         f"id={block['id']}"
@@ -1214,6 +1383,9 @@ class SessionManager:
                         pipe.append(content_key, content)
                         pipe.expire(content_key, STREAMING_TTL)
                         pipe.expire(blocks_key, STREAMING_TTL)
+                        pipe.expire(
+                            self._get_blocks_index_key(subtask_id), STREAMING_TTL
+                        )
                         pipe.expire(thinking_block_key, STREAMING_TTL)
                         await pipe.execute()
                 else:
@@ -1234,7 +1406,10 @@ class SessionManager:
                         pipe.append(content_key, content)
                         pipe.expire(content_key, STREAMING_TTL)
                         pipe.expire(blocks_key, STREAMING_TTL)
-                        await pipe.execute()
+                        results = await pipe.execute()
+                    await self._index_block(
+                        redis_client, subtask_id, block_id, results[0] - 1
+                    )
                     logger.debug(
                         f"[SessionManager] Created thinking block for subtask {subtask_id}: "
                         f"id={block['id']}"
@@ -1261,21 +1436,20 @@ class SessionManager:
                 block_id = self._decode_block_id(current_block_id)
 
                 # Find and update the text block
-                blocks_raw = await redis_client.lrange(blocks_key, 0, -1)
-                block_found = False
-                for i, block_json in enumerate(blocks_raw):
-                    block = json.loads(block_json)
-                    if block.get("id") == block_id:
-                        block["status"] = BlockStatus.DONE.value
-                        async with redis_client.pipeline(transaction=False) as pipe:
-                            pipe.lset(blocks_key, i, json.dumps(block))
-                            pipe.delete(text_block_key)
-                            pipe.expire(blocks_key, STREAMING_TTL)
-                            await pipe.execute()
-                        block_found = True
-                        break
-
-                if not block_found:
+                index, block = await self._find_block(
+                    redis_client, subtask_id, block_id
+                )
+                if block is not None:
+                    block["status"] = BlockStatus.DONE.value
+                    async with redis_client.pipeline(transaction=False) as pipe:
+                        pipe.lset(blocks_key, index, json.dumps(block))
+                        pipe.delete(text_block_key)
+                        pipe.expire(blocks_key, STREAMING_TTL)
+                        pipe.expire(
+                            self._get_blocks_index_key(subtask_id), STREAMING_TTL
+                        )
+                        await pipe.execute()
+                else:
                     await redis_client.delete(text_block_key)
             finally:
                 await redis_client.aclose()
@@ -1298,21 +1472,20 @@ class SessionManager:
 
                 block_id = self._decode_block_id(current_block_id)
 
-                blocks_raw = await redis_client.lrange(blocks_key, 0, -1)
-                block_found = False
-                for i, block_json in enumerate(blocks_raw):
-                    block = json.loads(block_json)
-                    if block.get("id") == block_id:
-                        block["status"] = BlockStatus.DONE.value
-                        async with redis_client.pipeline(transaction=False) as pipe:
-                            pipe.lset(blocks_key, i, json.dumps(block))
-                            pipe.delete(thinking_block_key)
-                            pipe.expire(blocks_key, STREAMING_TTL)
-                            await pipe.execute()
-                        block_found = True
-                        break
-
-                if not block_found:
+                index, block = await self._find_block(
+                    redis_client, subtask_id, block_id
+                )
+                if block is not None:
+                    block["status"] = BlockStatus.DONE.value
+                    async with redis_client.pipeline(transaction=False) as pipe:
+                        pipe.lset(blocks_key, index, json.dumps(block))
+                        pipe.delete(thinking_block_key)
+                        pipe.expire(blocks_key, STREAMING_TTL)
+                        pipe.expire(
+                            self._get_blocks_index_key(subtask_id), STREAMING_TTL
+                        )
+                        await pipe.execute()
+                else:
                     await redis_client.delete(thinking_block_key)
             finally:
                 await redis_client.aclose()
@@ -1484,6 +1657,7 @@ class SessionManager:
         try:
             streaming_key = self._get_streaming_key(subtask_id)
             blocks_key = self._get_blocks_key(subtask_id)
+            blocks_index_key = self._get_blocks_index_key(subtask_id)
             text_block_key = self._get_current_text_block_key(subtask_id)
             thinking_block_key = self._get_current_thinking_block_key(subtask_id)
             context_metrics_key = self._get_context_metrics_key(subtask_id)
@@ -1495,6 +1669,7 @@ class SessionManager:
                 await redis_client.delete(
                     streaming_key,
                     blocks_key,
+                    blocks_index_key,
                     text_block_key,
                     thinking_block_key,
                     context_metrics_key,
