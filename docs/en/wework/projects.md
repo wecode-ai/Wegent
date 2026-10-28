@@ -308,6 +308,8 @@ Set a title and Markdown notes when delivering, and select the messages, files, 
 
 After confirming a delivery from a task, a successful save closes the delivery dialog and opens the linked Issue's detail drawer so you can review its delivery records. If saving fails, the dialog stays open with an error so you can retry.
 
+The delivery is saved in the project space that owns the linked Issue.
+
 Open a delivery from its Issue and select **Edit** to change its title, notes, files, and selected messages. **Select more source messages** reads the source conversation under current access permissions. If the source is offline, deleted, or inaccessible, existing messages can still be kept or removed. Assets referenced by deliverable requirements cannot be removed directly.
 
 **Save changes** updates the same delivery and preserves its link, source task, and initial delivery time. Editing does not complete tasks again or advance workflows. There is no version-history UI. Cancel makes no changes. Failed saves retain the form. On a concurrent-edit conflict, preserve any text you need before choosing **Reload and discard edits** to view the latest delivery.

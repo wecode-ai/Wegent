@@ -148,7 +148,7 @@ export function createDesktopScenario(options) {
       await control.command('waitFor', panel, { text: '项目讨论答复' })
       await control.command('click', scoped('[data-testid="todo-detail-delivery-close"]'))
       console.log(`[delivery-e2e] Verified three persisted batches for ${issue.id}`)
-      await taskDelivery.verify(control)
+      await taskDelivery.verify(control, { project, issue })
     },
     diagnostics() {
       return {

@@ -1231,9 +1231,12 @@ describe('useWorkbenchCloudProjectContext', () => {
       listLoopItems: vi.fn().mockResolvedValue({ items: [item] }),
       listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
     }
+    const cloudApi = { ...localApi }
     const services = {
+      deliveryApi: { ...localApi },
       projectSpaceApis: {
         local: localApi,
+        cloud: cloudApi,
         defaultLocation: 'local',
       },
     } as unknown as WorkbenchServices
@@ -1284,6 +1287,9 @@ describe('useWorkbenchCloudProjectContext', () => {
     )
 
     await waitFor(() => expect(result.current.boundCloudItem).toEqual(item))
+    expect(result.current.boundProjectSpaceApi).toBe(
+      cloudProject.project_store === 'local' ? localApi : cloudApi
+    )
     act(() => result.current.openBoundProjectSpaceTask())
 
     const expectedTab = {
