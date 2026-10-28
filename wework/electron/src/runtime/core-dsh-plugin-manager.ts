@@ -128,6 +128,7 @@ export class CoreDshPluginManager {
   }
 
   install(spec: string): Promise<CoreDshPlugin[]> {
+    logPluginCommand(this.options.environment, { stage: 'install-requested' })
     return this.mutate(async () => {
       validateSpec(spec)
       const before = await this.readManifest()
@@ -170,11 +171,13 @@ export class CoreDshPluginManager {
         await this.preflight()
         return source
       } catch (error) {
+        logPluginCommand(this.options.environment, { stage: 'rollback-started' })
         await this.restore(snapshot).catch(restoreError => {
           throw new Error(
             `${errorMessage(error)}\nProfile recovery failed: ${errorMessage(restoreError)}`
           )
         })
+        logPluginCommand(this.options.environment, { stage: 'rollback-completed' })
         throw error
       }
     })
@@ -235,16 +238,23 @@ export class CoreDshPluginManager {
 
   private mutate(action: () => Promise<void>): Promise<CoreDshPlugin[]> {
     return this.serial(async () => {
+      logPluginCommand(this.options.environment, { stage: 'snapshot-started' })
       const snapshot = await this.snapshot()
       try {
+        logPluginCommand(this.options.environment, { stage: 'mutation-started' })
         await action()
-        return await this.readInventory()
+        logPluginCommand(this.options.environment, { stage: 'inventory-started' })
+        const inventory = await this.readInventory()
+        logPluginCommand(this.options.environment, { stage: 'mutation-completed' })
+        return inventory
       } catch (error) {
+        logPluginCommand(this.options.environment, { stage: 'rollback-started' })
         await this.restore(snapshot).catch(restoreError => {
           throw new Error(
             `${errorMessage(error)}\nProfile recovery failed: ${errorMessage(restoreError)}`
           )
         })
+        logPluginCommand(this.options.environment, { stage: 'rollback-completed' })
         throw error
       }
     })
@@ -650,11 +660,16 @@ function commandError(stage: string, error: unknown): Error {
 function redactDiagnostics(value: string): string {
   return value
     .replace(/(https?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, '$1[redacted]@')
+    .replace(/(\bBearer\s+)[^\s'"]+/gi, '$1[redacted]')
     .replace(/((?:token|password|authorization|_authToken)\s*[:=]\s*)[^\s]+/gi, '$1[redacted]')
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function logPluginCommand(environment: NodeJS.ProcessEnv, fields: Record<string, unknown>): void {
+  if (environment.VITE_WEWORK_E2E === 'true') console.info('[core-dsh-plugin-command]', fields)
 }
 
 function runCommand(
@@ -670,24 +685,59 @@ function runCommand(
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    const startedAt = Date.now()
+    const phase = args.includes('--dump-config') ? 'profile-validation' : 'package-manager'
+    logPluginCommand(options.env, { stage: 'command-started', phase, pid: child.pid })
     let stdout = ''
     let stderr = ''
     const timeout = setTimeout(() => {
+      logPluginCommand(options.env, {
+        stage: 'command-timed-out',
+        phase,
+        elapsedMs: Date.now() - startedAt,
+      })
       child.kill()
     }, 120_000)
     timeout.unref()
     child.stdout.on('data', chunk => {
       stdout += chunk
+      if (phase === 'package-manager')
+        logPluginCommand(options.env, {
+          stage: 'command-output',
+          phase,
+          stream: 'stdout',
+          output: redactDiagnostics(stdout).slice(-4000),
+        })
     })
     child.stderr.on('data', chunk => {
       stderr += chunk
+      logPluginCommand(options.env, {
+        stage: 'command-output',
+        phase,
+        stream: 'stderr',
+        ...(phase === 'package-manager'
+          ? { output: redactDiagnostics(stderr).slice(-4000) }
+          : { bytes: Buffer.byteLength(chunk) }),
+      })
     })
     child.once('error', error => {
       clearTimeout(timeout)
+      logPluginCommand(options.env, {
+        stage: 'command-failed',
+        phase,
+        code: (error as NodeJS.ErrnoException).code,
+        elapsedMs: Date.now() - startedAt,
+      })
       reject(Object.assign(error, { stdout, stderr }))
     })
     child.once('exit', code => {
       clearTimeout(timeout)
+      logPluginCommand(options.env, {
+        stage: 'command-exited',
+        phase,
+        code,
+        elapsedMs: Date.now() - startedAt,
+      })
       if (code === 0) resolve({ stdout, stderr })
       else
         reject(Object.assign(new Error(`${command} exited with code ${code}`), { stdout, stderr }))

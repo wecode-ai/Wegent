@@ -387,3 +387,27 @@ async function createFixture(
 function writeJson(path: string, value: unknown): Promise<void> {
   return writeFile(path, `${JSON.stringify(value, null, 2)}\n`)
 }
+
+test('redacts bearer and registry credentials from package-manager failures', async () => {
+  const fixture = await createFixture({
+    runCommand: async () => {
+      throw Object.assign(new Error('Package manager rejected the install'), {
+        stdout:
+          'Authorization: Bearer synthetic-auth-value\nhttps://user:synthetic-pass@registry.example.test/package',
+        stderr: '',
+      })
+    },
+  })
+  try {
+    const error = await fixture
+      .manager()
+      .install('dsh-example')
+      .catch(value => value)
+    expect(error).toBeInstanceOf(Error)
+    expect(error.message).toContain('[redacted]')
+    expect(error.message).not.toContain('synthetic-auth-value')
+    expect(error.message).not.toContain('synthetic-pass')
+  } finally {
+    await fixture.remove()
+  }
+})
