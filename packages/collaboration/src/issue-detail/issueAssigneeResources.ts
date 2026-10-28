@@ -6,6 +6,7 @@ import type { WorkspaceProjectAgent } from "../ports/SharedWorkspaceApi";
 import type { CollaborationOwnedAgent, CollaborationProject } from "../types";
 import {
   createResourceAgentBindingInput,
+  isSelectableAgentResource,
   normalizeProjectAgent,
 } from "../project-agent-config/model";
 import type { SharedIssueDetailWorkspaceApi } from "./createSharedIssueDetailPort";
@@ -68,7 +69,7 @@ export function createIssueAssigneeResources(
     );
     return resources.filter(
       (resource) =>
-        resource.status === "available" &&
+        isSelectableAgentResource(resource) &&
         (local
           ? resource.location === "local"
           : resource.location !== "local") &&
