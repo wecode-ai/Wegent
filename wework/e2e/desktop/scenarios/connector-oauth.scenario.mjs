@@ -13,11 +13,7 @@
 
 import assert from 'node:assert/strict'
 
-import {
-  ACTIVE_COMPOSER_SELECTOR,
-  ACTIVE_WORKBENCH_SELECTOR,
-  selectE2EModel,
-} from '../modules/shared.mjs'
+import { ACTIVE_COMPOSER_SELECTOR, ACTIVE_WORKBENCH_SELECTOR } from '../modules/shared.mjs'
 import {
   CONNECTOR_OAUTH_SLUG,
   startConnectorOAuthProvider,
@@ -136,7 +132,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      await selectE2EModel(control)
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: PROMPT })
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
 
