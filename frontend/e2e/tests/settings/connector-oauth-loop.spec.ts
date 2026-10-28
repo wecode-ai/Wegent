@@ -185,18 +185,23 @@ test.describe('Connector app OAuth loop', () => {
     page,
     request,
   }) => {
-    // Expire the stored grant quickly and prove the refresh endpoint renews it.
-    await request.delete(`${API_URL}/api/connector-apps/${SLUG}/connection`, {
-      headers: authHeaders(adminToken),
-    })
-    await providerControl(request, { tokenTtlSeconds: 1, rejectRefresh: false })
-    await page.reload({ waitUntil: 'domcontentloaded' })
-    await authorizeThroughProvider(page)
-    await expect(page.getByTestId(`disconnect-connector-app-${SLUG}`)).toBeVisible({
-      timeout: 30_000,
-    })
-    await page.waitForTimeout(2_000)
+    /** Re-authorize with a grant that expires almost immediately. */
+    const authorizeShortLivedGrant = async () => {
+      await request.delete(`${API_URL}/api/connector-apps/${SLUG}/connection`, {
+        headers: authHeaders(adminToken),
+      })
+      await providerControl(request, { tokenTtlSeconds: 1, rejectRefresh: false })
+      await openIntegrations(page)
+      await authorizeThroughProvider(page)
+      await expect(page.getByTestId(`disconnect-connector-app-${SLUG}`)).toBeVisible({
+        timeout: 30_000,
+      })
+      await page.waitForTimeout(2_000)
+    }
 
+    // An expired grant is renewed from the stored refresh token.
+    await authorizeShortLivedGrant()
+    await providerControl(request, { tokenTtlSeconds: 3600, rejectRefresh: false })
     const refreshed = await request.post(
       `${API_URL}/api/connector-apps/${SLUG}/connection/refresh`,
       { headers: authHeaders(adminToken) }
@@ -211,14 +216,18 @@ test.describe('Connector app OAuth loop', () => {
     expect(afterRefresh.refreshes).toBeGreaterThan(0)
 
     // A revoked grant keeps the connection unusable and reopens authorization.
-    await providerControl(request, { tokenTtlSeconds: 1, rejectRefresh: true })
-    await page.waitForTimeout(2_000)
+    await authorizeShortLivedGrant()
+    await providerControl(request, { rejectRefresh: true })
     const rejected = await request.post(
       `${API_URL}/api/connector-apps/${SLUG}/connection/refresh`,
       { headers: authHeaders(adminToken) }
     )
-    expect(rejected.ok(), await rejected.text()).toBeTruthy()
-    expect(((await rejected.json()) as ConnectorConnectionView).status).toBe('expired')
+    // A revoked grant is a rejected request: the handler keeps the stored
+    // connection but reports the rejection instead of pretending to recover.
+    expect(rejected.status()).toBe(400)
+    expect(await rejected.text()).toContain('rejected')
+    const revoked = await installedApp(request, adminToken)
+    expect(revoked?.connection.status).toBe('expired')
 
     await openIntegrations(page)
     await expect(page.getByTestId(`authorize-connector-app-${SLUG}`)).toBeVisible({

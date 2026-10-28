@@ -122,6 +122,28 @@ describe('authorization after plugin use', () => {
     expect(mocks.health).not.toHaveBeenCalled()
   })
 
+  test('resumes a cloud connector with only the continuation prompt', async () => {
+    const onSend = vi.fn()
+    const { result } = renderRecovery(
+      [
+        {
+          ...authMessage,
+          content: 'connector_auth_required\nconnectorSlug=dingtalk_log',
+        },
+      ],
+      onSend
+    )
+    await waitFor(() => expect(result.current.pending?.cloud).toEqual({ slug: 'dingtalk_log' }))
+
+    await act(async () => result.current.completePending())
+
+    // The blocked step continues; the original request is not replayed.
+    expect(onSend).toHaveBeenCalledExactlyOnceWith(
+      i18n.t('common:workbench.plugins_local_auth_resume_prompt')
+    )
+    expect(result.current.pending).toBeNull()
+  })
+
   test.each(['pending', 'streaming'] as const)(
     'waits until a %s message becomes terminal before checking authorization',
     async status => {
