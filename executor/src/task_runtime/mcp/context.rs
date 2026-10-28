@@ -11,15 +11,22 @@ pub(super) fn space_context_grant(
         origin.and_then(|value| value.get(camel).or_else(|| value.get(snake)))
     };
     let role_value = origin_value("dispatchRole", "dispatch_role");
+    let has_role = role_value.is_some_and(|value| !value.is_null());
     let role = role_value
         .and_then(Value::as_str)
         .and_then(space_context_role);
     let dispatch_id = origin_value("dispatchId", "dispatch_id").and_then(id_value);
-    let dispatched = role_value.is_some()
-        || dispatch_id.is_some()
-        || origin.is_some_and(|value| {
-            value.get("type").and_then(Value::as_str) == Some("issue_dispatch")
-        });
+    // Human assignments and stand-ins retain personal execution authority. Their
+    // dispatch IDs correlate workflow activity, rather than confer an agent role.
+    let human_assignment = origin_value("humanAssignmentId", "human_assignment_id")
+        .and_then(id_value)
+        .is_some();
+    let dispatched = has_role
+        || (!human_assignment
+            && (dispatch_id.is_some()
+                || origin.is_some_and(|value| {
+                    value.get("type").and_then(Value::as_str) == Some("issue_dispatch")
+                })));
     if dispatched && role.is_none() {
         return Err("Issue dispatch requires a valid manager or executor role".to_owned());
     }
@@ -93,6 +100,66 @@ fn id_value(value: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_automation_null_dispatch_fields_do_not_declare_an_agent_role() {
+        let mut request = ExecutionRequest::default();
+        request.extra.insert(
+            "origin".into(),
+            json!({
+                "type":"project_automation", "cloudProjectId":"space-1", "loopItemId":"issue-1",
+                "dispatchId":null, "dispatchRole":null
+            }),
+        );
+        let grant = space_context_grant(&request).unwrap().unwrap();
+        assert_eq!(grant.space_id.as_deref(), Some("space-1"));
+        assert_eq!(grant.item_id.as_deref(), Some("issue-1"));
+        assert!(grant.role.is_none());
+        assert!(grant.categories.is_empty());
+    }
+
+    #[test]
+    fn human_assignments_keep_personal_authority_without_masking_agent_roles() {
+        for role_key in ["dispatchRole", "dispatch_role"] {
+            for human_key in ["humanAssignmentId", "human_assignment_id"] {
+                let mut origin = json!({
+                    "type":"issue_dispatch", "cloudProjectId":"space-1",
+                    "loopItemId":"issue-1", "dispatchId":"dispatch-1",
+                    human_key:"human-1"
+                });
+                for role in [
+                    None,
+                    Some(Value::Null),
+                    Some(json!("executor")),
+                    Some(json!("unknown")),
+                ] {
+                    origin.as_object_mut().unwrap().remove(role_key);
+                    if let Some(role) = role {
+                        origin[role_key] = role;
+                    }
+                    let mut request = ExecutionRequest::default();
+                    request.extra.insert("origin".into(), origin.clone());
+                    let grant = space_context_grant(&request);
+                    if origin[role_key] == "unknown" {
+                        assert!(grant.is_err());
+                    } else {
+                        let grant = grant.unwrap().unwrap();
+                        assert_eq!(grant.space_id.as_deref(), Some("space-1"));
+                        assert_eq!(grant.item_id.as_deref(), Some("issue-1"));
+                        assert_eq!(
+                            grant.role,
+                            if origin[role_key] == "executor" {
+                                Some(SpaceContextRole::Executor)
+                            } else {
+                                None
+                            }
+                        );
+                        assert_eq!(grant.categories.is_empty(), grant.role.is_none());
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn invalid_dispatch_context_never_becomes_a_personal_context() {

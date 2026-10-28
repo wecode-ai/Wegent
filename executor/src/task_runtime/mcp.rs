@@ -144,6 +144,15 @@ pub(crate) struct SpaceMcpClientConfig {
 }
 
 impl SpaceMcpRequestContext {
+    pub(super) fn shares_unbound_authority(&self, other: &Self) -> bool {
+        self.surface != WeworkMcpSurface::StandIn
+            && self.surface == other.surface
+            && self.grant.is_none()
+            && other.grant.is_none()
+            && self.backend_url == other.backend_url
+            && self.auth_token == other.auth_token
+    }
+
     pub(crate) fn new(
         grant: Option<SpaceContextGrant>,
         backend_url: Option<String>,

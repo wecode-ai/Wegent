@@ -3966,6 +3966,7 @@ fn codex_thread_plan_selects_resume_when_fork_is_absent() {
 #[test]
 fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
     let mut request = ExecutionRequest::default();
+    let loaded = Map::new();
     let plan = codex_thread_plan(
         None,
         None,
@@ -3974,19 +3975,25 @@ fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
         &request,
         &CodexLaunchConfig::default(),
     );
-    assert_eq!(config_reload_resume_thread_id(&plan, &request), None);
+    assert_eq!(
+        config_reload_resume_thread_id(&plan, &request, Some(&loaded)),
+        None
+    );
     for identity in ["stand_in", "stand_in_identity"] {
         request.extra.insert(
             "origin".into(),
             json!({"initiatedBy":identity,"askBeforeAct":true}),
         );
         assert_eq!(
-            config_reload_resume_thread_id(&plan, &request),
+            config_reload_resume_thread_id(&plan, &request, Some(&loaded)),
             Some("existing")
         );
     }
     request.extra.get_mut("origin").unwrap()["askBeforeAct"] = json!(false);
-    assert_eq!(config_reload_resume_thread_id(&plan, &request), None);
+    assert_eq!(
+        config_reload_resume_thread_id(&plan, &request, Some(&loaded)),
+        None
+    );
     let direct = codex_thread_plan(
         Some("existing"),
         None,
@@ -3995,7 +4002,10 @@ fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
         &request,
         &CodexLaunchConfig::default(),
     );
-    assert_eq!(config_reload_resume_thread_id(&direct, &request), None);
+    assert_eq!(
+        config_reload_resume_thread_id(&direct, &request, Some(&loaded)),
+        None
+    );
 }
 
 #[test]

@@ -46,7 +46,9 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       }
       const callId = () => `space-discovery-${stepIndex}`
       if (requestContainsToolOutput(body, callId())) {
-        steps[stepIndex].verify(JSON.parse(readMcpToolOutput(body, callId())))
+        const result = readMcpToolOutput(body, callId())
+        assert.doesNotThrow(() => JSON.parse(result), `${steps[stepIndex].name}: ${result}`)
+        steps[stepIndex].verify(JSON.parse(result))
         stepIndex++
       }
       const step = steps[stepIndex]
@@ -122,7 +124,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         project_id: project.id,
         task_id: issue.id,
       })
-      assert.equal(comments.filter(comment => comment.body === COMMENT).length, 1)
+      assert.equal(comments.filter(comment => comment.content === COMMENT).length, 1)
       // The checkpoint runner discards its isolated Executor home and workspace.
     },
   }

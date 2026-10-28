@@ -299,6 +299,11 @@ mod mcp_apps;
 #[path = "codex/connection_mcp.rs"]
 mod connection_mcp;
 
+#[path = "codex/mcp_reload.rs"]
+mod mcp_reload;
+#[cfg(test)]
+use mcp_reload::config_reload_resume_thread_id;
+
 pub use interaction::CodexRequestUserInputReceiver;
 use interaction::{interaction_value_key, InteractionAnswerRouter};
 
@@ -725,6 +730,7 @@ impl CodexAppServerClient {
                 &process_launch_config,
             )
             .await?;
+            state.thread_mcp_configurations.clear();
             state.process = Some(process);
             state.process_environment = process_environment;
             state.next_id = next_id;
@@ -855,6 +861,7 @@ impl CodexAppServerClient {
         state.active_threads.remove(thread_id);
         let generation = state.thread_generations.get(thread_id).copied()?;
         if !retain_subscription {
+            state.thread_mcp_configurations.remove(thread_id);
             state.thread_generations.remove(thread_id);
             state.idle_thread_generations.remove(thread_id);
             return Some((generation, Vec::new()));
@@ -913,6 +920,7 @@ impl CodexAppServerClient {
         let _lifecycle_guard = lifecycle_gate.lock().await;
         {
             let mut state = self.state.lock().await;
+            state.thread_mcp_configurations.remove(thread_id);
             state.thread_generations.remove(thread_id);
             state.idle_thread_generations.remove(thread_id);
         }
@@ -953,6 +961,7 @@ impl CodexAppServerClient {
             if !state.active_threads.contains_key(thread_id)
                 && state.thread_generations.get(thread_id) == Some(&generation)
             {
+                state.thread_mcp_configurations.remove(thread_id);
                 state.thread_generations.remove(thread_id);
                 state.idle_thread_generations.remove(thread_id);
             }
@@ -1065,6 +1074,7 @@ impl CodexAppServerClient {
                 start_persistent_codex_app_server(&self.binary, state.next_id, &launch_config)
                     .await?;
             initialize_elapsed = Some(initialize_started_at.elapsed());
+            state.thread_mcp_configurations.clear();
             state.process = Some(process);
             state.process_environment = process_environment;
             state.next_id = next_id;
@@ -1118,6 +1128,7 @@ impl CodexAppServerClient {
                 &process_launch_config,
             )
             .await?;
+            state.thread_mcp_configurations.clear();
             state.process = Some(process);
             state.process_environment = process_environment;
             state.next_id = next_id;
@@ -1266,6 +1277,7 @@ struct CodexAppServerSharedState {
     active_threads: HashMap<String, usize>,
     mcp_app_leases: HashMap<(String, String), Instant>,
     thread_generations: HashMap<String, u64>,
+    thread_mcp_configurations: HashMap<String, Map<String, Value>>,
     idle_thread_generations: HashMap<String, u64>,
     next_thread_generation: u64,
     thread_lifecycle_gates: HashMap<String, Weak<Mutex<()>>>,
@@ -1279,6 +1291,7 @@ async fn stop_codex_app_server_process(
     pending_error: Option<&str>,
 ) -> bool {
     state.process_environment.clear();
+    state.thread_mcp_configurations.clear();
     let Some(mut process) = state.process.take() else {
         return false;
     };
@@ -1299,6 +1312,7 @@ impl Default for CodexAppServerSharedState {
             active_threads: HashMap::new(),
             mcp_app_leases: HashMap::new(),
             thread_generations: HashMap::new(),
+            thread_mcp_configurations: HashMap::new(),
             idle_thread_generations: HashMap::new(),
             next_thread_generation: 1,
             thread_lifecycle_gates: HashMap::new(),
@@ -1800,33 +1814,6 @@ fn thread_id_to_activate_before_start(thread_plan: &CodexThreadPlan) -> Option<&
     }
 }
 
-fn config_reload_resume_thread_id<'a>(
-    thread_plan: &'a CodexThreadPlan,
-    request: &ExecutionRequest,
-) -> Option<&'a str> {
-    let CodexThreadStart::Request {
-        operation: "thread/resume",
-        params,
-    } = &thread_plan.start
-    else {
-        return None;
-    };
-    let has_project_space_config =
-        params
-            .get("config")
-            .and_then(Value::as_object)
-            .is_some_and(|config| {
-                config
-                    .keys()
-                    .any(|key| key.starts_with("mcp_servers.wework_space."))
-            });
-    (has_project_space_config
-        || crate::runtime_work::stand_in_requires_confirmation(request)
-        || crate::runtime_work::external_work_kind(request).is_some())
-    .then(|| params.get("threadId").and_then(Value::as_str))
-    .flatten()
-}
-
 fn thread_id_from_response(
     operation: &str,
     response: &Value,
@@ -1926,9 +1913,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             request,
             &launch_config,
         );
-        if let Some(thread_id) = config_reload_resume_thread_id(&thread_plan, request) {
-            client.release_thread_subscription(thread_id).await?;
-        }
+        client
+            .reload_thread_configuration_if_needed(&thread_plan, request)
+            .await?;
         if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
             client.mark_thread_active(thread_id).await;
             subscribed_thread_id = Some(thread_id.to_owned());
@@ -1943,6 +1930,12 @@ async fn run_codex_app_server_turn_on_shared_client(
                 );
             }
         }
+        let requested_mcp_configuration = match &thread_plan.start {
+            CodexThreadStart::Request { params, .. } => {
+                Some(mcp_reload::mcp_thread_configuration(params))
+            }
+            CodexThreadStart::Direct(_) => None,
+        };
         let thread_id = match thread_plan.start {
             CodexThreadStart::Direct(thread_id) => {
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
@@ -1990,6 +1983,14 @@ async fn run_codex_app_server_turn_on_shared_client(
         } else {
             client.mark_thread_active(&thread_id).await;
             subscribed_thread_id = Some(thread_id.clone());
+        }
+        if let Some(mcp_configuration) = requested_mcp_configuration {
+            client
+                .state
+                .lock()
+                .await
+                .thread_mcp_configurations
+                .insert(thread_id.clone(), mcp_configuration);
         }
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
