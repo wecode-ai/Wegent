@@ -98,37 +98,49 @@ function writeEvents(response, responseId, events) {
   response.end(createSse([responseCreated(responseId), ...events, responseCompleted(responseId)]))
 }
 
-const GATEWAY_RESTART_TIMEOUT_MS = 15_000
+const BACKEND_READY_TIMEOUT_MS = 30_000
+
+/**
+ * Wait for the gateway to reach the Python upstream before the checkpoint
+ * starts driving business requests.
+ *
+ * The gateway answers a plain-text `502` while the Python origin is
+ * unreachable. Retrying the business requests themselves would hide a real
+ * outage mid-checkpoint, so readiness is proven once with the Python-owned
+ * `/api/health` route and every later failure stays a test failure.
+ */
+async function waitForBackendFallback(baseUrl, timeoutMs = BACKEND_READY_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs
+  let lastStatus = 'no response'
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${baseUrl}/api/health`)
+      await response.text()
+      if (response.ok) return
+      lastStatus = `HTTP ${response.status}`
+    } catch (error) {
+      lastStatus = String(error)
+    }
+    await new Promise(resolve => setTimeout(resolve, 200))
+  }
+  assert.fail(`The gateway never reached its Python upstream: ${lastStatus}`)
+}
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
-  const deadline = Date.now() + GATEWAY_RESTART_TIMEOUT_MS
-  for (;;) {
-    const response = await fetch(`${baseUrl}${pathname}`, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-        ...options.headers,
-      },
-    })
-    const text = await response.text()
-    // The Rust gateway answers this plain-text 502 for the few seconds its
-    // Python upstream needs to restart; it never reached a handler.
-    if (
-      response.status === 502 &&
-      text.includes('fallback upstream unavailable') &&
-      Date.now() < deadline
-    ) {
-      await new Promise(resolve => setTimeout(resolve, 200))
-      continue
-    }
-    assert.equal(
-      response.ok,
-      true,
-      `${options.method ?? 'GET'} ${pathname} failed with HTTP ${response.status}: ${text}`
-    )
-    return text ? JSON.parse(text) : null
-  }
+  const response = await fetch(`${baseUrl}${pathname}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...options.headers,
+    },
+  })
+  const text = await response.text()
+  assert.ok(
+    response.ok,
+    `${options.method ?? 'GET'} ${pathname} failed with HTTP ${response.status}: ${text}`
+  )
+  return text ? JSON.parse(text) : null
 }
 
 async function waitForValue(load, predicate, message, timeoutMs) {
@@ -540,6 +552,7 @@ export async function createDesktopScenario({
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
       authToken = cloud.authToken
+      await waitForBackendFallback(backendUrl)
       await request('/api/admin/setup-complete', { method: 'POST' })
     },
 
