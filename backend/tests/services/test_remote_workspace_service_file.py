@@ -188,5 +188,6 @@ def test_download_file_uses_archive_friendly_timeout():
     assert content == b"zip"
     assert content_type == "application/zip"
     client_factory.assert_called_once_with(
-        timeout=REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS
+        timeout=REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS,
+        trust_env=False,
     )
