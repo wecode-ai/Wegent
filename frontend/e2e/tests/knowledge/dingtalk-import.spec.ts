@@ -237,7 +237,12 @@ test.describe('External DingTalk document import', () => {
         .toContain('Restricted preview')
 
       await page.reload({ waitUntil: 'domcontentloaded' })
-      await page.getByTestId(`document-row-${document.id}`).click()
+      // The row's center can overlap its inline Edit button at the CI viewport.
+      // Click the document name to open the content preview through the row handler.
+      await page
+        .getByTestId(`document-row-${document.id}`)
+        .getByText(document.name, { exact: true })
+        .click()
       await expect(page.getByRole('heading', { name: 'Restricted preview' })).toBeVisible({
         timeout: 30_000,
       })
