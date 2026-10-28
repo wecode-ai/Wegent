@@ -12,6 +12,11 @@ use std::time::Duration;
 
 const DINGTALK_API: &str = "https://api.dingtalk.com";
 
+struct DingTalkContext<'a> {
+    app: &'a AppState,
+    http: &'a brz_http::Client,
+}
+
 #[derive(FromMysqlRow)]
 struct Follow {
     follower_user_id: i64,
@@ -114,8 +119,7 @@ pub(crate) async fn notify(
                         Value::Null
                     };
                     dingtalk(
-                        app,
-                        &http,
+                        DingTalkContext { app, http: &http },
                         &spec["config"],
                         binding,
                         &binding_config,
@@ -317,8 +321,7 @@ async fn telegram(
     Ok(())
 }
 async fn dingtalk(
-    app: &AppState,
-    http: &brz_http::Client,
+    context: DingTalkContext<'_>,
     config: &Value,
     binding: &Value,
     options: &Value,
@@ -326,6 +329,7 @@ async fn dingtalk(
     message: &str,
     directives: &super::directives::Directives,
 ) -> Result<()> {
+    let DingTalkContext { app, http } = context;
     let client_id = config["client_id"].as_str().unwrap_or("");
     let client_secret = secret(config, "client_secret")?;
     if client_id.is_empty() || client_secret.is_empty() {
@@ -505,7 +509,7 @@ async fn card(
     }
     let final_frame = json!({"outTrackId":track,"cardTemplateId":template,"openSpaceId":space,"key":"content","content":content,"isFull":true,"guid":super::super::project::notifications::uuid(),"isFinalize":true});
     let response = http
-        .put(&format!("{api}/v1.0/card/streaming"))?
+        .put(format!("{api}/v1.0/card/streaming"))?
         .header("x-acs-dingtalk-access-token", access)
         .json(&final_frame)
         .send()
