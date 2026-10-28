@@ -331,7 +331,7 @@ export async function createDesktopScenario(options) {
         'The download request blocked until preparation completed'
       )
       assert.notEqual(accepted.phase, 'failed', 'The download failed to start')
-      await waitForUpdatePreparation(async () =>
+      const observedProgress = await waitForUpdatePreparation(async () =>
         JSON.parse(await control.command('getAppUpdateProgress', 'body'))
       )
       const transfers = requests.filter(request => request.path === `/${pair.to.name}`)
