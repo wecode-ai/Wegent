@@ -47,6 +47,7 @@ use brz_redis::Redis;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 
+use super::knowledge_access::KnowledgeAccessError;
 use super::resolution::{KIND_COLUMNS, KindRow};
 use crate::permissions::{
     EntityResolvers, ResolutionPurpose, accessible_namespace_ids, effective_roles_in_groups,
@@ -300,7 +301,11 @@ impl<'a, R: Redis> AclContextSource<'a, R> {
     }
 
     /// `build_direct_access_query_context(db, user_id, candidate_ids=...)`.
-    pub async fn build(&self, user_id: i64, candidate_ids: &[i64]) -> MysqlResult<AclQueryContext> {
+    pub async fn build(
+        &self,
+        user_id: i64,
+        candidate_ids: &[i64],
+    ) -> Result<AclQueryContext, KnowledgeAccessError> {
         build_acl_query_context(
             self.mysql,
             self.resolvers,
@@ -314,6 +319,16 @@ impl<'a, R: Redis> AclContextSource<'a, R> {
     /// The shared MySQL client every read of this context runs on.
     pub fn mysql(&self) -> &MysqlService {
         self.mysql
+    }
+
+    /// The deployment's cache client (`_check_kb_access` consults it).
+    pub fn redis(&self) -> Option<&'a R> {
+        self.redis
+    }
+
+    /// The registered entity resolvers (`_check_kb_access`'s ACL chain).
+    pub fn resolvers(&self) -> &'a EntityResolvers<R> {
+        self.resolvers
     }
 
     /// `get_effective_role_in_group(db, user_id, group_name)`: the caller's
@@ -340,7 +355,19 @@ pub async fn build_acl_query_context<R: Redis>(
     redis: Option<&R>,
     user_id: i64,
     candidate_ids: &[i64],
-) -> MysqlResult<AclQueryContext> {
+) -> Result<AclQueryContext, KnowledgeAccessError> {
+    // `build_direct_access_query_context` starts with `_get_user_or_raise`
+    // (`knowledge_visibility_query.py:96` -> `:645`): the full `users` row is
+    // read (`db.query(User).filter(User.id == user_id).first()`) before any
+    // group read, and a missing row raises `ValueError("User not found")`.
+    // The create endpoint renders that `ValueError` as a `400` with the
+    // message as its detail.
+    let user: Option<crate::auth::UserRow> = mysql
+        .fetch_optional(crate::user_reader::USER_BY_ID_QUERY, (user_id,))
+        .await?;
+    if user.is_none() {
+        return Err(KnowledgeAccessError::UserNotFound);
+    }
     let groups = user_groups(mysql, resolvers, redis, user_id).await?;
     let orgs = organization_names(mysql).await?;
     let org_set: HashSet<&str> = orgs.iter().map(String::as_str).collect();
@@ -645,7 +672,7 @@ pub async fn get_acl_accessible_knowledge_base_ids<R: Redis>(
     acl: &AclContextSource<'_, R>,
     user_id: i64,
     candidate_ids: &[i64],
-) -> MysqlResult<Vec<i64>> {
+) -> Result<Vec<i64>, KnowledgeAccessError> {
     let candidates = deduplicate(candidate_ids);
     if candidates.is_empty() {
         return Ok(Vec::new());
@@ -676,6 +703,7 @@ pub async fn get_acl_accessible_knowledge_base_ids<R: Redis>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::responses::create::knowledge_access::knowledge_access_error;
     use serde_json::json;
 
     /// `resource_members.resource_id` is a bigint column: the recorded read
@@ -831,6 +859,92 @@ mod tests {
                 BindingArg::Int(7),
                 BindingArg::Str("42".to_string()),
             ]
+        );
+    }
+
+    /// `build_direct_access_query_context` (`knowledge_visibility_query.py:96`)
+    /// begins with `_get_user_or_raise` (`:645`): the full `users` row is the
+    /// first statement the ACL context issues, and the build stops when the
+    /// row is missing (the Source's `ValueError`, rendered as a 500).
+    #[tokio::test]
+    async fn acl_context_reads_the_user_row_before_any_group_read() {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mysql = crate::connect_mysql(&format!(
+                "mysql://test:test@{}/test?ssl-mode=disabled",
+                listener.local_addr().unwrap()
+            ))
+            .unwrap();
+            let (stop, stopped) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(
+                crate::sql_test_support::mysql_pool_server::capture_queries_until(
+                    listener, stopped,
+                ),
+            );
+            let resolvers = EntityResolvers::public(
+                MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test")
+                    .expect("lazy pool"),
+            );
+            let result = build_acl_query_context(
+                &mysql,
+                &resolvers,
+                None::<&brz_redis::RedisService>,
+                477,
+                &[263_078],
+            )
+            .await;
+            assert!(
+                result.is_err(),
+                "the fake server answers with a parse error"
+            );
+            stop.send(()).unwrap();
+            let queries = server.await.unwrap();
+            assert_eq!(queries.len(), 1, "{queries:?}");
+            assert_eq!(
+                normalize(&queries[0]),
+                normalize(crate::user_reader::USER_BY_ID_QUERY),
+                "the ACL context's first read is the team owner's users row"
+            );
+            mysql.close().await;
+        })
+        .await
+        .expect("the user read should be the first prepared statement");
+    }
+
+    /// `get_acl_accessible_knowledge_base_ids` returns before
+    /// `build_direct_access_query_context` when the candidate set is empty, so
+    /// the ACL path never reads a user row for a task without defaults. The
+    /// lazy pool would fail the test if any statement attempted a connection.
+    #[tokio::test]
+    async fn an_empty_access_set_never_reads_the_user_row() {
+        let mysql =
+            MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test").expect("lazy pool");
+        let resolvers = EntityResolvers::public(
+            MysqlService::connect_lazy("mysql://test:test@127.0.0.1:1/test").expect("lazy pool"),
+        );
+        let acl = AclContextSource::new(&mysql, &resolvers, None::<&brz_redis::RedisService>);
+        let ids = get_acl_accessible_knowledge_base_ids(&acl, 477, &[])
+            .await
+            .expect("the empty access set short-circuits before any read");
+        assert!(ids.is_empty());
+    }
+
+    /// `_get_user_or_raise`'s `ValueError("User not found")` is not handled by
+    /// `build_execution_request`, so the create endpoint's `except ValueError`
+    /// (`openapi_responses.py:1202-1210`) answers `400` with the message as
+    /// `detail`. A store failure keeps the dependency `500`.
+    #[test]
+    fn a_missing_user_row_is_the_source_value_error() {
+        let missing = knowledge_access_error(KnowledgeAccessError::UserNotFound);
+        assert_eq!(missing.status(), brz_http_server::StatusCode::BAD_REQUEST);
+        assert_eq!(missing.detail_message(), Some("User not found"));
+
+        let failed = knowledge_access_error(KnowledgeAccessError::Mysql(
+            brz_mysql::MysqlError::RowNotFound,
+        ));
+        assert_eq!(
+            failed.status(),
+            brz_http_server::StatusCode::INTERNAL_SERVER_ERROR
         );
     }
 }

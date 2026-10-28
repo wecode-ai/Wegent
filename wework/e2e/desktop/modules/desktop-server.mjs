@@ -932,6 +932,7 @@ class DesktopE2EServer {
         'skill_mention_display',
         'connector_auth_unmatched_resume',
         'supervisor',
+        'harness_app_models',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
@@ -2160,6 +2161,12 @@ class DesktopE2EServer {
 
     if (isReplyPredictionRequest(body)) {
       this.writeLocalAssistantMessage(response, { protocol }, JSON.stringify({ suggestion: null }))
+      return
+    }
+
+    if (this.scenario === 'harness_app_models') {
+      this.recordScenarioRequest('harness_app_models', modelRequest)
+      this.writeLocalAssistantMessage(response, { protocol }, 'HARNESS_APP_MODEL_OK')
       return
     }
 

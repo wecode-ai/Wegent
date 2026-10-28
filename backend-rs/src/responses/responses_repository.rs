@@ -23,6 +23,7 @@
 use brz_json::OpaqueJson;
 use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow};
 use chrono::NaiveDateTime;
+use serde_json::Value;
 
 /// One `tasks`/`tasks_{:04}` row projection used by the response flow.
 #[derive(Debug)]
@@ -58,8 +59,10 @@ pub struct SubtaskRow {
     pub role: String,
     /// Status enum text (`PENDING` / `RUNNING` / ...).
     pub status: String,
-    /// `result` JSON column; SQL NULL stays `None`.
-    pub result: Option<Json<brz_json::JsonProjection<super::output_builder::ResultInput>>>,
+    /// `result` JSON column kept as the raw document: SQL NULL stays `None`
+    /// and any present value (object or not) is retained, so the builder can
+    /// apply the source's `isinstance(result, dict)` guard itself.
+    pub result: Option<Json<Value>>,
 }
 
 impl SubtaskRow {
@@ -278,6 +281,21 @@ pub async fn get_task_by_states_active_owned(
 ) -> MysqlResult<Option<TaskRow>> {
     let row = task_store
         .get_active_task_owned(task_id, owner_user_id)
+        .await?;
+    row.as_ref().map(TaskRow::from_row).transpose()
+}
+
+/// [`get_task_by_states_active_owned`] on the caller's request transaction:
+/// the source resolves the `previous_response_id` Task on the request's own
+/// session, before team and model resolution.
+pub async fn get_task_by_states_active_owned_on(
+    sql: &mut dyn crate::request_sql::RequestSql,
+    task_store: &dyn crate::task_store::TaskStore,
+    task_id: i64,
+    owner_user_id: i32,
+) -> MysqlResult<Option<TaskRow>> {
+    let row = task_store
+        .get_active_task_owned_on(sql, task_id, owner_user_id)
         .await?;
     row.as_ref().map(TaskRow::from_row).transpose()
 }

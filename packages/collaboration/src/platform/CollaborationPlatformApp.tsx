@@ -99,9 +99,9 @@ import {
 import {
   isCurrentDeviceCollaborationAgent,
   WorkspaceCollaborationGroupsConfiguration,
-  WorkspaceMembersConfiguration,
   type WorkspaceResourceCommands,
 } from "./WorkspaceResourceConfiguration";
+import { WorkspaceGroupsPanel, WorkspaceMembersPanel } from './WorkspaceParticipantPanels'
 
 export type CollaborationProjectRendererWorkspaceContext =
   | CollaborationWorkspace
@@ -2765,11 +2765,11 @@ export function CollaborationPlatformApp({
                 agentsLabel={messages.agents}
                 ariaLabel={messages.collaborationParticipants}
                 groupsContent={
-                  <WorkspaceCollaborationGroupsConfiguration
+                  <WorkspaceGroupsPanel
+                    key={workspace.id}
+                    api={api}
                     workspace={workspace}
-                    groups={state.collaborationGroups}
-                    members={state.members}
-                    agents={state.agents}
+                    translate={translate}
                     locale={locale}
                     currentUserId={host.currentUser?.id}
                     commands={commands}
@@ -2783,9 +2783,11 @@ export function CollaborationPlatformApp({
                 initialTab={initialWorkspaceParticipantTab}
                 membersContent={
                   workspace.location === "cloud" ? (
-                    <WorkspaceMembersConfiguration
+                    <WorkspaceMembersPanel
+                      key={workspace.id}
+                      api={api}
                       workspace={workspace}
-                      members={state.members}
+                      translate={translate}
                       locale={locale}
                       commands={commands}
                     />
