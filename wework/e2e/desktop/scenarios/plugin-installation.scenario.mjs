@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createDesktopScenario as createToggleScenario } from './plugin-toggle-persistence.scenario.mjs'
+import { refreshPluginInventory } from '../modules/plugin-inventory-state.mjs'
 import {
   accountPlugin,
   openPlugin,
@@ -28,18 +29,15 @@ export function createDesktopScenario(options) {
       const fixture = { ...release, slug }
       try {
         await openPlugin(control, fixture)
-        await control.command('click', testId('plugins-refresh-button'))
+        await refreshPluginInventory(control)
         const install = testId(`plugin-marketplace-install-${release.pluginId}`)
-        await control.command('waitFor', install, {
-          timeoutMs: options.workbenchReadyTimeoutMs,
-        })
-        await control.command('click', install)
+        await control.command('clickWhenEnabled', install)
         await control.command('waitFor', testId('plugin-install-unofficial-warning'))
         assert.equal(await accountPlugin(cloud, slug), undefined)
         await control.command('click', testId('install-plugin-dialog-cancel'))
         await control.command('waitFor', install)
         assert.equal(await accountPlugin(cloud, slug), undefined)
-        await control.command('click', install)
+        await control.command('clickWhenEnabled', install)
         await control.command('waitFor', testId('plugin-install-unofficial-warning'))
         await control.command('click', testId('install-plugin-dialog-confirm'))
         await control.command('waitFor', testId(`plugin-marketplace-actions-${release.pluginId}`), {

@@ -4,6 +4,46 @@ set -euo pipefail
 trap 'printf "macOS E2E build contract failed at line %s\n" "$LINENO" >&2' ERR
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+ruby -ryaml - "$script_dir/../workflows" <<'RUBY'
+workflow_dir = ARGV.fetch(0)
+{
+  'wework-e2e.yml' => ['wework-desktop-memory-e2e', 'macos-build'],
+  'ci-cache-warmup.yml' => ['warm-wework-macos-electron', 'macos-digests']
+}.each do |workflow, (job, resolver_id)|
+  steps = YAML.load_file(File.join(workflow_dir, workflow)).fetch('jobs').fetch(job).fetch('steps')
+  resolver_index = steps.index { |step| step['id'] == resolver_id }
+  abort "#{workflow}: missing early source digest resolver" unless resolver_index
+  resolver = steps.fetch(resolver_index)
+  {
+    'EXECUTOR_SOURCE_DIGEST' => ['executor-source-digest', %w[executor/Cargo.toml executor/Cargo.lock executor/src/**/*.rs executor/vendor/**]],
+    'BACKEND_RS_SOURCE_DIGEST' => ['backend-rs-source-digest', %w[backend-rs/Cargo.toml backend-rs/Cargo.lock backend-rs/src/**/*.rs]]
+  }.each do |variable, (output, inputs)|
+    expression = "${{ hashFiles(#{inputs.map { |path| "'#{path}'" }.join(', ')}) }}"
+    abort "#{workflow}: incomplete source hash inputs" unless resolver.fetch('env').fetch(variable) == expression
+    abort "#{workflow}: source digest is not exported" unless resolver.fetch('run').include?(%Q{echo "#{output}=$#{variable}" >> "$GITHUB_OUTPUT"})
+  end
+  steps.each_with_index do |step, index|
+    if index < resolver_index && (step['uses'] || '').include?('cache')
+      abort "#{workflow}: source hashing must precede dependency restoration"
+    end
+    next if index == resolver_index
+    abort "#{workflow}: source hashing after dependency restoration can time out" if step.to_s.match?(/hashFiles\([^)]*src\/\*\*/)
+  end
+  {
+    'executor' => 'executor-source-digest',
+    'Rust backend' => 'backend-rs-source-digest'
+  }.each do |runtime, output|
+    step = steps.find { |item| item['name'] == "Restore macOS arm64 #{runtime} runtime" }
+    reference = "${{ steps.#{resolver_id}.outputs.#{output} }}"
+    abort "#{workflow}: runtime cache must reuse the source digest" unless step.fetch('with').fetch('key').end_with?(reference)
+    oci_steps = steps.select { |item| item['name'].match?(/macOS arm64 runtimes (from|to) OCI/) }
+    variable = runtime == 'executor' ? 'EXECUTOR_SOURCE_REF' : 'BACKEND_SOURCE_REF'
+    abort "#{workflow}: OCI runtimes must reuse the cache source digest" unless oci_steps.all? { |item| item.fetch('env').fetch(variable).end_with?(reference) }
+  end
+end
+RUBY
+
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 
