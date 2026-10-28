@@ -17,6 +17,19 @@ async function createStore(): Promise<{ root: string; store: RendererStorageStor
 }
 
 describe('RendererStorageStore', () => {
+  it('drains accepted writes and closes the renderer persistence boundary before snapshots', async () => {
+    const { root, store } = await createStore()
+    const first = store.update({ clear: false, changes: { marker: 'before' } })
+    const second = store.update({ clear: false, changes: { theme: 'dark' } })
+    await store.close()
+    await Promise.all([first, second])
+    await expect(store.update({ clear: true, changes: {} })).rejects.toThrow('closed')
+    await expect(store.clear()).rejects.toThrow('closed')
+    expect(
+      JSON.parse(await readFile(join(root, 'renderer-local-storage.json'), 'utf8')).entries
+    ).toEqual({ marker: 'before', theme: 'dark' })
+  })
+
   it('preserves browser storage until a durable snapshot exists', async () => {
     const { store } = await createStore()
     const cleanup = {

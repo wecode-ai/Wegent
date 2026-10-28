@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 
 import { localHarnessCliPath, localHarnessCliVersion } from '../modules/local-harness-cli.mjs'
 import { createSharedSkillRuntime } from '../modules/shared-skill-runtime.mjs'
+import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   responseCompleted,
   responseCreated,
@@ -177,16 +178,10 @@ async function waitForTaskIdle(control, taskRowTestId, timeoutMs) {
 }
 
 async function configureClaude(control, executablePath, version, timeoutMs) {
+  await ensureExperimentalFeaturesEnabled(control)
   await control.command('click', '[data-testid="settings-button"]')
   await control.command('click', '[data-testid="settings-menu-button"]')
-  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (!snapshot.testIds.includes('settings-nav-harnesses')) {
-    await control.command('waitFor', '[data-testid="general-experimental-features-toggle"]', {
-      timeoutMs,
-    })
-    await control.command('click', '[data-testid="general-experimental-features-toggle"]')
-    await control.command('waitFor', '[data-testid="settings-nav-harnesses"]', { timeoutMs })
-  }
+  await control.command('waitFor', '[data-testid="settings-nav-harnesses"]', { timeoutMs })
   await control.command('click', '[data-testid="settings-nav-harnesses"]')
   await control.command('waitFor', '[data-testid="harness-settings-page"]', { timeoutMs })
   await control.command('setLocalHarnessExecutablePaths', 'body', {

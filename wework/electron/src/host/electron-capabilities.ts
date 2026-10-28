@@ -44,7 +44,7 @@ import { FeedbackBundleManager, type FeedbackExportRequest } from './feedback-bu
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
 import type { TrayActivation, TrayMenuState, TraySnapshot } from './tray-manager.js'
 import type { StartupSplashSnapshot } from './startup-splash.js'
-import type { AppUpdateService, WeworkUpdateChannel } from './app-update-service.js'
+import type { AppUpdateController, WeworkUpdateChannel } from './app-update-service.js'
 import type { SchemeQueue } from './scheme-queue.js'
 import {
   listLocalWorkspaceOpeners,
@@ -128,7 +128,7 @@ export interface ProcessExplorerHostService {
 export interface ElectronDesktopServices {
   executorHome: string
   processExplorer: ProcessExplorerHostService
-  appUpdates?: AppUpdateService
+  appUpdates?: AppUpdateController
   browserAnnotations?: BrowserAnnotationController
   applicationMenu?: () => ApplicationMenu | null
   updateApplicationMenuCapabilities?: (
@@ -1254,7 +1254,7 @@ export function registerRendererStorageCapabilities(
 
 export function registerAppUpdateCapabilities(
   router: HostCapabilityRouter,
-  appUpdates: AppUpdateService | undefined
+  appUpdates: AppUpdateController | undefined
 ): void {
   router.register('appUpdate.check', params =>
     requiredAppUpdates(appUpdates).check(updateChannelParam(params))
@@ -1273,6 +1273,15 @@ export function registerAppUpdateCapabilities(
   )
   router.register('appUpdate.install', (_params, context) => {
     context.deferUntilResponseSent(requiredAppUpdates(appUpdates).createInstallAction())
+  })
+  router.register(
+    'appUpdate.previousRelease',
+    () => requiredAppUpdates(appUpdates).previousRelease?.() ?? null
+  )
+  router.register('appUpdate.rollback', (params, context) => {
+    const rollback = requiredAppUpdates(appUpdates).createRollbackAction
+    if (!rollback) throw new Error('Release rollback is unavailable')
+    context.deferUntilResponseSent(rollback.call(appUpdates, params.restoreConfirmed === true))
   })
 }
 
@@ -2013,7 +2022,7 @@ function compact<Value extends object>(value: Value): Value {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as Value
 }
 
-function requiredAppUpdates(value: AppUpdateService | undefined): AppUpdateService {
+function requiredAppUpdates(value: AppUpdateController | undefined): AppUpdateController {
   if (!value) throw new HostCapabilityError('capability_unavailable', 'App updates are unavailable')
   return value
 }
