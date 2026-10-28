@@ -65,6 +65,20 @@ fn compatibility_catalogs_keep_tools_and_configured_windows_without_official_aut
 }
 
 #[test]
+fn shared_catalog_preserves_the_previous_protocol_neutral_capabilities() {
+    let catalog = catalog();
+    let models = catalog["models"].as_array().unwrap();
+    let profile = |slug| models.iter().find(|model| model["slug"] == slug).unwrap();
+    let previous = profile("wework-gpt-5.6-sol");
+    let shared = profile("wework-gpt-6.1-sol");
+    for (key, value) in previous.as_object().unwrap() {
+        if !matches!(key.as_str(), "slug" | "display_name" | "description") {
+            assert_eq!(&shared[key], value, "shared compatibility changed {key}");
+        }
+    }
+}
+
+#[test]
 fn cloud_model_identity_resolves_to_protocol_independent_compatibility_profiles() {
     for (model_id, expected) in [
         (" GPT-6.1-Sol ", "wework-gpt-6.1-sol"),

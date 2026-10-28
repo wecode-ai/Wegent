@@ -91,21 +91,6 @@
       "display_name": "GPT-6.1-Sol",
       "description": "Wework GPT 6.1 Sol compatibility profile",
       "apply_patch_tool_type": "freeform",
-      "default_reasoning_level": "high",
-      "supported_reasoning_levels": [
-        {
-          "effort": "low",
-          "description": "Fast responses with lighter reasoning"
-        },
-        {
-          "effort": "high",
-          "description": "Greater reasoning depth for complex work"
-        },
-        {
-          "effort": "max",
-          "description": "Maximum reasoning for long-horizon tasks"
-        }
-      ],
       "context_window": 272000,
       "max_context_window": null,
       "supports_search_tool": true
