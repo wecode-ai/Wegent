@@ -827,6 +827,11 @@ jobs:
             -FilePath $nodePath `
             @arguments
 
+      - name: Stop Windows standard-user processes
+        if: always()
+        shell: pwsh
+        run: ./.github/scripts/stop-windows-standard-user-processes.ps1
+
       - name: Report Windows standard-user startup failures
         if: always() && steps.windows-core-e2e.outcome == 'failure'
         run: node .github/scripts/report-wework-desktop-e2e-failures.mjs

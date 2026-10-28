@@ -1,3 +1,5 @@
+import { UPGRADE_CHECKPOINTS, UPGRADE_CHECKPOINT_GROUP } from './upgrade-suite.mjs'
+
 export const DESKTOP_CHECKPOINTS = [
   'mcp-apps',
   'remote-device-onboarding',
@@ -142,6 +144,7 @@ export const DESKTOP_CHECKPOINTS = [
   'split-workbench',
   'release-package-startup',
   'app-update-full',
+  ...UPGRADE_CHECKPOINTS,
   'component-update',
   'renderer-crash-recovery',
   'native-window-startup',
@@ -200,6 +203,7 @@ export const PLUGIN_SEGMENTS = [
 ]
 
 export const DESKTOP_CHECKPOINT_GROUPS = new Map([
+  [UPGRADE_CHECKPOINT_GROUP, UPGRADE_CHECKPOINTS],
   [
     'collaboration-issue-comment-notification',
     ['collaboration-issue-comment-notification-navigation', 'issue-notification-read'],

@@ -51,6 +51,7 @@ function fixture() {
 describe('project handoff mention fixture preparation', () => {
   beforeEach(() => {
     jest.useFakeTimers()
+    jest.setSystemTime(1250)
   })
 
   afterEach(() => {
@@ -58,7 +59,7 @@ describe('project handoff mention fixture preparation', () => {
     jest.restoreAllMocks()
   })
 
-  it('waits for every late completion and the whole precision barrier before touching once', async () => {
+  it('waits for concurrent completions and the shared second boundary before touching once', async () => {
     const input = fixture()
     const completions = input.taskIds.map(() => deferred())
     input.waitForCompleted.mockImplementation(taskId => {
@@ -66,23 +67,19 @@ describe('project handoff mention fixture preparation', () => {
     })
     const preparing = prepareProjectMentionTasks(input)
 
-    expect(input.waitForCompleted.mock.calls).toEqual([[421]])
+    expect(input.waitForCompleted.mock.calls.map(([taskId]) => taskId)).toEqual(input.taskIds)
     completions[0].resolve()
-    await Promise.resolve()
-    expect(input.waitForCompleted.mock.calls).toEqual([[421], [423]])
     await jest.advanceTimersByTimeAsync(2_000)
     expect(input.touchTask).not.toHaveBeenCalled()
     expect(input.readProjectTasks).not.toHaveBeenCalled()
 
     completions[1].resolve()
-    await Promise.resolve()
-    expect(input.waitForCompleted.mock.calls).toEqual([[421], [423], [425]])
+    expect(input.waitForCompleted.mock.calls.map(([taskId]) => taskId)).toEqual(input.taskIds)
     await jest.advanceTimersByTimeAsync(2_000)
     expect(input.touchTask).not.toHaveBeenCalled()
 
     completions[2].resolve()
-    await Promise.resolve()
-    await jest.advanceTimersByTimeAsync(1_099)
+    await jest.advanceTimersByTimeAsync(750)
     expect(input.touchTask).not.toHaveBeenCalled()
     expect(input.readProjectTasks).not.toHaveBeenCalled()
 
@@ -103,7 +100,7 @@ describe('project handoff mention fixture preparation', () => {
     await jest.runAllTimersAsync()
     await preparing
 
-    expect(input.waitForCompleted.mock.calls).toEqual([[421], [423], [425]])
+    expect(input.waitForCompleted.mock.calls.map(([taskId]) => taskId)).toEqual(input.taskIds)
     expect(input.touchTask.mock.calls).toEqual(input.visibleTasks.map(task => [task]))
     expect(input.readProjectTasks).toHaveBeenCalledTimes(1)
   })

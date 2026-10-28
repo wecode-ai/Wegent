@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { settleMentionTasks } from './mention-task-fixtures'
 
 interface MentionTask {
   task_id: number
@@ -28,11 +29,7 @@ export async function prepareProjectMentionTasks({
   touchTask,
   readProjectTasks,
 }: ProjectMentionSetup): Promise<void> {
-  for (const taskId of taskIds) await waitForCompleted(taskId)
-
-  // Project summaries truncate updated_at to seconds. Cross that precision
-  // boundary once so a smaller target id cannot lose a timestamp tie to fillers.
-  await new Promise(resolve => setTimeout(resolve, 1_100))
+  await settleMentionTasks(taskIds, waitForCompleted)
   for (const task of visibleTasks) await touchTask(task)
 
   const tasks = await readProjectTasks()

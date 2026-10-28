@@ -402,7 +402,7 @@ describe('bundled plugin resources', () => {
       'utf8'
     )
 
-    expect(workflow).toMatch(/name: macOS arm64\s+runner: macos-14\s+platform: macos\s+arch: arm64/)
+    expect(workflow).toMatch(/name: macOS arm64\s+runner: macos-15\s+platform: macos\s+arch: arm64/)
     expect(workflow).toMatch(
       /name: macOS x64\s+runner: macos-15-intel\s+platform: macos\s+arch: x64/
     )
@@ -421,9 +421,8 @@ describe('bundled plugin resources', () => {
     expect(workflow).toContain('wework/test-results/desktop-e2e/')
     expect(workflow).toContain('WEWORK_ELECTRON_DEPENDENCIES_READY: "true"')
     expect(workflow).toContain('WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"')
-    expect(workflow).toContain(
-      '--parallel-segments release-package-startup,component-update,app-update-full'
-    )
+    expect(workflow).toContain('--parallel-segments release-package-startup,component-update')
+    expect(workflow).toContain('e2e:desktop -- --segment app-update-full')
     expect(workflow).toContain('windows-latest')
     expect(workflow).toContain('ubuntu-latest')
     expect(workflow).toContain('macOS arm64')

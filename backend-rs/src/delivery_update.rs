@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use crate::board_snapshot::repository::BoardSnapshotRepository;
 use crate::delivery_storage;
 use crate::loop_item_attachments::{handler::require_item_view_access, repository::get_task_item};
+use crate::loop_node_storage;
 use crate::loop_tasks::{
     auth::FlexibleUser, http_error::HttpError, loop_repository::has_permission,
 };
@@ -393,14 +394,7 @@ async fn commit_update<T: MysqlTransaction>(
         tx.execute("DELETE FROM loop_items WHERE id = ? AND delivery_id = ? AND resource_type = 'delivery_asset'", (asset.id.as_str(), delivery.id.as_str())).await?;
     }
     if !assets.is_empty() {
-        #[derive(FromMysqlRow)]
-        struct RequiredColumn {
-            name: String,
-        }
-        let required: Vec<RequiredColumn> = tx.fetch_all(
-            "SELECT COLUMN_NAME AS name FROM information_schema.columns WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'loop_items' AND IS_NULLABLE = 'NO'", (),
-        ).await?;
-        let required: HashSet<_> = required.into_iter().map(|column| column.name).collect();
+        let required = loop_node_storage::required_columns(tx).await?;
         let sql = asset_insert_sql(&required);
         for asset in assets {
             let content_type = asset
@@ -430,7 +424,7 @@ async fn commit_update<T: MysqlTransaction>(
 
 /// Match the Python LoopNode adapter: sentinels apply only to actual NOT NULL columns.
 fn asset_insert_sql(required: &HashSet<String>) -> String {
-    let mut columns = vec![
+    let columns = [
         "id",
         "resource_type",
         "project_space",
@@ -452,7 +446,7 @@ fn asset_insert_sql(required: &HashSet<String>) -> String {
         "created_at",
         "updated_at",
     ];
-    let mut values = vec![
+    let values = [
         "?",
         "'delivery_asset'",
         "'default'",
@@ -474,34 +468,7 @@ fn asset_insert_sql(required: &HashSet<String>) -> String {
         "UTC_TIMESTAMP()",
         "UTC_TIMESTAMP()",
     ];
-    for (names, value) in [
-        (
-            "parent_id public_id project_key name title storage_prefix source status priority current_delivery_id device_id task_id task_title path source_task_binding_id markdown_object_key chat_object_key manifest_object_key",
-            "''",
-        ),
-        (
-            "sequence_number created_by_user_id updated_by_user_id assignee_user_id assignee_team_id user_id added_by_user_id local_project_id is_default task_user_id backend_task_id linked_by_user_id",
-            "0",
-        ),
-        (
-            "start_at due_at linked_at unlinked_at completed_at delivered_at deleted_at",
-            "'1970-01-01 00:00:01'",
-        ),
-        ("source_task_snapshot metadata", "'{}'"),
-    ] {
-        for name in names
-            .split_whitespace()
-            .filter(|name| required.contains(*name))
-        {
-            columns.push(name);
-            values.push(value);
-        }
-    }
-    format!(
-        "INSERT INTO loop_items ({}) VALUES ({})",
-        columns.join(", "),
-        values.join(", ")
-    )
+    loop_node_storage::insert_sql(&columns, &values, required)
 }
 
 async fn cleanup(state: &AppState, keys: &[&str]) {

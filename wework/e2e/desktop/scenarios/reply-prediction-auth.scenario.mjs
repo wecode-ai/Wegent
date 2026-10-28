@@ -116,7 +116,9 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
             ...shellCommandResponse(
               body,
               ENV_CALL,
-              `test -x "$WEGENT_EXECUTOR_BINARY" && test "$WEGENT_TASK_WORKSPACE" = "$PWD" && printf '${ENV_OK}\\n'`,
+              process.platform === 'win32'
+                ? `if (-not (Test-Path -LiteralPath $env:WEGENT_EXECUTOR_BINARY -PathType Leaf)) { throw 'Executor binary is unavailable' }; if ([IO.Path]::GetFullPath($env:WEGENT_TASK_WORKSPACE) -ne (Get-Location).Path) { throw 'Task workspace differs from the shell directory' }; Write-Output '${ENV_OK}'`
+                : `test -x "$WEGENT_EXECUTOR_BINARY" && test "$WEGENT_TASK_WORKSPACE" = "$PWD" && printf '${ENV_OK}\\n'`,
               workspacePath
             ),
             responseCompleted(id),

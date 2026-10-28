@@ -2920,6 +2920,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(await checkForWeworkUpdate('stable'))
     case 'getAppUpdateProgress':
       return JSON.stringify(await invokeDesktopHost('appUpdate.downloadProgress'))
+    case 'getInstalledAppVersion':
+      return JSON.stringify(await invokeDesktopHost('app.getVersion'))
+    case 'quitApp':
+      await invokeDesktopHost('app.quit')
+      return 'quitting'
     // Starts the host download without following it to completion, so a
     // scenario can observe that accepting the download does not wait for the
     // whole transfer. downloadPendingAppUpdate remains the end-to-end command.
