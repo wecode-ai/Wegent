@@ -7,7 +7,7 @@
 Run directly, outside pytest's service-mocking conftest. CI supplies the same
 running Backend, MySQL and Redis used by the other gateway API E2E tests.
 Only fixture rows are inserted directly; callbacks traverse the public listener,
-the Rust callback handler and the subscription completion handler.
+the selected callback handler and the subscription completion handler.
 """
 
 from __future__ import annotations
@@ -55,9 +55,15 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         assert settings.DATABASE_URL.startswith("mysql"), "Real MySQL is required"
         with Redis.from_url(os.environ["REDIS_URL"]) as redis:
             assert redis.ping(), "Real Redis is required"
+        cls.route = os.environ["E2E_CALLBACK_ROUTE"]
+        assert cls.route in {"python", "rust"}
+        if cls.route == "python":
+            base_url = f"http://127.0.0.1:{state['python_port']}"
+            cls.handler_log = Path(os.environ["E2E_PYTHON_LOG"])
+        else:
+            cls.handler_log = Path(os.environ["E2E_RUST_LOG"])
+        assert cls.handler_log.is_file(), f"{cls.route} process log is required"
         cls.client = httpx.Client(base_url=base_url, timeout=30, trust_env=False)
-        cls.rust_log = Path(os.environ["E2E_RUST_LOG"])
-        assert cls.rust_log.is_file(), "Rust process log is required"
         cls.evidence: list[dict] = []
 
     @classmethod
@@ -207,6 +213,22 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             self.assertEqual(after[field], expected, after)
             self.assertNotEqual(after[field], "RUNNING")
         self.assertEqual(after["version"], before["version"] + 1)
+        self._assert_handler_receipt(expected)
+        self.evidence.append(
+            {"event_type": event_type, "before": before, "after": after}
+        )
+        return after
+
+    def _assert_handler_receipt(self, expected: str) -> None:
+        if self.route == "python":
+            receipt = (
+                f"[TaskCompletionHandler] Received TaskCompletedEvent: "
+                f"task_id={self.task_id}, subtask_id={self.subtask_id}, "
+                f"status={expected}"
+            )
+            self.assertIn(receipt, self.handler_log.read_text())
+            return
+
         # Breeze flushes asynchronously; require the migrated handler's receipt
         # for this exact callback as well as its durable database side effects.
         deadline = time.monotonic() + 5
@@ -218,17 +240,13 @@ class SubscriptionCallbackGateway(unittest.TestCase):
         while True:
             receipts = [
                 line
-                for line in self.rust_log.read_text().splitlines()
+                for line in self.handler_log.read_text().splitlines()
                 if "TaskCompletedEvent received" in line
             ]
             if any(receipt_fields <= set(line.split()) for line in receipts):
                 break
             self.assertLess(time.monotonic(), deadline, receipts)
             time.sleep(0.1)
-        self.evidence.append(
-            {"event_type": event_type, "before": before, "after": after}
-        )
-        return after
 
     def test_completed_callback_persists_subscription_completion(self) -> None:
         after = self._callback(

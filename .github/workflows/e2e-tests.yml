@@ -1025,6 +1025,7 @@ jobs:
           ENVIRONMENT: development
           DB_AUTO_MIGRATE: "false"
           E2E_API_URL: http://localhost:8000
+          E2E_CALLBACK_ROUTE: python
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
           E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/subscription-callback-gateway
           E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -1057,6 +1058,7 @@ jobs:
           ENVIRONMENT: development
           DB_AUTO_MIGRATE: "false"
           E2E_API_URL: http://localhost:8000
+          E2E_CALLBACK_ROUTE: rust
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
           E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/subscription-callback-gateway
           E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
