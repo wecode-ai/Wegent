@@ -579,7 +579,7 @@ def _build_cloud_gateway_model_config(
         "upstream_api_format": upstream_api_format,
         # This selects Codex capability metadata; model_id remains the exact
         # authorized cloud resource sent to the gateway.
-        "codex_catalog_model_id": catalog_model_id or "gpt-6.1-sol",
+        "codex_catalog_model_id": catalog_model_id or "wework-gpt-6.1-sol",
         "base_url": f"{backend_base}/api/runtime-work/llm-responses-proxy",
         "api_key": token,
         "default_headers": {

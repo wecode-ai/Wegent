@@ -35,7 +35,6 @@
     },
     {
       "slug": "gpt-6.1-sol",
-      "upstream_model_ids": ["gpt-6.1-sol"],
       "display_name": "GPT-6.1-Sol",
       "description": "GPT 6.1 Sol compatibility profile",
       "apply_patch_tool_type": "freeform",
@@ -62,7 +61,6 @@
     },
     {
       "slug": "gpt-6-astra",
-      "upstream_model_ids": ["gpt-6-astra"],
       "display_name": "GPT-6-Astra",
       "description": "GPT 6 Astra compatibility profile",
       "apply_patch_tool_type": "freeform",
@@ -85,6 +83,56 @@
       "priority": 5,
       "context_window": 272000,
       "max_context_window": 872000,
+      "supports_search_tool": true
+    },
+    {
+      "slug": "wework-gpt-6.1-sol",
+      "upstream_model_ids": ["gpt-6.1-sol"],
+      "display_name": "GPT-6.1-Sol",
+      "description": "Wework GPT 6.1 Sol compatibility profile",
+      "apply_patch_tool_type": "freeform",
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex work"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning for long-horizon tasks"
+        }
+      ],
+      "context_window": 272000,
+      "max_context_window": null,
+      "supports_search_tool": true
+    },
+    {
+      "slug": "wework-gpt-6-astra",
+      "upstream_model_ids": ["gpt-6-astra"],
+      "display_name": "GPT-6-Astra",
+      "description": "Wework GPT 6 Astra compatibility profile",
+      "apply_patch_tool_type": "freeform",
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex work"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning for long-horizon tasks"
+        }
+      ],
+      "context_window": 272000,
+      "max_context_window": null,
       "supports_search_tool": true
     },
     {

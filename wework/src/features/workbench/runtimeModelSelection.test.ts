@@ -360,7 +360,7 @@ describe('runtimeModelSelection', () => {
 
   test.each([
     ['gpt-5.6-sol', null],
-    ['gpt-6-astra', 'gpt-6-astra'],
+    ['gpt-6-astra', 'wework-gpt-6-astra'],
     ['custom-responses-model', null],
   ])('enables native Codex tools by default for Responses cloud model %s', (modelId, catalogId) => {
     const cloudModel: UnifiedModel = {

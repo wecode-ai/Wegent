@@ -2487,7 +2487,7 @@ fn codex_launch_config_keeps_the_model_budget_over_a_compatibility_catalog() {
         prompt: Value::String("review the current branch".to_owned()),
         model_config: json!({
             "model_id": "moonshot-kimi-k3.1-pro",
-            "codex_catalog_model_id": "gpt-6.1-sol",
+            "codex_catalog_model_id": "wework-gpt-6.1-sol",
             "codex_responses_compat_proxy": true,
             "model_context_window": 1_048_576,
             "max_output_tokens": 96_000,
@@ -2505,7 +2505,7 @@ fn codex_launch_config_keeps_the_model_budget_over_a_compatibility_catalog() {
 
     assert_eq!(
         codex_request_model(&request).as_deref(),
-        Some("gpt-6.1-sol")
+        Some("wework-gpt-6.1-sol")
     );
     assert_eq!(config.get("model_context_window"), Some(&json!(1_048_576)));
     let requested_limit = config
@@ -2513,9 +2513,62 @@ fn codex_launch_config_keeps_the_model_budget_over_a_compatibility_catalog() {
         .and_then(Value::as_i64)
         .expect("auto-compact limit should be present");
     assert_eq!(requested_limit, 762_060);
-    // gpt-6.1-sol caps the override at 90% of its 872k catalog window (784,800).
-    // The 80% input-budget limit stays below that cap, so Codex does not clamp it.
-    assert!(requested_limit < 872_000 * 9 / 10);
+    assert_eq!(requested_limit, (1_048_576 - 96_000) * 80 / 100);
+}
+
+#[test]
+fn auto_compact_limit_reserves_the_proxy_default_output_budget() {
+    for protocol in [
+        "openai-chat-completions",
+        "chat/completions",
+        "anthropic-messages",
+        "messages",
+    ] {
+        let model_config = json!({"upstream_api_format": protocol});
+        assert_eq!(codex_model_max_output_tokens(&model_config), Some(96_000));
+        assert_eq!(
+            codex_auto_compact_token_limit(&model_config, 1_048_576),
+            Some(762_060),
+            "unexpected budget for {protocol}"
+        );
+        assert_eq!(
+            codex_auto_compact_token_limit(
+                &json!({"upstream_api_format": protocol, "max_output_tokens": 8_000}),
+                1_000_000,
+            ),
+            Some(793_600)
+        );
+    }
+}
+
+#[test]
+fn auto_compact_limit_uses_catalog_context_when_no_override_was_saved() {
+    let _environment = environment::LaunchEnvironment::new();
+    let overrides = codex_model_config_overrides(&json!({
+        "codex_catalog_model_id": "wework-kimi-k3",
+        "upstream_api_format": "openai-chat-completions",
+    }));
+    assert!(overrides.contains(&"model_context_window=1048576".to_owned()));
+    assert!(overrides.contains(&"model_auto_compact_token_limit=762060".to_owned()));
+}
+
+#[test]
+fn auto_compact_limit_validates_aliases_and_handles_large_windows() {
+    let config = json!({
+        "model_context_window": 0,
+        "contextWindow": "1000000",
+        "max_output_tokens": false,
+        "maxOutputTokens": "32000",
+    });
+    assert_eq!(codex_model_context_window(&config), Some(1_000_000));
+    assert_eq!(
+        codex_auto_compact_token_limit(&config, 1_000_000),
+        Some(774_400)
+    );
+    assert_eq!(
+        codex_auto_compact_token_limit(&json!({"max_output_tokens": 1}), i64::MAX),
+        Some(((i128::from(i64::MAX) - 1) * 80 / 100) as i64)
+    );
 }
 
 #[test]

@@ -64,7 +64,8 @@ def test_resolves_active_wework_long_context_models() -> None:
         ("thudm-glm-5.3-flash", "wework-glm-5-3"),
         ("qwen3.8-max", "wework-qwen-3-8-max"),
         ("gpt-6-luna", "wework-gpt-6-luna"),
-        ("gpt-6-astra", "gpt-6-astra"),
+        ("gpt-6.1-sol", "wework-gpt-6.1-sol"),
+        ("gpt-6-astra", "wework-gpt-6-astra"),
     ]
     for model_id, catalog_id in cases:
         assert codex_catalog_model_id_for_upstream(model_id) == catalog_id

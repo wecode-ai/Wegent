@@ -6,6 +6,7 @@ import { CLOUD_PUBLIC_MODEL_NAME } from './shared.mjs'
 import {
   assistantMessage,
   createSse,
+  handleEmptyReplyPrediction,
   latestModelInputText,
   readRequestBody,
   responseCompleted,
@@ -253,19 +254,51 @@ async function verifyExecutionDetail(control, scope, run, expectedText, timeoutM
 
 export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
   let active = false
+  let linkedIssueTask = null
   const upstreamModels = new Map()
 
   return {
+    holdLinkedIssueTask(projectId, issue) {
+      let release
+      const held = new Promise(resolve => {
+        release = resolve
+      })
+      linkedIssueTask = { projectId, issue, held, requests: [] }
+      return { requests: linkedIssueTask.requests, release }
+    },
+
     async handleHttp(request, response, url) {
       if (
-        !active ||
+        (!active && !linkedIssueTask) ||
         request.method !== 'POST' ||
         !['/v1/responses', '/responses'].includes(url.pathname)
       ) {
         return false
       }
       const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const text = latestModelInputText(body)
+      if (!active && linkedIssueTask) {
+        const { projectId, issue, held, requests } = linkedIssueTask
+        assert.ok(text.includes(`[projectSpaceIssue]`), 'The linked Task lost its Issue context')
+        assert.ok(
+          text.includes(`wework-issue://${projectId}/${issue.id}`),
+          'The linked Task lost its Issue reference'
+        )
+        assert.ok(text.includes(issue.title), 'The linked Task lost its Issue title')
+        requests.push(body)
+        const id = 'collaboration-linked-issue-task'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.write(createSse([responseCreated(id)]))
+        await held
+        response.end(
+          createSse([
+            assistantMessage('COLLABORATION_LINKED_ISSUE_TASK_COMPLETE'),
+            responseCompleted(id),
+          ])
+        )
+        return true
+      }
       const marker = text.includes(MEMBER_REPLY)
         ? MEMBER_REPLY
         : text.includes(REPLY)

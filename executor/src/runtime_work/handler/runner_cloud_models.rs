@@ -118,6 +118,40 @@ fn cloud_protocol(model: &Value) -> Option<&'static str> {
     }
 }
 
+fn cloud_catalog_model_id(model: &Value) -> String {
+    [
+        "/config/codex_catalog_model_id",
+        "/config/codexCatalogModelId",
+    ]
+    .iter()
+    .find_map(|path| {
+        model
+            .pointer(path)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    })
+    .or_else(|| {
+        let model_id = [
+            "/modelId",
+            "/config/model_id",
+            "/config/modelId",
+            "/config/model",
+        ]
+        .iter()
+        .find_map(|path| {
+            model
+                .pointer(path)
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+        })
+        .or_else(|| model["name"].as_str())?;
+        crate::server::codex_model_catalog::catalog_model_id_for_upstream(model_id)
+    })
+    .unwrap_or_else(|| "wework-gpt-6.1-sol".to_owned())
+}
+
 fn materialize_cloud_payload(
     payload: &mut Value,
     models: &[Value],
@@ -164,7 +198,7 @@ fn materialize_cloud_payload(
         if !claude {
             config.as_object_mut().expect("config is an object").extend(
                 json!({
-                    "codex_catalog_model_id":model.pointer("/config/codex_catalog_model_id").and_then(Value::as_str).unwrap_or("gpt-6.1-sol"),
+                    "codex_catalog_model_id":cloud_catalog_model_id(model),
                     "codex_responses_compat_proxy":true,"tool_profile":"custom",
                     "native_tool_search":model.pointer("/config/native_tool_search").and_then(Value::as_bool).unwrap_or(protocol=="openai-responses"),
                     "native_namespace_tools":model.pointer("/config/native_namespace_tools").and_then(Value::as_bool).unwrap_or(protocol=="openai-responses"),
@@ -253,6 +287,37 @@ mod tests {
         assert_eq!(config["model_context_window"], 100_000);
         assert_eq!(config["default_headers"]["X-Wegent-Model-User-Id"], "0");
         assert_eq!(config["default_headers"]["X-Wegent-Model-Type"], "public");
+        assert_eq!(config["codex_catalog_model_id"], "wework-gpt-6.1-sol");
+    }
+
+    #[test]
+    fn cloud_gateway_keeps_inferred_and_explicit_compatibility_profiles() {
+        for protocol in [
+            "openai-responses",
+            "openai-chat-completions",
+            "anthropic-messages",
+        ] {
+            let mut selected = model(protocol);
+            selected["modelId"] = json!("moonshot-kimi-k3.1-pro");
+            let mut payload = cloud_payload("codex");
+            materialize_cloud_payload(&mut payload, &[selected.clone()], "http://backend", "token")
+                .unwrap();
+            assert_eq!(
+                payload["modelConfig"]["codex_catalog_model_id"],
+                "wework-kimi-k3-1-pro"
+            );
+            selected["config"]["codexCatalogModelId"] = json!("custom-catalog");
+            materialize_cloud_payload(&mut payload, &[selected], "http://backend", "token")
+                .unwrap();
+            assert_eq!(
+                payload["modelConfig"]["codex_catalog_model_id"],
+                "custom-catalog"
+            );
+        }
+        assert_eq!(
+            cloud_catalog_model_id(&json!({"name": "kimi-k3", "modelId": "unknown-model"})),
+            "wework-gpt-6.1-sol"
+        );
     }
 
     #[test]

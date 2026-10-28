@@ -429,3 +429,41 @@ def test_build_wework_runtime_model_config_preserves_explicit_cloud_catalog(
 
     assert config["model_id"] == model.name
     assert config["codex_catalog_model_id"] == "operator-selected-catalog"
+
+
+@pytest.mark.parametrize(
+    ("model_id", "catalog_id"),
+    [
+        ("gpt-6.1-sol", "wework-gpt-6.1-sol"),
+        ("gpt-6-astra", "wework-gpt-6-astra"),
+        ("unregistered-cloud-model", "wework-gpt-6.1-sol"),
+    ],
+)
+@pytest.mark.parametrize("protocol", ["openai-responses", "openai", "claude"])
+def test_cloud_models_use_wework_catalogs_without_official_account(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    model_id: str,
+    catalog_id: str,
+    protocol: str,
+) -> None:
+    from app.core.config import settings
+
+    model = _model_kind(0, model_id=model_id, protocol=protocol)
+    model.json["spec"]["modelConfig"].update(
+        context_window=1_200_000, max_output_tokens=96_000
+    )
+    test_db.add(model)
+    test_db.commit()
+    monkeypatch.setattr(settings, "WEGENT_BACKEND_PUBLIC_URL", "https://wegent.example")
+
+    config = build_wework_runtime_model_config(
+        test_db, model_name=model.name, creator=test_user
+    )
+
+    assert config["codex_catalog_model_id"] == catalog_id
+    assert config["model_context_window"] == 1_200_000
+    assert config["max_output_tokens"] == 96_000
+    assert config["base_url"].startswith("https://wegent.example/")
+    assert "sk-test-key" not in json.dumps(config)

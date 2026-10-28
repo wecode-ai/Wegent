@@ -23,7 +23,8 @@ describe('codexCatalog', () => {
     expect(codexCatalogModelIdForUpstream(['huoshan-deepseek-v4.1-flash'])).toBe(
       'wework-deepseek-v4-1-flash'
     )
-    expect(codexCatalogModelIdForUpstream(['gpt-6-astra'])).toBe('gpt-6-astra')
+    expect(codexCatalogModelIdForUpstream(['gpt-6.1-sol'])).toBe('wework-gpt-6.1-sol')
+    expect(codexCatalogModelIdForUpstream(['gpt-6-astra'])).toBe('wework-gpt-6-astra')
   })
 
   test('returns built-in catalog capabilities by slug', () => {

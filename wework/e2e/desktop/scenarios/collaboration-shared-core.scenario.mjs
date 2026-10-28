@@ -198,6 +198,7 @@ export function createDesktopScenario({
   let agent = null
   let cloudEnvironment = null
   let fixtureArchived = false
+  let linkedIssueTaskModel = null
 
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
   const projectSpacePicker = createProjectSpacePickerRegression({
@@ -905,6 +906,7 @@ export function createDesktopScenario({
         const taskComposer = scoped(
           '[data-testid="work-item-new-task-chat-panel"] [data-testid="chat-message-input"]'
         )
+        linkedIssueTaskModel = boardReplyModel.holdLinkedIssueTask(project.id, issue)
         await control.command('press', taskComposer, { key: 'Enter' })
         await control.command(
           'waitFor',
@@ -954,6 +956,12 @@ export function createDesktopScenario({
           'The private personal Task unexpectedly changed the shared Issue assignee'
         )
         await capture(control, 'collaboration-shared-core-08-local-task-bound.png')
+        await waitForApiValue(
+          async () => linkedIssueTaskModel.requests.length,
+          count => count === 1,
+          'The bound Issue did not reach the real local Codex model request',
+          uiTimeoutMs
+        )
         await verifyTaskTabLoadedCollaborationTask(
           control,
           binding.taskId ?? binding.task_id,
@@ -977,6 +985,7 @@ export function createDesktopScenario({
           taskId: binding.taskId ?? binding.task_id,
         })
       } finally {
+        linkedIssueTaskModel?.release()
         try {
           await archiveFixture()
         } finally {
@@ -990,6 +999,7 @@ export function createDesktopScenario({
     },
 
     async cleanup() {
+      linkedIssueTaskModel?.release()
       try {
         await archiveFixture()
       } finally {

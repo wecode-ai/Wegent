@@ -261,7 +261,7 @@ const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
 const RESPONSES_API_FORMAT = 'responses'
 const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
 const STALE_CODEX_PROVIDER_MODEL_PREFIX = 'codex-provider:'
-const DEFAULT_CODEX_CATALOG_MODEL_ID = 'gpt-6.1-sol'
+const DEFAULT_CODEX_CATALOG_MODEL_ID = 'wework-gpt-6.1-sol'
 
 const WEWORK_EXECUTION_IDENTITY = {
   id: 0,

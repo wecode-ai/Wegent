@@ -73,6 +73,28 @@ describe('runtimeContextUsage', () => {
     ).toBe(616_000)
   })
 
+  test.each(['openai-chat-completions', 'anthropic-messages'])(
+    'reserves the proxy output default for %s without confusing the Codex wire protocol',
+    upstreamApiFormat => {
+      const configured = model(
+        {
+          context_window: 1_048_576,
+          protocol: 'openai-responses',
+          upstreamApiFormat,
+        },
+        { runtime: { family: 'openai.openai-responses' } }
+      )
+      expect(modelMaxOutputTokensFromConfig(configured)).toBeNull()
+      expect(modelInputTokenBudget(configured)).toBe(952_576)
+      expect(
+        modelInputTokenBudget({
+          ...configured,
+          config: { ...configured.config, max_output_tokens: 8_000 },
+        })
+      ).toBe(1_040_576)
+    }
+  )
+
   test('keeps the full context window when no output budget is reserved', () => {
     expect(modelInputTokenBudget(model({ context_window: 1_000_000 }))).toBe(1_000_000)
     expect(

@@ -38,6 +38,51 @@ fn catalog() -> Value {
 }
 
 #[test]
+fn compatibility_catalogs_keep_tools_and_configured_windows_without_official_auth() {
+    let official = json!({
+        "slug": "gpt-6.1-sol",
+        "tool_mode": "code_mode_only",
+        "use_responses_lite": true,
+        "max_context_window": 872_000,
+    });
+    let mut catalog = json!({"models": [official.clone()]});
+    merge_base_models(&mut catalog).unwrap();
+    let models = catalog["models"].as_array().unwrap();
+    assert_eq!(models[0], official);
+    for slug in [
+        "wework-gpt-5.6-sol",
+        "wework-gpt-6.1-sol",
+        "wework-gpt-6-astra",
+    ] {
+        let model = models.iter().find(|model| model["slug"] == slug).unwrap();
+        assert_eq!(model["tool_mode"], Value::Null, "{slug}");
+        assert_eq!(model["use_responses_lite"], false, "{slug}");
+        assert_eq!(model["max_context_window"], Value::Null, "{slug}");
+        assert_eq!(model["shell_type"], "shell_command", "{slug}");
+        assert_eq!(model["apply_patch_tool_type"], "freeform", "{slug}");
+        assert_eq!(model["supports_search_tool"], true, "{slug}");
+    }
+}
+
+#[test]
+fn cloud_model_identity_resolves_to_protocol_independent_compatibility_profiles() {
+    for (model_id, expected) in [
+        (" GPT-6.1-Sol ", "wework-gpt-6.1-sol"),
+        ("gpt-6-astra", "wework-gpt-6-astra"),
+        ("moonshot-kimi-k3.1-pro-highspeed", "wework-kimi-k3-1-pro"),
+        ("kimi-k3", "wework-kimi-k3"),
+        ("huoshan-deepseek-v4.1-flash", "wework-deepseek-v4-1-flash"),
+    ] {
+        assert_eq!(
+            catalog_model_id_for_upstream(model_id).as_deref(),
+            Some(expected)
+        );
+    }
+    assert_eq!(catalog_model_id_for_upstream("unknown-model"), None);
+    assert_eq!(catalog_model_id_for_upstream("  "), None);
+}
+
+#[test]
 fn native_catalog_can_be_saved_without_obsolete_capability_fields() {
     let mut baseline = model_entry("gpt-6.1-sol", "GPT-6.1-Sol", None);
     let object = baseline.as_object_mut().expect("model object");
