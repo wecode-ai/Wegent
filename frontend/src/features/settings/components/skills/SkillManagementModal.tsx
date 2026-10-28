@@ -63,24 +63,36 @@ interface SkillManagementModalProps {
 
 type ManageableSkillScope = Exclude<NonNullable<SkillManagementModalProps['scope']>, 'public'>
 
+interface ManageableSkillsResult {
+  skills: UnifiedSkill[]
+  groupSkillIds: Set<number>
+}
+
 function mergeSkills(...skillGroups: UnifiedSkill[][]): UnifiedSkill[] {
-  const seenSkillIds = new Set<number>()
-  return skillGroups.flat().filter(skill => {
-    if (seenSkillIds.has(skill.id)) return false
-    seenSkillIds.add(skill.id)
-    return true
-  })
+  const skillsById = new Map<number, UnifiedSkill>()
+  for (const skill of skillGroups.flat()) {
+    const existing = skillsById.get(skill.id)
+    // The same skill can be public in one response and non-public in the other.
+    // Keep the non-public copy so the management list does not filter it out.
+    if (!existing || (existing.is_public && !skill.is_public)) {
+      skillsById.set(skill.id, skill)
+    }
+  }
+  return Array.from(skillsById.values())
 }
 
 async function fetchSkillsForManagement(
   scope: ManageableSkillScope,
   groupName?: string | null
-): Promise<UnifiedSkill[]> {
+): Promise<ManageableSkillsResult> {
   if (scope !== 'group') {
-    return fetchUnifiedSkillsList({
-      scope,
-      groupName: groupName || undefined,
-    })
+    return {
+      skills: await fetchUnifiedSkillsList({
+        scope,
+        groupName: groupName || undefined,
+      }),
+      groupSkillIds: new Set(),
+    }
   }
 
   // Agent editing exposes personal and team skills in the same selector, so
@@ -93,7 +105,10 @@ async function fetchSkillsForManagement(
       groupName: groupName || undefined,
     }),
   ])
-  return mergeSkills(personalSkills, groupSkills)
+  return {
+    skills: mergeSkills(personalSkills, groupSkills),
+    groupSkillIds: new Set(groupSkills.map(skill => skill.id)),
+  }
 }
 
 export default function SkillManagementModal({
@@ -107,6 +122,7 @@ export default function SkillManagementModal({
   const { toast } = useToast()
   const { user } = useUser()
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
+  const [groupSkillIds, setGroupSkillIds] = useState<Set<number>>(new Set())
   const [isLoading, setIsLoading] = useState(true)
   const [uploadModalOpen, setUploadModalOpen] = useState(false)
   const [editingSkill, setEditingSkill] = useState<UnifiedSkill | null>(null)
@@ -125,7 +141,7 @@ export default function SkillManagementModal({
   const uploadNamespace = scope === 'group' && groupName ? groupName : undefined
 
   const getSkillSourceLabel = (skill: UnifiedSkill): string => {
-    if (skill.is_group_shared || skill.namespace !== 'default') {
+    if (groupSkillIds.has(skill.id) || skill.namespace !== 'default') {
       return skill.namespace && skill.namespace !== 'default'
         ? `${t('settings:skills.source.group')} · ${skill.namespace}`
         : t('settings:skills.source.group')
@@ -140,7 +156,7 @@ export default function SkillManagementModal({
   }
 
   const isPersonalSkill = (skill: UnifiedSkill): boolean =>
-    !skill.is_group_shared &&
+    !groupSkillIds.has(skill.id) &&
     skill.namespace === 'default' &&
     Boolean(user && skill.user_id === user.id)
 
@@ -148,12 +164,16 @@ export default function SkillManagementModal({
     setIsLoading(true)
     try {
       // For public scope, use fetchPublicSkillsList; otherwise use fetchUnifiedSkillsList
-      const skillsData =
+      const result =
         scope === 'public'
-          ? await fetchPublicSkillsList()
+          ? {
+              skills: await fetchPublicSkillsList(),
+              groupSkillIds: new Set<number>(),
+            }
           : await fetchSkillsForManagement(scope, groupName)
       // Filter out public skills for management (only show user's own skills) unless scope is 'public'
-      setSkills(scope === 'public' ? skillsData : skillsData.filter(s => !s.is_public))
+      setSkills(scope === 'public' ? result.skills : result.skills.filter(s => !s.is_public))
+      setGroupSkillIds(result.groupSkillIds)
     } catch (error) {
       toast({
         variant: 'destructive',

@@ -113,12 +113,32 @@ describe('SkillManagementModal scope', () => {
     user_id: 0,
     is_group_shared: true,
   })
+  const sharedToAnotherGroupSkill = makeSkill({
+    id: 404,
+    name: 'personal-skill-shared-elsewhere',
+    namespace: 'default',
+    is_group_shared: true,
+  })
+  const duplicatedGroupSkill = makeSkill({
+    id: 505,
+    name: 'duplicated-group-skill',
+    namespace: 'moodly',
+    is_public: false,
+  })
 
   beforeEach(() => {
     jest.clearAllMocks()
     mockedFetchUnifiedSkillsList.mockImplementation(async params => {
-      if (params?.scope === 'personal') return [personalSkill]
-      if (params?.scope === 'group') return [groupSkill, boundPublicSkill]
+      if (params?.scope === 'personal') {
+        return [
+          personalSkill,
+          sharedToAnotherGroupSkill,
+          { ...duplicatedGroupSkill, is_public: true },
+        ]
+      }
+      if (params?.scope === 'group') {
+        return [groupSkill, boundPublicSkill, duplicatedGroupSkill]
+      }
       return []
     })
   })
@@ -131,9 +151,13 @@ describe('SkillManagementModal scope', () => {
     expect(await screen.findByText('sass-stability-monitor')).toBeInTheDocument()
     expect(screen.getByText('moodly-get-data')).toBeInTheDocument()
     expect(screen.getByText('public-skill-bound-to-team')).toBeInTheDocument()
+    expect(screen.getByText('personal-skill-shared-elsewhere')).toBeInTheDocument()
+    expect(screen.getByText('duplicated-group-skill')).toBeInTheDocument()
     expect(screen.getByTestId('managed-skill-source-101')).toHaveTextContent('我的技能')
     expect(screen.getByTestId('managed-skill-source-202')).toHaveTextContent('团队技能 · moodly')
     expect(screen.getByTestId('managed-skill-source-303')).toHaveTextContent('团队技能')
+    expect(screen.getByTestId('managed-skill-source-404')).toHaveTextContent('我的技能')
+    expect(screen.getByTestId('managed-skill-source-505')).toHaveTextContent('团队技能 · moodly')
     expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({ scope: 'personal' })
     expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({
       scope: 'group',
