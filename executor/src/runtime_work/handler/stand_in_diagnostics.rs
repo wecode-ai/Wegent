@@ -13,28 +13,31 @@ impl RuntimeWorkRpcHandler {
             "stand-in assignment decision",
             &[
                 ("device_id", self.device_id.clone()),
-                ("project_id", config["projectId"].to_string()),
-                ("issue_id", issue["id"].to_string()),
-                ("user_id", config["userId"].to_string()),
-                ("role_id", config["id"].to_string()),
+                ("project_id", diagnostic_identity(&config["projectId"])),
+                ("issue_id", diagnostic_identity(&issue["id"])),
+                ("user_id", diagnostic_identity(&config["userId"])),
+                ("role_id", diagnostic_identity(&config["id"])),
                 ("manual", (config["manual"] == true).to_string()),
-                ("project_store", config["projectStore"].to_string()),
+                (
+                    "project_store",
+                    diagnostic_identity(&config["projectStore"]),
+                ),
                 (
                     "issue_assignment_id",
-                    issue["human_task_binding"]["issueAssignmentId"].to_string(),
+                    diagnostic_identity(&issue["human_task_binding"]["issueAssignmentId"]),
                 ),
                 (
                     "dispatch_round_id",
-                    issue["human_task_binding"]["dispatchRoundId"].to_string(),
+                    diagnostic_identity(&issue["human_task_binding"]["dispatchRoundId"]),
                 ),
                 ("reason", reason.to_owned()),
                 (
                     "assignment_id",
-                    issue["human_task_binding"]["assignmentId"].to_string(),
+                    diagnostic_identity(&issue["human_task_binding"]["assignmentId"]),
                 ),
                 (
                     "human_assignment_id",
-                    issue["human_task_binding"]["humanAssignmentId"].to_string(),
+                    diagnostic_identity(&issue["human_task_binding"]["humanAssignmentId"]),
                 ),
                 ("details", details.to_string()),
             ],
@@ -48,15 +51,26 @@ impl RuntimeWorkRpcHandler {
             "stand-in assignment receipt",
             &[
                 ("device_id", self.device_id.clone()),
-                ("project_id", receipt["projectId"].to_string()),
-                ("issue_id", receipt["issueId"].to_string()),
-                ("assignment_id", receipt["assignmentId"].to_string()),
-                ("user_id", receipt["userId"].to_string()),
-                ("task_id", receipt["taskId"].to_string()),
-                ("retry_count", receipt["retryCount"].to_string()),
+                ("project_id", diagnostic_identity(&receipt["projectId"])),
+                ("issue_id", diagnostic_identity(&receipt["issueId"])),
+                (
+                    "assignment_id",
+                    diagnostic_identity(&receipt["assignmentId"]),
+                ),
+                ("user_id", diagnostic_identity(&receipt["userId"])),
+                ("task_id", diagnostic_identity(&receipt["taskId"])),
+                ("retry_count", diagnostic_identity(&receipt["retryCount"])),
                 ("reason", reason.to_owned()),
                 ("details", details.to_string()),
             ],
         );
+    }
+}
+
+fn diagnostic_identity(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Null => String::new(),
+        other => other.to_string(),
     }
 }

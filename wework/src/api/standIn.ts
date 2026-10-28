@@ -230,9 +230,12 @@ export function createStandInExecutorApi(transport: Request): StandInExecutorApi
         roleId: payload.standInId ?? payload.roleId,
         code: error && typeof error === 'object' && 'code' in error ? error.code : undefined,
       })
-      throw Object.assign(new Error(getStandInErrorMessage(error), { cause: error }), {
-        code: error && typeof error === 'object' && 'code' in error ? error.code : undefined,
-      })
+      const message = getStandInErrorMessage(error)
+      throw Object.assign(
+        new Error(message, { cause: error }),
+        error && typeof error === 'object' ? error : {},
+        { message, cause: error }
+      )
     }
   }
   return {

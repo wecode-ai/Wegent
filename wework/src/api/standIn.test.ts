@@ -236,3 +236,22 @@ describe('stand-in RPC failures', () => {
     expect(JSON.stringify(log.mock.calls)).not.toContain('private conversation')
   })
 })
+
+it('preserves connection authorization metadata and retry policy', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const error = {
+    code: 'connector_auth_required',
+    message: 'Authorize the account',
+    retryable: true,
+    details: { pluginKey: 'example-plugin', connectorSlug: 'work-account' },
+  }
+  const api = createStandInExecutorApi(vi.fn().mockRejectedValue(error))
+  await expect(api.connectionProviders('mac')).rejects.toMatchObject({
+    code: error.code,
+    retryable: true,
+    details: error.details,
+    cause: error,
+    message: i18n.t('common:standIn.errors.connector_auth_required'),
+  })
+  expect(error.message).toBe('Authorize the account')
+})

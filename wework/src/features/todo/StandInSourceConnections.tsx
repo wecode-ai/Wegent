@@ -33,7 +33,7 @@ export function StandInSourceConnections({
   const [results, setResults] = useState<Connection[]>([])
   const [nextCursor, setNextCursor] = useState<string>()
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ message: string; code?: unknown } | null>(null)
   const [searched, setSearched] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const allRows = role.connections ?? []
@@ -82,7 +82,12 @@ export function StandInSourceConnections({
       setNextCursor(result.hasMore ? result.nextCursor : undefined)
       setSearched(true)
     } catch (cause) {
-      if (sequence === searchSequence.current) setError(getStandInErrorMessage(cause))
+      if (sequence === searchSequence.current) {
+        setError({
+          message: getStandInErrorMessage(cause),
+          code: cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined,
+        })
+      }
     } finally {
       setBusy(false)
     }
@@ -195,8 +200,8 @@ export function StandInSourceConnections({
           )}
           {error && (
             <div role="alert" className="space-y-2 text-sm text-error">
-              <p>{error}</p>
-              {error.includes('connector_auth_required') &&
+              <p>{error.message}</p>
+              {error.code === 'connector_auth_required' &&
                 provider.authTarget &&
                 deviceId === localDeviceId && (
                   <button
