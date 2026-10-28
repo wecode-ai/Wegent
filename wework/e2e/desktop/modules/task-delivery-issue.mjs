@@ -52,10 +52,17 @@ export function createTaskDeliveryIssueRegression({ workspacePath, modelResponse
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
         { text: `${MARKER} complete`, timeoutMs: modelResponseTimeoutMs }
       )
-      await control.command(
-        'click',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-button"]`
-      )
+      if (
+        Number(
+          await control.command('getElementCount', '[data-testid="environment-info-popover"]', {
+            visible: true,
+          })
+        ) === 0
+      ) {
+        await control.command('click', '[data-testid="environment-info-button"]', {
+          visible: true,
+        })
+      }
       await control.command('waitFor', '[data-testid="environment-delivery-button"]')
       await control.command('click', '[data-testid="environment-delivery-button"]')
       await control.command('waitFor', '[data-testid="delivery-dialog"]')
