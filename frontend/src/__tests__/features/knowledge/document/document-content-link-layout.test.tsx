@@ -44,6 +44,11 @@ jest.mock('@/features/knowledge/multimodal/components/InlineImageViewer', () => 
 }))
 jest.mock('@/features/knowledge/document/utils/boundedRemoteFile', () => ({
   loadBoundedRemoteFile: jest.fn().mockResolvedValue({ blob: new Blob(['image']) }),
+  prepareRemotePdf: jest.fn().mockResolvedValue({
+    mimeType: 'application/pdf',
+    size: 8,
+    supportsRange: true,
+  }),
   probeRemoteVideo: jest.fn(),
 }))
 
