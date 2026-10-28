@@ -236,6 +236,16 @@ pub async fn put_object(
     key: &str,
     body: &[u8],
 ) -> Result<(), StorageError> {
+    put_object_with_content_type(client, config, key, body, "application/octet-stream").await
+}
+
+pub async fn put_object_with_content_type(
+    client: &HttpClient,
+    config: &MinioConfig,
+    key: &str,
+    body: &[u8],
+    content_type: &str,
+) -> Result<(), StorageError> {
     let host = config.host();
     let uri = format!("/{}/{}", config.bucket, encode_object_path(key));
     let url = format!("{}://{host}{uri}", config.scheme());
@@ -251,7 +261,7 @@ pub async fn put_object(
         &payload_sha256,
         &[
             ("host", host),
-            ("content-type", "application/octet-stream"),
+            ("content-type", content_type),
             ("x-amz-content-sha256", &payload_sha256),
             ("x-amz-date", &amz_date),
         ],
@@ -262,7 +272,7 @@ pub async fn put_object(
         .header("authorization", signed.authorization)
         .header("x-amz-content-sha256", signed.content_sha256)
         .header("x-amz-date", signed.amz_date)
-        .header("content-type", "application/octet-stream")
+        .header("content-type", content_type)
         .header("user-agent", "MinIO (Linux; x86_64) minio-py/7.2.20")
         .body(body.to_vec())
         .send()

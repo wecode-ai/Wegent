@@ -192,7 +192,13 @@ where
     F: Future<Output = ()>,
     G: FnOnce(&HybridConfig, RequestIdFilter<OriginService>) -> Result<Gateway<S>, BoxError>,
 {
-    let Application { state, routes } = application;
+    let Application {
+        state,
+        routes,
+        background_jobs,
+    } = application;
+    let job_client = state.background_jobs.clone();
+    let job_grace = job_client.configuration().shutdown_grace;
     let authenticator = crate::auth::AppAuthenticator::new(state);
     let api_server = brz_http_server::Server::bind_with_authenticator_and_config(
         SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
@@ -211,24 +217,49 @@ where
     let api_server = api_server.serve_until(async move {
         let _ = wait_for_api_shutdown.await;
     });
-    let gateway = build_gateway(&config, RequestIdFilter::new(api))?;
-    let gateway = serve_gateway(config, gateway, shutdown);
+    let gateway = build_gateway(&config, RequestIdFilter::new(api))?.with_cors(gateway_cors())?;
+    // Bind both listeners before opted-in jobs can cause side effects.
+    let listener = bind(config.listen_address).await?;
+    let mut jobs =
+        crate::background_jobs::BackgroundJobsRuntime::start(background_jobs, &job_client).await?;
+    let stop_jobs = jobs.stop_sender();
+    let shutdown_jobs = stop_jobs.clone();
+    let shutdown = async move {
+        shutdown.await;
+        let _ = shutdown_jobs.send(true);
+    };
+    let gateway = serve(listener, gateway, shutdown, config.shutdown_grace);
     tokio::pin!(api_server);
     tokio::pin!(gateway);
 
-    tokio::select! {
-        gateway_result = &mut gateway => {
-            let _ = api_shutdown.send(());
-            let api_result = api_server.await;
-            gateway_result?;
-            api_result?;
-            Ok(())
-        }
-        api_result = &mut api_server => {
-            api_result?;
-            Err(std::io::Error::other("exported Rust API listener stopped unexpectedly").into())
+    let result: Result<(), BoxError> = async {
+        tokio::select! {
+            gateway_result = &mut gateway => {
+                let _ = stop_jobs.send(true);
+                let _ = api_shutdown.send(());
+                let api_result = api_server.await;
+                gateway_result?;
+                api_result?;
+                Ok(())
+            }
+            api_result = &mut api_server => {
+                let _ = stop_jobs.send(true);
+                api_result?;
+                Err(std::io::Error::other("exported Rust API listener stopped unexpectedly").into())
+            }
+            error = jobs.failed() => {
+                let _ = stop_jobs.send(true);
+                let _ = api_shutdown.send(());
+                let _ = api_server.await;
+                Err(error.into())
+            }
         }
     }
+    .await;
+    let shutdown_result = jobs.shutdown(job_grace).await;
+    result?;
+    shutdown_result?;
+    Ok(())
 }
 
 /// Runs the hybrid Backend until the process receives an interrupt or terminate

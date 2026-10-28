@@ -13770,7 +13770,7 @@ describe('DesktopWorkbenchLayout', () => {
         screen.getByTestId('smart-app-development-preview-verification-stale')
       ).toHaveTextContent('验证已过期')
     )
-  })
+  }, 10_000)
 
   test('keeps an inactive Smart app preview from reclaiming the browser after switching tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()

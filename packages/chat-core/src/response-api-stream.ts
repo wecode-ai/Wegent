@@ -360,6 +360,19 @@ export function emitResponseApiEvent(
     return;
   }
 
+  if (eventName === "response.recovered") {
+    state.toolContexts.clear();
+    const turnId =
+      stringField(data, "turnId") ?? stringField(data, "turn_id") ?? base.subtaskId;
+    if (!turnId) return;
+    handlers.onChatRecovered?.({
+      ...base,
+      subtaskId: turnId,
+      turnId,
+    });
+    return;
+  }
+
   if (
     eventName === "response.incomplete" ||
     eventName === "response.failed" ||

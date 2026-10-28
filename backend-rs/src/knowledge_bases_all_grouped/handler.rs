@@ -69,8 +69,9 @@ async fn all_knowledge_bases_grouped(
     })
 }
 
-/// `KnowledgeService.get_all_knowledge_bases_grouped`.
-async fn all_grouped<M, R: brz_redis::Redis>(
+/// `KnowledgeService.get_all_knowledge_bases_grouped` (the knowledge-base
+/// resolver's accessible lookup, `openapi/kb_resolver.py:62-108`).
+pub(crate) async fn all_grouped<M, R: brz_redis::Redis>(
     mysql: &M,
     redis: Option<&R>,
     resolvers: &EntityResolvers<R>,
