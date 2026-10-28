@@ -43,6 +43,11 @@ async def test_dispatch_allows_app_device_task_execution() -> None:
     )
     with (
         patch.object(dispatcher, "_recover_executor_if_needed", AsyncMock()) as recover,
+        patch.object(
+            dispatcher,
+            "_resolve_device_route_id",
+            AsyncMock(return_value="app-device"),
+        ),
         patch.object(dispatcher.router, "route", return_value=target),
         patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
         patch.object(dispatcher, "_dispatch_websocket", AsyncMock()) as dispatch,

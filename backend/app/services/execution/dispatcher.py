@@ -360,7 +360,12 @@ class ExecutionDispatcher:
         self, request: ExecutionRequest, device_id: Optional[str]
     ) -> Optional[str]:
         """Resolve a logical App device to its registered Socket.IO route."""
-        if not device_id or not request.user or request.user.get("id") is None:
+        if (
+            not device_id
+            or not request.user
+            or request.user.get("id") is None
+            or self._has_fork_workspace_archive(request)
+        ):
             return device_id
 
         from app.services.device.identity import device_connection_route_id
