@@ -1920,6 +1920,8 @@
     "plugins_featured": "Featured",
     "plugins_category_other": "Other",
     "plugins_category_browse_count": "{{count}} plugins",
+    "plugins_install_unofficial_title": "Unofficial plugin",
+    "plugins_install_unofficial_description": "This is not an official plugin. It may execute code, access local files, or send data to external services. Only install it if you trust its source.",
     "plugins_install_failed": "Installation failed. Please try again.",
     "plugins_install_disabled_by_admin": "This plugin is disabled by your ChatGPT / Codex workspace admin. Ask an admin to enable it, then try again.",
     "plugins_install_chatgpt_auth_required": "Sign in to ChatGPT / Codex before installing this remote plugin.",
