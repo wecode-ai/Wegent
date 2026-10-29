@@ -27,6 +27,7 @@ async function loadClient() {
     String,
     Symbol,
     console,
+    setTimeout,
     window: hostWindow,
   })
   assert.ok(registration)
@@ -440,6 +441,88 @@ test('calls lifecycle-safe plugin backends through the shared runtime', async ()
 
   runtime.dispose()
   await assert.rejects(backend.request('analyze'), /disposed/)
+})
+
+test('retries a plugin backend that is not registered yet', async () => {
+  const client = await loadClient()
+  let attempts = 0
+  const runtime = client.exports.createExtensionRuntime({
+    fetch: async () => {
+      attempts += 1
+      if (attempts === 1) {
+        return {
+          ok: false,
+          status: 404,
+          async json() {
+            return {
+              ok: false,
+              error: { code: 'plugin_not_found', message: 'not registered', retryable: false },
+            }
+          },
+        }
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { ok: true, result: { enabled: true } }
+        },
+      }
+    },
+  })
+
+  const backend = runtime.service.backend.scope('wework-internal-telemetry')
+  assert.deepEqual(await backend.request('ready', {}), { enabled: true })
+  assert.equal(attempts, 2)
+  runtime.dispose()
+})
+
+test('retries a plugin backend transport that is not listening yet', async () => {
+  const client = await loadClient()
+  let attempts = 0
+  const runtime = client.exports.createExtensionRuntime({
+    fetch: async () => {
+      attempts += 1
+      if (attempts === 1) throw new TypeError('Failed to fetch')
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { ok: true, result: { enabled: true } }
+        },
+      }
+    },
+  })
+
+  const backend = runtime.service.backend.scope('wework-internal-telemetry')
+  assert.deepEqual(await backend.request('ready', {}), { enabled: true })
+  assert.equal(attempts, 2)
+  runtime.dispose()
+})
+
+test('surfaces plugin backend failures that retrying cannot fix', async () => {
+  const client = await loadClient()
+  let attempts = 0
+  const runtime = client.exports.createExtensionRuntime({
+    fetch: async () => {
+      attempts += 1
+      return {
+        ok: false,
+        status: 404,
+        async json() {
+          return {
+            ok: false,
+            error: { code: 'method_not_found', message: 'missing method', retryable: false },
+          }
+        },
+      }
+    },
+  })
+
+  const backend = runtime.service.backend.scope('wework-internal-telemetry')
+  await assert.rejects(backend.request('ready', {}), /missing method/)
+  assert.equal(attempts, 1)
+  runtime.dispose()
 })
 
 test('filters menus and keybindings through shared context expressions', async () => {

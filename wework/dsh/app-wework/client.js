@@ -11,6 +11,9 @@ window.__ModuleLoader__.load({
 
     const APP_RUNTIME_READY_EVENT = 'wework:app-runtime-ready'
     const PLUGIN_BACKEND_PATH = '/wework/plugins/v1/rpc'
+    // Plugin clients call their backend as soon as they mount, which can race the
+    // backend's own registration. Retry only calls that provably never ran.
+    const PLUGIN_BACKEND_RETRY_DELAYS_MS = [100, 300, 700, 1500, 2000, 3000, 3000, 4000]
     const ROOT_PRIORITY = -100
     const CONTRIBUTION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/
     const CONTEXT_KEY_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/
@@ -57,6 +60,48 @@ window.__ModuleLoader__.load({
         throw new Error(`${label} must match ${CONTRIBUTION_ID_PATTERN}`)
       }
       return value
+    }
+
+    async function requestPluginBackend(fetchImpl, body, assertActive) {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          return await sendPluginBackend(fetchImpl, body)
+        } catch (error) {
+          const delay = PLUGIN_BACKEND_RETRY_DELAYS_MS[attempt]
+          if (delay === undefined || !backendMayStillStart(error)) throw error
+          assertActive()
+          await new Promise(resolve => setTimeout(resolve, delay))
+        }
+      }
+    }
+
+    async function sendPluginBackend(fetchImpl, body) {
+      let response
+      try {
+        response = await fetchImpl(PLUGIN_BACKEND_PATH, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      } catch (cause) {
+        const error = new Error('Plugin backend is unreachable', { cause })
+        error.code = 'backend_unreachable'
+        throw error
+      }
+      const payload = await response.json()
+      if (!response.ok || !payload?.ok) {
+        const error = new Error(
+          payload?.error?.message || `Plugin backend request failed: ${response.status}`
+        )
+        error.code = payload?.error?.code ?? 'backend_failed'
+        error.retryable = Boolean(payload?.error?.retryable)
+        throw error
+      }
+      return payload.result
+    }
+
+    function backendMayStillStart(error) {
+      return error?.code === 'plugin_not_found' || error?.code === 'backend_unreachable'
     }
 
     function requiredContextKey(value) {
@@ -406,21 +451,7 @@ window.__ModuleLoader__.load({
                 if (typeof backendFetch !== 'function') {
                   throw new Error('Plugin backend transport is unavailable')
                 }
-                const response = await backendFetch(PLUGIN_BACKEND_PATH, {
-                  method: 'POST',
-                  headers: { 'content-type': 'application/json' },
-                  body: JSON.stringify({ plugin, method, params }),
-                })
-                const payload = await response.json()
-                if (!response.ok || !payload?.ok) {
-                  const error = new Error(
-                    payload?.error?.message || `Plugin backend request failed: ${response.status}`
-                  )
-                  error.code = payload?.error?.code ?? 'backend_failed'
-                  error.retryable = Boolean(payload?.error?.retryable)
-                  throw error
-                }
-                return payload.result
+                return requestPluginBackend(backendFetch, { plugin, method, params }, assertActive)
               },
             })
           },
