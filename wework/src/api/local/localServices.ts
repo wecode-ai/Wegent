@@ -275,6 +275,7 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
     : 'model-interface'
   const reasoningEfforts = localModelReasoningEfforts(config)
   const defaultReasoningEffort = localModelDefaultReasoningEffort(config)
+  const contextWindow = config.contextWindow ?? config.catalogEntry?.context_window
   return {
     name: localModelName(config),
     type: 'runtime',
@@ -285,7 +286,8 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
       protocol: OPENAI_RESPONSES_PROTOCOL,
       apiFormat: config.apiFormat,
       upstreamApiFormat: config.apiFormat,
-      ...(config.contextWindow ? { model_context_window: config.contextWindow } : {}),
+      codex_catalog_model_id: config.codexCatalogModelId || DEFAULT_CODEX_CATALOG_MODEL_ID,
+      ...(contextWindow ? { model_context_window: contextWindow } : {}),
       ...(config.maxOutputTokens ? { max_output_tokens: config.maxOutputTokens } : {}),
       ui: {
         family,

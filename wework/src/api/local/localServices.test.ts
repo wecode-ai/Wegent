@@ -25,6 +25,7 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
+import { modelInputTokenBudget } from '@/features/workbench/runtimeContextUsage'
 import type { LocalExecutorStatus } from '@/desktop/localExecutor'
 import { resolveEffectiveLocalCodexProxy } from '@/desktop/systemProxy'
 import { updateAppPreferences } from '@/desktop/appPreferences'
@@ -1566,6 +1567,39 @@ describe('createLocalAppServices', () => {
     expect(JSON.stringify(registerCall)).not.toContain('cloud-token')
     expect(JSON.stringify(registerCall)).not.toContain('hongyu9')
   })
+
+  test.each([undefined, 640_000])(
+    'preserves the local Catalog budget when the configured window is %s',
+    async contextWindow => {
+      const catalogEntry = createDefaultLocalModelCatalogEntry({
+        id: 'context-budget',
+        displayName: 'Context budget',
+        toolProfile: 'function',
+        contextWindow: 512_000,
+      })
+      saveLocalModelConfig({
+        id: 'context-budget',
+        displayName: 'Context budget',
+        modelId: 'unknown-upstream',
+        baseUrl: 'http://localhost:11434/v1',
+        apiFormat: 'openai-chat-completions',
+        contextWindow,
+        catalogEntry,
+        catalogReady: true,
+      })
+      const services = createLocalAppServices({
+        ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+        request: vi.fn().mockResolvedValue({}),
+        subscribe: vi.fn(),
+      })
+
+      const models = await services.modelApi.listModels()
+      const selected = models.data.find(model => model.name === 'local-model:context-budget')
+
+      expect(selected?.config?.codex_catalog_model_id).toBe(catalogEntry.slug)
+      expect(modelInputTokenBudget(selected)).toBe((contextWindow ?? 512_000) - 96_000)
+    }
+  )
 
   test('does not expose a custom model until its catalog restart is applied', async () => {
     saveLocalModelConfig({

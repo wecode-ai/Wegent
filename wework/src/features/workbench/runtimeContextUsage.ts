@@ -1,5 +1,7 @@
 import type { RuntimeContextUsage, UnifiedModel } from '@/types/api'
+import { builtinCodexCatalogModel } from '@wegent/chat-core/codex-catalog'
 import { getCloudModelUpstreamApiFormat } from '@wegent/chat-core/model-execution'
+import { resolveCodexCatalogModelId } from '@/lib/model-ui'
 
 const CONTEXT_WINDOW_CONFIG_KEYS = ['model_context_window', 'context_window', 'contextWindow']
 const MAX_OUTPUT_TOKENS_CONFIG_KEYS = ['max_output_tokens', 'maxOutputTokens']
@@ -41,11 +43,27 @@ function firstPositiveConfigInteger(
 }
 
 export function modelContextWindowFromConfig(model?: UnifiedModel | null): number | null {
-  return firstPositiveConfigInteger(model?.config, CONTEXT_WINDOW_CONFIG_KEYS)
+  return (
+    positiveInteger(model?.contextWindow) ??
+    firstPositiveConfigInteger(model?.config, CONTEXT_WINDOW_CONFIG_KEYS)
+  )
 }
 
 export function modelMaxOutputTokensFromConfig(model?: UnifiedModel | null): number | null {
-  return firstPositiveConfigInteger(model?.config, MAX_OUTPUT_TOKENS_CONFIG_KEYS)
+  return (
+    positiveInteger(model?.maxOutputTokens) ??
+    firstPositiveConfigInteger(model?.config, MAX_OUTPUT_TOKENS_CONFIG_KEYS)
+  )
+}
+
+function modelCatalogContextWindow(model?: UnifiedModel | null): number | null {
+  if (!model || (model.type === 'runtime' && model.config?.weworkModelKind !== 'model-interface')) {
+    return null
+  }
+  const catalogId =
+    resolveCodexCatalogModelId(model) ?? (model.type !== 'runtime' ? 'wework-gpt-6.1-sol' : null)
+  if (!catalogId?.startsWith('wework-')) return null
+  return positiveInteger(builtinCodexCatalogModel(catalogId)?.context_window)
 }
 
 /**
@@ -57,7 +75,7 @@ export function modelMaxOutputTokensFromConfig(model?: UnifiedModel | null): num
  * derives Codex's auto-compaction threshold. Automatic compaction starts at 80% of this budget.
  */
 export function modelInputTokenBudget(model?: UnifiedModel | null): number | null {
-  const contextWindow = modelContextWindowFromConfig(model)
+  const contextWindow = modelContextWindowFromConfig(model) ?? modelCatalogContextWindow(model)
   if (!contextWindow) {
     return null
   }

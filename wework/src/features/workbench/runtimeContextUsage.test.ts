@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { RuntimeContextUsage, UnifiedModel } from '@/types/api'
+import { runtimeContextUsageMetrics } from '@wegent/chat-core/runtime-context-usage'
 import {
   applyModelContextWindowOverride,
   findModelForSelection,
@@ -95,12 +96,77 @@ describe('runtimeContextUsage', () => {
     }
   )
 
+  test.each(['openai-chat-completions', 'anthropic-messages'])(
+    'uses the shared Catalog input budget for %s with no configured window',
+    upstreamApiFormat => {
+      const configured = model({
+        codex_catalog_model_id: 'wework-gpt-6.1-sol',
+        protocol: 'openai-responses',
+        upstreamApiFormat,
+      })
+      expect(modelContextWindowFromConfig(configured)).toBeNull()
+      expect(modelInputTokenBudget(configured)).toBe(176_000)
+      const usage = applyModelContextWindowOverride(
+        { ...baseUsage, last: { ...baseUsage.last, totalTokens: 140_800 } },
+        configured
+      )
+      expect(runtimeContextUsageMetrics(usage)?.usedPercent).toBe(80)
+      expect(
+        applyModelContextWindowOverride({ ...baseUsage, modelContextWindow: 128_000 }, configured)
+          .modelContextWindow
+      ).toBe(128_000)
+      expect(
+        modelInputTokenBudget({
+          ...configured,
+          config: { ...configured.config, max_output_tokens: 8_000 },
+        })
+      ).toBe(264_000)
+    }
+  )
+
+  test('uses the execution Catalog selection and shared default for cloud models', () => {
+    expect(modelInputTokenBudget(model({ protocol: 'openai' }, { modelId: 'kimi-k3.1-pro' }))).toBe(
+      952_576
+    )
+    expect(modelInputTokenBudget(model({ protocol: 'openai' }))).toBe(176_000)
+    expect(
+      modelInputTokenBudget(model({ protocol: 'openai', codexCatalogModelId: 'unknown-catalog' }))
+    ).toBeNull()
+  })
+
+  test('keeps native Responses defaults and explicit configuration ahead of the Catalog', () => {
+    const configured = model({
+      codex_catalog_model_id: 'wework-gpt-6.1-sol',
+      protocol: 'openai-responses',
+    })
+    expect(modelInputTokenBudget(configured)).toBe(272_000)
+    expect(applyModelContextWindowOverride(baseUsage, configured)).toBe(baseUsage)
+    expect(
+      modelInputTokenBudget({ ...configured, contextWindow: 1_000_000, maxOutputTokens: 8_000 })
+    ).toBe(992_000)
+  })
+
+  test.each(['codex-official', 'codex-provider'])(
+    'does not apply a Wework compatibility Catalog to a native %s model',
+    weworkModelKind => {
+      const configured = model(
+        { protocol: 'openai-responses', weworkModelKind },
+        { type: 'runtime', provider: 'local', modelId: 'gpt-6.1-sol' }
+      )
+      const usage = { ...baseUsage, modelContextWindow: 1_000_000 }
+      expect(modelInputTokenBudget(configured)).toBeNull()
+      expect(applyModelContextWindowOverride(usage, configured)).toBe(usage)
+    }
+  )
+
   test('keeps the full context window when no output budget is reserved', () => {
     expect(modelInputTokenBudget(model({ context_window: 1_000_000 }))).toBe(1_000_000)
     expect(
       modelInputTokenBudget(model({ context_window: 1_000_000, max_output_tokens: 1_000_000 }))
     ).toBe(1_000_000)
-    expect(modelInputTokenBudget(model({ max_output_tokens: 384_000 }))).toBeNull()
+    expect(
+      modelInputTokenBudget(model({ max_output_tokens: 384_000 }, { type: 'runtime' }))
+    ).toBeNull()
     expect(modelInputTokenBudget(null)).toBeNull()
   })
 
