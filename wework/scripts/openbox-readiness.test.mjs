@@ -5,24 +5,51 @@ import { join, resolve } from 'node:path'
 import { expect, it } from 'vitest'
 
 const launcher = resolve(import.meta.dirname, '../e2e/desktop/run-with-openbox.sh')
+const displayLauncher = resolve(import.meta.dirname, '../e2e/desktop/run-with-xvfb.sh')
 const runningWindowManager = `#!/bin/sh
 echo $$ > "$OPENBOX_TEST_DIR/pid"
 echo ready > "$OPENBOX_TEST_DIR/window-manager-ready"
 exec /bin/sleep 1000
 `
 
-function runFixture(openbox, xprop, { instantSleep = false } = {}) {
+function runFixture(
+  openbox,
+  xprop,
+  { instantSleep = false, isolatedDisplay = false, displayExit = 0 } = {}
+) {
   const directory = mkdtempSync(join(tmpdir(), 'wegent-openbox-readiness-'))
   try {
     writeFileSync(join(directory, 'openbox'), openbox, { mode: 0o755 })
     writeFileSync(join(directory, 'xprop'), xprop, { mode: 0o755 })
+    if (isolatedDisplay) {
+      writeFileSync(
+        join(directory, 'xvfb-run'),
+        `#!/bin/sh
+set -eu
+error_file=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --error-file=*) error_file=\${1#*=}; shift ;;
+    -a|--server-args=*) shift ;;
+    *) break ;;
+  esac
+done
+case "$error_file" in /dev/*|'') exit 31 ;; esac
+printf '%s' "$error_file" > "$OPENBOX_TEST_DIR/xvfb-error-path"
+printf 'Xvfb fixture diagnostic\\n' > "$error_file"
+if [ ${displayExit} -ne 0 ]; then exit ${displayExit}; fi
+exec "$@"
+`,
+        { mode: 0o755 }
+      )
+    }
     if (instantSleep) {
       writeFileSync(join(directory, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
     }
     const result = spawnSync(
       'sh',
       [
-        launcher,
+        isolatedDisplay ? displayLauncher : launcher,
         'sh',
         '-c',
         'echo started > "$OPENBOX_TEST_DIR/application"; test "$(cat "$OPENBOX_TEST_DIR/queries")" -ge 2',
@@ -46,6 +73,9 @@ function runFixture(openbox, xprop, { instantSleep = false } = {}) {
       queries: existsSync(join(directory, 'queries'))
         ? Number(readFileSync(join(directory, 'queries'), 'utf8'))
         : 0,
+      displayLogCleaned: existsSync(join(directory, 'xvfb-error-path'))
+        ? !existsSync(readFileSync(join(directory, 'xvfb-error-path'), 'utf8'))
+        : false,
     }
   } finally {
     try {
@@ -162,4 +192,33 @@ exit 1
   expect(result.queries).toBe(100)
   expect(result.openboxStarted).toBe(true)
   expect(result.applicationStarted).toBe(false)
+})
+
+it('forwards Xvfb diagnostics through piped stdio using a private regular file', () => {
+  const result = runFixture(
+    runningWindowManager,
+    `#!/bin/sh
+echo 2 > "$OPENBOX_TEST_DIR/queries"
+if [ "$#" -eq 1 ]; then exit 0; fi
+if [ ! -f "$OPENBOX_TEST_DIR/window-manager-ready" ]; then exit 1; fi
+echo '_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x1234'
+`,
+    { isolatedDisplay: true }
+  )
+  expect(result.status, result.stderr).toBe(0)
+  expect(result.applicationStarted).toBe(true)
+  expect(result.stderr).toContain('Xvfb fixture diagnostic')
+  expect(result.displayLogCleaned).toBe(true)
+})
+
+it('preserves Xvfb startup failure and its diagnostics without starting the app', () => {
+  const result = runFixture(runningWindowManager, '#!/bin/sh\nexit 1\n', {
+    isolatedDisplay: true,
+    displayExit: 23,
+  })
+  expect(result.status).toBe(23)
+  expect(result.applicationStarted).toBe(false)
+  expect(result.openboxStarted).toBe(false)
+  expect(result.stderr).toContain('Xvfb fixture diagnostic')
+  expect(result.displayLogCleaned).toBe(true)
 })
