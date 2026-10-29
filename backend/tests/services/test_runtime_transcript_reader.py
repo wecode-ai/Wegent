@@ -93,7 +93,12 @@ async def test_reference_cannot_overwrite_or_address_unrelated_data(reference):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "data",
-    [b"not gzip", gzip.compress(b"not JSON"), gzip.compress(b"[" * 2000 + b"]" * 1999)],
+    [
+        b"not gzip",
+        gzip.compress(b"not JSON", mtime=0),
+        gzip.compress(b"[" * 2000 + b"]" * 1999, mtime=0),
+    ],
+    ids=["invalid-gzip", "invalid-json", "unclosed-nested-json"],
 )
 async def test_invalid_snapshot_encoding_is_rejected(data):
     """Normalize gzip and JSON decoding failures to the stable encoding error."""
