@@ -129,7 +129,12 @@ export function MarkdownDiagramPreview({ code, language }: MarkdownDiagramPrevie
         {code}
       </span>
       {artifact && !failed && (
-        <DiagramCanvas artifact={artifact} onReady={onReady} onError={onError} />
+        <DiagramCanvas
+          artifact={artifact}
+          fullscreen={fullscreen}
+          onReady={onReady}
+          onError={onError}
+        />
       )}
       {renderViewer && !ready && (
         <div

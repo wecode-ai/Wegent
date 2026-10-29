@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { expect, test, vi } from 'vitest'
+import { beforeEach, expect, test, vi } from 'vitest'
 import { DiagramCanvas } from '../../../../packages/collaboration/src/markdown/DiagramCanvas'
 const controller = vi.hoisted(() => ({
   zoomIn: vi.fn(),
@@ -8,9 +8,32 @@ const controller = vi.hoisted(() => ({
   zoomWithWheel: vi.fn(),
   destroy: vi.fn(),
 }))
+const createPanzoom = vi.hoisted(() => vi.fn())
 vi.mock('../../../../packages/collaboration/node_modules/@panzoom/panzoom', () => ({
-  default: () => controller,
+  default: createPanzoom,
 }))
+beforeEach(() => {
+  vi.clearAllMocks()
+  createPanzoom.mockReturnValue(controller)
+})
+
+test.each([false, true])(
+  'preserves vertical touch scrolling only in inline mode (fullscreen=%s)',
+  fullscreen => {
+    render(
+      <DiagramCanvas
+        artifact={{ svg: '<svg/>', src: 'data:image/svg+xml,test', width: 100, height: 50 }}
+        fullscreen={fullscreen}
+        onReady={vi.fn()}
+        onError={vi.fn()}
+      />
+    )
+    expect(createPanzoom).toHaveBeenCalledWith(
+      screen.getByTestId('diagram-image'),
+      expect.objectContaining({ touchAction: fullscreen ? 'none' : 'pan-y' })
+    )
+  }
+)
 
 test('retains zoom, reset and modified-wheel controls without consuming ordinary conversation scrolling', () => {
   const ready = vi.fn()

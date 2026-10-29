@@ -8,11 +8,12 @@ export async function verifyConversationPanelLayout(control) {
       value: JSON.stringify({ width: 1600, height: 1200 }),
     })
   )
-  const toggle = selector('toggle-right-workspace-panel-button')
+  const headerControl = id => `[data-testid="workbench-main-header"] [data-testid="${id}"]`
+  const toggle = headerControl('toggle-right-workspace-panel-button')
   const shell = selector('right-workspace-panel-shell')
   const spacer = selector('environment-info-panel-spacer')
   const frame = selector('desktop-workbench-scroll-frame')
-  const environment = selector('environment-info-button')
+  const environment = headerControl('environment-info-button')
   let wasPinned
   try {
     await control.command('waitFor', `${shell}[aria-hidden="true"]`)

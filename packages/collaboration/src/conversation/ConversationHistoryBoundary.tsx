@@ -30,6 +30,7 @@ export function ConversationHistoryBoundary({
   const attemptedBoundaryRef = useRef<string | null>(null)
   const mountedRef = useRef(false)
   const [status, setStatus] = useState<'idle' | 'loading' | 'failed'>('idle')
+  const [completedBoundaryKey, setCompletedBoundaryKey] = useState<string | null>(null)
   useEffect(() => {
     mountedRef.current = true
     return () => {
@@ -44,10 +45,13 @@ export function ConversationHistoryBoundary({
       attemptedBoundaryRef.current = boundaryKey
       pendingRef.current = true
       setStatus('loading')
-      onPrepare(automatic)
       try {
+        onPrepare(automatic)
         await onLoad()
-        if (mountedRef.current) setStatus('idle')
+        if (mountedRef.current) {
+          setCompletedBoundaryKey(boundaryKey)
+          setStatus('idle')
+        }
       } catch {
         if (mountedRef.current) setStatus('failed')
       } finally {
@@ -91,7 +95,7 @@ export function ConversationHistoryBoundary({
     }
   }, [boundaryKey, failed, load, loading, manual, onLoad, scrollRef, status, suspended])
 
-  const showAction = manual || failed || status === 'failed'
+  const showAction = manual || failed || status === 'failed' || completedBoundaryKey === boundaryKey
   const busy = loading || status === 'loading'
   return (
     <div

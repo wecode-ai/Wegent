@@ -6,10 +6,12 @@ import { useMarkdownServices } from './MarkdownServices'
 
 export function DiagramCanvas({
   artifact,
+  fullscreen = false,
   onReady,
   onError,
 }: {
   artifact: DiagramArtifact
+  fullscreen?: boolean
   onReady: () => void
   onError: () => void
 }) {
@@ -21,7 +23,12 @@ export function DiagramCanvas({
     const image = imageRef.current
     const canvas = image?.parentElement
     if (!image || !canvas) return
-    const panzoom = Panzoom(image, { minScale: 0.4, maxScale: 4, canvas: true })
+    const panzoom = Panzoom(image, {
+      minScale: 0.4,
+      maxScale: 4,
+      canvas: true,
+      touchAction: fullscreen ? 'none' : 'pan-y',
+    })
     panzoomRef.current = panzoom
     const wheel = (event: WheelEvent) => {
       if (!event.ctrlKey && !event.metaKey) return
@@ -38,7 +45,7 @@ export function DiagramCanvas({
       panzoom.destroy()
       panzoomRef.current = null
     }
-  }, [artifact])
+  }, [artifact, fullscreen])
   const controls = [
     {
       id: 'out',

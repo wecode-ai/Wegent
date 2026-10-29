@@ -101,7 +101,10 @@ describe('automatic conversation history pagination', () => {
       fireEvent.click(screen.getByTestId('load-older-runtime-transcript-button'))
     )
     expect(onLoad).toHaveBeenCalledTimes(2)
-    expect(screen.queryByTestId('load-older-runtime-transcript-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('load-older-runtime-transcript-button')).toBeEnabled()
+    expect(screen.getByTestId('load-older-runtime-transcript-button')).not.toHaveTextContent(
+      'Retry'
+    )
   })
 
   test('retains explicit context loading while search owns the viewport', async () => {
@@ -117,6 +120,21 @@ describe('automatic conversation history pagination', () => {
     expect(onPrepare).toHaveBeenCalledWith(false)
   })
 
+  test('recovers if preparing the reading position fails before the request starts', async () => {
+    const onLoad = vi.fn().mockResolvedValue(undefined)
+    const onPrepare = vi.fn().mockImplementationOnce(() => {
+      throw new Error('Detached anchor')
+    })
+    render(boundary({ onLoad, onPrepare }))
+    await act(async () => intersect())
+    expect(onLoad).not.toHaveBeenCalled()
+    expect(screen.getByTestId('load-older-runtime-transcript-button')).toHaveTextContent('Retry')
+    await act(async () =>
+      fireEvent.click(screen.getByTestId('load-older-runtime-transcript-button'))
+    )
+    expect(onLoad).toHaveBeenCalledOnce()
+  })
+
   test('retries a host-reported pagination error without reloading the conversation', async () => {
     const onLoad = vi.fn().mockResolvedValue(undefined)
     const view = render(boundary({ onLoad, failed: true }))
@@ -128,9 +146,28 @@ describe('automatic conversation history pagination', () => {
     )
     expect(onLoad).toHaveBeenCalledOnce()
     view.rerender(boundary({ onLoad }))
-    expect(screen.queryByTestId('load-older-runtime-transcript-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('load-older-runtime-transcript-button')).toBeEnabled()
     intersect()
     expect(onLoad).toHaveBeenCalledOnce()
+  })
+
+  test('offers manual recovery without looping when a completed request makes no progress', async () => {
+    const onLoad = vi.fn().mockResolvedValue(undefined)
+    const onPrepare = vi.fn()
+    const view = render(boundary({ onLoad, onPrepare }))
+    await act(async () => intersect())
+    intersect()
+    expect(onLoad).toHaveBeenCalledOnce()
+    await act(async () =>
+      fireEvent.click(screen.getByTestId('load-older-runtime-transcript-button'))
+    )
+    expect(onLoad).toHaveBeenCalledTimes(2)
+    expect(onPrepare).toHaveBeenLastCalledWith(false)
+    view.rerender(boundary({ onLoad, onPrepare, boundaryKey: 'earlier-page' }))
+    expect(screen.queryByTestId('load-older-runtime-transcript-button')).not.toBeInTheDocument()
+    await act(async () => intersect())
+    expect(onLoad).toHaveBeenCalledTimes(3)
+    expect(onPrepare).toHaveBeenLastCalledWith(true)
   })
 
   test('ignores queued observer callbacks after suspension or unmount', () => {

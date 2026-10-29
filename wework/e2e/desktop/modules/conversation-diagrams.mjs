@@ -2,11 +2,13 @@ import {
   ACTIVE_WORKBENCH_SELECTOR,
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
+  DEFAULT_STEP_TIMEOUT_MS,
   FRESH_CHAT_PROMPT,
   assert,
   selectE2EModel,
 } from './shared.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
+import { waitForElementCount } from './harness-app-fixture.mjs'
 
 import { DIAGRAM_REGRESSION_MARKER } from './conversation-diagram-fixture.mjs'
 
@@ -55,6 +57,13 @@ export async function verifyConversationDiagrams(control, composerSelector, rest
       text: 'Diagram regression section 16',
       stableMs: 300,
     })
+    await waitForElementCount(
+      control,
+      image,
+      0,
+      DEFAULT_STEP_TIMEOUT_MS,
+      'The middle Markdown chunk did not unmount outside the preparation window'
+    )
     assert.equal(
       Number(await control.command('getElementCount', image)),
       0,

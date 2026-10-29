@@ -91,6 +91,22 @@ afterEach(() => {
 })
 
 describe('conversation search context', () => {
+  test('keeps live history manually accessible during find without changing hidden-pane behavior', async () => {
+    const props = { ...fixture(), searchPage: null }
+    const view = render(<ScrollableMessageArea {...props} autoScrollSuspended />)
+    const conversation = screen.getByTestId('visible-conversation')
+    expect(conversation).toHaveAttribute('data-history-loading-mode', 'automatic')
+    view.rerender(<ScrollableMessageArea {...props} />)
+    fireEvent.keyDown(window, { key: 'f', metaKey: true })
+    expect(conversation).toHaveAttribute('data-history-loading-mode', 'manual')
+    expect(screen.getByText('Latest conversation message')).toBeInTheDocument()
+    await act(async () => fireEvent.click(screen.getByTestId('context-before-control')))
+    expect(props.onLoadMoreBefore).toHaveBeenCalledOnce()
+    expect(props.onLoadSearchContext).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('conversation-find-close-button'))
+    expect(conversation).toHaveAttribute('data-history-loading-mode', 'automatic')
+  })
+
   test('loads only the requested context edge and restores the live conversation when closed', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const props = fixture()
