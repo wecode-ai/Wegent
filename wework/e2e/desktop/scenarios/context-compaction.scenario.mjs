@@ -2,6 +2,7 @@ import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { createInterruptedCompactionScenario } from './interrupted-context-compaction.mjs'
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
+import { createCatalogAutoCompactionVerification } from './catalog-auto-compaction.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -150,14 +151,16 @@ async function waitForRuntimePaneIdle(control, timeoutMs) {
   )
 }
 
-export function createDesktopScenario({
-  captureScreenshot,
-  modelResponseTimeoutMs,
-  uiTimeoutMs,
-  workbenchReadyTimeoutMs,
-  workspacePath,
-}) {
+export function createDesktopScenario(options) {
+  const {
+    captureScreenshot,
+    modelResponseTimeoutMs,
+    uiTimeoutMs,
+    workbenchReadyTimeoutMs,
+    workspacePath,
+  } = options
   const interrupted = createInterruptedCompactionScenario({ uiTimeoutMs, modelResponseTimeoutMs })
+  const catalogAuto = createCatalogAutoCompactionVerification(options)
   let active = false
   let compactionRequests = 0
   let rejectedCompactionRequests = 0
@@ -176,7 +179,9 @@ export function createDesktopScenario({
   })
 
   return {
+    prepareApp: catalogAuto.prepareApp,
     async handleHttp(request, response, url) {
+      if (await catalogAuto.handleHttp(request, response, url)) return true
       if (await interrupted.handleHttp(request, response, url)) return true
       if (
         !active ||
@@ -407,6 +412,7 @@ export function createDesktopScenario({
         )
         await captureScreenshot(control, 'context-compaction-06-rejected.png', 'body')
         rejectCompaction = false
+        await catalogAuto.verify(control)
       } finally {
         releaseCompaction()
       }
@@ -419,6 +425,7 @@ export function createDesktopScenario({
         rejectedCompactionRequests,
         followUpSawCompactedContext,
         interrupted: interrupted.diagnostics(),
+        catalogAuto: catalogAuto.diagnostics(),
       }
     },
   }
