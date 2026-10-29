@@ -70,15 +70,6 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let user = stand_in_user(&payload)?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
-        let settings = store
-            .personal_stand_in(user, &self.device_id)
-            .map_err(settings_error)?;
-        if settings["processing"]["mode"] != "silent" {
-            return Err(AppIpcError::new(
-                "bad_request",
-                "Save silent processing settings first",
-            ));
-        }
         self.process_stand_in_user(&store, user, true).await?;
         self.stand_in_processing_status(json!({"userId":user}))
     }
@@ -111,12 +102,23 @@ impl RuntimeWorkRpcHandler {
         force: bool,
     ) -> Result<(), AppIpcError> {
         let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
-        let Ok(_guard) = gate.try_lock() else {
-            return Ok(());
+        let _guard = if force {
+            gate.lock().await
+        } else {
+            let Ok(guard) = gate.try_lock() else {
+                return Ok(());
+            };
+            guard
         };
         let current_settings = store
             .personal_stand_in(user, &self.device_id)
             .map_err(settings_error)?;
+        if force && current_settings["processing"]["mode"] != "silent" {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "Save silent processing settings first",
+            ));
+        }
         let result = self
             .process_stand_in_user_on(store, user, &current_settings, force)
             .await;

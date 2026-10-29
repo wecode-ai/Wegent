@@ -343,3 +343,28 @@ async fn saving_after_failed_processing_clears_old_error_and_uses_new_interval()
             > chrono::Utc::now() + chrono::Duration::minutes(14)
     );
 }
+
+#[tokio::test]
+async fn manual_checks_wait_for_busy_processing_and_revalidate_saved_mode() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, mut settings) = fixture(root.path());
+    let gate = handler.task_send_gate("stand-in-processing:7");
+    let guard = gate.lock().await;
+    handler
+        .process_stand_in_user(&store, 7, false)
+        .await
+        .unwrap();
+    let check = handler.check_stand_in_processing(json!({"userId":7}));
+    tokio::pin!(check);
+    assert!(tokio::time::timeout(Duration::from_millis(10), &mut check)
+        .await
+        .is_err());
+    settings["processing"]["mode"] = json!("immediate");
+    store.save_personal_stand_in(7, "mac", settings).unwrap();
+    drop(guard);
+    assert_eq!(check.await.unwrap_err().code, "bad_request");
+    let state = store.stand_in_processing_state(7).unwrap();
+    assert!(state["error"].is_null());
+    assert!(state["nextCheckAt"].is_null());
+    assert!(handler.local_task_links(true).is_empty());
+}
