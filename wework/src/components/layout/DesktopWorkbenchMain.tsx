@@ -740,6 +740,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
+  const hasMainBackground = Boolean(background.imagePath && background.inMain)
   const isDesktop = isDesktopRuntime()
   const splitGroups = props.splitGroups
   const splitMode = splitGroups?.splitMode ?? false
@@ -1064,6 +1065,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     <SplitWorkbenchPaneStack
       activePane={props.activePane}
       layout={splitGroups.activeLayout}
+      showWorkbenchBackground={hasMainBackground}
       validRuntimeKeys={runtimePaneKeys}
       retainedResourceKeys={retainedResourceKeys}
       activeTestId={props.visible === false ? null : 'desktop-workbench-main'}

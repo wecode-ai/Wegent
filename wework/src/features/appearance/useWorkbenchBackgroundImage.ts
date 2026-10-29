@@ -42,6 +42,8 @@ export function useWorkbenchBackgroundImage(path: string | null): WorkbenchBackg
     return () => {
       cancelled = true
       release?.()
+      setLoaded(current => (current?.path === path ? null : current))
+      setFailedPath(current => (current === path ? null : current))
     }
   }, [path])
 

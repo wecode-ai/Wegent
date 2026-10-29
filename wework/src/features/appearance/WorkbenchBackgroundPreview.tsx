@@ -15,7 +15,7 @@ export function WorkbenchBackgroundPreview({
   blur,
   testIdSuffix,
 }: WorkbenchBackgroundPreviewProps) {
-  const { url, failed } = useWorkbenchBackgroundImage(imagePath)
+  const { url, failed, reportLoadError } = useWorkbenchBackgroundImage(imagePath)
   const backgroundUrl = failed ? null : url
 
   return (
@@ -29,6 +29,7 @@ export function WorkbenchBackgroundPreview({
             src={backgroundUrl}
             alt=""
             aria-hidden="true"
+            onError={reportLoadError}
             className="absolute inset-0 h-full w-full object-cover"
             style={{
               filter: blur ? `blur(${blur}px)` : undefined,
@@ -41,7 +42,10 @@ export function WorkbenchBackgroundPreview({
           />
         </>
       ) : (
-        <div className="absolute inset-0 flex items-center justify-center text-text-muted">
+        <div
+          data-testid={`appearance-background-preview-placeholder${testIdSuffix}`}
+          className="absolute inset-0 flex items-center justify-center text-text-muted"
+        >
           <Image className="h-6 w-6" />
         </div>
       )}
