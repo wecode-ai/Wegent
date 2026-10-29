@@ -866,13 +866,9 @@ async function verifyWorkspaceDocumentTabs(control) {
   await captureVerificationScreenshot(control, 'workspace-tabs-02-task-restored.png')
 }
 
-async function reloadMainWindow(control, errorMessage, localStorageEntry) {
+async function reloadMainWindow(control, errorMessage) {
   const readyCountBeforeReload = control.readyCount
-  await control.command(
-    'reloadMainWindow',
-    'body',
-    localStorageEntry ? { value: JSON.stringify({ localStorage: localStorageEntry }) } : undefined
-  )
+  await control.command('reloadMainWindow', 'body')
   await withTimeout(
     control.awaitReadyAfter(readyCountBeforeReload),
     WORKBENCH_READY_TIMEOUT_MS,

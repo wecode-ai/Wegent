@@ -39,6 +39,12 @@ function backgroundSettings(imagePath) {
   })
 }
 
+async function setAppearanceStorage(control, value) {
+  await control.command('setLocalStorageItem', 'body', {
+    value: JSON.stringify({ key: WORKBENCH_BACKGROUND_KEY, value }),
+  })
+}
+
 function cssAlpha(value) {
   const color = value.trim()
   if (color === 'transparent') return 0
@@ -193,10 +199,10 @@ async function verifyWorkbenchBackgroundSurfaces({ control }) {
   await writeFile(imagePath, TEST_BACKGROUND_PNG)
 
   try {
+    await setAppearanceStorage(control, backgroundSettings(imagePath))
     await reloadMainWindow(
       control,
-      'The workbench background configuration did not survive an appearance reload',
-      { key: WORKBENCH_BACKGROUND_KEY, value: backgroundSettings(imagePath) }
+      'The workbench background configuration did not survive an appearance reload'
     )
     await control.command('waitFor', WORKBENCH_BACKGROUND_SELECTOR, {
       visible: true,
@@ -318,10 +324,11 @@ async function verifyWorkbenchBackgroundSurfaces({ control }) {
       'bg-transparent',
       'The side chat composer'
     )
-    await reloadMainWindow(control, 'The missing workbench background fixture did not reload', {
-      key: WORKBENCH_BACKGROUND_KEY,
-      value: backgroundSettings(join(tmpdir(), 'wework-e2e-missing-background.png')),
-    })
+    await setAppearanceStorage(
+      control,
+      backgroundSettings(join(tmpdir(), 'wework-e2e-missing-background.png'))
+    )
+    await reloadMainWindow(control, 'The missing workbench background fixture did not reload')
     await control.command('waitFor', '[data-testid="new-chat-button"]', {
       visible: true,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -332,14 +339,11 @@ async function verifyWorkbenchBackgroundSurfaces({ control }) {
     })
   } finally {
     if (originalAppearance) {
-      await reloadMainWindow(control, 'The original appearance settings did not reload', {
-        key: WORKBENCH_BACKGROUND_KEY,
-        value: originalAppearance,
-      })
+      await setAppearanceStorage(control, originalAppearance)
     } else {
       await control.command('removeLocalStorageItem', 'body', { value: WORKBENCH_BACKGROUND_KEY })
-      await reloadMainWindow(control, 'The cleared workbench appearance did not reload')
     }
+    await reloadMainWindow(control, 'The workbench appearance fixture did not restore')
     await rm(imagePath, { force: true })
   }
 
