@@ -2141,16 +2141,46 @@ class TestSandboxManager:
     async def test_collect_expired_sandboxes_cleans_orphaned(
         self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
     ):
-        """Test cleans orphaned ZSet entries."""
+        """An entry without a session hash still deletes its Pod by task id."""
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.zrangebyscore.return_value = ["orphaned-id"]
         mock_redis_client.hget.return_value = None  # No sandbox data
+        mock_executor = MagicMock()
+        mock_executor.delete_executor_by_task_id.return_value = {"status": "success"}
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+            return_value=mock_executor,
+        )
 
         await manager._collect_expired_sandboxes()
 
+        mock_executor.delete_executor_by_task_id.assert_called_once_with("orphaned-id")
         mock_redis_client.zrem.assert_called_with(
             "wegent-sandbox:active", "orphaned-id"
         )
+
+    @pytest.mark.asyncio
+    async def test_collect_expired_sandboxes_keeps_orphan_when_delete_fails(
+        self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
+    ):
+        """A failed orphan delete keeps the entry so the next GC retries."""
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.zrangebyscore.return_value = ["orphaned-id"]
+        mock_redis_client.hget.return_value = None
+        mock_executor = MagicMock()
+        mock_executor.delete_executor_by_task_id.return_value = {
+            "status": "failed",
+            "error_msg": "api unavailable",
+        }
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+            return_value=mock_executor,
+        )
+
+        await manager._collect_expired_sandboxes()
+
+        mock_executor.delete_executor_by_task_id.assert_called_once_with("orphaned-id")
+        mock_redis_client.zrem.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_collect_expired_sandboxes_defers_when_archive_fails(

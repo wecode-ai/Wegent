@@ -1670,9 +1670,14 @@ class SandboxManager(metaclass=SingletonMeta):
         """
         sandbox = self._repository.load_sandbox(task_id_str)
         if sandbox is None:
-            # Clean up orphaned ZSet entry
-            self._repository.remove_from_active_set(task_id_str)
-            logger.debug(f"[SandboxManager] Cleaned orphaned ZSet entry: {task_id_str}")
+            # The session hash may have expired before GC reached this entry
+            # (Redis restart or a failed TTL extension). Delete by task-id
+            # label so the Pod does not become an orphan.
+            if await self._delete_orphaned_executor(task_id_str):
+                self._repository.remove_from_active_set(task_id_str)
+                logger.debug(
+                    f"[SandboxManager] Cleaned orphaned ZSet entry: {task_id_str}"
+                )
             return
 
         logger.info(
@@ -1702,6 +1707,43 @@ class SandboxManager(metaclass=SingletonMeta):
             )
             return
         await self.terminate_sandbox(task_id_str)
+
+    async def _delete_orphaned_executor(self, task_id: str) -> bool:
+        """Delete a Pod whose sandbox record is gone but is still tracked.
+
+        Returns True when the executor is removed (or already absent), so the
+        active-set entry can be dropped; False keeps the entry for the next GC
+        run to retry.
+        """
+        try:
+            executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+            result = await asyncio.to_thread(
+                executor.delete_executor_by_task_id, task_id
+            )
+        except Exception as exc:
+            logger.warning(
+                "[SandboxManager] Failed to delete orphaned executor "
+                "task_id=%s: %s",
+                task_id,
+                exc,
+            )
+            return False
+
+        status = str((result or {}).get("status", "")).lower()
+        if status in {"success", "not_found"}:
+            logger.info(
+                "[SandboxManager] Removed orphaned executor task_id=%s status=%s",
+                task_id,
+                status,
+            )
+            return True
+        logger.warning(
+            "[SandboxManager] Could not delete orphaned executor task_id=%s "
+            "result=%s",
+            task_id,
+            result,
+        )
+        return False
 
     async def _archive_before_terminate(self, sandbox: Sandbox) -> bool:
         """Archive the sandbox workspace so the task stays resumable.
