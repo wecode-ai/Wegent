@@ -22,7 +22,7 @@ from app.schemas.runtime_transcript_transport import (
 )
 from app.schemas.runtime_work import RuntimeTranscriptRequest, RuntimeTranscriptResponse
 
-# Bound both accumulated transport data and decompressed device-controlled JSON.
+# Bound transport data, decompressed JSON and projected restored transcript JSON.
 MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024
 TranscriptPacket = RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse
 TranscriptRead = Callable[[RuntimeTranscriptRequest], Awaitable[TranscriptPacket]]
@@ -114,15 +114,48 @@ def _unpack_transcript(data: bytes, snapshot: str) -> RuntimeTranscriptResponse:
     ):
         raise RuntimeTranscriptTransferError("invalid_snapshot_structure")
     transcript = packed["transcript"]
+    _validate_restored_size(transcript, strings, references)
     for reference in references:
         _restore_reference(transcript, strings, reference)
     return RuntimeTranscriptResponse.model_validate(transcript)
 
 
-def _restore_reference(
-    transcript: dict[str, Any], strings: list[str], reference: Any
+def _json_size(value: Any) -> int:
+    """Count compact UTF-8 JSON and stop at the restored-size limit."""
+    encoder = json.JSONEncoder(
+        ensure_ascii=False, allow_nan=False, separators=(",", ":")
+    )
+    size = 0
+    try:
+        for chunk in encoder.iterencode(value):
+            size += len(chunk.encode("utf-8"))
+            if size > MAX_TRANSCRIPT_BYTES:
+                raise RuntimeTranscriptTransferError("restored_size_limit")
+    except RuntimeTranscriptTransferError:
+        raise
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise RuntimeTranscriptTransferError("invalid_snapshot_encoding") from exc
+    return size
+
+
+def _validate_restored_size(
+    transcript: dict[str, Any], strings: list[str], references: list[Any]
 ) -> None:
-    """Restore a string only into an existing empty slot with a valid typed path."""
+    """Bound all repeated strings before restoration or response-model validation."""
+    size = _json_size(transcript)
+    string_sizes: dict[int, int] = {}
+    for reference in references:
+        _, index = _reference_parts(reference, len(strings))
+        if index not in string_sizes:
+            string_sizes[index] = _json_size(strings[index])
+        # Every valid reference replaces one JSON null, including repeated strings.
+        size += string_sizes[index] - len("null")
+    if size > MAX_TRANSCRIPT_BYTES:
+        raise RuntimeTranscriptTransferError("restored_size_limit")
+
+
+def _reference_parts(reference: Any, string_count: int) -> tuple[list[Any], int]:
+    """Validate a reference path and its strictly typed string-pool index."""
     if not isinstance(reference, dict):
         raise RuntimeTranscriptTransferError("invalid_string_reference")
     path, index = reference.get("path"), reference.get("index")
@@ -130,9 +163,17 @@ def _restore_reference(
         not isinstance(path, list)
         or not path
         or type(index) is not int
-        or not 0 <= index < len(strings)
+        or not 0 <= index < string_count
     ):
         raise RuntimeTranscriptTransferError("invalid_string_reference")
+    return path, index
+
+
+def _restore_reference(
+    transcript: dict[str, Any], strings: list[str], reference: Any
+) -> None:
+    """Restore a string only into an existing empty slot with a valid typed path."""
+    path, index = _reference_parts(reference, len(strings))
     target: Any = transcript
     for position, key in enumerate(path):
         if isinstance(target, dict) and isinstance(key, str) and key in target:

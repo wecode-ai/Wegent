@@ -63,9 +63,12 @@ request, verifies the snapshot SHA-256, offsets and complete size, then decompre
 restores string references. The response retains canonical `turns`, `messages` and page
 cursors. Explicit pagination, refresh and export fields are retained; an omitted page size
 uses the v2 default of 5 turns. Every internal continuation reauthorizes the original caller.
-Compressed snapshots and decompressed JSON are each limited to 64 MiB, and the entire
-aggregation shares the existing transcript RPC timeout budget. Invalid packets or an
-overall timeout return 502. Logs include device error codes, chunk offsets and byte counts
+Compressed snapshots, decompressed JSON and projected restored JSON are each limited to
+64 MiB. Before restoration, Backend counts compact UTF-8 JSON bytes for every expanded
+string reference, including repeated references and escaping, and rejects oversized pages
+before restoration or model validation. The entire aggregation shares the existing
+transcript RPC timeout budget. Invalid packets or an overall timeout return 502.
+Logs include device error codes, chunk offsets and byte counts
 with the existing request ID, without history contents. The device's 980,000-byte limit
 remains unchanged.
 

@@ -8,7 +8,7 @@ import base64
 import gzip
 import hashlib
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -54,6 +54,17 @@ def packet_for(data: bytes) -> RuntimeTranscriptChunkResponse:
             },
         }
     )
+
+
+def packed_repeated_output(output: str) -> dict:
+    """Represent repeated tool output with one pooled string and many references."""
+    packed = packed_transcript()
+    packed["strings"] = [output]
+    packed["transcript"]["turns"] = [{"output": None} for _ in range(16)]
+    packed["references"] = [
+        {"path": ["turns", index, "output"], "index": 0} for index in range(16)
+    ]
+    return packed
 
 
 async def read_packet(
@@ -163,3 +174,58 @@ async def test_decompressed_size_is_bounded(monkeypatch):
         reader.RuntimeTranscriptTransferError, match="decoded_size_limit"
     ):
         await read_packet(packet)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "output", ["x" * 600, '雪🙂\\"\n' * 100], ids=["ascii", "unicode"]
+)
+async def test_expanded_references_are_bounded_before_restoration(output, monkeypatch):
+    """Reject reference expansion before restoring strings or validating models."""
+    packed = packed_repeated_output(output)
+    raw = json.dumps(packed, ensure_ascii=False).encode()
+    assert len(raw) < 4096
+    packet = packet_for(gzip.compress(raw, mtime=0))
+    monkeypatch.setattr(reader, "MAX_TRANSCRIPT_BYTES", 4096)
+    restore = Mock(wraps=reader._restore_reference)
+    validate = Mock(wraps=RuntimeTranscriptResponse.model_validate)
+    monkeypatch.setattr(reader, "_restore_reference", restore)
+    monkeypatch.setattr(RuntimeTranscriptResponse, "model_validate", validate)
+
+    with pytest.raises(
+        reader.RuntimeTranscriptTransferError, match="restored_size_limit"
+    ):
+        await read_packet(packet)
+
+    restore.assert_not_called()
+    validate.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("remaining_bytes", [0, -1], ids=["exact-limit", "over-limit"])
+async def test_restored_size_counts_utf8_json_bytes(remaining_bytes, monkeypatch):
+    """Include UTF-8 width, JSON escapes and every repeated string in the limit."""
+    output = '雪🙂\\"\n' * 100
+    packed = packed_repeated_output(output)
+    expected = {
+        **packed["transcript"],
+        "turns": [{"output": output} for _ in range(16)],
+    }
+    restored_bytes = len(
+        json.dumps(expected, ensure_ascii=False, separators=(",", ":")).encode()
+    )
+    raw = json.dumps(packed, ensure_ascii=False).encode()
+    assert len(raw) < restored_bytes + remaining_bytes
+    packet = packet_for(gzip.compress(raw, mtime=0))
+    monkeypatch.setattr(
+        reader, "MAX_TRANSCRIPT_BYTES", restored_bytes + remaining_bytes
+    )
+
+    if remaining_bytes < 0:
+        with pytest.raises(
+            reader.RuntimeTranscriptTransferError, match="restored_size_limit"
+        ):
+            await read_packet(packet)
+    else:
+        result = await read_packet(packet)
+        assert result.turns == expected["turns"]
