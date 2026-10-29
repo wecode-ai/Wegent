@@ -1,4 +1,7 @@
-import { IssueAssignmentReceipts } from './IssueAssignmentReceipts'
+import {
+  IssueAssignmentReceipts,
+  type IssueAssignmentReceiptState,
+} from './IssueAssignmentReceipts'
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { LockKeyhole, Send } from 'lucide-react'
 import {
@@ -161,6 +164,9 @@ export function TodoEditor(props: TodoEditorProps) {
       },
     }
   }, [props.api, props.projectChatAgentApi, props.sharedApi])
+  const [assignmentReceipts, setAssignmentReceipts] = useState<IssueAssignmentReceiptState | null>(
+    null
+  )
   const receiptApi = useMemo(
     () =>
       workspaceApi.assignmentReceipts
@@ -217,6 +223,7 @@ export function TodoEditor(props: TodoEditorProps) {
     renderActivity: context =>
       props.projectChatClient ? (
         <TaskActivityView
+          assignmentReceipts={assignmentReceipts}
           commentAssignment={context.commentAssignment}
           key={context.item.id}
           client={props.projectChatClient}
@@ -262,6 +269,7 @@ export function TodoEditor(props: TodoEditorProps) {
           version={item.version}
           currentUserId={props.currentUserId}
           assigneeUserId={item.assignee_user_id}
+          onStateChange={setAssignmentReceipts}
         />
       ) : null,
     renderAssignmentHistory: context => (

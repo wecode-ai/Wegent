@@ -533,6 +533,8 @@ export function createStreamingScrollChecks({
     })
     await control.command('pointerDown', SCROLL_TO_BOTTOM_BUTTON_SELECTOR)
     await control.command('click', SCROLL_TO_BOTTOM_BUTTON_SELECTOR)
+    // A transcript click during follow must not classify subsequent spring steps as reader input.
+    await control.command('pointerClick', SCROLLER_SELECTOR)
     await scrollButtonAppendWritten
     await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
       text: SCROLL_BUTTON_APPEND_MARKER,

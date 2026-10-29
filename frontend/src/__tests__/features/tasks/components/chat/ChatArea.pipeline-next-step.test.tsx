@@ -313,7 +313,9 @@ jest.mock('@/features/tasks/components/chat/SloganDisplay', () => ({
   SloganDisplay: () => <div data-testid="slogan-display" />,
 }))
 jest.mock('@/features/tasks/components/input/ChatInputCard', () => ({
-  ChatInputCard: () => <div data-testid="chat-input-card" />,
+  ChatInputCard: ({ canSubmit }: { canSubmit: boolean }) => (
+    <div data-testid="chat-input-card" data-can-submit={String(canSubmit)} />
+  ),
 }))
 jest.mock('@/features/tasks/components/chat/ScrollToBottomIndicator', () => ({
   ScrollToBottomIndicator: () => <div data-testid="scroll-to-bottom-indicator" />,
@@ -918,6 +920,17 @@ describe('ChatArea selection while the catalog loads', () => {
     rerender(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" />)
     expect(mockNewChatTeam?.id).toBe(65)
     expect(mockHandleTeamChange.mock.calls.every(([team]) => team?.id === 65)).toBe(true)
+  })
+
+  it('blocks keyboard submission while an explicit agent is unresolved, then enables it', () => {
+    mockUseStatefulSelection = true
+    mockNewChatParams = new URLSearchParams(`teamId=${mockSelectedTeam.id}`)
+    const view = render(<ChatArea teams={[defaultTeam]} isTeamsLoading={false} taskType="chat" />)
+    expect(screen.getByTestId('chat-input-card')).toHaveAttribute('data-can-submit', 'false')
+
+    mockUrlTeam = mockSelectedTeam
+    view.rerender(<ChatArea teams={[defaultTeam]} isTeamsLoading={false} taskType="chat" />)
+    expect(screen.getByTestId('chat-input-card')).toHaveAttribute('data-can-submit', 'true')
   })
 
   it('waits for the requested agent before auto-sending instead of using the catalog default', async () => {

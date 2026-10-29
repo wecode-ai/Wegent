@@ -47,7 +47,9 @@ export function standInOrigin(item: RuntimeTaskReminderItem) {
   return record as Record<string, unknown> & { cloudProjectId: string; loopItemId: string }
 }
 
-export function standInState(item: RuntimeTaskReminderItem): StandInNotificationState {
+export function standInState(
+  item: Pick<RuntimeTaskReminderItem, 'task' | 'address' | 'lifecycle'>
+): StandInNotificationState {
   const task = normalizeRuntimeTaskSummary(item.task)
   const lifecycle = item.lifecycle
   const executionStatus =

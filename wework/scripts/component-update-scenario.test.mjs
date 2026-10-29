@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
 import { createDesktopScenario } from '../e2e/desktop/scenarios/component-update.scenario.mjs'
 import { validateUpgradeCatalog } from '../electron/src/runtime/upgrade-policy.mjs'
+import { extractRuntimeArchive } from './lib/extract-runtime-archive.mjs'
 
 for (const packageChannel of ['stable', 'beta']) {
   test(`${packageChannel} package fixture serves both user-selected update channels`, async t => {
@@ -27,7 +28,8 @@ for (const packageChannel of ['stable', 'beta']) {
         },
       })
     )
-    const resultDir = join(root, 'results')
+    // Exercise GNU tar's remote-host parsing on POSIX as well as Windows drives.
+    const resultDir = join(root, process.platform === 'win32' ? 'results' : 'local:results')
     await mkdir(resultDir)
     const originalBinary = process.env.WEWORK_E2E_APP_BIN
     const originalRequireRelease = process.env.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE
@@ -68,9 +70,17 @@ for (const packageChannel of ['stable', 'beta']) {
       assert.deepEqual(catalog.edges, [])
       const archive = await fetch(manifest.components.weworkCorePlugins.downloadUrl)
       assert.equal(archive.status, 200)
+      const archiveBytes = Buffer.from(await archive.arrayBuffer())
+      assert.equal(archiveBytes.byteLength, manifest.components.weworkCorePlugins.archiveBytes)
+      const archivePath = join(resultDir, `downloaded-${channel}.tar.gz`)
+      const extracted = join(resultDir, `extracted-${channel}`)
+      await writeFile(archivePath, archiveBytes)
+      await mkdir(extracted)
+      await extractRuntimeArchive(archivePath, extracted)
+      assert.equal(await readFile(join(extracted, 'plugin.json'), 'utf8'), '{}')
       assert.equal(
-        (await archive.arrayBuffer()).byteLength,
-        manifest.components.weworkCorePlugins.archiveBytes
+        await readFile(join(extracted, 'e2e-component-update', 'nested', 'marker.txt'), 'utf8'),
+        'component update activated\n'
       )
     }
     assert.equal(

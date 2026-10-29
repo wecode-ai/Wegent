@@ -6,7 +6,7 @@ import {
   getScrollViewportBounds,
   setDistanceFromBottom,
   scrollToContentPosition,
-} from './bottomOriginScroll'
+} from '../../../../packages/collaboration/src/conversation/conversationViewportScroll'
 
 function createScroller(scrollTop: number) {
   const element = document.createElement('div')
@@ -21,35 +21,32 @@ function createScroller(scrollTop: number) {
   return element
 }
 
-describe('bottom-origin scroll coordinates', () => {
-  test('uses zero as the physical bottom and negative offsets above it', () => {
-    const element = createScroller(-320)
-    element.dataset.scrollOrigin = 'bottom'
+describe('conversation viewport coordinates', () => {
+  test('uses positive DOM offsets and distances from either edge', () => {
+    const element = createScroller(480)
 
-    expect(getDistanceFromBottom(element, true)).toBe(320)
-    expect(getDistanceFromTop(element, true)).toBe(480)
+    expect(getDistanceFromBottom(element)).toBe(320)
+    expect(getDistanceFromTop(element)).toBe(480)
     expect(getScrollViewportBounds(element)).toEqual({ startPx: 480, endPx: 680 })
 
-    setDistanceFromBottom(element, 0, 'auto', true)
-    expect(element.scrollTop).toBe(-0)
+    setDistanceFromBottom(element, 0, 'auto')
+    expect(element.scrollTop).toBe(800)
 
-    setDistanceFromBottom(element, 180, 'auto', true)
-    expect(element.scrollTop).toBe(-180)
+    setDistanceFromBottom(element, 180, 'auto')
+    expect(element.scrollTop).toBe(620)
   })
 
-  test('maps virtualizer top offsets back to the bottom-origin DOM coordinate', () => {
+  test('writes content offsets without an origin adapter', () => {
     const element = createScroller(0)
-    element.dataset.scrollOrigin = 'bottom'
 
     scrollToContentPosition(element, 250, 'auto')
 
-    expect(element.scrollTop).toBe(-550)
+    expect(element.scrollTop).toBe(250)
     expect(getScrollViewportBounds(element).startPx).toBe(250)
   })
 
-  test('resolves viewport geometry without exposing top-origin coordinates', () => {
-    const element = createScroller(-320)
-    element.dataset.scrollOrigin = 'bottom'
+  test('resolves a screen coordinate inside the content', () => {
+    const element = createScroller(480)
     element.getBoundingClientRect = () => ({ top: 100 }) as DOMRect
 
     expect(getContentPositionForViewportY(element, 160)).toBe(540)
