@@ -107,10 +107,14 @@ async function verifyPdfPreview(page: Page, dialog: Locator, origin: string): Pr
 }
 
 async function verifyOfficePreview(page: Page, dialog: Locator, origin: string): Promise<void> {
-  const [response] = await Promise.all([
-    page.waitForResponse(response => response.url() === `${origin}/preview.docx`),
+  const [request] = await Promise.all([
+    // Scrolling to the card can start a cover request that is later aborted.
+    // Only a completed load has a response body available for inspection.
+    page.waitForEvent('requestfinished', request => request.url() === `${origin}/preview.docx`),
     previewTrigger(page, 'preview.docx').click(),
   ])
+  const response = await request.response()
+  if (!response) throw new Error('Completed Office preview request has no response')
   expect(response.status()).toBe(200)
   expect(response.headers()['access-control-allow-origin']).toBe('*')
   expect((await response.body()).subarray(0, 2).toString()).toBe('PK')
