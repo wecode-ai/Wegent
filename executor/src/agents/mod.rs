@@ -12,7 +12,7 @@ mod cargo_cache;
 mod claude_code;
 mod claude_options;
 mod codex;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) use codex::LaunchEnvironment as CodexLaunchEnvironment;
 mod codex_log_db;
 mod dify;
