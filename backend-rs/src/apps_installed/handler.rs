@@ -6,9 +6,9 @@
 //! `app/api/endpoints/connector_app_projection.py::installed_apps`).
 use std::sync::Arc;
 
+use crate::auth::SessionClaims;
 use brz_http_server::StatusCode;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
-use serde::Deserialize;
+use jsonwebtoken::Algorithm;
 
 use super::db::{self, UserRow};
 use super::service::{self, ConnectorApp};
@@ -16,16 +16,9 @@ use crate::auth::AppAuthenticator;
 use crate::state::AppState;
 
 /// Source `get_current_user` failure response.
-const UNAUTHORIZED_BODY: &str = "{\"detail\":\"Could not validate credentials\"}";
-
-/// Claims accepted from a Wegent user-session token
-/// (`app/core/session_token.py::is_user_session_payload`).
-#[derive(Debug, Deserialize)]
-struct Claims {
-    sub: Option<String>,
-    scope: Option<String>,
-    token_use: Option<String>,
-}
+const INVALID_CREDENTIALS: &str = "Could not validate credentials";
+const APPS_MISSING: &str = "Wegent-Apps-Not-Authenticated";
+const APPS_INACTIVE: &str = "Wegent-Apps-User-Inactive";
 
 pub(crate) struct InstalledAppsUser(UserRow);
 
@@ -46,9 +39,13 @@ impl brz_http_server::Authenticator<InstalledAppsUser> for AppAuthenticator {
         resolve_installed_apps_user(self.state(), authorization)
             .await
             .map(InstalledAppsUser)
-            .map_err(|(status, _)| {
+            .map_err(|(status, detail)| {
                 if status == StatusCode::INTERNAL_SERVER_ERROR {
                     brz_http_server::AuthFailure::Internal
+                } else if detail == "Not authenticated" {
+                    brz_http_server::AuthFailure::missing_credentials(APPS_MISSING)
+                } else if detail == "User not activated" {
+                    brz_http_server::AuthFailure::invalid_credentials(APPS_INACTIVE)
                 } else {
                     brz_http_server::AuthFailure::invalid_credentials("Bearer")
                 }
@@ -71,10 +68,16 @@ impl brz_http_server::Authenticator<InstalledAppsUser> for AppAuthenticator {
         use brz_http_server::IntoHttpError as _;
 
         let error = match failure {
+            brz_http_server::AuthFailure::MissingCredentials {
+                challenge: APPS_MISSING,
+            } => crate::http_compat::FastApiError::unauthorized("Not authenticated"),
+            brz_http_server::AuthFailure::InvalidCredentials {
+                challenge: APPS_INACTIVE,
+            } => crate::http_compat::FastApiError::unauthorized("User not activated"),
             brz_http_server::AuthFailure::Internal | brz_http_server::AuthFailure::Unavailable => {
                 unauthorized_error((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"))
             }
-            _ => unauthorized_error((StatusCode::UNAUTHORIZED, UNAUTHORIZED_BODY)),
+            _ => unauthorized_error((StatusCode::UNAUTHORIZED, INVALID_CREDENTIALS)),
         };
         error.into_http_error(arena)
     }
@@ -124,7 +127,11 @@ async fn apps(
 fn unauthorized_error(
     (status, body): (StatusCode, &'static str),
 ) -> crate::http_compat::FastApiError {
-    crate::http_compat::FastApiError::detail(status, body)
+    if status == StatusCode::UNAUTHORIZED {
+        crate::http_compat::FastApiError::unauthorized(body)
+    } else {
+        crate::http_compat::FastApiError::unhandled()
+    }
 }
 
 /// JWT session authentication mirroring `get_current_user`.
@@ -133,14 +140,15 @@ async fn resolve_installed_apps_user(
     authorization: Option<&str>,
 ) -> Result<UserRow, (StatusCode, &'static str)> {
     let Some(token) = bearer_token(authorization) else {
-        return Err((StatusCode::UNAUTHORIZED, UNAUTHORIZED_BODY));
+        return Err((StatusCode::UNAUTHORIZED, "Not authenticated"));
     };
     let Some(username) = verify_token(token, &state.jwt_secret_keys, &state.jwt_algorithm) else {
-        return Err((StatusCode::UNAUTHORIZED, UNAUTHORIZED_BODY));
+        return Err((StatusCode::UNAUTHORIZED, INVALID_CREDENTIALS));
     };
     match db::find_user_by_name(&state.mysql, &username).await {
         Ok(Some(user)) if user.users_is_active => Ok(user),
-        Ok(_) => Err((StatusCode::UNAUTHORIZED, UNAUTHORIZED_BODY)),
+        Ok(Some(_)) => Err((StatusCode::UNAUTHORIZED, "User not activated")),
+        Ok(None) => Err((StatusCode::UNAUTHORIZED, INVALID_CREDENTIALS)),
         Err(error) => {
             tracing::error!(%error, %username, "authentication user lookup failed");
             Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"))
@@ -150,13 +158,7 @@ async fn resolve_installed_apps_user(
 
 /// Extract the bearer credential like `extract_authorization_token`.
 fn bearer_token(authorization: Option<&str>) -> Option<&str> {
-    let value = authorization?;
-    let (scheme, token) = value.split_once(' ')?;
-    if scheme.eq_ignore_ascii_case("bearer") && !token.is_empty() {
-        Some(token)
-    } else {
-        None
-    }
+    crate::auth::bearer_credential(authorization)
 }
 
 /// Verify a bearer token against the active key, then legacy decode keys,
@@ -168,24 +170,12 @@ fn verify_token(token: &str, keys: &[Arc<str>], algorithm: &str) -> Option<Strin
         "HS512" => Algorithm::HS512,
         _ => return None,
     };
-    let mut validation = Validation::new(algorithm);
-    validation.validate_aud = false;
-    validation.required_spec_claims.clear();
-    for key in keys {
-        let decoding = DecodingKey::from_secret(key.as_bytes());
-        if let Ok(claims) = decode::<Claims>(token, &decoding, &validation) {
-            let payload = claims.claims;
-            if !is_user_session_payload(&payload) {
-                return None;
-            }
-            return payload.sub;
-        }
-    }
-    None
-}
-
-fn is_user_session_payload(claims: &Claims) -> bool {
-    claims.scope.is_none() && matches!(claims.token_use.as_deref(), None | Some("wework_access"))
+    crate::jwt_compat::decode_jose::<SessionClaims>(
+        token,
+        keys.iter().map(|key| key.as_bytes()),
+        algorithm,
+    )?
+    .username()
 }
 
 fn internal_error() -> crate::http_compat::FastApiError {
@@ -224,7 +214,7 @@ mod tests {
             Some("abc".to_string())
         );
         assert_eq!(bearer_token(Some("abc")), None);
-        assert_eq!(bearer_token(Some("Bearer ")), None);
+        assert_eq!(bearer_token(Some("Bearer ")), Some(""));
         assert_eq!(bearer_token(None), None);
     }
 
@@ -265,5 +255,46 @@ mod tests {
         let keys = test_keys();
         let token = make_token("secret", r#"{"sub":"matao"}"#);
         assert_eq!(verify_token(&token, &keys, "RS256"), None);
+    }
+}
+
+#[cfg(test)]
+mod python_compatibility {
+    #[test]
+    fn session_entry_point_matches_python() {
+        for (name, claims, expected) in crate::jwt_compat::tests::session_cases() {
+            let token = crate::jwt_compat::tests::sign(&claims, b"test-key");
+            assert_eq!(
+                super::verify_token(&token, &[std::sync::Arc::from("test-key")], "HS256").is_some(),
+                expected,
+                "{name}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod error_compatibility {
+    #[test]
+    fn authentication_errors_have_python_json_bodies() {
+        use brz_http_server::IntoHttpError as _;
+        let arena = brz_http_server::EphemeralBytesArena::new(256);
+        for detail in [
+            "Not authenticated",
+            "Could not validate credentials",
+            "User not activated",
+        ] {
+            let response =
+                super::unauthorized_error((brz_http_server::StatusCode::UNAUTHORIZED, detail))
+                    .into_http_error(&arena);
+            assert_eq!(response.status(), brz_http_server::StatusCode::UNAUTHORIZED);
+            let brz_http_server::ResponseBody::Arena(body) = response.body() else {
+                panic!("expected JSON error");
+            };
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(body.as_ref()).unwrap(),
+                serde_json::json!({"detail":detail})
+            );
+        }
     }
 }
