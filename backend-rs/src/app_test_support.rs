@@ -14,6 +14,16 @@ pub(crate) fn app(mysql: brz_mysql::MysqlService) -> Arc<AppState> {
     };
     let oidc_config = config::OidcConfig::default();
     Arc::new(AppState {
+        completion_app: std::sync::OnceLock::new(),
+        background_jobs: crate::background_jobs::BackgroundJobsClient::new(
+            crate::background_jobs::config::BackgroundJobsConfig {
+                scheduler_enabled: true,
+                worker_enabled: true,
+                job_allowlist: Default::default(),
+                shutdown_grace: std::time::Duration::from_secs(30),
+            },
+        ),
+        video_extensions: Arc::new(crate::background_jobs::video::DefaultVideoExtensions),
         entity_resolvers: crate::permissions::EntityResolvers::public(mysql.clone()),
         seed_tasks: crate::new_user_resources::default_tasks(mysql.clone()),
         user_profile: Arc::new(crate::user_profile::DefaultUserViewExtension),
