@@ -27,6 +27,7 @@ export function TaskDetailScrollbar({
       const track = scrollbarRef.current
       const thumb = thumbRef.current
       if (!viewport || !track || !thumb) return
+      const previousScrollTop = viewport.scrollTop
       const viewportHeight = viewport.clientHeight
       const contentHeight = viewport.scrollHeight
       const range = Math.max(0, contentHeight - viewportHeight)
@@ -63,6 +64,10 @@ export function TaskDetailScrollbar({
       thumb.style.transform = `translateY(${range ? (position / range) * travel : 0}px)`
       track.setAttribute('aria-valuemax', String(range))
       track.setAttribute('aria-valuenow', String(Math.round(position)))
+      // Publish custom input immediately so virtual rows cover the new viewport
+      // before paint, even when Chromium defers the native scroll event.
+      if (pointer && viewport.scrollTop !== previousScrollTop)
+        viewport.dispatchEvent(new Event('scroll'))
     },
     [scrollbarRef, viewportRef]
   )

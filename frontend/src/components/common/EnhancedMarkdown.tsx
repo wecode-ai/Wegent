@@ -12,7 +12,7 @@ import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
 import dynamic from 'next/dynamic'
-import type { Components } from 'react-markdown'
+import type { Components, Options } from 'react-markdown'
 import katex from 'katex'
 import { Check, Copy, Code, ChevronDown, ChevronUp } from 'lucide-react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
@@ -43,6 +43,8 @@ interface EnhancedMarkdownProps {
   /** Custom components to override default rendering */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   components?: Record<string, React.ComponentType<any>>
+  /** Optional feature-local transforms; default Markdown rendering is unchanged. */
+  rehypePlugins?: Options['rehypePlugins']
 }
 
 type ContentPart =
@@ -638,16 +640,14 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   source,
   theme,
   components,
+  rehypePlugins: extraRehypePlugins,
 }: EnhancedMarkdownProps) {
   // Connector skills end a turn with `connector_auth_required`/`connectorSlug`
   // markers for the client's authorization card; they must never be rendered.
   const visibleSource = useMemo(() => stripConnectorAuthMarkers(source), [source])
 
   // Extract frontmatter before processing
-  const { frontmatter, body } = useMemo(
-    () => extractFrontmatter(visibleSource),
-    [visibleSource]
-  )
+  const { frontmatter, body } = useMemo(() => extractFrontmatter(visibleSource), [visibleSource])
 
   const contentParts = useMemo(() => {
     const rawParts = splitArtifactBlocks(body)
@@ -763,8 +763,9 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
       ])
     }
     plugins.push(rehypeRaw)
+    if (extraRehypePlugins) plugins.push(...extraRehypePlugins)
     return plugins
-  }, [hasMath])
+  }, [hasMath, extraRehypePlugins])
 
   // URL transform to allow wegent://, attachment://, and DingTalk deep links.
   // Connector apps return dingtalk:// URLs (for example a created DingTalk log);

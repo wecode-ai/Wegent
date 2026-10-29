@@ -1,3 +1,7 @@
+import {
+  waitForTranscriptState,
+  waitForRestoredTranscript,
+} from '../modules/transcript-restoration.mjs'
 import { readRawRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
@@ -341,19 +345,6 @@ async function waitForLongHistoryHydration(control, timeoutMs) {
   throw new Error(
     `Timed out waiting for the long running transcript to hydrate: expected=${LONG_HISTORY_ITEM_COUNT}, observed=${displayItemCount}, elapsedMs=${Date.now() - startedAt}, snapshot=${JSON.stringify(latestSnapshot)}`
   )
-}
-
-async function waitForTranscriptState(control, predicate, description, timeoutMs, recordSample) {
-  const startedAt = Date.now()
-  let latest = null
-  while (Date.now() - startedAt < timeoutMs) {
-    latest = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    const matched = predicate(latest)
-    await recordSample?.({ matched, snapshot: latest })
-    if (matched) return latest
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  throw new Error(`${description}: ${JSON.stringify(latest?.pane?.transcript ?? null)}`)
 }
 
 function transcriptRaceRecorder(resultDir) {
@@ -894,7 +885,8 @@ export function createDesktopScenario({
       assert.equal(anchorSearch.matches[0].itemId, PAGED_ASSISTANT_ITEM)
       const anchorMessageId = `runtime-view:${anchorSearch.matches[0].turnId}:assistant`
       const pageRequest = { address: pagedAddress, limit: 50 }
-      // A cold native history read includes hydration and transfer; UI controls
+      // Every native page includes hydration and transfer of the 1,250-item fixture,
+      // including reads without refresh while the turn is running. UI controls
       // keep their separate interaction budget and responsiveness assertions.
       const nativePage = await requestExecutor(
         control,
@@ -915,7 +907,7 @@ export function createDesktopScenario({
         control,
         'runtime.tasks.transcript',
         pageRequest,
-        uiTimeoutMs
+        WORKBENCH_READY_TIMEOUT_MS
       )
       assert.equal(cachedPage.hasMoreBefore, true, 'The live cache hid older native items')
       assert.equal(
@@ -930,7 +922,7 @@ export function createDesktopScenario({
           ...pageRequest,
           beforeCursor: cachedPage.beforeCursor,
         },
-        uiTimeoutMs
+        WORKBENCH_READY_TIMEOUT_MS
       )
       assert.ok(olderPage.messages.length > 0, 'The older native page was not loaded')
       assert.notEqual(
@@ -944,12 +936,9 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', `[data-testid="${pagedRowId}"]`)
-      const restored = await waitForTranscriptState(
+      const restored = await waitForRestoredTranscript(
         control,
-        snapshot =>
-          snapshot.workbench?.currentRuntimeTask?.taskId === pagedTaskId &&
-          snapshot.pane?.transcript?.loading === false,
-        'The paginated conversation did not finish restoration',
+        pagedTaskId,
         WORKBENCH_READY_TIMEOUT_MS
       )
       assert.equal(restored.pane.transcript.hasMoreBefore, true)
@@ -975,6 +964,8 @@ export function createDesktopScenario({
       await reloadWorkbench(control)
       await control.command('waitFor', `[data-testid="${pagedRowId}"]`)
       await control.command('click', `[data-testid="${pagedRowId}"]`)
+      // Task-index readiness does not include the deliberately delayed transcript read.
+      await waitForRestoredTranscript(control, pagedTaskId, WORKBENCH_READY_TIMEOUT_MS)
       await control.command('waitFor', loadOlder)
       const originalSearchPane = JSON.parse(
         await control.command('getWorkbenchDebugSnapshot', 'body')

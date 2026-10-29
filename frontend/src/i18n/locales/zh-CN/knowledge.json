@@ -522,6 +522,29 @@
           "fetchFailedDescription": "原始文件获取失败，请检查网络连接或访问权限后重试。",
           "renderFailedTitle": "原始文件预览失败",
           "renderFailedDescription": "文件可能已损坏、加密或包含暂不支持的 Office 特性，可重试预览或下载原文件查看。"
+        },
+        "linkPreview": {
+          "previewOnly": "仅预览",
+          "loading": "正在安全加载文件...",
+          "viewOnline": "点击查看在线预览",
+          "coverUnavailable": "首页预览暂不可用，点击可继续尝试在线预览",
+          "retry": "重试",
+          "unavailable": "文件预览暂不可用",
+          "embeddedBlocked": "此嵌入内容已被阻止，请使用受限文件预览。",
+          "errors": {
+            "access-denied": "文件无法访问或来源授权已失效。",
+            "source-missing": "文件不存在或链接已经失效。",
+            "network-or-cors": "无法读取链接，可能受网络或跨域策略限制。",
+            "too-large": "文件超过在线预览大小限制。",
+            "too-complex": "文件解压、页数、像素或内容复杂度超过在线预览限制。",
+            "unsupported-type": "暂不支持此文件类型的在线预览。",
+            "parse-failed": "文件可能已损坏、加密或无法安全解析。",
+            "preview-failed": "PDF 预览加载失败，请重试。若问题持续，请联系管理员检查预览组件或文件链接。",
+            "codec-unsupported": "当前浏览器无法播放此视频格式或编码。",
+            "timeout": "文件加载超时，请稍后重试。",
+            "video-range-required": "视频较大且来源不支持分段读取，已停止加载以避免占用过多资源。",
+            "expired": "文件链接可能已过期，请重新读取或同步来源文档。"
+          }
         }
       },
       "downloadFailed": "下载文件失败",

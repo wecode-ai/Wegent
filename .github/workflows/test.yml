@@ -241,6 +241,19 @@ jobs:
           set -o pipefail
           cargo test --locked --test responses_large_json -- --ignored --test-threads=1 --nocapture 2>&1 | tee ../.ci-artifacts/backend-rs-tests/responses-mysql.log
 
+      - name: Verify assignment read-only HTTP E2E
+        working-directory: backend-rs
+        env:
+          DATABASE_URL: mysql://root@127.0.0.1:3306/mysql
+          REDIS_URL: redis://127.0.0.1:6379/0
+          WEGENT_BACKEND_RS_ENV_FILE: /dev/null
+          EXECUTOR_MANAGER_URL: http://127.0.0.1:1
+          SECRET_KEY: assignment-e2e-signing-key
+          WEGENT_E2E_LOG_DIRECTORY: ../.ci-artifacts/backend-rs-tests/assignments-http
+        run: |
+          set -o pipefail
+          cargo test --locked --test assignments_read_only -- --ignored --test-threads=1 --nocapture 2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignments-http.log
+
       - name: Upload Rust backend test evidence
         if: always()
         uses: actions/upload-artifact@v4
