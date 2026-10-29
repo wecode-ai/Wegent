@@ -51,6 +51,11 @@ create_stub() {
 printf '%s %s\n' "$(basename "$0")" "$*" >> "$CALL_LOG"
 if [ "$(basename "$0")" = "pnpm" ]; then
     case "$*" in
+        '--filter @wegent/chat-core test'*)
+            if [ "${PUSH_GATE_TEST_FAIL_CHAT_CORE:-0}" = "1" ]; then
+                exit 7
+            fi
+            ;;
         '--filter wework typecheck'|'--filter wework lint'|'--filter wework run lint:task-lifecycle')
             if [ "$*" = "--filter wework typecheck" ] && [ "${PUSH_GATE_TEST_REQUIRE_STATIC_ISOLATION:-0}" = "1" ]; then
                 rm -f "$CALL_LOG.wework-typecheck-complete"
@@ -572,6 +577,12 @@ if ! grep -qE '^pnpm --filter wecode-ai-assistant run test --passWithNoTests --m
     exit 1
 fi
 
+if ! grep -qE '^pnpm --filter @wegent/chat-core test --maxWorkers 2$' "$CALL_LOG"; then
+    echo "Expected chat-core tests to use the same bounded worker budget as the frontend."
+    cat "$CALL_LOG"
+    exit 1
+fi
+
 if ! grep -qE '^pnpm --filter wecode-ai-assistant exec next typegen$' "$CALL_LOG"; then
     echo "Expected frontend changes to regenerate Next.js route types."
     echo "Calls:"
@@ -583,6 +594,35 @@ if ! grep -qE '^pnpm --filter wecode-ai-assistant exec tsc --noEmit$' "$CALL_LOG
     echo "Expected frontend changes to run the TypeScript check after route type generation."
     echo "Calls:"
     cat "$CALL_LOG"
+    exit 1
+fi
+
+: > "$CALL_LOG"
+
+AI_VERIFIED=1 \
+FRONTEND_PRE_PUSH_TEST_WORKERS=1 \
+PATH="$TMP_DIR/bin:$PATH" \
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$TMP_DIR/frontend-serial.out" 2>&1
+refs/heads/topic $FRONTEND_LOCAL_SHA refs/heads/topic $FRONTEND_REMOTE_SHA
+EOF
+
+for expected_frontend_command in \
+    'pnpm --filter @wegent/chat-core test --maxWorkers 1' \
+    'pnpm --filter wecode-ai-assistant run test --passWithNoTests --maxWorkers 1'; do
+    if ! grep -qFx "$expected_frontend_command" "$CALL_LOG"; then
+        echo "Expected the frontend worker override to cover both test suites: $expected_frontend_command"
+        cat "$CALL_LOG"
+        exit 1
+    fi
+done
+
+if AI_VERIFIED=1 \
+    PUSH_GATE_TEST_FAIL_CHAT_CORE=1 \
+    PATH="$TMP_DIR/bin:$PATH" \
+    bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$TMP_DIR/frontend-core-failure.out" 2>&1; then
+refs/heads/topic $FRONTEND_LOCAL_SHA refs/heads/topic $FRONTEND_REMOTE_SHA
+EOF
+    echo "Expected a chat-core test failure to block the push."
     exit 1
 fi
 
