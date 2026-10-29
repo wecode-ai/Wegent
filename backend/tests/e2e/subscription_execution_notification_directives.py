@@ -320,12 +320,13 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
 
     def _configure_model_response(self, prompt: str) -> None:
         response = "测试，现在时间：12:00:00"
+        mention_id = os.environ.get("E2E_PROTOCOL_STAFF_ID", "900101")
         if "【静默】" in prompt and "【@列表" in prompt:
-            response += "\n【静默】【@列表：900101】"
+            response += f"\n【静默】【@列表：{mention_id}】"
         elif "【静默】" in prompt:
             response += "\n【静默】"
         elif "【@列表" in prompt:
-            response += "\n【@列表：900101】"
+            response += f"\n【@列表：{mention_id}】"
         self.client.post(
             "http://localhost:9999/stream-rules",
             json={
