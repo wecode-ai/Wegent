@@ -145,7 +145,7 @@ export function createDesktopScenario(options) {
         // serializing the thousand-item transcript while it is still being built.
         await withTimeout(
           continuation,
-          options.uiTimeoutMs,
+          options.workbenchReadyTimeoutMs,
           'The real Goal did not reach the held model continuation'
         )
         const running = await waitForWorkbenchDebugState(
