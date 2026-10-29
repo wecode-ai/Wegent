@@ -3,7 +3,7 @@ import {
   createDefaultLocalModelCatalogEntry,
   type LocalModelCatalogEntry,
 } from './localModelCatalog'
-import { codexCatalogModelIdForUpstream } from './codexCatalog'
+import { builtinCodexCatalogModel, codexCatalogModelIdForUpstream } from './codexCatalog'
 
 export const KIMI_CODING_CONTEXT_WINDOW = 262_144
 export const KIMI_K3_CONTEXT_WINDOW = 1_048_576
@@ -210,10 +210,7 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
       ? 'minimax-global'
       : legacyConfig.providerProfileId
   const storedApiFormat = normalizeLocalModelApiFormat(legacyConfig.apiFormat)
-  const deepSeekResponsesCatalogModelId = codexCatalogModelIdForUpstream(
-    [legacyConfig.modelId],
-    'openai-responses'
-  )
+  const deepSeekResponsesCatalogModelId = codexCatalogModelIdForUpstream([legacyConfig.modelId])
   const migrateDeepSeekResponses =
     legacyConfig.providerProfileId === 'deepseek' &&
     deepSeekResponsesCatalogModelId !== null &&
@@ -247,13 +244,18 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
   const isKimiOpenPlatformK3 = providerProfileId === 'kimi' && legacyConfig.modelId === 'kimi-k3'
   const providerCatalogModelId = isCustomProvider
     ? undefined
-    : (codexCatalogModelIdForUpstream([legacyConfig.modelId], apiFormat) ?? undefined)
+    : (codexCatalogModelIdForUpstream([legacyConfig.modelId]) ?? undefined)
+  const providerCatalogContextWindow = providerCatalogModelId
+    ? builtinCodexCatalogModel(providerCatalogModelId)?.context_window
+    : undefined
   const providerContextWindow = isKimiOpenPlatformK3
     ? KIMI_K3_CONTEXT_WINDOW
     : providerProfileId === 'kimi-coding' && providerCatalogModelId
       ? KIMI_CODING_CONTEXT_WINDOW
       : providerProfileId === 'deepseek' && providerCatalogModelId
-        ? DEEPSEEK_V4_CONTEXT_WINDOW
+        ? typeof providerCatalogContextWindow === 'number' && providerCatalogContextWindow > 0
+          ? providerCatalogContextWindow
+          : DEEPSEEK_V4_CONTEXT_WINDOW
         : undefined
   const nextConfig: LocalModelConfig = {
     id: legacyConfig.id,
@@ -287,13 +289,13 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
     ...(legacyConfig.visionModelConfigId
       ? { visionModelConfigId: legacyConfig.visionModelConfigId }
       : {}),
-    ...(providerCatalogModelId ||
-    legacyConfig.codexCatalogModelId ||
+    ...(legacyConfig.codexCatalogModelId ||
+    providerCatalogModelId ||
     typeof catalogEntry?.slug === 'string'
       ? {
           codexCatalogModelId:
-            providerCatalogModelId ||
             legacyConfig.codexCatalogModelId ||
+            providerCatalogModelId ||
             (catalogEntry?.slug as string),
         }
       : {}),
@@ -566,9 +568,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
       ? previous?.visionModelConfigId
       : input.visionModelConfigId?.trim() || undefined
   const enabled = input.enabled ?? previous?.enabled ?? true
-  const inferredCatalogModelId = isCustomProvider
-    ? null
-    : codexCatalogModelIdForUpstream([modelId], apiFormat)
+  const inferredCatalogModelId = isCustomProvider ? null : codexCatalogModelIdForUpstream([modelId])
   const codexCatalogModelId =
     input.codexCatalogModelId?.trim() ||
     inferredCatalogModelId ||
