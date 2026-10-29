@@ -677,7 +677,10 @@ mod tests {
         assert_eq!(grant.access_token, "gh-access");
         assert_eq!(grant.refresh_token.as_deref(), Some("gh-refresh-new"));
         assert_eq!(grant.expires_in, Some(28800));
-        assert_eq!(grant.granted_scopes, Some(vec!["repo".into(), "read:org".into()]));
+        assert_eq!(
+            grant.granted_scopes,
+            Some(vec!["repo".into(), "read:org".into()])
+        );
     }
 
     /// The same exchange surfaces a revoked GitHub grant as a rejection.
