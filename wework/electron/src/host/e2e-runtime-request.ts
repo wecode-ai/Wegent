@@ -22,7 +22,7 @@ export async function requestE2ERuntime(
     url.hostname !== '127.0.0.1' ||
     url.username ||
     url.password ||
-    !url.pathname.startsWith('/wework/') ||
+    !(url.pathname.startsWith('/wework/') || url.pathname.startsWith('/api/')) ||
     !['GET', 'HEAD', 'POST'].includes(input.method ?? 'GET')
   )
     throw new Error('Expected a local Wework Runtime request')

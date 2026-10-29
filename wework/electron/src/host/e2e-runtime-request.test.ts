@@ -17,6 +17,11 @@ describe('authenticated E2E Runtime requests', () => {
     'https://127.0.0.1:3000/wework/api',
     'http://evil.test/wework/api',
     'http://127.0.0.1:3000/other',
+    'http://127.0.0.1:3000/api',
+    'http://127.0.0.1:3000/apiary/private',
+    'http://127.0.0.1:3000/auth/bootstrap',
+    'http://evil.test/api/llm.models',
+    'https://127.0.0.1:3000/api/llm.models',
     'http://user@127.0.0.1:3000/wework/api',
   ])('rejects targets outside the local Runtime: %s', async target => {
     const cookies = vi.fn()
@@ -25,41 +30,57 @@ describe('authenticated E2E Runtime requests', () => {
     )
     expect(cookies).not.toHaveBeenCalled()
   })
-  test('fails without an authenticated browser session', async () => {
-    const request = vi.fn()
-    await expect(requestE2ERuntime(environment, { url }, async () => [], request)).rejects.toThrow(
-      'authentication is unavailable'
-    )
-    expect(request).not.toHaveBeenCalled()
-  })
-  test('uses only the target authority cookie, preserves errors, and refuses redirects', async () => {
-    const cookies = vi.fn(async () => [{ name: 'dsh-auth-test', value: 'signed-session' }])
-    const request = vi.fn<typeof fetch>(async () => new Response('{"ok":false}', { status: 403 }))
-    const result = await requestE2ERuntime(
-      environment,
-      {
-        url,
-        method: 'POST',
-        headers: { cookie: 'forged=1' },
-        body: '{}',
-      },
-      cookies,
-      request
-    )
-    expect(cookies).toHaveBeenCalledWith('http://127.0.0.1:3000')
-    expect(request).toHaveBeenCalledWith(
-      url,
-      expect.objectContaining({
-        method: 'POST',
-        body: '{}',
-        redirect: 'error',
-        signal: expect.any(AbortSignal),
-      })
-    )
-    expect(new Headers(request.mock.calls[0][1]?.headers).get('cookie')).toBe(
-      'dsh-auth-test=signed-session'
-    )
-    expect(result.status).toBe(403)
-    expect(result.body).toBe('{"ok":false}')
-  })
+  test.each([url, 'http://127.0.0.1:3000/api/llm.models'])(
+    'fails without an authenticated browser session: %s',
+    async target => {
+      const request = vi.fn()
+      await expect(
+        requestE2ERuntime(environment, { url: target }, async () => [], request)
+      ).rejects.toThrow('authentication is unavailable')
+      expect(request).not.toHaveBeenCalled()
+    }
+  )
+  test.each([url, 'http://127.0.0.1:3000/api/llm.models'])(
+    'rejects unsupported methods before reading session cookies: %s',
+    async target => {
+      const cookies = vi.fn()
+      await expect(
+        requestE2ERuntime(environment, { url: target, method: 'DELETE' }, cookies)
+      ).rejects.toThrow('local Wework')
+      expect(cookies).not.toHaveBeenCalled()
+    }
+  )
+  test.each([url, 'http://127.0.0.1:3000/api/llm.models'])(
+    'uses only the target authority cookie, preserves errors, and refuses redirects: %s',
+    async target => {
+      const cookies = vi.fn(async () => [{ name: 'dsh-auth-test', value: 'signed-session' }])
+      const request = vi.fn<typeof fetch>(async () => new Response('{"ok":false}', { status: 403 }))
+      const result = await requestE2ERuntime(
+        environment,
+        {
+          url: target,
+          method: 'POST',
+          headers: { cookie: 'forged=1' },
+          body: '{}',
+        },
+        cookies,
+        request
+      )
+      expect(cookies).toHaveBeenCalledWith('http://127.0.0.1:3000')
+      expect(request).toHaveBeenCalledWith(
+        target,
+        expect.objectContaining({
+          method: 'POST',
+          body: '{}',
+          redirect: 'error',
+          signal: expect.any(AbortSignal),
+        })
+      )
+      expect(new Headers(request.mock.calls[0][1]?.headers).get('cookie')).toBe(
+        'dsh-auth-test=signed-session'
+      )
+      expect(result.status).toBe(403)
+      expect(result.body).toBe('{"ok":false}')
+    }
+  )
 })

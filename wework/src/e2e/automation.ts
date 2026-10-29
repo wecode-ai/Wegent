@@ -1,4 +1,5 @@
 import { rendererCrashStore } from './rendererCrashStore'
+import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { createDesktopControlFile } from './file-fixture'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
@@ -112,14 +113,6 @@ import {
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
-
-interface DesktopControlResult {
-  id: string
-  clientId: string
-  ok: boolean
-  value?: string
-  error?: string
-}
 
 interface ScrollStabilitySamplePoint {
   anchorTop: number
@@ -3717,39 +3710,22 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       logRuntimeTaskCreateStage('desktop-control-received', diagnostic, 'debug')
       await postDesktopControlStarted(url, command, clientId)
       logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic, 'debug')
-      let result: DesktopControlResult
-      try {
-        const value = await executeDesktopControlCommand(command)
-        result = { id: command.id, clientId, ok: true, value }
-      } catch (error) {
-        result = {
-          id: command.id,
-          clientId,
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        }
+      const completion = completeDesktopControlCommand(
+        command,
+        clientId,
+        executeDesktopControlCommand,
+        result => postDesktopControlResult(url, result)
+      )
+      if (command.action === 'fetchLocalRuntime') {
+        // Runtime RPCs may wait on each other; keep polling so the controller
+        // can issue the overlapping request while each result retains its ID.
+        void completion.catch(error => {
+          console.error('[Wework] Desktop E2E Runtime request failed:', error)
+        })
+        commandRequest = pollForCommand()
+        continue
       }
-      try {
-        logRuntimeTaskCreateStage(
-          'desktop-control-executed',
-          { ...diagnostic, ok: result.ok },
-          'debug'
-        )
-        await postDesktopControlResult(url, result)
-        logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic, 'debug')
-      } catch (error) {
-        console.error(
-          '[Wework] Desktop E2E result acknowledgement failed:',
-          JSON.stringify({
-            commandId: command.id,
-            action: command.action,
-            actionSucceeded: result.ok,
-            actionError: result.error,
-            error: error instanceof Error ? error.message : String(error),
-          })
-        )
-        throw error
-      }
+      const result = await completion
       if (result.ok) {
         if (command.action === 'closeMainWindowToTray') {
           await invokeDesktopHost('e2e.hideMainWindow')

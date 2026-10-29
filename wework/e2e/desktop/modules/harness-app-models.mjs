@@ -10,6 +10,7 @@ import {
 } from './harness-app-fixture.mjs'
 import { LOCAL_MODEL_CASES } from './shared.mjs'
 import { runtimeTransportGates } from './runtime-transport-gates.mjs'
+import { fetchLocalRuntime } from './runtime-request.mjs'
 
 /** Created by this checkpoint so its DSH profile pins the Wework default model. */
 const INSTALLED_APP_ID = 'dsh-e2e-multi-model'
@@ -47,7 +48,7 @@ export async function verifyHarnessAppModels(
   await openSmartAppsTab(control, uiTimeoutMs)
   await openOwnedApps(control, uiTimeoutMs)
 
-  const packagePath = await createHarnessPackage(resultDir, INSTALLED_APP_ID, '0.1.0-rc.8', {
+  const packagePath = await createHarnessPackage(resultDir, INSTALLED_APP_ID, '0.2.0-rc.2', {
     cordisPatch: '[]\n',
   })
   await control.command('dropPaths', '[data-testid="smart-apps-owned-page"]', {
@@ -105,7 +106,7 @@ export async function verifyHarnessAppModels(
   // DSH reads the generated settings itself; llm.models proves it loaded every
   // provider instead of this test only inspecting the file Wework wrote.
   const providerGroups = await waitForDshValue(
-    () => dshRequest(installation.webUrl, 'llm.models', {}),
+    () => dshRequest(control, installation.webUrl, 'llm.models', {}),
     value => value.groups.some(group => group.id === 'wework-local'),
     30_000
   ).then(value => value.groups)
@@ -128,7 +129,7 @@ export async function verifyHarnessAppModels(
 
   // A failed launch must release the routes it registered before DSH started,
   // and it must not disturb the app that is already running.
-  const failingPackagePath = await createHarnessPackage(resultDir, FAILING_APP_ID, '0.1.0-rc.8', {
+  const failingPackagePath = await createHarnessPackage(resultDir, FAILING_APP_ID, '0.2.0-rc.2', {
     cordisPatch: '- id: [unterminated\n',
   })
   await control.command('dropPaths', '[data-testid="smart-apps-owned-page"]', {
@@ -156,13 +157,13 @@ export async function verifyHarnessAppModels(
   await waitForReleasedRoutes(failedRoutes, 120_000)
 
   const afterFailurePrompt = `HARNESS_AFTER_FAILURE_PROMPT_${randomUUID()}`
-  await dshRequest(installation.webUrl, 'session.prompt', {
+  await dshRequest(control, installation.webUrl, 'session.prompt', {
     sessionId,
     mode: 'queue',
     content: [{ type: 'text', text: afterFailurePrompt }],
   })
   await waitForHarnessModelRequest(control, afterFailurePrompt, EXTRA_MODEL.modelId, 30_000)
-  await waitForSessionIdle(installation.webUrl, sessionId, 30_000)
+  await waitForSessionIdle(control, installation.webUrl, sessionId, 30_000)
 
   // Closing the app tab must stop the runtime and release every route, not just
   // the route used by the selected model.
@@ -509,7 +510,7 @@ async function exerciseModelRoutes(
   installation,
   { resultDir, screenshotName, captureScreenshot }
 ) {
-  const models = await dshRequest(installation.webUrl, 'llm.models', {})
+  const models = await dshRequest(control, installation.webUrl, 'llm.models', {})
   const defaultProvider = models.groups.find(group => group.id === 'wework-local')
   assert.ok(defaultProvider, 'DSH did not expose the original default model provider')
   assert.deepEqual(
@@ -524,8 +525,12 @@ async function exerciseModelRoutes(
 
   const workspace = join(resultDir, 'harness-app-models-workspace')
   await mkdir(workspace, { recursive: true })
-  const { sessionId } = await dshRequest(installation.webUrl, 'session.create', { cwd: workspace })
-  const sessionModels = await dshRequest(installation.webUrl, 'session.models', { sessionId })
+  const { sessionId } = await dshRequest(control, installation.webUrl, 'session.create', {
+    cwd: workspace,
+  })
+  const sessionModels = await dshRequest(control, installation.webUrl, 'session.models', {
+    sessionId,
+  })
   assert.deepEqual(
     { provider: sessionModels.current.provider, model: sessionModels.current.model },
     { provider: 'wework-local', model: 'wework-selected' },
@@ -533,21 +538,21 @@ async function exerciseModelRoutes(
   )
 
   const defaultPrompt = `HARNESS_DEFAULT_MODEL_PROMPT_${randomUUID()}`
-  await dshRequest(installation.webUrl, 'session.prompt', {
+  await dshRequest(control, installation.webUrl, 'session.prompt', {
     sessionId,
     mode: 'queue',
     content: [{ type: 'text', text: defaultPrompt }],
   })
   await waitForHarnessModelRequest(control, defaultPrompt, DEFAULT_MODEL.modelId, 30_000)
-  await waitForSessionIdle(installation.webUrl, sessionId, 30_000)
+  await waitForSessionIdle(control, installation.webUrl, sessionId, 30_000)
 
-  await dshRequest(installation.webUrl, 'session.selectModel', {
+  await dshRequest(control, installation.webUrl, 'session.selectModel', {
     sessionId,
     provider: extraProvider.id,
     model: extraModelId,
   })
   const extraPrompt = `HARNESS_EXTRA_MODEL_PROMPT_${randomUUID()}`
-  await dshRequest(installation.webUrl, 'session.prompt', {
+  await dshRequest(control, installation.webUrl, 'session.prompt', {
     sessionId,
     mode: 'queue',
     content: [{ type: 'text', text: extraPrompt }],
@@ -568,7 +573,7 @@ async function exerciseModelRoutes(
     false,
     'A model with an incomplete proxy configuration still reached the model service'
   )
-  await waitForSessionIdle(installation.webUrl, sessionId, 30_000)
+  await waitForSessionIdle(control, installation.webUrl, sessionId, 30_000)
   await captureScreenshot(control, screenshotName, 'body')
   return sessionId
 }
@@ -645,18 +650,22 @@ function parseHarnessModelRoutes(settings) {
   return routes.filter(route => route.baseUrl)
 }
 
-async function dshRequest(baseUrl, method, payload) {
-  const response = await fetch(new URL(`api/${method}`, normalizeBaseUrl(baseUrl)), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      type: 'client-request',
-      rpcId: randomUUID(),
-      method,
-      payload,
-    }),
-    signal: AbortSignal.timeout(60_000),
-  })
+async function dshRequest(control, baseUrl, method, payload) {
+  const response = await fetchLocalRuntime(
+    control,
+    new URL(`api/${method}`, normalizeBaseUrl(baseUrl)),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'client-request',
+        rpcId: randomUUID(),
+        method,
+        payload,
+      }),
+      timeoutMs: 60_000,
+    }
+  )
   assert.equal(response.ok, true, `DSH ${method} returned HTTP ${response.status}`)
   const message = await response.json()
   assert.equal(message.type, 'server-response', `DSH ${method} returned an unexpected message`)
@@ -688,10 +697,10 @@ async function waitForDshValue(read, accept, timeoutMs) {
   throw new Error('DSH did not expose the expected model providers')
 }
 
-async function waitForSessionIdle(baseUrl, sessionId, timeoutMs) {
+async function waitForSessionIdle(control, baseUrl, sessionId, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
-    const { items } = await dshRequest(baseUrl, 'session.list', {})
+    const { items } = await dshRequest(control, baseUrl, 'session.list', {})
     const session = items.find(item => item.sessionId === sessionId)
     if (session && !session.running) return
     await delay(100)
