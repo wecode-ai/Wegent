@@ -1,11 +1,9 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Linking, StyleSheet, View } from 'react-native'
-import { useTheme } from 'react-native-paper'
+import { Button, Text, useTheme } from 'react-native-paper'
 import { WebView, type WebViewNavigation } from 'react-native-webview'
 
-import { jwtExpiry } from '@/auth/authClient'
-import { weworkIssueWebUrl, weworkWebOrigin } from '@/domain/weworkIssueLink'
-import { weworkWebSessionScript } from '@/domain/weworkWebSession'
+import { weworkIssueBootstrapUrl, weworkWebOrigin } from '@/domain/weworkIssueLink'
 
 interface WebIssueScreenProps {
   accessToken: string
@@ -16,15 +14,13 @@ interface WebIssueScreenProps {
 
 export function WebIssueScreen({ accessToken, projectId, itemId, webUrl }: WebIssueScreenProps) {
   const theme = useTheme()
+  const webViewRef = useRef<WebView>(null)
+  const [loadFailed, setLoadFailed] = useState(false)
   const uri = useMemo(
-    () => weworkIssueWebUrl(webUrl, { projectId, itemId }),
-    [itemId, projectId, webUrl]
+    () => weworkIssueBootstrapUrl(webUrl, { projectId, itemId }, accessToken),
+    [accessToken, itemId, projectId, webUrl]
   )
   const origin = useMemo(() => weworkWebOrigin(webUrl), [webUrl])
-  const sessionScript = useMemo(
-    () => weworkWebSessionScript(accessToken, jwtExpiry(accessToken)),
-    [accessToken]
-  )
   const shouldStartLoad = useCallback(
     (request: WebViewNavigation) => {
       if (request.url === 'about:blank') return true
@@ -42,13 +38,19 @@ export function WebIssueScreen({ accessToken, projectId, itemId, webUrl }: WebIs
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       <WebView
+        ref={webViewRef}
         source={{ uri }}
         style={styles.webView}
         sharedCookiesEnabled
         thirdPartyCookiesEnabled
-        injectedJavaScriptBeforeContentLoaded={sessionScript}
         originWhitelist={origin ? [origin, 'about:blank'] : ['about:blank']}
         onShouldStartLoadWithRequest={shouldStartLoad}
+        onLoadStart={() => setLoadFailed(false)}
+        onError={() => setLoadFailed(true)}
+        onHttpError={() => setLoadFailed(true)}
+        onNavigationStateChange={navigation => {
+          if (navigation.url.includes('/login')) setLoadFailed(true)
+        }}
         startInLoadingState
         renderLoading={() => (
           <View style={styles.loading}>
@@ -57,6 +59,15 @@ export function WebIssueScreen({ accessToken, projectId, itemId, webUrl }: WebIs
         )}
         testID="web-issue-view"
       />
+      {loadFailed && (
+        <View style={[styles.error, { backgroundColor: theme.colors.background }]}>
+          <Text style={styles.errorTitle}>Issue 页面加载失败</Text>
+          <Text style={styles.errorText}>请确认当前登录态有效，然后重试。</Text>
+          <Button mode="contained" onPress={() => webViewRef.current?.reload()}>
+            重试
+          </Button>
+        </View>
+      )}
     </View>
   )
 }
@@ -76,5 +87,24 @@ const styles = StyleSheet.create({
     left: 0,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  error: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    padding: 32,
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  errorText: {
+    textAlign: 'center',
+    opacity: 0.7,
   },
 })

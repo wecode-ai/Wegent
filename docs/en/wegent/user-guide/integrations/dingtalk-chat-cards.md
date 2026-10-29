@@ -57,7 +57,7 @@ For a layout that separates the notification type, item, detail, and actions, im
 
 1. In the [DingTalk card platform](https://open-dev.dingtalk.com/fe/card), create an ordinary message card for the robot application that sends notifications. Import the JSON in the editor, review the preview, then save and publish it.
 2. Copy the ID of the **new template in your organization**. Turn on "Send task notifications as cards" for the DingTalk channel and enter that ID. The test organization's template ID cannot be reused across organizations.
-3. Ensure production `FRONTEND_URL` is a reachable HTTPS address. In a real DingTalk client, check mentions, assignments, each run state, and both actions. The custom card's Wework action first opens a Wegent handoff page: desktop launches the desktop Wework application, while an installed Wework Mobile app handles the `/open-wework` App Link directly. Without the app, the phone stays on the handoff page and tries the Wework Mobile scheme. The View task action always opens the task web page.
+3. Ensure production `FRONTEND_URL` is a reachable HTTPS address. In a real DingTalk client, check mentions, assignments, each run state, and both actions. The custom card's Wework action first opens a Wegent handoff page: desktop launches the desktop Wework application. If DingTalk's mobile in-app browser intercepts the page, the page instructs the recipient to choose Open in browser; the external browser then uses the `/open-wework` App Link to enter Wework. The View task action always opens the task web page.
 
 Mobile App Links require the Web deployment to serve `/.well-known/assetlinks.json` and
 `/.well-known/apple-app-site-association`. Configure the Android signing certificate SHA-256 with

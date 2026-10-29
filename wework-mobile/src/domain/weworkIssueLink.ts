@@ -125,6 +125,19 @@ export function weworkIssueWebUrl(webUrl: string, issue: WeworkIssueLink): strin
   )}/issues/${encodeURIComponent(issue.itemId)}`
 }
 
+export function weworkIssueBootstrapUrl(
+  webUrl: string,
+  issue: WeworkIssueLink,
+  accessToken: string
+): string {
+  const redirect = `/collaboration/${encodeURIComponent(issue.projectId)}/issues/${encodeURIComponent(
+    issue.itemId
+  )}`
+  return `${webUrl.replace(/\/+$/, '')}/mobile-web-session#token=${encodeURIComponent(
+    accessToken
+  )}&redirect=${encodeURIComponent(redirect)}`
+}
+
 export function parseWeworkIssueWebUrl(input: string, webUrl: string): string | null {
   const issue = parseWeworkIssueLink(input)
   return issue ? weworkIssueWebUrl(webUrl, issue) : null

@@ -37,6 +37,18 @@ export default function App() {
   const auth = useWegentAuth()
   const colorScheme = useColorScheme()
   const theme = colorScheme === 'dark' ? darkTheme : lightTheme
+  const [deepLinkUrl, setDeepLinkUrl] = useState<string | null>(null)
+  const consumeDeepLink = useCallback(() => setDeepLinkUrl(null), [])
+
+  useEffect(() => {
+    void Linking.getInitialURL()
+      .then(url => {
+        if (url) setDeepLinkUrl(url)
+      })
+      .catch(() => undefined)
+    const subscription = Linking.addEventListener('url', ({ url }) => setDeepLinkUrl(url))
+    return () => subscription.remove()
+  }, [])
 
   return (
     <SafeAreaProvider>
@@ -45,6 +57,8 @@ export default function App() {
         {auth.status === 'authenticated' && auth.config ? (
           <RuntimeApplication
             config={auth.config}
+            deepLinkUrl={deepLinkUrl}
+            onDeepLinkConsumed={consumeDeepLink}
             onLogout={auth.logout}
             userId={auth.user?.id ?? 0}
             userLabel={auth.user?.full_name || auth.user?.user_name || ''}
@@ -65,11 +79,15 @@ export default function App() {
 
 function RuntimeApplication({
   config,
+  deepLinkUrl,
+  onDeepLinkConsumed,
   onLogout,
   userId,
   userLabel,
 }: {
   config: RuntimeSessionConfig
+  deepLinkUrl: string | null
+  onDeepLinkConsumed: () => void
   onLogout: () => Promise<void>
   userId: number
   userLabel: string
@@ -106,14 +124,10 @@ function RuntimeApplication({
   }, [navigationRef])
 
   useEffect(() => {
-    void Linking.getInitialURL()
-      .then(openIssueLink)
-      .catch(() => undefined)
-    const subscription = Linking.addEventListener('url', ({ url }) => {
-      openIssueLink(url)
-    })
-    return () => subscription.remove()
-  }, [openIssueLink])
+    if (!deepLinkUrl) return
+    openIssueLink(deepLinkUrl)
+    onDeepLinkConsumed()
+  }, [deepLinkUrl, onDeepLinkConsumed, openIssueLink])
 
   const workspaces = useMemo(
     () =>

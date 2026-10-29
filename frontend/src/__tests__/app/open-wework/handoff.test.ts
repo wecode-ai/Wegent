@@ -2,7 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { isMobileUserAgent, parseWeworkHandoff, weworkLaunchUrls } from '@/app/open-wework/handoff'
+import {
+  isDingTalkUserAgent,
+  isMobileUserAgent,
+  parseWeworkHandoff,
+  weworkLaunchUrls,
+} from '@/app/open-wework/handoff'
 
 describe('parseWeworkHandoff', () => {
   it('constructs fixed Wework and web routes for an issue comment', () => {
@@ -77,5 +82,14 @@ describe('parseWeworkHandoff', () => {
   it('detects phone and tablet user agents only', () => {
     expect(isMobileUserAgent('Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)')).toBe(true)
     expect(isMobileUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')).toBe(false)
+  })
+
+  it('detects DingTalk mobile in-app browsers', () => {
+    expect(
+      isDingTalkUserAgent(
+        'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 AliApp(DingTalk/7.6.0)'
+      )
+    ).toBe(true)
+    expect(isDingTalkUserAgent('Mozilla/5.0 (Linux; Android 15) Chrome/140.0.0.0')).toBe(false)
   })
 })

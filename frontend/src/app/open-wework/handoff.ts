@@ -16,6 +16,7 @@ const ALLOWED_PARAMS = new Set(['projectId', 'itemId', 'commentId'])
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
 const MOBILE_USER_AGENT = /Android|iPhone|iPad|iPod|Mobile/i
 const ANDROID_USER_AGENT = /Android/i
+const DINGTALK_USER_AGENT = /\bDingTalk\b|AliApp\(DingTalk/i
 
 function validSegment(value: string | null): value is string {
   return (
@@ -51,6 +52,10 @@ export function parseWeworkHandoff(params: URLSearchParams): WeworkHandoffDestin
 
 export function isMobileUserAgent(userAgent: string): boolean {
   return MOBILE_USER_AGENT.test(userAgent)
+}
+
+export function isDingTalkUserAgent(userAgent: string): boolean {
+  return DINGTALK_USER_AGENT.test(userAgent)
 }
 
 export function weworkLaunchUrls(weworkUrl: string, userAgent: string): WeworkLaunchUrls {

@@ -5,6 +5,11 @@
   "open_wework": "Open in Wework",
   "view_task": "View task",
   "browser_hint": "If Wework did not open, make sure the matching app is installed. You can also open this page in your system browser and try again, or view the task on the web.",
+  "dingtalk_title": "Open this page in a browser",
+  "dingtalk_description": "DingTalk's built-in browser does not hand this page to Wework. Tap the top-right menu, then choose Open in browser to launch Wework directly.",
+  "dingtalk_hint": "Choose Safari on iPhone or Chrome on Android.",
+  "dingtalk_step_menu": "Tap the top-right menu",
+  "dingtalk_step_browser": "Choose Open in browser",
   "invalid_title": "Invalid link",
   "invalid_description": "This link does not identify a task. Return to the notification and open it again."
 }

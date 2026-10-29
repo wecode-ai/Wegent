@@ -4,6 +4,7 @@ import {
   parseWeworkIssueLink,
   parseWeworkIssueWebUrl,
   weworkAppLinkOrigins,
+  weworkIssueBootstrapUrl,
   weworkIssueWebUrl,
 } from './weworkIssueLink'
 
@@ -82,5 +83,22 @@ describe('weworkIssueWebUrl', () => {
     expect(
       parseWeworkIssueWebUrl('wework://tasks/device/task', 'https://wegent.example')
     ).toBeNull()
+  })
+
+  it('builds a same-origin session bootstrap URL with a fragment token', () => {
+    const url = weworkIssueBootstrapUrl(
+      'https://wegent.example/',
+      { projectId: '12', itemId: 'gitlab:12/issue#3' },
+      'token value/+'
+    )
+    const parsed = new URL(url)
+
+    expect(parsed.origin).toBe('https://wegent.example')
+    expect(parsed.pathname).toBe('/mobile-web-session')
+    expect(parsed.search).toBe('')
+    expect(new URLSearchParams(parsed.hash.slice(1)).get('token')).toBe('token value/+')
+    expect(new URLSearchParams(parsed.hash.slice(1)).get('redirect')).toBe(
+      '/collaboration/12/issues/gitlab%3A12%2Fissue%233'
+    )
   })
 })

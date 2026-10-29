@@ -57,7 +57,7 @@ sidebar_position: 3
 
 1. 在[钉钉卡片平台](https://open-dev.dingtalk.com/fe/card)为发送通知的机器人应用创建普通消息卡片，在编辑器中导入 JSON，检查预览后保存并发布。
 2. 复制**本组织中新建模板**的 ID，在钉钉通道勾选“任务通知以卡片发送”，填写该模板 ID。测试组织使用的模板 ID 不能直接用于其他组织。
-3. 确认生产环境的 `FRONTEND_URL` 是可访问的 HTTPS 地址。在实际钉钉客户端检查 @提及、被分配和各执行状态，以及两个操作入口。自定义卡片的 Wework 入口先打开 Wegent 中转页：桌面端直接唤起 Wework 桌面应用；已安装手机版 Wework 时由 `/open-wework` App Link 直接接管，未安装时留在中转页并尝试唤起手机版 Wework。“查看任务”始终打开任务网页。
+3. 确认生产环境的 `FRONTEND_URL` 是可访问的 HTTPS 地址。在实际钉钉客户端检查 @提及、被分配和各执行状态，以及两个操作入口。自定义卡片的 Wework 入口先打开 Wegent 中转页：桌面端直接唤起 Wework 桌面应用；手机端如果被钉钉内置浏览器接管，页面会提示在右上角选择“在浏览器打开”，外部浏览器再通过 `/open-wework` App Link 进入 Wework。“查看任务”始终打开任务网页。
 
 手机端 App Link 需要 Web 部署提供 `/.well-known/assetlinks.json` 和
 `/.well-known/apple-app-site-association`。Android 使用的签名证书 SHA-256 通过
