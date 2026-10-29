@@ -101,6 +101,23 @@ beforeEach(() => {
 })
 
 describe('unified human response', () => {
+  it('delivers one shared stand-in reminder and keeps its request after dismissal', async () => {
+    view(interactionQuestion, {
+      ...interactionTask,
+      task: {
+        ...interactionTask.task,
+        runtimeHandle: { origin: { type: 'stand_in_work', initiatedBy: 'stand_in' } },
+      },
+    })
+    await waitFor(() => expect(screen.getAllByTestId('runtime-interaction-notice')).toHaveLength(1))
+    fireEvent.click(screen.getByTestId('interaction-notice-dismiss'))
+    await act(async () => {
+      await context!.refresh()
+    })
+    expect(screen.queryByTestId('runtime-interaction-notice')).not.toBeInTheDocument()
+    expect(context!.pending).toHaveLength(1)
+    expect(harness.send).not.toHaveBeenCalled()
+  })
   it('retains a remote cache until that exact device has been queried, including startup enumeration', async () => {
     const first = view()
     await waitFor(() => expect(context!.pending).toHaveLength(1))
