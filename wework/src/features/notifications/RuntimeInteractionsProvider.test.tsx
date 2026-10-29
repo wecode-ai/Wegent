@@ -256,6 +256,31 @@ describe('unified human response', () => {
     expect(context!.pending).toHaveLength(0)
   })
 
+  it('queues an async answer when an active goal has no confirmed running turn', async () => {
+    view(interactionQuestion, {
+      ...interactionTask,
+      task: {
+        ...interactionTask.task,
+        running: false,
+        status: 'queued',
+        goalStatus: 'active',
+      },
+    })
+    harness.transcript.mockResolvedValue({
+      ...interactionTranscript(),
+      running: undefined,
+    })
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    await act(async () => {
+      expect(await context!.respond(context!.pending[0], 'keep')).toBe(true)
+    })
+    expect(harness.send).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'keep', queueIfBusy: true })
+    )
+    expect(harness.guide).not.toHaveBeenCalled()
+    expect(context!.pending).toHaveLength(0)
+  })
+
   it.each([false, true])(
     'preserves the owning remote model configuration (handle only: %s)',
     async handleOnly => {
