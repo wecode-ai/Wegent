@@ -5,7 +5,15 @@ import {
   listLocalInstalledPluginsFromDisk,
   listPersonalMarketplacePluginsFromDisk,
   peekLocalCodexPluginsReadState,
+  readLocalInstalledInventoryFromDisk,
+  type LocalCodexPluginsState,
 } from './codexPlugins'
+import { resolveLocalPluginInventory } from '@/features/plugins/pluginInventorySources'
+import { writePluginInventory } from '@/features/plugins/pluginInventory'
+import {
+  clearPluginMarketplaceCache,
+  getPluginMarketplaceCache,
+} from '@/features/plugins/pluginMarketplaceCache'
 
 const mocks = vi.hoisted(() => ({
   request: vi.fn(),
@@ -50,6 +58,7 @@ describe('local plugin source isolation', () => {
   let failures: Set<string>
   let empty: Set<string>
   beforeEach(() => {
+    clearPluginMarketplaceCache()
     clearLocalCodexPluginsReadStateCache()
     mocks.deviceId = 'device-a'
     mocks.bundled = null
@@ -69,6 +78,187 @@ describe('local plugin source isolation', () => {
         return { marketplaces: empty.has(source) ? [] : [marketplace] }
       throw new Error(`Unexpected source ${source}`)
     })
+  })
+
+  function consumeSnapshot(state: LocalCodexPluginsState, expected: string[]) {
+    const local = resolveLocalPluginInventory(
+      getPluginMarketplaceCache('source-generations'),
+      {
+        items: state.installedPlugins,
+        deviceId: state.deviceId,
+        sourceReads: state.sourceReads,
+        partial: state.partial,
+      },
+      state.deviceId
+    )
+    const keys = (items: typeof local.items) => items.map(item => item.spec.source.pluginKey).sort()
+    expect(keys(state.installedPlugins)).toEqual(expected)
+    expect(keys(local.items)).toEqual(expected)
+    const shared = writePluginInventory('source-generations', state.deviceId, {
+      installedPlugins: local.items,
+      localInstalledSources: local.localInstalledSources,
+      localInstalledSourceStatus: local.localInstalledSourceStatus,
+    })
+    expect(keys(shared.installedPlugins)).toEqual(expected)
+    expect(shared.localInstalledSourceStatus).toEqual(local.localInstalledSourceStatus)
+    return local
+  }
+
+  test.each([
+    ['installed', 'remove'],
+    ['installed', 'add'],
+    ['installed', 'failure'],
+    ['disk', 'remove'],
+    ['disk', 'add'],
+    ['disk', 'failure'],
+  ] as const)(
+    'keeps flat, source and shared records consistent after a newer %s %s overtakes a catalog',
+    async (source, outcome) => {
+      if (outcome === 'add') {
+        empty.add('plugin/installed')
+        empty.add('executor.plugins.store.list')
+      }
+      empty.add('executor.plugins.personal.list')
+      const api = createLocalCodexPluginApi()
+      const params = { mergeAllMarketplaces: true as const, refresh: true }
+      consumeSnapshot(
+        await api.readState(params),
+        outcome === 'add' ? [] : ['codex-tool', 'managed-tool']
+      )
+      const original = mocks.request.getMockImplementation()!
+      let release!: (value: unknown) => void
+      let addedCodex = false
+      mocks.request.mockImplementation((method, args) => {
+        if (method === 'codex.app_server_request' && args.method === 'plugin/list')
+          return new Promise(resolve => {
+            release = resolve
+          })
+        if (
+          addedCodex &&
+          method === 'codex.app_server_request' &&
+          args.method === 'plugin/installed'
+        )
+          return {
+            marketplaces: [
+              { ...marketplace, plugins: [{ name: 'new-tool', installed: true, enabled: true }] },
+            ],
+          }
+        return original(method, args)
+      })
+      const pending = api.readState(params)
+      await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+      try {
+        empty.add('plugin/installed')
+        if (outcome === 'remove') empty.add('executor.plugins.store.list')
+        if (outcome === 'add') {
+          if (source === 'disk') empty.delete('executor.plugins.store.list')
+          else addedCodex = true
+        }
+        if (outcome === 'failure') failures.add('executor.plugins.store.list')
+        if (source === 'disk') await readLocalInstalledInventoryFromDisk()
+        else await api.listInstalledPlugins({ refresh: true })
+      } finally {
+        release({ marketplaces: [marketplace] })
+      }
+      const state = await pending
+      const expected =
+        outcome === 'remove'
+          ? []
+          : outcome === 'add' && source === 'installed'
+            ? ['new-tool']
+            : ['managed-tool']
+      const expectedStore =
+        outcome === 'add' && source === 'installed'
+          ? []
+          : outcome === 'remove'
+            ? []
+            : ['managed-tool']
+      const local = consumeSnapshot(state, expected)
+      expect(state.sourceReads?.store?.status).toBe(
+        outcome === 'failure' ? 'rejected' : 'fulfilled'
+      )
+      expect(local.localInstalledSourceStatus.store).toBe(state.sourceReads?.store?.status)
+      expect(state.sourceReads?.store?.items?.map(item => item.spec.source.pluginKey)).toEqual(
+        expectedStore
+      )
+      expect(Boolean(state.partial)).toBe(outcome === 'failure')
+      expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toEqual(state)
+    }
+  )
+
+  test('publishes a catalog membership failure before a newer disk scan inherits its source outcomes', async () => {
+    const api = createLocalCodexPluginApi()
+    const params = { mergeAllMarketplaces: true as const, refresh: true }
+    consumeSnapshot(await api.readState(params), ['codex-tool', 'managed-tool'])
+    failures.add('plugin/installed')
+    const original = mocks.request.getMockImplementation()!
+    let release!: (value: unknown) => void
+    mocks.request.mockImplementation((method, args) => {
+      if (method === 'codex.app_server_request' && args.method === 'plugin/list')
+        return new Promise(resolve => {
+          release = resolve
+        })
+      return original(method, args)
+    })
+    const pending = api.readState(params)
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    try {
+      await readLocalInstalledInventoryFromDisk()
+    } finally {
+      release({ marketplaces: [marketplace] })
+    }
+    const state = await pending
+    expect(state.sourceReads?.codex?.status).toBe('rejected')
+    expect(state.sourceReads?.personal?.status).toBe('fulfilled')
+    expect(state.partial).toBe(true)
+    consumeSnapshot(state, ['managed-tool', 'personal-tool'])
+  })
+
+  test('keeps detailed components in the source records consumed by the shared inventory', async () => {
+    const api = createLocalCodexPluginApi()
+    const params = { mergeAllMarketplaces: true as const, refresh: true }
+    const original = mocks.request.getMockImplementation()!
+    mocks.request.mockImplementation((method, args) => {
+      if (
+        method === 'codex.app_server_request' &&
+        args.method === 'plugin/installed' &&
+        !failures.has('plugin/installed')
+      )
+        return {
+          marketplaces: [
+            marketplace,
+            { ...marketplace, name: 'openai-curated-remote', path: '/remote' },
+          ],
+        }
+      if (method === 'codex.app_server_request' && args.method === 'plugin/read')
+        return {
+          plugin: {
+            summary: { name: 'codex-tool' },
+            skills: [{ name: 'detail-skill', path: 'skills/detail' }],
+          },
+        }
+      if (method === 'executor.plugins.manifest.read') return { connectors: [] }
+      return original(method, args)
+    })
+    const initial = await api.readState(params)
+    await api.readInstalledPluginDetail(
+      initial.installedPlugins.find(item => item.spec.source.pluginKey === 'codex-tool')!
+    )
+    const current = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })!
+    const local = consumeSnapshot(current, ['codex-tool', 'codex-tool', 'managed-tool'])
+    const detailed = local.items.find(item => item.spec.source.pluginKey === 'codex-tool')!
+    expect(detailed.spec.components.skills.map(skill => skill.name)).toContain('detail-skill')
+    expect(
+      local.items.find(item => item.spec.source.marketplace === 'openai-curated-remote')?.spec
+        .components.skills
+    ).toEqual([])
+    failures.add('plugin/installed')
+    const failed = await api.listInstalledPlugins({ refresh: true })
+    expect(
+      failed.items
+        .find(item => item.spec.source.pluginKey === 'codex-tool')
+        ?.spec.components.skills.map(skill => skill.name)
+    ).toContain('detail-skill')
   })
 
   test.each([
@@ -292,6 +482,10 @@ describe('local plugin source isolation', () => {
       partial.installedPlugins.find(item => item.spec.source.pluginKey === 'codex-tool')?.spec
         .sourcePayload
     ).toMatchObject({ cloudPluginId: 9, cloudReleaseId: 8 })
+    expect(
+      partial.sourceReads?.codex?.items?.find(item => item.spec.source.pluginKey === 'codex-tool')
+        ?.spec.sourcePayload
+    ).toMatchObject({ cloudPluginId: 9, cloudReleaseId: 8 })
     mocks.bundled = { id: 'wework-personal', path: '/personal' }
     await expect(api.listInstalledPlugins({ requireComplete: true })).rejects.toThrow('unavailable')
     failures.clear()
@@ -302,6 +496,10 @@ describe('local plugin source isolation', () => {
       item => item.spec.source.pluginKey === 'codex-tool'
     )?.spec.sourcePayload
     expect(payload?.cloudPluginId).toBeUndefined()
+    expect(
+      cleared.sourceReads?.codex?.items?.find(item => item.spec.source.pluginKey === 'codex-tool')
+        ?.spec.sourcePayload?.cloudPluginId
+    ).toBeUndefined()
     expect(payload?.cloudReleaseId).toBeUndefined()
   })
 
@@ -663,6 +861,11 @@ describe('local plugin source isolation', () => {
       await listLocalInstalledPluginsFromDisk()
 
       const peeked = peekLocalCodexPluginsReadState(target)!
+      consumeSnapshot(peeked, ['managed-tool', 'personal-tool'])
+      expect(peeked.sourceReads?.personal?.status).toBe('fulfilled')
+      expect(peeked.sourceReads?.personal?.items?.map(item => item.spec.source.pluginKey)).toEqual([
+        'personal-tool',
+      ])
       expect(Boolean(peeked.partial)).toBe(targetPartial)
       expect(peeked.installedPlugins.map(plugin => plugin.spec.source.pluginKey).sort()).toEqual([
         'managed-tool',

@@ -414,7 +414,10 @@ export function getPluginInventoryDiagnostics() {
   return {
     deviceId: snapshot?.deviceId ?? null,
     mutationRevision: snapshot?.mutationRevision ?? 0,
+    localInstalledSources: snapshot?.localInstalledSources ?? {},
+    localInstalledSourceStatus: snapshot?.localInstalledSourceStatus ?? {},
     installedPlugins: (snapshot?.installedPlugins ?? []).map(plugin => ({
+      inventoryId: inventoryIdentity(plugin),
       pluginKey: plugin.spec.source.pluginKey,
       enabled: plugin.spec.enabled,
       componentStates: plugin.spec.componentStates ?? {},

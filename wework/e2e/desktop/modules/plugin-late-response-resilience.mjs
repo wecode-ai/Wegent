@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { lstat, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib'
 import {
@@ -12,6 +12,7 @@ import {
   testId,
   until,
 } from './plugin-regression-fixture.mjs'
+import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 
 function jsonResponse(delayed) {
   const encoding = delayed.headers['content-encoding']
@@ -19,6 +20,150 @@ function jsonResponse(delayed) {
   assert.ok(!encoding || decoders[encoding], 'Unexpected real response encoding')
   const bytes = encoding ? decoders[encoding](delayed.body) : delayed.body
   return JSON.parse(bytes.toString('utf8'))
+}
+
+/** Delay original catalog bytes while a real disk scan updates only the adapter cache. */
+async function verifyCatalogDiskGeneration(control, executorHome, item, apiProxy) {
+  const gates = runtimeTransportGates(control)
+  const gateId = 'plugin-catalog-after-newer-disk'
+  const home = await realpath(executorHome)
+  const path = join(home, 'capabilities/manifest-v2.json')
+  assert.equal(await realpath(path), path, 'The isolated manifest must not be a symlink')
+  const metadata = await lstat(path)
+  assert.ok(metadata.isFile() && metadata.nlink === 1)
+  const original = await readFile(path)
+  const manifest = JSON.parse(original)
+  const targets = Object.entries(manifest.plugins).filter(
+    ([, plugin]) => Number(plugin.installed_plugin_id) === item.installedId
+  )
+  assert.equal(targets.length, 1, 'The real installed store fixture must exist before delaying')
+  const injected = Buffer.from(
+    JSON.stringify({
+      ...manifest,
+      plugins: Object.fromEntries(
+        Object.entries(manifest.plugins).filter(([key]) => key !== targets[0][0])
+      ),
+    })
+  )
+  const staging = `${path}.catalog-generation-${process.pid}.tmp`
+  const replace = async bytes => {
+    try {
+      await writeFile(staging, bytes, { flag: 'wx', mode: metadata.mode & 0o777 })
+      await rename(staging, path)
+    } finally {
+      await rm(staging, { force: true })
+    }
+  }
+  const report = { passed: false }
+  const previousRule = apiProxy.rule
+  const delayedRepairs = []
+  try {
+    // Keep legitimate automatic repairs from changing the fault before assertions.
+    apiProxy.rule = request => {
+      if (request.method === 'POST' && request.path.startsWith('/api/plugins/installed/')) {
+        delayedRepairs.push(request)
+        return 'hold-request'
+      }
+      return previousRule(request)
+    }
+    await control.command('waitFor', testId('plugins-refresh-button'), {
+      enabled: true,
+      stableMs: 250,
+    })
+    const before = await inventory(control)
+    await gates.arm({
+      id: gateId,
+      kind: 'response',
+      name: 'codex.app_server_request',
+      where: [{ path: 'params.method', equals: 'plugin/list' }],
+    })
+    await control.command('click', testId('plugins-refresh-button'))
+    const capture = await gates.wait(gateId)
+    assert.equal(capture.deliveries, 0, 'The old real catalog response must still be held')
+    const held = await inventory(control)
+    assert.equal(held.installedSourceReads.store.status, 'fulfilled')
+    assert.ok(held.installedSourceReads.store.pluginKeys.includes(item.slug))
+    await replace(injected)
+    const disk = JSON.parse(await control.command('readLocalPluginDiskInventory', 'body'))
+    assert.equal(disk.partial, false, 'The newer disk read must succeed completely')
+    assert.equal(disk.sourceReads.store.status, 'fulfilled')
+    assert.ok(!disk.sourceReads.store.pluginKeys.includes(item.slug))
+    assert.ok((await readFile(path)).equals(injected), 'Background work changed the disk fixture')
+    const afterDisk = await inventory(control)
+    assert.equal(
+      afterDisk.sharedInventory.mutationRevision,
+      before.sharedInventory.mutationRevision,
+      'A shared inventory mutation must not mask the adapter-only race'
+    )
+    assert.deepEqual(
+      afterDisk.sharedInventory.localInstalledSources,
+      held.sharedInventory.localInstalledSources,
+      'Only the adapter cache may change before releasing the catalog'
+    )
+    assert.deepEqual(
+      afterDisk.sharedInventory.localInstalledSourceStatus,
+      held.sharedInventory.localInstalledSourceStatus
+    )
+    await gates.release(gateId)
+    await control.command('waitFor', testId('plugins-refresh-button'), {
+      enabled: true,
+      stableMs: 250,
+    })
+    const after = await inventory(control)
+    assert.equal(after.installedSourceReads.store.status, 'fulfilled')
+    assert.ok(
+      !after.installedSourceReads.store.pluginKeys.includes(item.slug),
+      'The old catalog restored removed store source records'
+    )
+    const otherSourceContains = ['codex', 'personal'].some(source =>
+      after.installedSourceReads[source]?.pluginKeys.includes(item.slug)
+    )
+    assert.equal(
+      after.installedPlugins.some(plugin => plugin.pluginKey === item.slug),
+      otherSourceContains,
+      'Flat adapter records must agree with their source records'
+    )
+    const targetIds = after.sharedInventory.installedPlugins
+      .filter(plugin => plugin.pluginKey === item.slug)
+      .map(plugin => plugin.inventoryId)
+    assert.ok(
+      targetIds.every(id => !after.sharedInventory.localInstalledSources.store?.includes(id)),
+      'The shared inventory restored removed store ownership from the old catalog'
+    )
+    assert.equal((await gates.read(gateId)).deliveries, 1)
+    assert.ok(
+      (await readFile(path)).equals(injected),
+      'The successful assertion must observe the injected disk state'
+    )
+    Object.assign(report, {
+      passed: true,
+      disk,
+      flatContainsFixture: otherSourceContains,
+      storeOwnershipRemoved: true,
+    })
+  } finally {
+    try {
+      await replace(original)
+    } finally {
+      apiProxy.rule = previousRule
+      try {
+        await gates.reset()
+      } finally {
+        await Promise.all(delayedRepairs.map(request => request.release()))
+      }
+    }
+  }
+  await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
+  await control.command('waitFor', testId('plugins-refresh-button'), {
+    enabled: true,
+    stableMs: 250,
+  })
+  const recovered = await inventory(control)
+  assert.ok(
+    recovered.installedSourceReads.store.pluginKeys.includes(item.slug),
+    'A fresh read must restore the real store source after cleanup'
+  )
+  return report
 }
 
 /** A completed older real read must not undo a confirmed UI installation. */
@@ -32,7 +177,8 @@ export async function verifyPluginLateResponseResilience({
   captureScreenshot,
 }) {
   const report = {
-    scope: 'An older installed-list response arrives after a real UI installation',
+    scope:
+      'Older installed and catalog responses cannot undo a real installation or a newer disk source read',
     passed: false,
     preconditions: { completed: false },
   }
@@ -157,6 +303,15 @@ export async function verifyPluginLateResponseResilience({
       originalReplyActuallyReleased: true,
     }
     await captureScreenshot(control, 'plugin-late-response-after-release.png', 'body')
+    report.catalogDiskGeneration = await verifyCatalogDiskGeneration(
+      control,
+      executorHome,
+      {
+        ...item,
+        installedId,
+      },
+      apiProxy
+    )
     report.passed = true
     return report
   } catch (error) {

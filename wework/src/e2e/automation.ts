@@ -104,6 +104,7 @@ import {
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { nextConnectorSyncRevision } from '@/features/cloud-connection/connectorSyncRevision'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
+import type { LocalPluginInventoryRead } from '@/features/plugins/pluginInventorySources'
 import { checkForWeworkUpdate, downloadPendingWeworkUpdate } from '@/lib/app-updater'
 import { weworkTaskScheme } from '@/features/notifications/scheme'
 import {
@@ -113,6 +114,24 @@ import {
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
+
+function pluginSourceReadDiagnostics(sourceReads: LocalPluginInventoryRead['sourceReads']) {
+  return Object.fromEntries(
+    Object.entries(sourceReads ?? {}).flatMap(([source, read]) =>
+      read
+        ? [
+            [
+              source,
+              {
+                status: read.status,
+                pluginKeys: read.items?.map(plugin => plugin.spec.source.pluginKey) ?? [],
+              },
+            ],
+          ]
+        : []
+    )
+  )
+}
 
 interface DesktopControlResult {
   id: string
@@ -3403,6 +3422,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         peekLocalCodexPluginsReadState()
       return JSON.stringify({
         sharedInventory: getPluginInventoryDiagnostics(),
+        installedSourceReads: pluginSourceReadDiagnostics(installed?.sourceReads),
         composerApps: getComposerApps().map(app => ({
           id: app.id,
           isAccessible: app.isAccessible,
@@ -3429,6 +3449,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         refresh: true,
       })
       return JSON.stringify(state.marketplaceItems.map(item => String(item.id)))
+    }
+    case 'readLocalPluginDiskInventory': {
+      const { readLocalInstalledInventoryFromDisk } = await import('@/api/local/codexPlugins')
+      const read = await readLocalInstalledInventoryFromDisk()
+      return JSON.stringify({
+        deviceId: read.deviceId,
+        partial: Boolean(read.partial),
+        sourceReads: pluginSourceReadDiagnostics(read.sourceReads),
+      })
     }
     case 'getPluginSyncDiagnostics': {
       const deviceId = command.value?.trim()

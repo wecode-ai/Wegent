@@ -362,6 +362,15 @@ type CachedPluginsState = LocalCodexPluginsState & {
     personal?: InstalledPlugin[]
   }
 }
+type InstalledReadSnapshot = Pick<
+  CachedPluginsState,
+  | 'deviceId'
+  | 'installedPlugins'
+  | 'installedSources'
+  | 'sourceReads'
+  | 'installedPartial'
+  | 'installedReadGeneration'
+>
 let cachedState: CachedPluginsState | null = null
 let cachedStateGeneration = 0
 let cachedCatalogGeneration = 0
@@ -779,6 +788,48 @@ function rememberReadStateSnapshot(
   persistReadStateSnapshot(paramsKey, state, cachedStateAt)
 }
 
+/** Transfer membership and its source outcomes together, independently of the catalog. */
+function withInstalledReadSnapshot(
+  catalog: CachedPluginsState,
+  installed: InstalledReadSnapshot
+): CachedPluginsState {
+  return {
+    ...catalog,
+    deviceId: installed.deviceId,
+    installedPlugins: installed.installedPlugins,
+    installedSources: installed.installedSources,
+    sourceReads: installed.sourceReads,
+    installedPartial: installed.installedPartial,
+    installedReadGeneration: installed.installedReadGeneration,
+    partial: Boolean(catalog.catalogPartial || installed.installedPartial),
+    marketplaceItems: applyLocalCatalogMembership(
+      catalog.marketplaceItems,
+      installed.installedPlugins
+    ),
+  }
+}
+
+function rememberInstalledReadSnapshot(
+  installed: Omit<InstalledReadSnapshot, 'installedReadGeneration'>,
+  generation: number
+): void {
+  if (
+    !installed.deviceId ||
+    installed.deviceId !== getKnownLocalExecutorDeviceId()?.trim() ||
+    generation < cachedStateGeneration
+  )
+    return
+  const previous = readStateMatchesDevice(cachedState, installed.deviceId)
+    ? cachedState
+    : emptyState
+  cachedState = withInstalledReadSnapshot(previous, {
+    ...installed,
+    installedReadGeneration: generation,
+  })
+  cachedStateGeneration = generation
+  cachedStateAt = Date.now()
+}
+
 /** Returns the last local Codex marketplace snapshot without waiting on plugin/list. */
 export function peekLocalCodexPluginsReadState(
   params: {
@@ -801,16 +852,7 @@ export function peekLocalCodexPluginsReadState(
   if (!readStateMatchesDevice(persisted.state, deviceId)) return null
   const session = readStateMatchesDevice(cachedState, deviceId) ? cachedState : null
   // Catalog completeness belongs to this selection; only inventory is shared.
-  cachedState = session
-    ? {
-        ...persisted.state,
-        installedPlugins: session.installedPlugins,
-        installedSources: session.installedSources,
-        installedPartial: session.installedPartial,
-        installedReadGeneration: session.installedReadGeneration,
-        partial: persisted.state.catalogPartial || session.installedPartial,
-      }
-    : persisted.state
+  cachedState = session ? withInstalledReadSnapshot(persisted.state, session) : persisted.state
   cachedStateAt = persisted.cachedAt
   cachedStateParamsKey = paramsKey
   return cachedState
@@ -2191,6 +2233,11 @@ async function loadReadStateSnapshot(
   let installedError: unknown
   try {
     installedRead = await loadInstalledPluginsOnly({ skipCloudLinks: true }, executorStatus)
+    // A later disk scan must inherit this read's Codex outcome even while plugin/list waits.
+    rememberInstalledReadSnapshot(
+      { ...installedRead, installedPartial: installedRead.partial },
+      generation
+    )
   } catch (error) {
     installedError = error
   }
@@ -2318,18 +2365,11 @@ async function loadReadStateSnapshot(
     const hasNewerInstalledRead = (cachedState.installedReadGeneration ?? 0) > generation
     const installedPartial =
       cachedState.installedPartial || (!hasNewerInstalledRead && state.installedPartial)
-    state = {
-      ...state,
-      installedPlugins: cachedState.installedPlugins,
-      installedSources: cachedState.installedSources,
+    state = withInstalledReadSnapshot(state, {
+      ...cachedState,
       installedPartial,
       installedReadGeneration: Math.max(generation, cachedState.installedReadGeneration ?? 0),
-      partial: state.catalogPartial || installedPartial,
-      marketplaceItems: applyLocalCatalogMembership(
-        state.marketplaceItems,
-        cachedState.installedPlugins
-      ),
-    }
+    })
   }
   if (generation >= cachedCatalogGeneration) {
     // Always cache the unfiltered catalog so search queries can reuse it.
@@ -2398,7 +2438,14 @@ function rememberInstalledPluginDetail(detailed: InstalledPlugin): void {
       ''
     ).trim() || ''
   let changed = false
-  const installedPlugins = cachedState.installedPlugins.map(plugin => {
+  const withDetail = (plugin: InstalledPlugin): InstalledPlugin => {
+    if (
+      pluginMarketplaceIdentity(
+        plugin.spec.source.pluginKey,
+        installedPluginMarketplaceId(plugin) ?? ''
+      ) !== pluginMarketplaceIdentity(detailedKey, detailedMarketplace)
+    )
+      return plugin
     const sameId = detailedId.length > 0 && String(installedPluginId(plugin) ?? '') === detailedId
     const sameKey =
       !sameId &&
@@ -2407,7 +2454,8 @@ function rememberInstalledPluginDetail(detailed: InstalledPlugin): void {
     if (!sameId && !sameKey) return plugin
     changed = true
     return detailed
-  })
+  }
+  const installedPlugins = cachedState.installedPlugins.map(withDetail)
   const marketplaceItems = cachedState.marketplaceItems.map(item => {
     if (item.name.trim().toLowerCase() !== detailedKey) return item
     const itemMarketplace =
@@ -2428,7 +2476,21 @@ function rememberInstalledPluginDetail(detailed: InstalledPlugin): void {
     }
   })
   if (!changed) return
-  cachedState = { ...cachedState, installedPlugins, marketplaceItems }
+  const installedSources = { ...cachedState.installedSources }
+  const sourceReads = { ...cachedState.sourceReads }
+  for (const source of ['codex', 'store', 'personal'] as const) {
+    if (installedSources[source])
+      installedSources[source] = installedSources[source].map(withDetail)
+    const read = sourceReads[source]
+    if (read?.items) sourceReads[source] = { ...read, items: read.items.map(withDetail) }
+  }
+  cachedState = {
+    ...cachedState,
+    installedPlugins,
+    installedSources,
+    sourceReads,
+    marketplaceItems,
+  }
   cachedStateAt = Date.now()
   if (cachedStateParamsKey) {
     persistReadStateSnapshot(cachedStateParamsKey, cachedState, cachedStateAt)
@@ -2552,7 +2614,7 @@ async function loadInstalledPluginsOnly(
     cloudLinks,
     {
       authoritative: Boolean(personalPath) && !options.skipCloudLinks,
-      retainCachedDeviceId: linksFailed ? deviceId : undefined,
+      retainCachedDeviceId: linksFailed || options.skipCloudLinks ? deviceId : undefined,
     }
   )
   const installedPlugins = mergeLocalInstalledWithStorePackages(
@@ -3029,29 +3091,8 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         requireComplete: options?.requireComplete,
       })
       const installedPlugins = loaded.installedPlugins
-      if (
-        loaded.deviceId &&
-        loaded.deviceId === getKnownLocalExecutorDeviceId() &&
-        generation >= cachedStateGeneration
-      ) {
-        const previous: CachedPluginsState = readStateMatchesDevice(cachedState, loaded.deviceId)
-          ? cachedState
-          : emptyState
-        cachedState = {
-          ...previous,
-          installedPlugins,
-          installedSources: loaded.installedSources,
-          sourceReads: loaded.sourceReads,
-          deviceId: loaded.deviceId,
-          installedPartial: loaded.partial,
-          installedReadGeneration: generation,
-          partial: loaded.partial || previous.catalogPartial,
-        }
-        cachedStateGeneration = generation
-        cachedStateAt = Date.now()
-        // Keep the update in memory only. Persisting would write a membership-only
-        // snapshot into the 7-day durable cache and can clobber a fuller readState.
-      }
+      // Keep membership in memory only; the durable cache owns catalog data.
+      rememberInstalledReadSnapshot({ ...loaded, installedPartial: loaded.partial }, generation)
       return {
         items: installedPlugins,
         deviceId: loaded.deviceId,
