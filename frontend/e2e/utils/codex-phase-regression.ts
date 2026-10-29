@@ -18,6 +18,7 @@ interface PhaseRegressionContext {
   }>
 }
 
+/** Verify one text block survives a late phase change, persistence, and reload. */
 export async function assertCodexPhaseTransition(context: PhaseRegressionContext): Promise<void> {
   const marker = `PHASE_${Date.now()}`
   const preamble = `正在检查🙂 ${marker}`

@@ -7,6 +7,7 @@ export interface PhaseChangingMessage {
   doneDelayMs?: number
 }
 
+/** Stream an item whose completion changes phase, then hand it to the response finisher. */
 export function writePhaseChangingMessage(
   res: ServerResponse,
   message: PhaseChangingMessage,

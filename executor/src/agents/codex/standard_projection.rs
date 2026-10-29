@@ -119,6 +119,9 @@ impl StandardEventProjection {
         )
     }
 
+    /// Project output under a stable provider item ID and code-point block offset.
+    /// Completed prefix snapshots emit only their unseen suffix; rewritten text
+    /// replaces the same block even when its final phase differs from its start.
     fn project_output(
         &mut self,
         event_type: &str,

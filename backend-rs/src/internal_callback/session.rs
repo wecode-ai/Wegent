@@ -348,6 +348,8 @@ pub(crate) async fn add_block<R: Redis>(
     Ok(())
 }
 
+/// Append unseen text to the provider's block using a Unicode code-point offset.
+/// A missing offset appends at the current end; an offset beyond it is rejected.
 pub(crate) async fn add_identified_text_content<R: Redis>(
     redis: &R,
     subtask_id: i64,
@@ -731,7 +733,7 @@ pub(crate) async fn cleanup_streaming_state<R: Redis>(
     Ok(())
 }
 
-/// `_extract_block_content_keys`: the internal `_content_key` of each block.
+/// Return each block's internal content key and its replay-offset key for cleanup.
 fn extract_block_content_keys(blocks_raw: &[String]) -> Vec<String> {
     let mut keys = Vec::new();
     for entry in blocks_raw {

@@ -71,6 +71,8 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
         }
     }
 
+    /// Batch matching content types and provider IDs without crossing an explicit
+    /// Unicode code-point offset gap or merging overlapping callback replays.
     fn buffer_content(
         &mut self,
         content_type: StreamContentType,
@@ -130,6 +132,8 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
         self.flush_stream_storage().await;
     }
 
+    /// Persist buffered items in arrival order, retaining each identified text
+    /// block's starting offset so Redis can discard only its replayed prefix.
     async fn flush_stream_storage(&mut self) {
         self.first_buffered_at = None;
         let pending = std::mem::take(&mut self.buffer);
@@ -204,6 +208,8 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
         self.persist(event).await
     }
 
+    /// Buffer body deltas with their optional provider identity, then flush them
+    /// before collecting a boundary event's completed block snapshot.
     async fn persist(&mut self, event: &mut ExecutionEvent) -> RedisResult<()> {
         match event.event_type.as_str() {
             "start" => {

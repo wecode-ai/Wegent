@@ -61,6 +61,9 @@ redis.call('EXPIRE', KEYS[4], ARGV[5])
 return count - skip
 "#;
 
+/// Atomically append the unseen UTF-8 suffix to the stream and identified block.
+/// Offsets count Unicode code points: replays are ignored, overlaps are trimmed,
+/// and forward gaps fail before any block or content state changes.
 #[tracing::instrument(skip_all, fields(subtask_id = subtask_id, block_id = block_id, offset = ?offset))]
 pub(super) async fn append<R: Redis>(
     redis: &R,

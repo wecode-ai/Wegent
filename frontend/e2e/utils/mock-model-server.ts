@@ -531,6 +531,7 @@ function writeResponsesStreamingResponse(
   }, doneDelayMs)
 }
 
+/** Emit tool calls after an optional phase-changing message in the same response. */
 function writeResponsesToolCalls(
   res: http.ServerResponse,
   request: ModelRequest | null,
