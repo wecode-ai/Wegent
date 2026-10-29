@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { basename, join, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -12,6 +12,8 @@ import { createCheckpointTaskFixture } from '../modules/conversation-layout.mjs'
 import { resolveDesktopPackageLayout } from '../modules/desktop-package-layout.mjs'
 import { ACTIVE_COMPOSER_SELECTOR, CHECKPOINT_TASK_COMPLETION_TEXT } from '../modules/shared.mjs'
 import {
+  createShortInstallRoot,
+  runWithoutAsar,
   stopInstallationProcesses,
   waitForInstallationActivation,
 } from './windows-update.scenario.mjs'
@@ -33,6 +35,106 @@ function runProcess(command, arguments_, output, options = {}) {
   child.stdout.on('data', chunk => output.push(chunk.toString()))
   child.stderr.on('data', chunk => output.push(chunk.toString()))
   return { child, complete }
+}
+
+async function waitForOwnedApplicationProcess(installRoot, timeoutMs = 60_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const count = execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `$prefix = [IO.Path]::GetFullPath($env:WEWORK_E2E_OWNED_INSTALL_ROOT).TrimEnd('\\') + '\\'
+         @(Get-CimInstance Win32_Process -Filter "Name='WeWork.exe'" | Where-Object {
+           $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+         }).Count`,
+      ],
+      {
+        env: { ...process.env, WEWORK_E2E_OWNED_INSTALL_ROOT: installRoot },
+        encoding: 'utf8',
+      }
+    )
+    if (Number(count.trim()) > 0) return true
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  }
+  return false
+}
+
+// electron-builder's NSIS template terminates every running process whose image
+// name matches the packaged executable before installing. Historical installers
+// can therefore close an unrelated application that shares the image name (for
+// example the daily "Weibo WeWork" build). Refuse to start instead of silently
+// terminating someone else's session.
+async function assertLegacyInstallerWillNotCloseRunningApplication(legacyInstaller, installRoot) {
+  if (process.env.WEWORK_E2E_ALLOW_LEGACY_INSTALLER_APP_TERMINATION === '1') return
+  const output = execFileSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `$product = (Get-Item -LiteralPath $env:WEWORK_E2E_LEGACY_INSTALLER).VersionInfo.ProductName
+       if (-not $product) { exit 0 }
+       $image = "$product.exe"
+       $prefix = [IO.Path]::GetFullPath($env:WEWORK_E2E_OWNED_INSTALL_ROOT).TrimEnd('\\') + '\\'
+       @(Get-CimInstance Win32_Process | Where-Object {
+         $_.Name -ieq $image -and
+         $_.ExecutablePath -and
+         -not $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+       } | ForEach-Object { $_.ExecutablePath }) -join '|'`,
+    ],
+    {
+      env: {
+        ...process.env,
+        WEWORK_E2E_LEGACY_INSTALLER: legacyInstaller,
+        WEWORK_E2E_OWNED_INSTALL_ROOT: installRoot,
+      },
+      encoding: 'utf8',
+    }
+  )
+  const running = output
+    .split('|')
+    .map(value => value.trim())
+    .filter(Boolean)
+  if (running.length === 0) return
+  const executables = [...new Set(running)]
+  throw new Error(
+    `The historical NSIS installer force-closes every running "${basename(executables[0])}" process. Close ${executables.join(', ')} before running this checkpoint.`
+  )
+}
+
+// Historical installers leave per-version uninstall entries behind. While
+// testing several legacy builds the newest build resolves its installation
+// directory from those stale entries and upgrades a previous run's throwaway
+// directory instead of the one this checkpoint created.
+async function clearStaleE2EInstallRegistrations() {
+  execFileSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `$root = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall'
+       Get-ChildItem $root -ErrorAction SilentlyContinue | ForEach-Object {
+         $entry = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue
+         $uninstall = [string]$entry.UninstallString
+         if ($uninstall -like '*\\AppData\\Local\\w-*') {
+           Remove-Item -LiteralPath $_.PSPath -Recurse -Force -ErrorAction SilentlyContinue
+         }
+       }
+       # electron-builder resolves the previous per-user folder from
+       # HKCU\\Software\\<product guid>\\InstallLocation.
+       Get-ChildItem 'HKCU:\\Software' -ErrorAction SilentlyContinue | ForEach-Object {
+         $location = (Get-ItemProperty -LiteralPath $_.PSPath -Name InstallLocation -ErrorAction SilentlyContinue).InstallLocation
+         if ($location -and $location -like '*\\AppData\\Local\\w-*') {
+           Remove-Item -LiteralPath $_.PSPath -Recurse -Force -ErrorAction SilentlyContinue
+         }
+       }`,
+    ],
+    { encoding: 'utf8' }
+  )
 }
 
 export async function createDesktopScenario({
@@ -63,8 +165,10 @@ export async function createDesktopScenario({
   )
   assert.equal(descriptor.appVersion, targetVersion)
   assert.equal(descriptor.legacyMigration?.kind, 'self-contained-installer')
-  const installRoot = join(resultDir, 'legacy windows install')
+  const installRoot = createShortInstallRoot()
   const installOutput = []
+  await assertLegacyInstallerWillNotCloseRunningApplication(legacyInstaller, installRoot)
+  await clearStaleE2EInstallRegistrations()
   await runProcess(resolve(legacyInstaller), ['/S', `/D=${installRoot}`], installOutput, {
     // NSIS /D is the last unquoted argument, even when the path contains spaces.
     windowsVerbatimArguments: true,
@@ -167,6 +271,11 @@ export async function createDesktopScenario({
   let nsis
   const nsisOutput = []
   let completed = false
+  let restartDesktopApp = null
+  // electron-updater caches downloads under %LOCALAPPDATA% and reuses any
+  // matching pending installer. Point the application at a per-run directory
+  // so the historical updater always exercises the real download protocol.
+  const appLocalAppData = join(resultDir, 'local-appdata')
 
   return {
     usesReleasePackageRuntimeAssets: true,
@@ -175,11 +284,15 @@ export async function createDesktopScenario({
       WEWORK_UPDATE_BASE_URL: origin,
       WEWORK_E2E_CLOUD_TOKEN: '',
       WEWORK_E2E_CLOUD_BACKEND_URL: 'http://127.0.0.1:9',
+      LOCALAPPDATA: appLocalAppData,
     },
     resolveLaunchBinary() {
       return join(installRoot, 'WeWork.exe')
     },
-    prepareApp({ appEnvironment }) {
+    setRestartDesktopApp(restart) {
+      restartDesktopApp = restart
+    },
+    async prepareApp({ appEnvironment }) {
       for (const key of [
         'WEWORK_EXECUTOR_PATH',
         'WEWORK_EXECUTOR_SIDECAR',
@@ -188,12 +301,18 @@ export async function createDesktopScenario({
       ]) {
         delete appEnvironment[key]
       }
+      await mkdir(appLocalAppData, { recursive: true })
     },
     async verify(control) {
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      const taskRow = await createCheckpointTaskFixture(control, ACTIVE_COMPOSER_SELECTOR)
+      // Temporary switch for historical clients that cannot seed the E2E model
+      // provider. It only covers the preserved-task assertions.
+      const taskRow =
+        process.env.WEWORK_E2E_SKIP_CHECKPOINT_TASK_FIXTURE === '1'
+          ? null
+          : await createCheckpointTaskFixture(control, ACTIVE_COMPOSER_SELECTOR)
       await control.command('navigate', 'body', { value: '/settings/about' })
       await control.command('waitFor', '[data-testid="about-app-version"]', { text: legacyVersion })
       const betaEnabled = await control.command(
@@ -205,7 +324,11 @@ export async function createDesktopScenario({
         await control.command('click', '[data-testid="about-beta-update-switch"]')
       const action = await control.command('getText', '[data-testid="about-check-update-button"]')
       if (!action.includes(targetVersion))
-        await control.command('click', '[data-testid="about-check-update-button"]')
+        // The button stays disabled while the channel switch triggers its own
+        // update check, so wait for it instead of racing the renderer.
+        await control.command('clickWhenEnabled', '[data-testid="about-check-update-button"]', {
+          timeoutMs: 60_000,
+        })
       await control.command('waitFor', '[data-testid="about-update-status"]', {
         text: targetVersion,
         timeoutMs: 30_000,
@@ -249,15 +372,31 @@ export async function createDesktopScenario({
           if (error.code === 'ENOENT') return 0
           throw error
         })
-      const readyCount = control.readyCount
-      await control.command('click', '[data-testid="about-check-update-button"]')
-      await Promise.all([nsis?.complete, control.awaitReadyAfter(readyCount, 360_000)])
-      await control.command('waitFor', '[data-testid="app-shell"]', {
-        timeoutMs: workbenchReadyTimeoutMs,
+      await control.command('clickWhenEnabled', '[data-testid="about-check-update-button"]', {
+        timeoutMs: 60_000,
       })
+      // 0.5.x and v2 clients ask for restart confirmation before handing off.
+      await control.command('waitFor', '[data-testid="app-update-restart-confirm"]', {
+        timeoutMs: 30_000,
+      })
+      await control.command('click', '[data-testid="app-update-restart-confirm"]')
+      await nsis?.complete
       const state = await waitForInstallationActivation(installRoot, targetVersion)
       assert.equal(state.active.version, targetVersion)
       assert.equal(state.candidate, undefined)
+      assert.ok(
+        await waitForOwnedApplicationProcess(installRoot),
+        'The NSIS upgrade did not relaunch the updated application'
+      )
+      // The installer restarts the application from the shell, which drops the
+      // E2E environment and would attach it to the developer profile. Stop that
+      // instance and relaunch through the harness with the isolated profile.
+      await stopInstallationProcesses(installRoot)
+      assert.ok(restartDesktopApp, 'The desktop runner did not expose a restart hook')
+      await restartDesktopApp()
+      await control.command('waitFor', '[data-testid="app-shell"]', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       const startup = await waitForStartupProgressEvidence({
         userDataDirectory: electronUserDataDirectory,
         resultDir,
@@ -283,12 +422,14 @@ export async function createDesktopScenario({
         )
         await writeFile(join(resultDir, 'windows-launcher.log'), journal)
       }
-      await control.command('navigate', 'body', { value: '/' })
-      await control.command('click', `[data-testid="${taskRow}"]`)
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: CHECKPOINT_TASK_COMPLETION_TEXT,
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
+      if (taskRow) {
+        await control.command('navigate', 'body', { value: '/' })
+        await control.command('click', `[data-testid="${taskRow}"]`)
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: CHECKPOINT_TASK_COMPLETION_TEXT,
+          timeoutMs: workbenchReadyTimeoutMs,
+        })
+      }
       await control.command('navigate', 'body', { value: '/settings/about' })
       await control.command('waitFor', '[data-testid="about-app-version"]', { text: targetVersion })
       await writeFile(
@@ -321,7 +462,7 @@ export async function createDesktopScenario({
         join(resultDir, 'nsis-process.log'),
         [...installOutput, ...nsisOutput].join('')
       )
-      if (completed) await rm(installRoot, { recursive: true })
+      if (completed) await runWithoutAsar(() => rm(installRoot, { recursive: true }))
     },
     diagnostics() {
       return { legacyVersion, targetVersion, migrationRequests: requests }

@@ -10,7 +10,9 @@ import { waitForStartupProgressEvidence } from '../modules/startup-splash-progre
 import { resolveDesktopPackageLayout } from '../modules/desktop-package-layout.mjs'
 import {
   createWindowsUpdateScenario,
+  createShortInstallRoot,
   readInstallationState,
+  runWithoutAsar,
   stopInstallationProcesses,
   waitForInstallationActivation,
 } from './windows-update.scenario.mjs'
@@ -48,7 +50,7 @@ export async function createDesktopScenario(context) {
   const hash = createHash('sha512')
   await pipeline(createReadStream(setup), hash)
   const installerSha512 = hash.digest('base64')
-  const installRoot = join(resultDir, 'windows install')
+  const installRoot = createShortInstallRoot()
   const output = []
   await installPackage(resolve(legacyInstaller), installRoot, output)
   await stopInstallationProcesses(installRoot)
@@ -111,9 +113,11 @@ export async function createDesktopScenario(context) {
           const inactive = await resolveDesktopPackageLayout(
             join(fixture.artifacts.target.installRoot, 'WeWork.exe')
           )
-          await cp(dirname(inactive.versionBinary), join(installRoot, inactive.state.active.path), {
-            recursive: true,
-          })
+          await runWithoutAsar(() =>
+            cp(dirname(inactive.versionBinary), join(installRoot, inactive.state.active.path), {
+              recursive: true,
+            })
+          )
         }
       }
     },

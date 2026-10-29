@@ -456,6 +456,13 @@ function checkpointScenarioEnv(env, checkpoint) {
     // Exercise timezone-less UTC API timestamps outside the UTC timezone.
     nextEnv.TZ = 'Asia/Shanghai'
   }
+  if (checkpoint.startsWith('windows-update-')) {
+    // The first launch verifies every file of the complete release before
+    // Electron starts, and downloads are serialized in the renderer behind a
+    // long-running transfer. Both exceed the ordinary budgets.
+    nextEnv.WEWORK_E2E_DESKTOP_READY_TIMEOUT_MS = '600000'
+    nextEnv.WEWORK_E2E_CONTROL_DELIVERY_TIMEOUT_MS = '600000'
+  }
   if (
     checkpoint === 'application-menu' ||
     checkpoint === 'native-window-chrome' ||

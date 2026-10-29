@@ -1368,8 +1368,9 @@ async function ensureModelOptionVisible(
 ) {
   const targetOptionIds = modelOptionIdCandidates(modelIds)
   let reloadedLocalModels = false
+  let menu = null
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    let menu = JSON.parse(await control.command('snapshot', 'body'))
+    menu = JSON.parse(await control.command('snapshot', 'body'))
     if (await hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId))
       return menu
     if (menu.testIds.includes('model-advanced-toggle')) {
@@ -1409,7 +1410,7 @@ async function ensureModelOptionVisible(
   }
 
   throw new Error(
-    `Model options ${targetOptionIds.join(', ')} did not become visible${expectedProviderId ? ` for provider ${expectedProviderId}` : ''}`
+    `Model options ${targetOptionIds.join(', ')} did not become visible${expectedProviderId ? ` for provider ${expectedProviderId}` : ''}. Observed model test ids: ${(menu?.testIds ?? []).filter(testId => testId.startsWith('model-')).join(', ') || '(none)'}`
   )
 }
 

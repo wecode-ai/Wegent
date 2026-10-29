@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { copyFile, cp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
@@ -15,6 +16,19 @@ import { waitForStartupProgressEvidence } from '../modules/startup-splash-progre
 const runFile = promisify(execFile)
 const TRANSFER_TIMEOUT_MS = 300_000
 const RESTART_TIMEOUT_MS = 240_000
+
+// Electron's ASAR-aware fs treats app.asar as a directory, so recursive copies
+// and removals of complete installations fail with "Invalid package". Toggle
+// the flag only for these E2E file operations and restore the app's setting.
+export async function runWithoutAsar(operation) {
+  const previous = process.noAsar
+  process.noAsar = true
+  try {
+    return await operation()
+  } finally {
+    process.noAsar = previous
+  }
+}
 
 export async function readInstallationState(installRoot) {
   return JSON.parse(await readFile(join(installRoot, 'update-state.json'), 'utf8'))
@@ -47,6 +61,13 @@ export async function stopInstallationProcesses(installRoot) {
   )
 }
 
+// NSIS still uses MAX_PATH for extracted files. Keep the E2E install root
+// short so packaged plugin reference paths stay within that limit.
+export function createShortInstallRoot() {
+  const base = process.env.LOCALAPPDATA?.trim() || tmpdir()
+  return join(base, `w-${process.pid.toString(36)}`)
+}
+
 async function waitUntil(read, matches, message, timeoutMs = RESTART_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -59,8 +80,12 @@ async function waitUntil(read, matches, message, timeoutMs = RESTART_TIMEOUT_MS)
 
 export async function waitForInstallationActivation(installRoot, version) {
   return waitUntil(
-    () => readInstallationState(installRoot),
-    state => state.active.version === version && !state.candidate,
+    () =>
+      readInstallationState(installRoot).catch(error => {
+        if (error.code === 'ENOENT') return null
+        throw error
+      }),
+    state => state?.active?.version === version && !state.candidate,
     `Windows installation did not activate ${version}`
   )
 }
@@ -86,9 +111,9 @@ export async function createWindowsUpdateScenario(
   const fixtureFile = process.env.WEWORK_E2E_WINDOWS_UPDATE_FIXTURES
   assert.ok(fixtureFile, 'Prepare real Windows update fixtures before running this checkpoint')
   const fixture = JSON.parse(await readFile(resolve(fixtureFile), 'utf8'))
-  const installRoot = options.installRoot ?? join(resultDir, 'windows install')
+  const installRoot = options.installRoot ?? createShortInstallRoot()
   if (!options.existingInstallation) {
-    await cp(fixture.baselineRoot, installRoot, { recursive: true })
+    await runWithoutAsar(() => cp(fixture.baselineRoot, installRoot, { recursive: true }))
   }
   const targetKind = checkpoint === 'windows-update-rollback' ? 'startup-failure' : 'target'
   const targetBytes = await readFile(fixture.artifacts[targetKind].archive)
@@ -197,6 +222,9 @@ export async function createWindowsUpdateScenario(
       })
       taskRow = await createCheckpointTaskFixture(control, ACTIVE_COMPOSER_SELECTOR)
       await options.beforeUpdate?.(control, { restartDesktopApp, assertUserData, taskRow })
+      // Legacy 0.4.x/0.5.x apps legitimately request their old feed at startup.
+      // Only requests from the v2 update itself must stay off that protocol.
+      const updateRequestBaseline = requests.length
       const baseline = await resolveDesktopPackageLayout(join(installRoot, 'WeWork.exe'))
       const initialState = await readInstallationState(installRoot)
       assert.equal(initialState.active.version, fixture.baselineVersion)
@@ -258,6 +286,11 @@ export async function createWindowsUpdateScenario(
       ).size
       const readyCount = control.readyCount
       await control.command('click', '[data-testid="about-check-update-button"]')
+      // Installing asks the user to confirm the restart before the handoff.
+      await control.command('waitFor', '[data-testid="app-update-restart-confirm"]', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+      await control.command('click', '[data-testid="app-update-restart-confirm"]')
       await control.awaitReadyAfter(readyCount, RESTART_TIMEOUT_MS)
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
@@ -318,7 +351,9 @@ export async function createWindowsUpdateScenario(
         text: expectedVersion,
       })
       assert.equal(
-        requests.some(item => /\.exe$|components-|latest\.yml/.test(item.path)),
+        requests
+          .slice(updateRequestBaseline)
+          .some(item => /\.exe$|components-|latest\.yml/.test(item.path)),
         false,
         'A v2 update entered the legacy installer/component protocol'
       )
@@ -355,7 +390,7 @@ export async function createWindowsUpdateScenario(
         if (error.code !== 'ENOENT') throw error
       })
       // Keep failures intact for diagnosis; successful full-package copies are large.
-      if (completed) await rm(installRoot, { recursive: true })
+      if (completed) await runWithoutAsar(() => rm(installRoot, { recursive: true }))
     },
 
     diagnostics() {

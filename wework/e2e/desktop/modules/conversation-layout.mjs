@@ -1037,6 +1037,11 @@ async function createCheckpointTaskFixture(
     )
   )
   control.setScenario('checkpoint_task')
+  // Renderer readiness is reported when the app shell mounts; sidebar actions can
+  // appear a frame later, especially during a slow first start after an update.
+  await control.command('waitFor', newTaskButtonSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await control.command('click', newTaskButtonSelector)
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
