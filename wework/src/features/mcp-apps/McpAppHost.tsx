@@ -347,12 +347,16 @@ export function McpAppHost({
     app.onerror = error => {
       if (active) setFailure(error.message)
     }
+    const element = frame.current
     void app
-      .connect(appDocumentTransport(frame.current.contentWindow, appDocumentOrigin(document.url)))
+      .connect(appDocumentTransport(element.contentWindow!, appDocumentOrigin(document.url)))
+      .then(() => {
+        // Listen before loading a document that can initialize immediately.
+        if (active && element.src !== document.url) element.src = document.url
+      })
       .catch(error => {
         if (active) setFailure(error.message)
       })
-    const element = frame.current
     const updateContext = () =>
       app.setHostContext(appHostContext(element, latest().mode, descriptor, block.id))
     const resize = new ResizeObserver(updateContext)
@@ -496,7 +500,7 @@ export function McpAppHost({
           referrerPolicy="no-referrer"
           className="w-full min-w-0 flex-1 border-0"
           style={{ height: mode === 'fullscreen' ? undefined : height }}
-          src={document?.url ?? 'about:blank'}
+          src="about:blank"
         />
       )}
     </section>
