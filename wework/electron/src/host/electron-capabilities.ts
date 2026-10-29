@@ -58,6 +58,7 @@ import type { BrowserAnnotationController } from './browser-annotation-controlle
 import { RotatingLog } from '../runtime/rotating-log.js'
 import { registerMicrophoneDiagnostics } from './microphone-diagnostics.js'
 import {
+  closeConnectorAuthorizationWindow,
   isConnectorAuthorizationUrl,
   openConnectorAuthorizationWindow,
 } from './connector-authorization-window.js'
@@ -1072,6 +1073,11 @@ export function createElectronCapabilityRouter(
       url,
       parent: requiredWindow(window),
     })
+  })
+  // The poll loop owns the terminal state, so it also owns closing the window;
+  // an early close is how a user cancels.
+  router.register('auth.closeConnectorAuthorization', () => {
+    closeConnectorAuthorizationWindow()
   })
   router.register('shell.showItemInFolder', params =>
     shell.showItemInFolder(stringParam(params, 'path'))

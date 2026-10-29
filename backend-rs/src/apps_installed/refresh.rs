@@ -424,6 +424,11 @@ pub(crate) struct DiscoveryState<'a> {
 
 /// Persist the discovery outcome on a stored connection without touching the
 /// stored grant.
+///
+/// The write patches only the discovery members on the row as it exists now.
+/// Rewriting a document captured before the upstream call would put a
+/// pre-refresh `accessTokenEncrypted`/`refreshTokenEncrypted`/`expiresAt` back,
+/// undoing the grant rotation `session_headers` just performed.
 pub(crate) async fn write_discovery_state<M>(
     mysql: &M,
     row: &KindRow,
@@ -432,46 +437,79 @@ pub(crate) async fn write_discovery_state<M>(
 where
     M: Mysql,
 {
-    let mut document = row.kinds_json.0.to_value();
-    apply_discovery_state(&mut document, state)?;
-    write_json(mysql, row.kinds_id, &document).await
+    match (state.discovered_at, state.tool_summaries, state.last_error) {
+        (Some(discovered_at), Some(tool_summaries), None) => {
+            let summaries =
+                crate::json_compat::python_json_value(&Value::Array(tool_summaries.to_vec()));
+            mysql
+                .execute(
+                    "UPDATE kinds SET json = JSON_SET(json, \
+                     '$.spec.toolsDiscoveredAt', ?, \
+                     '$.spec.toolSummaries', CAST(? AS JSON), \
+                     '$.spec.lastError', CAST('null' AS JSON)), \
+                     updated_at = NOW() WHERE id = ?",
+                    (discovered_at.to_string(), summaries.as_str(), row.kinds_id),
+                )
+                .await
+                .map(|_| ())
+                .map_err(RefreshError::Database)
+        }
+        (None, None, Some(message)) => {
+            let error = discovery_error(message);
+            if state.expired {
+                mysql
+                    .execute(
+                        "UPDATE kinds SET json = JSON_SET(json, \
+                         '$.spec.lastError', CAST(? AS JSON), \
+                         '$.spec.status', 'expired'), \
+                         updated_at = NOW() WHERE id = ?",
+                        (error.as_str(), row.kinds_id),
+                    )
+                    .await
+                    .map(|_| ())
+                    .map_err(RefreshError::Database)
+            } else {
+                mysql
+                    .execute(
+                        "UPDATE kinds SET json = JSON_SET(json, \
+                         '$.spec.lastError', CAST(? AS JSON)), \
+                         updated_at = NOW() WHERE id = ?",
+                        (error.as_str(), row.kinds_id),
+                    )
+                    .await
+                    .map(|_| ())
+                    .map_err(RefreshError::Database)
+            }
+        }
+        _ => Err(RefreshError::Unavailable),
+    }
 }
 
-/// The document mutation behind [`write_discovery_state`].
-fn apply_discovery_state(
-    document: &mut Value,
-    state: &DiscoveryState<'_>,
-) -> Result<(), RefreshError> {
-    let spec = document
-        .get_mut("spec")
-        .and_then(Value::as_object_mut)
-        .ok_or(RefreshError::Unavailable)?;
-    if state.expired {
-        spec.insert("status".to_string(), json!("expired"));
-    }
-    if let Some(discovered_at) = state.discovered_at {
-        spec.insert(
-            "toolsDiscoveredAt".to_string(),
-            Value::String(discovered_at.to_string()),
-        );
-    }
-    if let Some(tool_summaries) = state.tool_summaries {
-        spec.insert(
-            "toolSummaries".to_string(),
-            Value::Array(tool_summaries.to_vec()),
-        );
-    }
-    spec.insert(
-        "lastError".to_string(),
-        match state.last_error {
-            Some(message) => json!({
-                "message": message.chars().take(500).collect::<String>(),
-                "at": Utc::now().to_rfc3339(),
-            }),
-            None => Value::Null,
-        },
-    );
-    Ok(())
+/// `set_status("expired")` for a credential the upstream rejected.
+///
+/// The grant is kept (`refreshTokenEncrypted` untouched) so a later retry can
+/// still renew it, and only the status member is patched.
+pub(crate) async fn mark_expired<M>(mysql: &M, kind_id: i64) -> Result<(), RefreshError>
+where
+    M: Mysql,
+{
+    mysql
+        .execute(
+            "UPDATE kinds SET json = JSON_SET(json, '$.spec.status', 'expired'), \
+             updated_at = NOW() WHERE id = ?",
+            (kind_id,),
+        )
+        .await
+        .map(|_| ())
+        .map_err(RefreshError::Database)
+}
+
+/// The `record_tool_error` payload (`{"message": ..., "at": ...}`).
+fn discovery_error(message: &str) -> String {
+    crate::json_compat::python_json_value(&json!({
+        "message": message.chars().take(500).collect::<String>(),
+        "at": Utc::now().to_rfc3339(),
+    }))
 }
 
 /// `db.refresh(connection.row)` after the commit.
@@ -729,6 +767,20 @@ mod tests {
         ));
     }
 
+    fn kind_row(document: Value) -> KindRow {
+        KindRow {
+            kinds_id: 42,
+            kinds_user_id: 128,
+            kinds_kind: "ConnectorConnection".to_string(),
+            kinds_name: "dingtalk_docs".to_string(),
+            kinds_namespace: "system".to_string(),
+            kinds_json: brz_mysql::Json(document.into()),
+            kinds_is_active: true,
+            kinds_created_at: chrono::NaiveDateTime::default(),
+            kinds_updated_at: chrono::NaiveDateTime::default(),
+        }
+    }
+
     fn connection_document() -> Value {
         json!({
             "spec": {
@@ -742,40 +794,44 @@ mod tests {
         })
     }
 
-    /// A rejected credential must surface as `expired` while keeping the grant
-    /// and the last known tool surface.
-    #[test]
-    fn a_rejected_credential_marks_the_connection_expired() {
-        let mut document = connection_document();
-        apply_discovery_state(
-            &mut document,
+    /// A rejected credential flips the status while the same statement leaves
+    /// every credential member untouched.
+    #[tokio::test]
+    async fn a_rejected_credential_marks_the_connection_expired() {
+        let mysql = crate::sql_test_support::KindQueryCapture::writing();
+        let row = kind_row(connection_document());
+
+        write_discovery_state(
+            &mysql,
+            &row,
             &DiscoveryState {
                 last_error: Some("MCP server returned status 401"),
                 expired: true,
                 ..Default::default()
             },
         )
+        .await
         .unwrap();
 
-        assert_eq!(document["spec"]["status"], json!("expired"));
-        assert_eq!(document["spec"]["refreshTokenEncrypted"], json!("refresh"));
-        assert_eq!(
-            document["spec"]["lastError"]["message"],
-            json!("MCP server returned status 401")
-        );
-        assert_eq!(
-            document["spec"]["toolSummaries"][0]["name"],
-            json!("old__tool")
-        );
+        let writes = mysql.writes();
+        assert_eq!(writes.len(), 1);
+        let sql = &writes[0].sql;
+        assert!(sql.contains("JSON_SET"), "{sql}");
+        assert!(sql.contains("'$.spec.lastError'"), "{sql}");
+        assert!(sql.contains("'$.spec.status', 'expired'"), "{sql}");
+        // The grant and the cached surface survive the patch.
+        assert!(!sql.contains("accessTokenEncrypted"), "{sql}");
+        assert!(!sql.contains("refreshTokenEncrypted"), "{sql}");
+        assert!(!sql.contains("toolSummaries"), "{sql}");
+        assert!(!sql.contains("json = ?"), "{sql}");
     }
 
-    /// A recovered upstream replaces the cached surface with the tools it just
-    /// returned and clears the previous failure.
-    #[test]
-    fn a_recovered_upstream_replaces_the_cached_surface() {
-        let mut document = connection_document();
-        document["spec"]["status"] = json!("expired");
-        document["spec"]["lastError"] = json!({"message": "boom", "at": "2026-01-01T00:00:00"});
+    /// A successful pass replaces the cached surface through the same partial
+    /// patch, so a rotated grant written meanwhile stays in place.
+    #[tokio::test]
+    async fn a_recovered_upstream_replaces_the_cached_surface() {
+        let mysql = crate::sql_test_support::KindQueryCapture::writing();
+        let row = kind_row(connection_document());
         let summaries = vec![json!({
             "name": "dingtalk_docs__new_tool",
             "title": null,
@@ -784,8 +840,9 @@ mod tests {
             "inputSchema": {"type": "object"},
         })];
 
-        apply_discovery_state(
-            &mut document,
+        write_discovery_state(
+            &mysql,
+            &row,
             &DiscoveryState {
                 discovered_at: Some("2026-10-28T10:00:00+00:00"),
                 tool_summaries: Some(&summaries),
@@ -793,23 +850,38 @@ mod tests {
                 expired: false,
             },
         )
+        .await
         .unwrap();
 
-        assert_eq!(
-            document["spec"]["toolSummaries"],
-            json!([{
-                "name": "dingtalk_docs__new_tool",
-                "title": null,
-                "description": "d",
-                "rawToolName": "new_tool",
-                "inputSchema": {"type": "object"},
-            }])
+        let writes = mysql.writes();
+        assert_eq!(writes.len(), 1);
+        let sql = &writes[0].sql;
+        assert!(sql.contains("JSON_SET"), "{sql}");
+        assert!(sql.contains("'$.spec.toolsDiscoveredAt'"), "{sql}");
+        assert!(sql.contains("'$.spec.toolSummaries'"), "{sql}");
+        assert!(
+            sql.contains("'$.spec.lastError', CAST('null' AS JSON)"),
+            "{sql}"
         );
-        assert_eq!(
-            document["spec"]["toolsDiscoveredAt"],
-            json!("2026-10-28T10:00:00+00:00")
-        );
-        assert_eq!(document["spec"]["lastError"], json!(null));
+        assert!(!sql.contains("accessTokenEncrypted"), "{sql}");
+        assert!(!sql.contains("refreshTokenEncrypted"), "{sql}");
+        assert!(!sql.contains("expiresAt"), "{sql}");
+        assert!(!sql.contains("json = ?"), "{sql}");
+    }
+
+    /// `mark_expired` patches only the status member.
+    #[tokio::test]
+    async fn marking_a_connection_expired_keeps_the_grant() {
+        let mysql = crate::sql_test_support::KindQueryCapture::writing();
+
+        mark_expired(&mysql, 42).await.unwrap();
+
+        let writes = mysql.writes();
+        assert_eq!(writes.len(), 1);
+        let sql = &writes[0].sql;
+        assert!(sql.contains("'$.spec.status', 'expired'"), "{sql}");
+        assert!(!sql.contains("refreshTokenEncrypted"), "{sql}");
+        assert_eq!(writes[0].first_integer, Some(42));
     }
 
     fn connection(refresh_token_encrypted: Option<&str>) -> ConnectorConnection {

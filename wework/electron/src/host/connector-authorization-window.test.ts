@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
-  isConnectorAuthorizationCallback,
+  closeConnectorAuthorizationWindow,
   isConnectorAuthorizationUrl,
   openConnectorAuthorizationWindow,
 } from './connector-authorization-window.js'
@@ -66,16 +66,30 @@ describe('connector authorization window', () => {
     expect(isConnectorAuthorizationUrl('not a url')).toBe(false)
   })
 
-  test('recognises the backend callback', () => {
-    expect(
-      isConnectorAuthorizationCallback(
-        'http://localhost:8000/api/connector-apps/oauth/callback?code=1&state=2'
+  test('keeps the window open after the backend callback loads', async () => {
+    vi.useFakeTimers()
+    try {
+      void openConnectorAuthorizationWindow({
+        url: 'https://provider.example/authorize',
+        parent,
+      })
+      await vi.advanceTimersByTimeAsync(0)
+
+      mocks.webContentsListeners.get('did-navigate')?.(
+        {},
+        'http://localhost:8000/api/connector-apps/oauth/callback?code=1'
       )
-    ).toBe(true)
-    expect(isConnectorAuthorizationCallback('https://provider.example/authorize')).toBe(false)
+      await vi.advanceTimersByTimeAsync(2_000)
+
+      // The backend may still be exchanging the code; the poll loop decides
+      // when the window can close.
+      expect(mocks.window.close).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
-  test('closes itself once the backend callback loads', async () => {
+  test('closes when the poll loop reports a terminal state', async () => {
     vi.useFakeTimers()
     try {
       const opened = openConnectorAuthorizationWindow({
@@ -84,19 +98,11 @@ describe('connector authorization window', () => {
       })
       await vi.advanceTimersByTimeAsync(0)
 
-      expect(mocks.window.loadURL).toHaveBeenCalledWith('https://provider.example/authorize')
-      expect(mocks.window.webContents.setWindowOpenHandler).toHaveBeenCalled()
-
-      mocks.webContentsListeners.get('did-navigate')?.(
-        {},
-        'http://localhost:8000/api/connector-apps/oauth/callback?code=1'
-      )
-      await vi.advanceTimersByTimeAsync(500)
+      closeConnectorAuthorizationWindow()
       expect(mocks.window.close).toHaveBeenCalledTimes(1)
 
       mocks.listeners.get('closed')?.()
       await opened
-      expect(mocks.fromPartition).toHaveBeenCalledWith('connector-authorization', { cache: false })
       expect(mocks.clearStorageData).toHaveBeenCalled()
     } finally {
       vi.useRealTimers()

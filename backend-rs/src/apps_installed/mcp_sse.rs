@@ -263,9 +263,9 @@ where
 }
 
 /// One parsed server-sent event.
-struct SseEvent {
-    event: String,
-    data: String,
+pub(super) struct SseEvent {
+    pub(super) event: String,
+    pub(super) data: String,
 }
 
 /// Incremental reader over the server's `text/event-stream` body.
@@ -298,7 +298,7 @@ impl SseReader {
 }
 
 /// Remove the first complete event from `buffer`.
-fn take_event(buffer: &mut Vec<u8>) -> Option<SseEvent> {
+pub(super) fn take_event(buffer: &mut Vec<u8>) -> Option<SseEvent> {
     let (end, separator_len) = find_event_end(buffer)?;
     let raw = buffer[..end].to_vec();
     buffer.drain(..end + separator_len);

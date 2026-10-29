@@ -19,10 +19,15 @@ export async function openCloudAuthorizationWindow(
 
   if (isElectronRuntime()) {
     // The capability resolves when the consent window closes, so hand the
-    // caller a handle and let it keep polling while the user decides.
+    // caller a handle and let it keep polling while the user decides. The
+    // poll loop closes the window once the backend reports a terminal state;
+    // closing it earlier is the user cancelling.
     const closed = invokeDesktopHost<void>('auth.openConnectorAuthorization', { url })
     void closed.catch(() => undefined)
-    return { closed }
+    return {
+      closed,
+      close: () => invokeDesktopHost<void>('auth.closeConnectorAuthorization'),
+    }
   }
 
   await openExternalUrl(url, { target: 'system' })

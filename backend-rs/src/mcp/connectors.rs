@@ -21,6 +21,7 @@ use brz_http_server::{Response, StatusCode};
 use serde_json::{Value, json};
 
 use crate::apps_installed::db::{self, UserRow};
+use crate::apps_installed::http_tools;
 use crate::apps_installed::mcp;
 use crate::apps_installed::service::{self, ConnectorApp, SessionError};
 use crate::apps_installed::{connection, refresh};
@@ -163,6 +164,21 @@ async fn list_tools(
     let mut tools = Vec::new();
     for app in connected {
         if app.transport == "http" {
+            match http_tools::definitions(app) {
+                Ok(definitions) => {
+                    let entries: Vec<Value> = definitions
+                        .iter()
+                        .filter(|tool| {
+                            app.tool_allowlist.is_empty() || app.tool_allowlist.contains(&tool.name)
+                        })
+                        .map(|tool| http_tools::listing_entry(app, tool))
+                        .collect();
+                    tools.extend(entries.into_iter().map(listing_entry));
+                }
+                Err(error) => {
+                    tracing::warn!(connector = %app.slug, %error, "skipping invalid HTTP connector");
+                }
+            }
             continue;
         }
         let row = db::find_connector_connection(&state.mysql, &app.slug, user.users_id)
@@ -295,20 +311,16 @@ async fn call_tool(
     let headers = match service::session_headers(&state.mysql, &app, &user).await {
         Ok(headers) => headers,
         Err(SessionError::AuthorizationRequired) => {
-            return failure(
-                serde_json::to_string(&json!({
-                    "error": "connector_auth_required",
-                    "connectorSlug": app.slug,
-                    "message": format!("Connector '{}' requires authorization", app.slug),
-                }))
-                .unwrap_or_default(),
-            );
+            return failure(connector_auth_required(&app.slug));
         }
         Err(error) => {
             tracing::warn!(connector = %app.slug, %error, "connector tool session failed");
             return failure(error.to_string());
         }
     };
+    if app.transport == "http" {
+        return call_http_tool(&app, upstream_name, &arguments, &headers).await;
+    }
     match mcp::call_tool_for_transport(
         &app.transport,
         &app.mcp_url,
@@ -319,11 +331,69 @@ async fn call_tool(
     .await
     {
         Ok(call) => success(&call),
+        Err(mcp::McpError::Unauthorized(message)) => {
+            unauthorized(state, &app, &user, &message).await
+        }
         Err(error) => {
             tracing::warn!(connector = %app.slug, %error, "connector tool call failed");
             failure("Connector tool failed")
         }
     }
+}
+
+/// Run one configured HTTP operation for a `transport = "http"` app.
+async fn call_http_tool(
+    app: &ConnectorApp,
+    upstream_name: &str,
+    arguments: &Value,
+    headers: &[(String, String)],
+) -> Value {
+    let definitions = match http_tools::definitions(app) {
+        Ok(definitions) => definitions,
+        Err(error) => return failure(error.to_string()),
+    };
+    let Some(tool) = definitions.iter().find(|tool| tool.name == upstream_name) else {
+        return failure("Connector tool not found");
+    };
+    match http_tools::call(app, tool, arguments, headers).await {
+        Ok(call) => success(&call),
+        Err(http_tools::HttpToolError::InvalidArguments(message)) => failure(message),
+        Err(error) => {
+            tracing::warn!(connector = %app.slug, %error, "connector HTTP tool failed");
+            failure(error.to_string())
+        }
+    }
+}
+
+/// The upstream rejected a still-unexpired credential: flip the connection to
+/// `expired` so the desktop offers re-authorization, and report the structured
+/// hint the agent is instructed to surface.
+async fn unauthorized(
+    state: &AppState,
+    app: &ConnectorApp,
+    user: &UserRow,
+    message: &str,
+) -> Value {
+    tracing::warn!(connector = %app.slug, %message, "connector rejected its credential");
+    if let Some(row) = db::find_connector_connection(&state.mysql, &app.slug, user.users_id)
+        .await
+        .ok()
+        .flatten()
+    {
+        let _ = refresh::mark_expired(&state.mysql, row.kinds_id).await;
+    }
+    failure(connector_auth_required(&app.slug))
+}
+
+/// The structured hint the agent is instructed to surface when a connector
+/// needs a fresh user grant (`wegent_apps` proxy contract).
+fn connector_auth_required(slug: &str) -> String {
+    serde_json::to_string(&json!({
+        "error": "connector_auth_required",
+        "connectorSlug": slug,
+        "message": format!("Connector '{slug}' requires authorization"),
+    }))
+    .unwrap_or_default()
 }
 
 /// `_content_blocks` plus `CallToolResult`: text blocks join into one readable
@@ -506,5 +576,82 @@ mod tests {
     fn a_scoped_surface_lists_its_app_only() {
         assert!(in_surface(&app("dingtalk", "lazy"), Some("dingtalk")));
         assert!(!in_surface(&app("github", "static"), Some("dingtalk")));
+    }
+
+    fn http_app(slug: &str, allowlist: Vec<String>) -> ConnectorApp {
+        let row = crate::apps_installed::db::KindRow {
+            kinds_id: 7,
+            kinds_user_id: 0,
+            kinds_kind: "ConnectorApp".to_string(),
+            kinds_name: slug.to_string(),
+            kinds_namespace: "system".to_string(),
+            kinds_json: brz_mysql::Json(
+                json!({
+                    "kind": "ConnectorApp",
+                    "spec": {
+                        "name": slug,
+                        "mcpUrl": "https://api.example.invalid/v1",
+                        "enabled": true,
+                        "authType": "oauth2",
+                        "transport": "http",
+                        "visibility": "all",
+                        "description": "d",
+                        "allowedRoles": [],
+                        "toolAllowlist": allowlist,
+                        "httpTools": [{
+                            "name": "lookup",
+                            "description": "Lookup a record",
+                            "method": "GET",
+                            "path": "/records/{id}",
+                            "input_schema": {"type": "object", "required": ["id"]},
+                        }],
+                    }
+                })
+                .into(),
+            ),
+            kinds_is_active: true,
+            kinds_created_at: chrono::NaiveDateTime::default(),
+            kinds_updated_at: chrono::NaiveDateTime::default(),
+        };
+        service::row_to_app(&row)
+    }
+
+    /// A `transport = "http"` app publishes its configured operations instead of
+    /// being skipped by the MCP listing.
+    #[test]
+    fn http_transport_apps_publish_their_configured_tools() {
+        let app = http_app("erp", vec![]);
+        assert_eq!(app.transport, "http");
+        let definitions = http_tools::definitions(&app).expect("valid configuration");
+        assert_eq!(definitions.len(), 1);
+        let entry = http_tools::listing_entry(&app, &definitions[0]);
+        assert_eq!(entry["name"], json!("erp__lookup"));
+        assert_eq!(entry["rawToolName"], json!("lookup"));
+        assert_eq!(entry["inputSchema"]["required"], json!(["id"]));
+    }
+
+    /// The allowlist still bounds the configured surface.
+    #[test]
+    fn http_transport_tools_respect_the_allowlist() {
+        let app = http_app("erp", vec!["other".to_string()]);
+        let entries: Vec<_> = http_tools::definitions(&app)
+            .expect("valid configuration")
+            .iter()
+            .filter(|tool| app.tool_allowlist.is_empty() || app.tool_allowlist.contains(&tool.name))
+            .map(|tool| http_tools::listing_entry(&app, tool))
+            .collect();
+        assert!(entries.is_empty());
+    }
+
+    /// A rejected credential surfaces the structured re-authorization hint.
+    #[test]
+    fn rejected_credentials_report_the_auth_required_hint() {
+        let value: Value = serde_json::from_str(&connector_auth_required("erp")).unwrap();
+        assert_eq!(value["error"], json!("connector_auth_required"));
+        assert_eq!(value["connectorSlug"], json!("erp"));
+        assert_eq!(
+            value["message"],
+            json!("Connector 'erp' requires authorization")
+        );
     }
 }

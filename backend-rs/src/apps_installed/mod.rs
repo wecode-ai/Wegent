@@ -18,6 +18,7 @@
 pub(crate) mod connection;
 pub mod db;
 mod handler;
+pub(crate) mod http_tools;
 pub mod mcp;
 pub(crate) mod mcp_sse;
 pub mod models;

@@ -8,18 +8,21 @@
  * The workbench used to hand the consent page to the system browser, which
  * took the user out of the app and left the desktop E2E unable to drive the
  * flow. This window keeps consent inside Wework, in a throwaway session so
- * provider cookies never mix with the workbench session, and closes itself once
- * the backend callback page loads — by then the grant is already stored.
+ * provider cookies never mix with the workbench session.
+ *
+ * The window closes when the renderer reports the session's terminal state.
+ * Closing it on the callback navigation would race the backend's code
+ * exchange: a slow provider makes the next poll still see `pending`, and the
+ * user gets "window closed" even though the grant is about to land.
  */
 
 import { BrowserWindow, session } from 'electron'
 
 /** Throwaway partition: nothing survives the consent flow. */
 export const CONNECTOR_AUTHORIZATION_PARTITION = 'connector-authorization'
-/** Backend endpoint that finishes the grant (`connector_apps.py`). */
-export const CONNECTOR_AUTHORIZATION_CALLBACK_PATH = '/api/connector-apps/oauth/callback'
-/** Let the callback page render its confirmation before closing. */
-const CLOSE_DELAY_MS = 400
+
+/** The window the renderer may close once the session reaches a terminal state. */
+let active: BrowserWindow | null = null
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
 
@@ -38,13 +41,13 @@ export function isConnectorAuthorizationUrl(value: string): boolean {
   return url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname)
 }
 
-/** Whether a navigation finished the grant on the backend callback. */
-export function isConnectorAuthorizationCallback(value: string): boolean {
-  try {
-    return new URL(value).pathname === CONNECTOR_AUTHORIZATION_CALLBACK_PATH
-  } catch {
-    return false
-  }
+/**
+ * Close the consent window. The renderer calls this when the polled session
+ * reaches `success`, `declined`, or `failed`; a user dismissal closes it the
+ * same way, which the poll loop reports as a cancellation.
+ */
+export function closeConnectorAuthorizationWindow(): void {
+  if (active && !active.isDestroyed()) active.close()
 }
 
 export interface ConnectorAuthorizationWindowOptions {
@@ -79,22 +82,17 @@ export async function openConnectorAuthorizationWindow(
   // The consent page navigates itself; popups would escape the isolated flow.
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 
-  const closed = new Promise<void>(resolve => window.once('closed', () => resolve()))
-  let closing = false
-  const closeAfterCallback = (target: string) => {
-    if (closing || !isConnectorAuthorizationCallback(target)) return
-    closing = true
-    setTimeout(() => {
-      if (!window.isDestroyed()) window.close()
-    }, CLOSE_DELAY_MS)
-  }
-  window.webContents.on('did-navigate', (_event, target) => closeAfterCallback(target))
-  window.webContents.on('will-redirect', (_event, target) => closeAfterCallback(target))
+  active = window
+  const closed = new Promise<void>(resolve =>
+    window.once('closed', () => {
+      if (active === window) active = null
+      resolve()
+    })
+  )
 
   try {
     await window.loadURL(options.url)
   } catch (error) {
-    closing = true
     if (!window.isDestroyed()) window.close()
     await closed
     throw error
