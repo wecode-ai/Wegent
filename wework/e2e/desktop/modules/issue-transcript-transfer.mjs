@@ -5,6 +5,8 @@ import { DatabaseSync } from 'node:sqlite'
 import { gunzipSync } from 'node:zlib'
 import { requestExecutor } from './executor-rpc.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
+import { waitForElementCount } from './harness-app-fixture.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 
 const RESTORED = 'ISSUE_LARGE_TRANSCRIPT_RESTORED'
 const RECOVERED = 'ISSUE_LARGE_TRANSCRIPT_RETRY_RECOVERED'
@@ -114,8 +116,17 @@ async function verifyCachedInitialRecovery({
   threadId,
 }) {
   const modal = scope('[data-testid="ai-chat-modal"]')
-  const start = proxy.requests.length
   await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
+  // Closing retains the old conversation until its exit animation finishes.
+  // Inject the fault only after that session unmounts, before opening a new one.
+  await waitForElementCount(
+    control,
+    modal,
+    0,
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The previous conversation must unmount before interrupting the reopened history request'
+  )
+  const start = proxy.requests.length
   proxy.rule = entry =>
     entry.method === 'POST' && entry.path === '/api/runtime-work/transcript'
       ? 'drop-response'
