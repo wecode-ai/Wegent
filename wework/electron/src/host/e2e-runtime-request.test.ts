@@ -20,8 +20,8 @@ describe('authenticated E2E Runtime requests', () => {
     'http://127.0.0.1:3000/api',
     'http://127.0.0.1:3000/apiary/private',
     'http://127.0.0.1:3000/auth/bootstrap',
-    'http://evil.test/api/llm.models',
-    'https://127.0.0.1:3000/api/llm.models',
+    'http://evil.test/api/session/modelCatalog',
+    'https://127.0.0.1:3000/api/session/modelCatalog',
     'http://user@127.0.0.1:3000/wework/api',
   ])('rejects targets outside the local Runtime: %s', async target => {
     const cookies = vi.fn()
@@ -30,7 +30,7 @@ describe('authenticated E2E Runtime requests', () => {
     )
     expect(cookies).not.toHaveBeenCalled()
   })
-  test.each([url, 'http://127.0.0.1:3000/api/llm.models'])(
+  test.each([url, 'http://127.0.0.1:3000/api/session/modelCatalog'])(
     'fails without an authenticated browser session: %s',
     async target => {
       const request = vi.fn()
@@ -40,7 +40,7 @@ describe('authenticated E2E Runtime requests', () => {
       expect(request).not.toHaveBeenCalled()
     }
   )
-  test.each([url, 'http://127.0.0.1:3000/api/llm.models'])(
+  test.each([url, 'http://127.0.0.1:3000/api/session/modelCatalog'])(
     'rejects unsupported methods before reading session cookies: %s',
     async target => {
       const cookies = vi.fn()
@@ -50,7 +50,7 @@ describe('authenticated E2E Runtime requests', () => {
       expect(cookies).not.toHaveBeenCalled()
     }
   )
-  test.each([url, 'http://127.0.0.1:3000/api/llm.models'])(
+  test.each([url, 'http://127.0.0.1:3000/api/session/modelCatalog'])(
     'uses only the target authority cookie, preserves errors, and refuses redirects: %s',
     async target => {
       const cookies = vi.fn(async () => [{ name: 'dsh-auth-test', value: 'signed-session' }])

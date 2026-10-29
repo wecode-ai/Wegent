@@ -38,6 +38,7 @@ export async function verifyHarnessAppModels(
   control.setScenario('harness_app_models')
 
   await setExperimentalFeatures(control, true, uiTimeoutMs)
+  await verifyCoreDshModels(control)
   const readyCountBeforeSeed = control.readyCount
   await control.command('reloadMainWindow', 'body', {
     value: JSON.stringify({
@@ -105,10 +106,10 @@ export async function verifyHarnessAppModels(
     'A model whose proxy route failed was still registered as a DSH provider'
   )
 
-  // DSH reads the generated settings itself; llm.models proves it loaded every
+  // DSH reads the generated settings itself; its catalog proves it loaded every
   // provider instead of this test only inspecting the file Wework wrote.
   const providerGroups = await waitForDshValue(
-    () => dshRequest(control, installation.webUrl, 'llm.models', {}),
+    () => dshRequest(control, installation.webUrl, 'session/modelCatalog', {}),
     value => value.groups.some(group => group.id === 'wework-local'),
     30_000
   ).then(value => value.groups)
@@ -159,10 +160,13 @@ export async function verifyHarnessAppModels(
   await waitForReleasedRoutes(failedRoutes, 120_000)
 
   const afterFailurePrompt = `HARNESS_AFTER_FAILURE_PROMPT_${randomUUID()}`
-  await dshRequest(control, installation.webUrl, 'session.prompt', {
-    sessionId,
-    mode: 'queue',
-    content: [{ type: 'text', text: afterFailurePrompt }],
+  await dshRequest(control, installation.webUrl, 'session/prompt', {
+    request: {
+      requestId: randomUUID(),
+      sessionId,
+      mode: 'queue',
+      content: [{ type: 'text', text: afterFailurePrompt }],
+    },
   })
   await waitForHarnessModelRequest(control, afterFailurePrompt, EXTRA_MODEL.modelId, 30_000)
   await waitForSessionIdle(control, installation.webUrl, sessionId, 30_000)
@@ -218,6 +222,29 @@ export async function verifyHarnessAppModels(
   await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
     timeoutMs: uiTimeoutMs,
   })
+}
+
+async function verifyCoreDshModels(control) {
+  const coreUrl = await control.command('getLocationOrigin', 'body')
+  const labels = [MODEL_LABEL, EXTRA_MODEL.labels[1]]
+  const catalog = await waitForDshValue(
+    () => dshRequest(control, coreUrl, 'session/modelCatalog', {}),
+    value =>
+      labels.every(label =>
+        value.groups.some(group => group.id.startsWith('wework-model-') && group.name === label)
+      ),
+    30_000
+  )
+  for (const label of labels) {
+    const provider = catalog.groups.find(
+      group => group.id.startsWith('wework-model-') && group.name === label
+    )
+    assert.deepEqual(
+      provider.models.map(model => model.id),
+      ['wework-selected'],
+      `Core DSH did not receive the synchronized Wework model ${label}`
+    )
+  }
 }
 
 async function armHostResponse(gates, id, name, hold = true) {
@@ -506,7 +533,7 @@ async function exerciseModelRoutes(
   installation,
   { resultDir, screenshotName, captureScreenshot }
 ) {
-  const models = await dshRequest(control, installation.webUrl, 'llm.models', {})
+  const models = await dshRequest(control, installation.webUrl, 'session/modelCatalog', {})
   const defaultProvider = models.groups.find(group => group.id === 'wework-local')
   assert.ok(defaultProvider, 'DSH did not expose the original default model provider')
   assert.deepEqual(
@@ -521,37 +548,42 @@ async function exerciseModelRoutes(
 
   const workspace = join(resultDir, 'harness-app-models-workspace')
   await mkdir(workspace, { recursive: true })
-  const { sessionId } = await dshRequest(control, installation.webUrl, 'session.create', {
-    cwd: workspace,
-  })
-  const sessionModels = await dshRequest(control, installation.webUrl, 'session.models', {
-    sessionId,
-  })
   assert.deepEqual(
-    { provider: sessionModels.current.provider, model: sessionModels.current.model },
+    { provider: models.default.provider, model: models.default.model },
     { provider: 'wework-local', model: 'wework-selected' },
-    'A new DSH session did not start on the original default model route'
+    'The DSH catalog lost the original default model route'
   )
+  const { sessionId } = await dshRequest(control, installation.webUrl, 'session/create', {
+    request: { cwd: workspace },
+  })
 
   const defaultPrompt = `HARNESS_DEFAULT_MODEL_PROMPT_${randomUUID()}`
-  await dshRequest(control, installation.webUrl, 'session.prompt', {
-    sessionId,
-    mode: 'queue',
-    content: [{ type: 'text', text: defaultPrompt }],
+  await dshRequest(control, installation.webUrl, 'session/prompt', {
+    request: {
+      requestId: randomUUID(),
+      sessionId,
+      mode: 'queue',
+      content: [{ type: 'text', text: defaultPrompt }],
+    },
   })
   await waitForHarnessModelRequest(control, defaultPrompt, DEFAULT_MODEL.modelId, 30_000)
   await waitForSessionIdle(control, installation.webUrl, sessionId, 30_000)
+  await assertSessionModel(control, installation.webUrl, sessionId, {
+    provider: 'wework-local',
+    model: 'wework-selected',
+  })
 
-  await dshRequest(control, installation.webUrl, 'session.selectModel', {
-    sessionId,
-    provider: extraProvider.id,
-    model: extraModelId,
+  await dshRequest(control, installation.webUrl, 'session/selectModel', {
+    request: { sessionId, provider: extraProvider.id, model: extraModelId },
   })
   const extraPrompt = `HARNESS_EXTRA_MODEL_PROMPT_${randomUUID()}`
-  await dshRequest(control, installation.webUrl, 'session.prompt', {
-    sessionId,
-    mode: 'queue',
-    content: [{ type: 'text', text: extraPrompt }],
+  await dshRequest(control, installation.webUrl, 'session/prompt', {
+    request: {
+      requestId: randomUUID(),
+      sessionId,
+      mode: 'queue',
+      content: [{ type: 'text', text: extraPrompt }],
+    },
   })
   const extraRequest = await waitForHarnessModelRequest(
     control,
@@ -570,6 +602,10 @@ async function exerciseModelRoutes(
     'A model with an incomplete proxy configuration still reached the model service'
   )
   await waitForSessionIdle(control, installation.webUrl, sessionId, 30_000)
+  await assertSessionModel(control, installation.webUrl, sessionId, {
+    provider: extraProvider.id,
+    model: extraModelId,
+  })
   await captureScreenshot(control, screenshotName, 'body')
   return sessionId
 }
@@ -646,7 +682,7 @@ async function dshRequest(control, baseUrl, method, payload) {
         type: 'client-request',
         rpcId: randomUUID(),
         method,
-        payload,
+        payload: { args: payload },
       }),
       timeoutMs: 60_000,
     }
@@ -685,12 +721,25 @@ async function waitForDshValue(read, accept, timeoutMs) {
 async function waitForSessionIdle(control, baseUrl, sessionId, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
-    const { items } = await dshRequest(control, baseUrl, 'session.list', {})
+    const { items } = await dshRequest(control, baseUrl, 'session/list', { _request: {} })
     const session = items.find(item => item.sessionId === sessionId)
     if (session && !session.running) return
     await delay(100)
   }
   throw new Error(`DSH session ${sessionId} did not finish its turn`)
+}
+
+async function assertSessionModel(control, baseUrl, sessionId, expected) {
+  const projections = await dshRequest(control, baseUrl, 'session/projections', {
+    request: { sessionId },
+  })
+  const selection = projections?.values.modelSelection?.lastUsed
+  assert.ok(selection, 'The DSH session did not persist its model selection')
+  assert.deepEqual(
+    { provider: selection.provider, model: selection.model },
+    expected,
+    'The DSH session did not persist the model route consumed by its request'
+  )
 }
 
 async function waitForHarnessModelRequest(control, prompt, expectedModelId, timeoutMs) {
