@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { spawn } from 'node:child_process'
 import { createReadStream } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -13,7 +12,11 @@ import {
 } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { UPGRADE_CHECKPOINTS, UPGRADE_PACKAGE_CHECKPOINTS } from './upgrade-suite.mjs'
-import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
+import {
+  createCheckpointProcessRunner,
+  formatDuration,
+  HEARTBEAT_INTERVAL_MS,
+} from './checkpoint-process.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -23,7 +26,6 @@ import { prepareDesktopE2EBuild } from '../../scripts/lib/desktop-e2e-build.mjs'
 import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
 import { extractRuntimeArchive } from '../../scripts/lib/extract-runtime-archive.mjs'
 
-const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_RESOURCES = new Map([
   // These macOS checkpoints need exclusive native focus or application activation.
@@ -383,73 +385,7 @@ const isolatedXvfbPath = join(scriptDir, 'run-with-openbox.sh')
 const cliArgs = process.argv.slice(2)
 const requestedArgs = cliArgs[0] === '--' ? cliArgs.slice(1) : cliArgs
 
-function formatDuration(durationMs) {
-  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
-}
-
-function runTaskFlow(args, env, label) {
-  return new Promise((resolvePromise, reject) => {
-    const startedAt = Date.now()
-    let lastOutputAt = startedAt
-    let resultDir = null
-    let outputTail = ''
-    let stderrTail = ''
-    const isolateDisplay = process.platform === 'linux' && env.WEWORK_E2E_ISOLATED_XVFB === 'true'
-    const command = isolateDisplay ? 'xvfb-run' : process.execPath
-    const commandArgs = isolateDisplay
-      ? [
-          '-a',
-          '--server-args=-screen 0 1280x720x24',
-          'sh',
-          isolatedXvfbPath,
-          process.execPath,
-          taskFlowPath,
-          ...args,
-        ]
-      : [taskFlowPath, ...args]
-    const child = spawn(command, commandArgs, {
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-
-    const forward = (chunk, destination, captureStderr = false) => {
-      lastOutputAt = Date.now()
-      const text = chunk.toString()
-      destination.write(text)
-      outputTail = `${outputTail}${text}`.slice(-12_000)
-      const resultDirMatch = outputTail.match(/\[desktop-e2e] result directory: ([^\r\n]+)/)
-      if (resultDirMatch) resultDir = resultDirMatch[1].trim()
-      if (captureStderr) stderrTail = `${stderrTail}${text}`.slice(-12_000)
-    }
-    child.stdout.on('data', chunk => forward(chunk, process.stdout))
-    child.stderr.on('data', chunk => forward(chunk, process.stderr, true))
-
-    const heartbeat = setInterval(() => {
-      const now = Date.now()
-      console.log(
-        `[desktop-e2e] ${label} still running: elapsed=${formatDuration(now - startedAt)}, last-output=${formatDuration(now - lastOutputAt)} ago`
-      )
-    }, HEARTBEAT_INTERVAL_MS)
-
-    child.once('error', error => {
-      clearInterval(heartbeat)
-      reject(error)
-    })
-    child.once('exit', (code, signal) => {
-      clearInterval(heartbeat)
-      rejectRecordedCheckpointFailure({
-        code: code ?? 1,
-        durationMs: Date.now() - startedAt,
-        resultDir,
-        signal,
-        stderrTail,
-      }).then(resolvePromise, reject)
-    })
-  })
-}
+const runTaskFlow = createCheckpointProcessRunner({ taskFlowPath, isolatedXvfbPath })
 
 async function readFailureSummary(result) {
   if (result.resultDir) {
