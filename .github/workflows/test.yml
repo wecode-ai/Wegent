@@ -649,6 +649,11 @@ jobs:
       - name: Prepare Wework Electron dependencies
         run: pnpm --filter wework prepare:electron
 
+      - name: Prepare real Xvfb lifecycle regression tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xvfb xauth x11-utils
+
       - name: Run process explorer package tests
         if: matrix.shard == 1
         run: |

@@ -1,5 +1,8 @@
 import { UPGRADE_PACKAGE_CHECKPOINTS } from './upgrade-suite.mjs'
 
+// Short-lived readiness clients must not reset the display before Openbox connects.
+export const ISOLATED_XVFB_SERVER_ARGUMENTS = '-screen 0 1280x720x24 -noreset'
+
 export function checkpointScenarioEnv(
   env,
   checkpoint,
