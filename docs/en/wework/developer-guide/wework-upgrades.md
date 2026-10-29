@@ -62,6 +62,11 @@ The existing `app-update-full` checkpoint shares the real-package scenario and r
 
 Upgrade edges explicitly record `fromSourceSha` and `toSourceSha`, each matching the delivered package metadata’s `sourceSha`; E2E results record both revisions. Missing or mismatched revisions block promotion, and clients also check the downloaded package revision. Diagnostic log failures must neither block preparation nor replace its original error. Before restoring data after a startup timeout, the native launcher must terminate the complete runtime tree, including writers in independent process groups.
 
+The upgrade workflow covers all three platforms by default; manual dispatches can select one
+`runner` for focused diagnosis. Intel Mac cold builds plus five serial real-package checkpoints
+have exceeded 75 minutes, so that platform has a 90-minute job budget; other platforms retain
+75 minutes. Scenarios, assertions, and their internal waiting budgets remain unchanged.
+
 ## Native launcher linker
 
 Packaging compiles the launcher through a direct `rustc` invocation, so it must explicitly translate
