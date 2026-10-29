@@ -2988,18 +2988,39 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const interactions = useRuntimeInteractions()
   const interactionViewOwner = useId()
   const registerInteractionView = interactions?.registerView
-  const viewedInteraction = interactions?.pending.filter(item =>
-    item.task.address.deviceId === currentRuntimeTask?.deviceId &&
-    item.task.address.taskId === currentRuntimeTask?.taskId &&
-    (requestUserInputPayloadKey(item.payload) === requestUserInputPayloadKey(pendingRequestUserInput) ||
-      (pendingRequestUserInput && !pendingRequestUserInput.interactionScope &&
-        (item.payload.requestId ?? item.payload.request_id ?? item.payload.itemId ?? item.payload.item_id) ===
-        (pendingRequestUserInput.requestId ?? pendingRequestUserInput.request_id ?? pendingRequestUserInput.itemId ?? pendingRequestUserInput.item_id)))
-  ).at(-1)
+  const pendingRequestUserInputKey = requestUserInputPayloadKey(pendingRequestUserInput)
+  const viewedInteraction = interactions?.pending
+    .filter(
+      item =>
+        pendingRequestUserInputKey !== null &&
+        item.task.address.deviceId === currentRuntimeTask?.deviceId &&
+        item.task.address.taskId === currentRuntimeTask?.taskId &&
+        (requestUserInputPayloadKey(item.payload) === pendingRequestUserInputKey ||
+          (pendingRequestUserInput &&
+            !pendingRequestUserInput.interactionScope &&
+            (item.payload.requestId ??
+              item.payload.request_id ??
+              item.payload.itemId ??
+              item.payload.item_id) ===
+              (pendingRequestUserInput.requestId ??
+                pendingRequestUserInput.request_id ??
+                pendingRequestUserInput.itemId ??
+                pendingRequestUserInput.item_id)))
+    )
+    .at(-1)
   useEffect(() => {
-    registerInteractionView?.(interactionViewOwner, paneActive && workbenchVisible ? viewedInteraction?.id ?? null : null)
+    registerInteractionView?.(
+      interactionViewOwner,
+      paneActive && workbenchVisible ? (viewedInteraction?.id ?? null) : null
+    )
     return () => registerInteractionView?.(interactionViewOwner, null)
-  }, [interactionViewOwner, paneActive, registerInteractionView, viewedInteraction?.id, workbenchVisible])
+  }, [
+    interactionViewOwner,
+    paneActive,
+    registerInteractionView,
+    viewedInteraction?.id,
+    workbenchVisible,
+  ])
   const selectedAssistantPlanContent = useMemo(
     () => findSelectedAssistantPlanContent(paneMessages, selectedAssistantPlan),
     [paneMessages, selectedAssistantPlan]

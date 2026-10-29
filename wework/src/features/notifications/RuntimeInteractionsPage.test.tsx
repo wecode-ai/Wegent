@@ -29,12 +29,12 @@ const approval: RuntimeInteraction = {
   answered: false,
 }
 
-function view(selectedId?: string) {
+function view(selectedId?: string, errors: Record<string, string> = {}) {
   const registerView = vi.fn()
   const value: RuntimeInteractionsValue = {
     pending: [approval],
     history: [],
-    errors: {},
+    errors,
     drafts: {},
     busy: new Set(),
     loading: false,
@@ -68,3 +68,11 @@ it('shows an expired exact destination without selecting or suppressing an unrel
   expect(screen.getByTestId('interaction-list-item')).toHaveAttribute('aria-pressed', 'false')
   expect(registerView).toHaveBeenLastCalledWith(expect.any(String), null)
 })
+
+it.each(['interactions.load_failed', 'interactions.failed', 'interactions.expired'])(
+  'shows an orphaned %s error exactly once without relabeling it',
+  error => {
+    view(undefined, { 'old-request': error })
+    expect(screen.getByRole('alert')).toHaveTextContent(new RegExp('^' + error + '$'))
+  }
+)

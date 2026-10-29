@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useEffect, useState } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { NotificationTaskContext, type TaskSource } from './NotificationTaskSourceContext'
 import { RuntimeInteractionsProvider } from './RuntimeInteractionsProvider'
@@ -21,6 +21,9 @@ const harness = vi.hoisted(() => ({
     openTab: vi.fn(),
     selectTab: vi.fn(),
   },
+  desktop: false,
+  host: vi.fn(),
+  hostListeners: new Set<(event: { type: string }) => void>(),
   transcript: vi.fn(),
   send: vi.fn(),
   guide: vi.fn(),
@@ -37,8 +40,16 @@ vi.mock('@/desktop/windowFocus', () => ({
   subscribeMainWindowFocus: () => () => {},
 }))
 vi.mock('@/lib/runtime-environment', () => ({
-  isElectronRuntime: () => false,
+  isElectronRuntime: () => harness.desktop,
   getDesktopWindowLabel: () => 'main',
+}))
+
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: harness.host,
+  subscribeDesktopHostEvents: (listener: (event: { type: string }) => void) => {
+    harness.hostListeners.add(listener)
+    return () => harness.hostListeners.delete(listener)
+  },
 }))
 
 let context: ReturnType<typeof useRuntimeInteractions>
@@ -101,6 +112,9 @@ function view(
 
 beforeEach(() => {
   vi.clearAllMocks()
+  harness.desktop = false
+  harness.hostListeners.clear()
+  harness.host.mockReset()
   localStorage.clear()
   harness.send.mockResolvedValue({ accepted: true })
   harness.guide.mockResolvedValue({ accepted: true })
@@ -108,7 +122,216 @@ beforeEach(() => {
   harness.list.mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
 })
 
+afterEach(() => vi.restoreAllMocks())
+
 describe('unified human response', () => {
+  it('bounds unchanged history scans while forcing explicit refresh and summary changes', async () => {
+    const intervals = vi.spyOn(window, 'setInterval')
+    const rendered = view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const poll = intervals.mock.calls.find(([, ms]) => ms === 5000)![0] as () => void
+    const initialReads = harness.transcript.mock.calls.length
+    await act(async () => {
+      poll()
+    })
+    expect(harness.transcript).toHaveBeenCalledTimes(initialReads)
+    await act(async () => {
+      await context!.refresh()
+    })
+    expect(harness.transcript).toHaveBeenCalledTimes(initialReads + 1)
+    rendered.rerenderSource({
+      ...rendered.taskSource,
+      items: [
+        {
+          ...interactionTask,
+          task: { ...interactionTask.task, updatedAt: '2026-10-30T00:00:01Z' },
+        },
+      ],
+    })
+    await waitFor(() => expect(harness.transcript).toHaveBeenCalledTimes(initialReads + 2))
+    const now = Date.now()
+    vi.spyOn(Date, 'now').mockReturnValue(now + 30_001)
+    await act(async () => {
+      poll()
+    })
+    expect(harness.transcript).toHaveBeenCalledTimes(initialReads + 3)
+  })
+
+  it('does not cache failed history reads or summaries without a timestamp', async () => {
+    const intervals = vi.spyOn(window, 'setInterval')
+    const rendered = view(interactionQuestion, interactionTask, false, new Error('offline'))
+    await waitFor(() => expect(context!.loading).toBe(false))
+    const poll = intervals.mock.calls.find(([, ms]) => ms === 5000)![0] as () => void
+    harness.transcript.mockResolvedValue(interactionTranscript())
+    await act(async () => {
+      poll()
+    })
+    expect(context!.pending[0].requestKey).not.toBe('unavailable')
+    const withoutTimestamp = {
+      ...interactionTask,
+      task: { ...interactionTask.task, updatedAt: undefined },
+    }
+    rendered.rerenderSource({ ...rendered.taskSource, items: [withoutTimestamp] })
+    await waitFor(() => expect(context!.loading).toBe(false))
+    const reads = harness.transcript.mock.calls.length
+    await act(async () => {
+      poll()
+    })
+    expect(harness.transcript).toHaveBeenCalledTimes(reads + 1)
+  })
+
+  it('invalidates history cache when the service changes or a device recovers', async () => {
+    const intervals = vi.spyOn(window, 'setInterval')
+    const rendered = view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const reads = harness.transcript.mock.calls.length
+    const newService = {
+      ...rendered.taskSource,
+      services: {
+        ...rendered.taskSource.services!,
+        runtimeWorkApi: {
+          ...rendered.taskSource.services!.runtimeWorkApi!,
+        },
+      },
+    }
+    rendered.rerenderSource(newService)
+    await waitFor(() => expect(harness.transcript).toHaveBeenCalledTimes(reads + 1))
+    const offline = {
+      ...newService,
+      devices: [
+        { device_id: 'device', status: 'offline' } as NonNullable<TaskSource['devices']>[number],
+      ],
+    }
+    rendered.rerenderSource(offline)
+    const poll = intervals.mock.calls.filter(([, ms]) => ms === 5000).at(-1)![0] as () => void
+    await act(async () => {
+      poll()
+    })
+    const beforeRecovery = harness.transcript.mock.calls.length
+    rendered.rerenderSource({ ...offline, devices: [{ ...offline.devices[0], status: 'online' }] })
+    // Inventory polling owns device availability and invalidates the previous successful read.
+    await act(async () => {
+      poll()
+    })
+    expect(harness.transcript).toHaveBeenCalledTimes(beforeRecovery + 1)
+  })
+
+  it('expires a request during a cached poll without reloading unchanged history', async () => {
+    const intervals = vi.spyOn(window, 'setInterval')
+    const now = Date.now()
+    view({ ...interactionQuestion, expiresAtUnixMs: now + 1000 })
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const reads = harness.transcript.mock.calls.length
+    const poll = intervals.mock.calls.find(([, ms]) => ms === 5000)![0] as () => void
+    vi.spyOn(Date, 'now').mockReturnValue(now + 1001)
+    await act(async () => {
+      poll()
+    })
+    expect(context!.pending).toHaveLength(0)
+    expect(harness.transcript).toHaveBeenCalledTimes(reads)
+  })
+
+  it('acknowledges an accepted native reply after a refresh replaces its effect', async () => {
+    harness.desktop = true
+    let accept!: (result: { accepted: boolean }) => void
+    harness.send.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          accept = resolve
+        })
+    )
+    let replies = [{ id: 'native-1', interactionId: '', text: 'keep' }]
+    harness.host.mockImplementation(async (command: string) => {
+      if (command === 'notification.pendingReplies') return replies[0]?.interactionId ? replies : []
+      if (command === 'notification.acknowledgeReply') replies = []
+    })
+    view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    replies[0].interactionId = context!.pending[0].id
+    act(() => harness.hostListeners.forEach(listener => listener({ type: 'notification-reply' })))
+    await waitFor(() => expect(harness.send).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      await context!.refresh()
+    })
+    await act(async () => {
+      accept({ accepted: true })
+    })
+    await waitFor(() =>
+      expect(harness.host).toHaveBeenCalledWith('notification.acknowledgeReply', {
+        id: 'native-1',
+        accountKey: 'test:1',
+      })
+    )
+    expect(replies).toEqual([])
+    expect(harness.send).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([true, false])(
+    'retries native acknowledgement without resending or replacing a draft (accepted=%s)',
+    async accepted => {
+      harness.desktop = true
+      harness.send.mockResolvedValue({ accepted, error: accepted ? undefined : 'rejected' })
+      const intervals = vi.spyOn(window, 'setInterval')
+      let replies = [{ id: 'native-1', interactionId: '', text: 'keep' }]
+      let failed = false
+      harness.host.mockImplementation(async (command: string) => {
+        if (command === 'notification.pendingReplies')
+          return replies[0]?.interactionId ? replies : []
+        if (command === 'notification.acknowledgeReply') {
+          if (!failed) {
+            failed = true
+            throw new Error('host unavailable')
+          }
+          replies = []
+        }
+      })
+      view()
+      await waitFor(() => expect(context!.pending).toHaveLength(1))
+      const id = context!.pending[0].id
+      replies[0].interactionId = id
+      act(() => harness.hostListeners.forEach(listener => listener({ type: 'notification-reply' })))
+      await waitFor(() => expect(failed).toBe(true))
+      if (!accepted) act(() => context!.setDraft(id, 'edited after failure'))
+      const poll = intervals.mock.calls.filter(([, ms]) => ms === 5000).at(-1)![0] as () => void
+      await act(async () => {
+        poll()
+      })
+      await waitFor(() => expect(replies).toEqual([]))
+      expect(harness.send).toHaveBeenCalledTimes(1)
+      if (!accepted) expect(context!.drafts[id]).toBe('edited after failure')
+    }
+  )
+
+  it('does not replay a failed native answer or overwrite its draft after renderer reload', async () => {
+    harness.desktop = true
+    harness.send.mockResolvedValue({ accepted: false, error: 'rejected' })
+    let replies = [{ id: 'native-reload', interactionId: '', text: 'original native text' }]
+    let failedAcknowledgement = false
+    harness.host.mockImplementation(async (command: string) => {
+      if (command === 'notification.pendingReplies') return replies[0]?.interactionId ? replies : []
+      if (command === 'notification.acknowledgeReply') {
+        if (!failedAcknowledgement) {
+          failedAcknowledgement = true
+          throw new Error('host unavailable')
+        }
+        replies = []
+      }
+    })
+    const first = view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const id = context!.pending[0].id
+    replies[0].interactionId = id
+    act(() => harness.hostListeners.forEach(listener => listener({ type: 'notification-reply' })))
+    await waitFor(() => expect(failedAcknowledgement).toBe(true))
+    act(() => context!.setDraft(id, 'edited before reload'))
+    first.unmount()
+    view()
+    await waitFor(() => expect(replies).toEqual([]))
+    expect(harness.send).toHaveBeenCalledTimes(1)
+    expect(context!.drafts[id]).toBe('edited before reload')
+    expect(context!.history).toEqual([])
+  })
+
   it('keeps an accepted old-account reply out of the new account state', async () => {
     let accept!: (result: { accepted: boolean }) => void
     harness.send.mockImplementation(

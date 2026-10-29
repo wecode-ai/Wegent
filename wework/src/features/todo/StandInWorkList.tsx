@@ -384,7 +384,7 @@ export function StandInWorkList({
             <button
               type="button"
               data-testid="stand-in-work-open-pending"
-              className="mt-5 rounded-lg bg-text-primary px-3 py-2 text-sm text-background"
+              className="mt-5 inline-flex min-h-11 items-center justify-center rounded-lg bg-text-primary px-3 py-2 text-sm text-background md:min-h-9"
               onClick={() =>
                 interactions.open(
                   interactions.pending.find(item => item.task.key === selected.key)?.id

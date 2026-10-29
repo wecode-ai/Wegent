@@ -110,6 +110,8 @@ function RuntimeInteractionsState({
   const [busy, setBusy] = useState<Set<string>>(new Set())
   const inFlight = useRef(new Set<string>())
   const clientIds = useRef(new Map<string, { answer: string; id: string }>())
+  const successfulReads = useRef(new Map<string, { signature: string; readAt: number }>())
+  const successfulReadApi = useRef(source?.services?.runtimeWorkApi)
   const fetching = useRef(false)
   const mounted = useRef(true)
   const [loading, setLoading] = useState(false)
@@ -124,6 +126,12 @@ function RuntimeInteractionsState({
   )
   const [submitted, setSubmitted] = useState<Set<string>>(
     () => new Set(history.map(item => item.id))
+  )
+  const submittedRef = useRef(submitted)
+  submittedRef.current = submitted
+  const handledNativeReplies = useMemo(
+    () => createStandInRecordStore(`wework.interactions:${accountKey}:native-replies`),
+    [accountKey]
   )
   const delivered = useMemo(
     () => createStandInRecordStore(`wework.interactions:${accountKey}:delivered`),
@@ -174,113 +182,145 @@ function RuntimeInteractionsState({
     )
   }, [])
 
-  const refresh = useCallback(async () => {
-    const current = sourceRef.current
-    const api = current?.services?.runtimeWorkApi
-    if (!api || fetching.current) return
-    fetching.current = true
-    setLoading(true)
-    try {
-      const discovered = await readInteractionTaskInventory(current)
-      if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return
-      const retained = inventoryRef.current.filter(
-        item => !discovered.refreshedDevices.has(item.address.deviceId)
-      )
-      const nextInventory = [
-        ...new Map([...retained, ...discovered.items].map(item => [item.key, item])).values(),
-      ]
-      setInventory(nextInventory)
-      setErrors(value => {
-        const next = Object.fromEntries(
-          Object.entries(value).filter(([key]) => !key.startsWith('inventory:'))
+  const refresh = useCallback(
+    async (force = true) => {
+      const current = sourceRef.current
+      const api = current?.services?.runtimeWorkApi
+      if (!api || fetching.current) return
+      if (successfulReadApi.current !== api) {
+        successfulReads.current.clear()
+        successfulReadApi.current = api
+      }
+      fetching.current = true
+      setLoading(true)
+      try {
+        const discovered = await readInteractionTaskInventory(current)
+        if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return
+        const retained = inventoryRef.current.filter(
+          item => !discovered.refreshedDevices.has(item.address.deviceId)
         )
-        for (const deviceId of discovered.failedDevices) {
-          if (
-            inventoryRef.current.some(item => item.address.deviceId === deviceId) ||
-            current.items.some(
-              item => item.address.deviceId === deviceId && item.task.interactionStatus
-            ) ||
-            deviceId === ''
+        const nextInventory = [
+          ...new Map([...retained, ...discovered.items].map(item => [item.key, item])).values(),
+        ]
+        setInventory(nextInventory)
+        setErrors(value => {
+          const next = Object.fromEntries(
+            Object.entries(value).filter(([key]) => !key.startsWith('inventory:'))
           )
-            next[`inventory:${deviceId}`] = t('interactions.load_failed')
-        }
-        return next
-      })
-      const candidates = new Map(
-        [
-          ...Object.values(loadedRef.current)
-            .flat()
-            .filter(item => !item.answered)
-            .map(item => item.task),
-          ...current.items,
-          ...nextInventory,
-        ].map(item => [item.key, item])
-      )
-      const items = [...candidates.values()].filter(
-        item =>
-          (item.lifecycle?.interactionStatus ?? item.task.interactionStatus) ||
-          loadedRef.current[item.key]?.some(request => !request.answered)
-      )
-      // Limit concurrent history reads without blocking unrelated tasks on one failure.
-      let index = 0
-      await Promise.all(
-        Array.from({ length: Math.min(4, items.length) }, async () => {
-          while (index < items.length) {
-            const item = items[index++]
+          for (const deviceId of discovered.failedDevices) {
             if (
-              discovered.failedDevices.has(item.address.deviceId) ||
-              discovered.failedDevices.has('') ||
-              (loadedRef.current[item.key]?.some(request => request.cached) &&
-                !discovered.refreshedDevices.has(item.address.deviceId))
+              inventoryRef.current.some(item => item.address.deviceId === deviceId) ||
+              current.items.some(
+                item => item.address.deviceId === deviceId && item.task.interactionStatus
+              ) ||
+              deviceId === ''
             )
-              continue
-            try {
-              const requests = await readRuntimeInteractions(item, api)
-              if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return
-              setLoaded(value => ({ ...value, [item.key]: requests }))
-              setErrors(value => {
-                const next = { ...value }
-                delete next[item.key]
-                return next
-              })
-              for (const answered of requests.filter(request => request.answered)) archive(answered)
-            } catch (error) {
-              if (!mounted.current) return
-              console.error('[Wework] Could not read pending interaction', {
-                taskId: item.address.taskId,
-                error,
-              })
-              setErrors(value => ({ ...value, [item.key]: t('interactions.load_failed') }))
-              if (item.lifecycle?.interactionStatus ?? item.task.interactionStatus) {
-                setLoaded(value =>
-                  value[item.key]?.length
-                    ? value
-                    : {
-                        ...value,
-                        [item.key]: [
-                          {
-                            id: interactionId(item, 'unavailable'),
-                            requestKey: 'unavailable',
-                            task: item,
-                            payload: { kind: 'request_user_input' },
-                            question: t('interactions.needs_reply'),
-                            context: t('interactions.load_failed'),
-                            createdAt: new Date(item.task.updatedAt ?? 0).getTime() || 0,
-                            answered: false,
-                          },
-                        ],
-                      }
-                )
+              next[`inventory:${deviceId}`] = t('interactions.load_failed')
+          }
+          return next
+        })
+        const candidates = new Map(
+          [
+            ...Object.values(loadedRef.current)
+              .flat()
+              .filter(item => !item.answered)
+              .map(item => item.task),
+            ...current.items,
+            ...nextInventory,
+          ].map(item => [item.key, item])
+        )
+        const items = [...candidates.values()].filter(
+          item =>
+            (item.lifecycle?.interactionStatus ?? item.task.interactionStatus) ||
+            loadedRef.current[item.key]?.some(request => !request.answered)
+        )
+        // Limit concurrent history reads without blocking unrelated tasks on one failure.
+        let index = 0
+        await Promise.all(
+          Array.from({ length: Math.min(4, items.length) }, async () => {
+            while (index < items.length) {
+              const item = items[index++]
+              if (
+                discovered.failedDevices.has(item.address.deviceId) ||
+                discovered.failedDevices.has('') ||
+                (loadedRef.current[item.key]?.some(request => request.cached) &&
+                  !discovered.refreshedDevices.has(item.address.deviceId))
+              ) {
+                successfulReads.current.delete(item.key)
+                continue
+              }
+              const readSignature = JSON.stringify([
+                item.task.updatedAt,
+                item.lifecycle?.interactionStatus,
+                item.task.interactionStatus,
+                item.lifecycle?.turn.id,
+                item.lifecycle?.turn.latestId,
+                item.lifecycle?.turn.phase,
+              ])
+              const previousRead = successfulReads.current.get(item.key)
+              // Summary timestamps are not transcript revisions; bound background cache freshness.
+              if (
+                !force &&
+                item.task.updatedAt &&
+                previousRead?.signature === readSignature &&
+                Date.now() - previousRead.readAt < 30_000
+              )
+                continue
+              try {
+                const requests = await readRuntimeInteractions(item, api)
+                if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return
+                successfulReads.current.set(item.key, {
+                  signature: readSignature,
+                  readAt: Date.now(),
+                })
+                setLoaded(value => ({ ...value, [item.key]: requests }))
+                setErrors(value => {
+                  const next = { ...value }
+                  delete next[item.key]
+                  return next
+                })
+                for (const answered of requests.filter(request => request.answered))
+                  archive(answered)
+              } catch (error) {
+                successfulReads.current.delete(item.key)
+                if (!mounted.current) return
+                console.error('[Wework] Could not read pending interaction', {
+                  taskId: item.address.taskId,
+                  error,
+                })
+                setErrors(value => ({ ...value, [item.key]: t('interactions.load_failed') }))
+                if (item.lifecycle?.interactionStatus ?? item.task.interactionStatus) {
+                  setLoaded(value =>
+                    value[item.key]?.length
+                      ? value
+                      : {
+                          ...value,
+                          [item.key]: [
+                            {
+                              id: interactionId(item, 'unavailable'),
+                              requestKey: 'unavailable',
+                              task: item,
+                              payload: { kind: 'request_user_input' },
+                              question: t('interactions.needs_reply'),
+                              context: t('interactions.load_failed'),
+                              createdAt: new Date(item.task.updatedAt ?? 0).getTime() || 0,
+                              answered: false,
+                            },
+                          ],
+                        }
+                  )
+                }
               }
             }
-          }
-        })
-      )
-    } finally {
-      fetching.current = false
-      if (mounted.current) setLoading(false)
-    }
-  }, [archive, t])
+          })
+        )
+      } finally {
+        fetching.current = false
+        if (mounted.current) setLoading(false)
+      }
+    },
+    [archive, t]
+  )
   const signature = JSON.stringify(
     source?.items.map(item => [
       item.key,
@@ -290,10 +330,10 @@ function RuntimeInteractionsState({
     ])
   )
   useEffect(() => {
-    void refresh()
-    const timer = window.setInterval(() => void refresh(), 5000)
+    void refresh(false)
+    const timer = window.setInterval(() => void refresh(false), 5000)
     return () => window.clearInterval(timer)
-  }, [refresh, signature])
+  }, [refresh, signature, source?.services?.runtimeWorkApi])
 
   const pending = useMemo(() => {
     const visible = new Map([...inventory, ...(source?.items ?? [])].map(item => [item.key, item]))
@@ -401,7 +441,8 @@ function RuntimeInteractionsState({
         const accepted = result.accepted ?? ('success' in result && result.success)
         if (!accepted) throw new Error(result.error || t('notifications.failed'))
         if (!mounted.current) return true
-        setSubmitted(current => new Set(current).add(item.id))
+        submittedRef.current = new Set(submittedRef.current).add(item.id)
+        setSubmitted(submittedRef.current)
         setReplyNotice(t('interactions.reply_success'))
         archive(item, Date.now())
         setDraft(item.id, '')
@@ -523,15 +564,29 @@ function RuntimeInteractionsState({
         >('notification.pendingReplies', { accountKey })
         for (const reply of replies) {
           if (!active || !mounted.current) return
+          if (
+            handledNativeReplies.getSnapshot()[reply.id] ||
+            submittedRef.current.has(reply.interactionId)
+          ) {
+            await invokeDesktopHost('notification.acknowledgeReply', { id: reply.id, accountKey })
+            continue
+          }
           const item = Object.values(loadedRef.current)
             .flat()
             .find(item => item.id === reply.interactionId)
           if (!item || inFlight.current.has(item.id)) continue
           setDraft(item.id, reply.text)
-          await respond(item, reply.text, reply.id)
+          const accepted = await respond(item, reply.text, reply.id)
+          // Accepted sends must be acknowledged even if a refresh replaced this effect.
+          // Failed sends remain editable drafts, unless their account has unmounted.
+          if (accepted || mounted.current) {
+            handledNativeReplies.write({
+              ...handledNativeReplies.getSnapshot(),
+              [reply.id]: { version: 'handled', savedAt: Date.now() },
+            })
+            await invokeDesktopHost('notification.acknowledgeReply', { id: reply.id, accountKey })
+          }
           if (!active) return
-          // A failed send remains an editable draft with its inline error.
-          await invokeDesktopHost('notification.acknowledgeReply', { id: reply.id, accountKey })
         }
       } catch (error) {
         console.error('[Wework] Could not handle notification reply', error)
@@ -543,11 +598,20 @@ function RuntimeInteractionsState({
       if (event.type === 'notification-reply') void drain()
     })
     void drain()
+    const timer = window.setInterval(() => void drain(), 5000)
     return () => {
+      window.clearInterval(timer)
       active = false
       unsubscribe()
     }
-  }, [accountKey, loaded, respond, setDraft, source?.services?.runtimeWorkApi])
+  }, [
+    accountKey,
+    handledNativeReplies,
+    loaded,
+    respond,
+    setDraft,
+    source?.services?.runtimeWorkApi,
+  ])
 
   const notice = focused
     ? (noticeIds.map(id => pending.find(item => item.id === id)).find(Boolean) ?? null)

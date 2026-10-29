@@ -129,7 +129,7 @@ export function RuntimeInteractionsPage({
             .filter(([key]) => !pending.some(request => request.id === key))
             .map(([key, error]) => (
               <p key={key} role="alert" className="px-3 py-2 text-sm text-status-error">
-                {t('interactions.load_failed')} {error}
+                {error}
               </p>
             ))}
         </div>
