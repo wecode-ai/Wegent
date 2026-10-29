@@ -122,12 +122,9 @@ pub(crate) const WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework �
 - Never enter passwords, authentication codes, payment details, or other secrets unless the user explicitly authorizes that exact action in the current conversation.
 - Do not use computer use for Wework built-in browser tasks; use the `browser_*` tools instead."#;
 pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空间 routing:
-- "项目空间" and "project space" refer to Wework project spaces. For project-space boards, tasks, files, comments, deliveries, tables, or assignment requests, use the available `wework_space` MCP tools.
-- `wework_space` is a fixed capability connected by the Wework Executor. Do not call MCP resource listing, a browser, Shell, `curl`, or parse `wegent://` URLs to determine whether it is available.
-- For the current bound Issue, call `get_current_context` first. Read its description with `get_board_item` and its discussion with `list_board_item_comments`, including PR links and feedback posted in comments. Use `add_board_item_comment` to write to the same visible Issue activity. Read attachments with `list_item_attachments`, then `read_item_attachment`.
-- Use `list_board_items` to list a project's tasks and `search_board_items` for text or structured task searches. Use the matching project-space tool for reads and writes instead of querying local files, executor logs, or backend storage directly.
-- For a manager-bound Issue, call `get_board_item` and `get_assignment_candidates` to inspect the Issue and eligible group members, then call `submit_workflow_plan` once for the current concurrent batch. The Executor starts every selected member as an independent task with that member's configured runtime; never use Codex subagents or execute member work yourself. A fresh manager task will be started after the batch finishes. Only the manager may update the parent Issue status through the project-space tool.
-- Manager and member runs are automatically recorded in the Issue activity. When the manager calls `update_issue_status`, its `comment` field is optional and is the only extra status explanation to publish. Do not duplicate the same result with `add_board_item_comment`.
+- Use `wework_space` MCP tools for Wework project spaces and Issues; discover deferred tools before reporting them unavailable.
+- For the current Issue, start with `get_current_context`; without a binding, use `list_spaces` and explicit target IDs. Follow the discovered tool instructions.
+- Never use MCP resources, browser, Shell, `curl`, local storage or provider APIs to bypass these tools or their access errors.
 "#;
 
 const IMAGE_MIME_TYPES: &[&str] = &[
@@ -301,6 +298,11 @@ mod mcp_apps;
 
 #[path = "codex/connection_mcp.rs"]
 mod connection_mcp;
+
+#[path = "codex/mcp_reload.rs"]
+mod mcp_reload;
+#[cfg(test)]
+use mcp_reload::config_reload_resume_thread_id;
 
 pub use interaction::CodexRequestUserInputReceiver;
 use interaction::{interaction_value_key, InteractionAnswerRouter};
@@ -728,6 +730,7 @@ impl CodexAppServerClient {
                 &process_launch_config,
             )
             .await?;
+            state.thread_mcp_configurations.clear();
             state.process = Some(process);
             state.process_environment = process_environment;
             state.next_id = next_id;
@@ -858,6 +861,7 @@ impl CodexAppServerClient {
         state.active_threads.remove(thread_id);
         let generation = state.thread_generations.get(thread_id).copied()?;
         if !retain_subscription {
+            state.thread_mcp_configurations.remove(thread_id);
             state.thread_generations.remove(thread_id);
             state.idle_thread_generations.remove(thread_id);
             return Some((generation, Vec::new()));
@@ -916,6 +920,7 @@ impl CodexAppServerClient {
         let _lifecycle_guard = lifecycle_gate.lock().await;
         {
             let mut state = self.state.lock().await;
+            state.thread_mcp_configurations.remove(thread_id);
             state.thread_generations.remove(thread_id);
             state.idle_thread_generations.remove(thread_id);
         }
@@ -956,6 +961,7 @@ impl CodexAppServerClient {
             if !state.active_threads.contains_key(thread_id)
                 && state.thread_generations.get(thread_id) == Some(&generation)
             {
+                state.thread_mcp_configurations.remove(thread_id);
                 state.thread_generations.remove(thread_id);
                 state.idle_thread_generations.remove(thread_id);
             }
@@ -1068,6 +1074,7 @@ impl CodexAppServerClient {
                 start_persistent_codex_app_server(&self.binary, state.next_id, &launch_config)
                     .await?;
             initialize_elapsed = Some(initialize_started_at.elapsed());
+            state.thread_mcp_configurations.clear();
             state.process = Some(process);
             state.process_environment = process_environment;
             state.next_id = next_id;
@@ -1121,6 +1128,7 @@ impl CodexAppServerClient {
                 &process_launch_config,
             )
             .await?;
+            state.thread_mcp_configurations.clear();
             state.process = Some(process);
             state.process_environment = process_environment;
             state.next_id = next_id;
@@ -1269,6 +1277,7 @@ struct CodexAppServerSharedState {
     active_threads: HashMap<String, usize>,
     mcp_app_leases: HashMap<(String, String), Instant>,
     thread_generations: HashMap<String, u64>,
+    thread_mcp_configurations: HashMap<String, Map<String, Value>>,
     idle_thread_generations: HashMap<String, u64>,
     next_thread_generation: u64,
     thread_lifecycle_gates: HashMap<String, Weak<Mutex<()>>>,
@@ -1282,6 +1291,7 @@ async fn stop_codex_app_server_process(
     pending_error: Option<&str>,
 ) -> bool {
     state.process_environment.clear();
+    state.thread_mcp_configurations.clear();
     let Some(mut process) = state.process.take() else {
         return false;
     };
@@ -1302,6 +1312,7 @@ impl Default for CodexAppServerSharedState {
             active_threads: HashMap::new(),
             mcp_app_leases: HashMap::new(),
             thread_generations: HashMap::new(),
+            thread_mcp_configurations: HashMap::new(),
             idle_thread_generations: HashMap::new(),
             next_thread_generation: 1,
             thread_lifecycle_gates: HashMap::new(),
@@ -1803,33 +1814,6 @@ fn thread_id_to_activate_before_start(thread_plan: &CodexThreadPlan) -> Option<&
     }
 }
 
-fn config_reload_resume_thread_id<'a>(
-    thread_plan: &'a CodexThreadPlan,
-    request: &ExecutionRequest,
-) -> Option<&'a str> {
-    let CodexThreadStart::Request {
-        operation: "thread/resume",
-        params,
-    } = &thread_plan.start
-    else {
-        return None;
-    };
-    let has_project_space_config =
-        params
-            .get("config")
-            .and_then(Value::as_object)
-            .is_some_and(|config| {
-                config
-                    .keys()
-                    .any(|key| key.starts_with("mcp_servers.wework_space."))
-            });
-    (has_project_space_config
-        || crate::runtime_work::stand_in_requires_confirmation(request)
-        || crate::runtime_work::external_work_kind(request).is_some())
-    .then(|| params.get("threadId").and_then(Value::as_str))
-    .flatten()
-}
-
 fn thread_id_from_response(
     operation: &str,
     response: &Value,
@@ -1929,9 +1913,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             request,
             &launch_config,
         );
-        if let Some(thread_id) = config_reload_resume_thread_id(&thread_plan, request) {
-            client.release_thread_subscription(thread_id).await?;
-        }
+        client
+            .reload_thread_configuration_if_needed(&thread_plan, request)
+            .await?;
         if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
             client.mark_thread_active(thread_id).await;
             subscribed_thread_id = Some(thread_id.to_owned());
@@ -1946,6 +1930,12 @@ async fn run_codex_app_server_turn_on_shared_client(
                 );
             }
         }
+        let requested_mcp_configuration = match &thread_plan.start {
+            CodexThreadStart::Request { params, .. } => {
+                Some(mcp_reload::mcp_thread_configuration(params))
+            }
+            CodexThreadStart::Direct(_) => None,
+        };
         let thread_id = match thread_plan.start {
             CodexThreadStart::Direct(thread_id) => {
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
@@ -1993,6 +1983,14 @@ async fn run_codex_app_server_turn_on_shared_client(
         } else {
             client.mark_thread_active(&thread_id).await;
             subscribed_thread_id = Some(thread_id.clone());
+        }
+        if let Some(mcp_configuration) = requested_mcp_configuration {
+            client
+                .state
+                .lock()
+                .await
+                .thread_mcp_configurations
+                .insert(thread_id.clone(), mcp_configuration);
         }
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
@@ -2510,8 +2508,40 @@ async fn read_shared_turn_notifications(
     let (response_error_tx, mut response_error_rx) = mpsc::unbounded_channel();
     let mut cancellation_requested = false;
     let mut overload_recovery = overload_recovery::OverloadRecovery::default();
+    let mut deferred_goal_snapshot: Option<Value> = None;
     loop {
+        // A user can resume and finish a Goal while overload backoff is sleeping.
+        // Consume its queued turns before applying the newer RPC snapshot.
+        let buffered_notification = if deferred_goal_snapshot.is_some() {
+            match notification_rx.try_recv() {
+                Ok(message) => Some(Ok(message)),
+                Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
+                    Some(Err(broadcast::error::RecvError::Lagged(skipped)))
+                }
+                Err(_) => {
+                    let response = deferred_goal_snapshot.take().unwrap();
+                    overload_recovery::sync_goal_snapshot(
+                        state,
+                        options.notifications.as_ref(),
+                        thread_id,
+                        &response,
+                    );
+                    options.wait_for_goal_continuation = false;
+                    if options.active_turn_id.is_none() {
+                        return Ok(last_outcome.unwrap_or(ExecutionOutcome::Cancelled {
+                            message: "Goal changed during model overload recovery".to_owned(),
+                        }));
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let receive_notification = async {
+            if let Some(notification) = buffered_notification {
+                return Ok(Some(notification));
+            }
             if let Some(cancel_rx) = options.cancellation.as_mut() {
                 tokio::select! {
                     _ = cancel_rx => Ok(None),
@@ -2756,20 +2786,23 @@ async fn read_shared_turn_notifications(
                     )
                     .await?;
                     if restoring_goal {
-                        overload_recovery::sync_goal_snapshot(
-                            state,
-                            options.notifications.as_ref(),
-                            thread_id,
-                            &response,
-                        );
-                        if !restarted && !state.goal_is_active() {
-                            return Ok(ExecutionOutcome::Cancelled {
-                                message: "Goal changed during model overload recovery".to_owned(),
-                            });
+                        if !restarted
+                            && response.pointer("/goal/status").and_then(Value::as_str)
+                                != Some("active")
+                        {
+                            deferred_goal_snapshot = Some(response);
+                            options.wait_for_goal_continuation = true;
+                        } else {
+                            overload_recovery::sync_goal_snapshot(
+                                state,
+                                options.notifications.as_ref(),
+                                thread_id,
+                                &response,
+                            );
+                            // Activating an idle Goal starts its native continuation.
+                            // Do not race it with a second turn/start request.
+                            options.wait_for_goal_continuation = state.goal_is_active();
                         }
-                        // Activating an idle Goal starts its native continuation.
-                        // Do not race it with a second turn/start request.
-                        options.wait_for_goal_continuation = state.goal_is_active();
                     } else {
                         options.active_turn_id = turn_start_response_id(&response);
                     }
@@ -2865,6 +2898,14 @@ async fn read_shared_turn_notifications(
                 state,
                 options.wait_for_goal_continuation,
             ) {
+                if let Some(response) = deferred_goal_snapshot.take() {
+                    overload_recovery::sync_goal_snapshot(
+                        state,
+                        options.notifications.as_ref(),
+                        thread_id,
+                        &response,
+                    );
+                }
                 return Ok(outcome);
             }
             last_outcome = Some(outcome);
@@ -5279,9 +5320,6 @@ fn managed_wework_mcp_config_overrides(
             &mut overrides,
         );
     }
-    if crate::task_runtime::mcp::encoded_space_context_grant(request).is_none() {
-        return Ok((overrides, env));
-    }
     append_managed_mcp_config(
         crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
         crate::task_runtime::mcp::space_mcp_client_config(request)?,
@@ -5328,7 +5366,7 @@ fn append_managed_mcp_config(
             ));
         }
     }
-    if config.context_bound {
+    if config.auto_approve {
         overrides.push(format!(
             "{key}.default_tools_approval_mode={}",
             toml_value("approve")

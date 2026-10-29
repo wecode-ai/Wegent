@@ -38,6 +38,15 @@ export function createStandInFailureRegression() {
         assert.fail(`Stand-in did not reach ${status}: ${JSON.stringify(result)}`)
       }
       await waitForStatus('failed')
+      const transcript = await rpc('runtime.tasks.transcript', {
+        ...address,
+        refresh: true,
+        limit: 20,
+      })
+      assert.ok(
+        transcript.turns?.some(turn => turn.error?.includes(FAILURE)),
+        'The original model error must remain in the Runtime transcript'
+      )
       assert.ok(requests > 0, 'Failure must come from the real model transport')
       const id = `stand-in:${encodeURIComponent(`${address.deviceId}\0${address.taskId}`)}`
       const processing = selector(`notification-processing-${id}`)
@@ -45,7 +54,9 @@ export function createStandInFailureRegression() {
       await control.command('click', '[data-testid="wework-notifications-button"]')
       await control.command('click', '[data-testid="wework-notifications-category-collaboration"]')
       await control.command('waitFor', status, { text: '处理失败' })
-      await control.command('waitFor', `${processing} p`, { text: FAILURE })
+      await control.command('waitFor', `${processing} p`, {
+        text: '分身操作失败，请稍后重试；如仍失败，请查看执行设备日志。',
+      })
       const text = await control.command('getText', processing)
       assert.ok(!/模型回复已完成|Model reply is ready/.test(text), text)
       reject = false

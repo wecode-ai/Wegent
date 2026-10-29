@@ -3861,6 +3861,7 @@ export function PluginsWorkspace({
     if (!inventoryCompleteRef.current) return
     if (pluginMutationInFlight) return
     if (!deviceCloudConnected) return
+    if (pluginMutationInFlight) return
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
     const autoUpdateCandidateReleaseKeys = pluginMarketplaceState.items.flatMap(item => {
@@ -4000,6 +4001,7 @@ export function PluginsWorkspace({
     currentDeviceId,
     deviceCloudConnected,
     installedPlugins,
+    pluginMutationInFlight,
     localInstalledStateReadyKey,
     marketplaceCacheKeyValue,
     pluginApi,

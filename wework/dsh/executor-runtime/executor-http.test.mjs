@@ -211,6 +211,31 @@ test('does not forward an unsafe browser request id to the executor', async () =
   assert.equal(response.headers['x-request-id'], receivedRequestId)
 })
 
+for (const event of ['finish', 'close']) {
+  test(`records HTTP ${event} separately from executor completion without payloads`, async t => {
+    const log = t.mock.method(console, 'info', () => {})
+    const response = responseFixture()
+    await handleExecutorRpc(
+      executorRpcRequest({ id: 'http-lifecycle', method: 'runtime.tasks.get', params: {} }),
+      response,
+      { request: async () => ({ privateTaskContent: 'must-not-be-logged' }) }
+    )
+    assert.equal(log.mock.calls.length, 2)
+
+    response.emit(event)
+
+    assert.equal(log.mock.calls.length, 3)
+    const [label, fields] = log.mock.calls[2].arguments
+    assert.equal(label, '[wework-executor-runtime] RPC HTTP response')
+    assert.equal(fields.request_id, 'http-lifecycle')
+    assert.equal(fields.event, event === 'finish' ? 'finished' : 'closed')
+    assert.equal(fields.headers_sent, true)
+    assert.equal(fields.writable_ended, true)
+    assert.ok(!JSON.stringify(log.mock.calls).includes('must-not-be-logged'))
+    for (const name of ['finish', 'close', 'error']) assert.equal(response.listenerCount(name), 0)
+  })
+}
+
 test('passes the browser cursor to the executor-owned event stream', async () => {
   const request = executorEventRequest('?after=7')
   const response = responseFixture()

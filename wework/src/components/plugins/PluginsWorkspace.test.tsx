@@ -4962,6 +4962,58 @@ describe('PluginsWorkspace', () => {
     expectFetchRequest('/api/plugins/marketplace?device_id=current-device')
   })
 
+  test('does not dispatch background synchronization while a foreground install is pending', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const marketplace = mockSystemSkillsFetch({ deviceAutoSyncSucceeds: true })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!
+    let release!: () => void
+    const pending = new Promise<void>(resolve => {
+      release = resolve
+    })
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes('/marketplace/101/install')) await pending
+      return originalFetch(input, init)
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
+    await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
+    await waitFor(() =>
+      expectFetchRequest('/api/plugins/marketplace/101/install?device_id=current-device', 'POST')
+    )
+    const key = pluginMarketplaceCacheKey('/api', 'cloud-token')
+    const cached = getPluginMarketplaceCache(key)!
+    await act(async () => {
+      setPluginMarketplaceCache({
+        ...cached,
+        marketplaceItems: cached.marketplaceItems.map(item => ({
+          ...item,
+          installed: false,
+          installedLocally: false,
+          installedPluginId: 101,
+          currentDeviceInstallation: {
+            deviceId: 'current-device',
+            desiredReleaseId: 1001,
+            actualReleaseId: null,
+            state: 'pending',
+            errorCode: null,
+            errorMessage: null,
+            attemptCount: 0,
+            lastSyncAt: null,
+            updatedAt: new Date().toISOString(),
+          },
+        })),
+      })
+    })
+    try {
+      expect(marketplace.getSyncDeviceCalls()).toBe(0)
+    } finally {
+      await act(async () => release())
+    }
+    await screen.findByTestId('plugin-marketplace-actions-101')
+    expect(marketplace.getSyncDeviceCalls()).toBe(0)
+  })
+
   test('auto-syncs account installs onto the current device once per session', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     const marketplaceMock = mockSystemSkillsFetch({
