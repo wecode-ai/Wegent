@@ -1,3 +1,4 @@
+import { verifyCodexConfigRestart } from '../modules/codex-config-restart.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFile, rm } from 'node:fs/promises'
@@ -375,6 +376,7 @@ export function createDesktopScenario({
         'Restarting the executor lost the configured Codex model server URL'
       )
       assert.equal(userConfigLayer?.disabled, false, 'The restarted Codex user config is disabled')
+      await verifyCodexConfigRestart({ control, executorLogPath, configPath })
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })

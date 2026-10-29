@@ -1,3 +1,8 @@
+import {
+  armRuntimeInputTransportGate,
+  readRuntimeInputTransportGate,
+  releaseRuntimeInputTransportGate,
+} from './runtime-input-transport-gate'
 import { rendererCrashStore } from './rendererCrashStore'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
@@ -44,6 +49,7 @@ import { matchConversationText } from '@wegent/chat-core/conversation-search'
 import { getComposerApps } from '@/components/chat/composer/composerAppsSnapshot'
 import {
   getRuntimeConversationCacheStats,
+  getRuntimeConversationTurns,
   getRuntimeConversationMessagesForLogicalAddress,
   reconcileRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
@@ -2023,6 +2029,16 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           JSON.parse(command.value ?? '{}')
         )
       )
+    case 'armRuntimeInputTransportGate':
+      armRuntimeInputTransportGate(command.value ?? 'response')
+      return ''
+    case 'getRuntimeCachedTurnCount':
+      return String(getRuntimeConversationTurns(JSON.parse(command.value ?? '{}')).length)
+    case 'readRuntimeInputTransportGate':
+      return readRuntimeInputTransportGate()
+    case 'releaseRuntimeInputTransportGate':
+      releaseRuntimeInputTransportGate()
+      return ''
     case 'getLocalRuntimeWork':
       return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
     case 'getLocalRuntimeTranscript':

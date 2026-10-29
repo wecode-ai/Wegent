@@ -1,3 +1,4 @@
+import { verifyRuntimeInputAcknowledgement } from './runtime-input-acknowledgement.mjs'
 import {
   readElicitationEvidence,
   readPendingElicitation,
@@ -389,7 +390,21 @@ async function verifyElicitationTimeout(
     original.expiresAtUnixMs <= requests[0].startedAt + durationMs + DEFAULT_STEP_TIMEOUT_MS
   )
   await captureVerificationScreenshot(control, `permission-mcp-${scenario}-pending.png`)
-  await waitForRealMcpTimeout(evidencePath, scenario, durationMs)
+  if (isUrl) {
+    // Exercise cache expiry during this existing real ten-minute deadline,
+    // before the following reload destroys the renderer and its pending ACK.
+    await verifyRuntimeInputAcknowledgement(control, {
+      outcomes: ['evicted'],
+      duringEviction: async () => {
+        control.setScenario('mcp_elicitation')
+        await control.command('click', `[data-testid="runtime-local-task-row-${taskId}"]`)
+        await waitForRealMcpTimeout(evidencePath, scenario, durationMs)
+      },
+    })
+    await control.command('click', `[data-testid="runtime-local-task-row-${taskId}"]`)
+  } else {
+    await waitForRealMcpTimeout(evidencePath, scenario, durationMs)
+  }
   await waitForWorkbenchDebugState(
     control,
     state =>
