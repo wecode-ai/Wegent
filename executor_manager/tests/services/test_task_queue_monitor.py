@@ -39,7 +39,7 @@ def _pending(
 @pytest.fixture
 def redis_client():
     client = MagicMock()
-    client.scan_iter.return_value = []
+    client.zrangebyscore.return_value = []
     client.llen.return_value = 0
     client.lrange.return_value = []
     return client
@@ -54,7 +54,7 @@ def _monitor(redis_client) -> TaskQueueMonitor:
 @pytest.mark.asyncio
 async def test_sweep_fails_dequeued_task_that_never_started(redis_client):
     """A dequeued task with no Pod after the grace period is failed."""
-    redis_client.scan_iter.return_value = ["wegent:task_queue:pending:13869"]
+    redis_client.zrangebyscore.return_value = ["13869"]
     redis_client.get.return_value = _pending(age_seconds=900, dequeued=True)
     callback = MagicMock()
     callback.send_error = AsyncMock(return_value=True)
@@ -69,12 +69,15 @@ async def test_sweep_fails_dequeued_task_that_never_started(redis_client):
     callback.send_error.assert_awaited_once()
     assert callback.send_error.await_args.kwargs["error_code"] == "task_queue_stalled"
     redis_client.delete.assert_called_once_with("wegent:task_queue:pending:13869")
+    redis_client.zrem.assert_called_once_with(
+        "wegent:task_queue:pending_index", "13869"
+    )
 
 
 @pytest.mark.asyncio
 async def test_sweep_skips_task_still_waiting_in_queue(redis_client):
     """Backpressure is not a stall: an item still in the queue is left alone."""
-    redis_client.scan_iter.return_value = ["wegent:task_queue:pending:13869"]
+    redis_client.zrangebyscore.return_value = ["13869"]
     redis_client.get.return_value = _pending(age_seconds=900, dequeued=False)
     redis_client.llen.return_value = 1
     redis_client.lrange.return_value = [json.dumps({"metadata": {"task_id": 13869}})]
@@ -95,7 +98,7 @@ async def test_sweep_skips_task_still_waiting_in_queue(redis_client):
 @pytest.mark.asyncio
 async def test_sweep_measures_from_dequeue_not_enqueue(redis_client):
     """Time spent waiting behind backpressure does not count as a stall."""
-    redis_client.scan_iter.return_value = ["wegent:task_queue:pending:13869"]
+    redis_client.zrangebyscore.return_value = ["13869"]
     redis_client.get.return_value = _pending(age_seconds=900, dequeued=False)
     payload = json.loads(redis_client.get.return_value)
     payload["dequeued_at"] = time.time() - 60
@@ -111,8 +114,8 @@ async def test_sweep_measures_from_dequeue_not_enqueue(redis_client):
 
 @pytest.mark.asyncio
 async def test_sweep_skips_fresh_pending_record(redis_client):
-    """A recently enqueued task is still within the grace period."""
-    redis_client.scan_iter.return_value = ["wegent:task_queue:pending:13869"]
+    """The index range query only returns entries past the stall window."""
+    redis_client.zrangebyscore.return_value = []
     redis_client.get.return_value = _pending(age_seconds=10, dequeued=False)
     callback = MagicMock()
     callback.send_error = AsyncMock(return_value=True)
@@ -126,7 +129,7 @@ async def test_sweep_skips_fresh_pending_record(redis_client):
 @pytest.mark.asyncio
 async def test_sweep_keeps_record_when_callback_fails(redis_client):
     """A failed error report is retried on the next sweep."""
-    redis_client.scan_iter.return_value = ["wegent:task_queue:pending:13869"]
+    redis_client.zrangebyscore.return_value = ["13869"]
     redis_client.get.return_value = _pending(age_seconds=900, dequeued=True)
     callback = MagicMock()
     callback.send_error = AsyncMock(return_value=False)
@@ -139,6 +142,24 @@ async def test_sweep_keeps_record_when_callback_fails(redis_client):
 
     assert stalled == []
     redis_client.delete.assert_not_called()
+    redis_client.zrem.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sweep_prunes_index_when_detail_expired(redis_client):
+    """An index entry without its detail record is dropped, not failed."""
+    redis_client.zrangebyscore.return_value = ["13869"]
+    redis_client.get.return_value = None
+    callback = MagicMock()
+    callback.send_error = AsyncMock(return_value=True)
+
+    stalled = await _monitor(redis_client).sweep()
+
+    assert stalled == []
+    callback.send_error.assert_not_awaited()
+    redis_client.zrem.assert_called_once_with(
+        "wegent:task_queue:pending_index", "13869"
+    )
 
 
 @pytest.mark.asyncio

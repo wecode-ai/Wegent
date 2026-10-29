@@ -41,6 +41,10 @@ def test_enqueue_task_records_pending(mocker):
     assert payload["subtask_id"] == "13890"
     assert payload["queue_key"] == "wegent:task_queue:online:online"
     assert payload["dequeued_at"] is None
+    redis_client.zadd.assert_called_once_with(
+        "wegent:task_queue:pending_index",
+        {"13869": payload["enqueued_at"]},
+    )
 
 
 def test_dequeue_task_marks_pending_dequeued(mocker):
@@ -64,6 +68,10 @@ def test_dequeue_task_marks_pending_dequeued(mocker):
 
     payload = json.loads(redis_client.setex.call_args.args[2])
     assert payload["dequeued_at"] is not None
+    redis_client.zadd.assert_called_once_with(
+        "wegent:task_queue:pending_index",
+        {"13869": payload["dequeued_at"]},
+    )
 
 
 def test_clear_pending_deletes_record(mocker):
@@ -73,3 +81,6 @@ def test_clear_pending_deletes_record(mocker):
     service.clear_pending(13869)
 
     redis_client.delete.assert_called_once_with("wegent:task_queue:pending:13869")
+    redis_client.zrem.assert_called_once_with(
+        "wegent:task_queue:pending_index", "13869"
+    )

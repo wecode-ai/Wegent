@@ -26,6 +26,9 @@ logger = setup_logger(__name__)
 # Default: "wegent:task_queue", can be set to e.g., "wegent:dev:task_queue" or "wegent:prod:task_queue"
 QUEUE_KEY_PREFIX = os.getenv("TASK_QUEUE_KEY_PREFIX", "wegent:task_queue")
 PENDING_KEY_TEMPLATE = f"{QUEUE_KEY_PREFIX}:pending:{{task_id}}"
+# Index of pending task ids ordered by their dispatch reference time, so the
+# stall monitor can range-scan instead of walking the whole Redis keyspace.
+PENDING_INDEX_KEY = f"{QUEUE_KEY_PREFIX}:pending_index"
 PENDING_KEY_TTL = int(os.getenv("TASK_QUEUE_PENDING_TTL", "3600"))
 
 # Retry configuration
@@ -189,6 +192,9 @@ class TaskQueueService:
                 PENDING_KEY_TTL,
                 json.dumps(payload),
             )
+            self.redis_client.zadd(
+                PENDING_INDEX_KEY, {str(task_id): payload["enqueued_at"]}
+            )
         except Exception as e:
             logger.warning(f"[TaskQueue] Failed to mark task pending: {e}")
 
@@ -212,6 +218,9 @@ class TaskQueueService:
                 }
             )
             self.redis_client.setex(key, PENDING_KEY_TTL, json.dumps(payload))
+            self.redis_client.zadd(
+                PENDING_INDEX_KEY, {str(task_id): payload["dequeued_at"]}
+            )
         except Exception as e:
             logger.warning(f"[TaskQueue] Failed to mark task dequeued: {e}")
 
@@ -221,6 +230,7 @@ class TaskQueueService:
             return
         try:
             self.redis_client.delete(PENDING_KEY_TEMPLATE.format(task_id=task_id))
+            self.redis_client.zrem(PENDING_INDEX_KEY, str(task_id))
         except Exception as e:
             logger.warning(f"[TaskQueue] Failed to clear pending task: {e}")
 

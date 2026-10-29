@@ -16,6 +16,7 @@ import time
 from typing import Any, Dict, List, Optional, Set
 
 from executor_manager.services.task_queue_service import (
+    PENDING_INDEX_KEY,
     PENDING_KEY_TEMPLATE,
     TaskQueueService,
 )
@@ -34,9 +35,11 @@ class TaskQueueMonitor:
         self,
         *,
         stall_timeout_seconds: int = DEFAULT_STALL_TIMEOUT,
+        scan_limit: int = 200,
         queue_service: Optional[TaskQueueService] = None,
     ) -> None:
         self._stall_timeout = stall_timeout_seconds
+        self._scan_limit = scan_limit
         self._queue_service = queue_service
 
     @property
@@ -54,11 +57,30 @@ class TaskQueueMonitor:
         now = time.time()
         stalled: List[str] = []
         queued_cache: Dict[str, Optional[Set[str]]] = {}
-        for key in client.scan_iter(
-            PENDING_KEY_TEMPLATE.format(task_id="*"), count=200
-        ):
+        try:
+            # Only entries whose dispatch reference is older than the stall
+            # window; this is a range scan over the index, not a keyspace walk.
+            candidates = client.zrangebyscore(
+                PENDING_INDEX_KEY,
+                "-inf",
+                now - self._stall_timeout,
+                start=0,
+                num=self._scan_limit,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[TaskQueueMonitor] Failed to read the pending index: %s", exc
+            )
+            return []
+
+        for member in candidates:
+            task_id = member.decode() if isinstance(member, bytes) else str(member)
+            key = PENDING_KEY_TEMPLATE.format(task_id=task_id)
             payload = self._load(client, key)
             if payload is None:
+                # Detail key expired (TTL) or is malformed; drop the index entry
+                # so it does not linger forever.
+                client.zrem(PENDING_INDEX_KEY, task_id)
                 continue
             # Measure from dequeue once a consumer picked the task up, so time
             # spent waiting behind backpressure does not count against it.
@@ -70,6 +92,7 @@ class TaskQueueMonitor:
             if await self._fail_task(payload):
                 stalled.append(payload["task_id"])
                 client.delete(key)
+                client.zrem(PENDING_INDEX_KEY, task_id)
         return stalled
 
     @staticmethod
