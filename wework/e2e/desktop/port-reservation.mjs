@@ -62,7 +62,7 @@ function* candidatePorts(dynamicRange) {
 
 export async function reservePort(
   registryDir = process.env.WEWORK_E2E_PORT_REGISTRY_DIR,
-  { dynamicRange } = {}
+  { dynamicRange, excludedPorts = [] } = {}
 ) {
   const excludedRange = dynamicRange === undefined ? await kernelDynamicPortRange() : dynamicRange
   for (const port of candidatePorts(excludedRange)) {
@@ -74,7 +74,12 @@ export async function reservePort(
       })
       const address = server.address()
       assert.ok(address && typeof address !== 'string', 'Unable to reserve an E2E port')
-      if (address.port < 1024 || FETCH_BLOCKED_SERVICE_PORTS.has(address.port)) continue
+      if (
+        address.port < 1024 ||
+        FETCH_BLOCKED_SERVICE_PORTS.has(address.port) ||
+        excludedPorts.includes(address.port)
+      )
+        continue
       if (await claimPort(registryDir, address.port)) return address.port
     } catch (error) {
       if (!excludedRange || error.code !== 'EADDRINUSE') throw error
