@@ -74,6 +74,8 @@ export function releaseUpgradePlan(catalogs, target, channel) {
   if (compareVersions(target.minSourceVersion, target.version) > 0)
     throw new Error('The minimum upgrade source cannot be newer than the target')
   const published = catalogs.filter(Boolean).map(validateUpgradeCatalog)
+  const selectedCatalogs =
+    channel === 'stable' ? published.filter(catalog => catalog.channel === 'stable') : published
   const blocked = new Set(
     published.flatMap(catalog =>
       catalog.releases
@@ -91,28 +93,35 @@ export function releaseUpgradePlan(catalogs, target, channel) {
       )
       .sort((left, right) => compareVersions(right.version, left.version))
   const previous =
-    eligible(published.find(catalog => catalog.channel === channel)?.releases ?? [])[0] ??
-    eligible(published.flatMap(catalog => catalog.releases))[0]
+    eligible(selectedCatalogs.find(catalog => catalog.channel === channel)?.releases ?? [])[0] ??
+    eligible(selectedCatalogs.flatMap(catalog => catalog.releases))[0]
   if (
     !previous &&
-    published.some(catalog => catalog.releases.some(release => release.version !== target.version))
+    selectedCatalogs.some(catalog =>
+      catalog.releases.some(release => release.version !== target.version)
+    )
   )
     throw new Error(
       `No eligible published upgrade source for ${target.version} (minimum ${target.minSourceVersion})`
     )
   if (!previous) return null
-  const baselineVersion =
+  const declaredBaseline =
     compareVersions(previous.minSourceVersion, target.minSourceVersion) >= 0
       ? previous.minSourceVersion
       : target.minSourceVersion
-  const baseline = published.some(catalog =>
+  const baselineVersion =
+    channel === 'stable' ? declaredBaseline.replace(/-beta\.\d+$/, '') : declaredBaseline
+  const baseline = selectedCatalogs.some(catalog =>
     catalog.releases.some(release => release.version === baselineVersion)
   )
+  const sourceForChannel = version => {
+    upgradeSource(published, version)
+    return upgradeSource(selectedCatalogs, version)
+  }
   return {
     baselineVersion,
-    baseline:
-      baseline && !blocked.has(baselineVersion) ? upgradeSource(published, baselineVersion) : null,
-    previous: upgradeSource(published, previous.version),
+    baseline: baseline && !blocked.has(baselineVersion) ? sourceForChannel(baselineVersion) : null,
+    previous: sourceForChannel(previous.version),
   }
 }
 

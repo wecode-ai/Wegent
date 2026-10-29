@@ -34,7 +34,8 @@ const automaticTarget = { version: '0.6.1', minSourceVersion: '0.5.13-beta.5' }
 
 test('release sources are automatic even when only the Beta catalog has history', () => {
   const beta = publishedCatalog('beta', ['0.5.13-beta.8'])
-  assert.deepEqual(releaseUpgradePlan([null, beta], automaticTarget, 'stable'), {
+  assert.equal(releaseUpgradePlan([null, beta], automaticTarget, 'stable'), null)
+  assert.deepEqual(releaseUpgradePlan([null, beta], automaticTarget, 'beta'), {
     baselineVersion: '0.5.13-beta.5',
     baseline: null,
     previous: beta.releases[0],
@@ -43,19 +44,19 @@ test('release sources are automatic even when only the Beta catalog has history'
 })
 
 test('keeps the fixed baseline and selects the previous release of the target channel', () => {
-  const stable = publishedCatalog('stable', ['0.5.13-beta.5', '0.5.13', '0.6.0'])
+  const stable = publishedCatalog('stable', ['0.5.13', '0.5.14', '0.6.0'])
   const beta = publishedCatalog('beta', ['0.6.1-beta.9', '0.6.1-beta.10', '0.6.0'])
   const plan = releaseUpgradePlan([stable, beta], automaticTarget, 'stable')
-  assert.equal(plan.baseline.version, '0.5.13-beta.5')
+  assert.equal(plan.baseline.version, '0.5.13')
   assert.equal(plan.previous.version, '0.6.0')
   assert.equal(
     releaseUpgradePlan([stable, beta], automaticTarget, 'beta').previous.version,
     '0.6.1-beta.10'
   )
-  stable.releases[2].minSourceVersion = '0.5.13'
+  stable.releases[2].minSourceVersion = '0.5.14'
   assert.equal(
     releaseUpgradePlan([stable, beta], automaticTarget, 'stable').baselineVersion,
-    '0.5.13'
+    '0.5.14'
   )
 })
 
@@ -91,27 +92,28 @@ test('only an initial or identical baseline permits no sources', () => {
   )
   for (const versions of [['0.5.13-beta.4'], ['0.6.2']]) {
     assert.throws(
-      () => releaseUpgradePlan([publishedCatalog('beta', versions)], automaticTarget, 'stable'),
+      () => releaseUpgradePlan([publishedCatalog('beta', versions)], automaticTarget, 'beta'),
       /No eligible published upgrade source/
     )
   }
   const revoked = publishedCatalog('beta', ['0.6.0'])
   revoked.releases[0].revoked = true
   assert.throws(
-    () => releaseUpgradePlan([revoked], automaticTarget, 'stable'),
+    () => releaseUpgradePlan([revoked], automaticTarget, 'beta'),
     /No eligible published upgrade source/
   )
 })
 
 test('the minimum is inclusive and cross-channel package identity is still enforced', () => {
   const beta = publishedCatalog('beta', ['0.5.13-beta.5'])
-  const plan = releaseUpgradePlan([beta], automaticTarget, 'stable')
+  const plan = releaseUpgradePlan([beta], automaticTarget, 'beta')
   assert.deepEqual(plan.baseline, beta.releases[0])
   assert.deepEqual(plan.previous, beta.releases[0])
-  const stable = publishedCatalog('stable', ['0.5.13-beta.5'])
+  const stable = publishedCatalog('stable', ['0.5.13'])
+  const betaStable = publishedCatalog('beta', ['0.5.13'])
   stable.releases[0].sha256 = 'b'.repeat(64)
   assert.throws(
-    () => releaseUpgradePlan([stable, beta], automaticTarget, 'stable'),
+    () => releaseUpgradePlan([stable, betaStable], automaticTarget, 'stable'),
     /immutable across channels/
   )
 })
@@ -132,20 +134,20 @@ test('invalid catalogs or target floors fail rather than creating a baseline', (
 })
 
 test('both fixed baseline and previous release are verified before retaining the baseline', async () => {
-  const catalog = publishedCatalog('stable', ['0.5.13-beta.5', '0.6.0'])
+  const catalog = publishedCatalog('stable', ['0.5.13', '0.6.0'])
   const plan = releaseUpgradePlan([catalog], automaticTarget, 'stable')
   const calls = []
   const result = await verifyReleaseUpgradePlan(plan, async source => {
     calls.push(source.version)
     return { from: source.version }
   })
-  assert.deepEqual(calls, ['0.5.13-beta.5', '0.6.0'])
-  assert.equal(result.minSourceVersion, '0.5.13-beta.5')
+  assert.deepEqual(calls, ['0.5.13', '0.6.0'])
+  assert.equal(result.minSourceVersion, '0.5.13')
   assert.equal(result.verified.length, 2)
 })
 
 test('a failed baseline advances to the previous release and persists for the next release', async () => {
-  const catalog = publishedCatalog('stable', ['0.5.13-beta.5', '0.6.0'])
+  const catalog = publishedCatalog('stable', ['0.5.13', '0.6.0'])
   const plan = releaseUpgradePlan([catalog], automaticTarget, 'stable')
   const result = await verifyReleaseUpgradePlan(plan, async source =>
     source.version === plan.baselineVersion ? null : { from: source.version }
@@ -167,7 +169,7 @@ test('a failed baseline advances to the previous release and persists for the ne
 
 test('a missing historical baseline verifies the previous release rather than inventing an edge', async () => {
   const catalog = publishedCatalog('beta', ['0.5.13-beta.8'])
-  const plan = releaseUpgradePlan([catalog], automaticTarget, 'stable')
+  const plan = releaseUpgradePlan([catalog], automaticTarget, 'beta')
   const calls = []
   const result = await verifyReleaseUpgradePlan(plan, async source => {
     calls.push(source.version)
@@ -179,7 +181,7 @@ test('a missing historical baseline verifies the previous release rather than in
 
 test('a shared baseline and previous release are tested exactly once', async () => {
   const plan = releaseUpgradePlan(
-    [publishedCatalog('stable', ['0.5.13-beta.5'])],
+    [publishedCatalog('stable', ['0.5.13'])],
     automaticTarget,
     'stable'
   )
@@ -194,7 +196,7 @@ test('a shared baseline and previous release are tested exactly once', async () 
 
 test('a failed previous release blocks publication regardless of the baseline result', async () => {
   const plan = releaseUpgradePlan(
-    [publishedCatalog('stable', ['0.5.13-beta.5', '0.6.0'])],
+    [publishedCatalog('stable', ['0.5.13', '0.6.0'])],
     automaticTarget,
     'stable'
   )
@@ -207,13 +209,13 @@ test('a failed previous release blocks publication regardless of the baseline re
       }),
       /Previous release upgrade and rollback verification failed/
     )
-    assert.deepEqual(calls, ['0.5.13-beta.5', '0.6.0'])
+    assert.deepEqual(calls, ['0.5.13', '0.6.0'])
   }
 })
 
 test('infrastructure and integrity failures abort instead of being treated as compatibility failures', async () => {
   const plan = releaseUpgradePlan(
-    [publishedCatalog('stable', ['0.5.13-beta.5', '0.6.0'])],
+    [publishedCatalog('stable', ['0.5.13', '0.6.0'])],
     automaticTarget,
     'stable'
   )
@@ -234,7 +236,7 @@ test('infrastructure and integrity failures abort instead of being treated as co
 
 test('generated policies keep the previous client upgradeable and carry X into the next release', async () => {
   for (const baselinePasses of [true, false]) {
-    const catalog = publishedCatalog('stable', ['0.5.13-beta.5', '0.6.0'])
+    const catalog = publishedCatalog('stable', ['0.5.13', '0.6.0'])
     const plan = releaseUpgradePlan([catalog], automaticTarget, 'stable')
     const target = {
       ...catalog.releases[1],
@@ -365,10 +367,10 @@ test('a new baseline with no incoming edges does not invent historical compatibi
   )
 })
 
-test('a Beta source can reach Stable only through a separately verified Stable edge', () => {
+test('a Stable source can reach Beta only through a separately verified Beta edge', () => {
   const node = (version, sha256) => ({
     version,
-    minSourceVersion: '1.0.0-beta.1',
+    minSourceVersion: '1.0.0',
     sha256,
     sourceSha: sha256.slice(0, 40),
     url: `https://example.com/${version}.tar.gz`,
@@ -377,8 +379,8 @@ test('a Beta source can reach Stable only through a separately verified Stable e
     readableDataSchemas: [1],
     revoked: false,
   })
-  const older = node('1.0.0-beta.1', 'a'.repeat(64))
-  const source = node('1.0.0-beta.2', 'b'.repeat(64))
+  const older = node('1.0.0', 'a'.repeat(64))
+  const source = node('1.1.0', 'b'.repeat(64))
   const priorEdge = {
     from: older.version,
     to: source.version,
@@ -392,16 +394,16 @@ test('a Beta source can reach Stable only through a separately verified Stable e
     rollback: 'passed',
     revoked: false,
   }
-  const beta = {
+  const stable = {
     schemaVersion: 1,
-    channel: 'beta',
+    channel: 'stable',
     platform: 'windows',
     arch: 'x64',
     releases: [older, source],
     edges: [priorEdge],
   }
-  const selected = upgradeSource([null, beta], source.version)
-  const target = node('1.0.0', 'c'.repeat(64))
+  const selected = upgradeSource([null, stable], source.version)
+  const target = node('1.2.0-beta.1', 'c'.repeat(64))
   const edge = {
     ...priorEdge,
     from: source.version,
@@ -411,22 +413,22 @@ test('a Beta source can reach Stable only through a separately verified Stable e
     fromSourceSha: source.sourceSha,
     toSourceSha: target.sourceSha,
   }
-  const stable = mergeUpgradePolicy(
+  const beta = mergeUpgradePolicy(
     null,
     target,
     [edge],
-    { channel: 'stable', platform: 'windows', arch: 'x64' },
+    { channel: 'beta', platform: 'windows', arch: 'x64' },
     [selected]
   )
   assert.deepEqual(
-    stable.releases.map(item => item.version),
+    beta.releases.map(item => item.version),
     [source.version, target.version]
   )
-  assert.deepEqual(stable.edges, [edge])
+  assert.deepEqual(beta.edges, [edge])
   assert.throws(
     () =>
       upgradeSource(
-        [beta, { ...beta, releases: [{ ...source, sha256: 'f'.repeat(64) }], edges: [] }],
+        [stable, { ...stable, releases: [{ ...source, sha256: 'f'.repeat(64) }], edges: [] }],
         source.version
       ),
     /immutable across channels/
