@@ -20,6 +20,11 @@ import {
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { verifyHumanInteractionOverBrowser } from '../modules/human-interaction-browser.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
+import {
+  startHumanInteractionIssue,
+  verifyHumanInteractionIssueReply,
+} from '../modules/human-interaction-issue.mjs'
 
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPOSER = `${ACTIVE} [data-active-workbench-pane="true"] [data-testid="chat-message-input"][contenteditable="true"]`
@@ -37,11 +42,24 @@ export function createDesktopScenario({
   uiTimeoutMs,
 }) {
   let held
+  let cloud
+  let environment
+  let issueFixture
+  let issueDiagnostics
   let toolRequested = false
   const callId = 'human-interactions-business-question'
   const responseId = 'human-interactions-review'
   return {
     requiresCloudEnvironment: true,
+    diagnostics() {
+      return { checkpoint, issueDiagnostics }
+    },
+    async prepareCloud(value) {
+      cloud = value
+    },
+    setCloudEnvironment(value) {
+      environment = value
+    },
     async handleHttp(request, response, url) {
       if (request.method === 'GET' && url.pathname === '/human-interactions-browser-fixture') {
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
@@ -94,7 +112,15 @@ export function createDesktopScenario({
       await rm(join(executorHome, 'codex', 'models_cache.json'), { force: true })
       await createSingleRootLocalProject(control, workspacePath, 'human-interactions')
       await selectE2EModel(control)
-      if (checkpoint === 'human-interactions-hidden') {
+      if (checkpoint === 'human-interactions-issue') {
+        issueFixture = await startHumanInteractionIssue({
+          cloud,
+          environment,
+          control,
+          prompt: PROMPT,
+          timeoutMs: modelResponseTimeoutMs,
+        })
+      } else if (checkpoint === 'human-interactions-hidden') {
         const hiddenPath = join(dirname(workspacePath), 'unlisted-question-workspace')
         await mkdir(hiddenPath, { recursive: true })
         const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
@@ -151,6 +177,28 @@ export function createDesktopScenario({
       const deadline = Date.now() + modelResponseTimeoutMs
       while (!held && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100))
       assert.ok(held, 'The real Codex run never requested the question tool')
+      if (issueFixture) {
+        const messages = await readProjectChatMessages(
+          issueFixture,
+          issueFixture.issueId,
+          uiTimeoutMs
+        )
+        issueDiagnostics = messages.map(message => ({
+          id: message.messageId,
+          senderType: message.sender.type,
+          rootId: message.rootMessageId,
+          triggerId: message.triggerMessageId,
+          runtimeAddress: message.runtimeAddress && {
+            deviceId: message.runtimeAddress.deviceId,
+            taskId: message.runtimeAddress.taskId,
+          },
+          status: message.status,
+        }))
+        console.log(
+          '[human-interaction-issue] Owning comment addresses',
+          JSON.stringify(issueDiagnostics)
+        )
+      }
       if (checkpoint === 'human-interactions-browser') {
         await verifyHumanInteractionOverBrowser({
           control,
@@ -236,6 +284,16 @@ export function createDesktopScenario({
       await control.command('click', `${page} [data-testid="interactions-history"]`)
       await control.command('waitFor', page, { text: QUESTION })
       await captureScreenshot(control, '08-handled-history.png')
+      if (issueFixture) {
+        await verifyHumanInteractionIssueReply(issueFixture, ANSWER, modelResponseTimeoutMs)
+        await control.command('click', `${page} [data-testid="interaction-open-original"]`)
+        await control.command('waitFor', `${ACTIVE} [data-testid="cloud-todo-detail-title"]`, {
+          text: '判断旧客户订单兼容策略',
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        await captureScreenshot(control, '09-original-issue-thread-resumes.png')
+        return
+      }
       await control.command('click', `${page} [data-testid="interaction-open-original"]`)
       await control.command('waitFor', `${ACTIVE} [data-testid="message-assistant"]`, {
         text: COMPLETION,

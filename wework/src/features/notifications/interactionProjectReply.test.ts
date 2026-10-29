@@ -38,9 +38,100 @@ function setup(store: 'local' | 'backend' = 'backend') {
   const services = {
     [store === 'local' ? 'localProjectChatClient' : 'projectChatClient']: client,
     runtimeWorkApi: { sendRuntimeMessage: bareSend },
+    deviceApi: { listDevices: vi.fn().mockResolvedValue([]) },
   } as unknown as WorkbenchServices
   return { item, send, execute, subscribe, unsubscribe, services, root, run, bareSend }
 }
+
+it('recognizes authenticated transport aliases of the same runtime without loosening task ownership', async () => {
+  const h = setup()
+  h.subscribe.mockResolvedValue({
+    snapshot: {
+      messages: [
+        h.root,
+        {
+          ...h.run,
+          runtimeAddress: { deviceId: 'app-record-70', taskId: interactionTask.address.taskId },
+        },
+      ],
+    },
+    unsubscribe: h.unsubscribe,
+  })
+  vi.mocked(h.services.deviceApi.listDevices).mockResolvedValue([
+    {
+      id: 70,
+      device_id: 'app-record-70',
+      app_device_id: interactionTask.address.deviceId,
+      name: 'Executor',
+      status: 'online',
+      device_type: 'app',
+      is_default: false,
+      runtime_instance_id: 'same-runtime',
+    },
+  ])
+  await replyToInteractionProject(h.item, 'Keep old behavior', 'reply-once', h.services, 'Failed')
+  expect(h.send).toHaveBeenCalledOnce()
+  expect(h.execute).toHaveBeenCalledOnce()
+})
+
+it('rejects an unknown runtime identity even when a task id is reused', async () => {
+  const h = setup()
+  h.subscribe.mockResolvedValue({
+    snapshot: {
+      messages: [
+        h.root,
+        {
+          ...h.run,
+          runtimeAddress: { deviceId: 'other-device', taskId: interactionTask.address.taskId },
+        },
+      ],
+    },
+    unsubscribe: h.unsubscribe,
+  })
+  await expect(
+    replyToInteractionProject(h.item, 'Keep old behavior', 'reply-once', h.services, 'Failed')
+  ).rejects.toThrow('interaction_issue_owner_mismatch')
+  expect(h.send).not.toHaveBeenCalled()
+})
+
+it('rejects ambiguous authenticated aliases instead of selecting an executor by guesswork', async () => {
+  const h = setup()
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  h.subscribe.mockResolvedValue({
+    snapshot: {
+      messages: [
+        h.root,
+        {
+          ...h.run,
+          runtimeAddress: { deviceId: 'app-record-70', taskId: interactionTask.address.taskId },
+        },
+      ],
+    },
+    unsubscribe: h.unsubscribe,
+  })
+  vi.mocked(h.services.deviceApi.listDevices).mockResolvedValue(
+    [70, 71].map(id => ({
+      id,
+      device_id: `app-record-${id}`,
+      app_device_id: interactionTask.address.deviceId,
+      name: 'Executor',
+      status: 'online' as const,
+      device_type: 'app' as const,
+      is_default: false,
+      runtime_instance_id: `different-runtime-${id}`,
+    }))
+  )
+  try {
+    await expect(
+      replyToInteractionProject(h.item, 'Keep old behavior', 'reply-once', h.services, 'Failed')
+    ).rejects.toThrow('ambiguous-executor-identity')
+    expect(h.send).not.toHaveBeenCalled()
+    expect(h.execute).not.toHaveBeenCalled()
+    expect(h.unsubscribe).toHaveBeenCalledOnce()
+  } finally {
+    warning.mockRestore()
+  }
+})
 
 it.each(['local', 'backend'] as const)(
   'persists the reply in its original %s Issue thread before continuation',

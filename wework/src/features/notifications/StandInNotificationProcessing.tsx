@@ -48,12 +48,9 @@ export function StandInNotificationProcessing({
   const projectId = notification.payload.projectId
   const issueId = notification.payload.itemId
   const canStart = !state && services?.standInApi && projectId && issueId && userId != null
-  const completionVersion = JSON.stringify([
-    state?.deviceId,
-    state?.taskId,
-    state?.status,
-    state?.updatedAt,
-  ])
+  const completionVersion = state
+    ? `${state.deviceId}:${state.taskId}:${standInVersion(state)}`
+    : ''
   const completedDeviceId = state?.deviceId
   const completedTaskId = state?.taskId
   const completedStatus = state?.status

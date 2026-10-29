@@ -1832,6 +1832,15 @@ sum of unread items from every registered source. The macOS Dock badge mirrors
 that sum; it does not count tray-menu rows. A tray preference may hide the
 unread-task section in the tray, but must never change the bell or Dock total.
 
+The bell also links to the singleton **Needs your input** workspace tab. Its
+pending count tracks unresolved structured questions independently of unread
+notifications: reading, dismissing, or marking notifications read never answers
+a question. In-app reminders, that tab, and the original conversation share the
+same request identity and response state. Simple business questions can be
+answered inline; approvals, authorization, and complex forms link to their
+original context. Keep one notification-settings surface and one reply control
+implementation; do not recreate per-source human-response forms.
+
 ```mermaid
 flowchart LR
   Runtime[Visible runtime tasks and lifecycle read state] --> Tasks[Task updates]

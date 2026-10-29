@@ -378,10 +378,13 @@ export function RuntimeInteractionsProvider({
         void refresh()
         return true
       } catch (error) {
-        console.error('[Wework] Could not send interaction reply', {
-          interactionId: item.id,
-          error,
-        })
+        console.error(
+          '[Wework] Could not send interaction reply',
+          JSON.stringify({
+            interactionId: item.id,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        )
         if (mounted.current)
           setErrors(current => ({
             ...current,

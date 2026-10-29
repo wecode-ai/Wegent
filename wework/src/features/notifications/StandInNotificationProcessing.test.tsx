@@ -115,7 +115,9 @@ describe('notification inline handling', () => {
       expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
         'notifications.stand_in_completed'
       )
-      expect(await screen.findByTestId('notification-stand-in-reply-open-assignment')).toBeEnabled()
+      expect(
+        screen.queryByTestId('notification-stand-in-reply-open-assignment')
+      ).not.toBeInTheDocument()
       rendered.rerender(<StandInNotificationProcessing notification={assignment} {...props} />)
       expect(screen.queryByTestId('notification-stand-in-status-assignment')).toBeNull()
       expect(screen.getByTestId('notification-stand-in-start-assignment')).toBeEnabled()
@@ -140,21 +142,22 @@ describe('notification inline handling', () => {
     )
   })
 
-  it('settles an inline follow-up whose completion shares the previous timestamp', async () => {
+  it('refreshes the execution summary when a new turn completes with the previous timestamp', async () => {
     const completed = notification()
     completed.payload.standIn!.turnId = 'turn-1'
     const props = { rowProps, services, userId: 1, onChanged }
     const rendered = render(<StandInNotificationProcessing notification={completed} {...props} />)
-    fireEvent.click(await screen.findByTestId('notification-stand-in-reply-open-assignment'))
-    fireEvent.change(screen.getByTestId('notification-stand-in-reply-assignment'), {
-      target: { value: 'Continue checking' },
+    await waitFor(() => expect(transcript).toHaveBeenCalledOnce())
+    transcript.mockResolvedValue({
+      workspacePath: '/project',
+      runtime: 'codex',
+      running: false,
+      turns: [],
+      messages: [
+        { id: 'new-prompt', role: 'user', content: 'Continue checking' },
+        { id: 'new-result', role: 'assistant', content: 'New turn result' },
+      ],
     })
-    fireEvent.click(screen.getByTestId('notification-stand-in-send-assignment'))
-    await waitFor(() =>
-      expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
-        'notifications.stand_in_running'
-      )
-    )
     rendered.rerender(
       <StandInNotificationProcessing
         notification={{
@@ -170,7 +173,12 @@ describe('notification inline handling', () => {
     expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
       'notifications.stand_in_completed'
     )
-    expect(screen.getByTestId('notification-stand-in-reply-open-assignment')).toBeEnabled()
+    expect(await screen.findByText('New turn result')).toBeVisible()
+    expect(transcript).toHaveBeenCalledTimes(2)
+    expect(
+      screen.queryByTestId('notification-stand-in-reply-open-assignment')
+    ).not.toBeInTheDocument()
+    expect(send).not.toHaveBeenCalled()
   })
 
   it('shows the existing execution status instead of announcing a new run', async () => {

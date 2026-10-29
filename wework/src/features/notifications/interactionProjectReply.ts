@@ -4,6 +4,22 @@ import {
 } from '@wegent/collaboration/execution/taskCardReply'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeInteraction } from './runtimeInteractions'
+import { createWorkbenchDeviceResolver } from '@/lib/workbench-device'
+
+async function ownsInteraction(
+  owner: ReturnType<typeof cardSessionAddress>,
+  item: RuntimeInteraction,
+  services: WorkbenchServices
+): Promise<boolean> {
+  if (!owner || owner.taskId !== item.task.address.taskId) return false
+  if (owner.deviceId === item.task.address.deviceId) return true
+  const devices = createWorkbenchDeviceResolver(await services.deviceApi.listDevices())
+  return Boolean(
+    devices.resolve(owner.deviceId) &&
+    devices.resolve(item.task.address.deviceId) &&
+    devices.identityKey(owner.deviceId) === devices.identityKey(item.task.address.deviceId)
+  )
+}
 
 /** Persist the reply on its owning Issue thread before continuing its execution. */
 export async function replyToInteractionProject(
@@ -16,7 +32,8 @@ export async function replyToInteractionProject(
   const binding = item.project
   const client =
     binding?.store === 'local' ? services.localProjectChatClient : services.projectChatClient
-  if (!binding?.rootCommentId || !client?.executeTaskComment) throw new Error(failedText)
+  if (!binding?.rootCommentId || !client?.executeTaskComment)
+    throw new Error(`${failedText} [interaction_issue_client_unavailable]`)
   const subscription = await client.subscribe(
     binding.projectId,
     binding.issueId,
@@ -26,18 +43,16 @@ export async function replyToInteractionProject(
   try {
     const messages = subscription.snapshot.messages
     const root = messages.find(message => message.messageId === binding.rootCommentId)
-    if (!root) throw new Error(failedText)
+    if (!root) throw new Error(`${failedText} [interaction_issue_root_unavailable]`)
     const card = {
       root,
       replies: messages.filter(message => message.rootMessageId === root.messageId),
     }
     const owner = cardSessionAddress(card)
-    if (
-      !owner ||
-      owner.deviceId !== item.task.address.deviceId ||
-      owner.taskId !== item.task.address.taskId
-    )
-      throw new Error(failedText)
+    if (!(await ownsInteraction(owner, item, services)))
+      throw new Error(
+        `${failedText} [interaction_issue_owner_mismatch] expected=${JSON.stringify({ deviceId: item.task.address.deviceId, taskId: item.task.address.taskId })} actual=${JSON.stringify(owner && { deviceId: owner.deviceId, taskId: owner.taskId })}`
+      )
     const result = await dispatchTaskCommentReply({
       client,
       projectId: binding.projectId,

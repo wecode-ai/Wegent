@@ -9,6 +9,7 @@ export const DESKTOP_CHECKPOINTS = [
   'human-interactions',
   'human-interactions-browser',
   'human-interactions-hidden',
+  'human-interactions-issue',
   'cloud-project-creation',
   'cloud-device-lifecycle',
   'cloud-model-recovery',
