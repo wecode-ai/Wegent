@@ -20,7 +20,7 @@ struct EmptyListRedis;
 struct FailingHydrationRedis;
 
 /// Serve either a missing Redis key or an explicitly stored content string.
-struct HydratedContentRedis(Option<&'static str>);
+struct HydratedContentRedis(Option<&'static str>, &'static str);
 
 fn block_entry() -> String {
     r#"{"id":"b1","type":"text","content":"","status":"done","timestamp":1,"_content_key":"chat:streaming:block_content:5:b1"}"#.to_string()
@@ -151,6 +151,7 @@ impl brz_redis::Redis for HydratedContentRedis {
     {
         let mut block: serde_json::Value = serde_json::from_str(&block_entry()).expect("block");
         block["text"] = serde_json::json!("stale metadata alias");
+        block["type"] = serde_json::json!(self.1);
         let bytes = serde_json::to_vec(&block).expect("block JSON");
         R::from_redis_value(&Value::BulkString(bytes.into())).map(|block| vec![block])
     }
@@ -171,24 +172,44 @@ impl brz_redis::Redis for HydratedContentRedis {
 
 #[tokio::test]
 async fn a_missing_content_key_is_not_an_explicit_empty_snapshot() {
-    let redis = HydratedContentRedis(None);
+    let redis = HydratedContentRedis(None, "text");
     let blocks = session::get_blocks(&redis, 5).await;
     assert_eq!(blocks.len(), 1);
-    assert!(!blocks[0].contains_key("content"));
-    assert!(!blocks[0].contains_key("text"));
+    assert_eq!(blocks[0].get("content"), Some(&serde_json::json!("")));
     assert!(!blocks[0].contains_key(session::BLOCK_CONTENT_KEY_FIELD));
     let finalized = session::finalize_and_get_blocks(&redis, 5, None, Some("COMPLETED")).await;
-    assert!(!finalized[0].contains_key("content"));
+    assert_eq!(
+        finalized.blocks[0].get("content"),
+        Some(&serde_json::json!(""))
+    );
+    assert!(finalized.has_missing_text_content);
 }
 
 #[tokio::test]
 async fn an_explicitly_stored_empty_content_key_remains_empty() {
-    let redis = HydratedContentRedis(Some(""));
+    let redis = HydratedContentRedis(Some(""), "text");
     let blocks = session::get_blocks(&redis, 5).await;
     assert_eq!(blocks.len(), 1);
     assert_eq!(blocks[0].get("content"), Some(&serde_json::json!("")));
     let finalized = session::finalize_and_get_blocks(&redis, 5, None, Some("COMPLETED")).await;
-    assert_eq!(finalized[0].get("content"), Some(&serde_json::json!("")));
+    assert_eq!(
+        finalized.blocks[0].get("content"),
+        Some(&serde_json::json!(""))
+    );
+    assert!(!finalized.has_missing_text_content);
+}
+
+#[tokio::test]
+async fn missing_thinking_content_keeps_the_renderer_string_contract() {
+    let redis = HydratedContentRedis(None, "thinking");
+    let blocks = session::get_blocks(&redis, 5).await;
+    assert_eq!(blocks[0].get("content"), Some(&serde_json::json!("")));
+    let finalized = session::finalize_and_get_blocks(&redis, 5, None, Some("COMPLETED")).await;
+    assert_eq!(
+        finalized.blocks[0].get("content"),
+        Some(&serde_json::json!(""))
+    );
+    assert!(!finalized.has_missing_text_content);
 }
 
 #[tokio::test]
@@ -198,6 +219,7 @@ async fn a_failed_block_read_yields_no_blocks() {
     assert!(
         session::finalize_and_get_blocks(&redis, 5, None, Some("COMPLETED"))
             .await
+            .blocks
             .is_empty()
     );
 }
@@ -209,6 +231,7 @@ async fn an_empty_block_list_yields_no_blocks() {
     assert!(
         session::finalize_and_get_blocks(&redis, 5, None, Some("COMPLETED"))
             .await
+            .blocks
             .is_empty()
     );
 }
@@ -220,6 +243,7 @@ async fn a_failed_content_hydration_yields_no_blocks() {
     assert!(
         session::finalize_and_get_blocks(&redis, 5, None, Some("COMPLETED"))
             .await
+            .blocks
             .is_empty()
     );
 }

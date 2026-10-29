@@ -28,6 +28,14 @@ const CALLBACK_CHANNEL_PREFIX: &str = "callback:channel:";
 /// Internal field stored in block metadata and stripped before returning.
 pub(crate) const BLOCK_CONTENT_KEY_FIELD: &str = "_content_key";
 
+/// Hydrated blocks retain the wire-format string while tracking unavailable
+/// text internally so completion can distinguish it from an explicit empty value.
+#[derive(Default)]
+pub(crate) struct LoadedBlocks {
+    pub(crate) blocks: Vec<Map<String, Value>>,
+    pub(crate) has_missing_text_content: bool,
+}
+
 fn set_ex_options() -> SetOptions {
     SetOptions::default().with_expiration(SetExpiration::Seconds(STREAMING_TTL))
 }
@@ -143,17 +151,14 @@ pub(crate) async fn publish_callback_event<R: Redis>(
 
 /// `_load_blocks_from_client`: read block metadata and hydrate per-block
 /// content from the internal content keys, then strip the internal field.
-/// A missing key leaves content absent; an explicitly stored empty string stays empty.
-async fn load_blocks<R: Redis>(
-    redis: &R,
-    subtask_id: i64,
-    strict: bool,
-) -> Option<Vec<Map<String, Value>>> {
+/// Missing text content is tracked separately from the client-safe block payload.
+async fn load_blocks<R: Redis>(redis: &R, subtask_id: i64, strict: bool) -> Option<LoadedBlocks> {
     let raw = redis
         .lrange::<_, String>(blocks_key(subtask_id), 0, -1)
         .await
         .ok()?;
     let mut blocks = Vec::with_capacity(raw.len());
+    let mut has_missing_text_content = false;
     let mut content_refs: Vec<(usize, String)> = Vec::new();
     for entry in &raw {
         let Ok(Value::Object(block)) = serde_json::from_str::<Value>(entry) else {
@@ -172,25 +177,33 @@ async fn load_blocks<R: Redis>(
         let values = redis.mget::<_, brz_redis::RedisBytes>(keys).await.ok()?;
         for ((index, _), value) in content_refs.iter().zip(values.iter()) {
             let block = &mut blocks[*index];
-            if let Some(bytes) = value {
-                let content = std::str::from_utf8(bytes).ok()?.to_string();
-                block.insert("content".into(), Value::String(content));
-            } else {
-                block.shift_remove("content");
-                block.shift_remove("text");
-            }
+            let content = match value {
+                Some(bytes) => std::str::from_utf8(bytes).ok()?.to_string(),
+                None => {
+                    has_missing_text_content |= matches!(
+                        block.get("type").and_then(Value::as_str),
+                        Some("text" | "output_text")
+                    );
+                    String::new()
+                }
+            };
+            block.insert("content".into(), Value::String(content));
         }
     }
     for block in &mut blocks {
         block.shift_remove(BLOCK_CONTENT_KEY_FIELD);
     }
-    Some(blocks)
+    Some(LoadedBlocks {
+        blocks,
+        has_missing_text_content,
+    })
 }
 
 /// `get_blocks`: load blocks without finalizing pending text/thinking blocks.
 pub(crate) async fn get_blocks<R: Redis>(redis: &R, subtask_id: i64) -> Vec<Map<String, Value>> {
     load_blocks(redis, subtask_id, true)
         .await
+        .map(|loaded| loaded.blocks)
         .unwrap_or_default()
 }
 
@@ -687,13 +700,15 @@ pub(crate) async fn finalize_and_get_blocks<R: Redis>(
     subtask_id: i64,
     termination_reason: Option<&str>,
     terminal_status: Option<&str>,
-) -> Vec<Map<String, Value>> {
+) -> LoadedBlocks {
     finalize_current_text_block(redis, subtask_id).await;
     finalize_current_thinking_block(redis, subtask_id).await;
-    let Some(blocks) = load_blocks(redis, subtask_id, true).await else {
-        return Vec::new();
+    let Some(mut loaded) = load_blocks(redis, subtask_id, true).await else {
+        return LoadedBlocks::default();
     };
-    finalize_unresolved_preview_tool_blocks(blocks, termination_reason, terminal_status)
+    loaded.blocks =
+        finalize_unresolved_preview_tool_blocks(loaded.blocks, termination_reason, terminal_status);
+    loaded
 }
 
 /// `clear_task_streaming_status`: drop the task-level streaming status key.

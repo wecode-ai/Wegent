@@ -7,13 +7,17 @@ use serde_json::Value;
 
 /// Prefer complete finalized text, preserving streamed whitespace and explicit
 /// empty replacements. Incomplete blocks retain the available stream aggregate.
-pub(super) fn terminal_text_value(blocks: Option<&Value>, accumulated: &str) -> String {
+pub(super) fn terminal_text_value(
+    blocks: Option<&Value>,
+    accumulated: &str,
+    has_missing_text_content: bool,
+) -> String {
     let parts = extract_text_value_from_blocks(blocks);
     if parts.is_empty() {
         return accumulated.to_string();
     }
     if !accumulated.trim().is_empty() {
-        if parts.iter().any(Option::is_none) {
+        if has_missing_text_content || parts.iter().any(Option::is_none) {
             return accumulated.to_string();
         }
         return parts.into_iter().flatten().collect();
@@ -61,7 +65,10 @@ mod tests {
         let blocks = json!([{
             "id": "message", "type": "text", "content": "已改写🙂", "status": "done"
         }]);
-        assert_eq!(terminal_text_value(Some(&blocks), "原始🙂"), "已改写🙂");
+        assert_eq!(
+            terminal_text_value(Some(&blocks), "原始🙂", false),
+            "已改写🙂"
+        );
     }
 
     #[test]
@@ -69,7 +76,7 @@ mod tests {
         let blocks = json!([{
             "id": "message", "type": "text", "content": "", "status": "done"
         }]);
-        assert_eq!(terminal_text_value(Some(&blocks), "原始🙂"), "");
+        assert_eq!(terminal_text_value(Some(&blocks), "原始🙂", false), "");
     }
 
     #[test]
@@ -77,7 +84,7 @@ mod tests {
         let blocks = json!([{
             "id": "message", "type": "text", "content": "", "text": "old"
         }]);
-        assert_eq!(terminal_text_value(Some(&blocks), "old"), "");
+        assert_eq!(terminal_text_value(Some(&blocks), "old", false), "");
     }
 
     #[test]
@@ -89,7 +96,7 @@ mod tests {
             {"id": "three", "type": "text", "content": "新结果🙂"}
         ]);
         assert_eq!(
-            terminal_text_value(Some(&blocks), ""),
+            terminal_text_value(Some(&blocks), "", false),
             "same\nsame\n新结果🙂"
         );
     }
@@ -105,9 +112,12 @@ mod tests {
             json!([{"type": "tool", "content": "tool output"}]),
             json!([{"type": "text"}]),
         ] {
-            assert_eq!(terminal_text_value(Some(&blocks), " old\n"), " old\n");
+            assert_eq!(
+                terminal_text_value(Some(&blocks), " old\n", false),
+                " old\n"
+            );
         }
-        assert_eq!(terminal_text_value(None, " old\n"), " old\n");
+        assert_eq!(terminal_text_value(None, " old\n", false), " old\n");
     }
 
     #[test]
@@ -117,7 +127,7 @@ mod tests {
             {"id": "two", "type": "text", "content": "world\n"}
         ]);
         assert_eq!(
-            terminal_text_value(Some(&blocks), "Hello world\n"),
+            terminal_text_value(Some(&blocks), "Hello world\n", false),
             "Hello world\n"
         );
     }
@@ -129,7 +139,7 @@ mod tests {
             {"id": "two", "type": "text", "content": "world\n"}
         ]);
         assert_eq!(
-            terminal_text_value(Some(&blocks), "Old world\n"),
+            terminal_text_value(Some(&blocks), "Old world\n", false),
             "Hello world\n"
         );
     }
@@ -141,7 +151,7 @@ mod tests {
             {"id": "two", "type": "text", "content": "world"}
         ]);
         assert_eq!(
-            terminal_text_value(Some(&blocks), "Hello world"),
+            terminal_text_value(Some(&blocks), "Hello world", false),
             "Hello world"
         );
     }
@@ -152,6 +162,19 @@ mod tests {
             {"id": "expired", "type": "text"},
             {"id": "two", "type": "text", "content": " world "}
         ]);
-        assert_eq!(terminal_text_value(Some(&blocks), ""), "world");
+        assert_eq!(terminal_text_value(Some(&blocks), "", false), "world");
+    }
+
+    #[test]
+    fn hydration_metadata_preserves_text_without_changing_block_wire_fields() {
+        let blocks = json!([
+            {"id": "expired", "type": "text", "content": ""},
+            {"id": "two", "type": "text", "content": "world"}
+        ]);
+        assert_eq!(
+            terminal_text_value(Some(&blocks), "Hello world", true),
+            "Hello world"
+        );
+        assert_eq!(terminal_text_value(Some(&blocks), "", true), "world");
     }
 }

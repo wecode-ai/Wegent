@@ -220,7 +220,10 @@ pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
         }
     }
 
-    let blocks = session::finalize_and_get_blocks(
+    let session::LoadedBlocks {
+        blocks,
+        has_missing_text_content,
+    } = session::finalize_and_get_blocks(
         ctx.redis,
         subtask_id,
         termination_reason.as_deref(),
@@ -281,7 +284,11 @@ pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
     if is_blank_text_value(final_result.get("value"))
         && (normalized_status == "COMPLETED" || !accumulated_content.trim().is_empty())
     {
-        let text_value = terminal_text_value(final_result.get("blocks"), &accumulated_content);
+        let text_value = terminal_text_value(
+            final_result.get("blocks"),
+            &accumulated_content,
+            has_missing_text_content,
+        );
         final_result.insert("value".into(), Value::String(text_value));
     }
 
