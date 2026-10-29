@@ -322,7 +322,7 @@
       "name": "exp_unicode_whitespace",
       "claims": {
         "sub": "u",
-        "exp": "2000000030 "
+        "exp": "\u00852000000030\u00a0"
       },
       "jose_valid": true,
       "pyjwt_valid": true,
@@ -370,7 +370,7 @@
       "name": "exp_unicode",
       "claims": {
         "sub": "u",
-        "exp": "٢٠٠٠٠٠٠٠٣٠"
+        "exp": "\u0662\u0660\u0660\u0660\u0660\u0660\u0660\u0660\u0663\u0660"
       },
       "jose_valid": true,
       "pyjwt_valid": true,
@@ -514,7 +514,7 @@
       "name": "nbf_unicode_whitespace",
       "claims": {
         "sub": "u",
-        "nbf": "2000000030 "
+        "nbf": "\u00852000000030\u00a0"
       },
       "jose_valid": false,
       "pyjwt_valid": false,
@@ -562,7 +562,7 @@
       "name": "nbf_unicode",
       "claims": {
         "sub": "u",
-        "nbf": "٢٠٠٠٠٠٠٠٣٠"
+        "nbf": "\u0662\u0660\u0660\u0660\u0660\u0660\u0660\u0660\u0663\u0660"
       },
       "jose_valid": false,
       "pyjwt_valid": false,
@@ -706,7 +706,7 @@
       "name": "iat_unicode_whitespace",
       "claims": {
         "sub": "u",
-        "iat": "2000000030 "
+        "iat": "\u00852000000030\u00a0"
       },
       "jose_valid": true,
       "pyjwt_valid": false,
@@ -754,7 +754,7 @@
       "name": "iat_unicode",
       "claims": {
         "sub": "u",
-        "iat": "٢٠٠٠٠٠٠٠٣٠"
+        "iat": "\u0662\u0660\u0660\u0660\u0660\u0660\u0660\u0660\u0663\u0660"
       },
       "jose_valid": true,
       "pyjwt_valid": false,

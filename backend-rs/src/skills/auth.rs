@@ -378,11 +378,12 @@ where
     match get_current_user(config, mysql, headers).await {
         Ok(user) => Ok(user),
         Err(auth_error) => {
-            let token = extract_bearer(headers.header("authorization"));
-            if token.is_empty() {
+            // Python's Skill identity fallback uses OAuth2, unlike the flexible chain above.
+            let Some(token) = crate::auth::bearer_credential(headers.header("authorization"))
+            else {
                 return Err(auth_error);
-            }
-            let Some(claims) = verify_skill_identity_token(config, &token) else {
+            };
+            let Some(claims) = verify_skill_identity_token(config, token) else {
                 return Err(auth_error);
             };
             let user: Option<UserRow> = mysql
@@ -595,6 +596,64 @@ mod python_compatibility {
             legacy_jwt_keys: Vec::new(),
             algorithm: "HS256".to_string(),
         }
+    }
+
+    #[tokio::test]
+    async fn skill_identity_uses_its_own_oauth2_fallback() {
+        let token = crate::jwt_compat::tests::sign(
+            &serde_json::json!({"type":"skill_identity", "user_id":7, "user_name":"u",
+                "runtime_type":"executor", "runtime_name":"task-1"}),
+            b"test-key",
+        );
+        for (scheme, expected_queries, runtime) in [
+            ("Bearer", 1, true),
+            ("bearer", 1, false),
+            ("bEaReR", 1, false),
+            ("raw", 0, true),
+            ("Basic", 0, false),
+        ] {
+            let authorization = if scheme == "raw" {
+                token.clone()
+            } else {
+                format!("{scheme} {token}")
+            };
+            let headers = crate::headers::OwnedHeaders::from_pairs([(
+                "authorization",
+                Some(authorization.as_str()),
+            )]);
+            let mysql = crate::sql_test_support::KindQueryCapture::default();
+            assert!(
+                get_current_user_or_skill_query_identity(&config(), &mysql, &headers.view())
+                    .await
+                    .is_err()
+            );
+            let queries = mysql.queries();
+            assert_eq!(queries.len(), expected_queries, "{scheme}");
+            if let Some(query) = queries.first() {
+                assert_eq!(query.first_integer, Some(7));
+            }
+            assert_eq!(
+                is_runtime_skill_download(&config(), &headers.view()),
+                runtime
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn skill_identity_fallback_does_not_normalize_the_session_chain() {
+        let session = crate::jwt_compat::tests::sign(&serde_json::json!({"sub":"u"}), b"test-key");
+        let authorization = format!("bearer {session}");
+        let headers = crate::headers::OwnedHeaders::from_pairs([(
+            "authorization",
+            Some(authorization.as_str()),
+        )]);
+        let mysql = crate::sql_test_support::KindQueryCapture::default();
+        assert!(
+            get_current_user_or_skill_query_identity(&config(), &mysql, &headers.view())
+                .await
+                .is_err()
+        );
+        assert!(mysql.queries().is_empty());
     }
 
     #[tokio::test]

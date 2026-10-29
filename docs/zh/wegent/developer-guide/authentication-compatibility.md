@@ -33,6 +33,8 @@ python-jose 会话规则如下：
 
 多凭证入口保留对应 Python 依赖的顺序及 header 解析：X-API-Key、Authorization API Key、
 会话 JWT、Task Token。不能将标准 OAuth2 的解析规则直接覆盖到多凭证入口。
+Skill identity 的备用入口单独遵循 OAuth2 的大小写不敏感 Bearer 规则，不接受裸令牌；
+普通多凭证入口与运行时下载判断仍各自保留对应 Python 路径的解析规则。
 
 Task Token 和 Skill 身份令牌按 PyJWT 规则校验，不能套用会话的用途规则：
 PyJWT 拒绝未来 iat，且 exp 等于当前时间也视为过期；它不执行 at_hash 校验。
@@ -53,4 +55,5 @@ Rust 单元测试验证样例，并检查认证入口接线、过期令牌拒绝
 不同用途令牌及数据库失败分类。它们由现有 Rust CI 的 cargo test --locked 执行。
 现有 Responses HTTP E2E 还在真实网关、MySQL 和 Redis 中覆盖会话声明及 Task 回退边界，
 由同一 Rust CI 中的 responses_large_json 套件执行。
+该套件还通过真实 Skill 下载核对不同凭证入口的 Bearer 解析、身份匹配和返回的归档内容。
 日志和提交内容不得包含 JWT、API Key、签名密钥或认证文件内容。

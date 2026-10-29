@@ -40,6 +40,9 @@ JWT headers. Missing or wrong schemes remain distinct from invalid Bearer creden
 Flexible dependencies preserve the corresponding Python credential order and header parsing:
 X-API-Key, Authorization API key, session JWT, then Task Token. Their parsing must not be replaced
 wholesale with standard OAuth2 behavior.
+The Skill identity fallback separately uses case-insensitive OAuth2 Bearer parsing and rejects raw
+tokens. The normal flexible chain and runtime-download classification each retain their corresponding
+Python parsing rules.
 
 Task Tokens and Skill identity tokens use PyJWT validation rather than session-purpose rules.
 PyJWT rejects future iat and treats exp equal to now as expired; it does not validate at_hash.
@@ -62,5 +65,6 @@ Rust unit tests check the fixtures, entry-point wiring, expired-token rejection,
 signatures and algorithms, token-purpose restrictions and database failure classification. Existing
 Rust CI runs them through cargo test --locked. The existing Responses HTTP E2E suite also checks
 session claims and Task fallback boundaries through the real gateway, MySQL and Redis; the same
-Rust CI runs it through responses_large_json. Never log or commit JWTs, API keys, signing secrets or
-authentication-file contents.
+Rust CI runs it through responses_large_json. That suite also downloads a real Skill archive to check
+credential-specific Bearer parsing, identity matching and response bytes. Never log or commit JWTs,
+API keys, signing secrets or authentication-file contents.

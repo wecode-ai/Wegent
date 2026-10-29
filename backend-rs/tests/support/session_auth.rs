@@ -2,11 +2,101 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Session-policy coverage through the existing real HTTP/MySQL/Redis harness.
+//! Authentication coverage through the existing real HTTP/MySQL/Redis harness.
 
 use brz_http::Client;
 use serde_json::{Value, json};
 use std::net::SocketAddr;
+
+pub(super) const SKILL_PATH: &str = "/api/v1/kinds/skills/1/download";
+const SKILL_ARCHIVE: &[u8] = b"PK\x05\x06\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+
+pub(super) async fn assert_skill_identity_compatibility(
+    client: &Client,
+    address: SocketAddr,
+    mysql: &brz_mysql::MysqlService,
+    user_id: i32,
+) {
+    seed_owned_skill(mysql, user_id).await;
+    let now = chrono::Utc::now().timestamp();
+    let identity = json!({"type":"skill_identity", "user_id":user_id,
+        "user_name":format!("responses-fixture-{user_id}"), "runtime_type":"executor",
+        "runtime_name":"auth-fixture", "iat":now, "exp":now+300});
+    let mut expired = identity.clone();
+    expired["exp"] = json!(now - 300);
+    let mut mismatched_user = identity.clone();
+    mismatched_user["user_name"] = json!("another-user");
+    let task = json!({"type":"task_token", "user_id":user_id,
+        "user_name":format!("responses-fixture-{user_id}"), "task_id":42, "subtask_id":1});
+    let session = json!({"sub":format!("responses-fixture-{user_id}")});
+    for (label, claims, scheme, status) in [
+        ("identity bearer", &identity, Some("Bearer"), 200),
+        ("identity lowercase", &identity, Some("bearer"), 200),
+        ("identity mixed case", &identity, Some("bEaReR"), 200),
+        ("identity raw", &identity, None, 401),
+        ("identity basic", &identity, Some("Basic"), 401),
+        ("identity expired", &expired, Some("bearer"), 401),
+        ("identity username", &mismatched_user, Some("bearer"), 401),
+        ("session bearer", &session, Some("Bearer"), 200),
+        ("session lowercase", &session, Some("bearer"), 401),
+        ("session raw", &session, None, 200),
+        ("task bearer", &task, Some("Bearer"), 200),
+        ("task lowercase", &task, Some("bearer"), 401),
+        ("task raw", &task, None, 200),
+    ] {
+        let token = super::signed_claims(claims);
+        let authorization =
+            scheme.map_or_else(|| token.clone(), |scheme| format!("{scheme} {token}"));
+        assert_skill_download(client, address, &authorization, status, label).await;
+    }
+}
+
+async fn seed_owned_skill(mysql: &brz_mysql::MysqlService, user_id: i32) {
+    for sql in [
+        "CREATE TABLE kinds (id INT PRIMARY KEY, user_id INT, kind VARCHAR(20),
+            name VARCHAR(100), namespace VARCHAR(100), json JSON, is_active TINYINT DEFAULT 1)",
+        "CREATE TABLE skill_binaries (kind_id INT PRIMARY KEY, binary_data LONGBLOB)",
+    ] {
+        mysql.execute(sql, ()).await.unwrap();
+    }
+    mysql
+        .execute(
+            "INSERT INTO kinds (id,user_id,kind,name,namespace,json)
+            VALUES (1,?,'Skill','auth-fixture','default',JSON_OBJECT())",
+            (user_id,),
+        )
+        .await
+        .unwrap();
+    mysql
+        .execute("INSERT INTO skill_binaries VALUES (1,?)", (SKILL_ARCHIVE,))
+        .await
+        .unwrap();
+}
+
+async fn assert_skill_download(
+    client: &Client,
+    address: SocketAddr,
+    authorization: &str,
+    status: u16,
+    label: &str,
+) {
+    let response = client
+        .get(format!("http://{address}{SKILL_PATH}"))
+        .unwrap()
+        .header("authorization", authorization)
+        .header("x-forwarded-for", format!("skill-auth-{address}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), status, "{label}");
+    let bytes = response.bytes().await.unwrap();
+    if status == 200 {
+        assert_eq!(bytes.as_ref(), SKILL_ARCHIVE, "{label}");
+    } else {
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["detail"], "Could not validate credentials", "{label}");
+    }
+}
 
 pub(super) async fn assert_session_compatibility(
     client: &Client,

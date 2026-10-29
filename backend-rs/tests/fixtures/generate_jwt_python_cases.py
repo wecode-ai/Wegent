@@ -135,9 +135,9 @@ def main() -> None:
         "cases": rows,
     }
     output = Path(__file__).with_name("jwt-python-jose.json")
-    content = json.dumps(fixture, ensure_ascii=False, indent=2) + "\n"
-    if not output.exists() or output.read_text() != content:
-        output.write_text(content)
+    content = json.dumps(fixture, indent=2) + "\n"
+    if not output.exists() or output.read_text(encoding="utf-8") != content:
+        output.write_text(content, encoding="utf-8")
     print(f"Generated {len(rows)} Python JWT cases")
 
 

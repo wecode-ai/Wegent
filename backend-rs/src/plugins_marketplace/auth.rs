@@ -82,9 +82,10 @@ where
 {
     let token = bearer_token(authorization)?;
     let algorithm = match algorithm {
+        "HS256" => Algorithm::HS256,
         "HS384" => Algorithm::HS384,
         "HS512" => Algorithm::HS512,
-        _ => Algorithm::HS256,
+        _ => return None,
     };
     let claims: SessionClaims =
         crate::jwt_compat::decode_jose(token, keys.iter().map(|key| key.as_bytes()), algorithm)?;
@@ -130,5 +131,27 @@ mod tests {
             exp: None,
         };
         assert!(!api.is_user_session_payload());
+    }
+
+    #[tokio::test]
+    async fn unsupported_configured_algorithms_do_not_reach_user_lookup() {
+        let token = crate::jwt_compat::tests::sign(&serde_json::json!({"sub":"u"}), b"test-key");
+        let authorization = format!("Bearer {token}");
+        let keys = [Arc::from("test-key")];
+        for (algorithm, expected_queries) in [
+            ("HS256", 1),
+            ("RS256", 0),
+            ("", 0),
+            ("hs256", 0),
+            ("unsupported", 0),
+        ] {
+            let mysql = crate::sql_test_support::KindQueryCapture::default();
+            assert!(
+                current_user_optional(&mysql, &keys, algorithm, Some(&authorization))
+                    .await
+                    .is_none()
+            );
+            assert_eq!(mysql.queries().len(), expected_queries, "{algorithm}");
+        }
     }
 }

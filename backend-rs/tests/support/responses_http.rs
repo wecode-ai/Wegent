@@ -93,7 +93,7 @@ pub async fn assert_http_reads(
     let mut state = build_app_state().await.unwrap();
     state.mysql = mysql.clone();
     state.task_store = store;
-    state.user_reader = Arc::new(PublicUserReader::new(mysql));
+    state.user_reader = Arc::new(PublicUserReader::new(mysql.clone()));
     state.auth = AuthConfig {
         jwt_key: "responses-fixture-signing-key".into(),
         legacy_jwt_keys: Vec::new(),
@@ -123,6 +123,7 @@ pub async fn assert_http_reads(
             &format!("/api/v1/responses/resp_{task_id}")
         ));
     }
+    assert!(config.selects_rust(&http::Method::GET, session_auth::SKILL_PATH));
     // Python owns no request in this scenario: any accidental fallback fails.
     let gateway = Gateway::new(
         config.routes,
@@ -207,6 +208,7 @@ pub async fn assert_http_reads(
         );
     }
     session_auth::assert_session_compatibility(&client, address, task_ids[0], user_id + 1).await;
+    session_auth::assert_skill_identity_compatibility(&client, address, &mysql, user_id).await;
     stop.send(()).unwrap();
     gateway_task.await.unwrap();
     api_stop.send(()).unwrap();
