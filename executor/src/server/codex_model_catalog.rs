@@ -63,6 +63,56 @@ const KIMI_CODEX_MODELS: &str = include_str!("../../../shared/assets/codex-model
 const DEEPSEEK_CODEX_MODELS: &str =
     include_str!("../../../shared/assets/codex-models/deepseek.json");
 const OPENAI_CODEX_MODELS: &str = include_str!("../../../shared/assets/codex-models/openai.json");
+const WEWORK_CODEX_MODELS: &str = include_str!("../../../shared/assets/codex-models/wework.json");
+const BUILTIN_CATALOG_RESOURCES: [(&str, &str); 4] = [
+    ("Kimi", KIMI_CODEX_MODELS),
+    ("DeepSeek", DEEPSEEK_CODEX_MODELS),
+    ("OpenAI", OPENAI_CODEX_MODELS),
+    ("Wework", WEWORK_CODEX_MODELS),
+];
+
+/// Match cloud model identities using the same declarative metadata as the UI.
+pub(crate) fn catalog_model_id_for_upstream(model_id: &str) -> Option<String> {
+    let model_id = model_id.trim().to_ascii_lowercase();
+    if model_id.is_empty() {
+        return None;
+    }
+    BUILTIN_CATALOG_RESOURCES
+        .into_iter()
+        .find_map(|(group, source)| {
+            let resource: Value = serde_json::from_str(source)
+                .unwrap_or_else(|error| panic!("{group} catalog JSON: {error}"));
+            resource["models"]
+                .as_array()?
+                .iter()
+                .find(|model| upstream_model_matches(model, &model_id))?
+                .get("slug")?
+                .as_str()
+                .map(str::to_owned)
+        })
+}
+
+fn upstream_model_matches(model: &Value, model_id: &str) -> bool {
+    let strings = |key: &str| {
+        model[key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+    };
+    model["upstream_model_id"]
+        .as_str()
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case(model_id))
+        || strings("upstream_model_ids")
+            .iter()
+            .any(|value| value == model_id)
+        || strings("upstream_model_id_contains")
+            .iter()
+            .any(|value| model_id.contains(value))
+}
 
 fn default_base_instructions() -> String {
     DEFAULT_BASE_INSTRUCTIONS.replace(
@@ -120,6 +170,26 @@ fn base_models() -> Vec<Value> {
     let mut models = builtin_model_entries();
     models.extend(read_custom_models());
     models
+}
+
+/// Resolve a Wework capability window without requiring an official account.
+pub(crate) fn model_context_window(slug: &str) -> Option<i64> {
+    if !slug.starts_with("wework-") {
+        return None;
+    }
+    let mut model = base_models()
+        .into_iter()
+        .find(|model| model.get("slug").and_then(Value::as_str) == Some(slug))?;
+    if let Some(catalog_override) = read_catalog_overrides()
+        .into_iter()
+        .find(|entry| entry.slug == slug)
+    {
+        apply_override_fields(&mut model, &catalog_override.fields);
+    }
+    model
+        .get("context_window")
+        .and_then(Value::as_i64)
+        .filter(|value| *value > 0)
 }
 
 pub(crate) fn vision_sidecar_catalog_model_id(base_model_id: &str) -> String {
@@ -415,14 +485,10 @@ struct CodexCatalogModel {
 }
 
 fn builtin_model_entries() -> Vec<Value> {
-    [
-        ("Kimi", KIMI_CODEX_MODELS),
-        ("DeepSeek", DEEPSEEK_CODEX_MODELS),
-        ("OpenAI", OPENAI_CODEX_MODELS),
-    ]
-    .into_iter()
-    .flat_map(|(group, source)| catalog_entries_from_resource(group, source))
-    .collect()
+    BUILTIN_CATALOG_RESOURCES
+        .into_iter()
+        .flat_map(|(group, source)| catalog_entries_from_resource(group, source))
+        .collect()
 }
 
 fn catalog_entries_from_resource(group: &str, source: &str) -> Vec<Value> {
