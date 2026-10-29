@@ -38,7 +38,7 @@ Linux desktop E2E builds and cache warmup consume the Rust Backend OCI image pro
 
 ## Operate and assert
 
-Linux isolated desktops use `Xvfb -noreset` so the display remains connectable throughout the checkpoint. The default reset after the last client disconnects can close the listener between a short-lived `xprop` probe and Openbox connecting; see [Debian's lifecycle analysis](https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1095028#43). Xvfb errors go through `/dev/stderr` into runner logs. Window-manager restarts or longer waits must not hide startup failures.
+Linux isolated desktops use `Xvfb -noreset` so the display remains connectable throughout the checkpoint. The default reset after the last client disconnects can close the listener between a short-lived `xprop` probe and Openbox connecting; see [Debian's lifecycle analysis](https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1095028#43). Window-manager restarts or longer waits must not hide startup failures.
 
 Pass the session path returned by `start` to every later command. Prefer stable `data-testid` selectors.
 

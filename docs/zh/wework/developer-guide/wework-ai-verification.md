@@ -38,7 +38,7 @@ Linux 桌面 E2E 构建和缓存预热使用 `e2e-tests.yml` 生产的 Rust Back
 
 ## 操作与断言
 
-Linux 隔离桌面使用 `Xvfb -noreset`，使显示服务在整个 checkpoint 内持续可连接。默认的“最后一个客户端断开即 reset”会在短连接 `xprop` 探测与 Openbox 连接之间关闭监听，详见 [Debian 的生命周期分析](https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1095028#43)。Xvfb 错误通过 `/dev/stderr` 进入 runner 日志；不通过重启窗口管理器或延长等待隐藏启动失败。
+Linux 隔离桌面使用 `Xvfb -noreset`，使显示服务在整个 checkpoint 内持续可连接。默认的“最后一个客户端断开即 reset”会在短连接 `xprop` 探测与 Openbox 连接之间关闭监听，详见 [Debian 的生命周期分析](https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1095028#43)。不通过重启窗口管理器或延长等待隐藏启动失败。
 
 后续命令都传入启动命令返回的 session 路径。优先使用稳定的 `data-testid` 选择器。
 
