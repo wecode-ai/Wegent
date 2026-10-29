@@ -22,11 +22,11 @@ impl EventSink for RecordingSink {
 async fn same_agent_tasks_run_concurrently_with_private_skills_mcp_and_settings() {
     let _lock = env_lock().lock().await;
     let _environment = isolated_environment();
-    let probe = unique_dir("concurrent-claude");
-    fs::create_dir_all(&probe).unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let probe = fixture.path();
     let _probe = EnvGuard::set("CONCURRENCY_PROBE", probe.to_str().unwrap());
-    let fake_claude = write_fake_executable(
-        "fake-claude-concurrent",
+    let fake_claude = write_fake_executable_at(
+        probe.join("fake-claude-concurrent"),
         r#"#!/bin/sh
 set -eu
 cat >/dev/null

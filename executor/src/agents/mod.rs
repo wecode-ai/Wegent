@@ -65,7 +65,9 @@ pub use codex::{
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
-pub(crate) use instance_home::{pin_task_skills, task_skills_directory, task_skills_directory_at};
+pub(crate) use instance_home::{
+    task_skills_directory, task_skills_directory_at, TaskSkillsDirectory,
+};
 
 pub(crate) fn has_isolated_native_home(request: &ExecutionRequest) -> bool {
     instance_home::request_home(request).is_some()

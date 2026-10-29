@@ -62,11 +62,15 @@ fn concurrent_executions_share_history_and_isolate_configuration() {
     one.activate().unwrap();
     two.activate().unwrap();
     assert_eq!(
-        task_skills_directory_at(root.path(), "task-1", "7").unwrap(),
+        task_skills_directory_at(root.path(), "task-1", "7")
+            .unwrap()
+            .path,
         one.snapshot.join("skills")
     );
     assert_eq!(
-        task_skills_directory_at(root.path(), "task-2", "7").unwrap(),
+        task_skills_directory_at(root.path(), "task-2", "7")
+            .unwrap()
+            .path,
         two.snapshot.join("skills")
     );
     assert!(task_skills_directory_at(root.path(), "task-1", "8").is_err());
@@ -84,7 +88,9 @@ fn concurrent_executions_share_history_and_isolate_configuration() {
     drop(two);
     archive.try_lock_exclusive().unwrap();
     FileExt::unlock(&archive).unwrap();
-    let skills = task_skills_directory_at(root.path(), "task-1", "7").unwrap();
+    let skills = task_skills_directory_at(root.path(), "task-1", "7")
+        .unwrap()
+        .path;
     assert_eq!(
         fs::read_to_string(skills.join("one/SKILL.md")).unwrap(),
         "one"
@@ -123,7 +129,9 @@ fn failed_task_never_resolves_another_tasks_shared_skill_selection() {
         .unwrap_err()
         .contains("no activated"));
     assert_eq!(
-        task_skills_directory_at(root.path(), "task-1", "7").unwrap(),
+        task_skills_directory_at(root.path(), "task-1", "7")
+            .unwrap()
+            .path,
         first.snapshot.join("skills")
     );
 }
@@ -215,6 +223,60 @@ fn completed_skill_snapshot_is_not_pruned_while_an_extension_reads_it() {
 }
 
 #[test]
+fn resolving_task_skills_pins_the_snapshot_before_the_next_turn_can_prune_it() {
+    let root = tempfile::tempdir().unwrap();
+    let task = request("task-1");
+    let home = named_home_at(root.path(), &task).unwrap();
+    let mut first = create_at(&task, root.path(), &home).unwrap();
+    prepare_skills(&first, Some("one"));
+    first.activate().unwrap();
+    let previous = first.snapshot.clone();
+    drop(first);
+
+    let selection = task_skills_directory_at(root.path(), "task-1", "7").unwrap();
+    let mut next = create_at(&task, root.path(), &home).unwrap();
+    prepare_skills(&next, Some("two"));
+    next.activate().unwrap();
+
+    assert!(
+        previous.join("skills/one/SKILL.md").is_file(),
+        "The resolved snapshot must remain readable before the consumer starts"
+    );
+    drop(selection);
+    drop(next);
+    assert!(!previous.exists());
+}
+
+#[test]
+fn pruning_failure_does_not_reject_an_already_activated_snapshot() {
+    let root = tempfile::tempdir().unwrap();
+    let task = request("task-1");
+    let home = named_home_at(root.path(), &task).unwrap();
+    let mut first = create_at(&task, root.path(), &home).unwrap();
+    prepare_skills(&first, Some("one"));
+    first.activate().unwrap();
+    let previous = first.snapshot.clone();
+    drop(first);
+    fs::remove_file(previous.join(".read.lock")).unwrap();
+
+    let mut next = create_at(&task, root.path(), &home).unwrap();
+    prepare_skills(&next, Some("two"));
+    next.activate().unwrap();
+
+    assert_eq!(
+        task_skills_directory_at(root.path(), "task-1", "7")
+            .unwrap()
+            .path,
+        next.snapshot.join("skills")
+    );
+    assert!(previous.join("skills/one/SKILL.md").is_file());
+    assert_eq!(
+        read_marker(&next.snapshot.join("execution.json")).unwrap()["ready"],
+        true
+    );
+}
+
+#[test]
 fn pipeline_lookup_keeps_legacy_and_snapshot_execution_ownership_checks() {
     let root = tempfile::tempdir().unwrap();
     let mut task = request("task-1");
@@ -233,7 +295,9 @@ fn pipeline_lookup_keeps_legacy_and_snapshot_execution_ownership_checks() {
         .contains("multiple"));
     drop(legacy);
     assert_eq!(
-        task_skills_directory_at(root.path(), "task-1", "7").unwrap(),
+        task_skills_directory_at(root.path(), "task-1", "7")
+            .unwrap()
+            .path,
         execution.snapshot.join("skills")
     );
     assert!(task_skills_directory_at(root.path(), "task-1", "8").is_err());

@@ -19,9 +19,25 @@ pub(crate) use session::{claude_session_transcript, validate_session};
 #[path = "instance_execution.rs"]
 mod execution;
 pub(super) use execution::acquire_claude;
-pub(crate) use execution::pin_skills as pin_task_skills;
 
 pub(super) use crate::file_lease::FileLease as HomeLease;
+
+/// Keep the selected snapshot alive for the complete consumer operation.
+#[derive(Debug)]
+pub(crate) struct TaskSkillsDirectory {
+    pub(crate) path: PathBuf,
+    _snapshot_lease: Option<HomeLease>,
+}
+
+impl TaskSkillsDirectory {
+    pub(crate) fn pin(path: PathBuf) -> Result<Self, String> {
+        let lease = execution::pin_skills(&path)?;
+        Ok(Self {
+            path,
+            _snapshot_lease: lease,
+        })
+    }
+}
 
 /// Backend Bot requests use the executing user's named agent Home.
 /// Shell-only requests retain the application's managed native Home.
@@ -547,7 +563,10 @@ pub(super) fn migrated_codex_rollout(
 }
 
 /// Resolve task Skills using the authenticated account and recorded task binding.
-pub(crate) fn task_skills_directory(task_id: &str, user_id: &str) -> Result<PathBuf, String> {
+pub(crate) fn task_skills_directory(
+    task_id: &str,
+    user_id: &str,
+) -> Result<TaskSkillsDirectory, String> {
     task_skills_directory_at(
         &crate::services::workbench::workbench_root()?,
         task_id,
@@ -559,7 +578,7 @@ pub(crate) fn task_skills_directory_at(
     root: &Path,
     task_id: &str,
     user_id: &str,
-) -> Result<PathBuf, String> {
+) -> Result<TaskSkillsDirectory, String> {
     let user_id = positive_id(&json!(user_id)).ok_or("Agent user identity is missing")?;
     let agents = root.join("agents");
     reject_symlink_ancestors(&agents, root)?;
@@ -610,7 +629,7 @@ pub(crate) fn task_skills_directory_at(
             && !execution::has_active_snapshot(home, root)?
             && active_task_lease(home, root, task_id)?
         {
-            active_skills.push(home.join("skills"));
+            active_skills.push(TaskSkillsDirectory::pin(home.join("skills"))?);
         } else {
             active_skills.extend(snapshots);
         }
@@ -619,8 +638,8 @@ pub(crate) fn task_skills_directory_at(
         return Err("Task has multiple active execution Skills directories".to_owned());
     }
     if let Some(skills) = active_skills.pop() {
-        reject_symlink_ancestors(&skills, root)?;
-        if !skills.is_dir() {
+        reject_symlink_ancestors(&skills.path, root)?;
+        if !skills.path.is_dir() {
             return Err("Task has no activated Skills directory".to_owned());
         }
         return Ok(skills);
@@ -633,10 +652,12 @@ pub(crate) fn task_skills_directory_at(
         }
         .to_owned());
     };
-    let skills =
-        execution::latest_skills(home, root, task_id)?.unwrap_or_else(|| home.join("skills"));
-    reject_symlink_ancestors(&skills, root)?;
-    if !skills.is_dir() {
+    let skills = match execution::latest_skills(home, root, task_id)? {
+        Some(skills) => skills,
+        None => TaskSkillsDirectory::pin(home.join("skills"))?,
+    };
+    reject_symlink_ancestors(&skills.path, root)?;
+    if !skills.path.is_dir() {
         return Err("Task has no activated Skills directory".to_owned());
     }
     Ok(skills)

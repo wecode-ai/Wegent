@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::process::CommandSpec;
+use crate::{logging::log_executor_event, process::CommandSpec};
 
 /// A private native configuration with shared, durable conversation storage.
 /// Shared Home leases allow executions to overlap while excluding session archives.
@@ -257,8 +257,17 @@ impl ExecutionHome {
             let _ = staging.keep();
         }
         // Only the most recent completed selection per task is retained for extensions.
-        prune_inactive_snapshots(&self.home, &root, &self.task_id)?;
+        self.prune_completed();
         Ok(())
+    }
+
+    fn prune_completed(&self) {
+        if let Err(error) = prune_inactive_snapshots(&self.home, &self.root, &self.task_id) {
+            log_executor_event(
+                "execution snapshot prune failed",
+                &[("task_id", self.task_id.clone()), ("error", error)],
+            );
+        }
     }
 }
 
@@ -267,7 +276,7 @@ impl Drop for ExecutionHome {
         drop(self.activity.take());
         if self.staging.is_none() {
             if let Ok(_preparation) = preparation_lease(&self.home, &self.root) {
-                let _ = prune_inactive_snapshots(&self.home, &self.root, &self.task_id);
+                self.prune_completed();
             }
         }
     }
@@ -356,12 +365,12 @@ pub(super) fn active_skills(
     home: &Path,
     root: &Path,
     task_id: &str,
-) -> Result<Vec<PathBuf>, String> {
+) -> Result<Vec<TaskSkillsDirectory>, String> {
     let _preparation = preparation_lease(home, root)?;
     task_snapshots(home, root, Some(task_id))?
         .into_iter()
         .filter_map(|path| match is_active(&path) {
-            Ok(true) => Some(Ok(path.join("skills"))),
+            Ok(true) => Some(pinned_snapshot_skills(&path)),
             Ok(false) => None,
             Err(error) => Some(Err(error)),
         })
@@ -378,7 +387,7 @@ pub(super) fn has_active_snapshot(home: &Path, root: &Path) -> Result<bool, Stri
     Ok(false)
 }
 
-pub(crate) fn pin_skills(skills: &Path) -> Result<Option<HomeLease>, String> {
+pub(super) fn pin_skills(skills: &Path) -> Result<Option<HomeLease>, String> {
     let snapshot = skills.parent().ok_or("Skills directory has no parent")?;
     let path = snapshot.join(".read.lock");
     if !path.try_exists().map_err(|error| error.to_string())? {
@@ -403,7 +412,7 @@ pub(super) fn latest_skills(
     home: &Path,
     root: &Path,
     task_id: &str,
-) -> Result<Option<PathBuf>, String> {
+) -> Result<Option<TaskSkillsDirectory>, String> {
     let _preparation = preparation_lease(home, root)?;
     let latest = latest_snapshot(home, root, task_id)?;
     if latest.is_none()
@@ -413,7 +422,16 @@ pub(super) fn latest_skills(
     {
         return Err("Task has no activated execution Skills directory".to_owned());
     }
-    Ok(latest.map(|path| path.join("skills")))
+    latest.as_deref().map(pinned_snapshot_skills).transpose()
+}
+
+// The caller holds the Home preparation lease until the reader lease is acquired.
+fn pinned_snapshot_skills(snapshot: &Path) -> Result<TaskSkillsDirectory, String> {
+    let skills = TaskSkillsDirectory::pin(snapshot.join("skills"))?;
+    if skills._snapshot_lease.is_none() {
+        return Err("Execution snapshot reader lock is missing".to_owned());
+    }
+    Ok(skills)
 }
 
 fn prune_inactive_snapshots(home: &Path, root: &Path, task_id: &str) -> Result<(), String> {

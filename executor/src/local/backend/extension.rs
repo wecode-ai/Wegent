@@ -14,9 +14,11 @@ use std::{
 use serde_json::{json, Value};
 use tokio::{process::Command, time::timeout};
 
+use crate::agents::TaskSkillsDirectory;
+
 const EXTENSION_TIMEOUT: Duration = Duration::from_secs(60);
 
-type TaskSkillsResolver = dyn Fn(&str, &str) -> Result<PathBuf, String> + Send + Sync;
+type TaskSkillsResolver = dyn Fn(&str, &str) -> Result<TaskSkillsDirectory, String> + Send + Sync;
 
 #[derive(Clone)]
 enum BackendIdentity {
@@ -69,7 +71,8 @@ impl DeviceExtensionRunner {
     where
         F: Fn(&str, &str) -> Result<PathBuf, String> + Send + Sync + 'static,
     {
-        self.task_skills_resolver = Arc::new(resolver);
+        self.task_skills_resolver =
+            Arc::new(move |task_id, user_id| TaskSkillsDirectory::pin(resolver(task_id, user_id)?));
         self
     }
 
@@ -90,10 +93,11 @@ impl DeviceExtensionRunner {
         self
     }
 
-    pub fn with_workbench_root(self, root: PathBuf) -> Self {
-        self.with_task_skills_resolver(move |task_id, user_id| {
+    pub fn with_workbench_root(mut self, root: PathBuf) -> Self {
+        self.task_skills_resolver = Arc::new(move |task_id, user_id| {
             crate::agents::task_skills_directory_at(&root, task_id, user_id)
-        })
+        });
+        self
     }
 
     async fn authenticated_identity(&self) -> Result<(String, String), String> {
@@ -172,13 +176,12 @@ impl DeviceExtensionRunner {
         }
 
         let skills_root = if extension_scope == "global" {
-            self.global_skills_root.clone()
+            TaskSkillsDirectory::pin(self.global_skills_root.clone())?
         } else {
             let (_, user_id) = self.authenticated_identity().await?;
             (self.task_skills_resolver)(&task_id.to_string(), &user_id)?
         };
-        let _snapshot_lease = crate::agents::pin_task_skills(&skills_root)?;
-        let script = resolve_script_path(&skills_root, &extension_name, &script_path)?;
+        let script = resolve_script_path(&skills_root.path, &extension_name, &script_path)?;
         let output = run_script(&script, &action, &extension_name, &extension_payload).await?;
         let response: Value = serde_json::from_str(&output)
             .map_err(|error| format!("Extension returned invalid JSON: {error}"))?;

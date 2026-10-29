@@ -230,13 +230,19 @@ fn migrate_at(source: &Path, target: &Path, kind: AgentKind, id: &str) -> Result
         return Err("Native session changed during migration".to_owned());
     }
     let published = target.join(relative);
-    if kind == AgentKind::ClaudeCode && destination.with_extension("").exists() {
-        // Publish companions first so a visible transcript always has its complete data.
-        publish_session_entry(
-            &destination.with_extension(""),
-            &published.with_extension(""),
-            target,
-        )?;
+    if kind == AgentKind::ClaudeCode {
+        let staged_companions = destination.with_extension("");
+        let published_companions = published.with_extension("");
+        super::reject_symlink_ancestors(&published_companions, target)?;
+        if staged_companions.exists() {
+            // Publish companions first so a visible transcript has its complete data.
+            publish_session_entry(&staged_companions, &published_companions, target)?;
+        } else if published_companions
+            .try_exists()
+            .map_err(|error| error.to_string())?
+        {
+            return Err("Existing native session import conflicts with source".to_owned());
+        }
     }
     publish_session_entry(&destination, &published, target)?;
     Ok(json!({"id":id, "path":relative, "engine":format!("{kind:?}")}))
@@ -781,6 +787,35 @@ mod tests {
             )
             .unwrap(),
             "child-data"
+        );
+    }
+
+    #[test]
+    fn selected_session_import_rejects_orphaned_companions_absent_from_source() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let relative = "projects/shared-workspace/session-new.jsonl";
+        let session = source.path().join(relative);
+        fs::create_dir_all(session.parent().unwrap()).unwrap();
+        fs::write(&session, "{\"sessionId\":\"session-new\"}\n").unwrap();
+        let published = target.path().join(relative);
+        let stale = published.with_extension("").join("subagents/child.jsonl");
+        fs::create_dir_all(stale.parent().unwrap()).unwrap();
+        fs::write(&stale, "orphaned companion data").unwrap();
+
+        let error = migrate_at(
+            source.path(),
+            target.path(),
+            AgentKind::ClaudeCode,
+            "session-new",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("conflicts"));
+        assert!(!published.exists());
+        assert_eq!(
+            fs::read_to_string(&stale).unwrap(),
+            "orphaned companion data"
         );
     }
 }
