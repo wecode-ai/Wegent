@@ -375,8 +375,9 @@ describe('telemetry client', () => {
 
   test('forwards identity events and their person properties under an identified policy', async () => {
     policyMocks.policy.personProfiles = 'identified_only'
-    const { installTelemetry } = await import('./client')
+    const { applyTelemetryIdentity, installTelemetry } = await import('./client')
     await installTelemetry(true)
+    applyTelemetryIdentity({ distinctId: 'jiaqi62', properties: { username: 'jiaqi62' } })
 
     const beforeSend = posthogMocks.init.mock.calls[0]?.[1]?.before_send
     const sanitized = beforeSend({
@@ -388,6 +389,10 @@ describe('telemetry client', () => {
         $current_url: 'http://localhost/private/project/42',
       },
       $set: { username: 'jiaqi62' },
+      $set_once: {
+        $initial_current_url: 'http://localhost/private/project/42?token=secret',
+        $initial_pathname: '/private/project/42',
+      },
     })
 
     expect(sanitized).toEqual({
@@ -399,6 +404,8 @@ describe('telemetry client', () => {
       },
       $set: { username: 'jiaqi62' },
     })
+    expect(JSON.stringify(sanitized)).not.toContain('secret')
+    expect(JSON.stringify(sanitized)).not.toContain('/private/project/42')
   })
 
   test('detaches the account identity on sign-out', async () => {
@@ -412,6 +419,24 @@ describe('telemetry client', () => {
     expect(posthogMocks.reset).toHaveBeenCalledWith(true)
   })
 
+  test('drops person properties the policy did not provide', async () => {
+    policyMocks.policy.personProfiles = 'identified_only'
+    const { applyTelemetryIdentity, installTelemetry } = await import('./client')
+    await installTelemetry(true)
+    applyTelemetryIdentity({ distinctId: 'jiaqi62', properties: { username: 'jiaqi62' } })
+
+    const beforeSend = posthogMocks.init.mock.calls[0]?.[1]?.before_send
+    const sanitized = beforeSend({
+      uuid: 'identify-uuid',
+      event: '$identify',
+      properties: { distinct_id: 'jiaqi62' },
+      $set: { username: 'jiaqi62', email: 'jiaqi62@example.com' },
+    })
+
+    expect(sanitized?.$set).toEqual({ username: 'jiaqi62' })
+    expect(JSON.stringify(sanitized)).not.toContain('jiaqi62@example.com')
+  })
+
   test('ignores an anonymous identity so the generated distinct id stays stable', async () => {
     const { applyTelemetryIdentity, installTelemetry } = await import('./client')
     await installTelemetry(true)
@@ -420,6 +445,43 @@ describe('telemetry client', () => {
 
     expect(posthogMocks.identify).not.toHaveBeenCalled()
     expect(posthogMocks.reset).not.toHaveBeenCalled()
+  })
+
+  test('detaches an account the SDK restored when the restarted app has no account', async () => {
+    localStorage.setItem('wework.telemetry.identified-account.v1', 'account-a')
+    const { applyTelemetryIdentity, installTelemetry } = await import('./client')
+    await installTelemetry(true)
+
+    applyTelemetryIdentity(null)
+
+    expect(posthogMocks.reset).toHaveBeenCalledWith(true)
+    expect(localStorage.getItem('wework.telemetry.identified-account.v1')).toBeNull()
+  })
+
+  test('does not merge a different account into the persisted one', async () => {
+    localStorage.setItem('wework.telemetry.identified-account.v1', 'account-a')
+    const { applyTelemetryIdentity, installTelemetry } = await import('./client')
+    await installTelemetry(true)
+
+    applyTelemetryIdentity({ distinctId: 'account-b', properties: { username: 'account-b' } })
+
+    expect(posthogMocks.reset).toHaveBeenCalledWith(true)
+    expect(posthogMocks.identify).toHaveBeenCalledWith('account-b', { username: 'account-b' })
+    expect(localStorage.getItem('wework.telemetry.identified-account.v1')).toBe('account-b')
+    expect(posthogMocks.reset.mock.invocationCallOrder[0]).toBeLessThan(
+      posthogMocks.identify.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
+    )
+  })
+
+  test('keeps the anonymous installation id stable across restarts', async () => {
+    const { applyTelemetryIdentity, installTelemetry } = await import('./client')
+    await installTelemetry(true)
+
+    applyTelemetryIdentity(null)
+    applyTelemetryIdentity(null)
+
+    expect(posthogMocks.reset).not.toHaveBeenCalled()
+    expect(localStorage.getItem('wework.telemetry.identified-account.v1')).toBeNull()
   })
 
   test('removes request, breadcrumb, message, context and source paths from Sentry events', async () => {

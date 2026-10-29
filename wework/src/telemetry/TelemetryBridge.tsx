@@ -33,7 +33,7 @@ const CONSENT_SAVE_TIMEOUT_MS = 10_000
 
 export function TelemetryBridge() {
   const appPreferences = useAppPreferencesState()
-  const { user } = useAuth()
+  const { user, isLoading: accountLoading } = useAuth()
   const cloudConnection = useOptionalCloudConnection()
   const { t } = useTranslation('common')
   const clientEnabled = useTelemetryEnabled()
@@ -56,14 +56,17 @@ export function TelemetryBridge() {
   // the cloud connection; a distribution that installs identity must report
   // that account, otherwise every session would stay anonymous.
   const account = cloudConnection.user ?? user
+  // "No account" and "auth has not resolved yet" must not look the same: the
+  // first detaches a persisted account, the second has to wait.
+  const accountResolved = cloudConnection.user != null || !accountLoading
 
   // A distribution that installs account identity attaches the signed-in user
   // as soon as the client is capturing; the anonymous policy returns `null` and
   // leaves the generated distinct id untouched.
   useEffect(() => {
-    if (!clientEnabled) return
+    if (!clientEnabled || !accountResolved) return
     applyTelemetryIdentity(telemetryPolicy.identityFor(account))
-  }, [account, clientEnabled])
+  }, [account, accountResolved, clientEnabled])
 
   useEffect(() => {
     if (!appPreferences?.loaded || initializedRef.current) {

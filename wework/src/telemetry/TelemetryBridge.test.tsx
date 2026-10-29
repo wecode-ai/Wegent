@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   electronRuntime: false,
   cloudUser: null as { id: number; user_name: string; email: string } | null,
   identityForUsers: [] as Array<{ id: number; user_name: string; email: string } | null>,
+  accountLoading: false,
   user: null as { id: number; user_name: string; email: string } | null,
 }))
 
@@ -41,7 +42,7 @@ vi.mock('./client', () => ({
 }))
 
 vi.mock('@/features/auth/useAuth', () => ({
-  useAuth: () => ({ user: mocks.user }),
+  useAuth: () => ({ user: mocks.user, isLoading: mocks.accountLoading }),
 }))
 
 vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
@@ -86,6 +87,7 @@ describe('TelemetryBridge', () => {
     mocks.electronRuntime = false
     mocks.cloudUser = null
     mocks.identityForUsers = []
+    mocks.accountLoading = false
     mocks.user = null
   })
 
@@ -118,6 +120,19 @@ describe('TelemetryBridge', () => {
     expect(mocks.identityForUsers).not.toContainEqual(
       expect.objectContaining({ user_name: 'local' })
     )
+  })
+
+  it('waits for the account to resolve instead of detaching while it loads', async () => {
+    mocks.accountLoading = true
+    const view = render(<TelemetryBridge />)
+
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 0))
+    expect(mocks.identityForUsers).toEqual([])
+
+    mocks.accountLoading = false
+    view.rerender(<TelemetryBridge />)
+
+    await waitFor(() => expect(mocks.identityForUsers).toEqual([null]))
   })
 
   it('initializes once and starts telemetry again after it is re-enabled', async () => {

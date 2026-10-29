@@ -19,6 +19,10 @@ import {
 } from './config'
 
 const INSTALLATION_ID_KEY = 'wework.telemetry.installation-id.v1'
+// The account this installation last reported, kept outside the SDK so a
+// restart can tell "the SDK still holds an account" from "this install has
+// never been identified".
+const IDENTIFIED_ACCOUNT_KEY = 'wework.telemetry.identified-account.v1'
 const STAND_IN_COLLECTION_SINCE_KEY = 'wework.stand-in-telemetry-enabled-since'
 const MAX_QUEUED_EVENTS = 100
 const COMMON_EVENT_PROPERTY_KEYS = [
@@ -73,6 +77,34 @@ let captureFlushScheduled = false
 let cachedCommonProperties: CommonTelemetryProperties | null = null
 let pendingTransition: Promise<void> = Promise.resolve()
 let identity: TelemetryIdentity | null = null
+// Set once the app tells us which account this session belongs to, including
+// `null` for "no account". Until then the SDK's persisted account is left alone
+// so a restart does not rotate the identity of a signed-in user.
+let identityResolved = false
+
+function readIdentifiedAccount(): string | null {
+  try {
+    return localStorage.getItem(IDENTIFIED_ACCOUNT_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writeIdentifiedAccount(distinctId: string): void {
+  try {
+    localStorage.setItem(IDENTIFIED_ACCOUNT_KEY, distinctId)
+  } catch {
+    // Telemetry keeps working without remembering the account locally.
+  }
+}
+
+function clearIdentifiedAccount(): void {
+  try {
+    localStorage.removeItem(IDENTIFIED_ACCOUNT_KEY)
+  } catch {
+    // Telemetry keeps working without remembering the account locally.
+  }
+}
 
 const telemetryEnabledListeners = new Set<() => void>()
 
@@ -108,10 +140,16 @@ function sanitizeIdentityCapture(capture: CaptureResult): CaptureResult {
     timestamp: capture.timestamp,
     uuid: capture.uuid,
   }
-  // Person properties live outside `properties`; they are the payload PostHog
-  // stores on the account profile.
-  if (capture.$set) sanitized.$set = capture.$set
-  if (capture.$set_once) sanitized.$set_once = capture.$set_once
+  // Person properties live outside `properties`. Only the properties the
+  // distribution policy named may be stored: posthog-js merges its own
+  // `$set_once` payload (`$initial_current_url`, `$initial_pathname`,
+  // `$initial_referrer_info`, ...) before `before_send`, and forwarding it would
+  // upload page URLs and any credentials they carry.
+  const policyPropertyKeys = new Set(Object.keys(identity?.properties ?? {}))
+  const personProperties = Object.fromEntries(
+    Object.entries(capture.$set ?? {}).filter(([key]) => policyPropertyKeys.has(key))
+  )
+  if (Object.keys(personProperties).length > 0) sanitized.$set = personProperties
   return sanitized
 }
 
@@ -140,6 +178,27 @@ function sanitizePostHogCapture(capture: CaptureResult | null): CaptureResult | 
   return sanitized
 }
 
+/**
+ * Reconciles the account this session reports with whatever the SDK persisted
+ * on a previous run. A different account must not inherit the previous person,
+ * and an anonymous session must not keep reporting an account from the last
+ * run; a never-identified installation keeps its anonymous id untouched.
+ */
+function applyIdentityToClient(client: PostHog, nextIdentity: TelemetryIdentity | null): void {
+  const previousDistinctId = readIdentifiedAccount()
+  if (!nextIdentity) {
+    if (!previousDistinctId) return
+    client.reset(true)
+    clearIdentifiedAccount()
+    return
+  }
+  if (previousDistinctId && previousDistinctId !== nextIdentity.distinctId) {
+    client.reset(true)
+  }
+  client.identify(nextIdentity.distinctId, nextIdentity.properties)
+  writeIdentifiedAccount(nextIdentity.distinctId)
+}
+
 async function initPostHog(): Promise<void> {
   if (posthog) return
   const config = getTelemetryConfig()
@@ -165,7 +224,10 @@ async function initPostHog(): Promise<void> {
     request_batching: true,
     before_send: sanitizePostHogCapture,
   })
-  if (identity) posthog.identify(identity.distinctId, identity.properties)
+  // Leave a persisted account alone until the app tells us which account this
+  // session belongs to; applying it here would rotate the identity of a
+  // signed-in user on every restart.
+  if (identityResolved) applyIdentityToClient(posthog, identity)
 }
 
 function sanitizeSentryTags(tags: SentryEvent['tags']): SentryEvent['tags'] {
@@ -423,16 +485,15 @@ export async function installTelemetry(initiallyEnabled: boolean): Promise<void>
 /**
  * Attaches the signed-in account to PostHog when the distribution policy
  * provides one, and detaches it on sign-out. Anonymous policies always pass
- * `null`, and a `null` without a previous identity is ignored so the generated
- * distinct id stays stable for the whole installation.
+ * `null`; that also clears an account the SDK restored from a previous run, so
+ * events are never attributed to a user who is no longer signed in.
  */
 export function applyTelemetryIdentity(nextIdentity: TelemetryIdentity | null): void {
   if (!enabled) return
-  if (!nextIdentity && !identity) return
+  identityResolved = true
   identity = nextIdentity
   if (!posthog) return
-  if (nextIdentity) posthog.identify(nextIdentity.distinctId, nextIdentity.properties)
-  else posthog.reset(true)
+  applyIdentityToClient(posthog, nextIdentity)
 }
 
 export function track<EventName extends AnalyticsEventName>(
@@ -496,9 +557,11 @@ async function applyTelemetryEnabled(nextEnabled: boolean): Promise<void> {
   sentry?.setUser(null)
   await sentry?.close(0)
   identity = null
+  identityResolved = false
   posthog = null
   sentry = null
   localStorage.removeItem(INSTALLATION_ID_KEY)
+  clearIdentifiedAccount()
   resetTelemetrySessionId()
   initialized = false
 }
@@ -515,6 +578,8 @@ export function resetTelemetryForTests(): void {
   captureFlushScheduled = false
   cachedCommonProperties = null
   identity = null
+  identityResolved = false
+  clearIdentifiedAccount()
 }
 
 export function sanitizeAnalyticsProperties<EventName extends AnalyticsEventName>(

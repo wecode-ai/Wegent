@@ -77,6 +77,22 @@ async function verifyIdentifiedTelemetryIdentity(control) {
     { username: IDENTIFIED_TELEMETRY_USERNAME },
     'The $identify event did not store the username as the person property'
   )
+  // posthog-js attaches its own `$set_once` payload ($initial_current_url,
+  // $initial_pathname, referrer, ...) before `before_send`; none of it may be
+  // forwarded because page URLs can carry paths and credentials.
+  assert.equal(
+    identify.$set_once,
+    undefined,
+    'The $identify event forwarded SDK-generated person properties'
+  )
+  const bodies = recordedBodies(control)
+  for (const forbidden of ['$initial_current_url', '$initial_pathname', '$initial_referrer_info']) {
+    assert.equal(
+      bodies.includes(forbidden),
+      false,
+      `Telemetry leaked SDK-generated person property ${forbidden}`
+    )
+  }
 
   await control.command('click', SETTINGS_BUTTON_SELECTOR)
   await control.command('click', SETTINGS_MENU_SELECTOR)
