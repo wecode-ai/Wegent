@@ -254,6 +254,114 @@ async fn assert_rollback_and_recovery(mysql: &MysqlService) {
     );
 }
 
+async fn assert_automation_maintains_index(mysql: &MysqlService) {
+    use crate::background_jobs::project::{assignments, store};
+
+    let assign = async |target: &str| {
+        mysql
+            .with_transaction(async |tx| {
+                let issue = store::locked(tx, "task", "issue-1").await?.unwrap();
+                assignments::record(
+                    tx,
+                    &issue,
+                    "human",
+                    target,
+                    "Reviewer",
+                    7,
+                    true,
+                    "automation",
+                )
+                .await
+            })
+            .await
+            .unwrap()
+    };
+    let assert_current = async |expected: &str| {
+        let repository = LoopItemRepository::new(mysql);
+        let indexed = repository
+            .list_active_assignment_comments("issue-1")
+            .await
+            .unwrap();
+        let history = repository.list_item_comments("issue-1").await.unwrap();
+        let authoritative = active_events(&history);
+        assert_eq!(
+            indexed.len(),
+            1,
+            "expected={expected}; indexed={indexed:?}; history={history:?}"
+        );
+        assert_eq!(indexed[0].id, expected);
+        assert_eq!(indexed[0].id, authoritative[0].comment.id);
+        assert_eq!(
+            indexed[0].assignment().unwrap().target_id.as_deref(),
+            Some("52")
+        );
+    };
+    let (first, created) = assign("52").await;
+    assert!(created);
+    assert_current(&first).await;
+    let (repeated, created) = assign("52").await;
+    assert!(!created);
+    assert_eq!(repeated, first);
+    assert_current(&first).await;
+
+    // A failed index write rolls back both the cancellation and new assignment.
+    let marker = index_id("assignment-index", "issue-1");
+    mysql
+        .execute("DELETE FROM loop_items WHERE id = ?", (marker.as_str(),))
+        .await
+        .unwrap();
+    mysql
+        .with_transaction(async |tx| {
+            store::insert(
+                tx,
+                "comment",
+                serde_json::json!({
+                    "id":marker,"loop_item_id":"issue-1","metadata":{"event_type":"discussion"}
+                }),
+            )
+            .await?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let failed = mysql
+        .with_transaction(async |tx| {
+            let issue = store::locked(tx, "task", "issue-1").await?.unwrap();
+            assignments::record(tx, &issue, "human", "53", "Other", 7, true, "automation").await
+        })
+        .await;
+    assert_eq!(failed.unwrap_err().database_code(), Some(1062));
+    assert_current(&first).await;
+    mysql
+        .execute("DELETE FROM loop_items WHERE id = ?", (marker.as_str(),))
+        .await
+        .unwrap();
+    ensure_active_index(mysql, "issue-1").await.unwrap();
+
+    // Simulate a pre-fix Rust writer: a new event exists but the v1 index still
+    // points at the previous assignment. Reading repairs it without new work IDs.
+    mysql.execute(
+        "UPDATE loop_items SET version = 1 WHERE parent_id = 'issue-1' AND resource_type = 'assignment_index'", (),
+    ).await.unwrap();
+    mysql.with_transaction(async |tx| {
+        store::insert(tx, "comment", serde_json::json!({
+            "id":"legacy-cancel", "loop_item_id":"issue-1",
+            "created_at":"2099-01-01 00:00:00",
+            "metadata":{"event_type":"assignment","action":"unassign","assignment_event_id":first}
+        })).await?;
+        store::insert(tx, "comment", serde_json::json!({
+            "id":"legacy-current", "loop_item_id":"issue-1",
+            "created_at":"2099-01-01 00:00:00",
+            "metadata":{"event_type":"assignment","action":"assign","target_type":"human","target_id":"52"}
+        })).await?;
+        Ok(())
+    }).await.unwrap();
+    for _ in 0..2 {
+        ensure_active_index(mysql, "issue-1").await.unwrap();
+        assert_current("legacy-current").await;
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires disposable loopback MySQL 8; explicitly run by the backend Rust CI job"]
 async fn initializes_nullable_and_sentinel_indexes_without_changing_assignment_events() {
@@ -289,6 +397,7 @@ async fn initializes_nullable_and_sentinel_indexes_without_changing_assignment_e
             let sentinel = !matches!(schema, Schema::Nullable);
             assert_initialization(&test_mysql, sentinel).await;
             assert_rollback_and_recovery(&test_mysql).await;
+            assert_automation_maintains_index(&test_mysql).await;
             test_mysql
                 .execute("DROP TABLE loop_items", ())
                 .await

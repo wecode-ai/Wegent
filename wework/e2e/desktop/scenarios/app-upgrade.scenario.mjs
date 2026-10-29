@@ -570,6 +570,15 @@ export async function createDesktopScenario(options) {
           }
           if (alive) await new Promise(accept => setTimeout(accept, 100))
         }
+        // Retain shutdown phases even when the successful release slot is removed.
+        await fs
+          .copyFile(
+            join(root, 'activation-diagnostics.log'),
+            join(resultDir, 'activation-diagnostics.log')
+          )
+          .catch(error => {
+            if (error.code !== 'ENOENT') throw error
+          })
         assert.equal(alive, false, 'The upgraded application did not exit during cleanup')
       }
       if (passed) await fs.rm(root, { recursive: true, force: true })

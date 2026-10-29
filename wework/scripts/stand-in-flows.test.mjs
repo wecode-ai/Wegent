@@ -1,10 +1,31 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { test } from 'vitest'
 
 import { openProjectStandIn } from '../e2e/desktop/modules/stand-in-flows.mjs'
 import { openStandInNotifications } from '../e2e/desktop/scenarios/stand-in-notifications.scenario.mjs'
 
 const entry = '[data-workspace-tab-content][aria-hidden="false"] [data-testid="stand-in-open"]'
+
+test.each(['cli', 'mcp'])(
+  '%s capability scenario uses the startup budget only for cold catalog bootstrap',
+  async boundary => {
+    const source = await readFile(
+      resolve(import.meta.dirname, `../e2e/desktop/scenarios/stand-in-${boundary}.scenario.mjs`),
+      'utf8'
+    )
+    assert.match(
+      source,
+      /const catalog = await requestExecutor\(\s*control,\s*'runtime.connections.catalog',\s*\{\},\s*workbenchReadyTimeoutMs\s*\)/
+    )
+    assert.match(
+      source,
+      /const recovered = await requestExecutor\(\s*control,\s*'runtime.connections.catalog',\s*\{\},\s*uiTimeoutMs\s*\)/
+    )
+    assert.match(source, /signal: AbortSignal.timeout\(uiTimeoutMs\)/)
+  }
+)
 
 test('project entry waits for the board to mount before clicking', async () => {
   const calls = []

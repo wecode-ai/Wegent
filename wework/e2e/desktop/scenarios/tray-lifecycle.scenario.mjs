@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { verifyTrayPositionPersistence } from './tray-position.mjs'
-import { waitForWindowState } from '../modules/native-window-state.mjs'
+import { waitForClosedStartupSplash, waitForWindowState } from '../modules/native-window-state.mjs'
 
 async function waitForRoute(control, expected, timeoutMs) {
   const deadline = Date.now() + timeoutMs
@@ -16,10 +16,12 @@ async function waitForRoute(control, expected, timeoutMs) {
 export async function createDesktopScenario({ appIdentifier, captureScreenshot, uiTimeoutMs }) {
   let restartDesktopApp
   return {
+    appEnvironment: { WEWORK_E2E_STARTUP_SPLASH_HOLD_MS: '6000' },
     setRestartDesktopApp(restart) {
       restartDesktopApp = restart
     },
     async verify(control) {
+      await waitForClosedStartupSplash(control, uiTimeoutMs)
       const tray = JSON.parse(await control.command('getTraySnapshot', 'body'))
       assert.equal(tray.created, true, 'The Electron Tray was not created')
       assert.match(

@@ -9,11 +9,41 @@ import { runtimeTranscriptTurnsToConversationTurns } from '@/features/workbench/
 import type { RuntimeTranscriptTurn } from '@/types/api'
 import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
+import { ScrollableMessageArea } from './ScrollableMessageArea'
 import '@/i18n'
 
 afterEach(() => vi.useRealTimers())
 
 describe('MessageList processing duration', () => {
+  test.each([
+    { name: 'message list', Conversation: MessageList },
+    { name: 'scrollable conversation', Conversation: ScrollableMessageArea },
+  ])(
+    'updates turn metadata without requiring a different message array in $name',
+    ({ Conversation }) => {
+      const startedAt = Date.parse('2026-10-28T00:00:00Z')
+      const turn: RuntimeConversationTurn = {
+        id: 'metadata-only',
+        status: 'failed',
+        startedAt,
+        completedAt: startedAt + 5000,
+        durationMs: 5000,
+        error: 'upstream unavailable',
+        items: [],
+      }
+      const messages = projectRuntimeConversationTurns([turn])
+      const view = render(<Conversation messages={messages} turns={[turn]} />)
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 5秒')
+      view.rerender(
+        <Conversation
+          messages={messages}
+          turns={[{ ...turn, completedAt: startedAt + 12000, durationMs: 12000 }]}
+        />
+      )
+      expect(screen.getByTestId('processing-duration-label')).toHaveTextContent('用时 12秒')
+    }
+  )
+
   test('keeps a failed turn duration after native history removes transient processing blocks', () => {
     vi.useFakeTimers()
     const start = Date.parse('2026-09-17T00:00:00Z')
