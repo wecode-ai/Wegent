@@ -1,17 +1,22 @@
-import { UserMessage, type UserMessageServices } from './UserMessage'
-import { AssistantMessage } from './AssistantMessage'
+import type { UserMessageServices } from './UserMessage'
+import { MessageListMessage } from './MessageListMessage'
 import {
   isCancelledAssistantMessage,
   shouldHideFailedAssistantContent,
   getDisplayProcessingBlocks,
 } from './assistantMessagePresentation'
-import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { flushSync } from 'react-dom'
 import {
-  defaultRangeExtractor,
-  measureElement as measureVirtualElement,
-} from '@tanstack/react-virtual'
-import type { VirtualItem, Virtualizer } from '@tanstack/react-virtual'
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { flushSync } from 'react-dom'
+import { defaultRangeExtractor, type Range as VirtualRange } from '@tanstack/react-virtual'
 import type { CSSProperties, ReactNode, RefObject } from 'react'
 import type { RequestUserInputResponse, TurnFileChangesSummary } from '@wegent/chat-core/runtime'
 import type {
@@ -28,15 +33,23 @@ import {
   resolveAsyncRequestUserInputAnswers,
   resolveAsyncRequestUserInputReplies,
 } from '@wegent/chat-core/runtime-user-input'
-import { getMessagePretextIntrinsicHeight } from './messagePretextLayout'
+import {
+  getMessagePretextIntrinsicHeight,
+  getMessageLayoutSignature,
+  readMessageLayoutTypography,
+  getMessageFontMetricsRevision,
+} from './messagePretextLayout'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 import {
   cacheConversationVirtualMeasurements,
   getConversationVirtualMeasurements,
 } from './conversationViewportCache'
 import { SelectionActionsPopover } from './SelectionActionsPopover'
-import { useBottomOriginVirtualizer } from './useBottomOriginVirtualizer'
-import { areMessageListPropsEqual } from './messageListPropsEqual'
+import {
+  useConversationVirtualizer,
+  type ConversationVirtualizer,
+} from './useConversationVirtualizer'
+import { useMessageRowMeasure, useMessageRowMeasurements } from './useMessageRowMeasurements'
 import {
   createMarkdownWindowingScope,
   MarkdownWindowingContext,
@@ -60,6 +73,7 @@ export interface MessageListProps {
   messages: WorkbenchMessage[]
   turns?: RuntimeConversationTurn[]
   scrollElementRef?: RefObject<HTMLDivElement | null>
+  scrollTailHeight?: number
   initialDistanceFromBottomPx?: number
   onBeforeUserMessageToggle?: () => void
   onVirtualLayoutChange?: () => void
@@ -104,22 +118,25 @@ export interface MessageListProps {
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
+  virtualScrollAdjustmentEnabled?: boolean
+  virtualAnchor?: 'start' | 'end'
   virtualAnchorToEnd?: boolean
-  bottomOrigin?: boolean
+  virtualizerRef?: RefObject<ConversationVirtualizer | null>
+  onVirtualScrollAdjustment?: (delta: number) => void
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
     nextMessage: WorkbenchMessage | undefined
   ) => ReactNode
 }
 
-const MESSAGE_LAYOUT_RESIZE_SETTLE_MS = 120
+const EMPTY_TURNS: RuntimeConversationTurn[] = []
+const EMPTY_DEVICES: NonNullable<MessageListProps['devices']> = []
 const SELECTION_ACTION_GAP = 8
 const VIRTUAL_MESSAGE_OVERSCAN = 2
 const VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT = VIRTUAL_MESSAGE_OVERSCAN * 2 + 1
 const MESSAGE_LIST_GAP_PX = 16
 const MESSAGE_LIST_PADDING_TOP_PX = 32
 const MESSAGE_LIST_PADDING_BOTTOM_PX = 8
-const preserveScrollPositionOutsideVirtualizer = () => false
 
 interface MessageTextSelection {
   text: string
@@ -142,9 +159,10 @@ export const MessageList = memo(function MessageList({
   onVirtualMeasurement,
   renderVisualization,
   messages,
-  turns = [],
+  turns = EMPTY_TURNS,
   scrollElementRef,
   initialDistanceFromBottomPx = 0,
+  scrollTailHeight = 0,
   onBeforeUserMessageToggle,
   onVirtualLayoutChange,
   className,
@@ -153,7 +171,7 @@ export const MessageList = memo(function MessageList({
   disableContentVisibility = false,
   forceVirtualMessageId = null,
   searchMessageId,
-  devices = [],
+  devices = EMPTY_DEVICES,
   onRetryFailedMessage,
   onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
@@ -174,15 +192,27 @@ export const MessageList = memo(function MessageList({
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
   virtualAnchorToEnd = true,
-  bottomOrigin = false,
+  virtualAnchor = 'end',
+  virtualScrollAdjustmentEnabled = true,
+  virtualizerRef,
+  onVirtualScrollAdjustment,
   renderGapAfterMessage,
 }: MessageListProps) {
   const listRef = useRef<HTMLDivElement>(null)
-  const layoutWidthUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const previousVisibleMessageIdsRef = useRef<string[]>([])
   const [isTextSelectionActive, setIsTextSelectionActive] = useState(false)
   const [textSelection, setTextSelection] = useState<MessageTextSelection | null>(null)
-  const [layoutWidth, setLayoutWidth] = useState(0)
+  const [layout, setLayout] = useState(() => ({
+    width: 0,
+    typography: readMessageLayoutTypography(scrollElementRef?.current),
+    fontEpoch: getMessageFontMetricsRevision(),
+  }))
+  const layoutWidth = layout.width
+  const layoutKey = JSON.stringify([
+    layout.width,
+    className ?? null,
+    layout.typography,
+    layout.fontEpoch,
+  ])
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [submittingEditMessageId, setSubmittingEditMessageId] = useState<string | null>(null)
   const resolvedMessages = useMemo(() => resolveAsyncRequestUserInputAnswers(messages), [messages])
@@ -224,19 +254,47 @@ export const MessageList = memo(function MessageList({
     !resolvedMessages.some(
       message => message.role === 'assistant' && message.status === 'streaming'
     )
+  const virtualMessages = virtualize && scrollElementRef !== undefined
+  const hasVisibleContent = visibleMessages.length > 0 || shouldShowWaitingIndicator
+  // Validate the actual column before hydrating sizes or preparing the transcript.
+  const virtualLayoutReady = virtualMessages && layoutWidth > 0
+  const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
+  const measurementLayout = useMemo(
+    () => ({
+      key: layoutKey,
+      messages: new Map(
+        visibleMessages.map(message => [message.id, getMessageLayoutSignature(message)])
+      ),
+    }),
+    [layoutKey, visibleMessages]
+  )
+  const initialMeasurementsCache = useMemo(
+    () =>
+      virtualMeasurementKey === null
+        ? []
+        : (getConversationVirtualMeasurements(virtualMeasurementKey, measurementLayout) ?? []),
+    [measurementLayout, virtualMeasurementKey]
+  )
   const messageIntrinsicHeights = useMemo(() => {
+    if (!virtualLayoutReady) return new Map<string, number>()
+    const measuredSizes = new Map(initialMeasurementsCache.map(item => [item.key, item.size]))
     return new Map(
       visibleMessages.map(message => [
         message.id,
-        getMessagePretextIntrinsicHeight(message, layoutWidth),
+        measuredSizes.get(message.id) ??
+          getMessagePretextIntrinsicHeight(message, layoutWidth, layout.typography),
       ])
     )
-  }, [layoutWidth, visibleMessages])
+  }, [
+    initialMeasurementsCache,
+    layoutWidth,
+    layout.typography,
+    virtualLayoutReady,
+    visibleMessages,
+  ])
   const listLayoutClass = className
-    ? 'mx-auto flex min-w-0 flex-col gap-4 pb-2 pt-8'
-    : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-6 pb-2 pt-8'
-  const virtualMessages = virtualize && scrollElementRef !== undefined
-  const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
+    ? 'mx-auto flex min-w-0 shrink-0 flex-col gap-4 pb-2 pt-8'
+    : 'mx-auto flex w-full min-w-0 max-w-3xl shrink-0 flex-col gap-4 px-6 pb-2 pt-8'
   const forcedVirtualMessageIndex = useMemo(
     () =>
       forceVirtualMessageId === null
@@ -248,44 +306,19 @@ export const MessageList = memo(function MessageList({
     () => findLastIndex(visibleMessages, message => message.status === 'streaming'),
     [visibleMessages]
   )
-  const initialMeasurementsCache = useMemo(
-    () => getVirtualMeasurementSnapshot(virtualMeasurementKey, visibleMessages),
-    [virtualMeasurementKey, visibleMessages]
+  const getItemKey = useCallback(
+    (index: number) => visibleMessages[index]?.id ?? 'assistant-waiting',
+    [visibleMessages]
   )
-  const initialVirtualContentHeight = useMemo(() => {
-    const measuredSizes = new Map(initialMeasurementsCache.map(item => [item.key, item.size]))
-    return (
-      MESSAGE_LIST_PADDING_TOP_PX +
-      MESSAGE_LIST_PADDING_BOTTOM_PX +
-      visibleMessages.reduce((total, message, index) => {
-        const size =
-          measuredSizes.get(message.id) ?? Math.ceil(messageIntrinsicHeights.get(message.id) ?? 220)
-        const gap = index < visibleMessages.length - 1 ? MESSAGE_LIST_GAP_PX : 0
-        return total + size + gap
-      }, 0)
-    )
-  }, [initialMeasurementsCache, messageIntrinsicHeights, visibleMessages])
-  const messageVirtualizer = useBottomOriginVirtualizer({
-    bottomOrigin,
-    count: visibleMessages.length,
-    enabled: virtualMessages,
-    getItemKey: index => visibleMessages[index]?.id ?? index,
-    estimateSize: index => {
-      const message = visibleMessages[index]
-      return Math.ceil((message && messageIntrinsicHeights.get(message.id)) ?? 220)
-    },
-    measureElement: (element, entry, instance) => {
-      const measuredSize = measureVirtualElement(element, entry, instance)
-      recordVirtualMeasurement(element, measuredSize, instance)
-      return measuredSize
-    },
-    gap: MESSAGE_LIST_GAP_PX,
-    paddingStart: MESSAGE_LIST_PADDING_TOP_PX,
-    paddingEnd: MESSAGE_LIST_PADDING_BOTTOM_PX,
-    overscan: VIRTUAL_MESSAGE_OVERSCAN,
-    anchorTo: virtualAnchorToEnd ? 'end' : 'start',
-    followOnAppend: virtualAnchorToEnd ? 'auto' : false,
-    rangeExtractor: range => {
+  const estimateSize = useCallback(
+    (index: number) =>
+      index === visibleMessages.length
+        ? 32
+        : Math.ceil(messageIntrinsicHeights.get(visibleMessages[index].id) ?? 220),
+    [messageIntrinsicHeights, visibleMessages]
+  )
+  const rangeExtractor = useCallback(
+    (range: VirtualRange) => {
       const indexes =
         range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
           ? Array.from({ length: range.count }, (_, index) => index)
@@ -295,27 +328,60 @@ export const MessageList = memo(function MessageList({
       ].filter(index => index >= 0 && !indexes.includes(index))
       return [...indexes, ...forcedIndexes].sort((left, right) => left - right)
     },
+    [forcedVirtualMessageIndex, streamingVirtualMessageIndex]
+  )
+  const measureElement = useMessageRowMeasure(onVirtualMeasurement)
+  const {
+    virtualizer: messageVirtualizer,
+    tailHeight,
+    scrollMargin,
+  } = useConversationVirtualizer({
+    count: visibleMessages.length + (shouldShowWaitingIndicator ? 1 : 0),
+    enabled: virtualLayoutReady,
+    getItemKey,
+    estimateSize,
+    measureElement,
+    gap: MESSAGE_LIST_GAP_PX,
+    paddingStart: MESSAGE_LIST_PADDING_TOP_PX,
+    paddingEnd: MESSAGE_LIST_PADDING_BOTTOM_PX,
+    overscan: VIRTUAL_MESSAGE_OVERSCAN,
+    anchorTo: virtualAnchor,
+    scrollEndThreshold: virtualAnchorToEnd ? 8 : -1,
+    followOnAppend: virtualAnchorToEnd ? 'auto' : false,
+    rangeExtractor,
     initialMeasurementsCache,
-    initialContentHeightPx: initialVirtualContentHeight,
     initialDistanceFromBottomPx,
-    positionKey: conversationKey,
+    scrollTailHeight,
     scrollElementRef,
-    shouldAdjustScrollPositionOnItemSizeChange: bottomOrigin
-      ? undefined
-      : preserveScrollPositionOutsideVirtualizer,
+    listRef,
+    virtualizerRef,
+    onScrollAdjustment: onVirtualScrollAdjustment,
   })
+  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = virtualScrollAdjustmentEnabled
+    ? undefined
+    : () => false
   const virtualTotalSize = virtualMessages ? messageVirtualizer.getTotalSize() : 0
   const virtualRows = messageVirtualizer.getVirtualItems()
+  const { measureRow, measureRows } = useMessageRowMeasurements(
+    listRef,
+    messageVirtualizer,
+    virtualLayoutReady
+  )
   const markdownLayoutHandlerRef = useRef<(element: HTMLElement) => void>(() => {})
   const pendingMarkdownLayoutsRef = useRef(new Set<HTMLElement>())
   const markdownWindowingState = useMemo(
     () => ({
       conversationKey,
-      scope: createMarkdownWindowingScope(scrollElementRef, element => {
-        markdownLayoutHandlerRef.current(element)
-      }),
+      layoutKey,
+      scope: createMarkdownWindowingScope(
+        scrollElementRef,
+        element => {
+          markdownLayoutHandlerRef.current(element)
+        },
+        layout.typography.rootFontSize
+      ),
     }),
-    [conversationKey, scrollElementRef]
+    [conversationKey, scrollElementRef, layoutKey, layout.typography.rootFontSize]
   )
   markdownLayoutHandlerRef.current = element => {
     const list = listRef.current
@@ -328,16 +394,9 @@ export const MessageList = memo(function MessageList({
       onVirtualLayoutChange?.()
       return
     }
-    const row = element.closest<HTMLElement>('[data-index]')
+    const row = element.closest<HTMLElement>('[data-message-row][data-index]')
     if (!row || !list.contains(row)) return
-    const index = Number(row.dataset.index)
-    if (!Number.isInteger(index) || index < 0 || index >= visibleMessages.length) return
-    const rect = row.getBoundingClientRect()
-    if (rect.width <= 0 || rect.height <= 0) return
-    // Match TanStack's ResizeObserver rounding so fractional rows cannot oscillate by one pixel.
-    const measuredSize = Math.round(rect.height)
-    recordVirtualMeasurement(row, measuredSize, messageVirtualizer)
-    messageVirtualizer.resizeItem(index, measuredSize)
+    measureRow(row)
   }
 
   useEffect(() => {
@@ -362,6 +421,7 @@ export const MessageList = memo(function MessageList({
   }, [markdownWindowingState])
 
   useLayoutEffect(() => {
+    if (virtualMessages && !virtualLayoutReady) return
     // Child layout effects run before the list's host ref is attached on first mount.
     const pendingChunks = [...pendingMarkdownLayoutsRef.current]
     pendingMarkdownLayoutsRef.current.clear()
@@ -390,119 +450,113 @@ export const MessageList = memo(function MessageList({
     onVirtualLayoutChange,
     scrollElementRef,
     virtualMessages,
+    virtualLayoutReady,
     virtualRows,
     virtualTotalSize,
   ])
 
+  const snapshotRef = useRef<{
+    layout: typeof measurementLayout
+  } | null>(null)
+  const uncacheableMessageIdsRef = useRef(new Set<string>())
   useLayoutEffect(() => {
-    const previousIds = previousVisibleMessageIdsRef.current
-    const nextIds = visibleMessages.map(message => message.id)
-    previousVisibleMessageIdsRef.current = nextIds
-    if (!virtualMessages || previousIds.length === 0) return
-
-    const firstDifferentIndex = nextIds.findIndex((id, index) => previousIds[index] !== id)
-    if (firstDifferentIndex < 0 && previousIds.length === nextIds.length) return
-    const changedIndex =
-      firstDifferentIndex >= 0 ? firstDifferentIndex : Math.min(previousIds.length, nextIds.length)
-
-    const virtualItemsByIndex = new Map(
-      messageVirtualizer.getVirtualItems().map(item => [item.index, item])
-    )
-    listRef.current?.querySelectorAll<HTMLElement>('[data-index]').forEach(row => {
-      const index = Number(row.dataset.index)
-      if (!Number.isInteger(index) || index < changedIndex) return
-
-      const virtualItem = virtualItemsByIndex.get(index)
-      if (!virtualItem) return
-      const measuredSize = Math.round(row.getBoundingClientRect().height)
-      if (virtualItem.size !== measuredSize) {
-        messageVirtualizer.resizeItem(index, measuredSize)
-      }
-    })
-  }, [messageVirtualizer, virtualMessages, visibleMessages])
-
-  useLayoutEffect(() => {
-    if (
-      !virtualMessages ||
-      streamingVirtualMessageIndex < 0 ||
-      streamingVirtualMessageIndex === visibleMessages.length - 1
-    ) {
-      return
-    }
-    const row = listRef.current?.querySelector<HTMLElement>(
-      `[data-index="${streamingVirtualMessageIndex}"]`
-    )
-    if (!row) return
-
-    const virtualItem = messageVirtualizer
-      .getVirtualItems()
-      .find(item => item.index === streamingVirtualMessageIndex)
-    const previousSize = virtualItem?.size
-    const previousTotalSize = messageVirtualizer.getTotalSize()
-    const measuredSize = Math.round(row.getBoundingClientRect().height)
-    messageVirtualizer.resizeItem(streamingVirtualMessageIndex, measuredSize)
-
-    if (previousSize !== measuredSize) {
-      onVirtualMeasurement?.({
-        messageId: visibleMessages[streamingVirtualMessageIndex]?.id ?? null,
-        previousSize: previousSize ?? null,
-        measuredSize,
-        previousTotalSize,
-        nextTotalSize: messageVirtualizer.getTotalSize(),
+    if (!virtualLayoutReady) return
+    listRef.current
+      ?.querySelectorAll<HTMLElement>('[data-message-row][data-index]')
+      .forEach(row => {
+        const id = row.querySelector<HTMLElement>('[data-message-id]')?.dataset.messageId
+        if (!id) return
+        if (
+          row.querySelector('[aria-expanded="true"], [data-testid="user-message-editor"]') ||
+          id === searchMessageId
+        )
+          uncacheableMessageIdsRef.current.add(id)
+        else uncacheableMessageIdsRef.current.delete(id)
       })
-    }
-  }, [
-    messageVirtualizer,
-    streamingVirtualMessageIndex,
-    virtualMessages,
-    visibleMessages,
-    onVirtualMeasurement,
-  ])
-
+    snapshotRef.current = { layout: measurementLayout }
+  })
   useEffect(
     () => () => {
-      if (!virtualMessages || virtualMeasurementKey === null) return
-      cacheConversationVirtualMeasurements(virtualMeasurementKey, messageVirtualizer.takeSnapshot())
+      const snapshot = snapshotRef.current
+      if (
+        virtualMessages &&
+        messageVirtualizer.options.enabled &&
+        virtualMeasurementKey !== null &&
+        snapshot
+      )
+        cacheConversationVirtualMeasurements(
+          virtualMeasurementKey,
+          messageVirtualizer
+            .takeSnapshot()
+            .filter(item => !uncacheableMessageIdsRef.current.has(String(item.key))),
+          snapshot.layout
+        )
     },
     [messageVirtualizer, virtualMeasurementKey, virtualMessages]
   )
 
   useLayoutEffect(() => {
-    if (!virtualMessages) return
     const element = listRef.current
-    if (!element) return
-
-    const updateLayoutWidth = () => {
-      setLayoutWidth(currentWidth => {
-        const nextWidth = element.clientWidth
-        return nextWidth === currentWidth ? currentWidth : nextWidth
+    if (!element || !virtualMessages) return
+    let active = true
+    const update = (fontLoaded = false) => {
+      const style = getComputedStyle(element)
+      const width = Math.max(
+        0,
+        Math.round(
+          element.clientWidth -
+            (Number.parseFloat(style.paddingLeft) || 0) -
+            (Number.parseFloat(style.paddingRight) || 0)
+        )
+      )
+      const typography = readMessageLayoutTypography(element)
+      setLayout(previous => {
+        if (
+          !fontLoaded &&
+          previous.width === width &&
+          JSON.stringify(previous.typography) === JSON.stringify(typography)
+        )
+          return previous
+        return {
+          width,
+          typography,
+          fontEpoch: getMessageFontMetricsRevision(),
+        }
       })
     }
-
-    const scheduleLayoutWidthUpdate = () => {
-      if (layoutWidthUpdateTimerRef.current !== null) {
-        clearTimeout(layoutWidthUpdateTimerRef.current)
-      }
-
-      layoutWidthUpdateTimerRef.current = setTimeout(() => {
-        layoutWidthUpdateTimerRef.current = null
-        updateLayoutWidth()
-      }, MESSAGE_LAYOUT_RESIZE_SETTLE_MS)
+    update()
+    const observer = new ResizeObserver(() => update())
+    observer.observe(element)
+    const mutation = new MutationObserver(() => update())
+    mutation.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['style', 'class'],
+    })
+    const fontsLoaded = () => {
+      if (active) update(true)
     }
-
-    updateLayoutWidth()
-    if (typeof ResizeObserver === 'undefined') return
-
-    const resizeObserver = new ResizeObserver(scheduleLayoutWidthUpdate)
-    resizeObserver.observe(element)
+    document.fonts?.addEventListener('loadingdone', fontsLoaded)
     return () => {
-      resizeObserver.disconnect()
-      if (layoutWidthUpdateTimerRef.current !== null) {
-        clearTimeout(layoutWidthUpdateTimerRef.current)
-        layoutWidthUpdateTimerRef.current = null
-      }
+      active = false
+      observer.disconnect()
+      mutation.disconnect()
+      document.fonts?.removeEventListener('loadingdone', fontsLoaded)
     }
-  }, [virtualMessages])
+  }, [hasVisibleContent, scrollElementRef, virtualMessages])
+
+  const previousLayoutKeyRef = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    if (!virtualLayoutReady || previousLayoutKeyRef.current === layoutKey) return
+    const previousKey = previousLayoutKeyRef.current
+    previousLayoutKeyRef.current = layoutKey
+    if (previousKey === null) return
+    messageVirtualizer.measure()
+    measureRows(
+      Array.from(
+        listRef.current?.querySelectorAll<HTMLElement>('[data-message-row][data-index]') ?? []
+      )
+    )
+  }, [layoutKey, measureRows, messageVirtualizer, virtualLayoutReady])
 
   useEffect(() => {
     if (!useContentVisibility && (!onAddSelectionToConversation || !onAskSelectionInSidebar)) return
@@ -630,8 +684,7 @@ export const MessageList = memo(function MessageList({
       style={
         virtualMessages
           ? {
-              height:
-                virtualTotalSize + (shouldShowWaitingIndicator ? MESSAGE_LIST_GAP_PX + 32 : 0),
+              height: Math.max(0, virtualTotalSize - tailHeight),
             }
           : undefined
       }
@@ -647,13 +700,13 @@ export const MessageList = memo(function MessageList({
         ? virtualRows.map(virtualRow => ({
             index: virtualRow.index,
             key: virtualRow.key,
-            measureRef: messageVirtualizer.measureElement,
+            measureRef: undefined,
             style: {
               position: 'absolute',
               left: 0,
               top: 0,
               width: '100%',
-              transform: `translateY(${virtualRow.start}px)`,
+              transform: `translateY(${virtualRow.start - scrollMargin}px)`,
             } satisfies CSSProperties,
           }))
         : visibleMessages.map((_, index) => ({
@@ -665,6 +718,19 @@ export const MessageList = memo(function MessageList({
       ).map(row => {
         const { index } = row
         const message = visibleMessages[index]
+        if (!message)
+          return (
+            <article
+              key={row.key}
+              data-index={index}
+              data-message-row
+              style={row.style}
+              className="min-w-0"
+              data-testid="message-assistant-waiting"
+            >
+              <AssistantThinkingIndicator />
+            </article>
+          )
         const nextMessage = visibleMessages[index + 1]
         const article = (
           <article
@@ -680,64 +746,43 @@ export const MessageList = memo(function MessageList({
             data-message-id={message.id}
             data-testid={`message-${message.role}`}
           >
-            {message.role === 'user' ? (
-              <UserMessage
-                services={userMessageServices}
-                message={message}
-                forceExpanded={searchMessageId === message.id}
-                replyQuestions={replyQuestionsByMessageId.get(message.id)}
-                onBeforeToggle={onBeforeUserMessageToggle}
-                onOpenWorkspaceFile={onOpenWorkspaceFile}
-                onOpenLocalSkillFile={onOpenLocalSkillFile}
-                editable={message.id === editableLastUserMessageId}
-                editing={message.id === activeEditingMessageId}
-                editSubmitting={message.id === activeSubmittingEditMessageId}
-                onStartEdit={() => setEditingMessageId(message.id)}
-                onCancelEdit={() => setEditingMessageId(null)}
-                onSubmitEdit={async content => {
-                  if (!onEditLastUserMessage) return false
-                  setSubmittingEditMessageId(message.id)
-                  try {
-                    const result = await onEditLastUserMessage(message, content)
-                    if (result !== false) {
-                      setEditingMessageId(null)
-                    }
-                    return result
-                  } finally {
-                    setSubmittingEditMessageId(current => (current === message.id ? null : current))
-                  }
-                }}
-              />
-            ) : (
-              <AssistantMessage
-                forceExpanded={searchMessageId === message.id}
-                imageServices={userMessageServices.images}
-                renderVisualization={renderVisualization}
-                message={message}
-                runtimeTurn={
-                  message.turnId && lastAssistantMessageIdByTurn.get(message.turnId) === message.id
-                    ? runtimeTurnsById.get(message.turnId)
-                    : undefined
-                }
-                conversationKey={conversationKey}
-                isActiveTurn={isWaitingForAssistant && index === visibleMessages.length - 1}
-                devices={devices}
-                onRetryFailedMessage={onRetryFailedMessage}
-                onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
-                onLoadFileChangesDiff={onLoadFileChangesDiff}
-                onRevertFileChanges={onRevertFileChanges}
-                onOpenFileChangesReview={onOpenFileChangesReview}
-                fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
-                onOpenWorkspaceFile={onOpenWorkspaceFile}
-                onRequestUserInputSubmit={onRequestUserInputSubmit}
-                onRequestUserInputIgnore={onRequestUserInputIgnore}
-                onOpenAssistantPlan={onOpenAssistantPlan}
-                onOpenSubagent={onOpenSubagent}
-                hideRequestUserInputBlocks={hideRequestUserInputBlocks}
-                hiddenRequestUserInputIds={hiddenRequestUserInputIds}
-                onFork={onForkMessage && message.turnId ? () => onForkMessage(message) : undefined}
-              />
-            )}
+            <MessageListMessage
+              message={message}
+              runtimeTurn={
+                message.turnId && lastAssistantMessageIdByTurn.get(message.turnId) === message.id
+                  ? runtimeTurnsById.get(message.turnId)
+                  : undefined
+              }
+              forceExpanded={searchMessageId === message.id}
+              isActiveTurn={isWaitingForAssistant && index === visibleMessages.length - 1}
+              userMessageServices={userMessageServices}
+              renderVisualization={renderVisualization}
+              conversationKey={conversationKey}
+              devices={devices}
+              replyQuestions={replyQuestionsByMessageId.get(message.id)}
+              editable={message.id === editableLastUserMessageId}
+              editing={message.id === activeEditingMessageId}
+              editSubmitting={message.id === activeSubmittingEditMessageId}
+              setEditingMessageId={setEditingMessageId}
+              setSubmittingEditMessageId={setSubmittingEditMessageId}
+              onBeforeUserMessageToggle={onBeforeUserMessageToggle}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
+              onOpenLocalSkillFile={onOpenLocalSkillFile}
+              onEditLastUserMessage={onEditLastUserMessage}
+              onRetryFailedMessage={onRetryFailedMessage}
+              onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
+              onLoadFileChangesDiff={onLoadFileChangesDiff}
+              onRevertFileChanges={onRevertFileChanges}
+              onOpenFileChangesReview={onOpenFileChangesReview}
+              fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
+              onRequestUserInputSubmit={onRequestUserInputSubmit}
+              onRequestUserInputIgnore={onRequestUserInputIgnore}
+              onOpenAssistantPlan={onOpenAssistantPlan}
+              onOpenSubagent={onOpenSubagent}
+              hideRequestUserInputBlocks={hideRequestUserInputBlocks}
+              hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+              onForkMessage={onForkMessage}
+            />
           </article>
         )
         const searchableArticle = (
@@ -747,7 +792,13 @@ export const MessageList = memo(function MessageList({
         )
         const gap = renderGapAfterMessage?.(message, nextMessage)
         return virtualMessages ? (
-          <div key={row.key} ref={row.measureRef} data-index={index} style={row.style}>
+          <div
+            key={row.key}
+            ref={row.measureRef}
+            data-index={index}
+            data-message-row
+            style={row.style}
+          >
             {searchableArticle}
             {gap}
           </div>
@@ -758,21 +809,8 @@ export const MessageList = memo(function MessageList({
           </Fragment>
         )
       })}
-      {shouldShowWaitingIndicator && (
-        <article
-          className="min-w-0"
-          data-testid="message-assistant-waiting"
-          style={
-            virtualMessages
-              ? {
-                  position: 'absolute',
-                  left: 0,
-                  top: messageVirtualizer.getTotalSize() + MESSAGE_LIST_GAP_PX,
-                  width: '100%',
-                }
-              : undefined
-          }
-        >
+      {!virtualMessages && shouldShowWaitingIndicator && (
+        <article className="min-w-0" data-testid="message-assistant-waiting">
           <AssistantThinkingIndicator />
         </article>
       )}
@@ -783,46 +821,7 @@ export const MessageList = memo(function MessageList({
       {content}
     </MarkdownWindowingContext.Provider>
   )
-}, areMessageListPropsEqual)
-
-function recordVirtualMeasurement<TScrollElement extends HTMLElement, TItemElement extends Element>(
-  element: TItemElement,
-  measuredSize: number,
-  instance: Virtualizer<TScrollElement, TItemElement>
-) {
-  if (!isConversationDiagnosticsEnabled()) return
-  const index = instance.indexFromElement(element)
-  const key = instance.options.getItemKey(index)
-  const item = instance.measurementsCache[index]
-  const estimatedSize = instance.options.estimateSize(index)
-  const previousSize = instance.itemSizeCache.get(key) ?? item?.size ?? estimatedSize
-  recordConversationDiagnostic('virtual-measurement', {
-    ...getConversationDiagnosticContext(element),
-    rowIndex: index,
-    previousSize,
-    measuredSize,
-    sizeDelta: measuredSize - previousSize,
-    estimatedSize,
-    totalSize: instance.getTotalSize(),
-    rowStart: item?.start,
-    rowEnd: item?.end,
-    scrolling: instance.isScrolling,
-  })
-}
-
-function getVirtualMeasurementSnapshot(
-  key: string | null,
-  messages: WorkbenchMessage[]
-): VirtualItem[] {
-  if (key === null) return []
-  const snapshot = getConversationVirtualMeasurements(key)
-  if (!snapshot) return []
-
-  const messageIds = new Set(messages.map(message => message.id))
-  if (snapshot.some(item => typeof item.key === 'string' && !messageIds.has(item.key))) return []
-
-  return snapshot
-}
+})
 
 function selectableMessageBodiesForRange(root: HTMLElement, range: Range): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>('[data-message-selectable-text]')).filter(

@@ -9,11 +9,11 @@
 //! a user-session JWT from the `Authorization: Bearer` header, resolves the
 //! `users` row by `user_name`, and rejects missing, invalid, or inactive
 //! users with `401 {"detail": ...}` and `WWW-Authenticate: Bearer`.
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
-use serde::Deserialize;
 
 use super::auth_error::AuthError;
-use crate::auth::{AppAuthenticator, SessionClaims};
+use crate::auth::AppAuthenticator;
+#[cfg(test)]
+use crate::auth::SessionClaims;
 use crate::config::AuthConfig;
 
 /// `users` row used by authentication and team serialization. The full
@@ -117,53 +117,6 @@ impl brz_http_server::Authenticator<TeamsUser> for AppAuthenticator {
     }
 }
 
-/// Decode keys derived from the active key and legacy decode-only keys.
-fn decoding_keys(config: &AuthConfig) -> Vec<Vec<u8>> {
-    let mut keys = vec![config.jwt_key.as_bytes().to_vec()];
-    for key in &config.legacy_jwt_keys {
-        if !keys.iter().any(|existing| existing == key.as_bytes()) {
-            keys.push(key.as_bytes().to_vec());
-        }
-    }
-    keys
-}
-
-/// Algorithm from settings (`HS256`).
-fn algorithm(config: &AuthConfig) -> Algorithm {
-    match config.algorithm.as_str() {
-        "HS384" => Algorithm::HS384,
-        "HS512" => Algorithm::HS512,
-        _ => Algorithm::HS256,
-    }
-}
-
-fn decode_with_keys<T: for<'de> Deserialize<'de>>(config: &AuthConfig, token: &str) -> Option<T> {
-    let mut validation = Validation::new(algorithm(config));
-    // No audience is required by the source decoders.
-    validation.validate_aud = false;
-    decoding_keys(config)
-        .into_iter()
-        .find_map(|key_bytes| {
-            let key = DecodingKey::from_secret(&key_bytes);
-            decode::<T>(token, &key, &validation).ok()
-        })
-        .map(|token| token.claims)
-}
-
-/// `extract_authorization_token`: `Bearer ` credential or the plain value.
-pub fn extract_authorization_token(authorization: Option<&str>) -> String {
-    let Some(header) = authorization else {
-        return String::new();
-    };
-    if let Some(token) = header.strip_prefix("Bearer ") {
-        return token.trim().to_string();
-    }
-    if let Some(token) = header.strip_prefix("bearer ") {
-        return token.trim().to_string();
-    }
-    header.trim().to_string()
-}
-
 /// `verify_token` + user lookup (`get_current_user`).
 pub async fn get_current_user<M, H>(
     config: &AuthConfig,
@@ -174,12 +127,9 @@ where
     M: brz_mysql::Mysql,
     H: crate::headers::Headers,
 {
-    let token = extract_authorization_token(headers.header("authorization"));
-    if token.is_empty() {
-        return Err(AuthError::not_authenticated());
-    }
-
-    let claims = match decode_with_keys::<SessionClaims>(config, &token) {
+    let token = crate::auth::bearer_credential(headers.header("authorization"))
+        .ok_or_else(AuthError::not_authenticated)?;
+    let claims = match crate::auth::decode_session_claims(config, token) {
         Some(claims) if claims.is_user_session_payload() => claims,
         _ => return Err(AuthError::could_not_validate_credentials()),
     };
@@ -217,18 +167,39 @@ where
 mod tests {
     use super::*;
 
-    #[test]
-    fn extracts_bearer_and_plain_tokens() {
-        assert_eq!(extract_authorization_token(Some("Bearer tok")), "tok");
-        assert_eq!(extract_authorization_token(Some("tok")), "tok");
-        assert_eq!(extract_authorization_token(None), "");
+    #[tokio::test]
+    async fn oauth2_scheme_controls_user_lookup() {
+        let config = crate::config::AuthConfig {
+            jwt_key: "test-key".to_string(),
+            legacy_jwt_keys: Vec::new(),
+            algorithm: "HS256".to_string(),
+        };
+        let token = crate::jwt_compat::tests::sign(&serde_json::json!({"sub":"u"}), b"test-key");
+        for (authorization, queries) in [
+            (Some(token.clone()), 0),
+            (Some(format!("bEaReR {token}")), 1),
+            (Some(format!("Bearer {token}")), 1),
+            (None, 0),
+        ] {
+            let mysql = crate::sql_test_support::KindQueryCapture::default();
+            let headers = crate::headers::OwnedHeaders::from_pairs([(
+                "authorization",
+                authorization.as_deref(),
+            )]);
+            assert!(
+                get_current_user(&config, &mysql, &headers.view())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(mysql.queries().len(), queries);
+        }
     }
 
     #[test]
     fn session_payload_filter() {
         let claims = |scope: Option<serde_json::Value>, token_use: Option<&str>| SessionClaims {
             sub: Some("ziping6".to_string()),
-            scope: scope.map(|_| serde::de::IgnoredAny),
+            scope,
             token_use: token_use.map(str::to_string),
             exp: None,
         };

@@ -589,6 +589,7 @@ class LoopItemService:
             db.query(CloudProject)
             .filter(CloudProject.id == cloud_project_id)
             .with_for_update()
+            .populate_existing()
             .one()
         )
         sequence = project.next_item_number
@@ -850,6 +851,7 @@ class LoopItemService:
                 assigned_by_user_id=user_id,
                 workflow_step=None,
                 notify=values.notify_assignee,
+                initial_assignment=True,
                 trigger=(
                     "default"
                     if payload.get("assignee_user_id") == user_id

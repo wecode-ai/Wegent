@@ -5,20 +5,14 @@ import {
 } from './conversationDiagnostics'
 
 // Numeric sources keep exported diagnostics free of application strings and identify each owner.
-// 1: virtualizer offset adapter; 2: initial virtualizer position; 3: shared bottom-distance writer;
-// 4: shared content-position writer; 5: controller jump to bottom (top-origin);
-// 6/7: streaming settle scrollTo/scrollTop; 8/9: streaming step scrollTo/scrollTop;
+// 1: virtualizer; 3: shared bottom-distance writer;
+// 4: shared content-position writer; 5: controller bottom follow;
 // 10: workbench scrollbar pointer; 11: workbench scrollbar keyboard.
 export const CONVERSATION_SCROLL_WRITE_SOURCE = {
   virtualizerOffset: 1,
-  virtualizerInitialPosition: 2,
   distanceFromBottom: 3,
   contentPosition: 4,
   controllerBottom: 5,
-  streamingSettleScrollTo: 6,
-  streamingSettleScrollTop: 7,
-  streamingStepScrollTo: 8,
-  streamingStepScrollTop: 9,
   scrollbarPointer: 10,
   scrollbarKeyboard: 11,
 } as const

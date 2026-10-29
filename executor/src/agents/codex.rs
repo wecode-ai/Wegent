@@ -4447,33 +4447,41 @@ fn codex_image_generation_enabled(model_config: &Value) -> Option<bool> {
 }
 
 fn codex_model_context_window(model_config: &Value) -> Option<i64> {
-    model_config
-        .get("model_context_window")
-        .or_else(|| model_config.get("context_window"))
-        .or_else(|| model_config.get("contextWindow"))
-        .and_then(value_i64)
-        .filter(|value| *value > 0)
+    ["model_context_window", "context_window", "contextWindow"]
+        .iter()
+        .filter_map(|key| model_config.get(key))
+        .find_map(|value| value_i64(value).filter(|value| *value > 0))
+        .or_else(|| {
+            let catalog_model_id = non_empty_config(model_config, "codex_catalog_model_id")
+                .or_else(|| non_empty_config(model_config, "codexCatalogModelId"))?;
+            codex_model_catalog::model_context_window(&catalog_model_id)
+        })
 }
 
 fn codex_model_max_output_tokens(model_config: &Value) -> Option<i64> {
-    model_config
-        .get("max_output_tokens")
-        .or_else(|| model_config.get("maxOutputTokens"))
-        .and_then(value_i64)
-        .filter(|value| *value > 0)
+    local_model_proxy::model_max_output_tokens(model_config)
+        .and_then(|value| i64::try_from(value).ok())
 }
+
+/// Percentage of the usable input budget at which Codex must compact.
+///
+/// The remaining 20% leaves room for the next request's system/tool overhead so a
+/// conversation does not grow all the way to the upstream context-length limit.
+const CODEX_AUTO_COMPACT_PERCENT: i64 = 80;
 
 /// Token threshold at which Codex must compact before the upstream rejects the turn.
 ///
 /// Upstream providers count the completion budget against the same window as the input,
 /// and the configured output ceiling travels with every request, so the usable input
-/// budget is `context_window - max_output_tokens`. Without this override Codex derives its
-/// auto-compaction threshold from the raw context window (90%, and 95% as a hard cap),
-/// which stays far above the input budget and lets conversations grow until the upstream
-/// fails the turn with a context-length error.
+/// budget is `context_window - max_output_tokens`. Compacting at 80% of that budget keeps
+/// the threshold below the upstream limit while avoiding the raw-window behavior (90% of
+/// the full window, 95% as a hard cap) that grows past the usable input budget.
 fn codex_auto_compact_token_limit(model_config: &Value, context_window: i64) -> Option<i64> {
     let max_output_tokens = codex_model_max_output_tokens(model_config)?;
-    (max_output_tokens < context_window).then(|| context_window - max_output_tokens)
+    (max_output_tokens < context_window).then(|| {
+        let input_budget = context_window - max_output_tokens;
+        (i128::from(input_budget) * i128::from(CODEX_AUTO_COMPACT_PERCENT) / 100) as i64
+    })
 }
 
 fn configured_codex_provider(

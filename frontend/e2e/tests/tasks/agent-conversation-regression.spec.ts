@@ -1010,6 +1010,60 @@ test.describe('Agent conversation regression', () => {
     }
   })
 
+  test('preserves a draft until the explicitly requested agent is ready', async ({
+    page,
+    request,
+  }) => {
+    const prompt = `AGENT_READINESS_${makeContextToken('agent_readiness')}`
+    const reply = `AGENT_READINESS_OK_${makeContextToken('agent_readiness_reply')}`
+    await configureStreamRule(request, prompt, reply)
+
+    const isRequestedTeam = (url: URL) => url.pathname === `/api/teams/${claudeChatTeam.id}`
+    let release!: () => void
+    let requested = false
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const holdTeam = async (route: Route) => {
+      requested = true
+      await gate
+      // Delay transport only; the real Backend resolves the requested agent.
+      await route.continue()
+    }
+    await page.route(isRequestedTeam, holdTeam)
+
+    try {
+      await openTaskPage(page, '/chat', claudeChatTeam.id, 'chat')
+      await expect.poll(() => requested, { timeout: 10_000 }).toBe(true)
+      const input = page.getByTestId('message-input')
+      await input.fill(prompt)
+      await expect(page.getByTestId('send-button')).toBeDisabled()
+      await input.press('Enter')
+      await expect(input).toContainText(prompt)
+      expect(new URL(page.url()).searchParams.get('taskId')).toBeNull()
+
+      const response = page.waitForResponse(response => isRequestedTeam(new URL(response.url())))
+      release()
+      expect((await response).status()).toBe(200)
+      await sendMessage(page, prompt)
+      const taskId = await waitForTaskId(page)
+      createdTaskIds.add(taskId)
+      await expect(page.getByTestId('messages-container')).toContainText(reply, {
+        timeout: RESPONSE_TIMEOUT_MS,
+      })
+      await waitForBackendTerminal(request, taskId)
+      const taskResponse = await request.get(`${API_BASE_URL}/api/tasks/${taskId}`, {
+        headers: authHeaders(),
+      })
+      expect(taskResponse.status()).toBe(200)
+      const task = (await taskResponse.json()) as { team: { id: number } }
+      expect(task.team.id).toBe(claudeChatTeam.id)
+    } finally {
+      release()
+      await page.unroute(isRequestedTeam, holdTeam)
+    }
+  })
+
   test('manual pipeline next step sends handoff user message and next bot prompt to the second model', async ({
     page,
     request,

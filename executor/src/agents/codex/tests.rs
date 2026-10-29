@@ -2476,7 +2476,110 @@ fn codex_launch_config_reserves_the_output_budget_from_the_auto_compact_limit() 
     assert_eq!(config.get("model_context_window"), Some(&json!(1_000_000)));
     assert_eq!(
         config.get("model_auto_compact_token_limit"),
-        Some(&json!(616_000))
+        Some(&json!(492_800))
+    );
+}
+
+#[test]
+fn codex_launch_config_keeps_the_model_budget_over_a_compatibility_catalog() {
+    let _environment = environment::LaunchEnvironment::new();
+    let request = ExecutionRequest {
+        prompt: Value::String("review the current branch".to_owned()),
+        model_config: json!({
+            "model_id": "moonshot-kimi-k3.1-pro",
+            "codex_catalog_model_id": "wework-gpt-6.1-sol",
+            "codex_responses_compat_proxy": true,
+            "model_context_window": 1_048_576,
+            "max_output_tokens": 96_000,
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params
+        .get("config")
+        .and_then(Value::as_object)
+        .expect("thread config should be present");
+
+    assert_eq!(
+        codex_request_model(&request).as_deref(),
+        Some("wework-gpt-6.1-sol")
+    );
+    assert_eq!(config.get("model_context_window"), Some(&json!(1_048_576)));
+    let requested_limit = config
+        .get("model_auto_compact_token_limit")
+        .and_then(Value::as_i64)
+        .expect("auto-compact limit should be present");
+    assert_eq!(requested_limit, 762_060);
+    assert_eq!(requested_limit, (1_048_576 - 96_000) * 80 / 100);
+}
+
+#[test]
+fn auto_compact_limit_reserves_the_proxy_default_output_budget() {
+    for protocol in [
+        "openai-chat-completions",
+        "chat/completions",
+        "anthropic-messages",
+        "messages",
+    ] {
+        let model_config = json!({"upstream_api_format": protocol});
+        assert_eq!(codex_model_max_output_tokens(&model_config), Some(96_000));
+        assert_eq!(
+            codex_auto_compact_token_limit(&model_config, 1_048_576),
+            Some(762_060),
+            "unexpected budget for {protocol}"
+        );
+        assert_eq!(
+            codex_auto_compact_token_limit(
+                &json!({"upstream_api_format": protocol, "max_output_tokens": 8_000}),
+                1_000_000,
+            ),
+            Some(793_600)
+        );
+    }
+}
+
+#[test]
+fn auto_compact_limit_uses_catalog_context_when_no_override_was_saved() {
+    let _environment = environment::LaunchEnvironment::new();
+    let overrides = codex_model_config_overrides(&json!({
+        "codex_catalog_model_id": "wework-kimi-k3",
+        "upstream_api_format": "openai-chat-completions",
+    }));
+    assert!(overrides.contains(&"model_context_window=1048576".to_owned()));
+    assert!(overrides.contains(&"model_auto_compact_token_limit=762060".to_owned()));
+}
+
+#[test]
+fn auto_compact_limit_validates_aliases_and_handles_large_windows() {
+    let config = json!({
+        "model_context_window": 0,
+        "contextWindow": "1000000",
+        "max_output_tokens": false,
+        "maxOutputTokens": "32000",
+    });
+    assert_eq!(codex_model_context_window(&config), Some(1_000_000));
+    assert_eq!(
+        codex_auto_compact_token_limit(&config, 1_000_000),
+        Some(774_400)
+    );
+    assert_eq!(
+        codex_auto_compact_token_limit(&json!({"max_output_tokens": 1}), i64::MAX),
+        Some(((i128::from(i64::MAX) - 1) * 80 / 100) as i64)
+    );
+}
+
+#[test]
+fn auto_compact_limit_uses_80_percent_of_the_input_budget() {
+    assert_eq!(
+        codex_auto_compact_token_limit(&json!({"max_output_tokens": 128_000}), 1_000_000),
+        Some(697_600)
+    );
+    assert_eq!(
+        codex_auto_compact_token_limit(&json!({"max_output_tokens": 128_000}), 400_000),
+        Some(217_600)
     );
 }
 
@@ -2484,14 +2587,14 @@ fn codex_launch_config_reserves_the_output_budget_from_the_auto_compact_limit() 
 fn auto_compact_limit_requires_a_usable_output_budget() {
     let cases = [
         // The configured output ceiling leaves an input budget.
-        (json!({"max_output_tokens": 384_000}), Some(616_000)),
+        (json!({"max_output_tokens": 384_000}), Some(492_800)),
         // An output budget that consumes the whole window leaves nothing to compact for.
         (json!({"max_output_tokens": 1_000_000}), None),
         (json!({"max_output_tokens": 1_200_000}), None),
         // Without a configured output ceiling the provider keeps its own default.
         (json!({}), None),
         (json!({"max_output_tokens": 0}), None),
-        (json!({"maxOutputTokens": "384000"}), Some(616_000)),
+        (json!({"maxOutputTokens": "384000"}), Some(492_800)),
     ];
 
     for (model_config, expected) in cases {
@@ -4647,6 +4750,7 @@ fn codex_model_provider_validation_accepts_requested_provider() {
 
 #[test]
 fn turn_input_matches_shared_prompt_reference_cases() {
+    let _lock = crate::test_env::lock();
     let cases: Vec<Value> = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../packages/chat-core/test-fixtures/prompt-mentions.json"

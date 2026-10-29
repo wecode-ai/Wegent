@@ -3,6 +3,7 @@ import { MCP_APP_SCHEME } from './host/mcp-app-documents.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
+import { traceShutdownStep } from './runtime/shutdown-diagnostics.js'
 import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
 
 import {
@@ -94,7 +95,7 @@ import {
 } from './host/startup-splash.js'
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
 import { clearStartupRuntimeFiles, clearStartupUserFiles } from './host/startup-recovery-files.js'
-import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
+import { activateTrayAction, ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon, trayIconFilename } from './host/tray-icon.js'
 import { trayGuidForApplicationId } from './host/tray-guid.js'
 import { openApplicationLogDirectory } from './host/application-log-directory.js'
@@ -137,6 +138,10 @@ import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-star
 import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
+import {
+  applyWorkbenchBackgroundPolicy,
+  workbenchBackgroundThrottling,
+} from './host/window-background-policy.js'
 import { redactLog } from './runtime/rotating-log.js'
 import { GlobalShortcutController } from './host/global-shortcut-controller.js'
 import {
@@ -173,6 +178,7 @@ protocol.registerSchemesAsPrivileged([
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
 ])
+applyWorkbenchBackgroundPolicy(process.platform, app.commandLine)
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -650,7 +656,7 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       delete params.partition
       webPreferences.session = contents.session
       webPreferences.preload = isolatedSurfacePreloadPath
-      webPreferences.backgroundThrottling = false
+      webPreferences.backgroundThrottling = workbenchBackgroundThrottling(process.platform)
     } else {
       params.partition = EMBEDDED_BROWSER_PARTITION
       webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
@@ -967,7 +973,7 @@ async function openWorkspaceWindow(input: {
     backgroundColor: '#181818',
     show: false,
     webPreferences: {
-      backgroundThrottling: false,
+      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -1066,7 +1072,7 @@ async function createAuxiliaryWindow(
     type: isSystemDrag && process.platform === 'darwin' ? 'panel' : undefined,
     backgroundColor: '#00000000',
     webPreferences: {
-      backgroundThrottling: false,
+      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -1167,7 +1173,7 @@ async function openProcessExplorerWindow(): Promise<void> {
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#181818' : '#fafafa',
     show: false,
     webPreferences: {
-      backgroundThrottling: false,
+      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -1299,7 +1305,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
     backgroundColor: startupTheme === 'dark' ? '#181818' : '#fafafa',
     show: false,
     webPreferences: {
-      backgroundThrottling: false,
+      backgroundThrottling: workbenchBackgroundThrottling(process.platform),
       preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
@@ -1465,8 +1471,31 @@ async function cancelMainWindowClose(): Promise<void> {
   if (decision) await applyWindowCloseDecision(decision)
 }
 
+const rendererStartupReady = createStartupReadyHandler(async (source: string) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  logStartupStep('renderer-startup-ready', 'completed', { source })
+  startupTelemetrySuccess.markRendererReady()
+  await holdStartupSplashForDesktopE2e()
+  // A quit request during startup owns the exit: never present the
+  // workbench while shutdown is already tearing the app down.
+  if (quitting || !mainWindow || mainWindow.isDestroyed()) return
+  if (!keepE2EWindowInBackground) mainWindow.show()
+  logStartupStep('main-window-show', 'completed')
+  await startupSplash?.close({
+    capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
+  })
+  logStartupStep('startup-splash-close', 'completed')
+  if (!keepE2EWindowInBackground) {
+    mainWindow.focus()
+    mainWindow.webContents.focus()
+  }
+  scheduleComputerUseStartup()
+})
+
 async function reactivateMainWindow(): Promise<void> {
-  if (focusStartupSplashIfActive()) return
+  focusStartupSplashIfActive()
+  await rendererStartupReady.whenReady
+  if (quitting) return
   const target = mainWindow
   if (!target || target.isDestroyed()) return
   if (keepE2EWindowInBackground) {
@@ -1488,12 +1517,11 @@ function dispatchTrayAction(action: TrayAction): void {
     requestApplicationShutdown(() => app.quit())
     return
   }
-  void reactivateMainWindow().catch(error => {
+  void activateTrayAction(action, reactivateMainWindow, readyAction => {
+    if (!quitting) desktopHostEvents.publish('tray.action', readyAction)
+  }).catch(error => {
     console.error('[window] failed to handle tray action', error)
   })
-  if (action.type === 'open-settings' || action.type === 'open-task') {
-    desktopHostEvents.publish('tray.action', action)
-  }
 }
 
 /**
@@ -1715,8 +1743,10 @@ function installIpc(): void {
 
 async function shutdown(): Promise<void> {
   pluginDevelopmentChildRuntime?.stopWatcher()
-  await pluginDevelopmentChildRuntime?.writeState('stopping')
-  await logRetention.stop()
+  await traceShutdownStep('child-runtime-stopping', () =>
+    pluginDevelopmentChildRuntime?.writeState('stopping')
+  )
+  await traceShutdownStep('log-retention', () => logRetention.stop())
   systemResume.stop()
   systemSleep.stop()
   trayNativeStatus?.stop()
@@ -1732,7 +1762,7 @@ async function shutdown(): Promise<void> {
   // ready. When the app quits within that window, an open splash cancels
   // app.quit() and strands the app on the splash, so close it through the
   // controlled-close path as part of every shutdown.
-  await startupSplash?.close()
+  await traceShutdownStep('startup-splash', () => startupSplash?.close())
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null
@@ -1751,11 +1781,11 @@ async function shutdown(): Promise<void> {
   const development = pluginDevelopment
   pluginDevelopment = null
   const stoppedServices = await Promise.allSettled([
-    browserBridge?.stop(),
-    controlBridge?.stop(),
-    computerUseService?.stop(),
-    development?.stop(),
-    desktopRuntime?.stop(),
+    traceShutdownStep('browser-bridge', () => browserBridge?.stop()),
+    traceShutdownStep('control-bridge', () => controlBridge?.stop()),
+    traceShutdownStep('computer-use', () => computerUseService?.stop()),
+    traceShutdownStep('plugin-development', () => development?.stop()),
+    traceShutdownStep('desktop-runtime', () => desktopRuntime?.stop()),
   ])
   const stopFailures = stoppedServices.filter(result => result.status === 'rejected')
   if (stopFailures.length)
@@ -1763,7 +1793,9 @@ async function shutdown(): Promise<void> {
       stopFailures.map(result => result.reason),
       'Desktop services did not stop cleanly'
     )
-  await pluginDevelopmentChildRuntime?.writeState('stopped')
+  await traceShutdownStep('child-runtime-stopped', () =>
+    pluginDevelopmentChildRuntime?.writeState('stopped')
+  )
 }
 
 function requestApplicationShutdown(exit: () => void): void {
@@ -1773,7 +1805,8 @@ function requestApplicationShutdown(exit: () => void): void {
 function prepareApplicationShutdown(): Promise<void> {
   if (shutdownPromise) return shutdownPromise
   quitting = true
-  shutdownPromise = shutdown()
+  rendererStartupReady.cancel()
+  shutdownPromise = traceShutdownStep('application', shutdown)
   return shutdownPromise
 }
 
@@ -2104,26 +2137,7 @@ async function configureDesktopRuntime(): Promise<void> {
             if (target && !target.isDestroyed()) target.close()
           },
           dockVisible: () => dockVisible,
-          rendererStartupReady: createStartupReadyHandler(async source => {
-            if (!mainWindow || mainWindow.isDestroyed()) return
-            logStartupStep('renderer-startup-ready', 'completed', { source })
-            startupTelemetrySuccess.markRendererReady()
-            await holdStartupSplashForDesktopE2e()
-            // A quit request during startup owns the exit: never present the
-            // workbench while shutdown is already tearing the app down.
-            if (quitting || !mainWindow || mainWindow.isDestroyed()) return
-            if (!keepE2EWindowInBackground) mainWindow.show()
-            logStartupStep('main-window-show', 'completed')
-            await startupSplash?.close({
-              capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
-            })
-            logStartupStep('startup-splash-close', 'completed')
-            if (!keepE2EWindowInBackground) {
-              mainWindow.focus()
-              mainWindow.webContents.focus()
-            }
-            scheduleComputerUseStartup()
-          }),
+          rendererStartupReady,
           rendererStartupFailed: () => {
             logStartupStep('renderer-startup', 'failed')
             startupTelemetry.fail('renderer_initialize')
@@ -2737,6 +2751,11 @@ app.on('before-quit', event => {
 })
 
 app.on('quit', () => {
+  recordReleaseDiagnostic(
+    'application-quit',
+    { pid: process.pid, platform: process.platform, osRelease: release() },
+    true
+  )
   // Electron can finish every JS lifecycle event yet remain stuck in native teardown on
   // physical macOS 26.0-26.4 hosts (electron/electron#52582). Runtime cleanup has already
   // completed before app.quit() reaches this event, so terminate only the stranded host.

@@ -410,12 +410,26 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          WEWORK_UPGRADE_DIAGNOSTICS_DIR: ${{ runner.temp }}/wework-upgrade-diagnostics
         run: |
           node wework/scripts/verify-release-upgrades.mjs \
             "$RUNNER_TEMP/wework-release-assets" \
             "${{ matrix.platform }}" "${{ matrix.arch }}" \
             "${{ needs.prepare-release.outputs.channel }}" \
             "$GITHUB_REPOSITORY" "${{ needs.prepare-release.outputs.release_tag }}"
+
+      - name: Retain release upgrade decisions and failure diagnostics
+        if: always() && (matrix.platform == 'macos' || matrix.platform == 'windows')
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-release-upgrades-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/wework-upgrade-diagnostics/**/summary.json
+            ${{ runner.temp }}/wework-upgrade-diagnostics/**/*.log
+            ${{ runner.temp }}/wework-upgrade-diagnostics/**/*result.json
+            ${{ runner.temp }}/wework-upgrade-diagnostics/**/failure-summary.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Verify componentized macOS update package
         if: matrix.platform == 'macos' && needs.prepare-release.outputs.componentized_host_update == 'true'

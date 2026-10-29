@@ -1,11 +1,13 @@
-import { render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { act, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { MessageList } from './MessageList'
 import {
   clearRuntimeConversationCacheForTests,
+  cacheConversationVirtualMeasurements,
   getConversationVirtualMeasurements,
 } from '@/features/workbench/runtimeConversationCache'
 import type { WorkbenchMessage } from '@/types/workbench'
+import * as messagePretextLayout from '../../../../packages/collaboration/src/conversation/messagePretextLayout'
 import '@/i18n'
 
 const {
@@ -58,6 +60,12 @@ vi.mock('@tanstack/react-virtual', () => ({
       (_, index) => range.startIndex + index
     ),
   useVirtualizer: (options: {
+    enabled: boolean
+    measureElement: (
+      row: HTMLElement,
+      entry: ResizeObserverEntry | undefined,
+      instance: unknown
+    ) => number
     count: number
     getItemKey: (index: number) => string | number
     rangeExtractor: (range: {
@@ -67,14 +75,19 @@ vi.mock('@tanstack/react-virtual', () => ({
       count: number
     }) => number[]
   }) => {
-    const visibleIndexes = options.rangeExtractor({
-      startIndex: Math.max(0, options.count - 2),
-      endIndex: options.count - 1,
-      overscan: 2,
-      count: options.count,
-    })
+    const visibleIndexes = !options.enabled
+      ? []
+      : options.rangeExtractor({
+          startIndex: Math.max(0, options.count - 2),
+          endIndex: options.count - 1,
+          overscan: 2,
+          count: options.count,
+        })
     const virtualizer = {
       options,
+      elementsCache: new Map(),
+      cancelScroll: vi.fn(),
+      measure: vi.fn(),
       indexFromElement: (element: HTMLElement) => Number(element.dataset.index),
       itemSizeCache: new Map(
         visibleIndexes.map(index => [
@@ -97,12 +110,19 @@ vi.mock('@tanstack/react-virtual', () => ({
           key: options.getItemKey(index),
           start: index * 120 + (index === options.count - 1 ? virtualizerLayout.shift : 0),
           size:
-            100 +
+            virtualizerMeasurementState.cachedSize +
             (index === options.count - 2 ? virtualizerLayout.shift : 0) -
             (index === options.count - 1 ? virtualizerLayout.shift : 0),
           end: index * 120 + 100 + (index === options.count - 2 ? virtualizerLayout.shift : 0),
         })),
-      measureElement: measureElementMock,
+      measureElement: (row: HTMLElement | null) => {
+        measureElementMock(row)
+        if (!row) return
+        const index = Number(row.dataset.index)
+        virtualizer.elementsCache.set(options.getItemKey(index), row)
+        const size = options.measureElement(row, undefined, virtualizer)
+        if (size !== virtualizerMeasurementState.cachedSize) resizeItemMock(index, size)
+      },
       resizeItem: resizeItemMock,
       takeSnapshot: () => [
         { index: 0, key: options.getItemKey(0), start: 32, end: 132, size: 100, lane: 0 },
@@ -115,6 +135,10 @@ vi.mock('@tanstack/react-virtual', () => ({
 }))
 
 describe('MessageList desktop virtualization', () => {
+  beforeEach(() => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  })
+
   afterEach(() => {
     clearRuntimeConversationCacheForTests()
     measureElementMock.mockClear()
@@ -159,99 +183,13 @@ describe('MessageList desktop virtualization', () => {
     const virtualizer = virtualizerInstances.at(-1)
     expect(
       (virtualizer?.shouldAdjustScrollPositionOnItemSizeChange as (() => boolean) | undefined)?.()
-    ).toBe(false)
+    ).toBeUndefined()
     expect(intersectionObserver).not.toHaveBeenCalled()
-  })
-
-  test('records ordinary historical row measurements with native results and size deltas', () => {
-    diagnosticsState.enabled = true
-    render(
-      <MessageList
-        messages={buildMessages(3, 'private-history')}
-        scrollElementRef={{ current: createScrollElement(200) }}
-      />
-    )
-    const options = useVirtualizerMock.mock.calls.at(-1)?.[0] as {
-      getItemKey: (index: number) => string
-      estimateSize: (index: number) => number
-      measureElement: (
-        element: HTMLElement,
-        entry: ResizeObserverEntry | undefined,
-        instance: Record<string, unknown>
-      ) => number
-    }
-    const instance = {
-      options,
-      indexFromElement: (element: HTMLElement) => Number(element.dataset.index),
-      itemSizeCache: new Map([['user-1', 90]]),
-      measurementsCache: Array.from({ length: 3 }, (_, index) => ({
-        size: 100,
-        start: index * 116,
-        end: index * 116 + 100,
-      })),
-      getTotalSize: () => 372,
-      isScrolling: true,
-    }
-    const rows = screen
-      .getAllByTestId('message-user')
-      .map(article => article.closest<HTMLElement>('[data-index]')!)
-    rows.forEach((row, index) => {
-      Object.defineProperty(row, 'offsetHeight', { configurable: true, value: 110 + index })
-      expect(options.measureElement(row, undefined, instance)).toBe(110 + index)
-      expect(nativeMeasureElementMock).toHaveBeenLastCalledWith(row, undefined, instance)
-    })
-    const resizeEntry = { borderBoxSize: [{ blockSize: 136 }] } as ResizeObserverEntry
-    expect(options.measureElement(rows[1], resizeEntry, instance)).toBe(136)
-    expect(nativeMeasureElementMock).toHaveBeenLastCalledWith(rows[1], resizeEntry, instance)
-
-    const measurements = recordConversationDiagnosticMock.mock.calls.filter(
-      ([name]) => name === 'virtual-measurement'
-    )
-    expect(measurements).toHaveLength(4)
-    expect(measurements.slice(0, 3).map(([, details]) => details.rowIndex)).toEqual([0, 1, 2])
-    expect(measurements.at(-1)).toEqual([
-      'virtual-measurement',
-      expect.objectContaining({
-        rowIndex: 1,
-        previousSize: 90,
-        measuredSize: 136,
-        sizeDelta: 46,
-        rowStart: 116,
-        rowEnd: 216,
-        scrolling: true,
-      }),
-    ])
-    expect(JSON.stringify(measurements)).not.toContain('private-history')
-    expect(JSON.stringify(measurements)).not.toContain('user-1')
-  })
-
-  test('leaves native measurement unchanged without diagnostic layout reads when disabled', () => {
-    render(
-      <MessageList
-        messages={buildMessages(1, 'diagnostics-disabled')}
-        scrollElementRef={{ current: createScrollElement(200) }}
-      />
-    )
-    const options = useVirtualizerMock.mock.calls.at(-1)?.[0] as {
-      measureElement: (
-        element: HTMLElement,
-        entry: ResizeObserverEntry | undefined,
-        instance: Record<string, unknown>
-      ) => number
-    }
-    const row = screen.getByTestId('message-user').closest<HTMLElement>('[data-index]')!
-    Object.defineProperty(row, 'offsetHeight', { value: 123 })
-    const getBoundingClientRect = vi.spyOn(row, 'getBoundingClientRect')
-    // A disabled recorder must not inspect virtual measurements or add a DOM measurement.
-    expect(options.measureElement(row, undefined, {})).toBe(123)
-    expect(nativeMeasureElementMock).toHaveBeenLastCalledWith(row, undefined, {})
-    expect(getBoundingClientRect).not.toHaveBeenCalled()
-    expect(recordConversationDiagnosticMock).not.toHaveBeenCalled()
   })
 
   test.each([0, 2523.78])(
     'measures rich historical Markdown while scrolling using actual row height %s',
-    rowHeight => {
+    async rowHeight => {
       diagnosticsState.enabled = true
       virtualizerMeasurementState.isScrolling = true
       virtualizerMeasurementState.cachedSize = 1313
@@ -282,6 +220,7 @@ describe('MessageList desktop virtualization', () => {
         <MessageList messages={messages} scrollElementRef={{ current: createScrollElement(800) }} />
       )
 
+      await act(async () => {})
       if (rowHeight === 0) {
         expect(resizeItemMock).not.toHaveBeenCalled()
         expect(recordConversationDiagnosticMock.mock.calls.map(([name]) => name)).not.toContain(
@@ -302,68 +241,6 @@ describe('MessageList desktop virtualization', () => {
         expect(nativeMeasureElementMock).not.toHaveBeenCalled()
       }
       getBoundingClientRect.mockRestore()
-    }
-  )
-
-  test.each([
-    { rowHeight: 606.47, expectedSize: 606 },
-    { rowHeight: 1334.31, expectedSize: 1334 },
-    { rowHeight: 2523.78, expectedSize: 2524 },
-  ])(
-    'keeps synchronous rich row height $rowHeight consistent with native ref and ResizeObserver measurements',
-    async ({ rowHeight, expectedSize }) => {
-      const { measureElement: nativeMeasureElement } =
-        await vi.importActual<typeof import('@tanstack/react-virtual')>('@tanstack/react-virtual')
-      diagnosticsState.enabled = true
-      virtualizerMeasurementState.isScrolling = true
-      virtualizerMeasurementState.cachedSize = expectedSize
-      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
-        this: HTMLElement
-      ) {
-        return new DOMRect(0, 0, 736, this.hasAttribute('data-index') ? rowHeight : rowHeight - 64)
-      })
-      const messages = buildMessages(3, 'fractional-history')
-      messages[1] = {
-        ...messages[1],
-        role: 'assistant',
-        content: '**Rich historical content.** '.repeat(200),
-      }
-      render(
-        <MessageList messages={messages} scrollElementRef={{ current: createScrollElement(800) }} />
-      )
-      const row = screen.getByTestId('message-assistant').closest<HTMLElement>('[data-index]')!
-      const instance = virtualizerInstances.at(-1)! as unknown as Parameters<
-        typeof nativeMeasureElement
-      >[2]
-      const options = useVirtualizerMock.mock.calls.at(-1)![0] as {
-        measureElement: typeof nativeMeasureElement
-      }
-      expect(resizeItemMock).toHaveBeenCalledWith(1, expectedSize)
-      const size = resizeItemMock.mock.calls.findLast(([index]) => index === 1)![1] as number
-      Object.defineProperty(row, 'offsetHeight', { configurable: true, value: expectedSize })
-      instance.itemSizeCache.delete(instance.options.getItemKey(1))
-      // The first native ref measurement reads integer offsetHeight before a cache exists.
-      expect(nativeMeasureElement(row, undefined, instance)).toBe(size)
-      instance.itemSizeCache.set(instance.options.getItemKey(1), size)
-      const resizeEntry = { borderBoxSize: [{ blockSize: rowHeight }] } as ResizeObserverEntry
-      expect(nativeMeasureElement(row, resizeEntry, instance)).toBe(expectedSize)
-      recordConversationDiagnosticMock.mockClear()
-
-      for (const entry of [undefined, resizeEntry]) {
-        nativeMeasureElementMock.mockImplementationOnce((element, resize, virtualizer) =>
-          nativeMeasureElement(element, resize, virtualizer as typeof instance)
-        )
-        expect(options.measureElement(row, entry, instance)).toBe(size)
-        expect(recordConversationDiagnosticMock).toHaveBeenLastCalledWith(
-          'virtual-measurement',
-          expect.objectContaining({
-            rowIndex: 1,
-            previousSize: size,
-            measuredSize: size,
-            sizeDelta: 0,
-          })
-        )
-      }
     }
   )
 
@@ -396,171 +273,6 @@ describe('MessageList desktop virtualization', () => {
     expect(onVirtualLayoutChange).toHaveBeenCalledOnce()
   })
 
-  test('adapts the virtualizer to the desktop bottom-origin scroller', () => {
-    const scrollElement = createScrollElement(200)
-    const messages = buildMessages(20, 'bottom-origin')
-    messages[19] = {
-      ...messages[19],
-      role: 'assistant',
-      status: 'streaming',
-    }
-    Object.defineProperty(scrollElement, 'scrollHeight', {
-      configurable: true,
-      value: 10_178,
-    })
-    scrollElement.scrollTop = -178
-    const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
-      scrollElement.scrollTop = top ?? scrollElement.scrollTop
-    })
-    scrollElement.scrollTo = scrollTo
-
-    render(
-      <MessageList messages={messages} scrollElementRef={{ current: scrollElement }} bottomOrigin />
-    )
-
-    expect(useVirtualizerMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        anchorTo: 'start',
-        followOnAppend: false,
-        observeElementOffset: expect.any(Function),
-        scrollToFn: expect.any(Function),
-      })
-    )
-    expect(scrollElement.scrollTop).toBe(0)
-
-    const options = useVirtualizerMock.mock.calls.at(-1)?.[0] as {
-      observeElementOffset: (
-        instance: Record<string, unknown>,
-        callback: (offset: number, isScrolling: boolean) => void
-      ) => void
-      scrollToFn: (
-        offset: number,
-        options: { adjustments?: number; behavior?: ScrollBehavior },
-        instance: Record<string, unknown>
-      ) => void
-    }
-    const instance = {
-      elementsCache: new Map<string, HTMLElement>(),
-      getTotalSize: () => 10_000,
-      scrollElement,
-    }
-    const listElement = document.createElement('div')
-    const itemElement = document.createElement('div')
-    listElement.style.height = '3900px'
-    listElement.append(itemElement)
-    instance.elementsCache.set('user-19', itemElement)
-    const shouldAdjustScrollPosition = virtualizerInstances.at(-1)
-      ?.shouldAdjustScrollPositionOnItemSizeChange as
-      | ((
-          item: { key: string; start: number },
-          delta: number,
-          instance: typeof instance
-        ) => boolean)
-      | undefined
-
-    scrollElement.scrollTop = -160
-    expect(shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(false)
-    expect(shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_000 }, -40, instance)).toBe(
-      false
-    )
-    expect(shouldAdjustScrollPosition?.({ key: 'user-18', start: 8_000 }, 40, instance)).toBe(false)
-    expect(listElement).toHaveStyle({ height: '3900px' })
-    expect(scrollElement.scrollTop).toBe(-160)
-
-    useVirtualizerMock.mockClear()
-    render(
-      <MessageList
-        messages={messages}
-        scrollElementRef={{ current: scrollElement }}
-        bottomOrigin
-        virtualAnchorToEnd={false}
-      />
-    )
-    const shouldPreserveScrollPosition = virtualizerInstances.at(-1)
-      ?.shouldAdjustScrollPositionOnItemSizeChange as
-      | ((
-          item: { key: string; start: number },
-          delta: number,
-          instance: typeof instance
-        ) => boolean)
-      | undefined
-
-    scrollElement.scrollTop = -160
-    expect(shouldPreserveScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(
-      false
-    )
-    expect(listElement).toHaveStyle({ height: '3900px' })
-    expect(scrollElement.scrollTop).toBe(-160)
-
-    expect(shouldPreserveScrollPosition?.({ key: 'user-19', start: 9_000 }, -40, instance)).toBe(
-      false
-    )
-    expect(listElement).toHaveStyle({ height: '3900px' })
-    expect(scrollElement.scrollTop).toBe(-160)
-
-    expect(shouldPreserveScrollPosition?.({ key: 'user-18', start: 8_000 }, 40, instance)).toBe(
-      false
-    )
-    expect(listElement).toHaveStyle({ height: '3900px' })
-    expect(scrollElement.scrollTop).toBe(-160)
-
-    scrollElement.scrollTop = 0
-    expect(shouldPreserveScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(
-      false
-    )
-    expect(listElement).toHaveStyle({ height: '3900px' })
-    expect(scrollElement.scrollTop).toBe(0)
-
-    Object.defineProperty(scrollElement, 'scrollHeight', {
-      configurable: true,
-      value: 10_218,
-    })
-    scrollElement.scrollTop = -200
-    observeElementOffsetMock.mockImplementationOnce(
-      (_instance: unknown, callback: (offset: number, isScrolling: boolean) => void) => {
-        callback(123, true)
-        return () => undefined
-      }
-    )
-    const onOffset = vi.fn()
-    options.observeElementOffset(instance, onOffset)
-    expect(onOffset).toHaveBeenLastCalledWith(9_600, true)
-
-    onOffset.mockClear()
-    options.scrollToFn(9_800, {}, instance)
-    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: undefined, top: 0 })
-    expect(onOffset).toHaveBeenLastCalledWith(9_800, false)
-
-    options.scrollToFn(9_600, {}, instance)
-    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: undefined, top: -200 })
-    expect(onOffset).toHaveBeenLastCalledWith(9_600, false)
-
-    options.scrollToFn(9_560, { adjustments: 40 }, instance)
-    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: undefined, top: -200 })
-    expect(onOffset).toHaveBeenLastCalledWith(9_600, false)
-
-    options.scrollToFn(9_760, { adjustments: 40 }, instance)
-    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: undefined, top: 0 })
-    expect(onOffset).toHaveBeenLastCalledWith(9_800, false)
-  })
-
-  test('normalizes a restored bottom-origin distance in the task-switch layout commit', () => {
-    const scrollElement = createScrollElement(200)
-    scrollElement.scrollTop = -178
-
-    render(
-      <MessageList
-        conversationKey="restored-bottom-origin"
-        messages={buildMessages(20, 'restored-bottom-origin')}
-        scrollElementRef={{ current: scrollElement }}
-        initialDistanceFromBottomPx={72}
-        bottomOrigin
-      />
-    )
-
-    expect(scrollElement.scrollTop).toBe(-72)
-  })
-
   test('notifies the scroll owner in the commit that changes the virtual list height', () => {
     const messages = buildMessages(20, 'layout')
     const scrollElementRef = { current: createScrollElement(200) }
@@ -574,7 +286,6 @@ describe('MessageList desktop virtualization', () => {
         messages={messages}
         scrollElementRef={scrollElementRef}
         onVirtualLayoutChange={onVirtualLayoutChange}
-        bottomOrigin
       />
     )
     expect(heights).toEqual(['10000px'])
@@ -585,7 +296,6 @@ describe('MessageList desktop virtualization', () => {
         messages={[...messages]}
         scrollElementRef={scrollElementRef}
         onVirtualLayoutChange={onVirtualLayoutChange}
-        bottomOrigin
       />
     )
     // No ResizeObserver callback or animation frame has run between commit and this assertion.
@@ -606,7 +316,6 @@ describe('MessageList desktop virtualization', () => {
         messages={messages}
         scrollElementRef={scrollElementRef}
         onVirtualLayoutChange={onVirtualLayoutChange}
-        bottomOrigin
       />
     )
     expect(positions).toEqual(['translateY(2280px)'])
@@ -618,7 +327,6 @@ describe('MessageList desktop virtualization', () => {
         messages={[...messages]}
         scrollElementRef={scrollElementRef}
         onVirtualLayoutChange={onVirtualLayoutChange}
-        bottomOrigin
       />
     )
     expect(positions).toEqual(['translateY(2280px)', 'translateY(2320px)'])
@@ -698,11 +406,8 @@ describe('MessageList desktop virtualization', () => {
 
     expect(screen.getByText('last-streaming message 99')).toBeInTheDocument()
     expect(resizeItemMock).not.toHaveBeenCalled()
-    expect(
-      measureElementMock.mock.calls.some(
-        ([element]) => element instanceof HTMLElement && element.dataset.index === '99'
-      )
-    ).toBe(true)
+    expect(measureElementMock).toHaveBeenCalled()
+    expect(useVirtualizerMock.mock.lastCall![0].measureElement).toEqual(expect.any(Function))
   })
 
   test('follows the end when a user and streaming assistant are appended', () => {
@@ -755,32 +460,9 @@ describe('MessageList desktop virtualization', () => {
 
     expect(useVirtualizerMock).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        anchorTo: 'start',
+        anchorTo: 'end',
+        scrollEndThreshold: -1,
         followOnAppend: false,
-      })
-    )
-  })
-
-  test('reconfigures the virtualizer when the scroll origin changes', () => {
-    const props = {
-      messages: buildMessages(20, 'origin-switch'),
-      scrollElementRef: { current: createScrollElement(200) },
-    }
-    const view = render(<MessageList {...props} />)
-
-    expect(useVirtualizerMock).toHaveBeenLastCalledWith(
-      expect.not.objectContaining({
-        observeElementOffset: expect.any(Function),
-      })
-    )
-
-    useVirtualizerMock.mockClear()
-    view.rerender(<MessageList {...props} bottomOrigin />)
-
-    expect(useVirtualizerMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        observeElementOffset: expect.any(Function),
-        scrollToFn: expect.any(Function),
       })
     )
   })
@@ -929,6 +611,89 @@ describe('MessageList desktop virtualization', () => {
       })
     )
   })
+
+  test('invalidates measured heights when the message column narrows inside the same viewport', () => {
+    const observers = new Map<Element, ResizeObserverCallback>()
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(private callback: ResizeObserverCallback) {}
+        observe = (element: Element) => observers.set(element, this.callback)
+        unobserve = (element: Element) => observers.delete(element)
+        disconnect = vi.fn()
+      }
+    )
+    const messages = buildMessages(20, 'column-resize')
+    const view = render(
+      <MessageList messages={messages} scrollElementRef={{ current: createScrollElement(200) }} />
+    )
+    const column = screen
+      .getByText('column-resize message 19')
+      .closest('[data-message-row]')!.parentElement!
+    const previousInstanceCount = virtualizerInstances.length
+    vi.spyOn(column, 'clientWidth', 'get').mockReturnValue(400)
+    act(() => observers.get(column)!([], {} as ResizeObserver))
+    expect(
+      virtualizerInstances
+        .slice(previousInstanceCount)
+        .some(engine => vi.mocked(engine.measure as () => void).mock.calls.length > 0)
+    ).toBe(true)
+    view.unmount()
+  })
+
+  test('reuses measured heights without preparing the full transcript again on return', () => {
+    const messages = buildMessages(20, 'reopened')
+    cacheConversationVirtualMeasurements(
+      'reopened-conversation',
+      messages.map((message, index) => ({
+        key: message.id,
+        index,
+        size: 987,
+        start: 32 + index * 1003,
+        end: 32 + index * 1003 + 987,
+        lane: 0,
+      })),
+      measurementLayout(messages)
+    )
+    const estimate = vi.spyOn(messagePretextLayout, 'getMessagePretextIntrinsicHeight')
+    render(
+      <MessageList
+        conversationKey="reopened-conversation"
+        messages={messages}
+        scrollElementRef={{ current: createScrollElement(200) }}
+      />
+    )
+    expect(estimate).not.toHaveBeenCalled()
+    const options = useVirtualizerMock.mock.lastCall![0]
+    expect(options.estimateSize(0)).toBe(987)
+    expect(options.initialOffset()).toBe(32 + 20 * 987 + 19 * 16 + 8 - 200)
+  })
+
+  test('estimates only rows missing from a restored measurement snapshot', () => {
+    const messages = buildMessages(2, 'partial')
+    cacheConversationVirtualMeasurements(
+      'partial-measurements',
+      [{ key: 'user-0', index: 0, size: 987, start: 32, end: 1019, lane: 0 }],
+      measurementLayout(messages)
+    )
+    const estimate = vi.spyOn(messagePretextLayout, 'getMessagePretextIntrinsicHeight')
+    render(
+      <MessageList
+        conversationKey="partial-measurements"
+        messages={messages}
+        scrollElementRef={{ current: createScrollElement(200) }}
+      />
+    )
+    expect(estimate).toHaveBeenCalled()
+    expect(new Set(estimate.mock.calls.map(([message]) => message.id))).toEqual(new Set(['user-1']))
+  })
+
+  test('does not prepare intrinsic heights when no virtual viewport is used', () => {
+    const estimate = vi.spyOn(messagePretextLayout, 'getMessagePretextIntrinsicHeight')
+    render(<MessageList messages={buildMessages(2, 'ordinary')} />)
+    expect(screen.getAllByTestId('message-user')).toHaveLength(2)
+    expect(estimate).not.toHaveBeenCalled()
+  })
 })
 
 function buildMessages(count: number, prefix: string): WorkbenchMessage[] {
@@ -952,4 +717,18 @@ function createScrollElement(clientHeight: number): HTMLDivElement {
     value: 800,
   })
   return scrollElement
+}
+
+function measurementLayout(messages: WorkbenchMessage[]) {
+  return {
+    key: JSON.stringify([
+      800,
+      null,
+      messagePretextLayout.readMessageLayoutTypography(createScrollElement(200)),
+      0,
+    ]),
+    messages: new Map(
+      messages.map(message => [message.id, messagePretextLayout.getMessageLayoutSignature(message)])
+    ),
+  }
 }

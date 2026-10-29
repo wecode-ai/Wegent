@@ -12,21 +12,30 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
-from app.models.delivery import CloudProject, ProjectChatAgent
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    LoopItemActiveAssignment,
+    LoopItemComment,
+    ProjectChatAgent,
+)
 from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.cloud_project import CloudProjectCreate
+from app.schemas.delivery import LoopItemCreate
 from app.services.cloud_projects.responses import list_project_responses
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.collaboration_permissions import collaboration_permission_service
+from app.services.loop_items.provider_router import loop_item_provider_router
 from app.services.project_chat.service import project_chat_service
 from app.services.workspaces.responses import list_workspace_responses
 from app.services.workspaces.storage import (
     ensure_resource_grant,
     workspace_kind_payload,
 )
+from tests.utils.collaboration import authorize_project
 
 
 @pytest.fixture
@@ -44,6 +53,63 @@ def mysql_url() -> Iterator[str]:
                 db.exec_driver_sql(f"DROP DATABASE `{database}`")
     finally:
         admin.dispose()
+
+
+def test_concurrent_issue_creation_refreshes_preloaded_project_sequence(
+    mysql_url: str,
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as db:
+            db.add(User(id=1, user_name="project-owner", password_hash="unused"))
+            db.add(
+                Kind(
+                    id=11,
+                    kind="CollaborationWorkspace",
+                    name="space-11",
+                    namespace="default",
+                    user_id=1,
+                    is_active=True,
+                    json=workspace_kind_payload(
+                        name="space-11",
+                        description="",
+                        namespace="default",
+                        public_id=str(uuid.uuid4()),
+                        is_default=False,
+                    ),
+                )
+            )
+            db.commit()
+            project = cloud_project_service.create(
+                db, 1, CloudProjectCreate(name="Concurrent Issues", workspace_id="11")
+            )
+            project_id, project_key = project.id, project.project_key
+
+        ready = Barrier(2, timeout=10)
+
+        def create_issue(index: int) -> str:
+            with Session(engine, autoflush=False) as db:
+                project = cloud_project_service.get(db, project_id, 1)
+                user = db.get(User, 1)
+                assert project.next_item_number == 1
+                ready.wait()
+                created = loop_item_provider_router.create(
+                    db, project, user, LoopItemCreate(title=f"Issue {index}")
+                )
+                return created.internal_item.id
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(create_issue, index) for index in range(2)]
+            item_ids = [future.result(timeout=30) for future in futures]
+        with Session(engine) as db:
+            assert set(item_ids) == {f"{project_key}-1", f"{project_key}-2"}
+            assert db.get(CloudProject, project_id).next_item_number == 3
+            assert (
+                db.query(LoopItem).filter_by(cloud_project_id=project_id).count() == 2
+            )
+    finally:
+        engine.dispose()
 
 
 def test_independent_project_creation_does_not_lock_absent_parent_grants(
@@ -124,6 +190,81 @@ def test_independent_project_creation_does_not_lock_absent_parent_grants(
                 pool.submit(create_project, workspace_id) for workspace_id in (11, 12)
             ]
             assert len({future.result(timeout=20) for future in futures}) == 2
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", synchronize)
+        engine.dispose()
+
+
+def test_initial_assignments_in_independent_projects_do_not_lock_empty_ranges(
+    mysql_url: str,
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        owner = User(id=1, user_name="assignment-owner", password_hash="unused")
+        db.add(owner)
+        db.flush()
+        project_ids = []
+        for index in range(2):
+            project = CloudProject(
+                public_id=str(uuid.uuid4()),
+                project_key=f"ASSIGN{index}",
+                name=f"Assignment {index}",
+                created_by_user_id=1,
+                metadata_json={},
+            )
+            authorize_project(db, project)
+            project_ids.append(project.id)
+        db.commit()
+
+    ready = Barrier(2, timeout=10)
+
+    def synchronize(_db, _cursor, statement, _params, context, _many) -> None:
+        if not statement.startswith("INSERT INTO loop_items"):
+            return
+        values = context.compiled_parameters[0] if context.compiled_parameters else {}
+        if values.get("resource_type") == "comment":
+            ready.wait()
+
+    def create_issue(project_id: str) -> str:
+        with Session(engine, autoflush=False) as db:
+            project = cloud_project_service.get(db, project_id, 1)
+            user = db.get(User, 1)
+            result = loop_item_provider_router.create(
+                db, project, user, LoopItemCreate(title="Concurrent first assignment")
+            )
+            return result.internal_item.id
+
+    # Independent Issues must both reach their first assignment insert without
+    # waiting for a range lock held by the other transaction.
+    sa.event.listen(engine, "before_cursor_execute", synchronize)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(create_issue, project_id) for project_id in project_ids
+            ]
+            errors = [future.exception(timeout=30) for future in futures]
+            assert not any(errors), f"Concurrent first assignments failed: {errors!r}"
+            issue_ids = [future.result(timeout=30) for future in futures]
+        with Session(engine) as db:
+            comments = (
+                db.query(LoopItemComment)
+                .filter(LoopItemComment.loop_item_id.in_(issue_ids))
+                .all()
+            )
+            assert len(comments) == 2
+            assert all(
+                comment.metadata_json["target_id"] == "1" for comment in comments
+            )
+            rows = (
+                db.query(LoopItemActiveAssignment)
+                .filter(LoopItemActiveAssignment.parent_id.in_(issue_ids))
+                .all()
+            )
+            assert len(rows) == 4
+            assert {row.loop_item_id for row in rows if row.loop_item_id} == {
+                comment.id for comment in comments
+            }
     finally:
         sa.event.remove(engine, "before_cursor_execute", synchronize)
         engine.dispose()

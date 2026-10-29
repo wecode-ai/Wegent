@@ -469,6 +469,7 @@ export function useChatStreamHandlers({
 
   const prepareChatSend = useCallback(
     (
+      teamId: number,
       message: string,
       localMessageId: string,
       immediateTaskId: number,
@@ -718,7 +719,7 @@ export function useChatStreamHandlers({
 
       const request: ContextSendRequest = {
         message: messageWithQueueContent,
-        team_id: selectedTeam?.id ?? 0,
+        team_id: teamId,
         task_id: currentTaskId ?? undefined,
         model_id: modelId,
         force_override_bot_model: Boolean(modelId),
@@ -831,7 +832,6 @@ export function useChatStreamHandlers({
       taskType,
       selectedDocumentIds,
       knowledgeBaseId,
-      selectedTeam?.id,
       currentTaskId,
       selectedTaskDetail,
       enableDeepThinking,
@@ -1088,6 +1088,7 @@ export function useChatStreamHandlers({
   // Core message sending logic
   const handleSendMessage = useCallback(
     async (overrideMessage?: string, sendOptions?: SendMessageOptions) => {
+      if (!selectedTeam) return
       const message =
         overrideMessage !== undefined ? overrideMessage.trim() : taskInputMessage.trim()
       const hasAttachments = attachments.length > 0
@@ -1128,6 +1129,7 @@ export function useChatStreamHandlers({
       const immediateTaskId = currentTaskId || -Date.now()
       const localMessageId = generateMessageId('user')
       const prepared = prepareChatSend(
+        selectedTeam.id,
         message,
         localMessageId,
         immediateTaskId,
@@ -1325,6 +1327,7 @@ export function useChatStreamHandlers({
       modelOverride: Model,
       existingContexts?: SubtaskContextBrief[]
     ) => {
+      if (!selectedTeam) return
       const message = overrideMessage.trim()
       if (!message && !shouldHideChatInput) return
 
@@ -1496,7 +1499,7 @@ export function useChatStreamHandlers({
         const tempTaskId = await contextSendMessage(
           {
             message: finalMessage,
-            team_id: selectedTeam?.id ?? 0,
+            team_id: selectedTeam.id,
             task_id: currentTaskId ?? undefined,
             model_id: modelId,
             force_override_bot_model: true, // Always force override when using model override
@@ -1621,6 +1624,7 @@ export function useChatStreamHandlers({
       projectId,
       refreshProjects,
       navigateToKnowledgeTask,
+      pathname,
     ]
   )
 

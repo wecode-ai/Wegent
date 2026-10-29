@@ -60,12 +60,48 @@ The existing `app-update-full` checkpoint shares the real-package scenario and r
 
 Upgrade edges explicitly record `fromSourceSha` and `toSourceSha`, each matching the delivered package metadata’s `sourceSha`; E2E results record both revisions. Missing or mismatched revisions block promotion, and clients also check the downloaded package revision. Diagnostic log failures must neither block preparation nor replace its original error. Before restoring data after a startup timeout, the native launcher must terminate the complete runtime tree, including writers in independent process groups.
 
+## Native launcher linker
+
+Packaging compiles the launcher through a direct `rustc` invocation, so it must explicitly translate
+the target's `CARGO_TARGET_<TARGET>_LINKER` environment variable into `-C linker=<path>`. Uppercase
+the target name and replace hyphens with underscores. For Windows x64, set
+`CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER` to the MSVC `link.exe` path. Direct `rustc` does not
+read this Cargo setting; configuring Cargo alone does not prevent name collisions in Git Bash.
+Without an explicit linker, preserve Rust's default selection. Empty or invalid explicit settings fail
+the build, matching Cargo.
+
+`node --test wework/scripts/build-launcher.test.mjs` compiles and starts the real launcher with
+Git `link.exe` first on PATH, and verifies that invalid linker settings are never ignored. Windows
+uses Git's actual `link.exe`; macOS/Linux use a native conflicting program to shadow the default
+`cc`. The upgrade E2E workflow runs this test on all three platforms.
+
 ## Release promotion
 
-`wework/upgrade-policy.json` declares the current target's floor and `sourceVersions`. The initial protocol release may have no incoming edges; subsequent releases must verify at least one. A source may remain fixed rather than tracking the immediately preceding release.
+CI workspace dependency caches must also distinguish absolute checkout paths: pnpm records
+absolute project paths, so sharing host and container caches triggers reinstallation during service
+startup. Main-branch platform E2E jobs populate the container cache. Windows desktop shards consume
+packaged dependencies directly; native startup verification installs Electron separately. Parallel
+Rust tests use checked-in executable script fixtures to avoid `ETXTBSY` from inherited writer handles.
+Persisting a board execution address precedes native session readiness. Confirm that the execution
+reaches its model within the runtime startup budget before starting the separate ten-second UI
+assertion budget.
 
-Release jobs create complete portable packages, download declared immutable sources, and invoke the shared checkpoint runner for upgrade and rollback. Evidence binds both versions and package hashes, platform, architecture, suite version, and CI run. Merge only successful edges into the component manifest. Preserve historical edges and their intermediate artifacts. Changed artifacts require a new version and new verification.
+`wework/upgrade-policy.json` declares only the product's minimum source constraint; no per-release source list is maintained. For each platform, architecture, and target channel, release jobs read the published catalog and retain the previous release's `minSourceVersion` as the fixed baseline X, bounded below by the repository constraint. Stable catalogs contain only Stable versions and floors. Beta catalogs may contain both Stable and Beta and can bootstrap from Stable when Beta has no history. Stable never imports Beta sources or edges.
+
+CI verifies X to target, then previous release to target, running once if both sources are identical. Each verification must start the actual delivered source, upgrade through the real UI, open the target's main interface, confirm persisted tasks and plugin configuration, continue a task, and roll back to a usable source. Process startup, extraction, and a health endpoint alone are insufficient.
+
+| Fixed baseline X | Previous release | Publication decision |
+| --- | --- | --- |
+| Passes | Passes | Retain X and publish both verified edges |
+| Fails or is not a registered verification source | Passes | Raise the minimum to the previous release and publish only successful edges |
+| Any result | Fails | Block publication without advancing rolling manifests |
+
+Download, permission, malformed-catalog, and checksum errors abort rather than count as compatibility failures. Revoked releases and regression fixtures are excluded. A genuine initial protocol baseline starts at its own version. Historical catalogs without an eligible previous release are errors, never new baselines. Passing X does not prove compatibility for intermediate versions: verify the previous release independently and preserve existing edges and bridge packages for continuous upgrades.
+
+Persist the confirmed floor and exact edges in each target channel's `upgradePolicy`. Publish immutable version assets before promoting rolling manifests. The next release reads X from that catalog and retains or raises it automatically, without writing version lists back to source. Stable publication verifies Stable and Beta independently; Beta publication advances only Beta. All platform jobs must succeed before publication. Always retain CI decision summaries and failure logs, distinguishing unavailable baselines, failed verification, and blocked publication; do not retry to hide failures.
+
+Release jobs create complete portable packages, download the automatically selected immutable sources, and invoke the shared checkpoint runner for upgrade and rollback. Evidence binds both versions and package hashes, platform, architecture, suite version, and CI run. Merge only successful edges into the component manifest. Preserve historical edges and their intermediate artifacts. Changed artifacts require a new version and new verification.
 
 Upload immutable target assets and evidence before promoting rolling manifests. Any required pair failure blocks promotion. Compatibility declarations, minimum versions, and unit tests cannot replace real release-pair evidence.
 
-A source may come from another channel, such as Beta to Stable. Verify a new edge under the target channel; import the source node without copying the other channel's edges. Bind evidence to the channel and require an immutable package hash across channels.
+Beta may import a Stable source only after verifying a new edge under Beta, without copying Stable's edges. Bind evidence to the channel and require an immutable package hash across channels. Stable catalogs reject Beta nodes and Beta minimum versions. Rollback restores the previous healthy local release rather than selecting an older release from the published catalog.
