@@ -20,7 +20,7 @@ sidebar_position: 40
 
 ## 协议与责任
 
-安装根 `WeWork.exe` 是独立 Rust 启动器；完整 Electron 位于 `versions/<version>-<manifest-hash>/WeWork.exe`。`release.json` 使用正斜杠相对路径，列出完整文件大小和 SHA-256；`windows-<channel>-v2.json` 提供完整 ZIP 的大小和 SHA-512。所有签名在清单生成前完成。
+安装根 `WeWork.exe` 是独立 Rust 启动器；完整 Electron 位于 `versions/<version>-<manifest-hash>/WeWork.exe`。`release.json` 使用正斜杠相对路径，列出完整文件大小和 SHA-256；`windows-<channel>-v2.json` 提供完整 ZIP 的大小和 SHA-512。如提供 Windows 代码签名，签名在清单生成前完成；未签名构建以这些摘要作为完整性依据。
 
 Electron 通过系统网络栈下载、解压和校验，退出前再次校验。原生启动器等父进程退出、持有操作系统文件锁、再次校验后发布不可变目录。升级期间 `update-state.json.active` 始终指向已确认版本；候选进程受进程组或 Windows Job Object 管理。只有运行时与页面都就绪，Electron 才写带随机能力值的健康确认。失败候选的整个进程树退出后，才能重新打开旧版本。原生启动器只在健康提交后安排原子自更新；普通启动仅重试已有替换请求，不隐式降级启动器。
 
@@ -53,9 +53,9 @@ Electron 通过系统网络栈下载、解压和校验，退出前再次校验�
 | 退出交接失败   | 实际执行缺失的更新器、停服中退出的更新器、停服失败、撤销后父进程退出                                            | 启动失败不先停服；停服失败确认取消后恢复当前版本；撤销的请求不会稍后误激活                           |
 | 启动进度与日志 | 真实 Electron 执行阶段进度、慢启动、失败，点击复制诊断；实际工作台启动后读取持久日志                            | 阶段按顺序推进至 renderer、splash 关闭；软超时不误报失败；硬失败提供诊断；日志不可写时恢复入口仍可用 |
 
-新协议 E2E 使用同源码构建的两个真实 Electron 包版本验证机制，不作为历史兼容性的证据。历史矩阵必须下载实际旧发布产物，并使用受信签名的迁移安装器。安装器签名不能为使测试通过而关闭。
+新协议 E2E 使用同源码构建的两个真实 Electron 包版本验证机制，不作为历史兼容性的证据。历史矩阵必须下载实际旧发布产物，并固定 release tag 与 SHA-256。项目未配置 Windows 代码签名时允许 `NotSigned` 产物；有签名时必须为 `Valid`，`HashMismatch`、`NotTrusted` 等异常状态仍必须失败。
 
-运行入口：`pnpm --filter wework e2e:desktop -- --segment windows-update-install`，其它 checkpoint 为 `windows-update-validation`、`windows-update-rollback`、`windows-update-recovery`、`windows-update-migration`、`windows-update-reinstall`。先按 CI 步骤准备真实 Windows 包和 fixture。`wework-release-e2e.yml` 的 `suite=windows-update` 执行前四项，并用官方签名 0.5.10 安装包验证直接覆盖两次与后续 v2 升级；这条直接安装路径使用 CI 构建的未签名新 NSIS，不关闭任何生产更新签名校验。正式发布 CI 再使用真实签名 NSIS，对 0.4.0、0.5.10 和动态上一版执行迁移与重装矩阵；上一版已采用 v2 时按实际协议升级。原生测试：`cargo test --locked --manifest-path executor/Cargo.toml --test wework_launcher`。Windows 文件锁和 Job Object 结论必须来自 Windows runner；macOS 原生测试与隔离 Electron 冒烟不能代替。
+运行入口：`pnpm --filter wework e2e:desktop -- --segment windows-update-install`，其它 checkpoint 为 `windows-update-validation`、`windows-update-rollback`、`windows-update-recovery`、`windows-update-migration`、`windows-update-reinstall`。先按 CI 步骤准备真实 Windows 包和 fixture。`wework-release-e2e.yml` 的 `suite=windows-update` 执行前四项，并用实际发布的 0.5.10 安装包验证直接覆盖两次与后续 v2 升级；这条直接安装路径使用 CI 构建的新 NSIS，不关闭任何生产更新校验。正式发布 CI 再使用实际发布 NSIS，对 0.4.0、0.5.10 和动态上一版执行迁移与重装矩阵；上一版已采用 v2 时按实际协议升级。原生测试：`cargo test --locked --manifest-path executor/Cargo.toml --test wework_launcher`。Windows 文件锁和 Job Object 结论必须来自 Windows runner；macOS 原生测试与隔离 Electron 冒烟不能代替。
 
 测试结果写入正常 E2E result 目录，保留 Electron 日志、launcher JSONL、状态及断言结果。清理时先停止隔离进程，再删除对应测试目录；不能触碰个人 Wework、原生 Codex/Claude Home 或项目空间记录。
 

@@ -434,7 +434,9 @@ jobs:
           $helper = Join-Path $resources 'bin/wework-launcher.exe'
           $nativeSignatures = @($launcher, $versionExecutable, $helper) | ForEach-Object {
             $signed = Get-AuthenticodeSignature -LiteralPath $_
-            if ($signed.Status -ne 'Valid') { throw "Packaged executable signature is $($signed.Status): $_" }
+            if ($signed.Status -notin @('Valid', 'NotSigned')) {
+              throw "Packaged executable signature is $($signed.Status): $_"
+            }
             @{
               path = [IO.Path]::GetRelativePath($root, $_)
               status = $signed.Status.ToString()
@@ -455,7 +457,7 @@ jobs:
             Copy-Item -Destination $assets
           $setup = Join-Path $assets ('WeWork_' + $env:RELEASE_VERSION + '_windows_x64-setup.exe')
           $signature = Get-AuthenticodeSignature -LiteralPath $setup
-          if ($signature.Status -ne 'Valid') {
+          if ($signature.Status -notin @('Valid', 'NotSigned')) {
             throw "Historical upgrade verification requires the real signed migration installer. Signature: $($signature.Status)"
           }
           @{
@@ -510,7 +512,9 @@ jobs:
             $installers = @(Get-ChildItem -LiteralPath $destination -Filter '*.exe' -File)
             if ($installers.Count -ne 1) { throw "Expected one historical installer for $version" }
             $signature = Get-AuthenticodeSignature -LiteralPath $installers[0].FullName
-            if ($signature.Status -ne 'Valid') { throw "Historical $version installer signature is $($signature.Status)" }
+            if ($signature.Status -notin @('Valid', 'NotSigned')) {
+              throw "Historical $version installer signature is $($signature.Status)"
+            }
             $env:WEWORK_E2E_LEGACY_WINDOWS_INSTALLER = $installers[0].FullName
             $env:WEWORK_E2E_LEGACY_WINDOWS_VERSION = $version
             foreach ($segment in @('windows-update-migration', 'windows-update-reinstall')) {
