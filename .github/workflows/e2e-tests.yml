@@ -964,7 +964,7 @@ jobs:
           uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
           uv run --no-sync python tests/e2e/dingtalk_notification_card_context.py
 
-      - name: Run subscription callback Rust gateway E2E
+      - name: Run subscription callback and system MCP gateway E2E
         if: matrix.shardIndex == 1
         working-directory: ./backend
         env:
@@ -986,6 +986,9 @@ jobs:
           test "$E2E_TEST_SHA" = "$E2E_EXPECTED_SHA"
           uv run --no-sync python tests/e2e/subscription_callback_gateway.py \
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
+          E2E_REPORT_DIR="$E2E_REPORT_DIR/system-mcp" \
+            uv run --no-sync python tests/e2e/system_mcp_gateway.py \
+            2>&1 | tee "$E2E_REPORT_DIR/system-mcp.log"
 
       - name: Upload subscription callback gateway E2E report
         if: always() && matrix.shardIndex == 1
