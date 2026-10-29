@@ -40,10 +40,13 @@ use super::claude_code::has_task_skill_names;
 mod claude_mcp;
 mod codex;
 mod codex_mcp;
+#[path = "runtime_capabilities/execution_snapshot.rs"]
+mod execution_snapshot;
 mod home_skills;
 mod skill_archive;
 pub use codex::prepare_codex_runtime;
 pub(crate) use codex::prepare_codex_runtime_locked;
+pub(super) use execution_snapshot::publish_agent_selection;
 use home_skills::HomeSkillsStage;
 pub(crate) mod mcp_environment;
 #[cfg(test)]
@@ -360,8 +363,12 @@ pub async fn prepare_claude_runtime(
         )
     })?;
 
-    let config_dir =
-        claude_config_dir(request, Some(&task_dir)).unwrap_or_else(|| task_dir.join(".claude"));
+    let config_dir = spec
+        .envs()
+        .get("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| claude_config_dir(request, Some(&task_dir)))
+        .unwrap_or_else(|| task_dir.join(".claude"));
     crate::artifact_workspace::bind(request, Some(&task_dir))?;
     fs::create_dir_all(&config_dir).map_err(|error| {
         format!(
@@ -574,6 +581,7 @@ async fn deploy_request_skills(
     ) else {
         if required_skills.is_empty() {
             return super::instance_home::request_home(request)
+                .and_then(|_| skills_dir.parent().map(Path::to_owned))
                 .map(|home| {
                     let skills = HomeSkillsStage::prepare(&home)?;
                     skills.activate()
@@ -588,7 +596,8 @@ async fn deploy_request_skills(
         });
     };
     let home_skills = super::instance_home::request_home(request)
-        .map(|home| HomeSkillsStage::prepare(&home))
+        .and_then(|_| skills_dir.parent())
+        .map(HomeSkillsStage::prepare)
         .transpose()?;
     if let Some(home_skills) = &home_skills {
         home_skills.reuse(&plan.skills)?;
@@ -2179,12 +2188,18 @@ fn install_deferred_mcp_hook(config_dir: &Path) {
         }]
     });
     if let Some(items) = pre_tool_use.as_array_mut() {
-        items.retain(
-            |item| match item.pointer("/hooks/0/command").and_then(Value::as_str) {
-                Some(command) => command != hook_command,
-                None => true,
-            },
-        );
+        items.retain(|item| {
+            let managed = item["matcher"] == "mcp__.*interactive_form_question.*"
+                && item
+                    .pointer("/hooks/0/command")
+                    .and_then(Value::as_str)
+                    .is_some_and(|command| {
+                        Path::new(command)
+                            .file_name()
+                            .is_some_and(|name| name == "defer-interactive-mcp-hook.sh")
+                    });
+            !managed
+        });
         items.push(hook_entry);
     } else {
         *pre_tool_use = Value::Array(vec![hook_entry]);

@@ -38,14 +38,18 @@ impl HomeSkillsStage {
     }
 
     pub(super) fn reuse(&self, names: &[String]) -> Result<(), String> {
+        self.reuse_from(&self.home, names)
+    }
+
+    pub(super) fn reuse_from(&self, home: &Path, names: &[String]) -> Result<(), String> {
         if names.iter().any(|name| name == NATIVE_SYSTEM_SKILLS) {
             return Err("The .system Skills directory is reserved for the native engine".into());
         }
-        let current = self.home.join("skills");
+        let current = home.join("skills");
         if !current.exists() {
             return Ok(());
         }
-        check_managed_target(&self.home, &current)?;
+        check_managed_target(home, &current)?;
         let old = read_skill_manifest(&current)?;
         let mut records = std::collections::BTreeMap::new();
         for name in names {

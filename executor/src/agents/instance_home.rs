@@ -16,6 +16,11 @@ use crate::protocol::{AgentKind, ExecutionRequest};
 mod session;
 pub(crate) use session::{claude_session_transcript, validate_session};
 
+#[path = "instance_execution.rs"]
+mod execution;
+pub(super) use execution::acquire_claude;
+pub(crate) use execution::pin_skills as pin_task_skills;
+
 pub(super) use crate::file_lease::FileLease as HomeLease;
 
 /// Backend Bot requests use the executing user's named agent Home.
@@ -359,6 +364,19 @@ pub(super) fn acquire(request: &ExecutionRequest) -> Result<Option<HomeLease>, S
 }
 
 fn acquire_at(request: &ExecutionRequest, root: &Path, home: &Path) -> Result<HomeLease, String> {
+    prepare_home(request, root, home)?;
+    let lock = open_home_lock(home, root)?;
+    lock.try_lock_exclusive()
+        .map_err(|_| "Agent Home already has an active execution".to_owned())?;
+    let lock = HomeLease(lock);
+    bind_task_at(request, root, home)?;
+    let active = home.join("runtime/active-task.json");
+    reject_symlink_ancestors(&active, root)?;
+    super::runtime_capabilities::write_json_file(&active, &json!({"task_id": request.task_id}))?;
+    Ok(lock)
+}
+
+fn prepare_home(request: &ExecutionRequest, root: &Path, home: &Path) -> Result<(), String> {
     if request.task_id.trim().is_empty() {
         return Err("Bot native Home requires a task identity".to_owned());
     }
@@ -378,17 +396,21 @@ fn acquire_at(request: &ExecutionRequest, root: &Path, home: &Path) -> Result<Ho
         fs::set_permissions(home, fs::Permissions::from_mode(0o700))
             .map_err(|error| format!("secure agent Home: {error}"))?;
     }
+    Ok(())
+}
+
+fn open_home_lock(home: &Path, root: &Path) -> Result<fs::File, String> {
     reject_symlink_ancestors(&home.join(".execution.lock"), root)?;
-    let lock = fs::OpenOptions::new()
+    fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(home.join(".execution.lock"))
-        .map_err(|error| format!("open agent Home lock: {error}"))?;
-    lock.try_lock_exclusive()
-        .map_err(|_| "Agent Home already has an active execution".to_owned())?;
-    let lock = HomeLease(lock);
+        .map_err(|error| format!("open agent Home lock: {error}"))
+}
+
+fn bind_task_at(request: &ExecutionRequest, root: &Path, home: &Path) -> Result<(), String> {
     let marker = home.join("agent.json");
     let existing = marker
         .try_exists()
@@ -418,11 +440,7 @@ fn acquire_at(request: &ExecutionRequest, root: &Path, home: &Path) -> Result<Ho
     if !binding.exists() || read_marker(&binding)? != task {
         super::runtime_capabilities::write_json_file(&binding, &task)?;
     }
-    // The held lease identifies the active pipeline stage for task-scoped tools.
-    let active = home.join("runtime/active-task.json");
-    reject_symlink_ancestors(&active, root)?;
-    super::runtime_capabilities::write_json_file(&active, &json!({"task_id": request.task_id}))?;
-    Ok(lock)
+    Ok(())
 }
 
 fn verified_legacy_home(
@@ -584,16 +602,28 @@ pub(crate) fn task_skills_directory_at(
     if found.iter().any(|(_, current)| *current) {
         found.retain(|(_, current)| *current);
     }
-    if found.len() > 1 {
-        let mut active = Vec::new();
-        for (home, current) in &found {
-            if active_task_lease(home, root, task_id)? {
-                active.push((home.clone(), *current));
-            }
+    let mut active_skills = Vec::new();
+    for (home, _) in &found {
+        let snapshots = execution::active_skills(home, root, task_id)?;
+        if snapshots.is_empty()
+            && found.len() > 1
+            && !execution::has_active_snapshot(home, root)?
+            && active_task_lease(home, root, task_id)?
+        {
+            active_skills.push(home.join("skills"));
+        } else {
+            active_skills.extend(snapshots);
         }
-        if active.len() == 1 {
-            found = active;
+    }
+    if active_skills.len() > 1 {
+        return Err("Task has multiple active execution Skills directories".to_owned());
+    }
+    if let Some(skills) = active_skills.pop() {
+        reject_symlink_ancestors(&skills, root)?;
+        if !skills.is_dir() {
+            return Err("Task has no activated Skills directory".to_owned());
         }
+        return Ok(skills);
     }
     let [(home, _)] = found.as_slice() else {
         return Err(if found.is_empty() {
@@ -603,7 +633,8 @@ pub(crate) fn task_skills_directory_at(
         }
         .to_owned());
     };
-    let skills = home.join("skills");
+    let skills =
+        execution::latest_skills(home, root, task_id)?.unwrap_or_else(|| home.join("skills"));
     reject_symlink_ancestors(&skills, root)?;
     if !skills.is_dir() {
         return Err("Task has no activated Skills directory".to_owned());

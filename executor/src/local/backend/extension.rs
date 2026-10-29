@@ -177,6 +177,7 @@ impl DeviceExtensionRunner {
             let (_, user_id) = self.authenticated_identity().await?;
             (self.task_skills_resolver)(&task_id.to_string(), &user_id)?
         };
+        let _snapshot_lease = crate::agents::pin_task_skills(&skills_root)?;
         let script = resolve_script_path(&skills_root, &extension_name, &script_path)?;
         let output = run_script(&script, &action, &extension_name, &extension_payload).await?;
         let response: Value = serde_json::from_str(&output)

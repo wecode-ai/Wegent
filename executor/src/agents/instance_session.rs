@@ -229,15 +229,32 @@ fn migrate_at(source: &Path, target: &Path, kind: AgentKind, id: &str) -> Result
     {
         return Err("Native session changed during migration".to_owned());
     }
-    let published = target.join(directory);
-    if published.exists() {
-        // Recovery after the directory rename but before agent.json publication.
-        verify_existing_tree(&staging.path().join(directory), &published, 0)?;
-    } else {
-        fs::rename(staging.path().join(directory), &published)
-            .map_err(|error| error.to_string())?;
+    let published = target.join(relative);
+    if kind == AgentKind::ClaudeCode && destination.with_extension("").exists() {
+        // Publish companions first so a visible transcript always has its complete data.
+        publish_session_entry(
+            &destination.with_extension(""),
+            &published.with_extension(""),
+            target,
+        )?;
     }
+    publish_session_entry(&destination, &published, target)?;
     Ok(json!({"id":id, "path":relative, "engine":format!("{kind:?}")}))
+}
+
+fn publish_session_entry(staged: &Path, published: &Path, home: &Path) -> Result<(), String> {
+    super::reject_symlink_ancestors(published, home)?;
+    if published.try_exists().map_err(|error| error.to_string())? {
+        // Recovery verifies this exact conversation, never another task's history.
+        return verify_existing_tree(staged, published, 0);
+    }
+    fs::create_dir_all(
+        published
+            .parent()
+            .ok_or("Native session parent is missing")?,
+    )
+    .map_err(|error| error.to_string())?;
+    fs::rename(staged, published).map_err(|error| error.to_string())
 }
 
 fn session_snapshot(
@@ -678,5 +695,92 @@ mod tests {
             fs::write(&session, "{\"sessionId\":\"wrong\",\"type\":\"session_meta\",\"payload\":{\"id\":\"wrong\"}}\n").unwrap();
             assert!(migrate_at(source.path(), target.path(), kind, "session-1").is_err());
         }
+    }
+
+    #[test]
+    fn selected_session_import_preserves_other_tasks_in_an_existing_shared_home() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let selected = "projects/shared-workspace/session-new.jsonl";
+        let existing = target
+            .path()
+            .join("projects/shared-workspace/session-existing.jsonl");
+        fs::create_dir_all(existing.parent().unwrap()).unwrap();
+        fs::write(&existing, "{\"sessionId\":\"session-existing\"}\n").unwrap();
+        fs::create_dir_all(
+            source
+                .path()
+                .join("projects/shared-workspace/session-new/subagents"),
+        )
+        .unwrap();
+        fs::write(
+            source.path().join(selected),
+            "{\"sessionId\":\"session-new\"}\n",
+        )
+        .unwrap();
+        fs::write(
+            source
+                .path()
+                .join("projects/shared-workspace/session-new/subagents/child.jsonl"),
+            "child-data",
+        )
+        .unwrap();
+        fs::write(source.path().join("auth.json"), "private").unwrap();
+        migrate_at(
+            source.path(),
+            target.path(),
+            AgentKind::ClaudeCode,
+            "session-new",
+        )
+        .unwrap();
+        migrate_at(
+            source.path(),
+            target.path(),
+            AgentKind::ClaudeCode,
+            "session-new",
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(&existing).unwrap(),
+            "{\"sessionId\":\"session-existing\"}\n"
+        );
+        assert_eq!(
+            fs::read_to_string(target.path().join(selected)).unwrap(),
+            "{\"sessionId\":\"session-new\"}\n"
+        );
+        assert_eq!(
+            fs::read_to_string(
+                target
+                    .path()
+                    .join("projects/shared-workspace/session-new/subagents/child.jsonl")
+            )
+            .unwrap(),
+            "child-data"
+        );
+        assert!(!target.path().join("auth.json").exists());
+        fs::write(
+            source
+                .path()
+                .join("projects/shared-workspace/session-new/subagents/child.jsonl"),
+            "conflicting-data",
+        )
+        .unwrap();
+        assert!(migrate_at(
+            source.path(),
+            target.path(),
+            AgentKind::ClaudeCode,
+            "session-new"
+        )
+        .unwrap_err()
+        .contains("conflicts"));
+        assert_eq!(
+            fs::read_to_string(
+                target
+                    .path()
+                    .join("projects/shared-workspace/session-new/subagents/child.jsonl")
+            )
+            .unwrap(),
+            "child-data"
+        );
     }
 }
