@@ -99,4 +99,5 @@ done
 
 docker cp "$backend":/app/backend-hybrid.state "$WEGENT_HYBRID_STATE_FILE"
 cd "$ROOT/backend"
+export E2E_TEST_SHA="${CI_COMMIT_SHA:-$(git -C "$ROOT" rev-parse HEAD)}"
 uv run --no-sync python tests/e2e/dingtalk_subscription_real_tenant.py
