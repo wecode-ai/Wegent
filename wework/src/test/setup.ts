@@ -422,6 +422,17 @@ function hasStorageApi(value: unknown): value is Storage {
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>()
 
+  constructor() {
+    // Browser Storage enumerates stored keys, not its implementation fields.
+    return new Proxy(this, {
+      ownKeys: storage => [...storage.values.keys()],
+      getOwnPropertyDescriptor: (storage, key) =>
+        typeof key === 'string' && storage.values.has(key)
+          ? { configurable: true, enumerable: true, value: storage.values.get(key) }
+          : undefined,
+    })
+  }
+
   get length() {
     return this.values.size
   }

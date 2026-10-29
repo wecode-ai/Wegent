@@ -98,7 +98,7 @@ export async function verifyRuntimeInputAcknowledgement(
           }),
         })
         await control.command('click', `[data-testid="runtime-local-task-row-${taskId}"]`)
-        await until(
+        const history = await until(
           async () =>
             JSON.parse(
               await control.command('readRuntimeTransportGate', 'body', {
@@ -108,6 +108,7 @@ export async function verifyRuntimeInputAcknowledgement(
           capture => capture?.deliveries === 1,
           'The pane did not receive real terminal history before the acknowledgement'
         )
+        assert.equal(history.value.result.runtime, 'codex', 'The native runtime must be Codex')
         await waitForWorkbenchDebugState(
           control,
           value =>
@@ -140,7 +141,30 @@ export async function verifyRuntimeInputAcknowledgement(
         assert.equal(await cachedTurns(), 0, 'The real idle cache eviction did not occur')
         assert.equal((await readGate(control)).released, false)
       }
+      if (outcome !== 'rejected') {
+        await control.command('armRuntimeTransportGate', 'body', {
+          value: JSON.stringify({
+            id: 'input-answer-delivered',
+            kind: 'response',
+            name: 'runtime.tasks.send',
+            where: [{ path: 'params.taskId', equals: taskId }],
+            hold: false,
+          }),
+        })
+      }
       await control.command('releaseRuntimeInputTransportGate')
+      if (outcome !== 'rejected') {
+        await until(
+          async () =>
+            JSON.parse(
+              await control.command('readRuntimeTransportGate', 'body', {
+                value: 'input-answer-delivered',
+              })
+            ),
+          capture => capture?.deliveries === 1 && capture.value.result.accepted === true,
+          'The accepted answer acknowledgement did not reach the real consumer'
+        )
+      }
       if (outcome === 'rejected') {
         await until(
           () => readGate(control),
@@ -153,6 +177,7 @@ export async function verifyRuntimeInputAcknowledgement(
           })
         )
         assert.equal(transcript.success, true)
+        assert.equal(transcript.runtime, 'codex', 'The native runtime must be Codex')
         const answers = [...transcript.turns, ...transcript.runtimeTurns]
           .flatMap(turn =>
             turn.items
