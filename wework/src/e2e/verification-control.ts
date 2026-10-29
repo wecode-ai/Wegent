@@ -179,6 +179,16 @@ export async function executeVerificationControlCommand(
   dependencies: VerificationControlDependencies
 ): Promise<DesktopControlExtensionResult> {
   switch (command.action) {
+    case 'disconnectLocalExecutorCloud': {
+      await requestLocalExecutor('executor.backend.configure', {})
+      const status = await requestLocalExecutor<{ configured: boolean; connected: boolean }>(
+        'executor.backend.status'
+      )
+      return {
+        handled: true,
+        value: JSON.stringify({ configured: status.configured, connected: status.connected }),
+      }
+    }
     case 'ensureLocalModelCatalogReady': {
       const { ensureLocalModelCatalogReady } = await import('./local-model-catalog-readiness')
       await ensureLocalModelCatalogReady()

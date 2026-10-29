@@ -7039,6 +7039,8 @@ describe('PluginsWorkspace', () => {
 
   test.each([
     'owner',
+    'offline-owner',
+    'offline-denied',
     'denied',
     'switched',
     'fresh-local-auth',
@@ -7048,6 +7050,7 @@ describe('PluginsWorkspace', () => {
     'reinstalls an uninstalled author source locally after fresh owner validation: %s',
     async outcome => {
       window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      const ownerDenied = outcome === 'denied' || outcome === 'offline-denied'
       const bundledMarketplace = vi
         .spyOn(localExecutor, 'getInitializedBundledPluginMarketplace')
         .mockReturnValue({
@@ -7085,6 +7088,7 @@ describe('PluginsWorkspace', () => {
           : {}),
       })
       mockCodexAppServerInvoke({
+        backendConnected: !outcome.startsWith('offline-'),
         installedPluginNames: [],
         marketplaces: [
           {
@@ -7133,8 +7137,8 @@ describe('PluginsWorkspace', () => {
       vi.mocked(fetch).mockImplementation(async (input, init) => {
         if (String(input).endsWith('/plugins/marketplace/101/owner')) {
           await ownerGate
-          return Response.json(outcome === 'denied' ? { detail: 'Not found' } : { pluginId: 101 }, {
-            status: outcome === 'denied' ? 404 : 200,
+          return Response.json(ownerDenied ? { detail: 'Not found' } : { pluginId: 101 }, {
+            status: ownerDenied ? 404 : 200,
           })
         }
         return fetcher?.(input, init) as Promise<Response>
@@ -7192,7 +7196,7 @@ describe('PluginsWorkspace', () => {
           view.rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
         }
         await act(async () => finishOwner())
-        if (outcome === 'owner' || authScenario) {
+        if (outcome === 'owner' || outcome === 'offline-owner' || authScenario) {
           await waitFor(() =>
             expect(installSource).toHaveBeenCalledWith(
               expect.objectContaining({
@@ -7244,7 +7248,7 @@ describe('PluginsWorkspace', () => {
           } else if (authScenario) {
             expect(healthCalls).toEqual([])
           }
-        } else if (outcome === 'denied') {
+        } else if (ownerDenied) {
           expect(await screen.findByTestId('plugin-operation-notice')).toHaveAttribute(
             'data-notice-kind',
             'error'
@@ -7253,7 +7257,7 @@ describe('PluginsWorkspace', () => {
           expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
           expect(await screen.findByTestId('plugin-marketplace-install-101')).toBeEnabled()
         }
-        if (outcome === 'denied' || outcome === 'switched') {
+        if (ownerDenied || outcome === 'switched') {
           expect(installSource).not.toHaveBeenCalled()
         }
         expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(
@@ -7275,10 +7279,88 @@ describe('PluginsWorkspace', () => {
     }
   )
 
-  test('keeps a recipient with stale personal-source metadata on the cloud install path', async () => {
+  test.each([true, false])(
+    'keeps a recipient with stale personal-source metadata on the cloud install path (connected=%s)',
+    async backendConnected => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({
+        marketplaceVisibility: 'personal',
+        marketplaceAccessRole: 'recipient',
+      })
+      mockCodexAppServerInvoke({ installedPluginNames: [], backendConnected })
+      const fetcher = vi.mocked(fetch).getMockImplementation()!
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        const response = await fetcher(input, init)
+        if (new URL(String(input), 'http://localhost').pathname !== '/api/plugins/marketplace') {
+          return response
+        }
+        const catalog = await response.json()
+        return Response.json({
+          ...catalog,
+          items: catalog.items.map((item: PluginMarketplaceItem) => ({
+            ...item,
+            localPersonalSource: {
+              marketplacePath: '/tmp/wework-personal',
+              pluginName: 'documents',
+            },
+          })),
+        })
+      })
+      const api = createLocalCodexPluginApi()
+      const installSource = vi.fn(api.installPersonalPluginSource)
+      const factory = vi.spyOn(codexPlugins, 'createLocalCodexPluginApi').mockReturnValue({
+        ...api,
+        installPersonalPluginSource: installSource,
+      })
+      try {
+        render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+        await screen.findByTestId('plugin-marketplace-install-101')
+        await userEvent.click(screen.getByTestId('plugin-marketplace-install-101'))
+        if (backendConnected) {
+          await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
+          expect(await screen.findByTestId('plugin-operation-notice')).toHaveTextContent('已安装')
+          expectFetchRequest(
+            '/api/plugins/marketplace/101/install?device_id=current-device',
+            'POST'
+          )
+        } else {
+          expect(await screen.findByTestId('plugin-operation-notice')).toHaveTextContent(
+            '当前设备未连接到云端'
+          )
+          expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
+          expect(
+            vi
+              .mocked(fetch)
+              .mock.calls.some(([input]) =>
+                String(input).includes('/plugins/marketplace/101/install')
+              )
+          ).toBe(false)
+        }
+        expect(installSource).not.toHaveBeenCalled()
+        expect(
+          vi
+            .mocked(fetch)
+            .mock.calls.some(([input]) => String(input).includes('/plugins/marketplace/101/owner'))
+        ).toBe(false)
+        expect(requestLocalExecutor).not.toHaveBeenCalledWith(
+          'runtime.codex.plugin.install_local_first',
+          expect.anything()
+        )
+      } finally {
+        factory.mockRestore()
+      }
+    }
+  )
+
+  test('keeps cloud updates gated for an installed author with local source while disconnected', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
-    mockSystemSkillsFetch({ marketplaceVisibility: 'personal', marketplaceAccessRole: 'recipient' })
-    mockCodexAppServerInvoke({ installedPluginNames: [] })
+    mockSystemSkillsFetch({
+      marketplaceVisibility: 'personal',
+      marketplaceAccessRole: 'owner',
+      marketplaceInstalled: true,
+      marketplaceUpdateAvailable: true,
+    })
+    mockCodexAppServerInvoke({ installedPluginNames: [], backendConnected: false })
     const fetcher = vi.mocked(fetch).getMockImplementation()!
     vi.mocked(fetch).mockImplementation(async (input, init) => {
       const response = await fetcher(input, init)
@@ -7297,31 +7379,28 @@ describe('PluginsWorkspace', () => {
         })),
       })
     })
-    const api = createLocalCodexPluginApi()
-    const installSource = vi.fn(api.installPersonalPluginSource)
-    const factory = vi.spyOn(codexPlugins, 'createLocalCodexPluginApi').mockReturnValue({
-      ...api,
-      installPersonalPluginSource: installSource,
-    })
-    try {
-      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
-      await screen.findByTestId('plugin-marketplace-install-101')
-      await installPluginFromMarketCard('plugin-marketplace-install-101')
-      expect(await screen.findByTestId('plugin-operation-notice')).toHaveTextContent('已安装')
-      expectFetchRequest('/api/plugins/marketplace/101/install?device_id=current-device', 'POST')
-      expect(installSource).not.toHaveBeenCalled()
-      expect(
-        vi
-          .mocked(fetch)
-          .mock.calls.some(([input]) => String(input).includes('/plugins/marketplace/101/owner'))
-      ).toBe(false)
-      expect(requestLocalExecutor).not.toHaveBeenCalledWith(
-        'runtime.codex.plugin.install_local_first',
-        expect.anything()
-      )
-    } finally {
-      factory.mockRestore()
-    }
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    const action = await screen.findByTestId('plugin-detail-toggle-101')
+    await waitFor(() => expect(action).toHaveTextContent('更新'))
+    await userEvent.click(action)
+
+    expect(await screen.findByTestId('plugin-operation-notice')).toHaveTextContent(
+      '当前设备未连接到云端'
+    )
+    expect(screen.queryByTestId('plugin-update-confirm-button')).not.toBeInTheDocument()
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(
+          ([input, init]) =>
+            String(input).includes('/plugins/installed/101') && init?.method === 'PUT'
+        )
+    ).toBe(false)
+    expect(requestLocalExecutor).not.toHaveBeenCalledWith(
+      'runtime.codex.plugin.install_local_first',
+      expect.anything()
+    )
   })
 
   test.each([false, true])(
@@ -8824,19 +8903,31 @@ describe('PluginsWorkspace', () => {
     })
   })
 
-  test.each(['success', 'scan-failure', 'superseded', 'account-change'])(
+  const personalVersionScenarios = [
+    'success',
+    'normalized-name',
+    'normalized-name-reference',
+    'scan-failure',
+    'superseded',
+    'account-change',
+  ]
+
+  test.each(personalVersionScenarios)(
     'submits a new personal version explicitly and preserves scope (%s)',
     async outcome => {
       window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      const normalizedName = outcome.startsWith('normalized-name')
+      const pluginKey = normalizedName ? 'gitlab-engineering' : 'dev-tools'
+      const pluginName = normalizedName ? 'GitLab Engineering' : 'dev-tools'
       mockSystemSkillsFetch({
         marketplaceVisibility: 'personal',
         marketplaceAccessRole: 'owner',
-        marketplaceName: 'dev-tools',
+        marketplaceName: pluginName,
         marketplaceDisplayName: 'Dev Tools',
       })
       mockCodexAppServerInvoke({
         deviceId: 'current-device',
-        installedPluginNames: ['dev-tools'],
+        installedPluginNames: [pluginKey],
         marketplaces: [
           {
             name: 'wework-personal',
@@ -8845,9 +8936,9 @@ describe('PluginsWorkspace', () => {
             plugins: [
               {
                 id: 'dev-tools-local',
-                name: 'dev-tools',
+                name: pluginKey,
                 localVersion: '2.0.0',
-                displayName: 'Dev Tools',
+                displayName: normalizedName ? 'New Engineering Tools' : 'Dev Tools',
                 description: 'Updated developer tools',
               },
             ],
@@ -8915,9 +9006,27 @@ describe('PluginsWorkspace', () => {
       const createApi = vi
         .spyOn(codexPlugins, 'createLocalCodexPluginApi')
         .mockReturnValue(localApi)
-      const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      const view = render(
+        <PluginsWorkspace
+          cloudApiBaseUrl="/api"
+          cloudToken="cloud-token"
+          pluginReference={
+            outcome === 'normalized-name-reference'
+              ? { pluginName, marketplaceName: 'wework-personal' }
+              : undefined
+          }
+        />
+      )
       try {
-        await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+        if (outcome === 'normalized-name-reference') {
+          await userEvent.click(await screen.findByTestId('plugin-detail-share-101'))
+          expect(await screen.findByTestId('plugin-share-intent-dialog')).toHaveTextContent(
+            'New Engineering Tools'
+          )
+          await userEvent.click(screen.getByTestId('plugin-publish-close'))
+        } else {
+          await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+        }
         expect(await screen.findByTestId('plugin-version-submit-notice')).toHaveTextContent(
           '本地 v2.0.0 · 已分享 v1.0.0'
         )
@@ -8942,7 +9051,7 @@ describe('PluginsWorkspace', () => {
         const cacheKey = pluginMarketplaceCacheKey('/api', 'cloud-token')
         const beforeSubmission = getPluginMarketplaceCache(cacheKey)
         await userEvent.click(screen.getByTestId('plugin-version-submit-confirm'))
-        if (outcome !== 'success') {
+        if (outcome !== 'success' && !normalizedName) {
           expect(await screen.findByRole('alert')).toHaveTextContent(
             outcome === 'superseded' ? '共享版本已被更新' : 'Package scan failed'
           )
@@ -8968,6 +9077,7 @@ describe('PluginsWorkspace', () => {
           expect(pluginInventoryReadIsCurrent(cacheKey, beforeSubmission)).toBe(false)
         }
         expect(submittedMetadata).toMatchObject({
+          slug: pluginKey,
           version: '2.0.0',
           purpose: 'restricted_share',
           releaseNotes: 'Add scheduling queries',
@@ -8988,6 +9098,50 @@ describe('PluginsWorkspace', () => {
         hash.mockRestore()
         createApi.mockRestore()
       }
+    }
+  )
+
+  test.each(['recipient', 'different-source'])(
+    'does not submit a normalized-name listing using a common display name (%s)',
+    async scenario => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      const pluginKey = scenario === 'recipient' ? 'gitlab-engineering' : 'another-source'
+      mockSystemSkillsFetch({
+        marketplaceVisibility: 'personal',
+        marketplaceAccessRole: scenario === 'recipient' ? 'recipient' : 'owner',
+        marketplaceName: 'GitLab Engineering',
+        marketplaceDisplayName: 'Engineering tools',
+      })
+      mockCodexAppServerInvoke({
+        installedPluginNames: [pluginKey],
+        marketplaces: [
+          {
+            name: 'wework-personal',
+            path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+            plugins: [
+              {
+                id: 'engineering-local',
+                name: pluginKey,
+                displayName: 'Engineering tools',
+                localVersion: '2.0.0',
+              },
+            ],
+          },
+        ],
+      })
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+      await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+
+      expect(await screen.findByTestId('plugin-detail-info')).toHaveTextContent(
+        scenario === 'recipient' ? '1.0.0' : '2.0.0'
+      )
+      expect(screen.queryByTestId('plugin-version-submit-open')).not.toBeInTheDocument()
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(([input]) => String(input).includes('/plugins/submissions/init'))
+      ).toBe(false)
     }
   )
 

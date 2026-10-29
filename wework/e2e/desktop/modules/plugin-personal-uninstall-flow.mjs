@@ -13,7 +13,7 @@ import {
   until,
 } from './plugin-regression-fixture.mjs'
 import { resultDir, WORKBENCH_READY_TIMEOUT_MS } from './shared.mjs'
-import { captureVerificationScreenshot } from './workspace-flows.mjs'
+import { captureVerificationScreenshot, reloadMainWindow } from './workspace-flows.mjs'
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
 
@@ -147,6 +147,38 @@ async function assertSharedRelease(owner, plugin, access) {
   assert.deepEqual(await pluginApi(owner, `/plugins/marketplace/${plugin.id}/access`), access)
 }
 
+export async function disconnectPersonalPluginRuntime(control, cloud, plugin) {
+  const runtime = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+  assert.ok(runtime.ready && runtime.deviceId, 'The local Runtime must remain ready')
+  const status = JSON.parse(await control.command('disconnectLocalExecutorCloud', 'body'))
+  assert.deepEqual(status, { configured: false, connected: false })
+  await until(
+    async () =>
+      JSON.parse(
+        await control.command('getPluginSyncDiagnostics', 'body', { value: runtime.deviceId })
+      ),
+    state => !state.backend.connected && !state.rendererConnected,
+    'The real Native disconnect did not reach the renderer'
+  )
+  const readable = await pluginApi(cloud, `/plugins/marketplace/${plugin.id}`)
+  assert.equal(readable.id, plugin.id, 'Cloud HTTP access was lost with the Runtime Socket')
+  return runtime.deviceId
+}
+
+export async function restorePersonalPluginRuntime(control, deviceId) {
+  await reloadMainWindow(control, 'The restored Runtime did not reconnect to desktop control')
+  await control.command('waitFor', testId('new-chat-button'), {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await until(
+    async () =>
+      JSON.parse(await control.command('getPluginSyncDiagnostics', 'body', { value: deviceId })),
+    state => state.backend.configured && state.backend.connected && state.rendererConnected,
+    'The real Runtime Socket did not reconnect after restoring the renderer',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+}
+
 export async function verifyAuthorSourceUninstall({
   control,
   cloudEnvironment,
@@ -200,20 +232,40 @@ export async function verifyAuthorSourceUninstall({
   await control.command('click', testId('plugins-distribution-tab-personal'))
   await control.command('fill', testId('plugins-search-input'), { value: plugin.name })
   await refreshPluginInventory(control, WORKBENCH_READY_TIMEOUT_MS)
-  await control.command('clickWhenEnabled', testId(`plugin-marketplace-install-${plugin.id}`))
-  await control.command('waitFor', testId('install-plugin-dialog-confirm'))
-  await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
-  await until(
-    () => pathExists(join(cache, version)),
-    Boolean,
-    'The author source did not reinstall locally'
-  )
-  await assertPersonalSourceUnchanged(source)
-  assert.equal(
-    await accountPlugin(cloudEnvironment, plugin.name),
-    undefined,
-    'Reinstalling author source created a cloud account install'
-  )
+  const deviceId = await disconnectPersonalPluginRuntime(control, cloudEnvironment, plugin)
+  try {
+    assert.deepEqual(
+      await pluginApi(cloudEnvironment, `/plugins/marketplace/${plugin.id}/owner`),
+      { pluginId: Number(plugin.id) },
+      'The disconnected author must still pass the real HTTP ownership check'
+    )
+    await control.command('clickWhenEnabled', testId(`plugin-marketplace-install-${plugin.id}`))
+    await control.command('waitFor', testId('install-plugin-dialog-confirm'))
+    await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+    await until(
+      () => pathExists(join(cache, version)),
+      Boolean,
+      'The disconnected author source did not reinstall locally'
+    )
+    await control.command(
+      'waitFor',
+      `${testId('plugin-operation-notice')}[data-notice-kind="success"]`
+    )
+    await assertPersonalSourceUnchanged(source)
+    await assertSharedRelease(cloudEnvironment, plugin, access)
+    assert.equal(
+      await accountPlugin(cloudEnvironment, plugin.name),
+      undefined,
+      'Reinstalling author source created a cloud account install'
+    )
+    const state = JSON.parse(
+      await control.command('getPluginSyncDiagnostics', 'body', { value: deviceId })
+    )
+    assert.equal(state.backend.connected, false, 'Author reinstall reconnected the Runtime Socket')
+    await captureVerificationScreenshot(control, 'personal-plugin-author-offline-reinstall.png')
+  } finally {
+    await restorePersonalPluginRuntime(control, deviceId)
+  }
   await openPersonalPlugin(control, plugin)
   await control.command('waitFor', testId('plugin-version-submit-notice'), { text: version })
   await control.command('click', testId('plugin-version-submit-open'))

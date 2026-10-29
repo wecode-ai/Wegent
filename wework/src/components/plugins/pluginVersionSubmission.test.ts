@@ -3,11 +3,11 @@ import type { PluginMarketplaceItem } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { hasNewPersonalPluginVersion } from './pluginVersionSubmission'
 
-const source = (version: string) =>
+const source = (version: string, pluginKey = 'dev-tools') =>
   ({
     version,
     origin: 'created',
-    raw: { spec: { source: { type: 'local', pluginKey: 'dev-tools' } } },
+    raw: { spec: { source: { type: 'local', pluginKey } } },
   }) as InstalledPluginItem
 const listing = {
   name: 'dev-tools',
@@ -37,6 +37,31 @@ describe('hasNewPersonalPluginVersion', () => {
         sharedVersion: '1.9.0',
       })
     ).toBe(true)
+  })
+
+  test.each(['GitLab Engineering', 'gitlab-engineering'])(
+    'matches source key %s to the published manifest name',
+    pluginKey => {
+      expect(
+        hasNewPersonalPluginVersion(source('2.0.0', pluginKey), {
+          ...listing,
+          name: 'GitLab Engineering',
+        })
+      ).toBe(true)
+    }
+  )
+
+  test('keeps normalized identity matching scoped to the owner and matching source', () => {
+    const namedListing = { ...listing, name: 'GitLab Engineering' }
+    expect(hasNewPersonalPluginVersion(source('2.0.0', 'other-source'), namedListing)).toBe(false)
+    for (const accessRole of ['recipient', 'catalog'] as const) {
+      expect(
+        hasNewPersonalPluginVersion(source('2.0.0', 'GitLab Engineering'), {
+          ...namedListing,
+          accessRole,
+        })
+      ).toBe(false)
+    }
   })
 
   test('requires the personal owner, an existing release and packable local source', () => {

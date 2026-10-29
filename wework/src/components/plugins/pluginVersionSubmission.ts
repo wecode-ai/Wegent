@@ -9,9 +9,11 @@ export function hasNewPersonalPluginVersion(
 ): boolean {
   if (
     !plugin ||
+    !listing ||
     !isPackableCreatedPlugin(plugin) ||
-    createdPluginSlugFromKey(plugin.raw.spec.source.pluginKey) !== listing?.name ||
-    listing?.accessRole !== 'owner' ||
+    createdPluginSlugFromKey(plugin.raw.spec.source.pluginKey) !==
+      createdPluginSlugFromKey(listing.name) ||
+    listing.accessRole !== 'owner' ||
     listing.visibility !== 'personal' ||
     !listing.latestReleaseId
   ) {

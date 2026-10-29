@@ -171,9 +171,66 @@ describe('usePluginVersionSubmission request lifetime', () => {
 
     expect(input.pluginApi.publishSubmission).toHaveBeenCalledWith(
       expect.any(File),
-      expect.objectContaining({ version: '2.0.0', releaseNotes: 'Update queries' })
+      expect.objectContaining({
+        slug: 'personal',
+        version: '2.0.0',
+        releaseNotes: 'Update queries',
+      })
     )
     expect(input.onPublished).toHaveBeenCalledOnce()
     expect(result.current.drawer).toBeNull()
+  })
+})
+
+describe('usePluginVersionSubmission source identity', () => {
+  const namedSource = {
+    ...source,
+    name: 'GitLab Engineering',
+    raw: {
+      spec: {
+        source: {
+          type: 'local',
+          marketplace: 'wework-personal',
+          pluginKey: 'GitLab Engineering',
+        },
+      },
+    },
+  } as InstalledPluginItem
+  const namedListing = { ...listing, name: 'GitLab Engineering' }
+
+  test('submits the normalized slug from a legal mixed-case manifest name', async () => {
+    const input = options()
+    const { result } = renderHook(() => usePluginVersionSubmission(input))
+    const action = result.current.actionFor(namedSource, namedListing)
+    expect(action).toBeDefined()
+    act(() => action!.onSubmit())
+    await waitFor(() => expect(result.current.drawer).not.toBeNull())
+
+    act(() => drawer(result).props.onSubmit('Update GitLab queries'))
+
+    await waitFor(() => expect(input.onPublished).toHaveBeenCalledOnce())
+    expect(input.localPluginApi.packageCreatedPlugin).toHaveBeenCalledWith(namedSource.raw)
+    expect(input.pluginApi.publishSubmission).toHaveBeenCalledWith(
+      expect.any(File),
+      expect.objectContaining({
+        slug: 'gitlab-engineering',
+        displayName: 'GitLab Engineering',
+        version: '2.0.0',
+        releaseNotes: 'Update GitLab queries',
+      })
+    )
+  })
+
+  test('does not expose or prepare submissions for recipients or a different source', () => {
+    const input = options()
+    const { result } = renderHook(() => usePluginVersionSubmission(input))
+
+    expect(
+      result.current.actionFor(namedSource, { ...namedListing, accessRole: 'recipient' })
+    ).toBeUndefined()
+    expect(result.current.actionFor(source, namedListing)).toBeUndefined()
+    expect(input.pluginApi.getMarketplacePluginAccess).not.toHaveBeenCalled()
+    expect(input.localPluginApi.packageCreatedPlugin).not.toHaveBeenCalled()
+    expect(input.pluginApi.publishSubmission).not.toHaveBeenCalled()
   })
 })

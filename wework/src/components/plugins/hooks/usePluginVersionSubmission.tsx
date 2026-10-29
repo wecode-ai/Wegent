@@ -12,6 +12,7 @@ import type {
 import type { InstalledPluginItem } from '../PluginManagementRows'
 import type { PluginOperationNoticeState } from '../PluginOperationNotice'
 import { PluginVersionSubmitDrawer } from '../PluginVersionSubmitDrawer'
+import { createdPluginSlugFromKey } from '../pluginOwnerLocalPackage'
 import { hasNewPersonalPluginVersion } from '../pluginVersionSubmission'
 
 interface SubmissionTarget {
@@ -123,7 +124,7 @@ export function usePluginVersionSubmission(options: VersionSubmissionOptions) {
         return
       }
       const completed = await options.pluginApi.publishSubmission(file, {
-        slug: target.listing.name,
+        slug: createdPluginSlugFromKey(target.plugin.raw.spec.source.pluginKey),
         displayName: target.plugin.name,
         version: target.plugin.version!,
         listingType: target.listing.listingType ?? 'plugin',

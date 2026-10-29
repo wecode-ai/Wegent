@@ -472,6 +472,7 @@ classify_wework_path() {
       wework/src/components/plugins/plugin-dialogs/UninstallPluginDialog.tsx | \
       wework/src/components/plugins/PluginVersionSubmit* | \
       wework/src/components/plugins/pluginVersionSubmission* | \
+      wework/src/components/plugins/hooks/usePluginDetailSelection* | \
       wework/src/components/plugins/hooks/usePluginVersionSubmission*)
       select_target "cloud:plugin-workspace-publication"
       ;;

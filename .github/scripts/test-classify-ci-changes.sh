@@ -1210,6 +1210,8 @@ done
 for personal_version_implementation_path in \
   wework/src/components/plugins/PluginVersionSubmitDrawer.tsx \
   wework/src/components/plugins/pluginVersionSubmission.ts \
+  wework/src/components/plugins/hooks/usePluginDetailSelection.ts \
+  wework/src/components/plugins/hooks/usePluginDetailSelection.test.ts \
   wework/src/components/plugins/hooks/usePluginVersionSubmission.tsx; do
   assert_desktop_case "Personal plugin version implementation retains lifecycle and publication coverage: $personal_version_implementation_path" \
     'wework_desktop_e2e=true

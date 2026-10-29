@@ -200,6 +200,7 @@ import {
   resolvePluginOwnerActions,
 } from './pluginOwnerActions'
 import {
+  createdPluginSlugFromKey,
   findPackableCreatedPlugin,
   isPackableCreatedPlugin,
   marketplaceItemOwnsLocalCreatedPackage,
@@ -323,6 +324,10 @@ function selectPrimaryPublication(
 type PersonalMarketplaceRefreshResult =
   | { complete: true; items: PluginMarketplaceItem[] }
   | { complete: false }
+
+function isPersonalSourceInstall(item: PluginMarketplaceItem): boolean {
+  return item.accessRole === 'owner' && Boolean(item.localPersonalSource)
+}
 
 async function readPersonalMarketplaceForCloudRefresh(): Promise<PersonalMarketplaceRefreshResult> {
   try {
@@ -1001,7 +1006,7 @@ export function PluginsWorkspace({
   )
 
   const createdPluginSlug = (plugin: InstalledPluginItem) =>
-    plugin.raw.spec.source.pluginKey.toLowerCase().replace(/[^a-z0-9._-]+/g, '-')
+    createdPluginSlugFromKey(plugin.raw.spec.source.pluginKey)
 
   const findOwnedMarketplacePlugin = (plugin: InstalledPluginItem) => {
     const associated = findMarketplaceItemForInstalled(plugin, pluginMarketplaceState.items)
@@ -1014,7 +1019,7 @@ export function PluginsWorkspace({
       return undefined
     const slug = createdPluginSlug(plugin)
     return pluginMarketplaceState.items.find(
-      item => item.accessRole === 'owner' && item.name === slug
+      item => item.accessRole === 'owner' && createdPluginSlugFromKey(item.name) === slug
     )
   }
 
@@ -2076,8 +2081,9 @@ export function PluginsWorkspace({
       return
     }
 
-    const installFromLocal = isLocalMarketplaceItem(item)
     const alreadyInstalled = Boolean(item.installed || item.installedLocally)
+    const installFromLocal =
+      isLocalMarketplaceItem(item) || (!alreadyInstalled && isPersonalSourceInstall(item))
     const needsCloudPackagePush =
       !installFromLocal && (!alreadyInstalled || marketplaceItemCanRetryPluginUpdate(item))
 
@@ -2245,7 +2251,7 @@ export function PluginsWorkspace({
     }
 
     const localMarketplaceId = localMarketplaceIdFromItem(item)
-    const installPersonalSource = item.accessRole === 'owner' && Boolean(item.localPersonalSource)
+    const installPersonalSource = isPersonalSourceInstall(item)
     const installFromLocal = localMarketplaceId !== null || installPersonalSource
     const isCurrent = capturePluginScope()
     const requireCurrentScope = () => {
@@ -5348,6 +5354,7 @@ export function PluginsWorkspace({
     const packableCreated = marketplaceItemOwnsLocalCreatedPackage(selectedMarketplacePlugin)
       ? (findPackableCreatedPlugin(installedPlugins, [
           selectedMarketplacePlugin.name,
+          createdPluginSlugFromKey(selectedMarketplacePlugin.name),
           selectedMarketplacePlugin.displayName,
           installedDetail?.raw.spec.source.pluginKey,
           installedDetail?.name,
@@ -5394,6 +5401,7 @@ export function PluginsWorkspace({
       openPackablePublish(
         [
           selectedMarketplacePlugin.name,
+          createdPluginSlugFromKey(selectedMarketplacePlugin.name),
           selectedMarketplacePlugin.displayName,
           installedDetail?.raw.spec.source.pluginKey,
           installedDetail?.name,

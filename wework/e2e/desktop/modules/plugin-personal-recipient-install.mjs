@@ -5,6 +5,10 @@ import { waitForSnapshot } from './conversation-layout.mjs'
 import { writeCodexConfig } from './desktop-build-flows.mjs'
 import { refreshPluginInventory } from './plugin-inventory-state.mjs'
 import { accountPlugin, materializedPlugin, testId, until } from './plugin-regression-fixture.mjs'
+import {
+  disconnectPersonalPluginRuntime,
+  restorePersonalPluginRuntime,
+} from './plugin-personal-uninstall-flow.mjs'
 import { resultDir, WORKBENCH_READY_TIMEOUT_MS } from './shared.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
@@ -28,6 +32,38 @@ async function installSharedPlugin({ control, recipientCloud, plugin, executorHo
   await control.command('click', testId('plugins-distribution-tab-personal'))
   await control.command('fill', testId('plugins-search-input'), { value: plugin.name })
   setPhase('refresh-shared-plugin')
+  await refreshPluginInventory(control, WORKBENCH_READY_TIMEOUT_MS)
+  setPhase('verify-disconnected-recipient-gate')
+  const deviceId = await disconnectPersonalPluginRuntime(control, recipientCloud, plugin)
+  try {
+    await control.command('clickWhenEnabled', testId(`plugin-marketplace-install-${plugin.id}`))
+    await control.command(
+      'waitFor',
+      `${testId('plugin-operation-notice')}[data-notice-kind="error"]`
+    )
+    assert.match(
+      await control.command('getText', testId('plugin-operation-notice')),
+      /当前设备未连接到云端|This device is not connected to the cloud/i
+    )
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    assert.equal(
+      snapshot.testIds.includes('install-plugin-dialog-confirm'),
+      false,
+      'The disconnected recipient bypassed the cloud installation gate'
+    )
+    assert.equal(
+      await accountPlugin(recipientCloud, plugin.name),
+      undefined,
+      'The disconnected recipient created cloud account membership'
+    )
+    await captureVerificationScreenshot(control, 'personal-plugin-recipient-offline-blocked.png')
+  } finally {
+    await restorePersonalPluginRuntime(control, deviceId)
+  }
+  await control.command('navigate', 'body', { value: '/plugins' })
+  await control.command('waitFor', testId('plugins-search-input'))
+  await control.command('click', testId('plugins-distribution-tab-personal'))
+  await control.command('fill', testId('plugins-search-input'), { value: plugin.name })
   await refreshPluginInventory(control, WORKBENCH_READY_TIMEOUT_MS)
   setPhase('open-install-confirmation')
   await control.command('clickWhenEnabled', testId(`plugin-marketplace-install-${plugin.id}`))
@@ -53,7 +89,7 @@ async function installSharedPlugin({ control, recipientCloud, plugin, executorHo
     'The recipient account install did not materialize a managed runtime package',
     WORKBENCH_READY_TIMEOUT_MS
   )
-  return { installedId, managed }
+  return { installedId, managed, disconnectedInstallBlocked: true }
 }
 
 async function captureRecipientFailure(control, phase) {
@@ -174,7 +210,7 @@ export async function verifyPersonalRecipientManagedInstall({
     const recipientRuntime = await readyExecutor(control)
     assert.notEqual(recipientRuntime.deviceId, ownerRuntime.deviceId)
     setPhase('open-shared-plugin')
-    const { installedId, managed } = await installSharedPlugin({
+    const { installedId, managed, disconnectedInstallBlocked } = await installSharedPlugin({
       control,
       recipientCloud,
       plugin,
@@ -187,7 +223,7 @@ export async function verifyPersonalRecipientManagedInstall({
     await assertRecipientActions(control, plugin)
     await captureVerificationScreenshot(control, 'personal-plugin-recipient-managed-install.png')
     setPhase('complete')
-    return { deviceId: recipientRuntime.deviceId, installedId, managed }
+    return { deviceId: recipientRuntime.deviceId, installedId, managed, disconnectedInstallBlocked }
   } catch (error) {
     console.log(`[personal-plugin-recipient] failed-phase=${phase}`)
     await captureRecipientFailure(control, phase)

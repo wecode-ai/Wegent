@@ -16,20 +16,23 @@ import {
 } from './plugin-personal-uninstall-flow.mjs'
 
 const slug = 'desktop-e2e-personal-version'
+const initialManifestName = 'Desktop E2E Personal Version'
+const initialDisplayName = 'Personal Version E2E'
+const updatedDisplayName = 'Updated Author Source E2E'
 const currentVersion = '1.0.0'
 const nextVersion = '1.1.0'
 
-async function createPackage(root, version) {
+async function createPackage(root, version, manifestName = slug, displayName = updatedDisplayName) {
   const archivePath = join(root, `${slug}-${version}.zip`)
   await createZipFixture(archivePath, {
     '.codex-plugin/plugin.json': JSON.stringify({
-      name: slug,
+      name: manifestName,
       version,
       description: 'Verifies explicit personal plugin version submission',
       author: { name: 'Wework Desktop E2E' },
       skills: './skills/',
       interface: {
-        displayName: 'Personal Version E2E',
+        displayName,
         shortDescription: 'Submit an updated personal plugin release',
         longDescription: 'Verifies explicit version submission and preserves the shared audience.',
         developerName: 'Wework Desktop E2E',
@@ -69,6 +72,7 @@ async function importPersonalSource(control, root, version, overwrite = false) {
     })
   )
   assert.equal(imported.version, version)
+  assert.equal(imported.displayName, updatedDisplayName)
 }
 
 export async function verifyPersonalPluginVersionSubmission({
@@ -104,10 +108,12 @@ export async function verifyPersonalPluginVersionSubmission({
     role: 'user',
     auth_source: 'password',
   })
-  const packageBytes = await readFile(await createPackage(root, currentVersion))
+  const packageBytes = await readFile(
+    await createPackage(root, currentVersion, initialManifestName, initialDisplayName)
+  )
   const initialized = await request('/plugins/submissions/init', 'POST', {
     slug,
-    displayName: 'Personal Version E2E',
+    displayName: initialDisplayName,
     version: currentVersion,
     filename: `${slug}.zip`,
     sha256: createHash('sha256').update(packageBytes).digest('hex'),
@@ -134,6 +140,8 @@ export async function verifyPersonalPluginVersionSubmission({
   const pluginPath = `/plugins/marketplace/${initialized.pluginId}`
   const before = await request(pluginPath)
   const accessBefore = await request(`${pluginPath}/access`)
+  assert.equal(before.name, initialManifestName)
+  assert.equal(before.displayName, initialDisplayName)
   assert.equal(before.version, currentVersion)
   assert.equal(accessBefore.targets.length, 1)
   assert.equal(accessBefore.allowCopy, true)
@@ -143,7 +151,7 @@ export async function verifyPersonalPluginVersionSubmission({
   await control.command('navigate', 'body', { value: '/plugins' })
   await control.command('waitFor', testId('plugins-search-input'))
   await control.command('click', testId('plugins-distribution-tab-personal'))
-  await control.command('fill', testId('plugins-search-input'), { value: slug })
+  await control.command('fill', testId('plugins-search-input'), { value: initialDisplayName })
   await control.command('click', testId('plugins-refresh-button'))
   await control.command('waitFor', testId(`plugin-marketplace-row-${initialized.pluginId}`))
   await control.command('click', testId(`plugin-marketplace-row-${initialized.pluginId}`))
@@ -174,6 +182,9 @@ export async function verifyPersonalPluginVersionSubmission({
     'Submitting the new personal source did not advance the shared release'
   )
   assert.notEqual(after.latestReleaseId, before.latestReleaseId)
+  assert.equal(after.id, before.id, 'Normalized name submission created another cloud Plugin')
+  assert.equal(after.name, slug, 'The latest real source manifest was not applied to the listing')
+  assert.equal(after.displayName, updatedDisplayName)
   assert.deepEqual(await request(`${pluginPath}/access`), accessBefore)
   await waitForSnapshot(
     control,
