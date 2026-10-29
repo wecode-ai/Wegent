@@ -5467,7 +5467,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         insertion={conversationSelectionInsertion}
                                         value={paneSession.input}
                                         onChange={paneSession.setInput}
-                                        onDraftEdit={paneSession.clearError}
+                                        onDraftEdit={paneSession.markDraftEdited}
                                         onSubmit={submitPaneInput}
                                         disabled={
                                           composerDisabled || !paneVisible || !workbenchVisible
@@ -5703,7 +5703,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           value={paneSession.input}
                           onChange={paneSession.setInput}
                           onDraftEdit={() => {
-                            paneSession.clearError?.()
+                            paneSession.markDraftEdited()
                             setCentralHarnessError(null)
                           }}
                           onSubmit={submitWorkbenchInput}

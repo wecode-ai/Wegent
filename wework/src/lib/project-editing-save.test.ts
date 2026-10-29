@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import type { DeviceInfo, RuntimeProjectWork, RuntimeWorkListResponse } from '@/types/api'
 import { qualifyLocalRuntimeSource } from './local-runtime-sidebar-identity'
-import { findOwnedRuntimeProject } from './project-editing-save'
+import { findOwnedRuntimeProject, projectSettingEqual } from './project-editing-save'
 
 const identity = {
   deviceId: 'native-ipc',
@@ -61,6 +61,26 @@ function project(owner: DeviceInfo, id: number): RuntimeProjectWork {
 function runtimeWork(projects: RuntimeProjectWork[]): RuntimeWorkListResponse {
   return { projects, chats: [], totalTasks: 0 }
 }
+
+test('compares nested project settings without normalizing absent, empty or null model options', () => {
+  const selection = { modelName: 'session-model', options: { speed: 'standard', reasoning: 'low' } }
+  expect(
+    projectSettingEqual(
+      { modelSelection: selection },
+      {
+        modelSelection: {
+          options: { reasoning: 'low', speed: 'standard' },
+          modelName: 'session-model',
+        },
+      }
+    )
+  ).toBe(true)
+  expect(projectSettingEqual({ modelSelection: undefined }, {})).toBe(true)
+  expect(projectSettingEqual({ modelSelection: null }, {})).toBe(false)
+  expect(
+    projectSettingEqual({ modelName: 'session-model' }, { modelName: 'session-model', options: {} })
+  ).toBe(false)
+})
 
 test('selects the canonical remote owner instead of a same-key native project sharing its alias', () => {
   const nativeProject = project(native, 7)

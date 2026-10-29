@@ -369,6 +369,11 @@ export function useWorkbenchPaneSession({
     [inputScopeKey, setErrorForScope]
   )
   const clearError = useCallback(() => setError(null), [setError])
+  const markDraftEdited = useCallback(() => {
+    inputRevisionRef.current += 1
+    setInputRevision(inputRevisionRef.current)
+    clearError()
+  }, [clearError])
   const setInput = scopedSetInput
   const restoreInputAfterFailure = useCallback(
     (value: string) => {
@@ -2783,6 +2788,7 @@ export function useWorkbenchPaneSession({
     browserAnnotationCommand,
     input,
     setInput,
+    markDraftEdited,
     error,
     setError,
     clearError,

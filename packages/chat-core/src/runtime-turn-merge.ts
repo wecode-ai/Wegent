@@ -1,17 +1,12 @@
 import {
-  processingBlocks,
-  assistantTextContent,
+  resolveRuntimeTurnThinkingContent,
   preserveProcessingBlockTiming,
   completeRuntimeTurnTiming,
 } from "./runtime-turn-helpers";
 import { preserveRequestUserInputResponse } from "./runtime-user-input";
 import { commandExecutionPayload } from "./command-execution";
 
-import {
-  getLatestThinkingContent,
-  nestWorkbenchProcessingBlocks,
-} from "./workbench-message-reducer";
-
+import { nestWorkbenchProcessingBlocks } from "./workbench-message-reducer";
 import type {
   ProcessingBlock,
   RuntimeConversationItem,
@@ -33,7 +28,7 @@ export function mergeRuntimeConversationTurn(
   const preserveLocalTerminal =
     isTerminalTurnStatus(local.status) &&
     isUnsettledTurnStatus(snapshot.status);
-  const items =
+  const mergedItems =
     snapshot.itemMerge === "prepend"
       ? prependRuntimeConversationItems(
           local.items,
@@ -47,9 +42,11 @@ export function mergeRuntimeConversationTurn(
         );
   const preserveLocalFailure =
     local.status === "failed" && Boolean(local.error) && !snapshot.error;
-  const preserveStreamingThinking =
-    snapshot.status === "streaming" &&
-    assistantTextContent(local.items) === assistantTextContent(snapshot.items);
+  const items = orderRuntimeConversationItems(mergedItems);
+  const status =
+    preserveLocalTerminal || preserveLocalFailure
+      ? local.status
+      : snapshot.status;
   const timing = isTerminalTurnStatus(local.status)
     ? {
         startedAt: local.startedAt ?? snapshot.startedAt,
@@ -70,7 +67,7 @@ export function mergeRuntimeConversationTurn(
       snapshot.clientUserMessageId ?? local.clientUserMessageId,
     runtimeMessageIndex: earliestRuntimeMessageIndex(local, snapshot),
     itemMerge: undefined,
-    items: orderRuntimeConversationItems(items),
+    items,
     position:
       Math.min(local.position ?? Infinity, snapshot.position ?? Infinity) ===
       Infinity
@@ -87,10 +84,7 @@ export function mergeRuntimeConversationTurn(
       snapshot.fileChanges.status === "active"
         ? local.fileChanges
         : (snapshot.fileChanges ?? local.fileChanges),
-    status:
-      preserveLocalTerminal || preserveLocalFailure
-        ? local.status
-        : snapshot.status,
+    status,
     ...timing,
     error:
       preserveLocalTerminal || preserveLocalFailure
@@ -103,11 +97,10 @@ export function mergeRuntimeConversationTurn(
     stoppedNotice: preserveLocalTerminal
       ? local.stoppedNotice
       : snapshot.stoppedNotice,
-    streamingThinkingContent: preserveLocalTerminal
-      ? undefined
-      : preserveStreamingThinking
-        ? getLatestThinkingContent(processingBlocks(items))
-        : snapshot.streamingThinkingContent,
+    streamingThinkingContent: resolveRuntimeTurnThinkingContent({
+      items,
+      status,
+    }),
   };
 }
 

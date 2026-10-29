@@ -659,12 +659,10 @@ printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
 #[cfg(unix)]
 #[tokio::test]
 async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resume() {
-    use super::super::{CodexAppServerClient, CodexAppServerProcess, CodexNotificationHub};
-    use std::{
-        collections::{BTreeMap, HashMap},
-        process::Stdio,
-        sync::Arc,
+    use super::super::{
+        CodexAppServerClient, CodexAppServerProcess, CodexNotificationHub, PendingCodexRequests,
     };
+    use std::{collections::BTreeMap, process::Stdio, sync::Arc};
     use tokio::{
         io::{AsyncBufReadExt, BufReader},
         sync::Mutex,
@@ -691,13 +689,14 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
         let mut child = command.spawn().unwrap();
         let stdin = child.stdin.take().unwrap();
         let mut requests = BufReader::new(child.stdout.take().unwrap()).lines();
-        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let pending = Arc::new(PendingCodexRequests::default());
         {
             let mut shared = client.state.lock().await;
             shared.process_environment =
                 client.process_environment(&shared.runtime_proxy_env, &BTreeMap::new());
             shared.process = Some(CodexAppServerProcess {
                 child,
+                config_diagnostics: None,
                 stdin: Arc::new(Mutex::new(stdin)),
                 pending: Arc::clone(&pending),
                 notifications: CodexNotificationHub::new(),
@@ -731,13 +730,13 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
         .await
         .expect("user mutation must reach the gate while the recovery snapshot is held");
         assert!(!user_mutation.is_finished());
-        pending
-            .lock()
-            .await
-            .remove(&read["id"].as_u64().unwrap())
-            .unwrap()
-            .send(Ok(json!({"goal": expected})))
-            .unwrap();
+        assert!(
+            pending
+                .complete(read["id"].as_u64().unwrap(), || Ok(
+                    json!({"goal": expected})
+                ))
+                .await
+        );
         let resume: Value =
             serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
         assert_eq!(resume["method"], "thread/goal/set");
@@ -747,13 +746,13 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
         );
         let mut active = expected.clone();
         active["status"] = json!("active");
-        pending
-            .lock()
-            .await
-            .remove(&resume["id"].as_u64().unwrap())
-            .unwrap()
-            .send(Ok(json!({"goal": active})))
-            .unwrap();
+        assert!(
+            pending
+                .complete(resume["id"].as_u64().unwrap(), || Ok(
+                    json!({"goal": active})
+                ))
+                .await
+        );
         assert!(recovery.await.unwrap().unwrap().1);
         let user: Value =
             serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
@@ -764,13 +763,11 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
         } else {
             json!({"goal": {"status": "paused"}})
         };
-        pending
-            .lock()
-            .await
-            .remove(&user["id"].as_u64().unwrap())
-            .unwrap()
-            .send(Ok(response.clone()))
-            .unwrap();
+        assert!(
+            pending
+                .complete(user["id"].as_u64().unwrap(), || Ok(response.clone()))
+                .await
+        );
         assert_eq!(user_mutation.await.unwrap().unwrap(), response);
         client.restart().await;
     }
@@ -781,13 +778,9 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
 async fn overload_recovery_drains_user_resumed_turns_before_settling_changed_goal() {
     use super::super::{
         read_shared_turn_notifications, CodexAppServerClient, CodexAppServerProcess,
-        CodexNotificationHub,
+        CodexNotificationHub, PendingCodexRequests,
     };
-    use std::{
-        collections::{BTreeMap, HashMap},
-        process::Stdio,
-        sync::Arc,
-    };
+    use std::{collections::BTreeMap, process::Stdio, sync::Arc};
     use tokio::{
         io::{AsyncBufReadExt, BufReader},
         sync::Mutex,
@@ -815,13 +808,14 @@ async fn overload_recovery_drains_user_resumed_turns_before_settling_changed_goa
         let mut child = command.spawn().unwrap();
         let stdin = child.stdin.take().unwrap();
         let mut requests = BufReader::new(child.stdout.take().unwrap()).lines();
-        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let pending = Arc::new(PendingCodexRequests::default());
         {
             let mut shared = client.state.lock().await;
             shared.process_environment =
                 client.process_environment(&shared.runtime_proxy_env, &BTreeMap::new());
             shared.process = Some(CodexAppServerProcess {
                 child,
+                config_diagnostics: None,
                 stdin: Arc::new(Mutex::new(stdin)),
                 pending: Arc::clone(&pending),
                 notifications: CodexNotificationHub::new(),
@@ -898,13 +892,13 @@ async fn overload_recovery_drains_user_resumed_turns_before_settling_changed_goa
                         sender.send(terminal.clone().into()).unwrap();
                     }
                 }
-                pending
-                    .lock()
-                    .await
-                    .remove(&request["id"].as_u64().unwrap())
-                    .unwrap()
-                    .send(Ok(json!({"goal":snapshot})))
-                    .unwrap();
+                assert!(
+                    pending
+                        .complete(request["id"].as_u64().unwrap(), || Ok(
+                            json!({"goal":snapshot})
+                        ))
+                        .await
+                );
                 let mut forwarded = Vec::new();
                 while let Some(message) = notify_rx.recv().await {
                     if mode == "in_flight"
@@ -947,7 +941,7 @@ async fn overload_recovery_drains_user_resumed_turns_before_settling_changed_goa
             state.goal_status_snapshot(),
             (true, snapshot["status"].as_str().map(str::to_owned))
         );
-        assert!(pending.lock().await.is_empty());
+        assert_eq!(pending.len().await, 0);
         client.restart().await;
     }
 }

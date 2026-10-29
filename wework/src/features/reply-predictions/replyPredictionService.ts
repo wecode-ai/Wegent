@@ -1,10 +1,12 @@
 import type { ModelSelectionConfig, RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { stableJsonStringify } from '@/lib/stable-json'
 import {
   readReplyPrediction,
   removeReplyPredictionCache,
   writeReplyPrediction,
 } from './replyPredictionCache'
+import { recordPredictionService } from './replyPredictionDiagnostics'
 
 export interface ReplyPredictionSource {
   scope: string
@@ -22,17 +24,10 @@ export interface ReplyPredictionResult {
 }
 
 export function replyPredictionKey(source: ReplyPredictionSource) {
-  return `${source.scope}\u0000${JSON.stringify(
-    [source.latestTurnId || source.revision, source.modelSelection],
-    (_key, value: unknown) =>
-      value && typeof value === 'object' && !Array.isArray(value)
-        ? Object.fromEntries(
-            Object.keys(value)
-              .sort()
-              .map(key => [key, (value as Record<string, unknown>)[key]])
-          )
-        : value
-  )}`
+  return `${source.scope}\u0000${stableJsonStringify([
+    source.latestTurnId || source.revision,
+    source.modelSelection,
+  ])}`
 }
 
 type PredictionApi = NonNullable<WorkbenchServices['replyPredictionApi']>
@@ -76,7 +71,7 @@ export class ReplyPredictionService {
     for (const [key, entry] of this.entries) {
       if (entry.address.deviceId !== address.deviceId || entry.address.taskId !== address.taskId)
         continue
-      this.invalidate(key.split('\u0000')[0])
+      this.invalidate(key.split('\u0000')[0], 'task-removed')
     }
     this.notify()
   }
@@ -105,10 +100,28 @@ export class ReplyPredictionService {
     for (const listener of this.listeners) listener()
   }
 
-  invalidate(scope: string) {
+  invalidate(scope: string, reason: 'busy' | 'request-key' | 'task-removed' = 'request-key') {
+    const details = {
+      busy: reason === 'busy',
+      requestKeyChanged: reason === 'request-key',
+      taskRemoved: reason === 'task-removed',
+    }
+    recordPredictionService(
+      'invalidate',
+      this.api,
+      this,
+      scope,
+      this.owners.get(scope) ?? 0,
+      undefined,
+      details
+    )
     this.failedScopes.delete(scope)
     for (const [key, entry] of this.entries) {
       if (!key.startsWith(`${scope}\u0000`)) continue
+      recordPredictionService('abort', this.api, this, scope, this.owners.get(scope) ?? 0, key, {
+        ...details,
+        settled: entry.settled,
+      })
       entry.controller.abort()
       this.entries.delete(key)
     }
@@ -116,8 +129,12 @@ export class ReplyPredictionService {
 
   retain(scope: string) {
     this.owners.set(scope, (this.owners.get(scope) ?? 0) + 1)
+    recordPredictionService('retain', this.api, this, scope, this.owners.get(scope)!)
     return () => {
       const owners = (this.owners.get(scope) ?? 1) - 1
+      recordPredictionService('release', this.api, this, scope, owners, undefined, {
+        lastOwnerReleased: owners <= 0,
+      })
       if (owners > 0) {
         this.owners.set(scope, owners)
         return
@@ -125,6 +142,10 @@ export class ReplyPredictionService {
       this.owners.delete(scope)
       for (const [key, entry] of this.entries) {
         if (key.startsWith(`${scope}\u0000`) && !entry.settled) {
+          recordPredictionService('abort', this.api, this, scope, owners, key, {
+            lastOwnerReleased: true,
+            settled: entry.settled,
+          })
           entry.controller.abort()
           this.entries.delete(key)
         }
@@ -136,6 +157,15 @@ export class ReplyPredictionService {
     if (source.busy) return null
     const key = replyPredictionKey(source)
     let entry = this.entries.get(key)
+    recordPredictionService(
+      'request',
+      this.api,
+      this,
+      source.scope,
+      this.owners.get(source.scope) ?? 0,
+      key,
+      { cacheHit: Boolean(entry) }
+    )
     if (!entry) {
       this.invalidate(source.scope)
       const controller = new AbortController()
@@ -153,6 +183,15 @@ export class ReplyPredictionService {
       }
       const activeEntry = entry
       void promise.then(text => {
+        recordPredictionService(
+          'settled',
+          this.api,
+          this,
+          source.scope,
+          this.owners.get(source.scope) ?? 0,
+          key,
+          { aborted: controller.signal.aborted, hasSuggestion: Boolean(text) }
+        )
         activeEntry.settled = true
         if (!controller.signal.aborted && this.entries.get(key) === activeEntry) {
           writeReplyPrediction(source.scope, {
@@ -168,6 +207,15 @@ export class ReplyPredictionService {
       this.notify()
       while (this.entries.size > 100) {
         const oldest = this.entries.keys().next().value!
+        recordPredictionService(
+          'abort',
+          this.api,
+          this,
+          oldest.split('\u0000')[0],
+          this.owners.get(oldest.split('\u0000')[0]) ?? 0,
+          oldest,
+          { capacityEviction: true }
+        )
         this.entries.get(oldest)?.controller.abort()
         this.entries.delete(oldest)
         this.failedScopes.delete(oldest.split('\u0000')[0])

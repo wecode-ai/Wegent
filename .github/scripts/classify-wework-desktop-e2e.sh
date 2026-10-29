@@ -606,6 +606,7 @@ classify_wework_path() {
       wework/e2e/desktop/modules/custom-model-output-budget.mjs | \
       wework/e2e/desktop/modules/native-agent-mcp.mjs | \
       wework/e2e/desktop/modules/workbench-home-migration.mjs | \
+      wework/e2e/desktop/modules/workbench-log-startup.mjs | \
       wework/e2e/desktop/modules/workbench-schema-compatibility.mjs | \
       wework/e2e/desktop/modules/workbench-desktop-startup.mjs | \
       wework/e2e/desktop/modules/workbench-component-publication.mjs | \
@@ -615,11 +616,16 @@ classify_wework_path() {
       wework/electron/src/runtime/workbench-executor-schema* | \
       wework/electron/src/runtime/workbench-codex-migration* | \
       wework/electron/src/runtime/workbench-migration-lock* | \
+      wework/electron/src/runtime/workbench-data-migration* | \
+      wework/electron/src/runtime/workbench-desktop-data* | \
       wework/electron/src/runtime/workbench-desktop-startup* | \
+      wework/electron/src/runtime/workbench-executor-data* | \
       wework/electron/src/runtime/workbench-home-migration* | \
       wework/electron/src/runtime/workbench-mode* | \
+      wework/electron/src/host/app-update-cache* | \
       wework/src/features/workbench-mode/*)
       select_target "core:workbench-mode"
+      macos_inspector_e2e=true
       return
       ;;
 

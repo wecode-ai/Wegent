@@ -880,6 +880,7 @@ class DesktopE2EServer {
         'fork_provider_follow_up',
         'task_plan',
         'request_user_input',
+        'request_user_input_cancelled',
         'request_user_input_async',
         'mcp_elicitation',
         'window_lifecycle',
@@ -3898,6 +3899,21 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(responseText),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'request_user_input_cancelled') {
+      // Stopping a real task settles its pending native question with empty answers.
+      // The model may observe that output before the native interrupt arrives.
+      this.recordScenarioRequest('request_user_input_cancelled', modelRequest)
+      const answer = toolOutputText(body, 'wework-e2e-request-user-input')
+      assert.notEqual(answer, null, 'Cancellation omitted the pending tool output')
+      assert.deepEqual(JSON.parse(answer), { answers: {} })
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage('WEWORK_DESKTOP_E2E_CANCELLED_INPUT'),
         responseCompleted(responseId),
       ])
       return

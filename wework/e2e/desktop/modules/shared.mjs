@@ -1229,10 +1229,15 @@ async function waitForExecutorRuntimeEvidence(
 async function waitForLogPattern(
   logPath,
   pattern,
-  { fromOffset = 0, timeoutMs = DEFAULT_STEP_TIMEOUT_MS } = {}
+  { child, fromOffset = 0, timeoutMs = DEFAULT_STEP_TIMEOUT_MS } = {}
 ) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
+    if (child && (child.exitCode !== null || child.signalCode !== null)) {
+      throw new Error(
+        `Process exited with ${child.exitCode ?? child.signalCode} before ${pattern} in ${logPath}`
+      )
+    }
     const content = await readFile(logPath, 'utf8').catch(() => '')
     if (pattern.test(content.slice(fromOffset))) return content
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))

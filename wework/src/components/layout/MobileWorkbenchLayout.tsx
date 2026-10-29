@@ -507,7 +507,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     <BufferedChatInput
                       value={paneSession.input}
                       onChange={paneSession.setInput}
-                      onDraftEdit={paneSession.clearError}
+                      onDraftEdit={paneSession.markDraftEdited}
                       onSubmit={submitPaneInput}
                       disabled={composerDisabled}
                       submitDisabled={paneSession.status.isSubmitting}
@@ -605,7 +605,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               <BufferedChatInput
                 value={paneSession.input}
                 onChange={paneSession.setInput}
-                onDraftEdit={paneSession.clearError}
+                onDraftEdit={paneSession.markDraftEdited}
                 onSubmit={submitPaneInput}
                 disabled={composerDisabled}
                 submitDisabled={paneSession.status.isSubmitting}

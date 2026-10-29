@@ -2,7 +2,6 @@ import {
   loadRuntimeFileChangesDiff,
   revertRuntimeFileChanges,
 } from '@wegent/chat-core/runtime-file-changes'
-import { applyRequestUserInputResponseToBlock } from '@wegent/chat-core/runtime-user-input'
 import { useCallback } from 'react'
 import type { Dispatch } from 'react'
 import { ApiError } from '@/api/http'
@@ -84,11 +83,11 @@ import {
   applyRuntimeConversationAction,
   beginRuntimeConversationOperation,
   removeRuntimeConversationTurn,
-  updateRuntimeConversationBlocks,
 } from './runtimeConversationCache'
 import { findFileChangesBySubtaskId } from './runtimePaneMessages'
 import { isRuntimeTaskBusyError } from './runtimePaneStatus'
 import { prepareRuntimeContinuationModel } from './runtimeContinuationModel'
+import { prepareRuntimeUserInputResponse } from './runtimeUserInputResponse'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import {
   inferRuntimeName,
@@ -424,6 +423,10 @@ export function useWorkbenchRuntimeMessaging({
       let sendRequested = false
       const userInputResponse =
         request.requestUserInputResponse ?? request.request_user_input_response
+      const isRequestUserInputResponse = Boolean(userInputResponse)
+      const acceptUserInputResponse = userInputResponse
+        ? prepareRuntimeUserInputResponse(request.address, userInputResponse)
+        : undefined
       const optimisticUserMessage = options?.optimisticUserMessage
       const outboundRequestWithClientId = optimisticUserMessage
         ? {
@@ -456,11 +459,8 @@ export function useWorkbenchRuntimeMessaging({
         if (options?.silentBusyRetry && !userInputResponse) {
           lifecycleStore.sendRequested(outboundRequest.address)
         }
-        if (userInputResponse) {
-          // Terminal history may omit transient forms before work-list refresh finishes.
-          updateRuntimeConversationBlocks(outboundRequest.address, block =>
-            applyRequestUserInputResponseToBlock(block, userInputResponse)
-          )
+        if (isRequestUserInputResponse) {
+          acceptUserInputResponse?.()
           lifecycleStore.userInputResponded(outboundRequest.address)
         } else if (response.status === 'queued') {
           lifecycleStore.sendQueued(outboundRequest.address, response.queuePosition)

@@ -372,6 +372,7 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
       error: state.error,
     },
   } as unknown as WorkbenchPaneContextValue
+  const clearError = vi.fn()
   const paneSession = {
     messages: props.messages ?? [],
     queuedMessages: props.queuedMessages ?? [],
@@ -379,6 +380,8 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     codeCommentContexts: props.codeCommentContexts ?? [],
     input: String(state.input ?? ''),
     setInput: props.onInputChange ?? vi.fn(),
+    clearError,
+    markDraftEdited: vi.fn(() => clearError()),
     sending: Boolean(state.isSending),
     waitingForAssistant: false,
     status: createPaneStatus({

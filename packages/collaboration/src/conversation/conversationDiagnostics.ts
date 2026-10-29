@@ -129,6 +129,31 @@ const SAFE_DETAIL_KEYS = new Set([
   'layoutIsolated',
   'phase',
   'smooth',
+  'predictionProviderId',
+  'predictionApiId',
+  'predictionServiceId',
+  'predictionScopeHash',
+  'predictionKeyHash',
+  'predictionModelHash',
+  'predictionModelSemanticHash',
+  'predictionTurnHash',
+  'ownerCount',
+  'eligible',
+  'enabled',
+  'busy',
+  'unmounted',
+  'apiChanged',
+  'serviceChanged',
+  'scopeChanged',
+  'keyChanged',
+  'busyChanged',
+  'requestKeyChanged',
+  'taskRemoved',
+  'lastOwnerReleased',
+  'capacityEviction',
+  'aborted',
+  'settled',
+  'hasSuggestion',
 ])
 
 export type ConversationDiagnosticEventName =
@@ -171,6 +196,14 @@ export type ConversationDiagnosticEventName =
   | 'search-diagram-viewer-result'
   | 'search-diagram-viewer-stop'
   | 'search-diagram-viewer-timeout'
+  | 'reply-prediction-effect-start'
+  | 'reply-prediction-effect-cleanup'
+  | 'reply-prediction-retain'
+  | 'reply-prediction-release'
+  | 'reply-prediction-request'
+  | 'reply-prediction-invalidate'
+  | 'reply-prediction-abort'
+  | 'reply-prediction-settled'
 
 export interface ConversationDiagnosticEvent {
   sequence: number
@@ -242,6 +275,16 @@ export function recordConversationDiagnostic(
   if (name === 'search-input' || name === 'search-delete') searchPerformanceCapture.capture()
   const sanitized: ConversationDiagnosticEvent['details'] = {}
   for (const [key, value] of Object.entries(details)) {
+    if (
+      name.startsWith('reply-prediction-') &&
+      (key === 'modelFieldOrder' || key === 'optionFieldOrder') &&
+      typeof value === 'string' &&
+      value.length <= 1024 &&
+      (value === '' || value.split(',').every(field => /^[a-zA-Z_][a-zA-Z0-9_]{0,79}$/.test(field)))
+    ) {
+      sanitized[key] = value
+      continue
+    }
     if (name === 'search-slow-script' && typeof value === 'string') {
       const safeValue = sanitizeSearchScriptDetail(key, value)
       if (safeValue !== undefined) sanitized[key] = safeValue

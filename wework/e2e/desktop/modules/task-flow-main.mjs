@@ -1,3 +1,4 @@
+import { verifyRuntimeInputAcknowledgement } from './runtime-input-acknowledgement.mjs'
 import {
   RealCloudEnvironment,
   verifyLocalExecutorUsesCloudSocketUrl,
@@ -2313,6 +2314,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     if (DESKTOP_SEGMENT === 'permission-modes') {
       phase = 'permission-modes'
       await verifyPermissionModes(control)
+      await verifyRuntimeInputAcknowledgement(control)
       console.log(`Wework desktop permission-modes checkpoint passed. Evidence: ${resultDir}`)
       return
     }

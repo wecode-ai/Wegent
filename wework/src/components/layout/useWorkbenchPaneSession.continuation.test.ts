@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, renderHook, waitFor } from '@testing-library/react'
-import { createElement, StrictMode, type ReactNode } from 'react'
+import { createElement, StrictMode, useCallback, useState, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
@@ -146,6 +146,196 @@ function expectDraftPreserved(session: ReturnType<typeof useWorkbenchPaneSession
   expect(mocks.setInput).not.toHaveBeenCalled()
   expect(mocks.resetAttachments).not.toHaveBeenCalled()
 }
+
+async function renderComposerSession() {
+  const projectChat = mocks.context.projectChat as Record<string, unknown>
+  const hook = renderHook(
+    ({ task }: { task: RuntimeTaskAddress }) => {
+      const [inputByScope, setInputByScope] = useState({ [scopeKey]: draft })
+      const setInputForScope = useCallback((key: string, value: string) => {
+        mocks.setInput(key, value)
+        setInputByScope(current => ({ ...current, [key]: value }))
+      }, [])
+      mocks.context = {
+        ...mocks.context,
+        projectChat: {
+          ...projectChat,
+          inputByScope,
+          attachmentStateByScope: {},
+          setInputForScope,
+        },
+      }
+      return useWorkbenchPaneSession({ currentRuntimeTask: task, debugSnapshotEnabled: false })
+    },
+    {
+      initialProps: { task: address as RuntimeTaskAddress },
+      wrapper: ({ children }: { children: ReactNode }) =>
+        createElement(RuntimeTaskLifecycleProvider, { store: lifecycleStore, children }),
+    }
+  )
+  await waitFor(() => expect(hook.result.current.transcriptLoading).toBe(false))
+  return hook
+}
+
+function deferAcceptedSendRefresh(queued = false) {
+  let finishRefresh: () => void = () => undefined
+  const refresh = new Promise<void>(resolve => {
+    finishRefresh = resolve
+  })
+  mocks.send.mockImplementation(async (_request, options) => {
+    if (queued) options.onQueued({ queuePosition: 2 })
+    await refresh
+    return true
+  })
+  return finishRefresh
+}
+
+describe('composer submission draft ownership', () => {
+  test.each(['A newly typed follow-up', draft])(
+    'preserves the published next draft %j while an accepted send finishes refreshing',
+    async nextDraft => {
+      const finishRefresh = deferAcceptedSendRefresh()
+      const { result } = await renderComposerSession()
+      let submission: Promise<boolean> = Promise.resolve(false)
+      act(() => {
+        submission = result.current.send()
+      })
+      await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+      act(() => result.current.setInput(nextDraft))
+
+      await act(async () => {
+        finishRefresh()
+        expect(await submission).toBe(true)
+      })
+
+      expect(result.current.input).toBe(nextDraft)
+      expect(mocks.setInput).not.toHaveBeenCalledWith(scopeKey, '')
+    }
+  )
+
+  test('preserves identical unflushed text after an immediate draft edit', async () => {
+    const finishRefresh = deferAcceptedSendRefresh()
+    const { result } = await renderComposerSession()
+    let submission: Promise<boolean> = Promise.resolve(false)
+    act(() => {
+      submission = result.current.send()
+    })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+
+    // The editor has changed, but its debounce has not published a new value.
+    act(() => result.current.markDraftEdited())
+    expect(result.current.input).toBe(draft)
+    await act(async () => {
+      finishRefresh()
+      expect(await submission).toBe(true)
+    })
+
+    expect(result.current.input).toBe(draft)
+    expect(mocks.setInput).not.toHaveBeenCalled()
+    expect(mocks.setError).toHaveBeenLastCalledWith(scopeKey, null)
+  })
+
+  test('does not clear again after the buffered composer publishes its synchronous clear', async () => {
+    const finishRefresh = deferAcceptedSendRefresh()
+    const { result } = await renderComposerSession()
+    let submission: Promise<boolean> = Promise.resolve(false)
+    act(() => {
+      submission = result.current.send()
+      result.current.setInput('')
+    })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+    mocks.setInput.mockClear()
+
+    await act(async () => {
+      finishRefresh()
+      expect(await submission).toBe(true)
+    })
+
+    expect(result.current.input).toBe('')
+    expect(mocks.setInput).not.toHaveBeenCalled()
+  })
+
+  test.each(['code-comment', 'queued', 'interrupt'] as const)(
+    'preserves a newer draft after an accepted %s submission',
+    async mode => {
+      const finishRefresh = deferAcceptedSendRefresh(mode === 'queued')
+      mocks.context.interruptAndSendRuntimePaneMessage = mocks.send
+      const { result } = await renderComposerSession()
+      if (mode === 'code-comment') act(() => result.current.addCodeComment(codeComment))
+      if (mode === 'interrupt') act(() => lifecycleStore.turnStarted(address, 'active-turn'))
+      let submission: Promise<boolean> = Promise.resolve(false)
+      act(() => {
+        submission = result.current.send(undefined, { interruptWhenBusy: mode === 'interrupt' })
+      })
+      await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+      act(() => result.current.setInput('The next unsent draft'))
+
+      await act(async () => {
+        finishRefresh()
+        expect(await submission).toBe(true)
+      })
+
+      expect(result.current.input).toBe('The next unsent draft')
+      expect(mocks.setInput).not.toHaveBeenCalledWith(scopeKey, '')
+    }
+  )
+
+  test('does not clear the original scope after switching away and back', async () => {
+    const finishRefresh = deferAcceptedSendRefresh()
+    const { result, rerender } = await renderComposerSession()
+    let submission: Promise<boolean> = Promise.resolve(false)
+    act(() => {
+      submission = result.current.send()
+    })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+    rerender({ task: { ...address, taskId: 'another-task' } })
+    rerender({ task: address })
+
+    await act(async () => {
+      finishRefresh()
+      await submission
+    })
+
+    expect(result.current.input).toBe(draft)
+    expect(mocks.setInput).not.toHaveBeenCalledWith(scopeKey, '')
+  })
+
+  test('does not grant the active scope ownership to a retained send callback', async () => {
+    const finishRefresh = deferAcceptedSendRefresh()
+    const { result, rerender } = await renderComposerSession()
+    const originalSend = result.current.send
+    rerender({ task: { ...address, taskId: 'another-task' } })
+    act(() => result.current.setInput('Another task draft'))
+    let submission: Promise<boolean> = Promise.resolve(false)
+    act(() => {
+      submission = originalSend()
+    })
+    await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
+
+    await act(async () => {
+      finishRefresh()
+      await submission
+    })
+
+    expect(result.current.input).toBe('Another task draft')
+    rerender({ task: address })
+    expect(result.current.input).toBe(draft)
+    expect(mocks.setInput).not.toHaveBeenCalledWith(scopeKey, '')
+  })
+
+  test.each([true, false])(
+    'keeps the untouched direct-send outcome when accepted=%s',
+    async accepted => {
+      mocks.send.mockResolvedValue(accepted)
+      const { result } = await renderComposerSession()
+
+      await act(async () => expect(await result.current.send()).toBe(accepted))
+
+      expect(result.current.input).toBe(accepted ? '' : draft)
+      expect(mocks.setInput).toHaveBeenCalledTimes(accepted ? 1 : 0)
+    }
+  )
+})
 
 describe('composer draft ownership during delayed send acknowledgment', () => {
   test.each([false, true])(

@@ -9,7 +9,7 @@ use super::*;
 #[tokio::test]
 async fn native_search_hydrates_complete_match_turn_and_pages_neighbor_context() {
     let _environment = crate::agents::CodexLaunchEnvironment::new();
-    let _capabilities = crate::services::capability_activation::begin_execution().await;
+    let _capability_lease = crate::services::capability_activation::begin_execution().await;
     let directory = tempfile::tempdir().unwrap();
     let binary = directory.path().join("search-fixture");
     let log = directory.path().join("requests.jsonl");
@@ -320,7 +320,7 @@ fn calls(log: &std::path::Path) -> Vec<Value> {
 #[tokio::test]
 async fn native_async_reply_search_crosses_pages_and_hydrates_its_complete_question_span() {
     let _environment = crate::agents::CodexLaunchEnvironment::new();
-    let _capabilities = crate::services::capability_activation::begin_execution().await;
+    let _capability_lease = crate::services::capability_activation::begin_execution().await;
     let directory = tempfile::tempdir().unwrap();
     let mut question_items = vec![json!({
         "id":"question", "type":"agentMessage", "phase":"final_answer", "delivery":"async",
@@ -502,7 +502,7 @@ done
 #[tokio::test]
 async fn native_search_projects_terminal_turns_across_pages_and_hydrates_complete_segments() {
     let _environment = crate::agents::CodexLaunchEnvironment::new();
-    let _capabilities = crate::services::capability_activation::begin_execution().await;
+    let _capability_lease = crate::services::capability_activation::begin_execution().await;
     let directory = tempfile::tempdir().unwrap();
     let mut failed_segments = vec![json!({
         "id":"early", "type":"agentMessage", "phase":"final_answer",
@@ -780,7 +780,7 @@ done
 #[tokio::test]
 async fn legacy_dispatch_searches_rollout_without_native_history_requests() {
     let _environment = crate::agents::CodexLaunchEnvironment::new();
-    let _capabilities = crate::services::capability_activation::begin_execution().await;
+    let _capability_lease = crate::services::capability_activation::begin_execution().await;
     let directory = tempfile::tempdir().unwrap();
     let rollout = directory.path().join("legacy.jsonl");
     let records = [

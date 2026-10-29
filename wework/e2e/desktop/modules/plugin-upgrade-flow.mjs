@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { access, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { fetchJson, resultDir } from './shared.mjs'
-import { captureVerificationScreenshot } from './workspace-flows.mjs'
+import { fetchJson, resultDir, WORKBENCH_READY_TIMEOUT_MS } from './shared.mjs'
+import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
+import { isPluginStartupAutoUpdateReady } from './plugin-startup-readiness.mjs'
 
 const pluginKey = 'desktop-e2e-upgrade'
 const oldVersion = '0.1.1'
@@ -70,6 +71,17 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   const capabilityManifestPath = join(dirname(codexHome), 'capabilities/manifest-v2.json')
   const readCapabilities = async () => JSON.parse(await readFile(capabilityManifestPath, 'utf8'))
   const managedKey = `${pluginKey}@wegent`
+  setPhase('plugin-startup-auto-update-ready')
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      isPluginStartupAutoUpdateReady(snapshot, {
+        apiBaseUrl: `${env.backendUrl}/api`,
+        deviceId,
+      }),
+    'Initial plugin auto-update must settle before publishing upgrade fixtures',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   setPhase('plugin-upgrade-old-install')
   const old = await env.publishPluginRelease({
     slug: pluginKey,

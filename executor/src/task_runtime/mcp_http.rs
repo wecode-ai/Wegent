@@ -121,6 +121,8 @@ fn local_mcp_token() -> &'static str {
 }
 
 pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint, String> {
+    // A delayed HTTP response must not revoke a live server's sessions and contexts.
+    // The owning thread exits whenever axum::serve exits, so its handle owns liveness.
     if let Some(endpoint) = active_endpoint() {
         return Ok(endpoint);
     }
@@ -657,6 +659,105 @@ mod tests {
         .stop();
 
         stopped_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    }
+
+    #[test]
+    fn busy_endpoint_is_preserved_until_its_server_thread_exits() {
+        const CHILD: &str = "WEGENT_TEST_SPACE_MCP_LIFECYCLE_CHILD";
+        if std::env::var(CHILD).as_deref() != Ok("1") {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "task_runtime::mcp_http::tests::busy_endpoint_is_preserved_until_its_server_thread_exits",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("WEGENT_EXECUTOR_HOME", home.path());
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(verify_busy_endpoint_lifecycle());
+    }
+
+    async fn verify_busy_endpoint_lifecycle() {
+        // Keep the listener alive without processing HTTP, as when the owner thread is busy.
+        let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = SpaceMcpEndpoint {
+            url: format!("http://{}/mcp", listener.local_addr().unwrap()),
+            token: local_mcp_token().to_owned(),
+        };
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let server_task = thread::spawn(move || {
+            let _listener = listener;
+            shutdown_rx.blocking_recv().unwrap();
+        });
+        *running_endpoint().lock().unwrap() = Some(RunningSpaceMcpEndpoint {
+            endpoint: endpoint.clone(),
+            contexts: std::sync::Arc::new(StdMutex::new(HashMap::new())),
+            shutdown_tx: Some(shutdown_tx),
+            server_task: Some(server_task),
+        });
+        let registered =
+            register_space_mcp_context(SpaceMcpRequestContext::new(None, None, None)).unwrap();
+        let (first, second) = tokio::join!(
+            ensure_space_mcp_http_endpoint(),
+            ensure_space_mcp_http_endpoint()
+        );
+        assert_eq!(first.unwrap().url, endpoint.url);
+        assert_eq!(second.unwrap().url, endpoint.url);
+        {
+            let mut running = running_endpoint().lock().unwrap();
+            let running = running.as_mut().unwrap();
+            assert!(running
+                .contexts
+                .lock()
+                .unwrap()
+                .contains_key(&registered.context_handle));
+            running.shutdown_tx.take().unwrap().send(()).unwrap();
+        }
+        let started = Instant::now();
+        while !running_endpoint()
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .server_task
+            .as_ref()
+            .unwrap()
+            .is_finished()
+        {
+            assert!(started.elapsed() < Duration::from_secs(2));
+            tokio::task::yield_now().await;
+        }
+        let (first, second) = tokio::join!(
+            ensure_space_mcp_http_endpoint(),
+            ensure_space_mcp_http_endpoint()
+        );
+        let restarted = first.unwrap();
+        assert_eq!(second.unwrap().url, restarted.url);
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .get(restarted.url.replace("/mcp", "/health"))
+            .bearer_auth(&restarted.token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        running_endpoint().lock().unwrap().take().unwrap().stop();
     }
 
     #[tokio::test]

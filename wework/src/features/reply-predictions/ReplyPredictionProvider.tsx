@@ -3,6 +3,8 @@ import {
   useEffect,
   useEffectEvent,
   useMemo,
+  useLayoutEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -22,6 +24,10 @@ import {
   type ReplyPredictionSource,
   type ReplyPredictionResult,
 } from './replyPredictionService'
+import {
+  recordPredictionEffect,
+  type PredictionEffectDiagnosticContext,
+} from './replyPredictionDiagnostics'
 
 const noSubscription = () => () => {}
 const emptySnapshot = () => null
@@ -88,11 +94,31 @@ export function ReplyPredictionProvider({
     prediction: ReplyPredictionResult | null
   } | null>(null)
   const resultKey = target ? replyPredictionKey(target) : ''
+  const diagnosticProvider = useRef({})
+  const diagnosticContext = useRef<PredictionEffectDiagnosticContext | null>(null)
+  useLayoutEffect(() => {
+    diagnosticContext.current = {
+      api,
+      service,
+      source: target,
+      key: resultKey,
+      busy,
+      enabled: Boolean(enabled),
+    }
+    return () => {
+      diagnosticContext.current = null
+    }
+  })
   useEffect(() => {
-    if (!service || !scope) return
+    const context = diagnosticContext.current!
+    const provider = diagnosticProvider.current
+    recordPredictionEffect('start', provider, context)
+    const recordCleanup = () =>
+      recordPredictionEffect('cleanup', provider, context, diagnosticContext.current)
+    if (!service || !scope) return recordCleanup
     if (busy) {
-      service.invalidate(scope)
-      return
+      service.invalidate(scope, 'busy')
+      return recordCleanup
     }
     let disposed = false
     const release = service.retain(scope)
@@ -105,6 +131,7 @@ export function ReplyPredictionProvider({
         if (!disposed) setResult({ key: resultKey, prediction: null })
       })
     return () => {
+      recordCleanup()
       disposed = true
       release()
     }

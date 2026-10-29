@@ -20,6 +20,7 @@ import {
   runtimeProjectTargetKey,
 } from './runtime-project-identity'
 import type { RuntimeProjectUpdate } from './runtime-project-update'
+import { stableJsonStringify } from './stable-json'
 
 export interface ProjectEditingSave {
   deviceId: string
@@ -30,21 +31,8 @@ export interface ProjectEditingSave {
   aiSettings?: RuntimeProjectAiSettings | null
 }
 
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical)
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([, item]) => item !== undefined)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, item]) => [key, canonical(item)])
-    )
-  }
-  return value
-}
-
 export function projectSettingEqual(a: unknown, b: unknown): boolean {
-  return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b))
+  return stableJsonStringify(a) === stableJsonStringify(b)
 }
 
 export function normalizedProjectAi(settings: RuntimeProjectAiSettings | null | undefined) {

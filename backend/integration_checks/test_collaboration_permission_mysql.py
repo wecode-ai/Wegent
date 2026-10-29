@@ -4,6 +4,7 @@ import os
 import uuid
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from threading import Barrier
 from typing import Any
 
@@ -46,6 +47,145 @@ def mysql_url() -> Iterator[str]:
                 db.exec_driver_sql(f"DROP DATABASE `{database}`")
     finally:
         admin.dispose()
+
+
+@pytest.mark.parametrize(
+    "same_resource", [True, False], ids=["same-resource", "different-resources"]
+)
+def test_independent_workspace_resource_grants_do_not_lock_absent_identities(
+    mysql_url: str,
+    same_resource: bool,
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    ResourceMember.__table__.create(engine)
+    ready = Barrier(2, timeout=10)
+
+    def synchronize(
+        _db: sa.Connection,
+        _cursor: Any,
+        statement: str,
+        _params: Any,
+        _context: Any,
+        _many: bool,
+    ) -> None:
+        if statement.startswith("INSERT INTO resource_members"):
+            # Both missing reads must finish before either transaction inserts.
+            ready.wait()
+
+    def authorize(index: int) -> int:
+        with Session(engine, autoflush=False) as db:
+            grant = ensure_resource_grant(
+                db,
+                workspace_id=11 + index,
+                resource_type="Team",
+                resource_id=101 if same_resource else 101 + index,
+                added_by_user_id=1,
+                role=BaseRole.Developer,
+            )
+            db.commit()
+            return grant.id
+
+    sa.event.listen(engine, "before_cursor_execute", synchronize)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(authorize, index) for index in range(2)]
+            assert len({future.result(timeout=20) for future in futures}) == 2
+        with Session(engine) as db:
+            assert db.query(ResourceMember).count() == 2
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", synchronize)
+        engine.dispose()
+
+
+def test_concurrent_workspace_resource_grants_share_one_identity_after_stale_reads(
+    mysql_url: str,
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    ResourceMember.__table__.create(engine)
+    ready = Barrier(4, timeout=10)
+
+    def authorize() -> int:
+        with Session(engine, autoflush=False) as db:
+            # Request authorization may establish a snapshot before a grant exists.
+            assert db.query(ResourceMember).first() is None
+            ready.wait()
+            grant = ensure_resource_grant(
+                db,
+                workspace_id=11,
+                resource_type="Team",
+                resource_id=101,
+                added_by_user_id=1,
+                role=BaseRole.Developer,
+            )
+            db.commit()
+            return grant.id
+
+    try:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [pool.submit(authorize) for _ in range(4)]
+            assert len({future.result(timeout=20) for future in futures}) == 1
+        with Session(engine) as db:
+            grant = db.query(ResourceMember).one()
+            assert (grant.role, grant.status, grant.invited_by_user_id) == (
+                "Developer",
+                "approved",
+                1,
+            )
+    finally:
+        engine.dispose()
+
+
+def test_workspace_resource_grant_restoration_reads_current_audit_metadata(
+    mysql_url: str,
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    ResourceMember.__table__.create(engine)
+    timestamp = datetime(2020, 1, 2, 3, 4, 5)
+    try:
+        with Session(engine) as db:
+            grant = ResourceMember.create(
+                resource_type="Team",
+                resource_id=101,
+                entity_type="workspace",
+                entity_id="11",
+                role="Reporter",
+                status="rejected",
+                invited_by_user_id=1,
+                requested_at=timestamp,
+            )
+            grant.created_at = timestamp
+            db.add(grant)
+            db.commit()
+            grant_id = grant.id
+        with Session(engine) as db:
+            stale = db.get(ResourceMember, grant_id)
+            assert stale is not None and stale.share_link_id == 0
+            with Session(engine) as writer:
+                current = writer.get(ResourceMember, grant_id)
+                current.entity_display_name = "Concurrent metadata"
+                current.share_link_id = 13
+                current.reviewed_by_user_id = 17
+                writer.commit()
+            restored = ensure_resource_grant(
+                db,
+                workspace_id=11,
+                resource_type="Team",
+                resource_id=101,
+                added_by_user_id=7,
+                role=BaseRole.Developer,
+            )
+            assert restored is stale
+            assert (restored.role, restored.status, restored.invited_by_user_id) == (
+                "Developer",
+                "approved",
+                7,
+            )
+            assert restored.entity_display_name == "Concurrent metadata"
+            assert (restored.share_link_id, restored.reviewed_by_user_id) == (13, 17)
+            assert (restored.requested_at, restored.created_at) == (timestamp,) * 2
+            db.commit()
+    finally:
+        engine.dispose()
 
 
 def test_concurrent_issue_creation_refreshes_preloaded_project_sequence(

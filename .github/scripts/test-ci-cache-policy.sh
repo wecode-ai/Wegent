@@ -368,6 +368,85 @@ if ! grep -Fq 'SCCACHE_BASEDIRS="$GITHUB_WORKSPACE"' "$sccache_action" ||
   fail "sccache must degrade safely and allow cache writes only from main"
 fi
 
+ruby -ryaml -rtmpdir -ropen3 - "$sccache_action" <<'RUBY'
+action = YAML.safe_load(File.read(ARGV.fetch(0)))
+step = action.fetch('runs').fetch('steps').find do |entry|
+  entry['name'] == 'Configure Rust compiler cache'
+end
+raise 'Missing sccache configuration step' unless step
+
+Dir.mktmpdir('sccache-policy-') do |root|
+  bin = File.join(root, 'bin')
+  Dir.mkdir(bin)
+  executable = File.join(bin, 'sccache')
+  File.write(executable, <<~'SH')
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ "$#" == 2 && "$1" == 'rustc' && "$2" == '-vV' ]]
+    [[ "$SCCACHE_GHA_ENABLED" == true ]]
+    [[ "$SCCACHE_BASEDIRS" == "$GITHUB_WORKSPACE" ]]
+    [[ "$SCCACHE_GHA_VERSION" == 'wegent-sccache-v1-Linux-X64' ]]
+    [[ "${SCCACHE_GHA_RW_MODE:-}" == "$EXPECTED_CACHE_MODE" ]]
+    [[ ! -s "$GITHUB_ENV" ]]
+    printf 'start\n' >> "$PROBE_CALLS"
+    exit "$PROBE_STATUS"
+  SH
+  File.chmod(0o755, executable)
+  cases = [
+    ['refs/pull/3988/merge', 'false', 'READ_ONLY', '0'],
+    ['refs/heads/main', 'false', '', '0'],
+    ['refs/pull/3988/merge', 'true', '', '0'],
+    ['refs/pull/3988/merge', 'false', 'READ_ONLY', '2'],
+    ['refs/heads/main', 'false', 'READ_ONLY', '0', 'READ_ONLY'],
+    ['refs/pull/3988/merge', 'false', 'READ_ONLY', '0', 'READ_WRITE'],
+  ]
+  cases.each_with_index do |(ref, save_cache, mode, probe_status, inherited_mode), index|
+    output = File.join(root, "env-#{index}")
+    calls = File.join(root, "calls-#{index}")
+    File.write(output, '')
+    env = {
+      'PATH' => "#{bin}:#{ENV.fetch('PATH')}",
+      'GITHUB_ENV' => output,
+      'GITHUB_WORKSPACE' => '/fixture/workspace',
+      'GITHUB_REF' => ref,
+      'RUNNER_OS' => 'Linux',
+      'RUNNER_ARCH' => 'X64',
+      'EXPECTED_CACHE_MODE' => mode,
+      'PROBE_CALLS' => calls,
+      'PROBE_STATUS' => probe_status,
+    }
+    env['SCCACHE_GHA_RW_MODE'] = inherited_mode if inherited_mode
+    script = step.fetch('run').gsub('${{ inputs.save-cache }}', save_cache)
+    stdout, stderr, status = Open3.capture3(
+      env, 'bash', '-e', '-o', 'pipefail',
+      stdin_data: script, unsetenv_others: true
+    )
+    raise "sccache setup failed: #{stdout}#{stderr}" unless status.success?
+    unless File.file?(calls) && File.read(calls) == "start\n"
+      raise 'sccache startup must be checked exactly once'
+    end
+
+    published = File.readlines(output, chomp: true).map { |line| line.split('=', 2) }.to_h
+    if probe_status == '0'
+      expected = {
+        'CARGO_INCREMENTAL' => '0',
+        'RUSTC_WRAPPER' => 'sccache',
+        'SCCACHE_BASEDIRS' => env.fetch('GITHUB_WORKSPACE'),
+        'SCCACHE_GHA_ENABLED' => 'true',
+        'SCCACHE_GHA_VERSION' => 'wegent-sccache-v1-Linux-X64',
+      }
+      expected['SCCACHE_GHA_RW_MODE'] = mode unless mode.empty?
+      raise "Unexpected sccache environment: #{published}" unless published == expected
+    else
+      raise 'Failed sccache startup must not publish compiler cache settings' unless published.empty?
+      unless stdout.include?('::warning::sccache could not start; continuing without Rust compiler caching')
+        raise 'Failed sccache startup must report its unavailable cache'
+      end
+    end
+  end
+end
+RUBY
+
 macos_warmup_section="$(
   sed -n \
     '/^  warm-wework-macos-electron:/,/^  prepare-wework-desktop-image:/p' \

@@ -156,6 +156,7 @@ describe('desktop E2E result retention', () => {
     await writeFile(join(resultDirectory, 'component-update.tar.gz'), 'archive\n')
     await writeFile(join(resultDirectory, 'dws-native.zip'), 'archive\n')
     await writeFile(join(resultDirectory, 'app.log'), 'diagnostic\n')
+    await createDirectoryWithFile(join(resultDirectory, 'backend-rs-logs'))
     await createDirectoryWithFile(join(resultDirectory, 'electron-user-data', 'Local Storage'))
 
     const removed = await compactDesktopE2EResult(resultDirectory)
@@ -171,6 +172,7 @@ describe('desktop E2E result retention', () => {
     await expectMissing(join(resultDirectory, 'component-update.tar.gz'))
     await expectMissing(join(resultDirectory, 'dws-native.zip'))
     await expectExists(join(resultDirectory, 'app.log'))
+    await expectExists(join(resultDirectory, 'backend-rs-logs', 'payload'))
     await expectExists(join(resultDirectory, 'electron-user-data', 'Local Storage', 'payload'))
   })
 
@@ -211,6 +213,7 @@ describe('desktop E2E result retention', () => {
     await createDirectoryWithFile(workspace)
     await writeFile(join(resultDirectory, 'dws-native.zip'), 'archive\n')
     await writeFile(join(resultDirectory, 'app.log'), 'diagnostic\n')
+    await createDirectoryWithFile(join(resultDirectory, 'backend-rs-logs'))
 
     await execFileAsync(gitBash(), [
       resolve(
@@ -235,6 +238,7 @@ describe('desktop E2E result retention', () => {
     await expectMissing(workspace)
     await expectMissing(join(resultDirectory, 'dws-native.zip'))
     await expectExists(join(resultDirectory, 'app.log'))
+    await expectExists(join(resultDirectory, 'backend-rs-logs', 'payload'))
   })
 
   test('compacts inactive results without touching a live desktop run', async () => {
