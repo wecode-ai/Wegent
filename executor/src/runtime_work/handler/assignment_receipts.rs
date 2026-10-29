@@ -27,10 +27,11 @@ impl RuntimeWorkRpcHandler {
         store
             .queue_assignment_receipt(&json!({
                 "projectId": project, "issueId": issue_id, "backendUrl": backend_url,
-                "assignmentId": binding["assignmentId"], "userId": config["userId"],
+                "assignmentId": super::stand_in::issue_assignment_event_id(binding)?, "userId": config["userId"],
                 "deviceId": self.device_id, "taskId": binding["taskId"],
             }))
             .map_err(settings_error)?;
+        self.log_stand_in_decision(config, issue, "receipt_queued", json!({"taskId":binding["taskId"],"issueAssignmentId":super::stand_in::issue_assignment_event_id(binding)?}));
         let handler = self.clone();
         tokio::spawn(async move {
             if let Err(error) = handler.flush_assignment_receipts().await {
@@ -70,9 +71,11 @@ impl RuntimeWorkRpcHandler {
                 continue;
             }
             let Some(connection) = self.backend_connection_snapshot()? else {
+                self.log_stand_in_receipt(&receipt, "cloud_unavailable", json!({}));
                 continue;
             };
             if receipt["backendUrl"].as_str() != Some(connection.backend_url.as_str()) {
+                self.log_stand_in_receipt(&receipt, "backend_changed", json!({}));
                 continue;
             }
             // Keep identity verification and the write on the same connection snapshot.
@@ -86,10 +89,12 @@ impl RuntimeWorkRpcHandler {
                 _ => None,
             };
             if verified.is_none() {
+                self.log_stand_in_receipt(&receipt, "identity_verification_failed", json!({}));
                 defer_receipt(&store, &id, &receipt, now)?;
                 continue;
             }
             if verified.as_ref().map(|user| &user["id"]) != Some(&receipt["userId"]) {
+                self.log_stand_in_receipt(&receipt, "account_changed", json!({}));
                 continue;
             }
             let path = format!(
@@ -101,15 +106,16 @@ impl RuntimeWorkRpcHandler {
                 "kind":"stand_in_received", "device_id":receipt["deviceId"], "task_id":receipt["taskId"],
             }))).await {
                 Ok(response) if response.status().is_success() || response.status() == reqwest::StatusCode::CONFLICT => {
+                    self.log_stand_in_receipt(&receipt, "completed", json!({"status":response.status().as_u16()}));
                     store.complete_assignment_receipt(&id).map_err(settings_error)?;
                 }
                 Ok(response) => {
                     defer_receipt(&store, &id, &receipt, now)?;
-                    log_executor_event("Assignment receipt pending", &[("receipt_id", id), ("status", response.status().to_string())]);
+                    self.log_stand_in_receipt(&receipt, "http_failed", json!({"status":response.status().as_u16()}));
                 }
                 Err(error) => {
                     defer_receipt(&store, &id, &receipt, now)?;
-                    log_executor_event("Assignment receipt pending", &[("receipt_id", id), ("error", error.message)]);
+                    self.log_stand_in_receipt(&receipt, "request_failed", json!({"errorCode":error.code}));
                 }
             }
         }
@@ -249,6 +255,24 @@ mod tests {
         assert_eq!(store.pending_assignment_receipts().unwrap().len(), 1);
         assert!(handler.local_task_links(true).is_empty());
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn round_receipt_acknowledges_the_issue_event_not_the_manager_work_id() {
+        let root = tempfile::tempdir().unwrap();
+        let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+        handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        handler.record_stand_in_receipt(
+            &json!({"projectId":"project","projectStore":"cloud","userId":7}),
+            &json!({"id":"issue"}),
+            &json!({"assignmentId":"member-work","dispatchRoundId":"round-1","issueAssignmentId":"issue-event","taskId":"accepted-task"}),
+            "https://backend.invalid",
+        ).await.unwrap();
+        let receipts = store.pending_assignment_receipts().unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].1["assignmentId"], "issue-event");
+        assert_eq!(receipts[0].1["taskId"], "accepted-task");
     }
 
     #[tokio::test]

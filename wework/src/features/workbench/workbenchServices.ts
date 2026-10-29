@@ -233,7 +233,8 @@ export interface WorkbenchServices {
     resolveLaunch: (
       harnessId: LocalHarnessId,
       option: LocalHarnessModelOption | null,
-      scope?: string
+      scope?: string,
+      includeContext?: boolean
     ) => Promise<LocalHarnessModelLaunchConfig | null>
     unregisterProxy: (token: string) => Promise<void>
     unregisterContext: (token: string) => Promise<void>

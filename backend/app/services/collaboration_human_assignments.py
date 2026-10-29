@@ -62,7 +62,11 @@ def human_task_bindings(
             "dispatchRoundId": DIRECT_HUMAN_ROUND_ID,
             "assignmentId": assignment.id,
         }
-    result.update(_round_human_task_bindings(db, rounds))
+    for issue_id, binding in _round_human_task_bindings(db, rounds).items():
+        result[issue_id] = {
+            **binding,
+            "issueAssignmentId": assignments[issue_id][0].id,
+        }
     return result
 
 

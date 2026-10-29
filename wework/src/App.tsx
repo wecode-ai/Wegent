@@ -399,7 +399,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
       : (iframe ?? surfaceHistory.iframe)
   const nextSurfaceHistory = {
     iframe: nextIframe,
-    hasMountedProvider: surfaceHistory.hasMountedProvider || !iframe,
+    hasMountedProvider: surfaceHistory.hasMountedProvider || !iframe || harnessAppStartupPending,
     hasMountedWorkbench: surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive,
   }
   if (
@@ -411,7 +411,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
   }
 
   const renderedIframe = iframe ?? surfaceHistory.iframe
-  const renderProvider = surfaceHistory.hasMountedProvider || !iframe
+  const renderProvider = surfaceHistory.hasMountedProvider || !iframe || harnessAppStartupPending
   const renderWorkbench = surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive
   // Fixed native tabs behave like desktop tabs: mount once, preserve their
   // effects and in-memory UI state, and remove them from layout and paint while inactive.
@@ -421,9 +421,11 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
   // disconnects their effects. Keep the current iframe route connected while
   // inactive; AppIframe hides the native WebView through its active prop.
   const keepIframeActive = Boolean(iframe)
-  // Starting an Electron Smart app is an application lifecycle operation, not
-  // a visible-tab effect. Keep its launcher connected until startup settles.
-  const keepHarnessAppLaunchActive = Boolean(harnessAppInstallationId && harnessAppLaunchActive)
+  // A reopened launch can be queued behind the old tab's cleanup before it
+  // establishes shared launch state. Keep that tab's pending owner connected too.
+  const keepHarnessAppLaunchActive = Boolean(
+    harnessAppInstallationId && (harnessAppLaunchActive || harnessAppStartupPending)
+  )
   const keepSurfaceActive =
     keepNativeWorkbenchActive || keepIframeActive || keepHarnessAppLaunchActive
 

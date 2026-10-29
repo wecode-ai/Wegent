@@ -12,6 +12,7 @@ export const RESPONSE_API_STREAM_EVENTS = [
   "response.completed",
   "response.failed",
   "response.incomplete",
+  "response.recovered",
   "response.reasoning_summary_text.delta",
   "response.output_item.added",
   "response.output_item.done",

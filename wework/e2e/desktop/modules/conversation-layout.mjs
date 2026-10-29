@@ -1,6 +1,8 @@
 import { readFile, readdir } from 'node:fs/promises'
 
 import { sendPrompt } from './conversation-navigation.mjs'
+import { verifyShortConversationTopAlignment } from './conversation-short-layout.mjs'
+import { distanceFromBottom, distanceFromTop } from './streaming-text-fixture.mjs'
 import {
   verifyConversationShortcuts,
   verifyEmptyConversationFind,
@@ -75,6 +77,7 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await verifyShortConversationTopAlignment(control, 'The initial four-message conversation')
   const shortConversationTaskRowTestId = await waitForNewTaskRow(
     control,
     taskRowsBeforeConversation,
@@ -298,6 +301,7 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await verifyShortConversationTopAlignment(control, 'The four-message conversation after restart')
   await waitForComposerFocus(
     control,
     DEFAULT_STEP_TIMEOUT_MS,
@@ -875,20 +879,6 @@ async function verifyViewImageProcessingBlock(control) {
     '04-view-image-expanded.png',
     '[data-testid="processing-live-preview"]'
   )
-}
-
-function distanceFromBottom(metrics) {
-  if (metrics.scrollOrigin === 'bottom') {
-    return Math.max(0, -metrics.scrollTop)
-  }
-  return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
-}
-
-function distanceFromTop(metrics) {
-  if (metrics.scrollOrigin === 'bottom') {
-    return Math.max(0, metrics.scrollHeight - metrics.clientHeight + metrics.scrollTop)
-  }
-  return Math.max(0, metrics.scrollTop)
 }
 
 async function openBottomWorkspaceTerminal(control, description) {

@@ -47,6 +47,7 @@ jobs:
       wework_desktop_core_e2e: ${{ steps.classify.outputs.wework_desktop_core_e2e }}
       windows_desktop_core_e2e: ${{ steps.classify.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:all') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
       wework_desktop_core_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
+      windows_desktop_core_e2e_matrix: ${{ steps.windows-matrix.outputs.matrix }}
       wework_desktop_cloud_e2e: ${{ steps.classify.outputs.wework_desktop_cloud_e2e }}
       wework_desktop_cloud_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_cloud_e2e_matrix }}
       wework_desktop_other_e2e: ${{ steps.classify.outputs.wework_desktop_other_e2e }}
@@ -83,6 +84,12 @@ jobs:
               .github/scripts/classify-wework-desktop-e2e.sh < "$changed_files"
             fi
           fi
+
+      - name: Balance Windows Core checkpoints by measured duration
+        id: windows-matrix
+        env:
+          CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
+        run: node .github/scripts/balance-wework-windows-e2e.mjs >> "$GITHUB_OUTPUT"
 
       - name: Resolve Wework E2E image
         id: image
@@ -480,63 +487,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           filter: blob:none
+          persist-credentials: false
 
-      - name: Set up Node workspace
-        uses: ./.github/actions/setup-node-workspace
+      - name: Restore or build Windows Wework desktop E2E package
+        uses: ./.github/actions/build-wework-windows-e2e
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8f
-
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
-
-      - name: Restore Windows Wework Electron E2E build dependencies
-        id: wework-windows-desktop-cargo-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ runner.temp }}/executor-target
-            ${{ env.ELECTRON_CACHE }}
-          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('executor/Cargo.lock', 'backend-rs/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-wework-electron-e2e-v1-
-
-      - name: Restore bundled Codex cache
-        id: bundled-windows-codex-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ${{ env.WEGENT_CODEX_CACHE_DIR }}
-          key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
-
-      - name: Build Windows Wework Electron E2E application
-        env:
-          CI: true
-          WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/executor-target
-          WEWORK_EXECUTOR_PROFILE: debug
-        run: |
-          pnpm --filter wework ai:verify:electron:build
-          node wework/scripts/build-desktop-e2e-client.mjs wework/electron/release/WeWork-win32-x64/resources/e2e-client
-          test -f wework/electron/release/WeWork-win32-x64/WeWork.exe
-          test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
-          test -f wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
-          test -f wework/electron/release/WeWork-win32-x64/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json
-
-      - name: Build Rust Backend Windows E2E gateway
-        shell: pwsh
-        run: |
-          $backendRsTarget = Join-Path $env:RUNNER_TEMP "backend-rs-target"
-          $env:CARGO_TARGET_DIR = $backendRsTarget
-          cargo build --locked --manifest-path backend-rs/Cargo.toml --bin wegent-backend-rs
-          $backendRsBin = Join-Path $backendRsTarget "debug/wegent-backend-rs.exe"
-          $appBackendRsBin = "wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe"
-          Copy-Item -LiteralPath $backendRsBin -Destination $appBackendRsBin -Force
-          if (-not (Test-Path $appBackendRsBin -PathType Leaf)) {
-            throw "Missing Windows Rust Backend E2E gateway: $appBackendRsBin"
-          }
 
       - name: Prepare Windows Redis E2E tools
         shell: pwsh
@@ -567,24 +523,6 @@ jobs:
               throw "Missing Windows Redis E2E binary: $binary"
             }
           }
-
-      - name: Save Windows Wework Electron E2E build dependencies
-        if: github.ref == 'refs/heads/main' && steps.wework-windows-desktop-cargo-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ runner.temp }}/executor-target
-            ${{ env.ELECTRON_CACHE }}
-          key: ${{ steps.wework-windows-desktop-cargo-cache.outputs.cache-primary-key }}
-
-      - name: Save bundled Codex cache
-        if: github.ref == 'refs/heads/main' && steps.bundled-windows-codex-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ${{ env.WEGENT_CODEX_CACHE_DIR }}
-          key: ${{ steps.bundled-windows-codex-cache.outputs.cache-primary-key }}
 
       - name: Upload Windows Wework desktop Core E2E build
         uses: actions/upload-artifact@v4
@@ -630,7 +568,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 17
-      matrix: ${{ fromJSON(needs.changes.outputs.wework_desktop_core_e2e_matrix) }}
+      matrix: ${{ fromJSON(needs.changes.outputs.windows_desktop_core_e2e_matrix) }}
 
     steps:
       - name: Checkout code
@@ -640,8 +578,14 @@ jobs:
           filter: blob:none
           persist-credentials: false
 
-      - name: Set up Node workspace
-        uses: ./.github/actions/setup-node-workspace
+      - name: Set up Node.js for prebuilt desktop tests
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+
+      - name: Set up pnpm for native startup verification
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
 
       - name: Set up Python and uv
         uses: ./.github/actions/setup-python-uv-cache
@@ -826,6 +770,11 @@ jobs:
           & ./.github/scripts/run-windows-standard-user-process.ps1 `
             -FilePath $nodePath `
             @arguments
+
+      - name: Stop Windows standard-user processes
+        if: always()
+        shell: pwsh
+        run: ./.github/scripts/stop-windows-standard-user-processes.ps1
 
       - name: Report Windows standard-user startup failures
         if: always() && steps.windows-core-e2e.outcome == 'failure'
@@ -1243,11 +1192,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+      - name: Compute macOS runtime source digests
+        id: macos-source
+        run: |
+          executor_digest="$(node .github/scripts/macos-e2e-source-digest.mjs executor)"
+          backend_digest="$(node .github/scripts/macos-e2e-source-digest.mjs backend-rs)"
+          echo "executor=$executor_digest" >> "$GITHUB_OUTPUT"
+          echo "backend-rs=$backend_digest" >> "$GITHUB_OUTPUT"
+
       - name: Resolve shared macOS Wework E2E build
         id: macos-build
         env:
-          EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs', 'executor/vendor/**') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
+          EXECUTOR_SOURCE_DIGEST: ${{ steps.macos-source.outputs.executor }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ steps.macos-source.outputs.backend-rs }}
         run: |
           mkdir -p .ci-artifacts
           reference_output="$(mktemp)"
@@ -1376,21 +1333,21 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-executor
-          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-executor-runtime-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs', 'executor/vendor/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-executor-runtime-v1-${{ steps.macos-source.outputs.executor }}
 
       - name: Restore macOS arm64 Rust backend runtime
         if: steps.macos-build.outputs.cache-hit != 'true'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-backend-rs
-          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-backend-rs-runtime-v1-${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-macos-backend-rs-runtime-v1-${{ steps.macos-source.outputs.backend-rs }}
 
       - name: Restore macOS arm64 runtimes from OCI
         if: steps.macos-build.outputs.cache-hit != 'true'
         env:
-          EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ hashFiles('executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**/*.rs', 'executor/vendor/**') }}
+          EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ steps.macos-source.outputs.executor }}
           EXECUTOR_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-head-${{ github.event.pull_request.head.sha || github.sha }}
-          BACKEND_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-v1-${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**/*.rs') }}
+          BACKEND_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-v1-${{ steps.macos-source.outputs.backend-rs }}
           BACKEND_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-head-${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           runtime_root="$HOME/.cache/wegent/wework-macos-e2e-runtimes"

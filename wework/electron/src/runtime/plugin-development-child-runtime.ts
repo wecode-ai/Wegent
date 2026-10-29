@@ -1,6 +1,7 @@
 import { watch, type FSWatcher } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { lstat, mkdir, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { sha256 } from './component-content-hash.js'
 import type { PluginDevelopmentStatus } from './plugin-development-manager.js'
 
 interface PluginDevelopmentChildRuntimeOptions {
@@ -18,6 +19,8 @@ export class PluginDevelopmentChildRuntime {
   private watcher: FSWatcher | null = null
   private reloadTimer: NodeJS.Timeout | null = null
   private reloadPromise: Promise<void> = Promise.resolve()
+  private pendingChanges = new Set<string | null>()
+  private sourceDigests = new Map<string, string | null>()
   private hmrGeneration = 0
   private hmrUpdatedAt: string | null = null
 
@@ -80,8 +83,15 @@ export class PluginDevelopmentChildRuntime {
     this.watcher = watch(
       this.options.sourceRoot,
       { persistent: false, recursive: true },
-      (_event, filename) => {
-        if (isPluginDevelopmentSourceChange(filename)) this.scheduleReload()
+      (event, filename) => {
+        if (isPluginDevelopmentSourceChange(filename)) {
+          console.info('[plugin-development] source changed', {
+            event,
+            filename: filename?.toString() ?? null,
+            hmrGeneration: this.hmrGeneration,
+          })
+          this.scheduleReload(filename?.toString() ?? null)
+        }
       }
     )
     this.watcher.on('error', error => {
@@ -99,20 +109,32 @@ export class PluginDevelopmentChildRuntime {
     this.watcher = null
   }
 
-  private scheduleReload(): void {
+  private scheduleReload(filename: string | null): void {
+    this.pendingChanges.add(filename)
     if (this.reloadTimer) clearTimeout(this.reloadTimer)
     this.reloadTimer = setTimeout(() => {
       this.reloadTimer = null
+      const filenames = [...this.pendingChanges]
+      this.pendingChanges.clear()
       this.reloadPromise = this.reloadPromise
         .catch(() => undefined)
         .then(async () => {
           if (this.options.isShuttingDown()) return
-          await this.writeState('reloading')
           try {
+            const { changed, digests } = await this.readSourceChanges(filenames)
+            if (!changed) return
+            console.info('[plugin-development] hot reload started', {
+              hmrGeneration: this.hmrGeneration,
+            })
+            await this.writeState('reloading')
             await this.options.restartCoreDsh()
             this.hmrGeneration += 1
             this.hmrUpdatedAt = new Date().toISOString()
             await this.writeState('ready')
+            for (const [path, digest] of digests) this.sourceDigests.set(path, digest)
+            console.info('[plugin-development] hot reload completed', {
+              hmrGeneration: this.hmrGeneration,
+            })
           } catch (reason) {
             const error = reason instanceof Error ? reason : new Error(String(reason))
             await this.writeState('error', error)
@@ -120,6 +142,38 @@ export class PluginDevelopmentChildRuntime {
           }
         })
     }, 300)
+  }
+
+  private async readSourceChanges(filenames: Array<string | null>): Promise<{
+    changed: boolean
+    digests: Map<string, string | null>
+  }> {
+    const digests = new Map<string, string | null>()
+    let changed = false
+    for (const filename of filenames) {
+      if (filename === null) {
+        changed = true
+        continue
+      }
+      const digest = await sourceDigest(join(this.options.sourceRoot, filename))
+      if (digest === undefined) {
+        changed = true
+        continue
+      }
+      digests.set(filename, digest)
+      changed ||= !this.sourceDigests.has(filename) || this.sourceDigests.get(filename) !== digest
+    }
+    return { changed, digests }
+  }
+}
+
+async function sourceDigest(path: string): Promise<string | null | undefined> {
+  try {
+    const metadata = await lstat(path)
+    return metadata.isFile() ? `${metadata.mode}:${await sha256(path)}` : undefined
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
   }
 }
 

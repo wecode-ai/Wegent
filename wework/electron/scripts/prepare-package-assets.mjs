@@ -25,8 +25,10 @@ import { materializeBundledPluginResources } from '../../scripts/lib/bundled-plu
 import { resolveHarnessRuntimeCachePaths } from '../../scripts/lib/harness-runtime-cache.mjs'
 import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
 import { extractWeworkAppStaticResources } from '../../scripts/lib/wework-app-component-resources.mjs'
+import { buildLauncher } from './build-launcher.mjs'
 import { withTemporaryBuildDirectory } from '../../scripts/lib/temporary-build-directory.mjs'
 import { packagedHarnessRuntimeCatalog } from '../../scripts/lib/packaged-harness-runtime.mjs'
+import builderConfig from '../electron-builder.config.cjs'
 
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const weworkRoot = resolve(electronRoot, '..')
@@ -73,6 +75,7 @@ await withTemporaryBuildDirectory({
   consume: async ([executorPath], appWebRoot) => {
     await rm(resourcesRoot, { recursive: true, force: true })
     await mkdir(join(resourcesRoot, 'bin'), { recursive: true, mode: 0o700 })
+    await buildLauncher(resourcesRoot, packageTargets.cargoTarget)
     const runtimeCatalog = JSON.parse(
       await readFile(join(harnessRuntimeMaterializedRoot, 'runtimes.json'), 'utf8')
     )
@@ -155,6 +158,8 @@ await withTemporaryBuildDirectory({
         {
           schemaVersion: 1,
           appVersion: electronPackage.version,
+          dataSchema: builderConfig.extraMetadata.weworkDataSchema,
+          readableDataSchemas: builderConfig.extraMetadata.weworkReadableDataSchemas,
           sourceSha,
           channel: process.env.VITE_WEWORK_RELEASE_CHANNEL?.trim() || 'development',
           components: {

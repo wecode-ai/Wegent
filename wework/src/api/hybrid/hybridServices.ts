@@ -726,10 +726,13 @@ export function createHybridWorkbenchServices(
     }
     throw new Error(`executor-not-found:${normalizedDeviceId}`)
   }
-  const mergeKnownDevices = (localDevices: DeviceInfo[], cloudDevices: DeviceInfo[]) =>
+  const mergeKnownDevices = (
+    localDevices: DeviceInfo[],
+    cloudDevices: DeviceInfo[]
+  ): DeviceInfo[] =>
     mergeDeviceLists(localDevices, [...currentAppDeviceRegistrations(), ...cloudDevices]).filter(
       device => !isAppDeviceRegistration(device)
-    )
+    ) as DeviceInfo[]
   const routeLocalSidebarMutation = async (
     deviceId: string,
     options: LocalRuntimeSidebarOptions | undefined,
@@ -979,9 +982,7 @@ export function createHybridWorkbenchServices(
           error
         )
       }
-      return mergeKnownDevices(localDevices, cloudDevices) as Awaited<
-        ReturnType<WorkbenchServices['deviceApi']['listDevices']>
-      >
+      return mergeKnownDevices(localDevices, cloudDevices)
     },
   }
 
@@ -1851,7 +1852,8 @@ export function createHybridWorkbenchServices(
     userApi: cloudServices.userApi,
     cloudBackgroundApi: {
       listTeams: cloudServices.teamApi.listTeams,
-      listDevices: requestOptions => listCloudDevices(requestOptions?.signal),
+      listDevices: async requestOptions =>
+        mergeKnownDevices(rememberedLocalDevices, await listCloudDevices(requestOptions?.signal)),
       listRuntimeWork: requestOptions => listCloudRuntimeWork(requestOptions?.signal),
     },
     getLocalRuntimeSidebarIdentity,
@@ -1893,6 +1895,7 @@ function filterRuntimeChatStreamHandlers(
     onChatChunk: route(handlers.onChatChunk),
     onChatDone: route(handlers.onChatDone),
     onChatError: route(handlers.onChatError),
+    onChatRecovered: route(handlers.onChatRecovered),
     onBlockCreated: route(handlers.onBlockCreated),
     onBlockUpdated: route(handlers.onBlockUpdated),
     onSubagentActivity: route(handlers.onSubagentActivity),

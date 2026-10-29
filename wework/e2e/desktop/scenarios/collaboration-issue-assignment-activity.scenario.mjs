@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { verifyCommentAssignment } from '../modules/comment-assignment.mjs'
+import { verifyAssignmentActivityReceipts } from '../modules/assignment-activity-receipts.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
@@ -155,6 +156,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     assert.equal(await control.command('getValue', title), LOCAL_ISSUE)
     const expected = [{ name: localOwner, action: '指派' }]
     await verifyAssignments(control, expected, null)
+    await verifyAssignmentActivityReceipts(control, '本人已读')
 
     await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
     await control.command('click', '[data-testid="cloud-todo-detail-assignee-option-empty"]')
@@ -167,6 +169,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     })
     expected.push({ name: '未指派', action: '取消指派' })
     await verifyAssignments(control, expected, null)
+    await verifyAssignmentActivityReceipts(control, null)
     const activityId = await control.command(
       'getAttribute',
       scoped('section[data-testid^="cloud-task-activity-"]'),
@@ -183,6 +186,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     assert.equal(await control.command('getValue', title), LOCAL_ISSUE)
     await verifyAssignments(control, expected, null)
     await captureScreenshot(control, 'assignment-activity-02-local-persisted.png', CONTENT)
+    await verifyAssignmentActivityReceipts(control, null)
   }
 
   return {
@@ -248,6 +252,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await openIssue(control)
       const expected = [{ name: owner.user_name, action: '指派' }]
       await verifyAssignments(control, expected)
+      await verifyAssignmentActivityReceipts(control, '本人已读')
 
       const comment = await request(
         `/api/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`,
@@ -276,6 +281,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await changeAssignee(control, member.id, 2, false)
       expected.push({ name: member.user_name, action: '转派' })
       await verifyAssignments(control, expected)
+      await verifyAssignmentActivityReceipts(control, '未读')
       const notifications = await request('/api/v1/wework-notifications', {}, memberToken)
       assert.deepEqual(
         notifications.items.map(notification => notification.id).sort(),
@@ -286,16 +292,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await changeAssignee(control, null, 3)
       expected.push({ name: '未指派', action: '取消指派' })
       await verifyAssignments(control, expected)
+      await verifyAssignmentActivityReceipts(control, null)
 
       await changeAssignee(control, owner.id, 4)
       expected.push({ name: owner.user_name, action: '转派' })
       await verifyAssignments(control, expected)
+      await verifyAssignmentActivityReceipts(control, '本人已读')
       await verifyTimeline(control)
       const savedHistory = issue.assignment_history
 
       await reloadMainWindow(control, 'The desktop did not reconnect after assignment reload')
       await openIssue(control)
       await verifyAssignments(control, expected)
+      await verifyAssignmentActivityReceipts(control, '本人已读')
       await verifyTimeline(control)
       const persisted = await request(`/api/v1/loop-items/${issue.id}`)
       assert.deepEqual(persisted.assignment_history, savedHistory)

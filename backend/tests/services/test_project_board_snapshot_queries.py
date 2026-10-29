@@ -492,7 +492,7 @@ def test_batch_human_bindings_use_only_the_latest_round_in_each_project(
                                     "assignee_type": "human",
                                     "human_user_id": owner_id,
                                     "human_assignment_id": f"human-{item.id}-{revision}",
-                                    "assignment_id": f"assignment-{item.id}",
+                                    "assignment_id": f"member-{item.id}-{revision}",
                                 }
                             ]
                             if not (index == 1 and revision == 1)
@@ -512,7 +512,8 @@ def test_batch_human_bindings_use_only_the_latest_round_in_each_project(
             "humanAssignmentId": f"human-{items[0].id}-1",
             "dispatchId": "dispatch-1",
             "dispatchRoundId": "round-1",
-            "assignmentId": f"assignment-{items[0].id}",
+            "assignmentId": f"member-{items[0].id}-1",
+            "issueAssignmentId": f"assignment-{items[0].id}",
         }
     }
 

@@ -1,5 +1,8 @@
+import { UPGRADE_CHECKPOINTS, UPGRADE_CHECKPOINT_GROUP } from './upgrade-suite.mjs'
+
 export const DESKTOP_CHECKPOINTS = [
   'mcp-apps',
+  'project-space-tool-discovery',
   'remote-device-onboarding',
   'workspace-tabs',
   'notification-tab-navigation',
@@ -140,10 +143,12 @@ export const DESKTOP_CHECKPOINTS = [
   'split-workbench',
   'release-package-startup',
   'app-update-full',
+  ...UPGRADE_CHECKPOINTS,
   'component-update',
   'renderer-crash-recovery',
   'native-window-startup',
   'native-window-chrome',
+  'window-background-policy',
   'renderer-storage',
   'application-menu',
   'tray-lifecycle',
@@ -176,6 +181,7 @@ export const DESKTOP_CHECKPOINTS = [
   'harness-apps',
   'harness-app-development',
   'harness-app-lifecycle',
+  'harness-app-models',
 
   'browser-multi-tabs',
   'embedded-browser',
@@ -198,6 +204,7 @@ export const PLUGIN_SEGMENTS = [
 ]
 
 export const DESKTOP_CHECKPOINT_GROUPS = new Map([
+  [UPGRADE_CHECKPOINT_GROUP, UPGRADE_CHECKPOINTS],
   [
     'collaboration-issue-comment-notification',
     ['collaboration-issue-comment-notification-navigation', 'issue-notification-read'],
@@ -226,7 +233,7 @@ export const DESKTOP_CHECKPOINT_GROUPS = new Map([
       'plugin-uninstall-reinstall-race',
     ],
   ],
-  ['harness-apps', ['harness-app-development', 'harness-app-lifecycle']],
+  ['harness-apps', ['harness-app-development', 'harness-app-lifecycle', 'harness-app-models']],
   [
     'streaming-text',
     [

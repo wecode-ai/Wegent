@@ -286,6 +286,7 @@ describe('CoreDshPluginManager', () => {
 async function createFixture(
   options: {
     environment?: NodeJS.ProcessEnv
+    realCommands?: boolean
     runCommand?: (
       command: string,
       args: string[],
@@ -359,12 +360,13 @@ async function createFixture(
         dshEntry: join(runtimeRoot, 'dsh.js'),
         nodeCommand: process.execPath,
         environment: options.environment ?? {},
-        runCommand:
-          options.runCommand ??
-          (async () => ({
-            stdout: '',
-            stderr: '',
-          })),
+        runCommand: options.realCommands
+          ? undefined
+          : (options.runCommand ??
+            (async () => ({
+              stdout: '',
+              stderr: '',
+            }))),
       }),
     manifest: () =>
       readFile(join(profileRoot, 'package.json'), 'utf8').then(
@@ -387,3 +389,76 @@ async function createFixture(
 function writeJson(path: string, value: unknown): Promise<void> {
   return writeFile(path, `${JSON.stringify(value, null, 2)}\n`)
 }
+
+test('redacts bearer and registry credentials from package-manager failures', async () => {
+  const fixture = await createFixture({
+    runCommand: async () => {
+      throw Object.assign(new Error('Package manager rejected the install'), {
+        stdout:
+          'Authorization: Bearer synthetic-auth-value\nhttps://user:synthetic-pass@registry.example.test/package',
+        stderr: '',
+      })
+    },
+  })
+  try {
+    const error = await fixture
+      .manager()
+      .install('dsh-example')
+      .catch(value => value)
+    expect(error).toBeInstanceOf(Error)
+    expect(error.message).toContain('[redacted]')
+    expect(error.message).not.toContain('synthetic-auth-value')
+    expect(error.message).not.toContain('synthetic-pass')
+  } finally {
+    await fixture.remove()
+  }
+})
+
+test('logs only allowlisted metadata from secret-bearing subprocess chunks', async () => {
+  const fixture = await createFixture({
+    environment: { VITE_WEWORK_E2E: 'true' },
+    realCommands: true,
+  })
+  const logs = vi.spyOn(console, 'info').mockImplementation(() => {})
+  try {
+    await writeFile(
+      join(fixture.runtimeRoot, 'node_modules/pnpm/bin/pnpm.cjs'),
+      `
+      const chunks = [
+        ['stdout', 'https://user:synthetic-split-'],
+        ['stdout', 'password@registry.example.test/package\\n'],
+        ['stdout', '{"token":"synthetic-json-secret"}\\n'],
+        ['stderr', 'Authorization: Bearer synthetic-bearer-secret\\n'],
+        ['stdout', 'Progress: resolved 3, reused 1, downloaded 2, added 2\\nECONNRESET\\n'],
+      ]
+      async function main() {
+        for (const [stream, text] of chunks) {
+          process[stream].write(text)
+          await new Promise(resolve => setTimeout(resolve, 10))
+        }
+        process.exitCode = 1
+      }
+      main()
+    `
+    )
+    await expect(fixture.manager().install('dsh-example')).rejects.toThrow('pnpm failed')
+    const recorded = JSON.stringify(logs.mock.calls)
+    expect(recorded).not.toContain('synthetic-')
+    expect(recorded).not.toContain('registry.example.test')
+    expect(recorded).not.toContain('"output"')
+    expect(recorded).toContain('ECONNRESET')
+    expect(logs).toHaveBeenCalledWith(
+      '[core-dsh-plugin-command]',
+      expect.objectContaining({
+        stage: 'command-output',
+        resolved: 3,
+        reused: 1,
+        downloaded: 2,
+        added: 2,
+      })
+    )
+  } finally {
+    logs.mockRestore()
+    await fixture.remove()
+  }
+})
