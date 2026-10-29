@@ -65,8 +65,56 @@ export async function verifyCatalogDiskGeneration({
   const delayedRepairs = []
   const repairOutcomes = new Map()
   const failures = []
+  const syncDiagnostics = async () =>
+    JSON.parse(await control.command('getPluginSyncDiagnostics', 'body', { value: deviceId }))
   try {
-    // Keep legitimate automatic repairs from changing the fault before assertions.
+    await control.command('waitFor', testId('plugins-refresh-button'), {
+      enabled: true,
+      stableMs: 250,
+    })
+    const initial = await until(
+      syncDiagnostics,
+      state =>
+        !state.inFlight &&
+        state.localCatalogReads.every(
+          read =>
+            read.phase !== 'started' ||
+            state.localCatalogReads.some(
+              end => end.phase !== 'started' && end.startedAt === read.time
+            )
+        ),
+      'Previous catalog and device synchronization did not settle before the race'
+    )
+    const previousStart = Math.max(
+      0,
+      ...initial.localCatalogReads.filter(read => read.phase === 'started').map(read => read.time)
+    )
+    const before = await inventory(control)
+    report.before = before
+    await gates.arm({
+      id: gateId,
+      kind: 'response',
+      name: 'codex.app_server_request',
+      where: [
+        { path: 'params.method', equals: 'plugin/list' },
+        { path: 'params.params.marketplaceKinds.*', equals: 'local' },
+      ],
+    })
+    await control.command('click', testId('plugins-refresh-button'))
+    const capture = await gates.wait(gateId)
+    report.catalogCapture = { capturedAt: capture.capturedAt, deliveries: capture.deliveries }
+    assert.equal(capture.deliveries, 0, 'The old real catalog response must still be held')
+    const pending = (await syncDiagnostics()).localCatalogReads.filter(
+      read =>
+        read.phase === 'started' && read.time > previousStart && read.time <= capture.capturedAt
+    )
+    assert.equal(pending.length, 1, 'The held local catalog must belong to the new refresh')
+    const catalogStartedAt = pending[0].time
+    report.catalogStartedAt = catalogStartedAt
+    const held = await inventory(control)
+    assert.equal(held.installedSourceReads.store.status, 'fulfilled')
+    assert.ok(held.installedSourceReads.store.pluginKeys.includes(item.slug))
+    // Arm only after the normal refresh reached plugin/list; do not pause its prerequisites.
     apiProxy.rule = request => {
       if (request.method === 'POST' && request.path.startsWith('/api/plugins/installed/')) {
         delayedRepairs.push(request)
@@ -74,25 +122,6 @@ export async function verifyCatalogDiskGeneration({
       }
       return previousRule(request)
     }
-    await control.command('waitFor', testId('plugins-refresh-button'), {
-      enabled: true,
-      stableMs: 250,
-    })
-    const before = await inventory(control)
-    report.before = before
-    await gates.arm({
-      id: gateId,
-      kind: 'response',
-      name: 'codex.app_server_request',
-      where: [{ path: 'params.method', equals: 'plugin/list' }],
-    })
-    await control.command('click', testId('plugins-refresh-button'))
-    const capture = await gates.wait(gateId)
-    report.catalogCapture = { capturedAt: capture.capturedAt, deliveries: capture.deliveries }
-    assert.equal(capture.deliveries, 0, 'The old real catalog response must still be held')
-    const held = await inventory(control)
-    assert.equal(held.installedSourceReads.store.status, 'fulfilled')
-    assert.ok(held.installedSourceReads.store.pluginKeys.includes(item.slug))
     await replace(injected)
     const disk = JSON.parse(await control.command('readLocalPluginDiskInventory', 'body'))
     report.disk = disk
@@ -117,10 +146,25 @@ export async function verifyCatalogDiskGeneration({
       held.sharedInventory.localInstalledSourceStatus
     )
     await gates.release(gateId)
-    await control.command('waitFor', testId('plugins-refresh-button'), {
-      enabled: true,
-      stableMs: 250,
-    })
+    // Refresh readiness can depend on a deliberately paused repair. Observe the
+    // exact catalog result instead, before restoring the manifest and resuming repairs.
+    await until(
+      async () => {
+        const state = await syncDiagnostics()
+        report.catalogDelivery = state.localCatalogReads.filter(
+          read => read.startedAt === catalogStartedAt
+        )
+        return report.catalogDelivery
+      },
+      reads => {
+        assert.ok(
+          !reads.some(read => read.phase === 'failed'),
+          'The held catalog failed after release'
+        )
+        return reads.some(read => read.phase === 'completed')
+      },
+      'The original local catalog did not complete after release'
+    )
     const after = await inventory(control)
     report.afterCatalog = after
     assert.equal(after.installedSourceReads.store.status, 'fulfilled')

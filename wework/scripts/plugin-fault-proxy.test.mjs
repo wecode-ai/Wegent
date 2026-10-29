@@ -272,6 +272,166 @@ test(
   }
 )
 
+test.for(['completed', 'failed'])(
+  'catalog race observes its own %s result before resuming a real paused repair',
+  { timeout: 5000 },
+  async (phase, t) => {
+    const { proxy, received, server } = await fixture(t)
+    const home = await mkdtemp(join(tmpdir(), 'plugin-generation-ordering-'))
+    t.onTestFinished(() => rm(home, { recursive: true, force: true }))
+    await mkdir(join(home, 'capabilities'))
+    const manifestPath = join(home, 'capabilities/manifest-v2.json')
+    const original = Buffer.from(
+      JSON.stringify({ version: 2, plugins: { tool: { installed_plugin_id: 72 } } })
+    )
+    await writeFile(manifestPath, original)
+    const item = { installedId: 72, slug: 'tool' }
+    const source = pluginKeys => ({ status: 'fulfilled', pluginKeys })
+    let armed = false
+    let delivered = false
+    let diskRead = false
+    let recovered = false
+    let repairPending = false
+    let repairResult
+    let completionPolls = 0
+    let readyWaits = 0
+    const previousReads = [
+      { phase: 'started', time: 1, startedAt: 1 },
+      { phase: 'completed', time: 2, startedAt: 1 },
+    ]
+    const capture = () => ({ capturedAt: 50, deliveries: Number(delivered) })
+    const report = { passed: false }
+    const previousRule = proxy.rule
+    // The repair may reach the real server only after the fault is restored.
+    server.removeAllListeners('request')
+    server.on('request', (request, response) => {
+      received.push({ method: request.method, url: request.url })
+      request.resume()
+      readFile(manifestPath).then(bytes => {
+        response.statusCode = bytes.equals(original) ? 200 : 409
+        response.end('real-repair-result')
+      })
+    })
+    const control = {
+      async command(name, _selector, options) {
+        switch (name) {
+          case 'waitFor':
+            readyWaits += 1
+            assert.equal(repairPending, false, 'Refresh cannot become ready while repair is paused')
+            return ''
+          case 'getPluginSyncDiagnostics': {
+            assert.equal(options.value, 'device-a')
+            const reads = [...previousReads]
+            if (armed) reads.push({ phase: 'started', time: 10, startedAt: 10 })
+            // An older completed read must not satisfy the new catalog wait.
+            if (delivered && ++completionPolls > 1) reads.push({ phase, time: 60, startedAt: 10 })
+            return JSON.stringify({ inFlight: repairPending, localCatalogReads: reads })
+          }
+          case 'armRuntimeTransportGate': {
+            const rule = JSON.parse(options.value)
+            assert.deepEqual(rule.where, [
+              { path: 'params.method', equals: 'plugin/list' },
+              { path: 'params.params.marketplaceKinds.*', equals: 'local' },
+            ])
+            armed = true
+            return ''
+          }
+          case 'click': {
+            // The refresh's ordinary prerequisite must finish before repair faults are armed.
+            const prerequisite = await fetch(`${proxy.url}/api/plugins/installed/sync-device`, {
+              method: 'POST',
+            })
+            assert.equal(prerequisite.status, 200)
+            await prerequisite.text()
+            assert.equal(proxy.rule, previousRule)
+            return ''
+          }
+          case 'readRuntimeTransportGate':
+            return JSON.stringify(capture())
+          case 'releaseRuntimeTransportGate':
+            delivered = true
+            return ''
+          case 'resetRuntimeTransportGates':
+            delivered = true
+            return ''
+          case 'readLocalPluginDiskInventory': {
+            assert.deepEqual(JSON.parse(await readFile(manifestPath, 'utf8')).plugins, {})
+            diskRead = true
+            repairPending = true
+            repairResult = fetch(`${proxy.url}/api/plugins/installed/sync-device`, {
+              method: 'POST',
+            }).then(async response => {
+              await response.text()
+              repairPending = false
+              return response.status
+            })
+            await until(() => proxy.requests.at(-1)?.release, Boolean, 'Repair was not paused')
+            return JSON.stringify({
+              partial: false,
+              sourceReads: { store: source([]), personal: source([]) },
+            })
+          }
+          case 'getComposerPluginInventoryDiagnostics': {
+            const complete = delivered && completionPolls > 1
+            if (delivered && !recovered) {
+              assert.ok(complete, 'Inventory assertions must wait for this catalog result')
+              assert.equal(repairPending, true)
+            }
+            const store = !diskRead || recovered ? ['tool'] : []
+            return JSON.stringify({
+              installedSourceReads: {
+                store: source(store),
+                codex: source(['tool']),
+                personal: source([]),
+              },
+              installedPlugins: [{ pluginKey: 'tool' }],
+              sharedInventory: {
+                mutationRevision: 2,
+                localInstalledSources: { store: complete && !recovered ? [] : ['cloud:72'] },
+                localInstalledSourceStatus: { store: 'fulfilled' },
+                installedPlugins: [{ inventoryId: 'cloud:72', pluginKey: 'tool' }],
+              },
+            })
+          }
+          case 'clickWhenEnabled':
+            assert.equal(repairPending, false)
+            assert.ok((await readFile(manifestPath)).equals(original))
+            recovered = true
+            return ''
+          default:
+            assert.fail(`Unexpected command ${name}`)
+        }
+      },
+    }
+    const run = verifyCatalogDiskGeneration({
+      control,
+      executorHome: home,
+      item,
+      apiProxy: proxy,
+      deviceId: 'device-a',
+      report,
+    })
+    if (phase === 'failed') await assert.rejects(run, /The held catalog failed after release/)
+    else await run
+    assert.equal(await repairResult, 200)
+    assert.equal(report.passed, phase === 'completed')
+    assert.equal(report.assertionsPassed === true, phase === 'completed')
+    assert.deepEqual(report.cleanupErrors, [])
+    assert.equal(report.catalogStartedAt, 10)
+    assert.deepEqual(
+      report.catalogDelivery.map(read => read.phase),
+      ['started', phase]
+    )
+    assert.equal(readyWaits, phase === 'completed' ? 2 : 1)
+    assert.equal(proxy.rule, previousRule)
+    assert.ok((await readFile(manifestPath)).equals(original))
+    assert.equal(received.length, 2, 'Prerequisite and restored repair each reach upstream once')
+    assert.equal(report.repairs.length, 1)
+    assert.equal(report.repairs[0].released, true)
+    assert.equal(report.repairs[0].responseCompleted, true)
+  }
+)
+
 test(
   'dropped POST response commits once and permits an explicit retry without retaining credentials',
   { timeout: 5000 },
