@@ -13,7 +13,7 @@
 use brz_http_server::{EphemeralBytesArena, IntoHttpError, Response, StatusCode};
 
 use super::mysql::UserRow;
-use crate::auth::SessionClaims;
+use crate::config::AuthConfig;
 
 pub struct AuthenticatedUser(pub UserRow);
 
@@ -34,14 +34,7 @@ impl brz_http_server::Authenticator<AuthenticatedUser> for crate::auth::AppAuthe
             .header("authorization")
             .and_then(|v| std::str::from_utf8(v).ok());
         let headers = crate::headers::OwnedHeaders::from_pairs([("authorization", authorization)]);
-        let mut keys = vec![self.state().auth.jwt_key.clone()];
-        keys.extend(self.state().auth.legacy_jwt_keys.iter().cloned());
-        let algorithm = match self.state().auth.algorithm.as_str() {
-            "HS384" => jsonwebtoken::Algorithm::HS384,
-            "HS512" => jsonwebtoken::Algorithm::HS512,
-            _ => jsonwebtoken::Algorithm::HS256,
-        };
-        authenticate(&headers.view(), &self.state().mysql, &keys, algorithm)
+        authenticate(&headers.view(), &self.state().mysql, &self.state().auth)
             .await
             .map_err(|error| match error {
                 AuthError::MissingCredentials => {
@@ -136,13 +129,12 @@ impl IntoHttpError for AuthError {
 pub async fn authenticate<M: brz_mysql::Mysql>(
     headers: &impl crate::headers::Headers,
     mysql: &M,
-    decode_keys: &[String],
-    algorithm: jsonwebtoken::Algorithm,
+    config: &AuthConfig,
 ) -> Result<AuthenticatedUser, AuthError> {
     let token = bearer_token(headers)?;
-    let claims = decode_session_token(&token, decode_keys, algorithm)
+    let username = crate::auth::decode_session_claims(config, &token)
+        .and_then(|claims| claims.username())
         .ok_or(AuthError::InvalidCredentials)?;
-    let username = claims.sub.clone().ok_or(AuthError::InvalidCredentials)?;
     let user = mysql
         .fetch_optional::<_, _, UserRow>(
             "SELECT id, user_name, email, git_info, is_active, role, auth_source, \
@@ -179,33 +171,6 @@ fn bearer_token(headers: &impl crate::headers::Headers) -> Result<String, AuthEr
     Ok(token.to_string())
 }
 
-/// Decode the JWT with the active key then legacy keys, matching
-/// `decode_jose_jwt` plus `is_user_session_payload`.
-fn decode_session_token(
-    token: &str,
-    decode_keys: &[String],
-    algorithm: jsonwebtoken::Algorithm,
-) -> Option<SessionClaims> {
-    let mut last_error = None;
-    for key in decode_keys {
-        match jsonwebtoken::decode::<SessionClaims>(
-            token,
-            &jsonwebtoken::DecodingKey::from_secret(key.as_bytes()),
-            &jsonwebtoken::Validation::new(algorithm),
-        ) {
-            Ok(token_data) => {
-                if token_data.claims.is_user_session_payload() {
-                    return Some(token_data.claims);
-                }
-                return None;
-            }
-            Err(error) => last_error = Some(error),
-        }
-    }
-    let _ = last_error;
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::{AuthError, authenticate, bearer_token};
@@ -216,7 +181,7 @@ mod tests {
     fn claims(scope: Option<&str>, token_use: Option<&str>) -> SessionClaims {
         SessionClaims {
             sub: Some("haibo16".to_string()),
-            scope: scope.map(|_| serde::de::IgnoredAny),
+            scope: scope.map(serde_json::Value::from),
             token_use: token_use.map(ToOwned::to_owned),
             exp: None,
         }
@@ -257,8 +222,12 @@ mod tests {
         ));
     }
 
-    fn keys() -> Vec<String> {
-        vec!["test-key".to_string()]
+    fn config() -> crate::config::AuthConfig {
+        crate::config::AuthConfig {
+            jwt_key: "test-key".to_string(),
+            legacy_jwt_keys: Vec::new(),
+            algorithm: "HS256".to_string(),
+        }
     }
 
     /// The representative recorded case sends no `Authorization` header. The
@@ -274,15 +243,10 @@ mod tests {
             ("empty header", Some("")),
         ] {
             let headers = OwnedHeaders::from_pairs([("authorization", value)]);
-            let error = authenticate(
-                &headers.view(),
-                &mysql,
-                &keys(),
-                jsonwebtoken::Algorithm::HS256,
-            )
-            .await
-            .err()
-            .unwrap_or_else(|| panic!("{label} must be rejected"));
+            let error = authenticate(&headers.view(), &mysql, &config())
+                .await
+                .err()
+                .unwrap_or_else(|| panic!("{label} must be rejected"));
             assert!(
                 matches!(error, AuthError::MissingCredentials),
                 "{label} reports the wrong failure"
@@ -301,15 +265,10 @@ mod tests {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         for value in ["Bearer ", "Bearer"] {
             let headers = OwnedHeaders::from_pairs([("authorization", Some(value))]);
-            let error = authenticate(
-                &headers.view(),
-                &mysql,
-                &keys(),
-                jsonwebtoken::Algorithm::HS256,
-            )
-            .await
-            .err()
-            .unwrap_or_else(|| panic!("{value:?} must be rejected"));
+            let error = authenticate(&headers.view(), &mysql, &config())
+                .await
+                .err()
+                .unwrap_or_else(|| panic!("{value:?} must be rejected"));
             assert!(
                 matches!(error, AuthError::InvalidCredentials),
                 "{value:?} reports the wrong failure"
@@ -342,6 +301,61 @@ mod tests {
                 std::str::from_utf8(body.as_ref()).unwrap(),
                 format!("{{\"detail\":\"{detail}\"}}")
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod python_compatibility {
+    fn config(algorithm: &str) -> crate::config::AuthConfig {
+        crate::config::AuthConfig {
+            jwt_key: "test-key".to_string(),
+            legacy_jwt_keys: Vec::new(),
+            algorithm: algorithm.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn session_entry_point_matches_python() {
+        for (name, claims, expected) in crate::jwt_compat::tests::session_cases() {
+            let token = crate::jwt_compat::tests::sign(&claims, b"test-key");
+            let authorization = format!("Bearer {token}");
+            let headers = crate::headers::OwnedHeaders::from_pairs([(
+                "authorization",
+                Some(authorization.as_str()),
+            )]);
+            let mysql = crate::sql_test_support::KindQueryCapture::default();
+            assert!(
+                super::authenticate(&headers.view(), &mysql, &config("HS256"))
+                    .await
+                    .is_err()
+            );
+            assert_eq!(!mysql.queries().is_empty(), expected, "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn unsupported_configured_algorithms_do_not_reach_user_lookup() {
+        let token = crate::jwt_compat::tests::sign(&serde_json::json!({"sub":"u"}), b"test-key");
+        let authorization = format!("Bearer {token}");
+        let headers = crate::headers::OwnedHeaders::from_pairs([(
+            "authorization",
+            Some(authorization.as_str()),
+        )]);
+        for (algorithm, expected_queries) in [
+            ("HS256", 1),
+            ("RS256", 0),
+            ("", 0),
+            ("hs256", 0),
+            ("unsupported", 0),
+        ] {
+            let mysql = crate::sql_test_support::KindQueryCapture::default();
+            let error = super::authenticate(&headers.view(), &mysql, &config(algorithm))
+                .await
+                .err()
+                .expect("the test user does not exist");
+            assert!(matches!(error, super::AuthError::InvalidCredentials));
+            assert_eq!(mysql.queries().len(), expected_queries, "{algorithm}");
         }
     }
 }

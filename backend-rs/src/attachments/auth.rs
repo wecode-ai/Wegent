@@ -9,12 +9,11 @@
 //! `None` (anonymous) when the header is absent, the token fails
 //! `decode_jose_jwt`/`verify_token`, or the user is missing or inactive; the
 //! download endpoint then applies its share-token/browser fallbacks.
-use crate::auth::SessionClaims;
 use crate::config::AuthConfig;
 use brz_json::OpaqueJson;
 use brz_mysql::{FromMysqlRow, Json};
 use chrono::NaiveDateTime;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+use jsonwebtoken::Algorithm;
 
 /// A `users` row selected with the source SQLAlchemy projection: every
 /// mapped column, labeled `users_<column>`. Only `id` and `is_active` are
@@ -99,22 +98,6 @@ const USER_BY_NAME_QUERY: &str = "SELECT users.id AS users_id, users.user_name A
      WHERE users.user_name = ? \
      LIMIT 1";
 
-/// Extract the bearer credential like `extract_authorization_token`:
-/// case-insensitive `Bearer ` prefix or the plain header value.
-fn extract_authorization_token(authorization: Option<&str>) -> String {
-    let Some(header) = authorization else {
-        return String::new();
-    };
-    let header = header.trim();
-    if let Some(token) = header.strip_prefix("Bearer ") {
-        return token.trim().to_string();
-    }
-    if let Some(token) = header.strip_prefix("bearer ") {
-        return token.trim().to_string();
-    }
-    header.to_string()
-}
-
 /// Algorithm from settings (`HS256`); shared with the download-token
 /// credential, which `_resolve_user_from_download_token` decodes with the
 /// same `settings.ALGORITHM`.
@@ -126,32 +109,10 @@ pub(super) fn algorithm(config: &AuthConfig) -> Algorithm {
     }
 }
 
-fn decoding_keys(config: &AuthConfig) -> Vec<Vec<u8>> {
-    let mut keys = vec![config.jwt_key.as_bytes().to_vec()];
-    for key in &config.legacy_jwt_keys {
-        let candidate = key.as_bytes();
-        if !keys.iter().any(|existing| *existing == candidate) {
-            keys.push(candidate.to_vec());
-        }
-    }
-    keys
-}
-
 /// `verify_token` with key rotation: the active key, then legacy keys.
 /// Returns the verified `sub` username.
 fn verify_token(config: &AuthConfig, token: &str) -> Option<String> {
-    let mut validation = Validation::new(algorithm(config));
-    // python-jose validates `exp` only when present; no audience is required.
-    validation.validate_aud = false;
-    validation.required_spec_claims.clear();
-    for key_bytes in decoding_keys(config) {
-        let key = DecodingKey::from_secret(&key_bytes);
-        if let Ok(token) = decode::<SessionClaims>(token, &key, &validation) {
-            // `is_user_session_payload` plus non-empty `sub` extraction.
-            return token.claims.username();
-        }
-    }
-    None
+    crate::auth::verify_token(config, token).ok()
 }
 
 /// `get_current_user_optional`: `None` for every failure mode (invalid,
@@ -164,16 +125,19 @@ pub async fn get_current_user_optional<M>(
 where
     M: brz_mysql::Mysql,
 {
-    let token = extract_authorization_token(authorization);
-    if token.is_empty() {
-        return Ok(None);
-    }
-    let Some(username) = verify_token(config, &token) else {
+    let Some(token) = crate::auth::bearer_credential(authorization) else {
         return Ok(None);
     };
-    let user: Option<UserRow> = mysql
-        .fetch_optional(USER_BY_NAME_QUERY, (username,))
-        .await?;
+    let Some(username) = verify_token(config, token) else {
+        return Ok(None);
+    };
+    let user: Option<UserRow> = match mysql.fetch_optional(USER_BY_NAME_QUERY, (username,)).await {
+        Ok(user) => user,
+        Err(error) => {
+            tracing::error!(%error, "optional session user lookup failed");
+            return Ok(None);
+        }
+    };
     Ok(user.filter(|user| user.users_is_active != 0))
 }
 
@@ -197,14 +161,17 @@ mod tests {
     }
 
     #[test]
-    fn extracts_bearer_tokens() {
+    fn optional_auth_uses_the_oauth2_scheme() {
         assert_eq!(
-            extract_authorization_token(Some("Bearer abc.def")),
-            "abc.def"
+            crate::auth::bearer_credential(Some("Bearer abc")),
+            Some("abc")
         );
-        assert_eq!(extract_authorization_token(Some("bearer abc")), "abc");
-        assert_eq!(extract_authorization_token(Some("abc")), "abc");
-        assert_eq!(extract_authorization_token(None), "");
+        assert_eq!(
+            crate::auth::bearer_credential(Some("bEaReR abc")),
+            Some("abc")
+        );
+        assert_eq!(crate::auth::bearer_credential(Some("abc")), None);
+        assert_eq!(crate::auth::bearer_credential(None), None);
     }
 
     #[test]
@@ -238,5 +205,56 @@ mod tests {
             verify_token(&config, &legacy).as_deref(),
             Some("legacy-user")
         );
+    }
+}
+
+#[cfg(test)]
+mod python_compatibility {
+    #[test]
+    fn session_entry_point_matches_python() {
+        let config = crate::config::AuthConfig {
+            jwt_key: "test-key".to_string(),
+            legacy_jwt_keys: Vec::new(),
+            algorithm: "HS256".to_string(),
+        };
+        for (name, claims, expected) in crate::jwt_compat::tests::session_cases() {
+            let token = crate::jwt_compat::tests::sign(&claims, b"test-key");
+            assert_eq!(
+                super::verify_token(&config, &token).is_some(),
+                expected,
+                "{name}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod optional_compatibility {
+    use super::*;
+
+    #[tokio::test]
+    async fn oauth2_optional_rejects_plain_tokens_and_preserves_anonymous_db_failure() {
+        let config = AuthConfig {
+            jwt_key: "test-key".to_string(),
+            legacy_jwt_keys: Vec::new(),
+            algorithm: "HS256".to_string(),
+        };
+        let token = crate::jwt_compat::tests::sign(&serde_json::json!({"sub":"u"}), b"test-key");
+        let mysql = crate::sql_test_support::KindQueryCapture::failing_reads();
+        assert!(
+            get_current_user_optional(&config, &mysql, Some(&token))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(mysql.queries().is_empty());
+        let authorization = format!("bEaReR {token}");
+        assert!(
+            get_current_user_optional(&config, &mysql, Some(&authorization))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(mysql.queries().len(), 1);
     }
 }
