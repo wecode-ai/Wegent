@@ -150,12 +150,18 @@ class IssueAssignmentService:
         comment_id: str | None = None,
         comment_body: str | None = None,
         replace_root_assignments: bool = False,
+        initial_assignment: bool = False,
     ) -> tuple[AssignmentEvent, bool]:
         del workspace_id
         self._lock_issue(db, issue_id)
         normalized_type = self._member_type(member_type)
         normalized_id = member_id.strip()
-        current = self._active_events(db, issue_id, for_update=True)
+        # A newly inserted Issue has no committed assignment history to lock.
+        current = (
+            {}
+            if initial_assignment
+            else self._active_events(db, issue_id, for_update=True)
+        )
         existing = current.get(
             (normalized_type, normalized_id, self._workflow_step(workflow_step))
         )
@@ -220,8 +226,11 @@ class IssueAssignmentService:
         else:
             comment.metadata_json = metadata
         db.flush()
-        self._refresh_active_index(db, issue_id)
-        return AssignmentEvent(comment=comment, metadata=metadata), True
+        event = AssignmentEvent(comment=comment, metadata=metadata)
+        self._refresh_active_index(
+            db, issue_id, initial_event=event if initial_assignment else None
+        )
+        return event, True
 
     def remove(
         self,
@@ -280,13 +289,22 @@ class IssueAssignmentService:
     def _lock_issue(db: Session, issue_id: str) -> None:
         db.query(LoopItem.id).filter(LoopItem.id == issue_id).with_for_update().one()
 
-    def _refresh_active_index(self, db: Session, issue_id: str) -> None:
+    def _refresh_active_index(
+        self,
+        db: Session,
+        issue_id: str,
+        *,
+        initial_event: AssignmentEvent | None = None,
+    ) -> None:
         """Rebuild only on assignment changes, never on receipt reads or writes."""
-        active = self._active_events(db, issue_id, for_update=True)
-        db.query(LoopItemActiveAssignment).filter(
-            LoopItemActiveAssignment.parent_id == issue_id,
-            LoopItemActiveAssignment.resource_type == "assignment_index",
-        ).delete(synchronize_session=False)
+        if initial_event is not None:
+            active = [initial_event]
+        else:
+            active = list(self._active_events(db, issue_id, for_update=True).values())
+            db.query(LoopItemActiveAssignment).filter(
+                LoopItemActiveAssignment.parent_id == issue_id,
+                LoopItemActiveAssignment.resource_type == "assignment_index",
+            ).delete(synchronize_session=False)
         db.add_all(
             [
                 LoopItemActiveAssignment(
@@ -301,7 +319,7 @@ class IssueAssignmentService:
                     loop_item_id=event.id,
                     sort_order=position,
                 )
-                for position, event in enumerate(active.values())
+                for position, event in enumerate(active)
             ]
         )
         db.flush()

@@ -846,6 +846,7 @@ class LoopItemService:
                 db,
                 project_id=project.id,
                 issue_id=item.id,
+                initial_assignment=True,
                 member_type=assignment_member[0],
                 member_id=assignment_member[1],
                 assigned_by_user_id=user_id,
