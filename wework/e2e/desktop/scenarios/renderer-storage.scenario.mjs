@@ -16,6 +16,8 @@ export async function createDesktopScenario({ electronUserDataDirectory, uiTimeo
   return {
     async verify(control) {
       await control.command('snapshot', 'body')
+      await verifyWorkbenchBackgroundSurfaces({ control })
+
       const originBeforeRestart = await control.command('getLocationOrigin', 'body')
       for (const [key, value] of Object.entries(STORAGE_ENTRIES)) {
         assert.equal(
@@ -72,8 +74,6 @@ export async function createDesktopScenario({ electronUserDataDirectory, uiTimeo
         )
         await control.command('removeLocalStorageItem', 'body', { value: key })
       }
-
-      await verifyWorkbenchBackgroundSurfaces({ control })
     },
 
     diagnostics() {
