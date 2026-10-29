@@ -283,11 +283,15 @@ must not implicitly broaden a remote execution scope.
 
 ### Context Compaction Results
 
+The context indicator uses the smaller of the runtime window and the model input budget. When no window is configured, it reads the selected Wework Catalog window; local custom models use their own Catalog window. The input budget reserves the explicit output ceiling, or 96,000 tokens for Chat Completions and Anthropic Messages when no ceiling is configured. Native Responses preserves provider defaults without an explicit output ceiling. With an explicit or translated-protocol output reservation, the executor auto-compacts at 80% of the input budget; the manual compaction hint defaults to 75%.
+
 The executor live-item cache must retain compaction start/completion status. Persisting an interrupted turn must preserve the incomplete result of an unfinished compaction.
 
 Only a compaction completion event can mark `context_compaction` successful. When a turn ends or the user stops it, an unfinished compaction displays “Context compaction did not complete”; ordinary block settlement must not mark it `done`. A completed compaction stays successful even if its containing turn is subsequently stopped.
 
 Interrupted compaction has not reduced the context, so the next turn may compact again. History refresh must not turn an interrupted attempt into a success; Codex history may omit unfinished attempts. The desktop `context-compaction` checkpoint covers successful compaction, interruption, history refresh, and subsequent compaction recovery.
+
+The same checkpoint also loads models from the real configuration file to verify shared and Kimi Catalog default windows, default and explicit output reservations for translated protocols, and explicit and omitted Responses output ceilings. Each case checks no compaction below the threshold, automatic compaction above it, summary-backed continuation, and stable conversation identity. Only the model service is mocked; model configuration, Electron, the executor, Codex, and protocol conversion use real implementations. These cases reuse the existing Core CI checkpoint and build artifacts.
 
 ### Web Search Tool Blocks
 

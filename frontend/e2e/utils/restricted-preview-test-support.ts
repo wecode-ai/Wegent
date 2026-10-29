@@ -107,10 +107,16 @@ async function verifyPdfPreview(page: Page, dialog: Locator, origin: string): Pr
 }
 
 async function verifyOfficePreview(page: Page, dialog: Locator, origin: string): Promise<void> {
-  const [response] = await Promise.all([
-    page.waitForResponse(response => response.url() === `${origin}/preview.docx`),
+  const [request] = await Promise.all([
+    // Opening the dialog can abort an earlier load after its response headers.
+    // Inspect the completed browser transfer that supplies the real renderer.
+    page.waitForEvent(
+      'requestfinished',
+      request => request.method() === 'GET' && request.url() === `${origin}/preview.docx`
+    ),
     previewTrigger(page, 'preview.docx').click(),
   ])
+  const response = (await request.response())!
   expect(response.status()).toBe(200)
   expect(response.headers()['access-control-allow-origin']).toBe('*')
   expect((await response.body()).subarray(0, 2).toString()).toBe('PK')
