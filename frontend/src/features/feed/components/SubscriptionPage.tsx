@@ -12,6 +12,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import dynamic from 'next/dynamic'
 import { Compass, Eye, EyeOff, Plus, Store, User } from 'lucide-react'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { SubscriptionProvider, useSubscriptionContext } from '../contexts/subscriptionContext'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
@@ -67,6 +68,8 @@ function SubscriptionPageContent() {
     undefined
   )
   const [editingSubscription, setEditingSubscription] = useState<Subscription | null>(null)
+  const [editLoadError, setEditLoadError] = useState<Subscription | null>(null)
+  const [isEditLoading, setIsEditLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<FeedTabValue>('all')
   const [mineSubTab, setMineSubTab] = useState<MineSubTabValue>('my_created')
   // Only the newest edit request may populate the form.
@@ -76,6 +79,7 @@ function SubscriptionPageContent() {
 
   const handleCreateSubscription = useCallback(() => {
     editRequestRef.current.invalidate()
+    setEditLoadError(null)
     setEditingSubscription(null)
     setFormInitialData(undefined)
     setIsFormOpen(true)
@@ -87,11 +91,30 @@ function SubscriptionPageContent() {
 
   const handleEditSubscription = useCallback(async (subscription: Subscription) => {
     const requestId = editRequestRef.current.begin()
-    const editable = await loadEditableSubscription(subscription)
-    if (!editRequestRef.current.isLatest(requestId)) return
-    setEditingSubscription(editable)
-    setFormInitialData(undefined)
-    setIsFormOpen(true)
+    setIsEditLoading(true)
+    setEditLoadError(null)
+    try {
+      const editable = await loadEditableSubscription(subscription)
+      if (!editRequestRef.current.isLatest(requestId)) return
+      setEditingSubscription(editable)
+      setFormInitialData(undefined)
+      setIsFormOpen(true)
+    } catch (error) {
+      console.error('Failed to load subscription detail:', error)
+      if (editRequestRef.current.isLatest(requestId)) {
+        setEditLoadError(subscription)
+      }
+    } finally {
+      if (editRequestRef.current.isLatest(requestId)) {
+        setIsEditLoading(false)
+      }
+    }
+  }, [])
+
+  const handleDismissEditError = useCallback(() => {
+    editRequestRef.current.invalidate()
+    setEditLoadError(null)
+    setIsEditLoading(false)
   }, [])
 
   const handleFormSuccess = useCallback(() => {
@@ -337,6 +360,28 @@ function SubscriptionPageContent() {
           onSuccess={handleFormSuccess}
           initialData={formInitialData}
         />
+      )}
+      {editLoadError && (
+        <div className="border-t border-border bg-base px-4 py-3">
+          <Alert variant="destructive" data-testid="subscription-edit-load-error">
+            <AlertDescription className="flex items-center justify-between gap-4">
+              <span>{t('edit_load_failed')}</span>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => handleEditSubscription(editLoadError)}
+                  disabled={isEditLoading}
+                  data-testid="subscription-edit-retry"
+                >
+                  {isEditLoading ? t('edit_loading') : t('retry')}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={handleDismissEditError}>
+                  {t('cancel')}
+                </Button>
+              </div>
+            </AlertDescription>
+          </Alert>
+        </div>
       )}
     </div>
   )

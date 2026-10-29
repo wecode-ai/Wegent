@@ -39,10 +39,9 @@ describe('loadEditableSubscription', () => {
     expect(mockedGetSubscription).toHaveBeenCalledWith(42)
   })
 
-  it('falls back to the list item when the detail request fails', async () => {
-    jest.spyOn(console, 'error').mockImplementation(() => undefined)
+  it('rejects a failed detail request instead of editing a stale list item', async () => {
     mockedGetSubscription.mockRejectedValue(new Error('network down'))
 
-    await expect(loadEditableSubscription(LIST_ITEM)).resolves.toBe(LIST_ITEM)
+    await expect(loadEditableSubscription(LIST_ITEM)).rejects.toThrow('network down')
   })
 })

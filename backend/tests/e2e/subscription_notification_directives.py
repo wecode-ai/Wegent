@@ -236,6 +236,8 @@ class SubscriptionNotificationDirectives(unittest.TestCase):
                                 "bind_group": True,
                                 "group_conversation_id": f"cid-e2e-{suffix}",
                                 "group_name": "E2E group",
+                                # Legacy static mentions must never create targets.
+                                "group_mention_user_ids": ["stale-user"],
                             }
                         },
                     },
@@ -415,6 +417,13 @@ class SubscriptionNotificationDirectives(unittest.TestCase):
                     group[0]["imGroupOpenDeliverModel"].get("atUserIds"), None
                 )
                 self.assertEqual(evidence["summary"], "Report")
+
+    def test_legacy_static_mentions_never_create_targets(self) -> None:
+        evidence = self._run_completion("All good")
+        group = _card_payloads(evidence["requests"], "IM_GROUP")
+        self.assertEqual(len(group), 1)
+        self.assertNotIn("atUserIds", group[0]["imGroupOpenDeliverModel"])
+        self.assertNotIn("stale-user", json.dumps(group[0]))
 
     def test_plain_message_delivers_without_mentions(self) -> None:
         evidence = self._run_completion("All good")

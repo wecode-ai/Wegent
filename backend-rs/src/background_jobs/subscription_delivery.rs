@@ -380,19 +380,9 @@ async fn dingtalk(
                 .as_str()
                 .filter(|s| !s.is_empty())
         {
-            let configured: Vec<String> = options["group_mention_user_ids"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect();
-            let ids = if directives.mentions.is_empty() {
-                configured
-            } else {
-                directives.mentions.clone()
-            };
-            let mentions = mentions(app, &ids).await;
+            // Only per-message directives create mention targets. The removed
+            // static group_mention_user_ids setting must not leak old targets.
+            let mentions = mentions(app, &directives.mentions).await;
             card(
                 http,
                 access,
