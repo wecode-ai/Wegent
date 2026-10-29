@@ -53,6 +53,16 @@ function setNavigatorValue<K extends keyof Navigator>(key: K, value: Navigator[K
   })
 }
 
+function createDeferred<Value>() {
+  let resolve!: (value: Value) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<Value>((complete, fail) => {
+    resolve = complete
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
+
 describe('Electron local terminal', () => {
   beforeEach(() => {
     mocks.desktop = true
@@ -199,6 +209,89 @@ describe('Electron local terminal', () => {
       ['workspace.listOpeners'],
       ['workspace.pickOpener'],
     ])
+  })
+
+  test('shares overlapping opener discovery without retaining completed results', async () => {
+    const initial = [{ id: 'vscode', category: 'general', available: true }]
+    const refreshed = [{ id: 'cursor', category: 'general', available: true }]
+    const discovery = createDeferred<typeof initial>()
+    mocks.desktopHost.mockReturnValueOnce(discovery.promise).mockResolvedValueOnce(refreshed)
+
+    const requests = Array.from({ length: 3 }, () => listLocalWorkspaceOpeners())
+    expect(mocks.desktopHost).toHaveBeenCalledTimes(1)
+    expect(mocks.desktopHost).toHaveBeenCalledWith('workspace.listOpeners')
+    discovery.resolve(initial)
+    expect(await Promise.all(requests)).toEqual([initial, initial, initial])
+
+    await expect(listLocalWorkspaceOpeners()).resolves.toEqual(refreshed)
+    expect(mocks.desktopHost).toHaveBeenCalledTimes(2)
+  })
+
+  test('releases failed discovery and preserves the original error for every caller', async () => {
+    const discovery = createDeferred<never>()
+    const failure = new Error('Opener discovery failed')
+    mocks.desktopHost.mockReturnValueOnce(discovery.promise).mockResolvedValueOnce([])
+    const results = Promise.allSettled([listLocalWorkspaceOpeners(), listLocalWorkspaceOpeners()])
+    discovery.reject(failure)
+
+    expect(await results).toEqual([
+      { status: 'rejected', reason: failure },
+      { status: 'rejected', reason: failure },
+    ])
+    await expect(listLocalWorkspaceOpeners()).resolves.toEqual([])
+    expect(mocks.desktopHost).toHaveBeenCalledTimes(2)
+  })
+
+  test('keeps desktop discovery unavailable outside the desktop runtime', async () => {
+    const discovery = createDeferred<[]>()
+    mocks.desktopHost.mockReturnValueOnce(discovery.promise)
+    const request = listLocalWorkspaceOpeners()
+    mocks.desktop = false
+
+    await expect(listLocalWorkspaceOpeners()).resolves.toEqual([])
+    expect(mocks.desktopHost).toHaveBeenCalledTimes(1)
+    discovery.resolve([])
+    await request
+  })
+
+  test('refreshes a changed custom opener without an old request clearing the new one', async () => {
+    const original = [{ id: 'vscode', category: 'general', available: true }]
+    const updated = [{ id: 'custom', category: 'winOnly', available: true }]
+    const first = createDeferred<typeof original>()
+    const second = createDeferred<typeof updated>()
+    let discoveries = 0
+    mocks.desktopHost.mockImplementation(capability => {
+      if (capability === 'workspace.pickOpener') return Promise.resolve('D:\\Tools\\editor.exe')
+      discoveries += 1
+      return discoveries === 1 ? first.promise : second.promise
+    })
+    const oldRequest = listLocalWorkspaceOpeners()
+    await pickLocalWorkspaceOpenerExe()
+    const newRequest = listLocalWorkspaceOpeners()
+    expect(discoveries).toBe(2)
+
+    first.resolve(original)
+    await expect(oldRequest).resolves.toEqual(original)
+    const overlappingNewRequest = listLocalWorkspaceOpeners()
+    expect(discoveries).toBe(2)
+    second.resolve(updated)
+    expect(await Promise.all([newRequest, overlappingNewRequest])).toEqual([updated, updated])
+  })
+
+  test('keeps shared discovery when the custom opener picker is cancelled', async () => {
+    const discovery = createDeferred<[]>()
+    mocks.desktopHost.mockImplementation(capability =>
+      capability === 'workspace.pickOpener' ? Promise.resolve(null) : discovery.promise
+    )
+    const first = listLocalWorkspaceOpeners()
+    await expect(pickLocalWorkspaceOpenerExe()).resolves.toBeNull()
+    const second = listLocalWorkspaceOpeners()
+    expect(mocks.desktopHost.mock.calls).toEqual([
+      ['workspace.listOpeners'],
+      ['workspace.pickOpener'],
+    ])
+    discovery.resolve([])
+    await Promise.all([first, second])
   })
 
   test('opens attachments with the workspace choice and uses the global choice for a new workspace', async () => {
