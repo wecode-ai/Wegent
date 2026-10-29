@@ -3417,7 +3417,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const { getPluginInventoryDiagnostics } =
         await import('@/features/plugins/pluginMarketplaceCache')
       const { peekLocalCodexPluginsReadState } = await import('@/api/local/codexPlugins')
+      // PluginsWorkspace reconciles local-only catalogs before remote discovery.
       const installed =
+        peekLocalCodexPluginsReadState({
+          mergeAllMarketplaces: true,
+          marketplaceKinds: ['local'],
+        }) ??
         peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true }) ??
         peekLocalCodexPluginsReadState()
       return JSON.stringify({
