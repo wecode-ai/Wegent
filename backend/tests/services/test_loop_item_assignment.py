@@ -12,7 +12,13 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    LoopItemActiveAssignment,
+    LoopItemComment,
+    ProjectChatAgent,
+)
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
@@ -22,6 +28,7 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
+from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.loop_items.service import loop_item_service
 from tests.utils.agent_resources import create_runnable_wegent_team
@@ -953,6 +960,43 @@ def test_create_robot_assignee_starts_in_progress(
 
     assert item.status == "in_progress"
     assert _active_execution(test_db, item) is not None
+    assignment = issue_assignment_service.active_for_issue(test_db, item.id)[0]
+    assert (assignment.member_type, assignment.member_id) == ("agent", bot.id)
+    assert {
+        row.loop_item_id
+        for row in test_db.query(LoopItemActiveAssignment).filter_by(parent_id=item.id)
+    } == {None, assignment.id}
+
+
+def test_initial_assignment_and_index_roll_back_with_new_issue(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = loop_item_service.create(
+        test_db,
+        project.id,
+        test_user.id,
+        LoopItemCreate(title="Uncommitted Issue", notify_assignee=False),
+        commit=False,
+    )
+    issue_id = item.id
+    assignments = issue_assignment_service.active_for_issue(test_db, issue_id)
+    assert [(event.member_type, event.member_id) for event in assignments] == [
+        ("human", str(test_user.id))
+    ]
+    assert (
+        test_db.query(LoopItemActiveAssignment).filter_by(parent_id=issue_id).count()
+        == 2
+    )
+
+    test_db.rollback()
+
+    assert test_db.get(LoopItem, issue_id) is None
+    assert test_db.query(LoopItemComment).filter_by(loop_item_id=issue_id).count() == 0
+    assert (
+        test_db.query(LoopItemActiveAssignment).filter_by(parent_id=issue_id).count()
+        == 0
+    )
 
 
 @pytest.mark.parametrize("target_type", ["agent", "team"])

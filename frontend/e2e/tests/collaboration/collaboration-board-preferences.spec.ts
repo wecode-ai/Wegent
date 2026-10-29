@@ -3,7 +3,7 @@
 
 import { expect, test, type Locator, type Page, type Request } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
-import { LoginPage } from '../../pages/auth/login.page'
+import { switchUser } from '../../utils/switch-user'
 import { webApi } from '../../utils/collaboration-test-support'
 import {
   boardTest,
@@ -45,16 +45,6 @@ async function expectIssues(page: Page, all: Issue[], visible: Issue[]): Promise
     )
   }
   await expect(page.getByText(/保存失败|Failed to save|Could not save/i)).toHaveCount(0)
-}
-
-async function switchUser(
-  page: Page,
-  currentUsername: string,
-  nextUser: typeof REGULAR_USER
-): Promise<void> {
-  await page.getByRole('button').filter({ hasText: currentUsername }).click()
-  await page.getByRole('menuitem', { name: /^(退出登录|Logout)$/ }).click()
-  await new LoginPage(page).login(nextUser.username, nextUser.password)
 }
 
 for (const role of ['Developer', 'Viewer'] as const) {
