@@ -12,8 +12,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 export function WeworkSchemeBridge() {
   const tabs = useWorkspaceTabs()
   const { t } = useTranslation('common')
-  const pendingTitle = useRef(t('interactions.title'))
-  pendingTitle.current = t('interactions.title')
+  const interactionsTitle = t('interactions.title')
+  const pendingTitle = useRef(interactionsTitle)
   const connection = useContext(CloudConnectionContext)
   const connectionRef = useRef(connection)
   const focusRequestRef = useRef(0)
@@ -22,7 +22,8 @@ export function WeworkSchemeBridge() {
   useLayoutEffect(() => {
     connectionRef.current = connection
     tabsRef.current = tabs
-  }, [connection, tabs])
+    pendingTitle.current = interactionsTitle
+  }, [connection, tabs, interactionsTitle])
   const open = useCallback((url: string, deferInRenderer = true): boolean => {
     const destination = parseWeworkScheme(url)
     if (!destination) return true
