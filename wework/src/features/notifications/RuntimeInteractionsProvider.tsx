@@ -33,6 +33,7 @@ import { weworkInteractionScheme } from './scheme'
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { replyToInteractionProject } from './interactionProjectReply'
 import { prepareRuntimeContinuationModel } from '@/features/workbench/runtimeContinuationModel'
+import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { readInteractionTaskInventory } from './interactionTaskInventory'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
@@ -334,7 +335,9 @@ export function RuntimeInteractionsProvider({
               t('interactions.failed')
             ).then(() => ({ accepted: true, error: undefined }))
           : asyncInput &&
-              (live.running ?? live.task.lifecycle?.turn.active ?? live.task.task.running)
+              (live.running ??
+                live.task.lifecycle?.turn.active ??
+                isRuntimeTaskExecutionRunning(live.task.task))
             ? await api.guideRuntimeTask({
                 address: live.task.address,
                 message,
