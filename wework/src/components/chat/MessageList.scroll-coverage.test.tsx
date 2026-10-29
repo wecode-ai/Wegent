@@ -17,6 +17,7 @@ afterEach(() => {
 test.each([false, true])(
   'keeps mixed rows contiguous with scroll controller %s',
   async controlled => {
+    const resizeObservers = new Set<{ deliver: () => void }>()
     // Deliver the browser's initial border-box observations before paint, including rows
     // mounted during scrolling. JSDOM's default observer never delivers entries.
     vi.stubGlobal(
@@ -24,25 +25,30 @@ test.each([false, true])(
       class {
         targets = new Set<Element>()
         queued = false
-        constructor(private callback: ResizeObserverCallback) {}
+        constructor(private callback: ResizeObserverCallback) {
+          resizeObservers.add(this)
+        }
+        deliver() {
+          if (!this.targets.size) return
+          this.callback(
+            [...this.targets].map(target => {
+              const rect = target.getBoundingClientRect()
+              return {
+                target,
+                borderBoxSize: [{ inlineSize: rect.width, blockSize: rect.height }],
+                contentRect: rect,
+              } as unknown as ResizeObserverEntry
+            }),
+            this as unknown as ResizeObserver
+          )
+        }
         observe(target: Element) {
           this.targets.add(target)
           if (this.queued) return
           this.queued = true
           queueMicrotask(() => {
             this.queued = false
-            if (!this.targets.size) return
-            this.callback(
-              [...this.targets].map(target => {
-                const rect = target.getBoundingClientRect()
-                return {
-                  target,
-                  borderBoxSize: [{ inlineSize: rect.width, blockSize: rect.height }],
-                  contentRect: rect,
-                } as unknown as ResizeObserverEntry
-              }),
-              this as unknown as ResizeObserver
-            )
+            this.deliver()
           })
         }
         unobserve(target: Element) {
@@ -138,9 +144,11 @@ test.each([false, true])(
     function Conversation({
       conversationMessages = messages,
       conversationKey = 'initial',
+      suspended = false,
     }: {
       conversationMessages?: WorkbenchMessage[]
       conversationKey?: string
+      suspended?: boolean
     }) {
       const controller = useConversationScrollController({
         messages: conversationMessages,
@@ -148,7 +156,7 @@ test.each([false, true])(
         externalScrollRef: scrollElementRef,
         loading: false,
         isWaitingForAssistant: false,
-        autoScrollSuspended: false,
+        autoScrollSuspended: suspended,
         initialScrollPosition: 'latest',
       })
       return (
@@ -212,6 +220,24 @@ test.each([false, true])(
       }
     }
     if (controlled) {
+      view.rerender(
+        <ConversationTranslationProvider translate={createCollaborationTranslator('en')}>
+          <Conversation suspended />
+        </ConversationTranslationProvider>
+      )
+      const rows = [...view.container.querySelectorAll<HTMLElement>('[data-message-row]')]
+      const precedingRow = rows.find(row => row.getBoundingClientRect().bottom < 0)!
+      const readingRow = rows.find(row => row.getBoundingClientRect().bottom > 0)!
+      expect(precedingRow).toBeDefined()
+      const readingTop = readingRow.getBoundingClientRect().top
+      const previousOffset = viewport.scrollTop
+      heights[Number(precedingRow.dataset.index)] += 200
+      await act(async () => resizeObservers.forEach(observer => observer.deliver()))
+      // Opening find pauses following, but a late image above the reader must not
+      // move the visible text. Exercise real ResizeObserver-to-virtualizer sizing.
+      expect(viewport.scrollTop).toBe(previousOffset + 200)
+      expect(readingRow.getBoundingClientRect().top).toBe(readingTop)
+
       const runningMessages = messages.map((message, index) => ({
         ...message,
         id: `running-${index}`,

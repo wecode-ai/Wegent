@@ -718,6 +718,6 @@ export function useConversationScrollController({
     virtualAnchorToEnd:
       mode === 'follow' && !latestRef.current.streaming && !motionActive && !autoScrollSuspended,
     virtualAnchor: mode === 'navigate' || mode === 'drag' ? ('start' as const) : ('end' as const),
-    virtualScrollAdjustmentEnabled: mode === 'read' && !autoScrollSuspended,
+    virtualScrollAdjustmentEnabled: mode === 'read',
   }
 }
