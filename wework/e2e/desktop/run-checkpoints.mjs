@@ -14,6 +14,7 @@ import {
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { UPGRADE_CHECKPOINTS, UPGRADE_PACKAGE_CHECKPOINTS } from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
+import { ISOLATED_XVFB_OPTIONS } from './xvfb-options.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -400,16 +401,7 @@ function runTaskFlow(args, env, label) {
     const isolateDisplay = process.platform === 'linux' && env.WEWORK_E2E_ISOLATED_XVFB === 'true'
     const command = isolateDisplay ? 'xvfb-run' : process.execPath
     const commandArgs = isolateDisplay
-      ? [
-          '-a',
-          '--error-file=/dev/stderr',
-          '--server-args=-screen 0 1280x720x24',
-          'sh',
-          isolatedXvfbPath,
-          process.execPath,
-          taskFlowPath,
-          ...args,
-        ]
+      ? [...ISOLATED_XVFB_OPTIONS, 'sh', isolatedXvfbPath, process.execPath, taskFlowPath, ...args]
       : [taskFlowPath, ...args]
     const child = spawn(command, commandArgs, {
       env,

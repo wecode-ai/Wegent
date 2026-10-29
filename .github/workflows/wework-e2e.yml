@@ -255,6 +255,9 @@ jobs:
           filter: blob:none
           persist-credentials: false
 
+      - name: Verify isolated Xvfb lifecycle
+        run: node --test wework/e2e/desktop/xvfb-lifecycle.test.mjs
+
       - name: Set up ORAS
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
         with:
