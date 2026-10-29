@@ -72,3 +72,10 @@ export function deferredToolSearchCall(
   }
   return { toolName: search.name, arguments: { query, limit: 1 } }
 }
+
+export function resolveToolName(request: unknown, requestedName: string): string {
+  return (
+    modelToolDefinitions(request).find(tool => modelToolMatches(tool, requestedName))?.name ??
+    requestedName
+  )
+}

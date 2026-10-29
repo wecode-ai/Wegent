@@ -36,18 +36,44 @@ mod runtime_model_query_activation;
 #[path = "support/runtime_capability_startup.rs"]
 mod runtime_capability_startup;
 
+#[cfg(unix)]
+#[path = "support/runtime_temporary_chat_persistence.rs"]
+mod runtime_temporary_chat_persistence;
+
 struct EnvLockGuard {
+    // Restore the environment before deleting fixtures and releasing the lock.
+    _environment: Vec<EnvGuard>,
+    _root: tempfile::TempDir,
     _guard: OwnedMutexGuard<()>,
 }
 
 async fn env_lock() -> EnvLockGuard {
     static LOCK: OnceLock<Arc<AsyncMutex<()>>> = OnceLock::new();
+    let guard = LOCK
+        .get_or_init(|| Arc::new(AsyncMutex::new(())))
+        .clone()
+        .lock_owned()
+        .await;
+    let root = tempfile::tempdir().unwrap();
+    let mut environment = Vec::new();
+    for (key, directory) in [
+        ("HOME", "home"),
+        ("CODEX_HOME", "codex"),
+        ("WEGENT_EXECUTOR_HOME", "executor"),
+        ("WEGENT_WORKBENCH_HOME", "workbench"),
+        ("WEGENT_CAPABILITIES_HOME", "capabilities"),
+    ] {
+        let path = root.path().join(directory);
+        fs::create_dir_all(&path).unwrap();
+        environment.push(EnvGuard::set(key, path.to_str().unwrap()));
+    }
+    environment.push(EnvGuard::remove("WEGENT_CODEX_HOME"));
+    environment.push(EnvGuard::remove("CODEX_SQLITE_HOME"));
+    environment.push(EnvGuard::set("WEWORK_CODEX_SUBSCRIPTION_ENABLED", "false"));
     EnvLockGuard {
-        _guard: LOCK
-            .get_or_init(|| Arc::new(AsyncMutex::new(())))
-            .clone()
-            .lock_owned()
-            .await,
+        _environment: environment,
+        _root: root,
+        _guard: guard,
     }
 }
 
@@ -57,6 +83,12 @@ struct EnvGuard {
 }
 
 impl EnvGuard {
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
+
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);
@@ -927,7 +959,7 @@ async fn runtime_tasks_create_ephemeral_codex_thread_hidden_from_task_list() {
     );
     assert_eq!(fork_call["params"]["cwd"], "/tmp/project");
     assert_eq!(fork_call["params"]["permissions"], ":danger-full-access");
-    assert_eq!(fork_call["params"]["ephemeral"], true);
+    assert!(fork_call["params"].get("ephemeral").is_none());
     let inject_call = calls
         .iter()
         .find(|call| call["method"] == "thread/inject_items")
@@ -1386,12 +1418,8 @@ async fn runtime_tasks_wait_for_a_running_source_turn_before_forking_ephemeral_c
 #[tokio::test]
 async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly() {
     let _lock = env_lock().await;
-    let _home = EnvGuard::set(
-        "WEGENT_EXECUTOR_HOME",
-        &temp_path("runtime-ephemeral-follow-up-home", "dir")
-            .display()
-            .to_string(),
-    );
+    let executor_home = temp_path("runtime-ephemeral-follow-up-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
     let _codex_home = EnvGuard::set(
         "CODEX_HOME",
         &temp_path("runtime-ephemeral-follow-up-codex-home", "dir")
@@ -1400,11 +1428,29 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
     );
     let log_path = temp_path("runtime-ephemeral-follow-up-log", "jsonl");
     let fake_codex = write_fake_codex_ephemeral_two_turns(&log_path);
-    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+    seed_persisted_runtime_task(&executor_home, "side-chat-follow-up", "thread-ephemeral");
+    let index_path = executor_home.join("runtime-work/index.json");
+    let mut index: Value = serde_json::from_slice(&fs::read(&index_path).unwrap()).unwrap();
+    index["tasks"]["side-chat-follow-up"]["ephemeral"] = json!(true);
+    fs::write(&index_path, serde_json::to_vec(&index).unwrap()).unwrap();
+    // Existing sessions have no persistence marker and must keep their loaded owner.
+    CodexAppServerClient::new(fake_codex.display().to_string())
+        .request(
+            "thread/fork",
+            json!({"threadId": "parent", "ephemeral": true}),
+        )
+        .await
+        .unwrap();
+    let (event_tx, mut events) = broadcast::channel(64);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
 
     handler
         .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.create",
+            "method": "runtime.tasks.send",
             "payload": {
                 "taskId": "side-chat-follow-up",
                 "workspacePath": "/tmp/project",
@@ -1435,9 +1481,14 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
             }
         }))
         .await
-        .expect("ephemeral create should be accepted");
+        .expect("legacy temporary-chat send should be accepted");
     wait_for_turn_count(&log_path, 1).await;
-    wait_until_task_idle(&handler, "side-chat-follow-up").await;
+    recv_events_until(&mut events, |received| {
+        received
+            .iter()
+            .any(|event| event["event"] == "response.completed")
+    })
+    .await;
 
     let transcript = handler
         .handle_runtime_rpc(json!({
@@ -1478,7 +1529,12 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
         .expect("ephemeral follow-up should be accepted");
     assert_eq!(sent["accepted"], true);
     wait_for_turn_count(&log_path, 2).await;
-    wait_until_task_idle(&handler, "side-chat-follow-up").await;
+    recv_events_until(&mut events, |received| {
+        received
+            .iter()
+            .any(|event| event["event"] == "response.completed")
+    })
+    .await;
 
     let calls = read_json_lines(&log_path);
     assert_eq!(
@@ -1523,6 +1579,32 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
             .count(),
         2
     );
+
+    CodexAppServerClient::new(fake_codex.display().to_string())
+        .restart()
+        .await;
+    handler.handle_runtime_rpc(json!({
+        "method":"runtime.tasks.send",
+        "payload":{"taskId":"side-chat-follow-up", "workspacePath":"/tmp/project",
+            "message":"after reload", "executionRequest":{
+                "task_id":"side-chat-follow-up", "subtask_id":"side-turn-3",
+                "prompt":"after reload", "project_workspace_path":"/tmp/project",
+                "ephemeral":true, "bot":[{"shell_type":"Codex"}],
+                "model_config":{"model":"openai", "model_id":"gpt-5.5", "api_format":"responses"}
+            }}
+    })).await.unwrap();
+    let failed = recv_events_until(&mut events, |received| {
+        received
+            .iter()
+            .any(|event| event["event"] == "response.failed")
+    })
+    .await;
+    assert!(failed
+        .iter()
+        .any(|event| event.to_string().contains("Open a new temporary chat")));
+    CodexAppServerClient::new(fake_codex.display().to_string())
+        .restart()
+        .await;
 }
 
 #[tokio::test]
@@ -4948,7 +5030,7 @@ while IFS= read -r line; do
       ;;
     *'"method":"turn/start"'*)
       if [ "$thread_loaded" -eq 0 ]; then
-        printf '%s\n' '{{"id":'"$request_id"',"error":{{"message":"ephemeral thread is not loaded"}}}}'
+        printf '%s\n' '{{"id":'"$request_id"',"error":{{"message":"thread not found: thread-ephemeral"}}}}'
       else
         turn_count=$((turn_count + 1))
         printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'

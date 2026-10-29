@@ -1,3 +1,5 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import {
   useCallback,
   useContext,
@@ -37,6 +39,7 @@ import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInComposer } from './StandInComposer'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import { findStandInProject } from './standInProjects'
 
 type View = 'project' | 'main' | 'connections' | 'advanced' | 'create'
 export interface StandInSettingsHandle {
@@ -76,6 +79,7 @@ export function StandInSettingsPage({
   onOpenPersonalSettings?(roleId: string, deviceId: string): void
   ref?: Ref<StandInSettingsHandle>
 }) {
+  useStandInOpened('settings', initialProfileId === '@primary' ? 'primary' : 'role')
   const { t } = useTranslation('common')
   const cloudConnection = useContext(CloudConnectionContext)
   const canLoadPersonalAgents = cloudConnection?.isConnected ?? true
@@ -146,7 +150,7 @@ export function StandInSettingsPage({
           })
       })
       .catch(cause => {
-        if (active) setError(String(cause))
+        if (active) setError(getStandInErrorMessage(cause))
       })
     return () => {
       active = false
@@ -165,7 +169,7 @@ export function StandInSettingsPage({
         if (active) setRuntimeWork(value)
       })
       .catch(cause => {
-        if (active) setError(String(cause))
+        if (active) setError(getStandInErrorMessage(cause))
       })
     return () => {
       active = false
@@ -395,8 +399,7 @@ export function StandInSettingsPage({
           <p data-testid="stand-in-project-agent-scope" className="mt-2 text-xs text-text-muted">
             {t('standIn.personal.project_agent_scope', {
               project:
-                projects.find(project => project.id === role.agentProject?.id)?.name ??
-                role.agentProject.id,
+                findStandInProject(projects, role.agentProject)?.name ?? role.agentProject.id,
             })}
           </p>
         )}
@@ -701,7 +704,7 @@ export function StandInSettingsPage({
               {view === 'connections' && (
                 <StandInConnectionSettings
                   role={role}
-                  projects={availableProjects}
+                  projects={projects}
                   focusedProjectId={initialProject?.id}
                   disabled={saving}
                   onChange={changeRole}

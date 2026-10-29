@@ -1,3 +1,5 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import { ArrowUpRight, ChevronRight, GripVertical, Layers, Split, X } from 'lucide-react'
 import { useState } from 'react'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
@@ -49,6 +51,12 @@ export function StandInWorkList({
   const selected = items.find(item => item.key === selectedKey)
   const selectedState = selected && standInState(selected)
   const selectedWork = inbox.find(work => work.taskId === selected?.task.taskId)
+  const selectedOrigin = selected?.task.runtimeHandle?.origin as
+    | { standInId?: string | null }
+    | undefined
+  const identity =
+    (selectedWork?.roleId ?? selectedOrigin?.standInId) === '@primary' ? 'primary' : 'role'
+  useStandInOpened('work', identity, active && !!selected, selected?.key)
   const needsStart =
     selectedWork && ['pending', 'failed', 'needs_grouping'].includes(selectedWork.status)
   const statusLabel = (item: RuntimeTaskReminderItem) => {
@@ -429,7 +437,7 @@ export function StandInWorkList({
                   onRefresh?.()
                   await onOpenTask?.(address)
                 } catch (cause) {
-                  setError(String(cause))
+                  setError(getStandInErrorMessage(cause))
                 } finally {
                   setBusy(false)
                 }

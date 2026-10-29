@@ -1,4 +1,8 @@
+import { UPGRADE_CHECKPOINTS, UPGRADE_CHECKPOINT_GROUP } from './upgrade-suite.mjs'
+
 export const DESKTOP_CHECKPOINTS = [
+  'mcp-apps',
+  'project-space-tool-discovery',
   'remote-device-onboarding',
   'workspace-tabs',
   'notification-tab-navigation',
@@ -9,8 +13,11 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-model-presets',
   'cloud-space-mention',
   'collaboration-shared-core',
+  'collaboration-deliveries',
+  'collaboration-delivery-editing',
   'collaboration-issue-task-discovery',
   'collaboration-app-queue-identity',
+  'collaboration-runtime-reconciliation',
   'collaboration-first-use',
   'collaboration-worktree-policy',
   'collaboration-group-onboarding',
@@ -18,6 +25,9 @@ export const DESKTOP_CHECKPOINTS = [
   'stand-in-action-confirmation',
   'stand-in-list-confirmation',
   'stand-in-profile',
+  'stand-in-telemetry',
+  'stand-in-profile-settings',
+  'stand-in-model-catalog',
   'stand-in-identities',
   'stand-in-connections',
   'stand-in-mcp',
@@ -42,10 +52,14 @@ export const DESKTOP_CHECKPOINTS = [
   'collaboration-issue-assignment-activity',
   'collaboration-issue-comment-attachments',
   'collaboration-issue-comment-notification',
+  'collaboration-issue-comment-notification-navigation',
+  'issue-notification-read',
   'collaboration-issue-mcp-comments',
+  'collaboration-issue-attachment-preview',
   'collaboration-issue-archive',
   'collaboration-board-sorting',
   'collaboration-board-move-recovery',
+  'collaboration-home-preload',
   'priority-filter',
   'telemetry-consent',
   'external-content-import',
@@ -87,7 +101,11 @@ export const DESKTOP_CHECKPOINTS = [
   'plugin-uninstall-reinstall-race',
 
   'plugin-composer-long-list',
+  'plugin-collaboration-composer-isolation',
   'plugin-runtime-path-recovery',
+  'plugin-runtime-route-refresh',
+  'plugin-background-sync-isolation',
+  'plugin-periodic-reconcile',
   'plugin-toggle-persistence',
   'plugin-workspace-publication',
   'project-ai-settings',
@@ -95,12 +113,14 @@ export const DESKTOP_CHECKPOINTS = [
   'fork-provider-preservation',
   'codex-account-login',
   'permission-modes',
+  'runtime-input-answer-persistence',
   'computer-use',
   'task-status-sync',
   'task-board-association',
   'task-board-bulk-actions',
   'core-task-flow',
   'task-attachments',
+  'device-artifact-declaration',
   'drawing-attachment',
   'cloud-git-worktree',
   'cloud-worktree-capability',
@@ -123,6 +143,7 @@ export const DESKTOP_CHECKPOINTS = [
   'split-workbench',
   'release-package-startup',
   'app-update-full',
+  ...UPGRADE_CHECKPOINTS,
   'component-update',
   'renderer-crash-recovery',
   'native-window-startup',
@@ -154,10 +175,12 @@ export const DESKTOP_CHECKPOINTS = [
   'git-commit-generation',
   'claude-runtime',
   'local-file-preview',
+  'office-file-preview',
   'local-harness',
   'harness-apps',
   'harness-app-development',
   'harness-app-lifecycle',
+  'harness-app-models',
 
   'browser-multi-tabs',
   'embedded-browser',
@@ -180,6 +203,12 @@ export const PLUGIN_SEGMENTS = [
 ]
 
 export const DESKTOP_CHECKPOINT_GROUPS = new Map([
+  [UPGRADE_CHECKPOINT_GROUP, UPGRADE_CHECKPOINTS],
+  [
+    'collaboration-issue-comment-notification',
+    ['collaboration-issue-comment-notification-navigation', 'issue-notification-read'],
+  ],
+  ['stand-in-profile', ['stand-in-profile-settings', 'stand-in-model-catalog']],
   [
     'plugin-account-auth',
     [
@@ -203,7 +232,7 @@ export const DESKTOP_CHECKPOINT_GROUPS = new Map([
       'plugin-uninstall-reinstall-race',
     ],
   ],
-  ['harness-apps', ['harness-app-development', 'harness-app-lifecycle']],
+  ['harness-apps', ['harness-app-development', 'harness-app-lifecycle', 'harness-app-models']],
   [
     'streaming-text',
     [
@@ -231,3 +260,17 @@ export const DESKTOP_CHECKPOINT_GROUPS = new Map([
     ],
   ],
 ])
+
+export function expandDesktopCheckpoints(checkpoints) {
+  const expanded = []
+  const seen = new Set()
+  for (const checkpoint of checkpoints) {
+    const members = DESKTOP_CHECKPOINT_GROUPS.get(checkpoint) ?? [checkpoint]
+    for (const member of members) {
+      if (seen.has(member)) continue
+      seen.add(member)
+      expanded.push(member)
+    }
+  }
+  return expanded
+}

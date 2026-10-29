@@ -3,6 +3,7 @@ import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import {
   installedPluginDistribution,
   installedPluginMarketplaceId,
+  isOfficialMarketplacePlugin,
   marketplaceItemMarketplaceId,
   marketplacePluginDistribution,
 } from './pluginDistribution'
@@ -97,6 +98,29 @@ function installedPlugin(input: {
 }
 
 describe('pluginDistribution', () => {
+  test.each([
+    ['codex', 'public', 'openai-bundled', true],
+    ['codex', 'public', 'community-plugins', false],
+    ['wegent', 'public', undefined, true],
+    ['wegent', 'workspace', undefined, false],
+    ['user', 'public', undefined, false],
+    ['user', 'personal', undefined, false],
+  ] as const)(
+    'checks official provenance for %s / %s / %s',
+    (sourceProvider, visibility, marketplaceId, official) => {
+      expect(
+        isOfficialMarketplacePlugin(
+          marketplaceItem({
+            name: 'sample',
+            sourceProvider,
+            visibility,
+            manifest: { marketplaceId },
+          })
+        )
+      ).toBe(official)
+    }
+  )
+
   test('maps personal marketplace plugins to personal distribution', () => {
     expect(
       marketplacePluginDistribution(

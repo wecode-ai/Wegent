@@ -312,8 +312,21 @@ export function useWorkbenchPaneSession({
     () => projectChat.resetAttachmentsForScope(inputScopeKey),
     [inputScopeKey, projectChat]
   )
+  const dismissAttachmentError = useCallback(
+    (filename: string) => projectChat.dismissAttachmentErrorForScope(inputScopeKey, filename),
+    [inputScopeKey, projectChat]
+  )
   const input = projectChat.inputByScope[inputScopeKey] ?? ''
   const setInputForScope = projectChat.setInputForScope
+  const getInputRevisionForScope = projectChat.getInputRevisionForScope
+  const sharedInputRevision = getInputRevisionForScope(inputScopeKey)
+  const mountedRef = useRef(false)
+  useLayoutEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
   const [inputRevision, setInputRevision] = useState(0)
   const inputRevisionRef = useRef(0)
   const activeInputScopeRef = useRef(inputScopeKey)
@@ -1676,13 +1689,16 @@ export function useWorkbenchPaneSession({
         const submittedInput = (inputOverride ?? input).trim()
         // Capture the rendered revision, before asynchronous submission preparation.
         let submittedInputRevision = inputRevision
+        let submittedSharedInputRevision = sharedInputRevision
         const ownsSubmittedInput = () =>
+          getInputRevisionForScope(inputScopeKey) === submittedSharedInputRevision &&
           inputRevisionRef.current === submittedInputRevision &&
           activeInputScopeRef.current === inputScopeKey
         const clearSubmittedInput = () => {
-          if (!ownsSubmittedInput()) return
+          if (!mountedRef.current || !ownsSubmittedInput()) return
           setInput('')
           submittedInputRevision = inputRevisionRef.current
+          submittedSharedInputRevision = getInputRevisionForScope(inputScopeKey)
         }
         const restoreSubmittedInput = (scopeKey: string, value: string) => {
           if (ownsSubmittedInput()) setInputForScope(scopeKey, value)
@@ -2187,6 +2203,8 @@ export function useWorkbenchPaneSession({
         getRuntimeModelFields,
         input,
         inputRevision,
+        sharedInputRevision,
+        getInputRevisionForScope,
         inputScopeKey,
         interruptAndSendQueuedMessage,
         lifecycleStore,
@@ -2758,6 +2776,7 @@ export function useWorkbenchPaneSession({
     attachments: attachmentState.attachments,
     uploadingFiles: attachmentState.uploadingFiles,
     attachmentErrors: attachmentState.errors,
+    dismissAttachmentError,
     handleFileSelect,
     removeAttachment,
     messages,
@@ -2991,10 +3010,18 @@ function summarizeWorkbenchMessages(messages: WorkbenchMessage[]): Record<string
 
 function debugRuntimePaneMessageFlow(event: string, details: Record<string, unknown>) {
   if (!event.startsWith('transcript-load-') && !isRuntimeDebugEnabled()) return
-  console.debug('[Wework] Runtime pane message flow', {
-    event,
-    ...details,
-  })
+  if (
+    event.startsWith('transcript-load-') &&
+    (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true')
+  ) {
+    logRuntimeTaskCreateStage(event, details)
+  }
+  if (isRuntimeDebugEnabled()) {
+    console.debug('[Wework] Runtime pane message flow', {
+      event,
+      ...details,
+    })
+  }
 }
 
 function isRuntimeDebugEnabled(): boolean {

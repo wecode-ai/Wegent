@@ -651,9 +651,13 @@ fn environment_change_diagnostics_report_keys_without_values() {
 
 #[test]
 fn shared_notification_lag_is_recoverable() {
-    let notification =
-        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None, false)
-            .expect("lagged notifications should keep the turn alive");
+    let notification = shared_notification_result(
+        Err(broadcast::error::RecvError::Lagged(37)),
+        None,
+        false,
+        false,
+    )
+    .expect("lagged notifications should keep the turn alive");
 
     assert!(matches!(notification, SharedNotification::Lagged(37)));
 }
@@ -661,9 +665,59 @@ fn shared_notification_lag_is_recoverable() {
 #[test]
 fn closed_notification_stream_reports_executor_shutdown() {
     assert!(matches!(
-        shared_notification_result(Err(broadcast::error::RecvError::Closed), None, true),
+        shared_notification_result(Err(broadcast::error::RecvError::Closed), None, true, false),
         Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
     ));
+}
+
+#[test]
+fn closed_notification_stream_does_not_reuse_an_earlier_outcome_during_shutdown() {
+    assert!(matches!(
+        shared_notification_result(
+            Err(broadcast::error::RecvError::Closed),
+            Some(ExecutionOutcome::Completed { content: "Earlier turn".into() }),
+            true,
+            true,
+        ),
+        Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
+    ));
+}
+
+#[test]
+fn stopping_an_active_goal_does_not_complete_it_with_its_previous_turn() {
+    for shutdown in [false, true] {
+        let expected = if shutdown {
+            CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
+        } else {
+            CODEX_APP_SERVER_ACTIVE_GOAL_INTERRUPTED
+        };
+        let previous = || {
+            Some(ExecutionOutcome::Completed {
+                content: "Earlier turn".into(),
+            })
+        };
+        assert!(matches!(
+            shared_notification_result(
+                Err(broadcast::error::RecvError::Closed), previous(), shutdown, true,
+            ),
+            Err(error) if error == expected
+        ));
+        assert_eq!(
+            stopped_shared_turn_outcome(previous(), shutdown, true, "app-server exited"),
+            Err(expected.to_owned())
+        );
+    }
+}
+
+#[test]
+fn stopping_after_a_finished_non_goal_turn_keeps_its_completed_outcome() {
+    let outcome = ExecutionOutcome::Completed {
+        content: "Finished turn".into(),
+    };
+    assert_eq!(
+        stopped_shared_turn_outcome(Some(outcome.clone()), false, false, "app-server exited"),
+        Ok(outcome)
+    );
 }
 
 #[tokio::test]
@@ -787,7 +841,7 @@ fn persistent_app_server_uses_codex_deferred_mcp_tools() {
         .contains(&"features.tool_search_always_defer_mcp_tools=false".to_owned()));
     assert!(config
         .config_overrides
-        .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
+        .contains(&CODEX_ENABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
     assert!(config
         .config_overrides
         .contains(&CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned()));
@@ -1656,7 +1710,7 @@ fn codex_launch_config_enables_streaming_patch_updates() {
         .contains(&CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned()));
     assert!(launch_config
         .config_overrides
-        .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
+        .contains(&CODEX_ENABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
     assert!(launch_config
         .config_overrides
         .contains(&CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned()));
@@ -3809,6 +3863,59 @@ fn codex_thread_plan_trims_and_prioritizes_direct_thread() {
 }
 
 #[test]
+fn temporary_tasks_persist_native_history_without_changing_auxiliary_threads() {
+    let launch = CodexLaunchConfig::default();
+    let mut request = ExecutionRequest {
+        ephemeral: true,
+        ..ExecutionRequest::default()
+    };
+    assert_eq!(thread_start_params(&request, &launch)["ephemeral"], true);
+    assert_eq!(
+        thread_fork_params("source", None, &request, &launch)["ephemeral"],
+        true
+    );
+
+    request.persist_runtime_thread();
+    assert!(request.ephemeral, "the task must remain hidden");
+    assert!(thread_start_params(&request, &launch)
+        .get("ephemeral")
+        .is_none());
+    assert!(thread_fork_params("source", None, &request, &launch)
+        .get("ephemeral")
+        .is_none());
+
+    request.use_ephemeral_codex_thread();
+    assert!(request.uses_ephemeral_codex_thread());
+    assert!(request.extra.get("persist_runtime_thread").is_none());
+    assert_eq!(thread_start_params(&request, &launch)["ephemeral"], true);
+    assert_eq!(
+        thread_fork_params("source", None, &request, &launch)["ephemeral"],
+        true
+    );
+}
+
+#[test]
+fn missing_legacy_temporary_threads_explain_how_to_continue() {
+    let mut request = ExecutionRequest {
+        ephemeral: true,
+        ..ExecutionRequest::default()
+    };
+    let original = "thread not found: old-thread".to_owned();
+    let error = temporary_thread_error(&request, Some("old-thread"), original.clone());
+    assert!(error.contains("Open a new temporary chat"));
+    assert!(error.contains(&original));
+    assert_eq!(
+        temporary_thread_error(&request, Some("another-thread"), original.clone()),
+        original
+    );
+    request.persist_runtime_thread();
+    assert_eq!(
+        temporary_thread_error(&request, Some("old-thread"), original.clone()),
+        original
+    );
+}
+
+#[test]
 fn codex_thread_plan_ignores_empty_direct_thread_and_prioritizes_fork() {
     let plan = codex_thread_plan(
         Some("   "),
@@ -3862,6 +3969,7 @@ fn codex_thread_plan_selects_resume_when_fork_is_absent() {
 #[test]
 fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
     let mut request = ExecutionRequest::default();
+    let loaded = Map::new();
     let plan = codex_thread_plan(
         None,
         None,
@@ -3870,19 +3978,25 @@ fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
         &request,
         &CodexLaunchConfig::default(),
     );
-    assert_eq!(config_reload_resume_thread_id(&plan, &request), None);
+    assert_eq!(
+        config_reload_resume_thread_id(&plan, &request, Some(&loaded)),
+        None
+    );
     for identity in ["stand_in", "stand_in_identity"] {
         request.extra.insert(
             "origin".into(),
             json!({"initiatedBy":identity,"askBeforeAct":true}),
         );
         assert_eq!(
-            config_reload_resume_thread_id(&plan, &request),
+            config_reload_resume_thread_id(&plan, &request, Some(&loaded)),
             Some("existing")
         );
     }
     request.extra.get_mut("origin").unwrap()["askBeforeAct"] = json!(false);
-    assert_eq!(config_reload_resume_thread_id(&plan, &request), None);
+    assert_eq!(
+        config_reload_resume_thread_id(&plan, &request, Some(&loaded)),
+        None
+    );
     let direct = codex_thread_plan(
         Some("existing"),
         None,
@@ -3891,7 +4005,10 @@ fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
         &request,
         &CodexLaunchConfig::default(),
     );
-    assert_eq!(config_reload_resume_thread_id(&direct, &request), None);
+    assert_eq!(
+        config_reload_resume_thread_id(&direct, &request, Some(&loaded)),
+        None
+    );
 }
 
 #[test]
@@ -4017,6 +4134,62 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
 }
 
 #[test]
+fn legacy_ghost_keeps_stored_rules_in_all_thread_launches_with_runtime_declaration() {
+    let legacy = "Create files in mnt/outputs and share computer://path/to/file links.";
+    let request = ExecutionRequest {
+        system_prompt: legacy.to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let launch_config = CodexLaunchConfig::default();
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+    ] {
+        let instructions = params["developerInstructions"]
+            .as_str()
+            .expect("runtime declaration instructions must reach the real SDK");
+        assert!(instructions.starts_with(legacy));
+        assert!(instructions.ends_with(crate::artifact_cli::AGENT_INSTRUCTIONS));
+        assert!(instructions.contains("artifact declare --path"));
+        assert_eq!(
+            instructions
+                .matches(external_work::SOURCE_CONTENT_INSTRUCTIONS)
+                .count(),
+            1
+        );
+        let runtime_suffix = format!(
+            "{}\n\n{}",
+            external_work::SOURCE_CONTENT_INSTRUCTIONS,
+            crate::artifact_cli::AGENT_INSTRUCTIONS
+        );
+        assert!(instructions.ends_with(runtime_suffix.as_str()));
+    }
+    assert_eq!(request.system_prompt, legacy);
+}
+
+#[test]
+fn text_only_thread_launches_do_not_inject_tool_or_artifact_instructions() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert("enable_tools".into(), json!(false));
+    let launch_config = CodexLaunchConfig::default();
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+    ] {
+        let instructions = params["developerInstructions"]
+            .as_str()
+            .expect("text-only instructions must reach the real SDK");
+        assert!(instructions.contains("Do not execute actions or call tools."));
+        assert!(!instructions.contains(external_work::SOURCE_CONTENT_INSTRUCTIONS));
+        assert!(!instructions.contains(crate::artifact_cli::AGENT_INSTRUCTIONS));
+    }
+}
+
+#[test]
 fn thread_launch_params_always_include_space_routing() {
     let request = ExecutionRequest::default();
     let launch_config = CodexLaunchConfig::default();
@@ -4029,13 +4202,18 @@ fn thread_launch_params_always_include_space_routing() {
         let instructions = params["developerInstructions"]
             .as_str()
             .expect("developer instructions should be a string");
-        assert!(instructions.contains("Wework 项目空间 routing:"));
+        assert_eq!(
+            instructions
+                .matches(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS)
+                .count(),
+            1
+        );
         assert!(instructions.contains("get_current_context"));
-        assert!(instructions.contains("list_item_attachments"));
-        assert!(instructions.contains("read_item_attachment"));
-        assert!(instructions.contains("MCP resource listing"));
-        assert!(instructions.contains("list_board_items"));
-        assert!(instructions.contains("get_assignment_candidates"));
+        assert!(instructions.contains("list_spaces"));
+        assert!(instructions.contains("discover deferred tools"));
+        assert!(instructions.contains("Follow the discovered tool instructions"));
+        assert!(instructions.contains("Never use MCP resources, browser, Shell, `curl`"));
+        assert!(instructions.contains("bypass these tools or their access errors"));
     }
 }
 
@@ -4405,22 +4583,19 @@ fn codex_thread_launch_enables_user_input_in_default_mode() {
 }
 
 #[test]
-fn codex_thread_launch_disables_tool_call_mcp_elicitation() {
+fn codex_thread_launch_isolates_mcp_approvals_from_ordinary_user_input() {
     let request = ExecutionRequest::default();
-    let mut launch_config = CodexLaunchConfig::default();
-    launch_config
-        .config_overrides
-        .push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
+    let launch_config = CodexLaunchConfig {
+        config_overrides: codex_runtime_default_config_overrides(),
+        ..CodexLaunchConfig::default()
+    };
 
     let thread_start = thread_start_params(&request, &launch_config);
     let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
     let thread_fork = thread_fork_params("thread-1", None, &request, &launch_config);
 
     for params in [thread_start, thread_resume, thread_fork] {
-        assert_eq!(
-            params["config"]["features.tool_call_mcp_elicitation"],
-            false
-        );
+        assert_eq!(params["config"]["features.tool_call_mcp_elicitation"], true);
         assert_eq!(
             params["approvalPolicy"]["granular"]["mcp_elicitations"],
             true
@@ -4660,6 +4835,8 @@ fn github_cli_input_does_not_activate_official_connector_or_plugin_skill() {
     let instructions = codex_thread_developer_instructions("user settings", "task settings");
     assert!(instructions.contains(github_cli::INSTRUCTIONS));
     assert!(instructions.contains("connectorSlug=wework-github-cli"));
+    assert!(instructions.contains("artifact declare --path"));
+    assert!(instructions.contains("sends metadata only"));
 }
 
 #[test]
@@ -4798,10 +4975,9 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
         .iter()
         .find(|value| value.starts_with("skills.config="))
         .expect("skills config override should be present");
-    assert_eq!(
-        skills_override,
-        "skills.config=[{enabled=false,name=\"browser:control-in-app-browser\"},{enabled=false,name=\"chrome:control-chrome\"}]"
-    );
+    let parsed_override: Value = toml_edit::de::from_str(skills_override)
+        .expect("skills config override should be valid TOML");
+    assert_eq!(parsed_override["skills"]["config"], config["skills.config"]);
     assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
     assert!(!config.contains_key("features.code_mode.direct_only_tool_namespaces"));
     assert_eq!(
@@ -4942,6 +5118,44 @@ fn codex_launch_config_includes_computer_use_mcp_server() {
 }
 
 #[test]
+fn source_collaboration_approval_exemption_survives_start_resume_fork_and_turn() {
+    let _environment = environment::LaunchEnvironment::new();
+    for kind in ["connection_work", "dingtalk_work", "issue_dispatch"] {
+        for ask in [false, true] {
+            let mut value = json!({
+                "task_id":"source-collaboration-review",
+                "origin":{"type":kind,"initiatedBy":"stand_in","askBeforeAct":ask,
+                    "cloudProjectId":"project-1","loopItemId":"issue-1"}
+            });
+            if kind == "issue_dispatch" {
+                value["origin"]["dispatchRole"] = json!("executor");
+            }
+            let request = serde_json::from_value(value).unwrap();
+            let launch = build_codex_launch_config(&request).unwrap();
+            let key = "mcp_servers.wework_space.default_tools_approval_mode";
+            assert_eq!(
+                launch.config_overrides.iter().filter(|entry| entry.starts_with(&format!("{key}="))).count(),
+                2,
+                "One managed default and one source policy override; never apply source policy twice"
+            );
+            for params in [
+                thread_start_params(&request, &launch),
+                thread_resume_params("thread", &request, &launch),
+                thread_fork_params("thread", None, &request, &launch),
+            ] {
+                assert_eq!(params["config"][key], "approve");
+                assert_eq!(
+                    params["approvalsReviewer"],
+                    external_work::reviewer(&request)
+                );
+            }
+            let turn = turn_start_params("thread", &request, &launch, vec![]);
+            assert_eq!(turn["approvalsReviewer"], external_work::reviewer(&request));
+        }
+    }
+}
+
+#[test]
 fn codex_thread_binds_project_space_through_context_grant() {
     let _environment = environment::LaunchEnvironment::new();
     let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
@@ -5030,7 +5244,7 @@ fn codex_thread_exposes_project_space_to_issue_automation_executor() {
 }
 
 #[test]
-fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
+fn codex_thread_discovers_project_space_without_a_project_binding() {
     let _environment = environment::LaunchEnvironment::new();
     let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let request = ExecutionRequest::default();
@@ -5040,8 +5254,18 @@ fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
     let params = thread_start_params(&request, &launch_config);
     let config = params["config"].as_object().expect("thread config");
 
-    assert!(!config.contains_key("mcp_servers.wework_space.enabled"));
-    assert!(!config.contains_key("mcp_servers.wework_space.url"));
+    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
+    assert_eq!(config["mcp_servers.wework_space.url"], endpoint.url);
+    assert_eq!(
+        config["mcp_servers.wework_space.default_tools_approval_mode"],
+        "approve"
+    );
+    assert!(
+        !config["mcp_servers.wework_space.http_headers.X-Wework-Mcp-Context"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
     assert!(!config.contains_key("mcp_servers.wework_space.command"));
     assert!(!config.contains_key("mcp_servers.wework_space.args"));
     assert!(launch_config
@@ -5070,7 +5294,7 @@ fn codex_thread_exposes_notifications_without_project_context() {
     let params = thread_start_params(&request, &launch_config);
     let config = params["config"].as_object().expect("thread config");
 
-    assert!(!config.contains_key("mcp_servers.wework_space.enabled"));
+    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
     assert_eq!(config["mcp_servers.wework_notifications.enabled"], true);
     assert_eq!(
         config["mcp_servers.wework_notifications.url"],
@@ -5096,6 +5320,29 @@ fn codex_thread_exposes_notifications_without_project_context() {
     let serialized = serde_json::to_string(&mcp_config).expect("serialized MCP config");
     assert!(!serialized.contains("https://wework.example.com"));
     assert!(!serialized.contains("runtime-token"));
+}
+
+#[test]
+fn project_space_routing_keeps_detailed_workflows_out_of_initial_context() {
+    let instructions = codex_thread_developer_instructions("", "");
+    assert!(instructions.contains(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS));
+    assert!(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS.len() < 600);
+    assert!(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS.contains("deferred tools"));
+    assert!(!WEWORK_SPACE_DEVELOPER_INSTRUCTIONS.contains("submit_workflow_plan"));
+    assert!(!WEWORK_SPACE_DEVELOPER_INSTRUCTIONS.contains("list_item_attachments"));
+}
+
+#[test]
+fn codex_rejects_incomplete_dispatch_instead_of_exposing_personal_tools() {
+    let _environment = environment::LaunchEnvironment::new();
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "origin".into(),
+        json!({
+            "type":"issue_dispatch", "dispatchRole":"executor", "cloudProjectId":"space-1"
+        }),
+    );
+    assert!(build_codex_launch_config(&request).is_err());
 }
 
 #[test]

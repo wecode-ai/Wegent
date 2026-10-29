@@ -1308,9 +1308,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             if bot_dict:
                 detailed_bots.append(
                     {
+                        **bot_info,
                         "bot": bot_dict,
-                        "bot_prompt": bot_info.get("bot_prompt"),
-                        "role": bot_info.get("role"),
                     }
                 )
 
@@ -1326,16 +1325,19 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             team_dict["user"] = user
         else:
             team_dict["share_status"] = 2  # shared from others
-            # Redact credentials on a response copy only: the owner User row is
-            # session-attached, and mutating it here would let a later commit in
-            # the same session wipe the stored tokens.
-            user_view = {
-                field: getattr(user, field)
-                for field in UserInDB.model_fields
-                if field != "git_info" and hasattr(user, field)
-            }
-            user_view["git_info"] = []
-            team_dict["user"] = user_view
+            if user is None:
+                team_dict["user"] = None
+            else:
+                # Redact credentials on a response copy only: the owner User row is
+                # session-attached, and mutating it here would let a later commit in
+                # the same session wipe the stored tokens.
+                user_view = {
+                    field: getattr(user, field)
+                    for field in UserInDB.model_fields
+                    if field != "git_info" and hasattr(user, field)
+                }
+                user_view["git_info"] = []
+                team_dict["user"] = user_view
 
         team_dict["bots"] = detailed_bots
 

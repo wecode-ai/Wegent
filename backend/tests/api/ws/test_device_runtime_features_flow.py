@@ -202,7 +202,11 @@ async def test_cloud_registration_runtime_features_reach_provider_projection(
     await _wait_for_registration_followups(namespace)
     devices = await CloudDeviceProvider().list_devices(test_db, test_user.id)
 
-    assert result == {"success": True, "device_id": device_id}
+    assert result == {
+        "success": True,
+        "device_id": device_id,
+        "device_route_id": device_id,
+    }
     assert devices[0]["status"] == "online"
     assert devices[0]["runtime_features"] == runtime_features
     assert (
@@ -252,7 +256,11 @@ async def test_remote_heartbeat_runtime_features_reach_provider_projection(
     )
     devices = await RemoteDeviceProvider().list_devices(test_db, test_user.id)
 
-    assert registered == {"success": True, "device_id": device_id}
+    assert registered == {
+        "success": True,
+        "device_id": device_id,
+        "device_route_id": device_id,
+    }
     assert heartbeat == {"success": True}
     assert devices[0]["status"] == "online"
     assert devices[0]["executor_version"] == "1.0.1"
@@ -299,7 +307,13 @@ async def test_app_heartbeat_reconciles_wegent_tasks(
     )
     await _wait_for_registration_followups(namespace)
 
-    assert registered == {"success": True, "device_id": device_id}
+    # The mocked registration layer returns no dedicated route, so the ack
+    # echoes the submitted device id.
+    assert registered == {
+        "success": True,
+        "device_id": device_id,
+        "device_route_id": device_id,
+    }
     assert heartbeat == {"success": True}
     assert session["device_type"] == DeviceType.APP.value
     assert reconcile.await_count == 2
@@ -354,7 +368,11 @@ async def test_registration_and_heartbeat_preserve_explicit_project_denials(
     )
     await _wait_for_registration_followups(namespace)
     devices = await RemoteDeviceProvider().list_devices(test_db, test_user.id)
-    assert registered == {"success": True, "device_id": device_id}
+    assert registered == {
+        "success": True,
+        "device_id": device_id,
+        "device_route_id": device_id,
+    }
     assert devices[0]["runtime_features"]["projectEditing"] == denials
     assert "worktrees" not in devices[0]["runtime_features"]
 
@@ -410,7 +428,11 @@ async def test_malformed_runtime_features_do_not_block_registration_or_heartbeat
     )
     devices = await RemoteDeviceProvider().list_devices(test_db, test_user.id)
 
-    assert registered == {"success": True, "device_id": device_id}
+    assert registered == {
+        "success": True,
+        "device_id": device_id,
+        "device_route_id": device_id,
+    }
     assert heartbeat == {"success": True}
     assert devices[0]["status"] == "online"
     assert devices[0]["executor_version"] == "1.0.1"

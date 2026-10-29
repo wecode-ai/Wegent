@@ -56,11 +56,13 @@ import { QueryParamAutoSend } from '../params'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
 import { useModelSelection } from '../../hooks/useModelSelection'
 import { useDefaultTeam } from '../../hooks/useDefaultTeam'
+import { useUrlTeam } from '../../hooks/useUrlTeam'
 import { useRecentTaskTeams } from '../../hooks/useRecentTaskTeams'
 import { useUser } from '@/features/common/UserContext'
 import { QueueMessageHandler } from '@/features/inbox'
 import type { ChatAreaExtension } from './types'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
+import { mergeTaskMentionTasks } from './taskMentionTasks'
 import { useChatStatusIndicator } from '@/features/tasks/hooks/useChatStatusIndicator'
 import {
   buildInteractiveFormCancellation,
@@ -375,13 +377,15 @@ function ChatAreaContent({
       !teamIdFromUrl &&
       !selectedTeamForNewTask
   )
-  // The completed catalog remains authoritative for visibility and refreshes.
+  const urlTeam = useUrlTeam(teamIdFromUrl, !effectiveTaskId && !taskIdFromUrl)
+  // Explicit navigation is resolved by ID; offset pages can omit existing agents.
+  const resolvedTeam = urlTeam ?? earlyDefaultTeam
   const teams = useMemo(
     () =>
-      earlyDefaultTeam && !catalogTeams.some(team => team.id === earlyDefaultTeam.id)
-        ? [earlyDefaultTeam, ...catalogTeams]
+      resolvedTeam && !catalogTeams.some(team => team.id === resolvedTeam.id)
+        ? [resolvedTeam, ...catalogTeams]
         : catalogTeams,
-    [catalogTeams, earlyDefaultTeam]
+    [catalogTeams, resolvedTeam]
   )
 
   // Select the team before resolving generation models. Attachment limits are synchronized
@@ -1121,7 +1125,23 @@ function ChatAreaContent({
 
   // Get project info when in project context
   const projectIdFromUrl = getSearchParam(searchParams, 'projectId')
-  const { projects } = useProjectContext()
+  const { projects, loadAllProjectTasks } = useProjectContext()
+  const enableTaskMentions =
+    effectiveTaskType === 'chat' || effectiveTaskType === 'code' || effectiveTaskType === 'task'
+  const mentionTasks = useMemo(
+    () =>
+      mergeTaskMentionTasks(
+        tasks,
+        projects.map(project => project.tasks)
+      ),
+    [projects, tasks]
+  )
+  const loadMentionProjectTasks = useCallback(() => {
+    projects.forEach(project => {
+      if (project.task_count > 0) void loadAllProjectTasks(project.id)
+    })
+  }, [loadAllProjectTasks, projects])
+
   const activeProject = useMemo(() => {
     if (!projectIdFromUrl) return null
     const project = projects.find(p => p.id === Number(projectIdFromUrl))
@@ -1178,6 +1198,9 @@ function ChatAreaContent({
   // Extract values for dependency array
   const selectedTeam = chatState.selectedTeam
   const isTeamSelectionReady =
+    (!teamIdFromUrl ||
+      ignoredTeamIdParamRef.current === teamIdFromUrl ||
+      selectedTeam?.id === Number(teamIdFromUrl)) &&
     initializedTeamSelection?.scope === teamSelectionScope &&
     initializedTeamSelection.teamId != null &&
     initializedTeamSelection.teamId === selectedTeam?.id
@@ -1286,16 +1309,13 @@ function ChatAreaContent({
     // Case 2a: teamId URL param present - select specific team regardless of initialization state
     // This handles navigation after accepting a share invite (/chat?teamId=xxx)
     if (!taskIdFromUrl && teamIdFromUrl && teamIdFromUrl !== ignoredTeamIdParamRef.current) {
-      const targetTeamId = Number(teamIdFromUrl)
-      const teamFromUrl =
-        filteredTeams.find(t => t.id === targetTeamId) || teams.find(t => t.id === targetTeamId)
-      if (teamFromUrl) {
-        handleTeamChange(teamFromUrl)
-        markTeamSelectionInitialized(teamFromUrl)
+      if (urlTeam) {
+        handleTeamChange(urlTeam)
+        markTeamSelectionInitialized(urlTeam)
         lastSyncedTaskIdRef.current = null
-        return
       }
-      if (isTeamsLoading || loadError) return
+      // Never silently substitute a default while resolving an explicit agent.
+      return
     }
 
     if (!taskIdFromUrl && selectedTeamForNewTask) {
@@ -1350,6 +1370,7 @@ function ChatAreaContent({
     selectedTaskDetail,
     taskIdFromUrl,
     teamIdFromUrl,
+    urlTeam,
     selectedTeam,
     handleTeamChange,
     markTeamSelectionInitialized,
@@ -1676,11 +1697,13 @@ function ChatAreaContent({
   // Unified canSubmit flag
   const canSubmit = useMemo(() => {
     return (
+      chatState.selectedTeam !== null &&
       !submitBlockedReason &&
       (!streamHandlers.isStreaming || streamHandlers.canQueueMessage) &&
       chatState.isAttachmentReadyToSend
     )
   }, [
+    chatState.selectedTeam,
     chatState.isAttachmentReadyToSend,
     streamHandlers.isStreaming,
     streamHandlers.canQueueMessage,
@@ -2489,10 +2512,10 @@ function ChatAreaContent({
     teamModeFilter,
     tipText: chatState.randomTip,
     isGroupChat: selectedTaskDetail?.is_group_chat || false,
-    mentionTasks: tasks,
+    mentionTasks,
     currentTaskId: selectedTaskDetail?.id ?? selectedTask?.id,
-    enableTaskMentions:
-      effectiveTaskType === 'chat' || effectiveTaskType === 'code' || effectiveTaskType === 'task',
+    enableTaskMentions,
+    onMentionMenuOpen: loadMentionProjectTasks,
     onSelectConversation: handleSelectConversation,
     isDragging: chatState.isDragging,
     onDragEnter: handleDragEnter,
@@ -2743,13 +2766,9 @@ function ChatAreaContent({
               onReEdit={handleReEdit}
               waitingMessage={compactingWaitMessage}
               defaultSaveKnowledgeBaseId={taskType === 'knowledge' ? knowledgeBaseId : undefined}
-              mentionTasks={tasks}
+              mentionTasks={mentionTasks}
               currentTaskId={selectedTaskDetail?.id ?? selectedTask?.id}
-              enableTaskMentions={
-                effectiveTaskType === 'chat' ||
-                effectiveTaskType === 'code' ||
-                effectiveTaskType === 'task'
-              }
+              enableTaskMentions={enableTaskMentions}
             />
           </div>
         </div>

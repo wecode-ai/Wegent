@@ -884,7 +884,24 @@ function PlatformControllerHarness({
 }
 
 const originalGetAnimations = Element.prototype.getAnimations;
+const originalDialogMethods = Object.getOwnPropertyDescriptors(
+  HTMLDialogElement.prototype,
+);
 beforeEach(() => {
+  Object.defineProperties(HTMLDialogElement.prototype, {
+    showModal: {
+      configurable: true,
+      value(this: HTMLDialogElement) {
+        this.open = true;
+      },
+    },
+    close: {
+      configurable: true,
+      value(this: HTMLDialogElement) {
+        this.open = false;
+      },
+    },
+  });
   Object.defineProperty(Range.prototype, "getClientRects", {
     configurable: true,
     value: () => [],
@@ -919,6 +936,12 @@ afterEach(async () => {
   vi.useRealTimers();
   container.remove();
   vi.unstubAllGlobals();
+  for (const method of ["showModal", "close"]) {
+    const original = originalDialogMethods[method];
+    if (original)
+      Object.defineProperty(HTMLDialogElement.prototype, method, original);
+    else Reflect.deleteProperty(HTMLDialogElement.prototype, method);
+  }
   if (originalGetAnimations)
     Element.prototype.getAnimations = originalGetAnimations;
   else Reflect.deleteProperty(Element.prototype, "getAnimations");
@@ -1056,6 +1079,26 @@ describe("CollaborationPlatformApp real component flow", () => {
       expect(manageResource).toHaveBeenCalledOnce();
     },
   );
+  it("shows catalog Agents as selectable without claiming execution readiness", async () => {
+    const { api } = createApi({
+      initialResources: {
+        agents: [{ ...agent, status: "unchecked" }],
+        execution_environments: [],
+      },
+    });
+    await render(<PlatformHarness api={api} />);
+    await click(byTestId("collaboration-primary-agents"));
+
+    const status = byTestId(
+      `collaboration-agents-row-${agent.id}`,
+    ).querySelector(".collaboration-resource-row-status");
+    expect(status?.textContent).toBe("可选择");
+    expect(status?.getAttribute("data-tone")).toBe("unchecked");
+    expect(status?.getAttribute("title")).toBe(
+      "执行时会检查智能体配置及当前权限。",
+    );
+  });
+
   it("deletes an agent resource after confirmation", async () => {
     const { api } = createApi();
     await render(<PlatformHarness api={api} />);
@@ -1607,6 +1650,31 @@ describe("CollaborationPlatformApp real component flow", () => {
       ).toBeNull();
     },
   );
+
+  it("keeps a collapsed selected workspace collapsed when navigation refreshes", async () => {
+    const { api } = createApi();
+    const start = { ...initialLocation, workspaceId: workspace.id };
+    const toggle = () =>
+      byTestId(`collaboration-workspace-toggle-${workspace.id}`);
+
+    await render(<PlatformHarness api={api} start={start} />);
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+
+    await click(toggle());
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+
+    await render(
+      <PlatformHarness
+        api={api}
+        refreshKey="navigation-refresh"
+        start={start}
+      />,
+    );
+    await flush();
+
+    expect(api.workspaces.list).toHaveBeenCalledTimes(2);
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+  });
 
   it("enters a cached local workspace without retrying an unavailable cloud source", async () => {
     const localWorkspace = {
@@ -2630,6 +2698,36 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toBe("page");
   });
 
+  it("passes accessible projects without workspace membership to personal Stand-in settings", async () => {
+    const sharedProject = {
+      ...project,
+      id: "shared-project",
+      name: "Shared review project",
+      workspace_id: "shared-workspace",
+      workspace_context: {
+        id: "shared-workspace",
+        public_id: "shared-public",
+        name: "Shared workspace",
+      },
+    };
+    const { api } = createApi({ initialProjects: [project, sharedProject] });
+    const renderStandInPage = vi.fn(({ projects }) => (
+      <div data-testid="stand-in-settings-page">
+        {projects.map((row) => row.name).join(", ")}
+      </div>
+    ));
+    await render(
+      <PlatformHarness api={api} renderStandInPage={renderStandInPage} />,
+    );
+    await click(byTestId("collaboration-primary-stand-in"));
+    expect(byTestId("stand-in-settings-page").textContent).toContain(
+      project.name,
+    );
+    expect(byTestId("stand-in-settings-page").textContent).toContain(
+      sharedProject.name,
+    );
+  });
+
   it("keeps the personal Stand-in editor mounted while navigation refreshes", async () => {
     const { api } = createApi();
     const renderStandInPage = () => (
@@ -3389,9 +3487,46 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.issues.getBoardSnapshot).toHaveBeenCalledExactlyOnceWith(
       project.id,
     );
-    expect(api.assignments?.list).toHaveBeenCalledExactlyOnceWith(issue.id);
+    expect(api.assignments?.list).not.toHaveBeenCalled();
     await click(byTestId("collaboration-tab-table"));
     expect(api.assignments?.list).toHaveBeenCalledExactlyOnceWith(issue.id);
+  });
+
+  it("keeps the loaded board when its workspace catalog arrives later", async () => {
+    const target = {
+      ...project,
+      workspace_context: {
+        id: workspace.id,
+        public_id: "parent",
+        name: workspace.name,
+      },
+    };
+    const { api } = createApi({ initialProjects: [target] });
+    const pending = deferred<CollaborationWorkspace[]>();
+    vi.mocked(api.workspaces!.list).mockReturnValue(pending.promise);
+
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          projectId: project.id,
+        }}
+      />,
+    );
+
+    expect(byTestId(`cloud-todo-card-${issue.id}`)).toBeTruthy();
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledExactlyOnceWith(
+      project.id,
+    );
+    await act(async () => pending.resolve([workspace]));
+    await flush();
+    expect(byTestId(`cloud-todo-card-${issue.id}`)).toBeTruthy();
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledExactlyOnceWith(
+      project.id,
+    );
+    expect(api.assignments?.list).not.toHaveBeenCalled();
   });
 
   it.each(["board", "table"] as const)(
@@ -5156,6 +5291,28 @@ describe("CollaborationPlatformApp real component flow", () => {
     });
   });
 
+  it("clears the assignment draft after the persisted Issue replaces its source", async () => {
+    const api = await renderIssueWithCollaborationGroup();
+    vi.mocked(api.issues.assign).mockResolvedValue({
+      ...issue,
+      version: issue.version + 1,
+      assignee_user_id: member.user_id,
+      assignee_agent_id: null,
+      assignee_team_id: null,
+      assignee_group_id: null,
+    });
+    await click(byTestId("cloud-todo-detail-assignee"));
+    await click(
+      portalByTestId(
+        `cloud-todo-detail-assignee-option-user:${member.user_id}`,
+      ),
+    );
+    await click(byTestId("cloud-todo-save"));
+    expect(
+      container.querySelector('[data-testid="cloud-todo-save"]'),
+    ).toBeNull();
+  });
+
   it("mentions and assigns a project agent", async () => {
     const api = await renderIssueWithCollaborationGroup();
     const comment = byTestId(
@@ -5527,6 +5684,62 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(
       byTestId(`collaboration-issue-table-row-${issue.id}`).textContent,
     ).toContain("表格真实智能体");
+  });
+
+  it("refreshes the current assignee name when returning to the table", async () => {
+    const { api, assignments } = createApi();
+    const humanAssignment: CollaborationAssignment = {
+      id: "table-human",
+      issue_id: issue.id,
+      target_type: "human",
+      target_id: "1",
+      target_name: "当前负责人",
+      workflow_step: "需求确认",
+      comment_id: null,
+      created_by_user_id: 1,
+      created_by_user_name: "项目经理",
+      status: "active",
+      created_at: "2026-09-12T02:00:00Z",
+      updated_at: "2026-09-12T02:00:00Z",
+    };
+    assignments.push(humanAssignment);
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          projectId: project.id,
+        }}
+      />,
+    );
+    expect(api.assignments?.list).not.toHaveBeenCalled();
+
+    await click(byTestId("collaboration-tab-table"));
+    expect(
+      byTestId(`collaboration-issue-table-row-${issue.id}`).textContent,
+    ).toContain(humanAssignment.target_name);
+    expect(api.assignments?.list).toHaveBeenCalledExactlyOnceWith(issue.id);
+
+    await click(byTestId("collaboration-tab-board"));
+    assignments.push({
+      ...humanAssignment,
+      id: "table-agent",
+      target_type: "agent",
+      target_id: agent.id,
+      target_name: agent.name,
+      workflow_step: "实现",
+      created_at: "2026-09-12T03:00:00Z",
+      updated_at: "2026-09-12T03:00:00Z",
+    });
+    await click(byTestId("collaboration-tab-table"));
+
+    const rowText = byTestId(
+      `collaboration-issue-table-row-${issue.id}`,
+    ).textContent;
+    expect(rowText).toContain(agent.name);
+    expect(rowText).not.toContain(humanAssignment.target_name);
+    expect(api.assignments?.list).toHaveBeenCalledTimes(2);
   });
 });
 

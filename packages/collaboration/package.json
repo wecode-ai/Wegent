@@ -138,9 +138,9 @@
       "types": "./src/conversation/conversationDiagnostics.ts",
       "import": "./src/conversation/conversationDiagnostics.ts"
     },
-    "./conversation/bottomOriginScroll": {
-      "types": "./src/conversation/bottomOriginScroll.ts",
-      "import": "./src/conversation/bottomOriginScroll.ts"
+    "./conversation/conversationViewportScroll": {
+      "types": "./src/conversation/conversationViewportScroll.ts",
+      "import": "./src/conversation/conversationViewportScroll.ts"
     },
     "./conversation/codexReferences": {
       "types": "./src/conversation/codexReferences.ts",
@@ -182,9 +182,9 @@
       "types": "./src/conversation/messagePretextLayout.ts",
       "import": "./src/conversation/messagePretextLayout.ts"
     },
-    "./conversation/useBottomOriginVirtualizer": {
-      "types": "./src/conversation/useBottomOriginVirtualizer.ts",
-      "import": "./src/conversation/useBottomOriginVirtualizer.ts"
+    "./conversation/useConversationVirtualizer": {
+      "types": "./src/conversation/useConversationVirtualizer.ts",
+      "import": "./src/conversation/useConversationVirtualizer.ts"
     },
     "./conversation/conversationViewportCache": {
       "types": "./src/conversation/conversationViewportCache.ts",
@@ -469,7 +469,7 @@
     "streamdown": "2.5.0",
     "tailwind-merge": "^3.6.0",
     "@chenglou/pretext": "0.0.8",
-    "@tanstack/react-virtual": "3.14.2",
+    "@tanstack/react-virtual": "3.14.23",
     "prosemirror-commands": "^1.7.1",
     "prosemirror-history": "^1.5.0",
     "prosemirror-keymap": "^1.2.3",
@@ -480,6 +480,7 @@
     "prosemirror-view": "^1.42.0",
     "react-markdown": "^10.1.0",
     "rehype-sanitize": "6.0.0",
+    "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
     "unified": "^11.0.5"

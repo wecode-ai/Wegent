@@ -24,6 +24,15 @@ def build_context_display_fields(
     if context_type == "attachment":
         return _build_attachment_fields(data)
 
+    if context_type == "remote_workspace_artifact":
+        return {
+            **_build_attachment_fields(data),
+            "remote_task_id": data.get("task_id"),
+            "remote_path": data.get("relative_path"),
+            "modified_at": data.get("modified_at"),
+            "sha256": data.get("sha256"),
+        }
+
     if context_type == "knowledge_base":
         return {
             "knowledge_id": data.get("knowledge_id"),

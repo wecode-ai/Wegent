@@ -13,15 +13,17 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
-from app.models.delivery import CloudProject, ProjectChatAgent
+from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.cloud_project import CloudProjectCreate
+from app.schemas.delivery import LoopItemCreate
 from app.services.cloud_projects.responses import list_project_responses
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.collaboration_permissions import collaboration_permission_service
+from app.services.loop_items.provider_router import loop_item_provider_router
 from app.services.project_chat.service import project_chat_service
 from app.services.workspaces.responses import list_workspace_responses
 from app.services.workspaces.storage import (
@@ -182,6 +184,63 @@ def test_workspace_resource_grant_restoration_reads_current_audit_metadata(
             assert (restored.share_link_id, restored.reviewed_by_user_id) == (13, 17)
             assert (restored.requested_at, restored.created_at) == (timestamp,) * 2
             db.commit()
+    finally:
+        engine.dispose()
+
+
+def test_concurrent_issue_creation_refreshes_preloaded_project_sequence(
+    mysql_url: str,
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as db:
+            db.add(User(id=1, user_name="project-owner", password_hash="unused"))
+            db.add(
+                Kind(
+                    id=11,
+                    kind="CollaborationWorkspace",
+                    name="space-11",
+                    namespace="default",
+                    user_id=1,
+                    is_active=True,
+                    json=workspace_kind_payload(
+                        name="space-11",
+                        description="",
+                        namespace="default",
+                        public_id=str(uuid.uuid4()),
+                        is_default=False,
+                    ),
+                )
+            )
+            db.commit()
+            project = cloud_project_service.create(
+                db, 1, CloudProjectCreate(name="Concurrent Issues", workspace_id="11")
+            )
+            project_id, project_key = project.id, project.project_key
+
+        ready = Barrier(2, timeout=10)
+
+        def create_issue(index: int) -> str:
+            with Session(engine, autoflush=False) as db:
+                project = cloud_project_service.get(db, project_id, 1)
+                user = db.get(User, 1)
+                assert project.next_item_number == 1
+                ready.wait()
+                created = loop_item_provider_router.create(
+                    db, project, user, LoopItemCreate(title=f"Issue {index}")
+                )
+                return created.internal_item.id
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(create_issue, index) for index in range(2)]
+            item_ids = [future.result(timeout=30) for future in futures]
+        with Session(engine) as db:
+            assert set(item_ids) == {f"{project_key}-1", f"{project_key}-2"}
+            assert db.get(CloudProject, project_id).next_item_number == 3
+            assert (
+                db.query(LoopItem).filter_by(cloud_project_id=project_id).count() == 2
+            )
     finally:
         engine.dispose()
 

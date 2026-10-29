@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
 import { X } from 'lucide-react'
 import { dequal } from 'dequal'
@@ -66,7 +67,7 @@ export function StandInPrimaryProfile({
         }
       })
       .catch(cause => {
-        if (active) setRuntimeError(String(cause))
+        if (active) setRuntimeError(getStandInErrorMessage(cause))
       })
     return () => {
       active = false
@@ -163,13 +164,15 @@ export function StandInPrimaryProfile({
           showPrompt={false}
           controls={null}
           onChange={update => {
-            const next = typeof update === 'function' ? update(role) : update
-            setDraft(current => ({
-              ...current,
-              model: next.model,
-              modelOptions: next.modelOptions,
-              workspace: next.workspace,
-            }))
+            setDraft(current => {
+              const next = typeof update === 'function' ? update({ ...role, ...current }) : update
+              return {
+                ...current,
+                model: next.model,
+                modelOptions: next.modelOptions,
+                workspace: next.workspace,
+              }
+            })
           }}
           onSave={async () => {}}
           disabled={saving}

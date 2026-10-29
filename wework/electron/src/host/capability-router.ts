@@ -1,6 +1,11 @@
 export const HOST_PROTOCOL_VERSION = 1
 
 export const HOST_CAPABILITIES = [
+  'mcpApps.createDocument',
+  'mcpApps.releaseDocument',
+  'mcpApps.renewDocument',
+  'mcpApps.saveFile',
+  'e2e.mcpAppFrame',
   'app.getVersion',
   'app.quit',
   'app.relaunch',
@@ -8,6 +13,8 @@ export const HOST_CAPABILITIES = [
   'appUpdate.download',
   'appUpdate.downloadProgress',
   'appUpdate.install',
+  'appUpdate.previousRelease',
+  'appUpdate.rollback',
   'attachment.abort',
   'attachment.append',
   'attachment.begin',
@@ -164,9 +171,11 @@ export const HOST_CAPABILITIES = [
   'smartApps.preview',
   'smartApps.start',
   'smartApps.stop',
+  'smartApps.storeAdditionalProxyTokens',
   'smartApps.storeContextToken',
   'smartApps.storeDecisionToken',
   'smartApps.storeProxyToken',
+  'smartApps.takeAdditionalProxyTokens',
   'smartApps.takeContextToken',
   'smartApps.takeDecisionToken',
   'smartApps.takeProxyToken',

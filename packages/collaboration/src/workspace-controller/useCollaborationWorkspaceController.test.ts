@@ -161,10 +161,12 @@ describe("collaboration workspace controller", () => {
       eager: true,
     },
     myWorkEnabled = false,
+    deferDispatch = false,
   ) {
     const dispatch = (action: CollaborationWorkspaceControllerAction) => {
       actions.push(action);
-      state = collaborationWorkspaceControllerReducer(state, action);
+      if (!deferDispatch)
+        state = collaborationWorkspaceControllerReducer(state, action);
     };
     return {
       api,
@@ -236,6 +238,45 @@ describe("collaboration workspace controller", () => {
     expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(2);
   });
 
+  it("invalidates in-flight snapshots when reloading only project metadata", async () => {
+    const updatedIssue = { ...issue, version: 3, assignee_user_id: 1 };
+    state = {
+      ...state,
+      projects: [project],
+      project,
+      issues: [updatedIssue],
+      projectItems: { [project.id]: [updatedIssue] },
+    };
+    const { api, commands } = createController();
+    const snapshot = {
+      items: [issue],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    };
+    const pending = deferred<typeof snapshot>();
+    vi.mocked(api.issues.getBoardSnapshot).mockReturnValueOnce(pending.promise);
+
+    const oldRefresh = commands.loadProjectSnapshot(project.id);
+    await commands.loadProject(project.id, false, {
+      invalidate: true,
+      loadSnapshot: false,
+    });
+
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledOnce();
+    expect(actions).toContainEqual({
+      type: "project-metadata-loaded",
+      project,
+    });
+    pending.resolve(snapshot);
+    expect(await oldRefresh).toBeNull();
+    expect(state.issues).toEqual([updatedIssue]);
+    expect(state.projectItems[project.id]).toEqual([updatedIssue]);
+    expect(
+      actions.some((action) => action.type === "project-snapshot-loaded"),
+    ).toBe(false);
+  });
+
   it.each(["reassignment", "restore"])(
     "invalidates an in-flight board read after %s",
     async (change) => {
@@ -268,6 +309,36 @@ describe("collaboration workspace controller", () => {
     },
   );
 
+  it("refreshes again when an Issue change arrives during a project load", async () => {
+    state = { ...state, projects: [project], project, selectedIssue: issue };
+    const { api, commands } = createController();
+    const previous = {
+      items: [issue],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    };
+    const reassigned = { ...issue, version: 3, assignee_user_id: 1 };
+    const pending = deferred<typeof previous>();
+    vi.mocked(api.issues.getBoardSnapshot)
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce({ ...previous, items: [reassigned] });
+
+    const oldRefresh = commands.loadProject(project.id, false);
+    const changedRefresh = commands.loadProject(project.id, false, {
+      invalidate: true,
+    });
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(2);
+    await changedRefresh;
+    expect(state.issues).toEqual([reassigned]);
+    expect(state.selectedIssue).toEqual(reassigned);
+
+    pending.resolve(previous);
+    await oldRefresh;
+    expect(state.issues).toEqual([reassigned]);
+    expect(state.selectedIssue).toEqual(reassigned);
+  });
+
   it("keeps a successful project catalog when My Work fails", async () => {
     const api = createApi();
     api.myWork!.list = vi
@@ -290,6 +361,101 @@ describe("collaboration workspace controller", () => {
     expect(state.error).toBe("load failed");
     expect(state.errorSource).toBe("load");
     expect(notify).toHaveBeenCalledWith("load failed", "error");
+  });
+
+  it("discards a home preload invalidated by an Issue refresh", async () => {
+    state = { ...state, projects: [project], project, selectedIssue: issue };
+    const { api, commands } = createController();
+    const previous = {
+      items: [issue],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    };
+    const reassigned = { ...issue, version: 3, assignee_user_id: 1 };
+    const updated = { ...previous, items: [reassigned] };
+    const pending = deferred<typeof previous>();
+    vi.mocked(api.issues.getBoardSnapshot)
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue(updated);
+
+    const oldHome = commands.loadProjects();
+    await vi.waitFor(() =>
+      expect(api.issues.getBoardSnapshot).toHaveBeenCalledOnce(),
+    );
+    await commands.loadProject(project.id, false, { invalidate: true });
+    pending.resolve(previous);
+    await oldHome;
+
+    expect(state.projectItems[project.id]).toEqual([reassigned]);
+    expect(state.issues).toEqual([reassigned]);
+    expect(state.selectedIssue).toEqual(reassigned);
+    await commands.loadProject(project.id, false);
+    expect(state.issues).toEqual([reassigned]);
+    expect(state.selectedIssue).toEqual(reassigned);
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(3);
+  });
+
+  it("preserves refreshed home data when React batches snapshot dispatches before refs update", async () => {
+    state = {
+      ...state,
+      projects: [project],
+      project,
+      issues: [issue],
+      selectedIssue: issue,
+      projectItems: { [project.id]: [issue] },
+      projectMembers: { [project.id]: [] },
+      projectAgents: { [project.id]: [] },
+      projectTaskBindings: { [project.id]: [] },
+    };
+    const previous = {
+      items: [issue],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    };
+    const reassigned = { ...issue, version: 3, assignee_user_id: 1 };
+    const pending = deferred<typeof previous>();
+    const api = createApi();
+    vi.mocked(api.issues.getBoardSnapshot)
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce({ ...previous, items: [reassigned] });
+    const { commands } = createController(api, vi.fn(), undefined, false, true);
+
+    const oldHome = commands.loadProjects();
+    await vi.waitFor(() =>
+      expect(api.issues.getBoardSnapshot).toHaveBeenCalledOnce(),
+    );
+    await commands.loadProject(project.id, false, { invalidate: true });
+    pending.resolve(previous);
+    await oldHome;
+    // React may apply both queued results before the next render updates the refs.
+    state = actions.reduce(collaborationWorkspaceControllerReducer, state);
+
+    expect(state.projectItems[project.id]).toEqual([reassigned]);
+    expect(state.issues).toEqual([reassigned]);
+    expect(state.selectedIssue).toEqual(reassigned);
+  });
+
+  it("does not preserve an old snapshot after a non-invalidated home read fails", async () => {
+    state = {
+      ...state,
+      projectItems: { [project.id]: [issue] },
+      projectMembers: { [project.id]: [] },
+      projectAgents: { [project.id]: [] },
+      projectTaskBindings: { [project.id]: [] },
+    };
+    const { api, commands } = createController();
+    vi.mocked(api.issues.getBoardSnapshot).mockRejectedValueOnce(
+      new Error("unavailable"),
+    );
+
+    await commands.loadProjects();
+
+    expect(state.projectItems).toEqual({});
+    expect(state.projectMembers).toEqual({});
+    expect(state.projectAgents).toEqual({});
+    expect(state.projectTaskBindings).toEqual({});
   });
 
   it("does not request or retain My Work when the capability is disabled", async () => {
@@ -684,6 +850,31 @@ describe("collaboration workspace controller", () => {
     expect(state.selectedIssue).toEqual(savedIssue);
     expect(state.attachments).toEqual([attachment]);
     expect(state.comments).toEqual([comment]);
+  });
+
+  it("keeps an assignment saved from the board before the first detail load finishes", async () => {
+    const response = deferred<CollaborationIssue>();
+    const api = createApi();
+    api.issues.get = vi.fn().mockReturnValue(response.promise);
+    const { commands } = createController(api);
+
+    // Navigation starts detail hydration before the board has populated the catalog.
+    const load = commands.loadSelectedIssue(issue.id);
+    expect(state.selectedIssue).toBeNull();
+    state = collaborationWorkspaceControllerReducer(state, {
+      type: "project-loaded",
+      project,
+      snapshot: { items: [issue], members: [], agents: [], taskBindings: [] },
+    });
+    const saved = { ...issue, assignee_user_id: 2, version: 2 };
+    commands.replaceIssue(saved);
+    expect(state.issues).toEqual([saved]);
+    expect(state.selectedIssue).toBeNull();
+
+    response.resolve(issue);
+    expect(await load).toEqual(saved);
+    expect(state.selectedIssue).toEqual(saved);
+    expect(state.issues).toEqual([saved]);
   });
 
   it("ignores a collection mutation that belongs to another issue", () => {
@@ -1269,6 +1460,32 @@ describe("collaboration workspace controller", () => {
     expect(api.issues.reorder).not.toHaveBeenCalled();
   });
 
+  it.each([undefined, { beforeItemId: null }])(
+    "leaves thrown update errors to the calling surface (position=%s)",
+    async (position) => {
+      const api = createApi();
+      const error = Object.assign(new Error("No authorized environment"), {
+        errorCode: "RUNNER_ENVIRONMENT_UNAVAILABLE",
+      });
+      api.issues.update = vi.fn().mockRejectedValue(error);
+      const { commands, notify } = createController(api);
+      await expect(
+        commands.updateIssue(
+          issue.id,
+          {
+            version: issue.version,
+            status: "in_progress",
+            position,
+          },
+          { throwOnError: true },
+        ),
+      ).rejects.toBe(error);
+      expect(state.error).toBeNull();
+      expect(notify).not.toHaveBeenCalled();
+      expect(state.issues).toEqual([]);
+    },
+  );
+
   it.each(
     ["update", "assign"].flatMap((kind) =>
       [false, true].map((hidden) => ({ kind, hidden })),
@@ -1457,147 +1674,13 @@ describe("collaboration workspace controller", () => {
     api.projects.update = vi.fn().mockResolvedValue(assigneeProject);
     const { commands } = createController(api);
 
-    await commands.changeProjectGroup({
-      project: statusProject,
-      groupBy: "assignee",
-      defaultStatuses: [],
+    await commands.updateProject(statusProject.id, {
+      version: statusProject.version,
+      boardConfig: assigneeProject.board_config,
     });
     await commands.loadProject(project.id, false);
 
     expect(api.projects.get).not.toHaveBeenCalled();
     expect(state.project).toEqual(assigneeProject);
-  });
-
-  it("reapplies a group change to the latest project after a version conflict", async () => {
-    const statusProject = {
-      ...project,
-      board_config: {
-        group_by: "status" as const,
-        processing_start_status_id: "processing",
-        statuses: [],
-      },
-    };
-    const latestProject = { ...statusProject, version: 2 };
-    const assigneeProject = {
-      ...latestProject,
-      board_config: {
-        ...latestProject.board_config,
-        group_by: "assignee" as const,
-      },
-      version: 3,
-    };
-    state = { ...state, projects: [statusProject], project: statusProject };
-    const api = createApi();
-    api.projects.get = vi.fn().mockResolvedValue(latestProject);
-    api.projects.update = vi
-      .fn()
-      .mockRejectedValueOnce({ status: 409 })
-      .mockResolvedValueOnce(assigneeProject);
-    const { commands, notify } = createController(api);
-
-    await commands.changeProjectGroup({
-      project: statusProject,
-      groupBy: "assignee",
-      defaultStatuses: [],
-    });
-
-    expect(api.projects.get).toHaveBeenCalledWith(project.id);
-    expect(api.projects.update).toHaveBeenLastCalledWith(project.id, {
-      version: 2,
-      boardConfig: {
-        ...latestProject.board_config,
-        group_by: "assignee",
-      },
-    });
-    expect(state.project).toEqual(assigneeProject);
-    expect(notify).not.toHaveBeenCalled();
-  });
-
-  it("recognizes the local version_conflict error protocol", async () => {
-    const statusProject = {
-      ...project,
-      board_config: {
-        group_by: "status" as const,
-        processing_start_status_id: "processing",
-        statuses: [],
-      },
-    };
-    const latestProject = { ...statusProject, version: 2 };
-    const priorityProject = {
-      ...latestProject,
-      board_config: {
-        ...latestProject.board_config,
-        group_by: "priority" as const,
-      },
-      version: 3,
-    };
-    state = { ...state, projects: [statusProject], project: statusProject };
-    const api = createApi();
-    api.projects.get = vi.fn().mockResolvedValue(latestProject);
-    api.projects.update = vi
-      .fn()
-      .mockRejectedValueOnce({ code: "version_conflict" })
-      .mockResolvedValueOnce(priorityProject);
-    const { commands, notify } = createController(api);
-
-    await commands.changeProjectGroup({
-      project: statusProject,
-      groupBy: "priority",
-      defaultStatuses: [],
-    });
-
-    expect(api.projects.get).toHaveBeenCalledWith(project.id);
-    expect(state.project).toEqual(priorityProject);
-    expect(notify).not.toHaveBeenCalled();
-  });
-
-  it("does not let an older group change overwrite the latest selection", async () => {
-    const statusProject = {
-      ...project,
-      board_config: {
-        group_by: "status" as const,
-        processing_start_status_id: "processing",
-        statuses: [],
-      },
-    };
-    const tagProject = {
-      ...statusProject,
-      board_config: {
-        ...statusProject.board_config,
-        group_by: "tag" as const,
-      },
-      version: 2,
-    };
-    let rejectOlder!: (error: unknown) => void;
-    const olderUpdate = new Promise<CollaborationProject>(
-      (_resolve, reject) => {
-        rejectOlder = reject;
-      },
-    );
-    state = { ...state, projects: [statusProject], project: statusProject };
-    const api = createApi();
-    api.projects.update = vi
-      .fn()
-      .mockReturnValueOnce(olderUpdate)
-      .mockResolvedValueOnce(tagProject);
-    const { commands, notify } = createController(api);
-
-    const olderChange = commands.changeProjectGroup({
-      project: statusProject,
-      groupBy: "priority",
-      defaultStatuses: [],
-    });
-    await commands.changeProjectGroup({
-      project: statusProject,
-      groupBy: "tag",
-      defaultStatuses: [],
-    });
-    rejectOlder({ status: 409 });
-    await olderChange;
-
-    expect(api.projects.get).not.toHaveBeenCalled();
-    expect(api.projects.update).toHaveBeenCalledTimes(2);
-    expect(state.project).toEqual(tagProject);
-    expect(notify).not.toHaveBeenCalled();
   });
 });

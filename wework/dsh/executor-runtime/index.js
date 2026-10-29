@@ -235,6 +235,7 @@ export async function handleExecutorRpc(req, res, client) {
       request_id: requestId,
       method,
     })
+    observeRpcResponse(res, requestId, method, startedAt)
     const result = await client.request(body.method, body.params, undefined, requestId)
     console.info('[wework-executor-runtime] RPC request finished', {
       request_id: requestId,
@@ -253,6 +254,27 @@ export async function handleExecutorRpc(req, res, client) {
     })
     sendError(res, error, requestId)
   }
+}
+
+function observeRpcResponse(res, requestId, method, startedAt) {
+  const finish = () => complete('finished')
+  const close = () => complete('closed')
+  function complete(event) {
+    res.off('finish', finish)
+    res.off('close', close)
+    console.info('[wework-executor-runtime] RPC HTTP response', {
+      request_id: requestId,
+      method,
+      event,
+      elapsed_ms: Date.now() - startedAt,
+      headers_sent: res.headersSent,
+      writable_ended: res.writableEnded,
+      writable_finished: res.writableFinished,
+      destroyed: res.destroyed,
+    })
+  }
+  res.once('finish', finish)
+  res.once('close', close)
 }
 
 export async function handleExecutorEvents(

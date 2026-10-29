@@ -81,7 +81,9 @@ export function workspaceHttpRequestBody(value: unknown): unknown {
       // Runtime/provider option names are opaque API values.
       return [
         wireKey,
-        wireKey === "model_options" ? nested : workspaceHttpRequestBody(nested),
+        wireKey === "model_options" || wireKey === "board_views"
+          ? nested
+          : workspaceHttpRequestBody(nested),
       ];
     }),
   );
@@ -321,7 +323,7 @@ export function createSharedWorkspaceHttpApi(
       },
       async listAgents(workspaceId, options) {
         const response = await get<{ items: unknown[] }>(
-          `/v1/workspaces/${encoded(workspaceId)}/agents`,
+          `/v1/workspaces/${encoded(workspaceId)}/agents?include_readiness=false`,
           options?.forceRefresh ? 0 : undefined,
         );
         return response.items.map((item) =>
@@ -431,7 +433,9 @@ export function createSharedWorkspaceHttpApi(
         },
       },
       async list() {
-        return mapCollaborationPlatformResourcesDto(await get("/v1/resources"));
+        return mapCollaborationPlatformResourcesDto(
+          await get("/v1/resources?include_readiness=false"),
+        );
       },
       async removeAgent(agent) {
         if (agent.team_id == null) {

@@ -306,15 +306,14 @@ mod tests {
         assert!(registered, "GET {PATH} must be registered by the router");
     }
 
-    /// Registering the content update handler must not select the lower-volume
-    /// PUT method when only the GET cutover is configured.
+    /// Both content methods stay Python-owned while their Rust handlers remain.
     #[test]
     fn knowledge_document_content_put_registration_keeps_python_ownership() {
         const PATH: &str = "/api/knowledge/documents/:document_id/content";
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
         let table = load(&path).unwrap();
         let concrete = "/api/knowledge/documents/43199/content";
-        assert!(table.matches(&Method::GET, concrete));
+        assert!(!table.matches(&Method::GET, concrete));
         assert!(!table.matches(&Method::PUT, concrete));
         assert!(!table.matches(&Method::POST, concrete));
 
@@ -412,5 +411,76 @@ mod tests {
         assert!(!table.matches(&Method::DELETE, "/api/tasks/123"));
         assert!(!table.matches(&Method::DELETE, "/api/tasks/bulk"));
         assert!(!table.matches(&Method::PUT, "/api/users/me"));
+    }
+
+    #[test]
+    fn knowledge_routes_keep_registered_handlers_without_cutover() {
+        const PREFIXES: [&str; 8] = [
+            "/api/knowledge-bases",
+            "/api/knowledge",
+            "/api/mcp/knowledge",
+            "/api/mcp/knowledge-external",
+            "/api/share/KnowledgeBase",
+            "/api/wiki",
+            "/api/dingtalk-wikispace",
+            "/api/admin/public-retrievers",
+        ];
+        let in_scope = |path: &str| {
+            PREFIXES.iter().any(|prefix| {
+                path == *prefix
+                    || path
+                        .strip_prefix(prefix)
+                        .is_some_and(|tail| tail.starts_with('/'))
+            })
+        };
+        assert!(!in_scope("/api/knowledge-documents/123"));
+        assert!(!in_scope("/api/knowledge-bases-other"));
+        assert!(!in_scope("/api/mcp/knowledge-external-other"));
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let config = load_routes_config(&path).unwrap();
+        assert!(config.routes.iter().all(|rule| !in_scope(&rule.path)));
+        let table = load(&path).unwrap();
+        let registered: BTreeSet<_> =
+            brz_http_server::__private::inventory::iter::<crate::__http_registry_http_apis::Entry>
+                .into_iter()
+                .flat_map(|entry| (entry.0.routes)())
+                .filter(|route| in_scope(route.path) && route.methods & (1 << 1) != 0)
+                .map(|route| route.path.to_owned())
+                .collect();
+        for path in [
+            "/api/knowledge-bases/:knowledge_base_id/document-protection",
+            "/api/knowledge-bases/:knowledge_base_id/artifacts",
+            "/api/knowledge/documents",
+            "/api/knowledge/documents/:document_id/content",
+            "/api/knowledge-bases/:kb_id/documents/:doc_id/detail",
+            "/api/knowledge-bases/:knowledge_base_id/folders",
+            "/api/mcp/knowledge-external/documents/:document_id/file",
+            "/api/share/KnowledgeBase/:resource_id/my-permission",
+            "/api/wiki/connections",
+        ] {
+            assert!(registered.contains(path), "Rust handler lost: GET {path}");
+        }
+        for path in registered.iter().map(String::as_str).chain(PREFIXES) {
+            let concrete = path
+                .split('/')
+                .map(|part| if part.starts_with(':') { "123" } else { part })
+                .collect::<Vec<_>>()
+                .join("/");
+            for method in [
+                Method::GET,
+                Method::HEAD,
+                Method::POST,
+                Method::PUT,
+                Method::PATCH,
+                Method::DELETE,
+                Method::OPTIONS,
+            ] {
+                assert!(!table.matches(&method, &concrete), "{method} {path}");
+            }
+        }
+        // Existing non-knowledge cutovers keep the same method selection.
+        assert!(table.matches(&Method::GET, "/api/users/me"));
+        assert!(table.matches(&Method::PUT, "/api/runtime-work/im-notifications/presence"));
+        assert!(!table.matches(&Method::POST, "/api/users/me"));
     }
 }

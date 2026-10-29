@@ -437,10 +437,7 @@ export function useWorkbenchRuntimeMessaging({
       try {
         if (!isCurrent()) return false
         // Replies settle an existing native request and do not select a model.
-        if (
-          !isRequestUserInputResponse &&
-          blockRuntimeSendForUnavailableModel(request.address, options)
-        )
+        if (!userInputResponse && blockRuntimeSendForUnavailableModel(request.address, options))
           return false
         if (optimisticUserMessage) {
           applyRuntimeConversationAction(request.address, {
@@ -450,7 +447,7 @@ export function useWorkbenchRuntimeMessaging({
         }
         const outboundRequest = await prepareRuntimeSendRequest(outboundRequestWithClientId)
         if (!isCurrent()) return false
-        if (!options?.silentBusyRetry && !isRequestUserInputResponse) {
+        if (!options?.silentBusyRetry && !userInputResponse) {
           lifecycleStore.sendRequested(outboundRequest.address)
           sendRequested = true
         }
@@ -459,7 +456,7 @@ export function useWorkbenchRuntimeMessaging({
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
         }
-        if (options?.silentBusyRetry && !isRequestUserInputResponse) {
+        if (options?.silentBusyRetry && !userInputResponse) {
           lifecycleStore.sendRequested(outboundRequest.address)
         }
         if (isRequestUserInputResponse) {

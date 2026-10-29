@@ -159,10 +159,6 @@ function stringField(record: Record<string, unknown>, key: string): string | und
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
-  return models
-}
-
 function cloudExecutableModels(models: UnifiedModel[]): UnifiedModel[] {
   return models.filter(supportsCloudExecution)
 }
@@ -730,10 +726,13 @@ export function createHybridWorkbenchServices(
     }
     throw new Error(`executor-not-found:${normalizedDeviceId}`)
   }
-  const mergeKnownDevices = (localDevices: DeviceInfo[], cloudDevices: DeviceInfo[]) =>
+  const mergeKnownDevices = (
+    localDevices: DeviceInfo[],
+    cloudDevices: DeviceInfo[]
+  ): DeviceInfo[] =>
     mergeDeviceLists(localDevices, [...currentAppDeviceRegistrations(), ...cloudDevices]).filter(
       device => !isAppDeviceRegistration(device)
-    )
+    ) as DeviceInfo[]
   const routeLocalSidebarMutation = async (
     deviceId: string,
     options: LocalRuntimeSidebarOptions | undefined,
@@ -983,16 +982,15 @@ export function createHybridWorkbenchServices(
           error
         )
       }
-      return mergeKnownDevices(localDevices, cloudDevices) as Awaited<
-        ReturnType<WorkbenchServices['deviceApi']['listDevices']>
-      >
+      return mergeKnownDevices(localDevices, cloudDevices)
     },
   }
 
   const standInApiForDevice = async (deviceId: string) => {
-    const identity = await getLocalRuntimeSidebarIdentity()
     const api =
-      deviceId === identity?.deviceId ? localServices.standInApi : cloudServices.standInApi
+      (await runtimeApiForDevice(deviceId)) === localServices.runtimeWorkApi
+        ? localServices.standInApi
+        : cloudServices.standInApi
     if (!api) throw new Error('Executor settings are unavailable')
     return api
   }
@@ -1116,6 +1114,11 @@ export function createHybridWorkbenchServices(
     },
     compactRuntimeTask(data: RuntimeCompactRequest) {
       return routeByAddress(data.address).compactRuntimeTask(data)
+    },
+    requestMcpApp<T = unknown>(data: import('@/api/mcpApps').McpAppRequest): Promise<T> {
+      const api = routeByAddress(data.address)
+      if (!api.requestMcpApp) throw new Error('Executor does not support MCP Apps')
+      return api.requestMcpApp<T>(data)
     },
     cleanRuntimeBackgroundTerminals(address: RuntimeTaskAddress) {
       const api = routeByAddress(address)
@@ -1681,13 +1684,27 @@ export function createHybridWorkbenchServices(
           return { data: [] }
         })
         return {
-          data: mergeModelCatalogs(annotateLocalModels(localModels.data), cloudModels.getModels()),
+          data: mergeModelCatalogs(localModels.data, cloudModels.getModels()),
         }
       },
     },
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
     standInApi: {
+      async configureTelemetry(userId, deviceId, enabled, enabledSince) {
+        return (await standInApiForDevice(deviceId)).configureTelemetry(
+          userId,
+          deviceId,
+          enabled,
+          enabledSince
+        )
+      },
+      async telemetryFacts(userId, deviceId) {
+        return (await standInApiForDevice(deviceId)).telemetryFacts(userId, deviceId)
+      },
+      async acknowledgeTelemetry(userId, deviceId, ids) {
+        return (await standInApiForDevice(deviceId)).acknowledgeTelemetry(userId, deviceId, ids)
+      },
       async memories(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).memories(userId, deviceId)
       },
@@ -1706,13 +1723,14 @@ export function createHybridWorkbenchServices(
       async runWork(userId, deviceId, workId) {
         return (await standInApiForDevice(deviceId)).runWork(userId, deviceId, workId)
       },
-      async organizeWork(userId, deviceId, workId, messageIds, targetWorkId) {
+      async organizeWork(userId, deviceId, workId, messageIds, targetWorkId, telemetryAction) {
         return (await standInApiForDevice(deviceId)).organizeWork(
           userId,
           deviceId,
           workId,
           messageIds,
-          targetWorkId
+          targetWorkId,
+          ...(telemetryAction ? ([telemetryAction] as const) : ([] as const))
         )
       },
       async adjustMessage(userId, deviceId, workId, messageId, targetWorkId) {
@@ -1834,7 +1852,8 @@ export function createHybridWorkbenchServices(
     userApi: cloudServices.userApi,
     cloudBackgroundApi: {
       listTeams: cloudServices.teamApi.listTeams,
-      listDevices: requestOptions => listCloudDevices(requestOptions?.signal),
+      listDevices: async requestOptions =>
+        mergeKnownDevices(rememberedLocalDevices, await listCloudDevices(requestOptions?.signal)),
       listRuntimeWork: requestOptions => listCloudRuntimeWork(requestOptions?.signal),
     },
     getLocalRuntimeSidebarIdentity,
@@ -1876,6 +1895,7 @@ function filterRuntimeChatStreamHandlers(
     onChatChunk: route(handlers.onChatChunk),
     onChatDone: route(handlers.onChatDone),
     onChatError: route(handlers.onChatError),
+    onChatRecovered: route(handlers.onChatRecovered),
     onBlockCreated: route(handlers.onBlockCreated),
     onBlockUpdated: route(handlers.onBlockUpdated),
     onSubagentActivity: route(handlers.onSubagentActivity),

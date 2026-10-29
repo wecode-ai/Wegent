@@ -238,6 +238,24 @@ function createMockDeliveryApi() {
 }
 
 describe('createWeworkDeliverySharedWorkspaceApi', () => {
+  it.each(['renamed', null])(
+    'maps atomic tag change target %s to the delivery API',
+    async target => {
+      const deliveryApi = createMockDeliveryApi()
+      const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+
+      await api.projects.update('project-1', {
+        version: 2,
+        tagChange: { source: 'old', target },
+      })
+
+      expect(deliveryApi.updateCloudProject).toHaveBeenCalledExactlyOnceWith('project-1', {
+        version: 2,
+        tag_change: { source: 'old', target },
+      })
+    }
+  )
+
   it('preserves current project authority and member override provenance', async () => {
     const deliveryApi = createMockDeliveryApi()
     const authoritative: CloudProject = {
@@ -753,7 +771,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
             ],
           }
         }
-        if (endpoint === '/v1/workspaces/workspace-1/agents') {
+        if (endpoint === '/v1/workspaces/workspace-1/agents?include_readiness=false') {
           return {
             items: [
               {
@@ -763,7 +781,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
                 owner_type: 'workspace',
                 owner_id: 'workspace-1',
                 owner_name: 'Workspace',
-                status: 'available',
+                status: 'unchecked',
               },
             ],
           }
@@ -786,7 +804,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         if (endpoint === '/v1/workspaces/workspace-1/projects') {
           return { items: [project] }
         }
-        if (endpoint === '/v1/resources') {
+        if (endpoint === '/v1/resources?include_readiness=false') {
           return {
             agents: [
               {
@@ -995,6 +1013,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'issues',
         'comments',
         'assignments',
+        'assignmentReceipts',
         'attachments',
         'collaborators',
         'taskBindings',
@@ -1047,8 +1066,11 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     await api.workspaces?.removeMember('workspace-1', 2)
     expect(client.delete).toHaveBeenCalledWith('/v1/workspaces/workspace-1/members/2')
     await expect(api.workspaces?.listAgents('workspace-1')).resolves.toMatchObject([
-      { id: '12', team_id: 12 },
+      { id: '12', team_id: 12, status: 'unchecked' },
     ])
+    expect(client.get).toHaveBeenCalledWith(
+      '/v1/workspaces/workspace-1/agents?include_readiness=false'
+    )
     await expect(api.workspaces?.addAgent('workspace-1', { teamId: 13 })).resolves.toMatchObject({
       id: '13',
       team_id: 13,

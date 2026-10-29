@@ -27,6 +27,18 @@ pub trait ErpProvider<R: brz_redis::Redis = brz_redis::RedisService>: Send + Syn
         self.employee_id(i64::from(user_id)).await
     }
 
+    /// `_resolve_employee_id_result` on the caller's query handle: the profile
+    /// read joins the caller's transaction while the lazy-sync branch keeps the
+    /// implementation's own connection.
+    async fn resolve_employee_id_on(
+        &self,
+        _query: &mut dyn crate::permissions::EntityQuery,
+        redis: Option<&R>,
+        user_id: i32,
+    ) -> brz_mysql::MysqlResult<Option<String>> {
+        self.resolve_employee_id(redis, user_id).await
+    }
+
     /// Read already-cached department membership without an upstream request.
     async fn cached_membership(
         &self,

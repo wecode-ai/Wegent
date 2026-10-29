@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useRef, useState } from 'react'
 import { ArrowUp, LoaderCircle, MessageSquare } from 'lucide-react'
 import { isImeEnterEvent } from '@wegent/chat-core/ime'
@@ -8,7 +9,7 @@ import {
 } from '@wegent/chat-core/runtime-user-input'
 import type { RequestUserInputPayload, RequestUserInputResponse } from '@wegent/chat-core/runtime'
 import type { StandInNotification, StandInNotificationState } from './standInNotifications'
-import { standInOrigin } from './standInNotifications'
+import { standInOrigin, standInState, standInVersion } from './standInNotifications'
 import { notificationTextFromMessages } from '@/features/workbench/runtimeTaskNotificationContent'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { projectRuntimePaneTranscript } from '@/features/workbench/runtimeTaskLifecycle/projection'
@@ -18,7 +19,7 @@ import { StandInIcon } from '@wegent/collaboration'
 import { NotificationFeedRow, type NotificationFeedRowProps } from './NotificationFeedRow'
 
 const ACTION_CLASS =
-  'inline-flex min-h-11 items-center gap-1.5 rounded-lg bg-muted/80 px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50 md:min-h-7'
+  'inline-flex min-h-11 items-center gap-1.5 rounded-lg bg-muted/80 px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:min-h-7'
 
 export function StandInNotificationProcessing({
   notification,
@@ -40,7 +41,10 @@ export function StandInNotificationProcessing({
   const [busy, setBusy] = useState(false)
   const submitting = useRef(false)
   const [error, setError] = useState<string | null>(null)
-  const [started, setStarted] = useState<StandInNotificationState | null>(null)
+  const [started, setStarted] = useState<{
+    state: StandInNotificationState
+    notificationVersion: string | null
+  } | null>(null)
   const [loaded, setLoaded] = useState<{
     signature: string
     question: RequestUserInputPayload | null
@@ -48,12 +52,19 @@ export function StandInNotificationProcessing({
     error?: string
   } | null>(null)
   const [submittedVersion, setSubmittedVersion] = useState<string | null>(null)
-  const state = notification.payload.standIn ?? started
+  const notifiedState = notification.payload.standIn
+  const notificationVersion = notifiedState ? standInVersion(notifiedState) : null
+  if (started && notifiedState && notificationVersion !== started.notificationVersion)
+    setStarted(null)
+  const state =
+    started && (!notifiedState || started.notificationVersion === notificationVersion)
+      ? started.state
+      : notifiedState
   const actorName = notification.payload.actorName?.trim()
   const runtimeApi = services?.runtimeWorkApi
   const projectId = notification.payload.projectId
   const issueId = notification.payload.itemId
-  const signature = state ? `${state.deviceId}:${state.taskId}:${state.updatedAt}` : ''
+  const signature = state ? `${state.deviceId}:${state.taskId}:${standInVersion(state)}` : ''
   const deviceId = state?.deviceId
   const taskId = state?.taskId
   const status = state?.status
@@ -82,7 +93,9 @@ export function StandInNotificationProcessing({
           signature,
           question: pending?.renderPayload ?? null,
           summary:
-            (status === 'failed' ? transcript.turns.at(-1)?.error : '') ||
+            (status === 'failed' && transcript.turns.at(-1)?.error
+              ? getStandInErrorMessage(transcript.turns.at(-1)?.error)
+              : '') ||
             notificationTextFromMessages(response.messages)?.body ||
             '',
         })
@@ -93,7 +106,7 @@ export function StandInNotificationProcessing({
             signature,
             question: null,
             summary: '',
-            error: cause instanceof Error ? cause.message : String(cause),
+            error: getStandInErrorMessage(cause),
           })
       })
     return () => {
@@ -111,7 +124,7 @@ export function StandInNotificationProcessing({
       await onChanged()
       return true
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(getStandInErrorMessage(cause))
       return false
     } finally {
       submitting.current = false
@@ -148,15 +161,14 @@ export function StandInNotificationProcessing({
         userId,
         origin?.projectStore === 'local' ? 'local' : 'cloud',
         target,
-        typeof origin?.standInId === 'string' ? origin.standInId : 'default'
+        typeof origin?.standInId === 'string' ? origin.standInId : undefined
       )
-      setStarted({
-        ...address,
-        status: 'running',
-        summary: '',
-        updatedAt: new Date().toISOString(),
-      })
-      if (state) setSubmittedVersion(signature)
+      const result = await services.standInApi.readTask(address.deviceId, address.taskId)
+      if (!result.success || !result.task)
+        throw Object.assign(new Error(result.error || t('notifications.stand_in_unavailable')), {
+          code: result.code,
+        })
+      setStarted({ state: standInState({ address, task: result.task }), notificationVersion })
     })
 
   const canStart = !state && services?.standInApi && projectId && issueId && userId != null
@@ -203,7 +215,7 @@ export function StandInNotificationProcessing({
               )}
               {(state?.summary || summary) && (
                 <p className="line-clamp-2 rounded-lg bg-muted/70 px-3 py-2 text-sm text-text-secondary">
-                  {state?.summary || summary}
+                  {state?.summary ? getStandInErrorMessage(state.summary) : summary}
                 </p>
               )}
               {(canStart ||
@@ -266,7 +278,7 @@ export function StandInNotificationProcessing({
                 />
               ) : showReplyEditor ? (
                 <form
-                  className="flex items-center gap-1 rounded-lg border border-border/60 bg-muted/20 p-1 focus-within:ring-1 focus-within:ring-focus"
+                  className="flex items-center gap-1 rounded-lg border border-border/60 bg-muted/20 p-1 keyboard:focus-within:ring-1 keyboard:focus-within:ring-focus"
                   onSubmit={event => {
                     event.preventDefault()
                     if (draft.trim()) void send(draft.trim())
@@ -290,7 +302,7 @@ export function StandInNotificationProcessing({
                     data-testid={`notification-stand-in-send-${notification.id}`}
                     aria-label={t('notifications.stand_in_send')}
                     disabled={busy || !draft.trim()}
-                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-text-primary text-background hover:bg-text-primary/90 focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-30 md:h-7 md:w-7"
+                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-text-primary text-background hover:bg-text-primary/90 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-30 md:h-7 md:w-7"
                   >
                     <ArrowUp className="h-4 w-4" />
                   </button>

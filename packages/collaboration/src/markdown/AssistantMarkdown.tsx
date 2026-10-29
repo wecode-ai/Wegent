@@ -12,6 +12,7 @@ import {
 import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
 import { Folder, Link2 } from 'lucide-react'
 import { Streamdown, defaultRemarkPlugins, type StreamdownProps } from 'streamdown'
+import remarkBreaks from 'remark-breaks'
 import type { Element } from 'hast'
 import { ComposerLinkChip } from './ComposerLinkChip'
 import 'streamdown/styles.css'
@@ -70,6 +71,7 @@ const completeMarkdownSource = (content: string) => [content]
 export interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
+  preserveLineBreaks?: boolean
   variant?: 'default' | 'document' | 'process' | 'user'
   renderLink?: (href: string, text: string) => ReactNode
   onOpenFile?: (path: string, options?: MarkdownFileOpenOptions) => void
@@ -126,6 +128,7 @@ type AssistantMarkdownPart =
 export const AssistantMarkdown = memo(function AssistantMarkdown({
   content,
   isStreaming = false,
+  preserveLineBreaks = false,
   variant = 'default',
   onOpenFile,
   renderVisualization: renderVisualizationOverride,
@@ -145,13 +148,13 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         : stripUnsupportedContentReferenceCitations(bufferedContent),
     [bufferedContent, variant]
   )
-  const remarkPlugins = useMemo<StreamdownProps['remarkPlugins']>(
-    () =>
-      variant === 'user'
-        ? Object.values(defaultRemarkPlugins)
-        : [...Object.values(defaultRemarkPlugins), [remarkAssistantAnnotations, { isStreaming }]],
-    [variant, isStreaming]
-  )
+  const remarkPlugins = useMemo<StreamdownProps['remarkPlugins']>(() => {
+    const plugins: NonNullable<StreamdownProps['remarkPlugins']> =
+      Object.values(defaultRemarkPlugins)
+    if (variant !== 'user') plugins.push([remarkAssistantAnnotations, { isStreaming }])
+    if (preserveLineBreaks) plugins.push(remarkBreaks)
+    return plugins
+  }, [variant, isStreaming, preserveLineBreaks])
   const windowMarkdown = Boolean(services.windowMarkdown) && variant === 'default'
   const contentParts = useMemo(() => {
     const parts =
@@ -446,6 +449,7 @@ function areAssistantMarkdownPropsEqual(
   return (
     previous.content === next.content &&
     previous.isStreaming === next.isStreaming &&
+    previous.preserveLineBreaks === next.preserveLineBreaks &&
     previous.renderVisualization === next.renderVisualization &&
     previous.variant === next.variant &&
     previous.onOpenFile === next.onOpenFile &&

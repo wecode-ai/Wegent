@@ -55,14 +55,29 @@ describe('addressed composer catalogs', () => {
       workspacePath: '',
     })
   })
-  it('merges the addressed device cloud installs and fails when that membership is unavailable', async () => {
+  it('merges the addressed device cloud installs and keeps the runtime catalog when unavailable', async () => {
     const request = vi.fn().mockResolvedValue(snapshot)
     const listCloud = vi.fn().mockResolvedValue([])
     const api = createRuntimeComposerApi({ request }, listCloud)
     expect((await api.readCatalog(address)).cloudInstalledPlugins).toEqual([])
     expect(listCloud).toHaveBeenCalledWith('remote-device')
     listCloud.mockRejectedValueOnce(new Error('cloud inventory unavailable'))
-    await expect(api.readCatalog(address)).rejects.toThrow('cloud inventory unavailable')
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      await expect(api.readCatalog(address)).resolves.toMatchObject({
+        taskId: 'side-task',
+        projectPluginIds: ['tool@local'],
+        cloudInstalledPlugins: [],
+        partial: true,
+        unavailableSources: ['cloud-installed-plugins'],
+      })
+      expect(warning).toHaveBeenCalledWith(
+        '[Wework] Failed to read cloud plugin membership; keeping the runtime catalog.',
+        expect.any(Error)
+      )
+    } finally {
+      warning.mockRestore()
+    }
   })
   it('uses the selected device and task, leaving workspace resolution to the executor', async () => {
     const request = vi.fn().mockResolvedValue(snapshot)
@@ -120,6 +135,30 @@ describe('addressed composer catalogs', () => {
     expect(result.apps[0]).toMatchObject({ id: 'app', isAccessible: false })
     expect(result.marketplaces[0].plugins[0]).toMatchObject({ name: 'tool', enabled: false })
     expect(result.skills[0]).toMatchObject({ name: 'pdf', path: '/side-workspace/pdf' })
+    expect(result.store.plugins[0]).toMatchObject({ packageId: 'managed-id' })
+    expect(result).toMatchObject({ partial: false, unavailableSources: [] })
+  })
+  it('preserves unavailable runtime sources while keeping local plugins usable', async () => {
+    const request = vi.fn().mockResolvedValue({
+      ...snapshot,
+      partial: true,
+      unavailableSources: ['codex-apps', 'codex-marketplaces'],
+      store: {
+        storePath: '/store',
+        plugins: [
+          {
+            name: 'managed',
+            packageId: 'managed-id',
+            enabled: true,
+            marketplace: 'wegent',
+            pluginPath: '/store/managed',
+          },
+        ],
+      },
+    })
+    const result = await createRuntimeComposerApi({ request }, async () => []).readCatalog(address)
+    expect(result.partial).toBe(true)
+    expect(result.unavailableSources).toEqual(['codex-apps', 'codex-marketplaces'])
     expect(result.store.plugins[0]).toMatchObject({ packageId: 'managed-id' })
   })
   it('rejects a snapshot for another task and malformed sources', async () => {

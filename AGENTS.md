@@ -110,9 +110,14 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 
 ## Testing and verification
 
-Prioritize fast, iterative development. Run E2E tests and `ai:verify` only when the user explicitly requests them. This execution policy overrides automatic E2E and real-Electron verification requirements in scoped guides; those guides still define how to verify when requested.
+Prioritize fast, iterative development. Run E2E tests and `ai:verify` only when the user explicitly requests them, except for changes to desktop updating, rollback, upgrade data migration, or their packaging and release gates: those changes require focused real packaged-Electron upgrade and rollback E2E verification. This execution policy overrides other automatic E2E and real-Electron verification requirements in scoped guides; those guides still define how to verify when requested.
 
-Run focused tests before committing; run broader tests when risk warrants it. E2E tests may mock only model services; every other component and integration must be real. They may not silently skip or fail gracefully, and failures must be fixed rather than skipped.
+Desktop update eligibility must come from exact, CI-verified source-to-target package pairs. A target's minimum source version is a constraint, never proof of compatibility. Preserve required intermediate packages, and never promote an upgrade edge without successful upgrade and rollback evidence bound to the delivered package hashes. See `wework/AGENTS.md` for the maintenance contract.
+
+Run focused tests before committing; run broader tests when risk warrants it. E2E tests may mock only model services; every other component and integration must be real. Never weaken assertions, skip scenarios, or tolerate failures to obtain a pass; fix failures instead.
+Use focused unit/component tests for local presentation or component state changes. Add or extend real E2E coverage for new cross-boundary features or changes to core flows, permissions, persistence, or critical state; the local E2E execution policy above still applies.
+Modify existing E2E tests only when a complete chain of log evidence proves the original test logic is wrong.
+Reuse unified E2E suites, runners, services, and build artifacts. Do not introduce increased total resource usage or substantial execution-time regressions without explicit user acceptance.
 Treat intermittent test failures as defects: investigate and fix them immediately before proceeding; never use reruns or retries to obtain a passing result or hide the underlying problem.
 Every E2E scenario must be invoked by GitHub CI. Focused local E2E commands may exist for debugging, but they must also be included by a CI-covered suite; do not add dead E2E coverage that CI never runs.
 Long desktop E2E flows must expose registered checkpoints through the shared runner. A checkpoint must establish its own minimal prerequisites so both one-checkpoint and from-checkpoint runs are valid; do not depend on state created only by an earlier skipped checkpoint.
@@ -128,6 +133,7 @@ pnpm --dir frontend test
 - Branches: `<type>/<description>` where type is `feature`, `fix`, `refactor`, `docs`, `test`, or `chore`.
 - Commits use Conventional Commits: `<type>[scope]: <description>`.
 - Respect Husky output; never use `--no-verify`.
+- Do not commit temporary screenshots, logs, dumps, or build artifacts. If required for delivery, explain their purpose and obtain explicit user authorization.
 - Pull the latest main branch and resolve conflicts before opening a PR. Run `git push` in an isolated background process because pre-push checks are expensive.
 
 ## Module quick reference

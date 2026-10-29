@@ -6,6 +6,7 @@ import { useEffect, useMemo, useReducer, useRef } from "react";
 
 import { collectIssueSubtreeIds, removeIssueSubtree } from "../board";
 import { isIssueVersionConflict } from "../issue-detail/issueVersionConflict";
+import { traceIssueStateChange } from "./issueStateDiagnostics";
 import {
   mergeIssueReadConfirmation,
   mergeIssueReadState,
@@ -36,7 +37,6 @@ import type {
   CollaborationLocation,
   CollaborationMember,
   CollaborationProject,
-  CollaborationStatus,
 } from "../types";
 
 export interface CollaborationWorkspaceControllerState extends IssueReadProjection {
@@ -96,7 +96,11 @@ export interface CollaborationWorkspaceControllerCommands {
   loadProject(
     projectId: string,
     showLoading?: boolean,
-    options?: { isCurrent?(): boolean; loadSnapshot?: boolean },
+    options?: {
+      isCurrent?(): boolean;
+      invalidate?: boolean;
+      loadSnapshot?: boolean;
+    },
   ): Promise<void>;
   loadProjectSnapshot(
     projectId: string,
@@ -125,6 +129,7 @@ export interface CollaborationWorkspaceControllerCommands {
   updateIssue(
     issueId: string,
     input: WorkspaceIssueUpdateInput,
+    /** The caller owns error presentation when true; position conflicts still reload. */
     options?: { throwOnError?: boolean },
   ): Promise<CollaborationIssue | null>;
   assignIssue(
@@ -136,11 +141,6 @@ export interface CollaborationWorkspaceControllerCommands {
     issueId: string,
     options?: { throwOnError?: boolean },
   ): Promise<boolean>;
-  changeProjectGroup(input: {
-    project: CollaborationProject;
-    groupBy: "status" | "priority" | "assignee" | "tag";
-    defaultStatuses: CollaborationStatus[];
-  }): Promise<void>;
   refreshSelectedIssue(): Promise<void>;
   refreshProjectAgents(projectId: string): Promise<void>;
   replaceProject(project: CollaborationProject): void;
@@ -184,7 +184,6 @@ const unavailableCollaborationWorkspaceControllerCommands: CollaborationWorkspac
     updateIssue: async () => null,
     assignIssue: async () => null,
     archiveIssue: async () => false,
-    changeProjectGroup: async () => undefined,
     refreshSelectedIssue: async () => undefined,
     refreshProjectAgents: async () => undefined,
     replaceProject: () => undefined,
@@ -206,6 +205,7 @@ export type CollaborationWorkspaceControllerAction =
   | {
       type: "home-loaded";
       projects: CollaborationProject[];
+      preserveSnapshotProjectIds: string[];
       projectItems: Record<string, CollaborationIssue[]>;
       projectMembers: Record<string, CollaborationMember[]>;
       projectAgents: Record<string, CollaborationAgent[]>;
@@ -310,15 +310,41 @@ export const initialCollaborationWorkspaceControllerState: CollaborationWorkspac
     errorSource: null,
   };
 
+function preserveProjectSnapshotValues<T>(
+  incoming: Record<string, T>,
+  current: Record<string, T>,
+  projectIds: readonly string[],
+): Record<string, T> {
+  const values = { ...incoming };
+  for (const projectId of projectIds) {
+    if (Object.hasOwn(current, projectId))
+      values[projectId] = current[projectId];
+  }
+  return values;
+}
+
 export function collaborationWorkspaceControllerReducer(
   state: CollaborationWorkspaceControllerState,
   action: CollaborationWorkspaceControllerAction,
 ): CollaborationWorkspaceControllerState {
-  return mergeIssueReadState(
+  const next = mergeIssueReadState(
     state,
     reduceWorkspaceState(state, action),
     action.type === "issue-read" ? action.issue : undefined,
   );
+  traceIssueStateChange(action.type, state.selectedIssue, next.selectedIssue);
+  return next;
+}
+
+function resolveLoadedIssue(
+  state: Pick<
+    CollaborationWorkspaceControllerState,
+    "issues" | "selectedIssue"
+  >,
+  incoming: CollaborationIssue,
+): CollaborationIssue {
+  const listed = state.issues.find((issue) => issue.id === incoming.id);
+  return newestIssue(state.selectedIssue, newestIssue(listed, incoming));
 }
 
 function reduceWorkspaceState(
@@ -338,10 +364,26 @@ function reduceWorkspaceState(
       return {
         ...state,
         projects: action.projects,
-        projectItems: action.projectItems,
-        projectMembers: action.projectMembers,
-        projectAgents: action.projectAgents,
-        projectTaskBindings: action.projectTaskBindings,
+        projectItems: preserveProjectSnapshotValues(
+          action.projectItems,
+          state.projectItems,
+          action.preserveSnapshotProjectIds,
+        ),
+        projectMembers: preserveProjectSnapshotValues(
+          action.projectMembers,
+          state.projectMembers,
+          action.preserveSnapshotProjectIds,
+        ),
+        projectAgents: preserveProjectSnapshotValues(
+          action.projectAgents,
+          state.projectAgents,
+          action.preserveSnapshotProjectIds,
+        ),
+        projectTaskBindings: preserveProjectSnapshotValues(
+          action.projectTaskBindings,
+          state.projectTaskBindings,
+          action.preserveSnapshotProjectIds,
+        ),
         myWork: action.myWork,
         error: null,
         errorSource: null,
@@ -523,7 +565,7 @@ function reduceWorkspaceState(
     case "issue-loaded":
       return {
         ...state,
-        selectedIssue: newestIssue(state.selectedIssue, action.issue),
+        selectedIssue: resolveLoadedIssue(state, action.issue),
         attachments:
           action.preserveAttachments &&
           state.selectedIssue?.id === action.issue.id
@@ -699,17 +741,6 @@ interface CommandEnvironment {
   notify?(message: string, kind: "success" | "error"): void;
 }
 
-function errorStatus(error: unknown): number | null {
-  if (!error || typeof error !== "object" || !("status" in error)) return null;
-  return typeof error.status === "number" ? error.status : null;
-}
-
-function isVersionConflict(error: unknown): boolean {
-  if (errorStatus(error) === 409) return true;
-  if (!error || typeof error !== "object" || !("code" in error)) return false;
-  return error.code === "version_conflict";
-}
-
 const externalGitBoardStatuses = [
   "inbox",
   "pending",
@@ -838,7 +869,6 @@ export function createCollaborationWorkspaceControllerCommands({
   const selectedIssueCommentsRevisions = new Map<string, number>();
   const selectedIssueAssignmentsRevisions = new Map<string, number>();
   const projectMutationGenerations = new Map<string, number>();
-  const projectGroupChangeRevisions = new Map<string, number>();
   const externalColumnLoads = new Set<string>();
   const standardSnapshotLoads = new Map<
     string,
@@ -863,9 +893,12 @@ export function createCollaborationWorkspaceControllerCommands({
   const loadHomeSnapshot = (projectId: string) => {
     const active = homeSnapshotLoads.get(projectId);
     if (active) return active;
+    const mutationGeneration = projectMutationGeneration(projectId);
     const pending = loadStandardSnapshot(projectId)
       .catch(() => null)
       .then((snapshot) => {
+        if (mutationGeneration !== projectMutationGeneration(projectId))
+          return null;
         homeSnapshotResults.set(projectId, snapshot);
         return snapshot;
       })
@@ -961,8 +994,13 @@ export function createCollaborationWorkspaceControllerCommands({
   const loadProject = async (
     projectId: string,
     showLoading = true,
-    options?: { isCurrent?(): boolean; loadSnapshot?: boolean },
+    options?: {
+      isCurrent?(): boolean;
+      invalidate?: boolean;
+      loadSnapshot?: boolean;
+    },
   ) => {
+    if (options?.invalidate) markProjectMutated(projectId);
     const revision = ++projectLoadRevision;
     const isCurrent = () =>
       revision === projectLoadRevision && (options?.isCurrent?.() ?? true);
@@ -1068,6 +1106,7 @@ export function createCollaborationWorkspaceControllerCommands({
           ? await Promise.all(
               projects.map(async (project) => ({
                 projectId: project.id,
+                mutationGeneration: projectMutationGeneration(project.id),
                 snapshot: !canPreloadHomeSnapshot(project)
                   ? null
                   : isExternalGitProject(project)
@@ -1087,26 +1126,37 @@ export function createCollaborationWorkspaceControllerCommands({
               })),
             )
           : [];
+        const currentSnapshots = snapshots.filter(
+          ({ projectId, mutationGeneration }) =>
+            mutationGeneration === projectMutationGeneration(projectId),
+        );
+        const preserveSnapshotProjectIds = snapshots
+          .filter(
+            ({ projectId, mutationGeneration }) =>
+              mutationGeneration !== projectMutationGeneration(projectId),
+          )
+          .map(({ projectId }) => projectId);
         dispatch({
           type: "home-loaded",
           projects,
+          preserveSnapshotProjectIds,
           projectItems: Object.fromEntries(
-            snapshots.flatMap(({ projectId, snapshot }) =>
+            currentSnapshots.flatMap(({ projectId, snapshot }) =>
               snapshot ? [[projectId, snapshot.items]] : [],
             ),
           ),
           projectMembers: Object.fromEntries(
-            snapshots.flatMap(({ projectId, snapshot }) =>
+            currentSnapshots.flatMap(({ projectId, snapshot }) =>
               snapshot ? [[projectId, snapshot.members]] : [],
             ),
           ),
           projectAgents: Object.fromEntries(
-            snapshots.flatMap(({ projectId, snapshot }) =>
+            currentSnapshots.flatMap(({ projectId, snapshot }) =>
               snapshot ? [[projectId, snapshot.agents]] : [],
             ),
           ),
           projectTaskBindings: Object.fromEntries(
-            snapshots.flatMap(({ projectId, snapshot }) =>
+            currentSnapshots.flatMap(({ projectId, snapshot }) =>
               snapshot ? [[projectId, snapshot.taskBindings]] : [],
             ),
           ),
@@ -1276,8 +1326,13 @@ export function createCollaborationWorkspaceControllerCommands({
             : Promise.resolve([]),
         ]);
         if (revision !== selectedIssueLoadRevision) return null;
-        const currentIssue = getSelectedIssue();
-        const resolvedIssue = newestIssue(currentIssue, issue);
+        const resolvedIssue = resolveLoadedIssue(
+          {
+            issues: getExternalBoardState().issues,
+            selectedIssue: getSelectedIssue(),
+          },
+          issue,
+        );
         dispatch({
           type: "issue-loaded",
           issue: resolvedIssue,
@@ -1373,7 +1428,9 @@ export function createCollaborationWorkspaceControllerCommands({
         });
         return issue;
       } catch (error) {
-        if (!input.position || !(await reportPositionConflict(issueId, error)))
+        const conflictReported =
+          input.position && (await reportPositionConflict(issueId, error));
+        if (!conflictReported && !options?.throwOnError)
           reportError(messages.saveFailed);
         if (options?.throwOnError) throw error;
         return null;
@@ -1408,59 +1465,6 @@ export function createCollaborationWorkspaceControllerCommands({
         reportError(messages.saveFailed);
         if (options?.throwOnError) throw error;
         return false;
-      }
-    },
-    async changeProjectGroup({ project, groupBy, defaultStatuses }) {
-      const revision = (projectGroupChangeRevisions.get(project.id) ?? 0) + 1;
-      projectGroupChangeRevisions.set(project.id, revision);
-      const isCurrent = () =>
-        projectGroupChangeRevisions.get(project.id) === revision;
-      const config = project.board_config ?? {
-        group_by: "status" as const,
-        processing_start_status_id: defaultStatuses[1]?.id ?? null,
-        statuses: defaultStatuses,
-      };
-      dispatch({
-        type: "replace-project",
-        project: { ...project, board_config: { ...config, group_by: groupBy } },
-      });
-      try {
-        const updated = await api.projects.update(project.id, {
-          version: project.version,
-          boardConfig: { ...config, group_by: groupBy },
-        });
-        markProjectMutated(project.id);
-        if (!isCurrent()) return;
-        catalogProjects = catalogProjects.map((item) =>
-          item.id === updated.id ? updated : item,
-        );
-        dispatch({ type: "replace-project", project: updated });
-      } catch (error) {
-        if (!isCurrent()) return;
-        if (!isVersionConflict(error)) {
-          dispatch({ type: "replace-project", project });
-          reportError(messages.saveFailed);
-          return;
-        }
-        try {
-          const latest = await api.projects.get(project.id);
-          if (!isCurrent()) return;
-          const latestConfig = latest.board_config ?? config;
-          const updated = await api.projects.update(project.id, {
-            version: latest.version,
-            boardConfig: { ...latestConfig, group_by: groupBy },
-          });
-          markProjectMutated(project.id);
-          if (!isCurrent()) return;
-          catalogProjects = catalogProjects.map((item) =>
-            item.id === updated.id ? updated : item,
-          );
-          dispatch({ type: "replace-project", project: updated });
-        } catch {
-          if (!isCurrent()) return;
-          await loadProject(project.id, false);
-          reportError(messages.conflict, "conflict");
-        }
       }
     },
     async refreshSelectedIssue() {
@@ -1499,6 +1503,11 @@ export function createCollaborationWorkspaceControllerCommands({
       dispatch({ type: "append-issue", issue });
     },
     replaceIssue: (issue) => {
+      console.debug("[collaboration-workspace] received issue replacement", {
+        issueId: issue.id,
+        version: issue.version,
+        selectedIssueId: getSelectedIssue()?.id ?? null,
+      });
       markProjectMutated(issue.cloud_project_id);
       dispatch({ type: "replace-issue", issue });
     },
@@ -1548,7 +1557,18 @@ function scopedWorkspaceReducer(
       state: action.state,
     };
   }
-  if (action.scope !== current.scope) return current;
+  if (action.scope !== current.scope) {
+    if (action.action.type === "replace-issue") {
+      console.warn(
+        "[collaboration-workspace] ignored issue update from previous API scope",
+        {
+          issueId: action.action.issue.id,
+          version: action.action.issue.version,
+        },
+      );
+    }
+    return current;
+  }
   return {
     ...current,
     state: collaborationWorkspaceControllerReducer(

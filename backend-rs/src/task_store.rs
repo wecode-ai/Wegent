@@ -15,10 +15,15 @@ use brz_mysql::{Mysql, MysqlResult, MysqlRow};
 
 use crate::tasks_search::statements::tasks_by_ids_statement;
 
+pub use crate::request_sql::{RequestSql, RouteKey, StatementArgs, fetch_optional_as};
 pub use crate::task_store_default::DefaultTaskStore;
 pub use crate::task_store_listing::{
     OwnedTaskPage, SubtaskListing, SubtaskPage, count_subtasks_by_task, load_subtasks_by_ids,
-    page_subtasks_by_task, subtask_context_columns,
+    ordered_subtasks_for_user, page_subtasks_by_task, subtask_context_columns,
+};
+pub use crate::task_store_personal::{
+    PERSONAL_TASK_HISTORY_LIMIT, PersonalTaskIndexes, personal_task_candidates,
+    personal_task_candidates_statement,
 };
 pub use crate::task_store_pipeline::{PipelineStageAdvance, advance_pipeline_stage};
 pub use crate::task_store_project::{
@@ -51,7 +56,8 @@ pub use crate::task_store_create::*;
 pub use crate::task_store_edit::*;
 pub use crate::task_store_executor_reference::{
     AssistantExecutor, SubtaskPairInsert, consume_executor_reference,
-    create_subtask_pair_with_executor_reference, latest_assistant_executor_statement,
+    create_subtask_pair_with_executor_reference, create_subtask_pair_with_resolved_executor,
+    latest_assistant_executor_statement, resolve_executor_reference_on,
     task_for_update_first_statement,
 };
 pub use crate::task_store_project_count::{
@@ -161,15 +167,17 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         &self,
         user_id: i64,
         limit: i64,
-        cursor: Option<(chrono::NaiveDateTime, i64)>,
+        cursor: Option<i64>,
         client_origin: Option<&str>,
     ) -> MysqlResult<Vec<MysqlRow>> {
-        crate::task_store_listing::personal_task_candidates(
+        personal_task_candidates(
             &self.mysql,
+            TASKS_TABLE,
             user_id,
             limit,
             cursor,
             client_origin,
+            None,
         )
         .await
     }
@@ -265,12 +273,7 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         task_id: i64,
         user_id: i32,
     ) -> MysqlResult<Vec<MysqlRow>> {
-        self.mysql
-            .fetch_all(
-                subtasks_by_owner_statement(SUBTASKS_TABLE),
-                (task_id, user_id),
-            )
-            .await
+        ordered_subtasks_for_user(&self.mysql, SUBTASKS_TABLE, task_id, user_id).await
     }
 
     async fn get_active_task_owned(
@@ -284,6 +287,23 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
                 (task_id, owner_user_id),
             )
             .await
+    }
+
+    async fn get_active_task_owned_on(
+        &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        owner_user_id: i32,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        sql.fetch_optional_row(
+            crate::request_sql::RouteKey::Task(task_id as u64),
+            &active_task_owned_statement(TASKS_TABLE),
+            vec![
+                StatementArg::Int(task_id),
+                StatementArg::Int(i64::from(owner_user_id)),
+            ],
+        )
+        .await
     }
 
     async fn get_active_task_any_owner(&self, task_id: i64) -> MysqlResult<Option<MysqlRow>> {
@@ -358,6 +378,20 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
         subtask_id: i64,
     ) -> MysqlResult<Option<MysqlRow>> {
         crate::task_store_subtask_writes::refresh_subtask(self, subtask_id).await
+    }
+
+    async fn refresh_subtask_on(
+        &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
+        _task_id: i64,
+        subtask_id: i64,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        sql.fetch_optional_row(
+            crate::request_sql::RouteKey::Task(_task_id as u64),
+            &subtask_by_id_refresh_statement(SUBTASKS_TABLE),
+            vec![StatementArg::Int(subtask_id)],
+        )
+        .await
     }
 
     async fn get_latest_subtask_ref_for_user(&self, user_id: i32) -> MysqlResult<Option<MysqlRow>> {
@@ -462,6 +496,20 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
             .await
     }
 
+    async fn refresh_task_on(
+        &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        _owner_user_id: i64,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        sql.fetch_optional_row(
+            crate::request_sql::RouteKey::Task(task_id as u64),
+            &task_by_id_refresh_statement(TASKS_TABLE),
+            vec![StatementArg::Int(task_id)],
+        )
+        .await
+    }
+
     async fn clear_project_for_owned_tasks(
         &self,
         project_id: i64,
@@ -537,6 +585,29 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
             .await
     }
 
+    async fn lineage_task_on(
+        &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        owner_user_id: i64,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        sql.fetch_optional_row(
+            crate::request_sql::RouteKey::Task(task_id as u64),
+            &owner_matches_task_id_statement(TASKS_TABLE),
+            vec![StatementArg::Int(task_id), StatementArg::Int(owner_user_id)],
+        )
+        .await
+    }
+
+    async fn list_subtasks_by_task_ordered_on(
+        &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        _owner_user_id: i64,
+    ) -> MysqlResult<SubtaskListing> {
+        crate::task_store_listing::ordered_subtasks_by_task_on(sql, SUBTASKS_TABLE, task_id).await
+    }
+
     async fn get_active_task_by_id(
         &self,
         task_id: i64,
@@ -597,10 +668,13 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
     async fn list_subtasks_by_task_unfiltered(
         &self,
         task_id: i64,
-        owner_user_id: i64,
+        owner_user_id: Option<i64>,
     ) -> MysqlResult<Vec<MysqlRow>> {
-        let sql = subtasks_by_task_unfiltered_statement(SUBTASKS_TABLE, true);
-        self.mysql.fetch_all(sql, (task_id, owner_user_id)).await
+        let sql = subtasks_by_task_unfiltered_statement(SUBTASKS_TABLE, owner_user_id.is_some());
+        match owner_user_id {
+            Some(owner_user_id) => self.mysql.fetch_all(sql, (task_id, owner_user_id)).await,
+            None => self.mysql.fetch_all(sql, (task_id,)).await,
+        }
     }
 
     async fn mark_task_subtasks_deleted(
@@ -644,6 +718,27 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
             .execute(sql, (json, updated_at, task_id))
             .await
             .map(|outcome| outcome.rows_affected)
+    }
+
+    async fn update_task_json_on(
+        &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        _owner_user_id: i64,
+        json: &str,
+        updated_at: &str,
+    ) -> MysqlResult<u64> {
+        sql.execute_statement(
+            crate::request_sql::RouteKey::Task(task_id as u64),
+            &update_task_json_statement(TASKS_TABLE),
+            vec![
+                StatementArg::Str(json.to_string()),
+                StatementArg::Str(updated_at.to_string()),
+                StatementArg::Int(task_id),
+            ],
+        )
+        .await
+        .map(|execution| execution.rows_affected)
     }
 
     async fn has_running_assistant(&self, task_id: i64) -> MysqlResult<bool> {

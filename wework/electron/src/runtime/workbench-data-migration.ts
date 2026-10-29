@@ -33,16 +33,12 @@ function stat(path: string): fs.BigIntStats | undefined {
   }
 }
 
-function owns(
-  path: string,
-  journal: FileIdentity & { directory?: boolean },
-  allowDeviceChange = false
-): boolean {
+function owns(path: string, journal: FileIdentity & { directory?: boolean }): boolean {
   const entry = stat(path)
   return (
     !!entry &&
     (journal.directory ? entry.isDirectory() : entry.isFile()) &&
-    (allowDeviceChange || entry.dev.toString() === journal.device) &&
+    entry.dev.toString() === journal.device &&
     entry.ino.toString() === journal.inode
   )
 }
@@ -135,35 +131,14 @@ function refreshMutableFileBridge(options: EntryMigration, journal: Journal): bo
   return true
 }
 
-// Recover aliases before Electron creates its single-instance files or log directory.
+// Recover aliases before Electron creates its single-instance files.
 // symlink is exclusive: concurrent startup cannot overwrite an existing entry.
-export function recoverWorkbenchDataBridge(
-  options: EntryMigration,
-  recovery: { replaceEmptyDirectory?: boolean; allowDirectoryDeviceChange?: boolean } = {}
-): void {
+export function recoverWorkbenchDataBridge(options: EntryMigration): void {
   const journal = readJournal(options)
-  if (!journal) return
-  // A remount can change st_dev while the migrated log directory retains its inode.
-  // Only opted-in directory recovery may relax the device check; files stay strict.
-  if (
-    !owns(options.target, journal, journal.directory && recovery.allowDirectoryDeviceChange) &&
-    !(journal.completed && !journal.directory)
-  )
+  if (!journal || (!owns(options.target, journal) && !(journal.completed && !journal.directory)))
     return
   const original = stat(options.source)
-  if (original) {
-    if (
-      !recovery.replaceEmptyDirectory ||
-      !journal.directory ||
-      !original.isDirectory() ||
-      fs.readdirSync(options.source).length
-    )
-      return
-    validateMigrationPaths(options)
-    // Only an explicitly opted-in log directory may be recreated after cleanup.
-    // rmdir also refuses a concurrent write; never recursively remove user data.
-    fs.rmdirSync(options.source)
-  }
+  if (original) return
   if (process.platform === 'win32' && !journal.directory) {
     if (!stat(options.target)) return
     if (refreshMutableFileBridge(options, journal)) return

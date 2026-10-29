@@ -67,7 +67,8 @@ pub(crate) const INTERNAL_DEVICE_COMMAND_KEYS: [&str; 2] =
     ["environment_prepare", "sync_git_credentials"];
 
 /// `command_service.REMOTE_READ_ONLY_COMMAND_KEYS`.
-const REMOTE_READ_ONLY_COMMAND_KEYS: [&str; 25] = [
+const REMOTE_READ_ONLY_COMMAND_KEYS: [&str; 26] = [
+    "task_artifact",
     "pwd",
     "home_dir",
     "ls_dirs",
@@ -114,7 +115,8 @@ const RUNTIME_AUTH_COMMAND_KEYS: [&str; 2] = ["read_runtime_auth_file", "sync_ru
 
 /// `command_service.execute_configured_device_command`'s payload keys that
 /// carry `command_key` to the executor.
-const EXECUTOR_COMMAND_KEY_KEYS: [&str; 5] = [
+const EXECUTOR_COMMAND_KEY_KEYS: [&str; 6] = [
+    "task_artifact",
     "environment_prepare",
     "git_apply_patch",
     "workspace_tree",

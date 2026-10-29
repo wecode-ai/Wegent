@@ -8,11 +8,11 @@ use super::{
     aitable_provider::AITableProvider, credentials::mask_provider_config,
     issue_provider::IssueProvider, store::task_provider, ArchivedLoopItemPage, BinaryInput,
     ChatAgent, ChatAgentCreate, ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate,
-    DeliveryDetail, DeliveryFinalize, IssueComment, LocalComment, LocalCommentCreate,
-    LocalExecution, LocalExecutionClaim, LocalRuntimeCommentStart, LocalTaskStore, LoopItem,
-    ProjectCreate, ProjectDescriptor, ProjectFile, ProjectUpdate, RuntimeTaskAddress,
-    TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskRuntimeError,
-    TaskUpdate,
+    DeliveryDetail, DeliveryFinalize, DeliveryUpdate, IssueComment, LocalComment,
+    LocalCommentCreate, LocalExecution, LocalExecutionClaim, LocalRuntimeCommentStart,
+    LocalTaskStore, LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile, ProjectUpdate,
+    RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder,
+    TaskRuntimeError, TaskUpdate,
 };
 
 /// Routes project and task operations to the provider configured on each project.
@@ -557,6 +557,25 @@ impl TaskRuntime {
         }
     }
 
+    pub fn assignment_receipts(
+        &self,
+        project: &str,
+        issue: &str,
+    ) -> Result<Vec<Value>, TaskRuntimeError> {
+        self.local_store.assignment_receipts(project, issue)
+    }
+
+    pub fn acknowledge_assignment(
+        &self,
+        project: &str,
+        issue: &str,
+        assignment: &str,
+        user: i64,
+    ) -> Result<(), TaskRuntimeError> {
+        self.local_store
+            .acknowledge_assignment(project, issue, assignment, user, false)
+    }
+
     pub async fn mark_task_read(
         &self,
         project_id: &str,
@@ -628,6 +647,31 @@ impl TaskRuntime {
     ) -> Result<IssueComment, TaskRuntimeError> {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
+            TaskProviderKind::Local => {
+                self.get_task(project_id, task_id).await?;
+                if body.trim().is_empty() {
+                    return Err(TaskRuntimeError::Invalid("Comment body is required".into()));
+                }
+                let comment = self.create_comment(LocalCommentCreate {
+                    project_id: project_id.to_owned(),
+                    task_id: task_id.to_owned(),
+                    client_message_id: None,
+                    sender_type: "system".into(),
+                    sender_id: "wework_space".into(),
+                    sender_name: "Wework".into(),
+                    content: body.to_owned(),
+                    metadata: serde_json::json!({"activity_type": "mcp_comment"}),
+                    reply_to_message_id: None,
+                })?;
+                Ok(IssueComment {
+                    id: comment.message_id,
+                    body: comment.content,
+                    author: comment.sender_name,
+                    web_url: None,
+                    created_at: comment.created_at,
+                    updated_at: comment.updated_at,
+                })
+            }
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
                 self.issue_provider
                     .add_comment(&project, provider, task_id, body)
@@ -1210,6 +1254,21 @@ impl TaskRuntime {
 
     pub fn list_deliveries(&self, item_id: &str) -> Result<Vec<Delivery>, TaskRuntimeError> {
         self.local_store.list_deliveries(item_id)
+    }
+
+    pub fn update_delivery(
+        &self,
+        delivery_id: &str,
+        input: DeliveryUpdate,
+    ) -> Result<DeliveryDetail, TaskRuntimeError> {
+        self.local_store.update_delivery(delivery_id, input)
+    }
+
+    pub fn list_project_delivery_files(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<Value>, TaskRuntimeError> {
+        self.local_store.list_project_delivery_files(project_id)
     }
 
     pub fn delivery_detail(&self, delivery_id: &str) -> Result<DeliveryDetail, TaskRuntimeError> {

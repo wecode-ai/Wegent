@@ -1,4 +1,6 @@
+import type { CollaborationAssignmentReceipt as IssueAssignmentReceipt } from '@wegent/collaboration'
 import type { RunnerSelection } from '@wegent/collaboration'
+import { deliveryUpdateForm } from '@wegent/collaboration'
 import { createIssueTaskBindingApi } from '@wegent/chat-core/issue-task-binding-api'
 import { ApiError, type HttpClient } from './http'
 import type { ProjectChatAgent } from './projectChatAgents'
@@ -18,6 +20,8 @@ import type {
 } from '@/types/api'
 import { saveBlobToDownloads } from '@/lib/blobDownload'
 
+export type { CollaborationAssignmentReceipt as IssueAssignmentReceipt } from '@wegent/collaboration'
+
 export type CloudProjectId = string
 type CloudProjectIdInput = CloudProjectId | number
 
@@ -32,6 +36,8 @@ export interface DeliveryAsset {
 }
 
 export interface Delivery {
+  title?: string
+  version?: number
   id: string
   loop_item_id: string
   created_by_user_id: number
@@ -50,6 +56,7 @@ export interface DeliveryDetail extends Delivery {
 }
 
 export interface DeliveryCreateInput {
+  title?: string
   markdown: string
   chat?: Record<string, unknown>
   source_task?: RuntimeTaskAddress
@@ -317,6 +324,7 @@ export interface ProjectTaskAttachment extends CloudLoopItemAttachment {
 }
 
 export interface CloudProject {
+  board_views?: import('@wegent/collaboration').ProjectBoardViews | null
   id: CloudProjectId
   workspace_id?: string | null
   workspace_access_role?: 'Owner' | 'Maintainer' | 'Developer' | 'Viewer' | null
@@ -716,6 +724,7 @@ export function createDeliveryApi(client: HttpClient) {
     updateCloudProject(
       projectId: CloudProjectIdInput,
       data: {
+        tag_change?: { source: string; target: string | null }
         name?: string
         description?: string
         tags?: string[]
@@ -725,6 +734,7 @@ export function createDeliveryApi(client: HttpClient) {
         default_issue_security?: 'open' | 'related'
         card_display?: CloudProject['card_display']
         board_config?: CloudProject['board_config']
+        board_views?: CloudProject['board_views']
         pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
         collaboration_groups?: CloudProject['collaboration_groups']
@@ -888,10 +898,33 @@ export function createDeliveryApi(client: HttpClient) {
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
     },
-    markLoopItemRead(itemId: string, activitySequence?: number): Promise<CloudLoopItem> {
-      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/read`, {
-        activity_sequence: activitySequence ?? null,
-      })
+    async getIssueAssignmentReceipts(itemId: string): Promise<IssueAssignmentReceipt[]> {
+      const response = await client.get<{ items: IssueAssignmentReceipt[] }>(
+        `/v1/loop-items/${encodeURIComponent(itemId)}/assignments`
+      )
+      return response.items.filter(row => row.target_type === 'human')
+    },
+    acknowledgeIssueAssignment(
+      itemId: string,
+      assignmentId: string,
+      userId: number
+    ): Promise<unknown> {
+      // Cloud identity comes from authentication; local adapters use this argument.
+      void userId
+      return client.post(
+        `/v1/loop-items/${encodeURIComponent(itemId)}/assignments/${encodeURIComponent(assignmentId)}/receipt`,
+        { kind: 'human_read' }
+      )
+    },
+    async markLoopItemRead(itemId: string, activitySequence?: number): Promise<CloudLoopItem> {
+      const item = await client.post<CloudLoopItem>(
+        `/v1/loop-items/${encodeURIComponent(itemId)}/read`,
+        {
+          activity_sequence: activitySequence ?? null,
+        }
+      )
+      window.dispatchEvent(new Event('wework-notifications-changed'))
+      return item
     },
     findLoopItemForTask(task: RuntimeTaskAddress): Promise<CloudLoopItem> {
       const query = new URLSearchParams({ device_id: task.deviceId, task_id: task.taskId })
@@ -1174,6 +1207,15 @@ export function createDeliveryApi(client: HttpClient) {
     },
     createDelivery(itemId: string, data: DeliveryCreateInput): Promise<Delivery> {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/deliveries`, data)
+    },
+    updateDelivery(
+      deliveryId: string,
+      input: import('@wegent/collaboration').WorkspaceDeliveryUpdate
+    ): Promise<DeliveryDetail> {
+      return client.patch(
+        `/v1/deliveries/${encodeURIComponent(deliveryId)}`,
+        deliveryUpdateForm(input)
+      )
     },
     addAsset(deliveryId: string, file: File, relativePath: string): Promise<DeliveryAsset> {
       const form = new FormData()

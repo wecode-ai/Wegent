@@ -7,6 +7,7 @@ import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-type
 import type {
   CollaborationAgent,
   CollaborationAssignment,
+  CollaborationAssignmentReceipt,
   CollaborationAttachment,
   CollaborationBoardSnapshot,
   CollaborationComment,
@@ -49,6 +50,7 @@ export interface WorkspaceProjectCreateInput {
 
 export interface WorkspaceProjectUpdateInput {
   version: number;
+  tagChange?: { source: string; target: string | null };
   name?: string;
   description?: string;
   tags?: string[];
@@ -58,6 +60,7 @@ export interface WorkspaceProjectUpdateInput {
   defaultIssueSecurity?: "open" | "related";
   providerConfig?: Record<string, unknown>;
   boardConfig?: CollaborationProject["board_config"];
+  boardViews?: CollaborationProject["board_views"];
   cardDisplay?: CollaborationProject["card_display"];
   pullRequestAutomation?: Record<string, unknown>;
   workflowDefinition?: Record<string, unknown>;
@@ -282,6 +285,10 @@ export interface WorkspaceDeliveryAsset {
 }
 
 export interface WorkspaceDelivery {
+  title?: string;
+  version?: number;
+  sourceTaskSnapshot?: Record<string, unknown> | null;
+  createdByUserId?: number | null;
   id: string;
   issueId: string;
   status: "draft" | "delivered";
@@ -749,6 +756,7 @@ export interface SharedWorkspaceDeliveriesApi {
   create(
     issueId: string,
     input: {
+      title?: string;
       markdown: string;
       chat?: Record<string, unknown>;
       sourceTask?: WorkspaceRuntimeTaskAddress;
@@ -764,6 +772,19 @@ export interface SharedWorkspaceDeliveriesApi {
     input: { fulfillments: Array<Record<string, unknown>> },
   ): Promise<WorkspaceDelivery>;
   discardDraft(deliveryId: string): Promise<void>;
+  update?(
+    deliveryId: string,
+    input: WorkspaceDeliveryUpdate,
+  ): Promise<WorkspaceDelivery>;
+}
+
+export interface WorkspaceDeliveryUpdate {
+  title: string;
+  version: number;
+  markdown: string;
+  chat: Record<string, unknown> | null;
+  retained_asset_ids: string[];
+  files: Array<{ relative_path: string; file: File }>;
 }
 
 export interface SharedWorkspaceExecutionsApi {
@@ -977,6 +998,14 @@ export interface SharedWorkspaceApi {
   issues: SharedWorkspaceIssuesApi;
   comments: SharedWorkspaceCommentsApi;
   assignments?: SharedWorkspaceAssignmentsApi;
+  assignmentReceipts?: {
+    list(issueId: string): Promise<CollaborationAssignmentReceipt[]>;
+    acknowledge(
+      issueId: string,
+      assignmentId: string,
+      userId: number,
+    ): Promise<unknown>;
+  };
   attachments: SharedWorkspaceAttachmentsApi;
   collaborators: SharedWorkspaceCollaboratorsApi;
   taskBindings: SharedWorkspaceTaskBindingsApi;

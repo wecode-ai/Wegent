@@ -74,6 +74,53 @@ export async function verifyRuntimeInputAcknowledgement(
         'The real terminal event did not arrive before the acknowledgement'
       )
       assert.equal((await readGate(control)).released, false)
+      if (outcome !== 'rejected') {
+        // Switch to another real conversation before reopening, forcing the pane
+        // to consume native terminal history while the answer RPC remains held.
+        const otherRow = JSON.parse(await control.command('snapshot', 'body')).testIds.find(
+          id =>
+            id.startsWith('runtime-local-task-row-') && id !== `runtime-local-task-row-${taskId}`
+        )
+        assert.ok(otherRow, 'The permission checkpoint must provide another conversation')
+        await control.command('click', `[data-testid="${otherRow}"]`)
+        await until(
+          async () => JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')),
+          value => value.workbench?.currentRuntimeTask?.taskId !== taskId,
+          'The previous conversation did not detach before reloading native history'
+        )
+        await control.command('armRuntimeTransportGate', 'body', {
+          value: JSON.stringify({
+            id: 'input-terminal-history',
+            kind: 'response',
+            name: 'runtime.tasks.transcript',
+            where: [{ path: 'params.taskId', equals: taskId }],
+            hold: false,
+          }),
+        })
+        await control.command('click', `[data-testid="runtime-local-task-row-${taskId}"]`)
+        await until(
+          async () =>
+            JSON.parse(
+              await control.command('readRuntimeTransportGate', 'body', {
+                value: 'input-terminal-history',
+              })
+            ),
+          capture => capture?.deliveries === 1,
+          'The pane did not receive real terminal history before the acknowledgement'
+        )
+        await waitForWorkbenchDebugState(
+          control,
+          value =>
+            value.workbench?.currentRuntimeTask?.taskId === taskId &&
+            value.pane?.transcript?.loading === false &&
+            value.pane?.status?.isBusy === false,
+          'The pane did not consume real terminal history before the acknowledgement'
+        )
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: REQUEST_USER_INPUT_COMPLETION_TEXT,
+        })
+        assert.equal((await readGate(control)).released, false)
+      }
       if (outcome === 'switched' || outcome === 'evicted') {
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
@@ -146,6 +193,7 @@ export async function verifyRuntimeInputAcknowledgement(
       }
     } finally {
       await control.command('releaseRuntimeInputTransportGate')
+      await control.command('resetRuntimeTransportGates', 'body', { value: '[]' })
     }
   }
 }

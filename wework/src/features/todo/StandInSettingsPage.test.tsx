@@ -63,6 +63,106 @@ function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
 const userSetup = () => userEvent.setup({ delay: null })
 
 describe('Personal stand-in settings', () => {
+  it('uses the project store in both project-agent scope labels', async () => {
+    const role = newStandInRole('mac', 'review')
+    role.agentId = 'reviewer'
+    role.agentProject = { id: 'one', store: 'cloud' }
+    role.collaboration = {
+      ...role.collaboration,
+      enabled: true,
+      allProjects: false,
+      projects: [role.agentProject],
+    }
+    const { props } = fixture({ roles: [role] })
+    props.projects.push({
+      id: 'one',
+      name: 'Cloud project',
+      project_store: 'backend',
+    } as CollaborationProject)
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} />)
+    expect(await screen.findByTestId('stand-in-project-agent-scope')).toHaveTextContent(
+      'Cloud project'
+    )
+    await user.click(screen.getByTestId('stand-in-connections-open'))
+    await user.click(screen.getByTestId('stand-in-connection-project-cloud-one'))
+    expect(screen.getByTestId('stand-in-connections')).toHaveTextContent('Cloud project')
+    expect(screen.getByTestId('stand-in-connections')).not.toHaveTextContent('First project')
+  })
+
+  it('keeps project names visible on another device without offering local projects to connect', async () => {
+    const role = newStandInRole('remote', 'review')
+    role.collaboration = {
+      ...role.collaboration,
+      enabled: true,
+      allProjects: false,
+      projects: [
+        { id: 'one', store: 'local' },
+        { id: 'one', store: 'cloud' },
+      ],
+    }
+    const { props } = fixture({ executionDeviceId: 'remote', roles: [role] })
+    props.projects.push({
+      id: 'one',
+      name: 'Cloud project',
+      project_store: 'backend',
+    } as CollaborationProject)
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} initialDeviceId="remote" />)
+    await user.click(await screen.findByTestId('stand-in-connections-open'))
+    expect(screen.getByTestId('stand-in-connection-project-local-one')).toHaveTextContent(
+      'First project'
+    )
+    expect(screen.getByTestId('stand-in-connection-project-cloud-one')).toHaveTextContent(
+      'Cloud project'
+    )
+    await user.click(screen.getByTestId('stand-in-connection-project-local-one'))
+    expect(screen.getByRole('checkbox', { name: 'First project' })).toBeChecked()
+    expect(screen.queryByRole('checkbox', { name: 'Second project' })).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Cloud project' })).toBeChecked()
+    await user.click(screen.getByRole('checkbox', { name: 'First project' }))
+    expect(screen.queryByRole('checkbox', { name: 'First project' })).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-connections-back'))
+    expect(screen.queryByTestId('stand-in-connection-project-local-one')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-connection-project-cloud-one')).toHaveTextContent(
+      'Cloud project'
+    )
+  })
+
+  it('keeps remote all-project scope without offering projects owned by this computer', async () => {
+    const role = newStandInRole('remote', 'review')
+    role.collaboration.enabled = true
+    role.collaboration.allProjects = false
+    const { props, personalSave } = fixture({ executionDeviceId: 'remote', roles: [role] })
+    props.projects.push({
+      id: 'cloud',
+      name: 'Cloud project',
+      project_store: 'backend',
+    } as CollaborationProject)
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} initialDeviceId="remote" />)
+    await user.click(await screen.findByTestId('stand-in-connections-open'))
+    await user.click(screen.getByTestId('stand-in-add-connection'))
+    await user.click(screen.getByTestId('stand-in-add-projects-connection'))
+    expect(screen.queryByRole('checkbox', { name: 'First project' })).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-all-projects'))
+    expect(screen.getByRole('checkbox', { name: 'Cloud project' })).toBeChecked()
+    expect(screen.queryByRole('checkbox', { name: 'First project' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: 'Second project' })).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('stand-in-save'))
+    expect(personalSave).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        roles: [
+          expect.objectContaining({
+            collaboration: expect.objectContaining({ allProjects: true, projects: [] }),
+          }),
+        ],
+      }),
+      'remote'
+    )
+  })
+
   it('returns the created role to its parent after the first save', async () => {
     const { props, personalSave } = fixture({ roles: [] })
     const user = userSetup()
@@ -104,7 +204,9 @@ describe('Personal stand-in settings', () => {
     render(<StandInSettingsPage {...props} initialProfileId="default" onDeleted={onDeleted} />)
     await user.click(await screen.findByTestId('stand-in-role-delete'))
     await user.click(screen.getByTestId('stand-in-role-delete-confirm'))
-    expect(await screen.findByText('Error: task changed')).toBeInTheDocument()
+    expect(
+      await screen.findByText('分身操作失败，请稍后重试；如仍失败，请查看执行设备日志。')
+    ).toBeInTheDocument()
     expect(onDeleted).not.toHaveBeenCalled()
     expect(screen.getByTestId('stand-in-role-delete-confirm')).toBeInTheDocument()
   })
@@ -504,7 +606,9 @@ describe('Personal stand-in settings', () => {
     await user.type(name, '代码审查')
     expect(personalSave).not.toHaveBeenCalled()
     await user.click(screen.getByTestId('stand-in-save'))
-    expect(await screen.findByRole('alert')).toHaveTextContent('version_conflict')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '分身设置已在其他位置更新，请刷新后重新修改。'
+    )
     expect(name).toHaveValue('代码审查')
     await user.click(screen.getByTestId('stand-in-save'))
     await screen.findByTestId('stand-in-saved')
@@ -540,7 +644,9 @@ describe('Personal stand-in settings', () => {
     expect(personalSave).not.toHaveBeenCalled()
     expect(screen.getByTestId('stand-in-pending-save')).toHaveTextContent('开启并保存后')
     await user.click(screen.getByTestId('stand-in-save'))
-    expect(await screen.findByRole('alert')).toHaveTextContent('version_conflict')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '分身设置已在其他位置更新，请刷新后重新修改。'
+    )
     expect(screen.getByTestId('stand-in-auto')).toHaveAttribute('aria-checked', 'true')
   })
 
@@ -588,9 +694,47 @@ describe('Personal stand-in settings', () => {
     personalGet.mockRejectedValueOnce(new Error('Executor offline'))
     const user = userSetup()
     render(<StandInSettingsPage {...props} />)
-    expect(await screen.findByRole('alert')).toHaveTextContent('Executor offline')
+    expect(await screen.findByRole('alert')).toHaveTextContent('执行设备离线，请连接设备后重试。')
     await user.click(screen.getByTestId('stand-in-reload'))
     expect(await screen.findByTestId('stand-in-agent')).toBeInTheDocument()
     await waitFor(() => expect(personalGet).toHaveBeenCalledTimes(2))
   })
+})
+
+it('shows actionable connection guidance and preserves the rejected project-agent draft', async () => {
+  const role = newStandInRole('mac', 'review')
+  role.connections = [
+    {
+      providerId: 'example',
+      id: 'group',
+      name: 'Work group',
+      kind: 'group',
+      profile: 'work',
+      policy: { automatic: true, askBeforeAct: true },
+    },
+  ]
+  const { props, personalSave } = fixture({ roles: [role] })
+  props.api = {
+    agents: {
+      list: vi.fn(async (id: string) =>
+        id === 'one'
+          ? [{ id: 'reviewer', name: 'Project reviewer', runtime: 'codex', status: 'active' }]
+          : []
+      ),
+    },
+  } as unknown as SharedWorkspaceApi
+  personalSave.mockRejectedValueOnce({
+    code: 'stand_in_project_connections',
+    message: 'invalid task data: Project-scoped agents can only receive work from their project',
+  })
+  const user = userSetup()
+  render(<StandInSettingsPage {...props} />)
+  const option = await screen.findByRole('option', { name: 'Project reviewer · First project' })
+  await user.selectOptions(screen.getByTestId('stand-in-agent'), option)
+  await user.click(screen.getByTestId('stand-in-save'))
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '该智能体只能接收所属项目的工作。请先移除其他来源连接，或改选个人智能体。'
+  )
+  expect(screen.getByTestId('stand-in-project-agent-scope')).toHaveTextContent('First project')
+  expect(personalSave.mock.calls[0][1].roles[0].connections).toEqual(role.connections)
 })

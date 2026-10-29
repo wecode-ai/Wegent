@@ -1752,6 +1752,7 @@
   "attachment": {
     "errors": {
       "unsupported_type": "Unsupported file format",
+      "empty_file": "The file is empty. Please select a non-empty file or copy the image again.",
       "unsupported_type_hint": "Please upload files in these formats: {{types}}",
       "unrecognized_type": "Unrecognized file type",
       "unrecognized_type_hint": "Please upload documents, images, or text files",

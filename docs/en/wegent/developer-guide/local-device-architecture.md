@@ -34,6 +34,26 @@ flowchart LR
     style BE fill:#14B8A6,color:#fff
 ```
 
+### Device artifact declaration and download
+
+Claude Code and Wegent executors linked to a Backend Task can declare final deliverables:
+
+```bash
+$WEGENT_EXECUTOR_BINARY artifact declare --path outputs/report.pdf
+```
+
+A declaration sends only the filename, relative path, canonical workspace root, size, modification time, and SHA-256. It does not upload file contents. `WEGENT_BACKEND_TASK_ID` identifies the Backend API task, while `WEGENT_TASK_ID` retains the local conversation identity for workspace resolution. Authentication uses only the execution's `AUTH_TOKEN` (Task Token), not the separate runtime credential.
+
+The executor working directory, `WEGENT_TASK_WORKSPACE`, and the declaration command share the same workspace path resolver. When a local device configures `LOCAL_WORKSPACE_ROOT`, the logical `/workspace` alias must not be treated as its physical workspace directory.
+
+The updated default `Ghost/default/wegent-wework` requires successful declaration before directing users to conversation file cards, rather than local paths or `computer://` links. Initialization YAML does not overwrite existing Ghosts. Claude Code (with tools enabled) and Codex inject declaration instructions at execution time, so legacy Ghosts can use this delivery flow without rewriting database configuration. The prompt data migration and its no-op revision are removed without application-data reads or writes. Environments already recording `a9c4e7b2d610` require separate version compatibility handling before deployment. Previously migrated prompts are not automatically restored. See the [withdrawal and revision-chain notes](./device-artifact-prompt-migration.md).
+
+Backend captures the executor name and namespace from the Task Token's assistant subtask and persists them with the workspace root as the artifact source. Downloads always use this source snapshot, never the task's latest executor. Recovery that rebinds the original subtask cannot redirect an old card to a new device. An unavailable original source remains unavailable; shared and copied tasks do not carry these device artifacts.
+
+Device downloads reuse the canonical containment checks in `workspace_read_file_chunk`. HTTP executors use `/filesystem/artifact`, which requires an explicit `root_path`. Each read resolves the real path and verifies that it stays inside the original workspace, rejecting a file replaced with an outside symlink after declaration. An older executor without this endpoint fails explicitly; a rejected read must not fall back to `/files`. Bytes pass through Backend only when requested and are not persisted in Backend artifact storage. A card reads the current file in the original workspace, not a permanent historical copy.
+
+Each artifact download is limited to 50 MiB. HTTP downloads check `Content-Length` before reading the body and count actual bytes as they arrive. Missing or understated lengths cannot bypass the limit: reading stops immediately with 413 when the limit is exceeded.
+
 ### Wework Packaged App Local-First Channel
 
 Local Electron packages reuse the release package's brand metadata and update source configuration. They must also include `app-update.yml` in Resources with `updaterCacheDirName` derived from the package name, allowing startup to migrate the actual updater cache directory. Write this file before signing the macOS app.
@@ -145,6 +165,8 @@ The executor’s active transcript cache accumulates both `item/agentMessage/del
 Unphased text items that are still accumulating deltas remain process text, matching the live stream, and adopt their terminal projection only after completion. History loading must not promote it to a final answer early. If Goal recovery fails or is cancelled before a native turn starts, terminal events must also omit the old user-message identity without modifying the original request used for backend reporting.
 
 After one physical Goal turn completes, the executor waits for Codex to create the next turn automatically. If that wait times out, it reconciles against provider-authoritative state through `thread/goal/get` and `thread/read`: it rebinds and continues listening when an active turn already exists, attempts native `thread/resume` once when the Goal remains active but the thread is idle, and exposes `needsAttention` to Wework instead of waiting silently when continuation still cannot proceed. Wework uses the Goal execution states `running`, `recovering`, and `needsAttention` to distinguish normal execution, restart recovery, and user-action-required recovery. A user recovery action reuses the retained Goal request instead of sending an ordinary chat message.
+
+A timeout waiting for initial model or tool progress does not prove that execution stopped. When the shared Codex app-server has only one active execution, the executor may terminate that process and report a startup timeout failure. If restarting is skipped to protect other active executions, it must retain the original startup request, notification subscription, and cancellation handler until an actual terminal outcome arrives, without reporting failure or marking the Goal `needsAttention`. Recovery eligibility is checked again at each startup timeout interval. Cancellation must still send a native startup interrupt while the startup response is pending or a Goal has no turn ID. A stopped execution already marked `needsAttention` must not be revived by a streaming turn left in historical transcripts. Suppressed turn IDs are retained as history so late snapshots cannot replace a newly resumed turn; a new running executor snapshot or an explicit recovery can still start subsequent execution. Task status, Goal recovery indicators, and thinking indicators must reflect the same execution lifecycle.
 
 The Wework frontend manages every task lifecycle through one user-scoped `RuntimeTaskLifecycleStore`. The Store owns one state machine per task and routes events to it. The state machine is the aggregate root for execution, turn, Goal, and unread state; its reducer is only an internal transition implementation. The React Provider adapts that same Store for subscription and neither stores nor infers execution state. The task list, composer, message thinking feedback, system tray, close guard, and completion reminders all read the same Store snapshot.
 

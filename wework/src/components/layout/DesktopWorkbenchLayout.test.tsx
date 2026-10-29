@@ -1,4 +1,13 @@
-import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  configure,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useEffect, useMemo, useState } from 'react'
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -2074,7 +2083,29 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('wework-collaboration-platform')).not.toBeInTheDocument()
   })
 
-  test('keeps a retained board bound to its own workspace tab route', async () => {
+  test('keeps a retained board bound to its own workspace tab route', async ({
+    onTestFinished,
+  }) => {
+    const dialogMethods = ['showModal', 'close'] as const
+    const descriptors = dialogMethods.map(method =>
+      Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, method)
+    )
+    for (const method of dialogMethods) {
+      Object.defineProperty(HTMLDialogElement.prototype, method, {
+        configurable: true,
+        value: function (this: HTMLDialogElement) {
+          this.open = method === 'showModal'
+        },
+      })
+    }
+    onTestFinished(() => {
+      cleanup()
+      dialogMethods.forEach((method, index) => {
+        const descriptor = descriptors[index]
+        if (descriptor) Object.defineProperty(HTMLDialogElement.prototype, method, descriptor)
+        else Reflect.deleteProperty(HTMLDialogElement.prototype, method)
+      })
+    })
     deliveryApiMock.available = true
     const project = {
       id: 'project-1',
@@ -2144,8 +2175,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    await userEvent.click(screen.getByTestId('collaboration-board-settings'))
-    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('board-view-picker'))
+    await userEvent.click(screen.getByTestId('board-view-edit'))
+    expect(screen.getByTestId('board-view-editor')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '看板设置' })).toHaveClass(
       'text-heading-sm',
       'font-medium'
@@ -2158,7 +2190,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('board-view-editor')).toBeInTheDocument()
     expect(actions.updateActiveTab).not.toHaveBeenCalled()
 
     view.rerender(
@@ -2168,7 +2200,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
-    expect(screen.getByTestId('project-board-settings-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('board-view-editor')).toBeInTheDocument()
   })
 
   test('returns to the workspace after opening settings from its account menu', async () => {
@@ -4273,8 +4305,8 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    const scrollContainer = screen.getByTestId('desktop-chat-scroll')
     const scroller = screen.getByTestId('desktop-workbench-content')
+    expect(scroller).toHaveAttribute('data-scroll-origin', 'top')
     Object.defineProperty(scroller, 'clientHeight', {
       value: 200,
       configurable: true,
@@ -4284,12 +4316,15 @@ describe('DesktopWorkbenchLayout', () => {
       configurable: true,
     })
     Object.defineProperty(scroller, 'scrollTop', {
-      value: -200,
+      value: 400,
       writable: true,
       configurable: true,
     })
 
-    fireEvent.scroll(scrollContainer)
+    expect(screen.queryByTestId('scroll-to-bottom-button')).not.toBeInTheDocument()
+    fireEvent.wheel(scroller, { deltaY: -200 })
+    scroller.scrollTop = 200
+    fireEvent.scroll(scroller)
 
     expect(await screen.findByTestId('scroll-to-bottom-button')).toHaveClass('bottom-4', 'z-10')
   })
@@ -9237,6 +9272,8 @@ describe('DesktopWorkbenchLayout', () => {
   }, 30_000)
 
   test('temporary chat keeps a stale busy rejection queued without blind retries', async () => {
+    // Queue semantics do not require timer-paced typing, which can outlive a timed-out test.
+    const user = userEvent.setup({ delay: null })
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',
       taskId: 'runtime-side-chat-stale-busy',
@@ -9252,13 +9289,13 @@ describe('DesktopWorkbenchLayout', () => {
     })
     renderWorkspacePanelLayout()
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
-    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await user.type(sideChatInput, 'first message')
+    await user.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalled())
 
     const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
@@ -9266,8 +9303,8 @@ describe('DesktopWorkbenchLayout', () => {
       | undefined
     act(() => streamHandlers?.onAssistantStart?.())
 
-    await userEvent.type(sideChatInput, 'follow-up during stale state')
-    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await user.type(sideChatInput, 'follow-up during stale state')
+    await user.click(within(sideChat).getByTestId('send-message-button'))
 
     await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1))
     expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
@@ -9279,6 +9316,8 @@ describe('DesktopWorkbenchLayout', () => {
   }, 30_000)
 
   test('temporary chat marks a rejected queued send as failed', async () => {
+    // Queue semantics do not require timer-paced typing, which can outlive a timed-out test.
+    const user = userEvent.setup({ delay: null })
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',
       taskId: 'runtime-side-chat-rejected-queue',
@@ -9292,17 +9331,17 @@ describe('DesktopWorkbenchLayout', () => {
     sendRuntimePaneMessageMock.mockRejectedValueOnce(new Error('network unavailable'))
     renderWorkspacePanelLayout()
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
-    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await user.type(sideChatInput, 'first message')
+    await user.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalled())
 
-    await userEvent.type(sideChatInput, 'queued follow-up')
-    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await user.type(sideChatInput, 'queued follow-up')
+    await user.click(within(sideChat).getByTestId('send-message-button'))
     expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
       'queued follow-up'
     )
@@ -13678,7 +13717,7 @@ describe('DesktopWorkbenchLayout', () => {
         screen.getByTestId('smart-app-development-preview-verification-stale')
       ).toHaveTextContent('验证已过期')
     )
-  })
+  }, 10_000)
 
   test('keeps an inactive Smart app preview from reclaiming the browser after switching tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
@@ -14316,81 +14355,112 @@ describe('DesktopWorkbenchLayout', () => {
     expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(4)
   }, 15_000)
 
-  test('preserves an absolute file opened from a message when switching runtime tasks', async () => {
-    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
-    const workspaceFileApi = {
-      listWorkspaceEntries: vi.fn().mockImplementation((_deviceId: string, path: string) =>
-        Promise.resolve({
-          path,
-          entries: [],
-        })
-      ),
-      readWorkspaceTextFile: vi.fn().mockImplementation((_deviceId: string, path: string) =>
-        Promise.resolve({
-          path,
-          name: 'outside.md',
-          content: 'outside workspace preview',
-          editable: true,
-          revision: 'sha256:outside',
-          truncated: false,
-          size: 25,
-          modifiedAt: null,
-        })
-      ),
-    }
-    const messages = [
-      {
-        id: 'assistant-edited-absolute-file',
-        taskId: 101,
-        role: 'assistant' as const,
-        content: '',
-        status: 'completed' as const,
-        createdAt: '2026-08-05T00:00:00.000Z',
-        blocks: [
-          {
-            id: 'edit-absolute-file',
-            subtaskId: 101,
-            type: 'tool' as const,
-            toolName: 'edit_file',
-            toolInput: {
-              path: '/tmp/outside.md',
-              old_string: 'before',
-              new_string: 'after',
+  test.each([false, true])(
+    'restores a message file after switching tasks (standalone: %s)',
+    async standalone => {
+      const { propsForTask, taskA, taskB, localDevice, runtimeWork } =
+        createLocalRuntimeTaskPanelFixture()
+      const workspaceFileApi = {
+        listWorkspaceEntries: vi.fn().mockImplementation((_deviceId: string, path: string) =>
+          Promise.resolve({
+            path,
+            entries: [],
+          })
+        ),
+        readWorkspaceTextFile: vi.fn().mockImplementation((_deviceId: string, path: string) =>
+          Promise.resolve({
+            path,
+            name: 'outside.md',
+            content: 'outside workspace preview',
+            editable: true,
+            revision: 'sha256:outside',
+            truncated: false,
+            size: 25,
+            modifiedAt: null,
+          })
+        ),
+      }
+      const messages = [
+        {
+          id: 'assistant-edited-absolute-file',
+          taskId: 101,
+          role: 'assistant' as const,
+          content: '',
+          status: 'completed' as const,
+          createdAt: '2026-08-05T00:00:00.000Z',
+          blocks: [
+            {
+              id: 'edit-absolute-file',
+              subtaskId: 101,
+              type: 'tool' as const,
+              toolName: 'edit_file',
+              toolInput: {
+                path: '/tmp/outside.md',
+                old_string: 'before',
+                new_string: 'after',
+              },
+              status: 'completed' as const,
+              createdAt: 1770000000000,
             },
-            status: 'completed' as const,
-            createdAt: 1770000000000,
+          ],
+        },
+      ]
+      const standaloneWork = {
+        projects: [],
+        chats: runtimeWork.projects[0].deviceWorkspaces,
+        totalTasks: runtimeWork.totalTasks,
+      }
+      const propsWithFileMessage = (task: typeof taskA) => {
+        const props = propsForTask(task)
+        if (!standalone) return { ...props, messages, workspaceFileApi }
+        return {
+          ...props,
+          state: {
+            ...props.state,
+            currentProject: null,
+            projects: [],
+            runtimeWork: standaloneWork,
           },
-        ],
-      },
-    ]
-    const propsWithFileMessage = (task: typeof taskA) => ({
-      ...propsForTask(task),
-      messages,
-      workspaceFileApi,
-    })
-    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
-    const { rerender } = render(<DesktopWorkbenchLayout {...propsWithFileMessage(taskA)} />)
+          projectWork: {
+            ...props.projectWork,
+            currentProject: null,
+            currentProjectId: null,
+            projects: [],
+            devices: [localDevice],
+            runtimeWork: standaloneWork,
+          },
+          messages,
+          workspaceFileApi,
+        }
+      }
+      const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+      const { rerender } = render(<DesktopWorkbenchLayout {...propsWithFileMessage(taskA)} />)
 
-    await userEvent.click(activePane().getByRole('button', { name: /正在编辑 outside\.md/ }))
-    expect(await activePane().findByTestId('workspace-markdown-preview')).toHaveTextContent(
-      'outside workspace preview'
-    )
-
-    rerender(<DesktopWorkbenchLayout {...propsWithFileMessage(taskB)} />)
-    rerender(<DesktopWorkbenchLayout {...propsWithFileMessage(taskA)} />)
-
-    await waitFor(() => {
-      expect(activePane().getByTestId('right-workspace-file-tab')).toHaveAttribute(
-        'aria-selected',
-        'true'
-      )
-      expect(activePane().getByTestId('workspace-file-path')).toHaveTextContent('/tmp/outside.md')
-      expect(activePane().getByTestId('workspace-markdown-preview')).toHaveTextContent(
+      const fileTrigger = activePane().getByText('正在编辑 outside.md')
+      expect(fileTrigger.closest('button')).toHaveAccessibleName(/正在编辑 outside\.md/)
+      expect(fileTrigger).toBeVisible()
+      await userEvent.click(fileTrigger)
+      expect(await activePane().findByTestId('workspace-markdown-preview')).toHaveTextContent(
         'outside workspace preview'
       )
-    })
-    expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(2)
-  })
+
+      rerender(<DesktopWorkbenchLayout {...propsWithFileMessage(taskB)} />)
+      rerender(<DesktopWorkbenchLayout {...propsWithFileMessage(taskA)} />)
+
+      await waitFor(() => {
+        expect(activePane().getByTestId('right-workspace-file-tab')).toHaveAttribute(
+          'aria-selected',
+          'true'
+        )
+        expect(activePane().getByTestId('workspace-file-path')).toHaveTextContent('/tmp/outside.md')
+        expect(activePane().getByTestId('workspace-markdown-preview')).toHaveTextContent(
+          'outside workspace preview'
+        )
+      })
+      expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(2)
+    },
+    10_000
+  )
 
   test('preserves the review when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture(2)

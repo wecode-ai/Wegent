@@ -1,3 +1,9 @@
+import {
+  getMcpAppPanel,
+  isMcpAppPanelTab,
+  useMcpAppWorkspacePanels,
+} from '@/features/mcp-apps/workspacePanels'
+import { createMcpAppConversationServices } from '@/features/mcp-apps/conversationServices'
 import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
 import { BackgroundTerminalsSummary } from './BackgroundTerminalsSummary'
 import { conversationTerminals } from './backgroundTerminals'
@@ -577,7 +583,9 @@ function normalizeRightWorkspacePanelTab(
 function normalizeRightWorkspacePanelView(
   view: RightWorkspacePanelView | 'browser' | 'terminal'
 ): RightWorkspacePanelView {
-  return view === 'launcher' ? view : normalizeRightWorkspacePanelTab(view)
+  return view === 'launcher' || isMcpAppPanelTab(view)
+    ? 'launcher'
+    : normalizeRightWorkspacePanelTab(view)
 }
 
 function getRightWorkspaceHarnessSessionId(tab: RightWorkspaceHarnessTab) {
@@ -1193,7 +1201,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     createDeviceDirectory,
     startNewChat,
   } = useWorkbenchPaneContext()
-  const { services, openRuntimeTask, workspaceTabId, loadRuntimeTranscriptForPane } = useWorkbench()
+  const {
+    services,
+    openRuntimeTask,
+    workspaceTabId,
+    loadRuntimeTranscriptForPane,
+    sendRuntimePaneMessage,
+  } = useWorkbench()
   const deviceApi = services?.deviceApi
   const { t } = useTranslation('common')
   const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
@@ -1355,7 +1369,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     cloudProjectMentionCandidates,
     defaultProject,
     deliveryDialogOpen,
-    finishLocalDelivery,
+    finishDelivery,
     handleSelectCloudProject,
     openBoundProjectSpaceTask,
     openDelivery,
@@ -1390,6 +1404,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem && boundProjectSpaceApi
   )
   const issueExecutionReadOnly = Boolean(currentProjectSpaceRuntimeTask?.issueExecution)
+  const mcpAppConversationServices = useMemo(
+    () =>
+      createMcpAppConversationServices({
+        address: currentRuntimeTask,
+        api: services?.runtimeWorkApi,
+        readOnly: issueExecutionReadOnly,
+        sendMessage: sendRuntimePaneMessage,
+      }),
+    [currentRuntimeTask, services?.runtimeWorkApi, issueExecutionReadOnly, sendRuntimePaneMessage]
+  )
   const supervisor = runtimeTaskSummary?.supervisor ?? null
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
     ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
@@ -1651,7 +1675,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     const restoredTabs = (initialWorkspaceState?.rightPanelTabs ?? []) as Array<
       RightWorkspacePanelTab | 'browser' | 'terminal'
     >
-    return restoredTabs.map(normalizeRightWorkspacePanelTab)
+    return restoredTabs.filter(tab => !isMcpAppPanelTab(tab)).map(normalizeRightWorkspacePanelTab)
   })
   const [selectedAssistantPlan, setSelectedAssistantPlan] = useState<SelectedAssistantPlan | null>(
     () => initialWorkspaceState?.selectedAssistantPlan ?? null
@@ -2073,13 +2097,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ? `calc(${rightPanelWidth} - ${rightTitlebarActionsWidth})`
     : '0px'
   const temporaryChatAvailable = !activeLocalHarnessSession
+  const canBrowseFiles = Boolean(
+    workspaceProject ||
+    selectedWorkspaceFile?.target ||
+    openFileRequest?.target ||
+    openFileRequest?.attachment ||
+    Object.keys(fileTabs).length
+  )
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
-    const canBrowseFiles = Boolean(
-      workspaceProject ||
-      openFileRequest?.target ||
-      openFileRequest?.attachment ||
-      Object.keys(fileTabs).length
-    )
     const availableContextTabs = workItemContextAvailable
       ? rightPanelTabs
       : rightPanelTabs.filter(tab => tab !== 'work-item')
@@ -2100,14 +2125,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ? permittedTabs
       : [...permittedTabs, rightPanelView]
   }, [
-    openFileRequest?.target,
-    openFileRequest?.attachment,
-    fileTabs,
+    canBrowseFiles,
     rightPanelTabs,
     rightPanelView,
     temporaryChatAvailable,
     workItemContextAvailable,
-    workspaceProject,
   ])
   const effectiveRightPanelView =
     (!temporaryChatAvailable && rightPanelView.startsWith('chat:')) ||
@@ -2237,12 +2259,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           isDirectory: selectedWorkspaceFile.isDirectory,
         }
       : null
-  const canBrowseFiles = Boolean(
-    workspaceProject ||
-    openFileRequest?.target ||
-    openFileRequest?.attachment ||
-    Object.keys(fileTabs).length
-  )
   const devWorkspacePath = getWeworkDevInstanceInfo()?.worktree?.trim() ?? ''
   const centralHarnessTargetDevice = composerWorkspaceTarget?.deviceId
     ? devices.find(device => device.device_id === composerWorkspaceTarget.deviceId)
@@ -3082,6 +3098,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       attachments: paneSession.attachments,
       uploadingFiles: paneSession.uploadingFiles,
       errors: paneSession.attachmentErrors,
+      dismissAttachmentError: paneSession.dismissAttachmentError,
       handleFileSelect: paneSession.handleFileSelect,
       removeAttachment: paneSession.removeAttachment,
       modelSelectorOpenSignal,
@@ -3104,6 +3121,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [
       modelSelectorOpenSignal,
       paneSession.attachmentErrors,
+      paneSession.dismissAttachmentError,
       paneSession.attachments,
       paneSession.handleFileSelect,
       paneSession.removeAttachment,
@@ -3989,6 +4007,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [openRightPanelTab, setSelectedAssistantPlan]
   )
   const closeRightPanelTab = (tab: RightWorkspacePanelTab) => {
+    if (isMcpAppPanelTab(tab)) {
+      const panel = getMcpAppPanel(tab)
+      if (panel) {
+        panel.dismiss()
+        return
+      }
+    }
     const extensionState = isRightWorkspaceExtensionTab(tab)
       ? rightPanelExtensionTabsRef.current[tab]
       : undefined
@@ -4076,6 +4101,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setRightPanelView(nextTabs[nextTabs.length - 1])
     }
   }
+  useMcpAppWorkspacePanels({
+    address: currentRuntimeConversationSource,
+    openTab: openRightPanelTab,
+    closeTab: closeRightPanelTab,
+  })
   const closeRightPanelTabFromExtension = useEffectEvent((tab: RightWorkspacePanelTab) => {
     closeRightPanelTab(tab)
   })
@@ -4758,7 +4788,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
       onOpenConversationWorkspaceFile={path => void openWorkspaceFileFromMessage(path)}
       onDeliver={
-        currentRuntimeTask && services?.deliveryApi && activeDeliveryItem ? openDelivery : undefined
+        currentRuntimeTask && boundProjectSpaceApi && activeDeliveryItem ? openDelivery : undefined
       }
       todoLabel={
         boundCloudItem ? `${boundCloudItem.id} · ${boundCloudItem.title}` : boundCloudProject?.name
@@ -5244,6 +5274,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   onClick={focusComposerFromConversationClick}
                 >
                   <ScrollableMessageArea
+                    mcpApp={mcpAppConversationServices}
                     searchActive={paneActive && paneVisible && workbenchVisible}
                     workspacePath={composerWorkspaceTarget?.path}
                     imageTarget={remoteImageTarget}
@@ -5933,9 +5964,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   <WorkItemContextPanel
                     key={`${boundCloudProject.id}:${boundCloudItem.id}:${boundCloudItem.version}:${currentProjectSpaceRuntimeTask.deviceId}:${currentProjectSpaceRuntimeTask.taskId}`}
                     api={boundProjectSpaceApi}
+                    services={services}
                     project={boundCloudProject}
                     item={boundCloudItem}
                     currentTask={currentProjectSpaceRuntimeTask}
+                    currentUserId={state.user?.id}
+                    localProjects={state.projects}
                     deviceNamesById={getWorkbenchDeviceNamesById(state.devices)}
                     onOpenBoard={openBoundProjectSpaceTask}
                     onOpenTask={openRuntimeTask}
@@ -6144,20 +6178,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           onCreate={associateRuntimeTaskWithNewItem}
           onSelect={associateRuntimeTaskWithExistingItem}
         />
-        {deliveryDialogOpen &&
-          activeDeliveryItem &&
-          currentRuntimeTask &&
-          services?.deliveryApi && (
-            <DeliveryDialog
-              item={activeDeliveryItem}
-              runtimeTask={currentRuntimeTask}
-              runtimeTaskTitle={runtimeTaskTitle}
-              messages={paneSession.messages}
-              deliveryApi={services.deliveryApi}
-              onCancel={closeDeliveryDialog}
-              onDelivered={() => void finishLocalDelivery()}
-            />
-          )}
+        {deliveryDialogOpen && activeDeliveryItem && currentRuntimeTask && boundProjectSpaceApi && (
+          <DeliveryDialog
+            item={activeDeliveryItem}
+            runtimeTask={currentRuntimeTask}
+            runtimeTaskTitle={runtimeTaskTitle}
+            messages={paneSession.messages}
+            deliveryApi={boundProjectSpaceApi}
+            onCancel={closeDeliveryDialog}
+            onDelivered={finishDelivery}
+          />
+        )}
       </>
     </main>
   )

@@ -8,6 +8,10 @@ import { verifyIssueConversationDrawers } from '../modules/issue-conversation-dr
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
 import {
+  selectProjectBoardGrouping,
+  verifyPersonalBoardGrouping,
+} from '../modules/collaboration-board-personal-view.mjs'
+import {
   assertFullscreenIssueComposerColumn,
   assertFullscreenIssueComposerColumnAtWindowSize,
 } from '../modules/issue-composer-layout.mjs'
@@ -21,6 +25,7 @@ import {
   verifyCommentExecutionStatus,
 } from '../modules/issue-activity-timeline.mjs'
 import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
+import { verifyMultiTagBoardDrag } from '../modules/collaboration-board-tag-drag.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import {
   openDirectProjectCreation,
@@ -40,6 +45,27 @@ const AGENT_NAME = '协作核心 Codex'
 const TERMINAL_STATUS_ISSUE_TITLE = '验证终态任务不再显示执行中'
 const FIXED_TASK_TAB_CONTENT = '[data-testid="workspace-tab-content-fixed-task"]'
 const FIXED_TASK_TAB_SELECT = '[data-testid="workspace-tab-select-fixed-task"]'
+
+async function verifyCurrentTableAssignment(control, scoped, issueId, assigneeName, timeoutMs) {
+  await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+  await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+    visible: false,
+    timeoutMs,
+  })
+  await control.command('click', scoped('[data-testid="collaboration-tab-table"]'))
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="collaboration-issue-table-row-${issueId}"]`),
+    { text: assigneeName, timeoutMs }
+  )
+  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await control.command('clickWhenEnabled', scoped(`[data-testid="cloud-todo-card-${issueId}"]`), {
+    timeoutMs,
+  })
+  await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+    timeoutMs,
+  })
+}
 
 async function requestJson(baseUrl, token, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
@@ -160,8 +186,12 @@ export function createDesktopScenario({
   workbenchReadyTimeoutMs,
   executorHome,
 }) {
-  const boardReplyModel = createBoardReplyModelRegression({ executorHome, uiTimeoutMs })
-  const projectOnlyNavigation = createProjectOnlyNavigationRegression({ uiTimeoutMs })
+  const boardReplyModel = createBoardReplyModelRegression({
+    executorHome,
+    uiTimeoutMs,
+    workbenchReadyTimeoutMs,
+  })
+  const projectOnlyNavigation = createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHome })
   let backendUrl = ''
   let authToken = ''
   let owner = null
@@ -235,6 +265,10 @@ export function createDesktopScenario({
 
     setCloudEnvironment(environment) {
       cloudEnvironment = environment
+    },
+
+    setRestartDesktopApp(restart) {
+      projectOnlyNavigation.setRestartDesktopApp(restart)
     },
 
     async verify(control) {
@@ -322,6 +356,7 @@ export function createDesktopScenario({
         await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
 
         const workspaceName = `${WORKSPACE_NAME}-${process.pid}`
+        const invalidWorkspaceName = 'x'.repeat(101)
         await control.command('click', scoped('[data-testid="collaboration-workspace-create"]'))
         await control.command(
           'waitFor',
@@ -332,7 +367,7 @@ export function createDesktopScenario({
           'fill',
           scoped('[data-testid="collaboration-workspace-name-input"]'),
           {
-            value: workspaceName,
+            value: invalidWorkspaceName,
           }
         )
         await control.command(
@@ -341,9 +376,60 @@ export function createDesktopScenario({
           { value: 'Created through the real native Wework Collaboration UI.' }
         )
         await control.command(
+          'nativePress',
+          scoped('[data-testid="collaboration-workspace-create-confirm"]'),
+          { key: 'Tab' }
+        )
+        assert.equal(
+          await control.command('getActiveElementTestId', 'body'),
+          'collaboration-workspace-name-input',
+          'Tab escaped the workspace creation modal'
+        )
+        await control.command(
+          'nativePress',
+          scoped('[data-testid="collaboration-workspace-name-input"]'),
+          { key: 'Shift+Tab' }
+        )
+        assert.equal(
+          await control.command('getActiveElementTestId', 'body'),
+          'collaboration-workspace-create-confirm',
+          'Shift+Tab escaped the workspace creation modal'
+        )
+        await control.command(
           'click',
           scoped('[data-testid="collaboration-workspace-create-confirm"]')
         )
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-workspace-create-error"]'),
+          { text: 'Request parameter validation failed', timeoutMs: uiTimeoutMs }
+        )
+        assert.equal(
+          await control.command(
+            'getValue',
+            scoped('[data-testid="collaboration-workspace-name-input"]')
+          ),
+          invalidWorkspaceName,
+          'A failed creation discarded the workspace draft'
+        )
+        await control.command(
+          'fill',
+          scoped('[data-testid="collaboration-workspace-name-input"]'),
+          { value: workspaceName }
+        )
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-workspace-create-error"]'),
+          { visible: false, timeoutMs: uiTimeoutMs }
+        )
+        await control.command(
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-workspace-create-confirm"]')
+        )
+        await control.command('waitFor', scoped('.collaboration-workspace-create-dialog'), {
+          visible: false,
+          timeoutMs: uiTimeoutMs,
+        })
         workspace = await waitForApiValue(
           async () => {
             const response = await request('/api/v1/workspaces')
@@ -544,6 +630,17 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
         await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+        const maintainerProject = await request(`/api/v1/cloud-projects/${project.id}`)
+        assert.equal(maintainerProject.access_role, 'Maintainer')
+        await verifyPersonalBoardGrouping(control, {
+          scoped,
+          request,
+          project,
+          groupBy: 'priority',
+        })
+        await selectProjectBoardGrouping(control, scoped, 'status')
+        await capture(control, 'collaboration-shared-core-personal-board-views.png')
+        await verifyMultiTagBoardDrag(control, { scoped, request, project, uiTimeoutMs })
         await control.command('waitFor', scoped('[data-testid="collaboration-issue-create"]'), {
           visible: true,
           timeoutMs: uiTimeoutMs,
@@ -656,6 +753,7 @@ export function createDesktopScenario({
             notify_target: false,
           }),
         })
+        await verifyCurrentTableAssignment(control, scoped, issue.id, owner.user_name, uiTimeoutMs)
         await request(`/api/v1/loop-items/${issue.id}/assignments`, {
           method: 'POST',
           body: JSON.stringify({
@@ -686,16 +784,7 @@ export function createDesktopScenario({
           'The real backend did not persist the Agent workflow-step assignment'
         )
         await capture(control, 'collaboration-shared-core-06-issue-activity.png')
-        await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
-        await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
-          visible: false,
-          timeoutMs: uiTimeoutMs,
-        })
-        await control.command(
-          'clickWhenEnabled',
-          scoped(`[data-testid="cloud-todo-card-${issue.id}"]`),
-          { timeoutMs: uiTimeoutMs }
-        )
+        await verifyCurrentTableAssignment(control, scoped, issue.id, AGENT_NAME, uiTimeoutMs)
         await control.command('waitFor', activitySelector, { timeoutMs: uiTimeoutMs })
         await boardReplyModel.verify(control, issue, scoped, {
           backendUrl,

@@ -134,13 +134,18 @@ ordinary read within the same renderer process.
 
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/run-checkpoints.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
+The `collaboration-runtime-reconciliation` Core checkpoint runs independently and creates its own isolated cloud project, Issue, agent, and real Executor. A transparent WebSocket proxy holds actual completion events to cover snapshot-first, final-event-first, and terminal transactions contending on a real MySQL row lock. Each order checks the complete final text in the database, the Issue UI, and after reload. While a continuation's model response is held, it replays duplicate, reordered, unsequenced, and empty old completion events. Every replay waits for the real backend acknowledgement before asserting that the new turn, workflow, and execution capacity remain unchanged. The proxy only schedules transport; every component except the model service is real. Cleanup releases the model, transaction locks, and proxy connections.
+
+The `runtime-input-answer-persistence` Core checkpoint answers real MCP elicitation forms in the main workbench pane and a temporary chat. The Executor, Codex app-server, MCP server, desktop automation transport, and work-list refresh stay real; only the model service is mocked. Executor request gates hold the accepted answer after the real response and hold the terminal continuation so the terminal history deterministically arrives before the work-list refresh completes. The checkpoint asserts that the full answer summary remains visible before and after the refresh. It also verifies that a transport failure and a stale executor rejection never mark the answer as accepted, and that archiving while acceptance is pending does not restore the answer.
+
 The main desktop runner also supports execution through ordered checkpoints.
-The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
+The checkpoints are `mcp-apps`, `remote-device-onboarding`, `workspace-tabs`,
 `cloud-project-creation`, `cloud-space-mention`, `priority-filter`,
 `telemetry-consent`, `automation-lifecycle`, `project-automation`,
 `project-assignment-notification`, `offline-local-project-space`,
 `core-dsh-plugin-management`, `plugin-auto-update`, `plugin-workspace-publication`,
-`project-ai-settings`, `model-routing`, `permission-modes`, `computer-use`,
+`project-ai-settings`, `model-routing`, `permission-modes`,
+`runtime-input-answer-persistence`, `computer-use`,
 `task-status-sync`, `task-board-association`, `core-task-flow`, `task-attachments`,
 `cloud-git-worktree`, `cloud-worktree-capability`,
 `cloud-worktree-create`, `cloud-worktree-queued-cancel`, `cloud-worktree-tools`,
@@ -216,10 +221,75 @@ PageDown restores the viewport. A single ten-second deadline cannot bound many
 page operations: control latency under concurrent CI can exhaust it while
 history remains intact. Focused regressions cover a slow control channel, stalled
 scrolling, and missing history.
+`background-terminals` runs alone first within its existing shard; the remaining
+checkpoints then regain their configured concurrency. Native keyboard actions
+avoid CPU contention from other full desktop environments while preparation is
+reused, without another matrix job, a longer ten-second step budget, or fewer
+history and native-input assertions.
 Shards are balanced from observed CI durations; a new or
 materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures.
+The Issue notification read scenario waits for the close button to disappear after
+closing a drawer before interacting with the board. Closing commits after the exit
+animation; clicking a covered card earlier can let the delayed close affect the
+new Issue. Task lifecycle regressions cover delayed running snapshots for both the
+same and a prior provider turn. A confirmed settled turn cannot restart from stale
+metadata, even when its update timestamp exceeds a second-precision completion;
+the executor can still confirm the start of a different new turn.
+An earlier completion cannot settle a known newer live turn. Goal execution between
+turns remains independent of turn completion and is confirmed by the executor.
+Read-only board drag checks scroll the source card into view after grouping changes
+and reloads. Owner lane-order checks and cross-column reload checks also scroll
+each card into view before checking visibility. Windows can have a narrower available viewport, so priority and tag
+columns cannot all be assumed visible. Permission and persistence assertions remain.
+Tracked task activity composers also scroll into view before visibility checks.
+Executor environment verification resolves real filesystem paths through Node to
+compare Windows native paths with the Bash working directory correctly.
+Notification tab navigation waits for the project URL to commit before recording
+or comparing it; a rendered project title does not imply its asynchronous route
+has committed. Project-route preservation and tab-reuse assertions remain enabled.
+Foreground plugin installation pauses automatic page updates and synchronization
+until completion, preventing stale inventory from triggering a full replay.
+Cloud restoration retains the resolved socket endpoint. Runtime-token rotation
+updates shared executor credentials while preserving the device connection and
+RPC route, avoiding lost transcript requests during reloads. Traditional tasks read
+rotated runtime tokens only while backend, socket, and session credentials match
+the original connection; switched or disconnected sessions reject old tasks.
+Goal restoration preserves the
+known turn and rejects a different stale streaming history.
+Background device refreshes retain app registration aliases that match the current
+native runtime identity, so cloud comment addresses and native completion events
+share one lifecycle. Registrations for older runtimes remain excluded.
+If delivery finalization races the personal-task start transition, re-read the
+Issue once after a version conflict and recompute the update, preserving completed
+Issues. Web task joins resolve streaming state before reading messages so a stream
+finishing during restoration cannot leave an old blank message snapshot.
+Stand-in dispatch pins large create/send futures on the heap at their shared
+boundary, keeping nested async state machines from overflowing Windows Tokio
+worker stacks with exit code `0xC00000FD`. Regressions enforce Clippy's
+[16 KiB large-future boundary](https://doc.rust-lang.org/stable/clippy/lint_configuration.html#future-size-threshold)
+for manual, assignment, and scheduler entry points; existing
+real desktop scenarios cover the complete execution flow.
+Long history hydration polls use `performanceSnapshot` with `collectMemory: false`
+to avoid forced GC on every poll; final memory assertions retain full sampling.
+Timeout diagnostics include the last snapshot. After upstream #4146 bounded isolated
+E2E fixture timers, permission modes measured about three minutes and fit alongside
+the measured 25-minute Core 4. Remove the redundant shard, retaining the original ten
+Core runners, real expiry assertions, and the 40-minute step limit.
+Source project configuration no longer forces the Windows unelevated sandbox,
+which rejects split writable roots; other permission and approval settings remain.
+Windows source-project coverage therefore verifies outside writes can execute;
+other platforms retain OS write-denial checks. All platforms still verify explicitly
+authorized writes, native approval denial of private reads, and no private data
+disclosure. The network probe declares a text response type so PowerShell does not
+enumerate response bytes.
+The subscription model fixture rejects every upgrade path with HTTP 426 and
+handles `ECONNRESET` throughout the socket lifetime; other socket errors still
+fail. Node regressions cover different paths, repeated resets, and unexpected errors, preventing
+an unhandled socket error from crashing cleanup after scenario assertions pass.
+
 Long scenarios are split into independent checkpoints as well as balanced shards:
+
 The newly merged `stand-in-project-enable` checkpoint has no historical sample.
 It shares preparation with the stand-in configuration flows in Core shard 3,
 which now contains 15 tasks; other ordinary Core shards contain 14. The estimates
@@ -227,7 +297,7 @@ above exclude this new checkpoint.
 
 - `plugin-account-auth` expands into password sync, exclusive credential transfer, OAuth, DWS accounts, conversation QR, and GitHub checkpoints.
 - `plugin-uninstall-resilience` expands into write coordination, lost response, unknown result, restart recovery, and reinstall race checkpoints. `plugin-write-coordination` independently checks API responsiveness during contention, post-commit ACK conflicts, and later sync recovery. Removal recovery checkpoints create another active installation so catalog refresh is tested alongside pending cleanup.
-- `harness-apps` expands into development and installation/runtime lifecycle checkpoints.
+- `harness-apps` expands into development, installation/runtime lifecycle, and multi-model routing checkpoints.
 - `streaming-text` expands into content, tool details, timers, scrolling, message order, and subagent checkpoints.
 
 Each checkpoint establishes its own prerequisites in an isolated environment. The
@@ -299,7 +369,31 @@ milestone screenshots, and every run retains logs, state snapshots, and other
 useful diagnostics. Before upload, CI removes only transient Chromium caches
 that cannot help reproduce a failure. Uploads disable redundant compression for
 PNG and other already-compressed evidence so artifact archiving does not extend
-the pipeline tail. Merge queue validates
+the pipeline tail.
+
+The Backend Rust E2E image producer, desktop consumers, and warmup must use the
+same content digest, covering Cargo manifests, the lockfile, source, examples,
+and `e2e-tests.yml`, which defines the artifact layout. The image must contain
+both `wegent-backend-rs` and `attachment-s3-e2e`. Missing artifacts fail restoration
+and release the temporary container; an incomplete cache is not a fallback.
+CI cache policy runs `test-backend-rs-e2e-runtime.rb`, which executes the actual
+workflow build, publish, and restore scripts to check this contract.
+
+In Core shard 6, `harness-app-models` holds the real additional-token handoff,
+asserts that the running tab is not published yet, then checks close, reopen,
+model calls, and route release. A host running snapshot does not mean renderer
+handoff is complete. Management refresh, open, and retry must not bypass the
+installation's pending lifecycle. On failure, compare delivery counts in
+`harness-model-token-handoff.json` with the UI snapshot rather than increasing
+waits or weakening the early-publication assertion.
+A retained management page can leave a stopped runtime's URL registered after
+restoring an old running snapshot. Starting again invalidates that registration
+before creating a new tab. An existing tab or pending operation still owns its
+registration and must not lose it to a stale management snapshot. The checkpoint
+checks for no stale iframe immediately after Start and no running iframe before
+the additional-token handoff finishes.
+
+Merge queue validates
 the final commit that enters `main`, so Tests, Lint, Platform E2E, and Wework E2E
 do not repeat the same validation after the merge through a `push main` trigger. The
 mapping lives in `.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
@@ -374,6 +468,8 @@ commands and wait helpers accept `timeoutMs` for genuinely slower special
 steps; startup, workbench recovery, and the model protocol matrix keep their
 dedicated limits. Set `WEWORK_E2E_STEP_TIMEOUT_MS` to temporarily adjust the
 global default for ordinary steps in a slower diagnostic environment.
+
+Role settings load asynchronously, so source management uses `clickWhenEnabled` before clicking its entry. Catalog saves and restores first use the shared `waitForCatalogRestart` to handle the actual confirmation and verify that a new Codex process serves the catalog after persistence, then assert that the editor closes. A successful IPC request alone does not prove restart completion. These regressions retain the 10-second budget without reruns or expanded timeouts.
 
 The main desktop flow also covers pasting or dropping ordinary files and folders from Finder. The composer must render file and folder path chips without creating an attachment badge. The request sent to Codex must contain the matching absolute paths without inlining file contents. This decision depends on whether the native desktop transfer resolves a file path; the composer must not switch to attachment upload early only because its current workspace is marked as remote. The top quick-send window uses the same rule and reads bytes only for image attachments. Both scenarios use ordinary small files. For focused local diagnosis, run `node wework/e2e/desktop/run-checkpoints.mjs --pasted-workspace-paths-only` or `node wework/e2e/desktop/run-checkpoints.mjs --dropped-workspace-paths-only`.
 
@@ -461,8 +557,10 @@ The message-order scenario waits for the current turn's SSE response to finish s
 The stream-recovery scenario selects its registered fixture model before the first send;
 the composer appearing does not establish model-catalog readiness. It still verifies that
 streaming continues during renderer reload and restores the complete output.
-Post-restart follow-ups wait for the send control to become enabled before sending Enter once;
-stable composer text does not establish restored model-catalog readiness. The model request and
+The shared Enter-send helper and model matrix reuse the same send-control readiness check.
+After filling a draft, wait for the control to become enabled with the original ten-second step
+budget, then send Enter once. An available editor or stable composer text does not establish
+restored model-catalog readiness after reload. The model request and
 send action are awaited together so either failure follows the normal diagnostics and cleanup
 path instead of an unhandled Promise rejection exiting Node without a failure snapshot.
 Model-request waits stop polling when their budget expires, leaving no active poll timers.
@@ -471,8 +569,15 @@ Restoring native model-catalog defaults temporarily unmounts model rows while re
 The scenario observes the stable page until the original row returns without its customization
 marker, then verifies native data and the persisted override file.
 The overload cancellation phase selects its fixture model independently for the new conversation.
+When a user resumes and completes a Goal during overload backoff, the executor processes queued new-turn events before applying the latest Goal snapshot. A new turn still running must deliver its own terminal event. Focused regressions cover completed, in-flight, paused, and cleared Goals, preserving the current turn identity without an extra Goal activation or turn start. Manually driven fake app-server processes use independent temporary Homes and private state outside the global registry, preventing concurrent skill reloads or executor-wide shutdown from interfering with another test.
+The device artifact declaration scenario uses one Node invocation to generate its file and execute the real declaration command, avoiding Unix heredoc syntax in Windows PowerShell. Only a successful declaration emits its completion marker, which the model must receive before finishing. Unique-artifact, exact-content download, and native-preview assertions remain enabled. Local command verification covers PowerShell, Unix shells, spaces and Unicode in paths, and declaration failure propagation.
+In run 40623393090, every Windows Core 4 checkpoint passed, but startup and cleanup exhausted the 40-minute step limit. Move the measured six-minute board sorting checkpoint to the existing roughly 22-minute Core 8 shard. Place permission modes in Core 4 and remove the extra shard. Retain the original ten Core runners, every checkpoint, the 40-minute limit, and exclusive latency benchmark shards.
+The stand-in settings scenario uses the existing `clickWhenEnabled` action to wait for its sidebar entry after switching collaboration tabs or reloading. A visible tab does not establish that its asynchronous page has mounted.
 Action execution and result acknowledgement are separate: an acknowledgement failure must not
-produce a fabricated failed-action result. E2E Electron logs retain loopback request paths and
+produce a fabricated failed-action result. Control stages use the existing debug-log snapshot
+capture. Result transport records client duration, event-loop lag, page visibility, and server
+receipt time; the server records whether the command is still pending when its result arrives.
+No action contents or authentication values are logged. E2E Electron logs retain loopback request paths and
 network error codes without headers or query parameters. Windows failure artifacts include
 `windows-network-diagnostics.json` with TCP state and process connection counts, excluding addresses,
 to diagnose Winsock resource exhaustion.
@@ -744,6 +849,8 @@ New E2E tests should prefer this helper and `data-testid` locators instead of un
 
 ## CI Guidance
 
+The Backend Rust E2E image contains both `wegent-backend-rs` and `attachment-s3-e2e`. Its producer, desktop consumers, and warmup use the shared `v2` image naming rule in `resolve-backend-rs-e2e-runtime.sh`. Their identical hash inputs include the Rust manifest, lockfile, sources, examples, and `.github/runtime-images/backend-rs-e2e.Dockerfile`. Recipe changes generate a new tag; old `v1` images containing only the API server cannot be reused. Cache hits must still restore the complete payload. CI invokes runtime handoff unit tests that verify matching build, publication, restoration, and upload paths instead of skipping missing files or hiding cache defects behind a fallback.
+
 The platform E2E base image, `docker/wework-e2e/browser.Dockerfile`, preinstalls the Docker CLI through `docker.io` and checks `docker --version` during its build. Shards use that CLI when preparing the remote workspace Executor without running apt update or installation. The Dockerfile content hash determines the image tag, so CI builds a new image after changes and reuses it in subsequent runs.
 
 Local list bootstrap reads and manual refreshes share one revision. A superseded bootstrap read must exit before both publishing its list and starting cloud synchronization, preventing stale startup work from restarting synchronization and clearing a selected local project. The original task-discovery E2E keeps its execution-mode and local execution assertions unchanged.
@@ -820,7 +927,7 @@ not equivalent coverage.
 Regular draft PRs do not run browser or desktop E2E. Merge queue runs the
 complete browser plus Linux and Windows Desktop Core suites before a commit
 enters `main`; `main` does not repeat checks that already passed for the merge
-group. The macOS memory gate runs only for non-draft PRs carrying `ci:memory` or `ci:all`.
+group. The macOS memory gate runs only for non-draft PRs carrying `ci:all`.
 Regular PRs, scheduled runs, and manual runs do not execute memory E2E. Applying `ci:all` runs browser, Linux desktop, Windows
 desktop, and macOS memory E2E even when the PR's changed paths would not
 normally select Wework E2E. The workflow also runs a regression excluding memory E2E every
@@ -872,3 +979,9 @@ Publish native editor callbacks only during React layout commit. A suspended con
 Isolated Windows desktop E2E launches disable Chromium `TcpPortRandomizationWin` so rapid loopback connections use normal OS port allocation. Electron 44.7.0 / Chromium 152.0.7977.130 enables this feature by default; upstream [572515601](https://issuetracker.google.com/issues/572515601) confirms WSAENOBUFS at low connection counts on Windows Server 2025 and other affected systems. Repository logs record native `ERR_NO_BUFFER_SPACE` together with TCP event 4231. Merge existing scenario feature switches and deduplicate entries; retain startup, model HTTP-error, and resource assertions.
 
 The Windows desktop E2E test step has a 40-minute budget within the 60-minute job limit, leaving time to upload failure logs and diagnostic artifacts. A previous Core shard 7 hit the job deadline; its job-log endpoint returned 404 and the run log archive omitted that shard, so evidence could not be recovered from the destroyed runner. Step timeouts remain failures and retain the existing always-run uploads.
+
+Executor RPC completion only establishes that the Executor returned a result, not that HTTP delivery finished. DSH separately records response `finish` or premature `close` events and stream state. Desktop E2E calls use unique request IDs and distinguish response-header and response-body failures, retaining elapsed time, length and encoding metadata without parameters or bodies. The plugin development child records source events, relative paths and reload generations to distinguish missing file notifications, duplicate reloads and UI synchronization failures. Diagnostics add no retries or timeout extensions.
+
+One Windows source write can produce multiple file notifications; time debouncing does not merge every late event during a restart. Plugin development compares file content and permission digests with the last successfully loaded version to avoid duplicate reloads. New content, deletion/recreation and new notifications after a failed reload still trigger loading. Directory and unnamed notifications retain their existing reload behavior. Original HMR generation and functional E2E assertions remain unchanged. Focused Electron test paths and `-t` filters route together to Electron without starting an unrestricted renderer suite.
+
+Long-history transport buffers JSON serialization fragments before feeding gzip's fast level, reducing small writes from escaped content and compression cost for interactive reads. The regression uses the original high-entropy Unicode/emoji history fixture to verify over two orders of magnitude fewer compressor-input writes with identical JSON bytes and explicit propagation of final buffered-write failures. Existing complete restoration, chunk limits, concurrent snapshot reuse and long-path coverage remain enabled. Phase logs record packing, compression and publication duration plus compressed byte counts without bodies. Chunk size, completeness assertions and hydration deadlines are unchanged.

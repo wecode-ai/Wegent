@@ -170,6 +170,96 @@ async function loseRealResponse(route: Route) {
   await route.abort('failed')
 }
 
+test('late initial snapshot cannot undo an Issue assignment and refreshed board', async ({
+  page,
+  projectFixture: { project, path },
+}) => {
+  const issuePath = `/api/v1/cloud-projects/${project.id}/loop-items`
+  const issue = await webApi<Resource>(page, issuePath, {
+    method: 'POST',
+    body: { title: 'Assignment wins over late home preload', status: 'inbox', priority: 'none' },
+  })
+  const members = await webApi<Array<{ user_id: number }>>(
+    page,
+    `/api/v1/cloud-projects/${project.id}/members`
+  )
+  expect(members.length).toBeGreaterThan(0)
+  const assignee = members[0].user_id
+  await webApi(page, `/api/v1/loop-items/${issue.id}`, {
+    method: 'PATCH',
+    body: { version: issue.version, assignee_user_id: null },
+  })
+  let release!: () => void
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
+  let fetched = false
+  let delivered = false
+  const snapshotUrl = (url: URL) =>
+    url.pathname === `/api/v1/cloud-projects/${project.id}/board-snapshot`
+  const holdFirstSnapshot = async (route: Route) => {
+    if (fetched) return route.continue()
+    const response = await route.fetch()
+    expect(response.ok()).toBe(true)
+    fetched = true
+    await held
+    await route.fulfill({ response })
+    delivered = true
+  }
+  await page.route(snapshotUrl, holdFirstSnapshot)
+  try {
+    await page.goto(path)
+    await expect.poll(() => fetched).toBe(true)
+    // Settings needs project metadata, not the blocked initial board snapshot.
+    // Keep the same controller/document while opening the real Issue editor.
+    const origin = await page.evaluate(() => performance.timeOrigin)
+    await page.evaluate(
+      path => window.history.pushState(null, '', path),
+      `${path}/issues/${issue.id}?view=manage`
+    )
+    await page.getByTestId('cloud-todo-detail-assignee').click()
+    await page.getByTestId(`cloud-todo-detail-assignee-option-user:${assignee}`).click()
+    await page.getByTestId('cloud-todo-save').click()
+    await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
+    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+      'data-value',
+      `user:${assignee}`
+    )
+    const current = await webApi<Resource & { assignee_user_id: number }>(
+      page,
+      `/api/v1/loop-items/${issue.id}`
+    )
+    expect(current.assignee_user_id).toBe(assignee)
+    const finished = page.waitForEvent('requestfinished', request =>
+      snapshotUrl(new URL(request.url()))
+    )
+    release()
+    await finished
+    await expect.poll(() => delivered).toBe(true)
+    await page.evaluate(
+      () =>
+        new Promise<void>(resolve =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+        )
+    )
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(origin)
+    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+      'data-value',
+      `user:${assignee}`
+    )
+    await page.evaluate(path => window.history.pushState(null, '', `${path}?view=board`), path)
+    await expect(page.getByTestId(`cloud-todo-card-assignee-${issue.id}`)).not.toHaveText('')
+    await page.getByTestId(`collaboration-issue-${issue.id}`).click()
+    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+      'data-value',
+      `user:${assignee}`
+    )
+  } finally {
+    release()
+    await page.unrouteAll({ behavior: 'wait' })
+  }
+})
+
 test('settings skip the board snapshot, retry the real candidate catalog, and restore the board', async ({
   page,
   projectFixture: { project, path },
@@ -207,12 +297,13 @@ test('settings skip the board snapshot, retry the real candidate catalog, and re
     await page.getByTestId('project-agent-candidates-retry').click()
     const catalogResponse = await recovered
     expect(catalogResponse.ok()).toBe(true)
+    expect(new URL(catalogResponse.url()).searchParams.get('include_readiness')).toBe('false')
     expect((await catalogResponse.json()).agents).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           team_id: candidate.id,
           name: candidate.name,
-          status: 'available',
+          status: 'unchecked',
         }),
       ])
     )
@@ -521,3 +612,54 @@ for (const outcome of ['success', 'failure'] as const) {
     }
   })
 }
+
+test('workspace members remain usable while the real Agent catalog response is pending', async ({
+  page,
+  projectFixture: { workspaceId },
+}) => {
+  const workspacePath = `/api/v1/workspaces/${workspaceId}`
+  let release!: () => void
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
+  let fetched = false
+  let agentRequests = 0
+  let memberRequests = 0
+  page.on('request', request => {
+    const url = new URL(request.url())
+    if (url.pathname === `${workspacePath}/agents`) agentRequests++
+    if (url.pathname === `${workspacePath}/members`) memberRequests++
+  })
+  const catalogUrl = (url: URL) => url.pathname === `${workspacePath}/agents`
+  const holdFirst = async (route: Route) => {
+    expect(new URL(route.request().url()).searchParams.get('include_readiness')).toBe('false')
+    if (fetched) return route.continue()
+    const response = await route.fetch()
+    expect(response.ok()).toBe(true)
+    fetched = true
+    await held
+    await route.fulfill({ response })
+  }
+  await page.route(catalogUrl, holdFirst)
+  try {
+    await page.goto(`/collaboration/workspaces/${workspaceId}/agents`)
+    await expect(page.getByTestId('project-agent-config-loading')).toBeVisible()
+    await expect.poll(() => fetched).toBe(true)
+    expect(agentRequests).toBe(1)
+    expect(memberRequests).toBe(0)
+    await page.getByTestId('collaboration-workspace-participants-tab-members').click()
+    await expect(page.getByTestId('collaboration-workspace-member-invite')).toBeVisible()
+    await expect(page.getByTestId('workspace-members-loading')).toHaveCount(0)
+    expect(memberRequests).toBe(1)
+    expect(agentRequests).toBe(1)
+    release()
+    await page.getByTestId('collaboration-workspace-participants-tab-agents').click()
+    await expect(page.getByTestId('project-agent-config-loading')).toHaveCount(0)
+    await expect(page.getByTestId('project-agent-add')).toBeEnabled()
+    await page.getByTestId('collaboration-workspace-participants-tab-members').click()
+    await expect(page.getByTestId('collaboration-workspace-member-invite')).toBeVisible()
+  } finally {
+    release()
+    await page.unroute(catalogUrl, holdFirst)
+  }
+})

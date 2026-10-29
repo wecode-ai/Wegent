@@ -7,7 +7,6 @@ import {
   FolderOpen,
   FolderPlus,
   GitCompareArrows,
-  Loader2,
   Monitor,
   RotateCw,
   Search,
@@ -16,7 +15,7 @@ import {
   X,
 } from 'lucide-react'
 import { useContext, useMemo, useRef, useState } from 'react'
-import { CompositedSpinner } from '@/components/common/CompositedSpinner'
+import { MobileRuntimeTaskRunningStatus } from './MobileRuntimeTaskRunningStatus'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
@@ -171,21 +170,6 @@ export function MobileDrawer({
   )
 
   if (!open) return null
-
-  const renderRuntimeTaskRunningStatus = (testId: string) => {
-    const label = t('workbench.runtime_task_running')
-    return (
-      <span
-        data-testid={testId}
-        role="status"
-        aria-label={label}
-        title={label}
-        className="ml-2 inline-flex h-7 w-7 shrink-0 items-center justify-center text-text-secondary"
-      >
-        <CompositedSpinner icon={Loader2} className="h-3.5 w-3.5" />
-      </span>
-    )
-  }
 
   const closeAfter = (action?: () => void) => {
     action?.()
@@ -511,9 +495,10 @@ export function MobileDrawer({
                             ) : lifecycleSnapshot.runningTaskKeys.has(
                                 getRuntimeTaskLifecycleKey(taskAddress)
                               ) ? (
-                              renderRuntimeTaskRunningStatus(
-                                `mobile-chat-runtime-task-running-${task.taskId}`
-                              )
+                              <MobileRuntimeTaskRunningStatus
+                                address={taskAddress}
+                                testId={`mobile-chat-runtime-task-running-${task.taskId}`}
+                              />
                             ) : visibleUnreadRuntimeTaskKeys.has(
                                 getRuntimeTaskReminderItemKey(workspace, task)
                               ) ? (
@@ -622,7 +607,7 @@ export function MobileDrawer({
                               setRenamingProjectId(null)
                             }
                           }}
-                          className="min-w-0 flex-1 select-text rounded-lg border border-border bg-background px-2 py-1 text-heading-sm leading-6 text-text-primary outline-none focus:border-focus"
+                          className="min-w-0 flex-1 select-text rounded-lg border border-border bg-background px-2 py-1 text-heading-sm leading-6 text-text-primary outline-none keyboard:focus:border-focus"
                         />
                       ) : (
                         <span className="min-w-0 flex-1 truncate">{project.name}</span>
@@ -709,9 +694,10 @@ export function MobileDrawer({
                                       ) : lifecycleSnapshot.runningTaskKeys.has(
                                           getRuntimeTaskLifecycleKey(taskAddress)
                                         ) ? (
-                                        renderRuntimeTaskRunningStatus(
-                                          `mobile-runtime-task-running-${task.taskId}`
-                                        )
+                                        <MobileRuntimeTaskRunningStatus
+                                          address={taskAddress}
+                                          testId={`mobile-runtime-task-running-${task.taskId}`}
+                                        />
                                       ) : visibleUnreadRuntimeTaskKeys.has(
                                           getRuntimeTaskReminderItemKey(workspace, task)
                                         ) ? (

@@ -61,6 +61,7 @@ import {
   telemetryEvents,
 } from './response-protocol.mjs'
 import { tmpdir } from 'node:os'
+import { posix } from 'node:path'
 
 import {
   ANTHROPIC_EMPTY_COMPLETION_TEXT,
@@ -305,6 +306,7 @@ const EMBEDDED_BROWSER_BRIDGE_COLLISION_SEARCH_ID =
 const EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID = 'wework-embedded-browser-bridge-collision-open'
 const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
+  'decodeImage',
   'getAttribute',
   'getElementCount',
   'getTerminalText',
@@ -332,31 +334,42 @@ function findNestedString(value, predicate) {
   return null
 }
 
-function requestContainsSkillLocator(body, skillPath, skillName) {
-  const requestText = JSON.stringify(body)
-  if (requestText.includes(skillPath)) return true
-
-  const normalizedSkillPath = skillPath.replaceAll('\\', '/')
-  const relativeSkillPath = `${skillName}/SKILL.md`
-  const skillRoot = normalizedSkillPath.slice(0, -relativeSkillPath.length).replace(/\/$/u, '')
-  const catalog = findNestedString(
-    body,
-    value => value.includes('### Skill roots') && value.includes(relativeSkillPath)
-  )
-  if (!catalog) return false
-
-  for (const line of catalog.split(/\r?\n/u)) {
-    const rootMatch = line.match(/^- `([^`]+)` = `([^`]+)`$/u)
-    if (!rootMatch) continue
-    const [, alias, root] = rootMatch
-    if (
-      root.replaceAll('\\', '/') === skillRoot &&
-      catalog.includes(`(file: ${alias}/${relativeSkillPath})`)
-    ) {
-      return true
-    }
+function requestContainsSkillLocator(body, skillPath) {
+  const normalize = value => {
+    const path = value.replaceAll('\\', '/')
+    return `${path.startsWith('//') ? '/' : ''}${posix.normalize(path)}`
   }
-  return false
+  const expectedPath = normalize(skillPath)
+  return Boolean(
+    findNestedString(body, catalog => {
+      const roots = new Map()
+      let section = null
+      for (const rawLine of catalog.split(/\r?\n/u)) {
+        const line = rawLine.trim()
+        if (/^#{1,6} /u.test(line) || /^<\/?skills_instructions>/u.test(line)) {
+          section =
+            line === '### Skill roots' ? 'roots' : line === '### Available skills' ? 'skills' : null
+          if (section === 'roots' || /^#{1,2} |^<\/?skills_instructions>/u.test(line)) {
+            roots.clear()
+          }
+          continue
+        }
+        if (section === 'roots') {
+          const root = line.match(/^- `([^`]+)` = `([^`]+)`$/u)
+          if (root) roots.set(root[1], root[2])
+        }
+        if (section !== 'skills') continue
+        const entry = line.match(/^- .+ \(file: (.+)\)$/u)
+        if (!entry) continue
+        const locator = entry[1].replaceAll('\\', '/')
+        const separator = locator.indexOf('/')
+        const root = roots.get(locator.slice(0, separator))
+        const expandedPath = root ? `${root}/${locator.slice(separator + 1)}` : locator
+        if (normalize(expandedPath) === expectedPath) return true
+      }
+      return false
+    })
+  )
 }
 
 /** Text of the user-authored turns codex forwarded to the model, in order. */
@@ -920,6 +933,7 @@ class DesktopE2EServer {
         'skill_mention_display',
         'connector_auth_unmatched_resume',
         'supervisor',
+        'harness_app_models',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
@@ -1183,8 +1197,8 @@ class DesktopE2EServer {
     return this.commandForClient(clientId, action, selector, options)
   }
 
-  recordControlTransport(event, clientId) {
-    this.controlTransportHistory.push({ event, clientId, at: new Date().toISOString() })
+  recordControlTransport(event, clientId, details = {}) {
+    this.controlTransportHistory.push({ event, clientId, ...details, at: new Date().toISOString() })
     if (this.controlTransportHistory.length > 200) this.controlTransportHistory.shift()
   }
 
@@ -2068,7 +2082,7 @@ class DesktopE2EServer {
 
     if (request.method === 'POST' && url.pathname === '/started') {
       const started = await readRequestBody(request)
-      this.recordControlTransport('started', started.clientId)
+      this.recordControlTransport('started', started.clientId, { commandId: started.id })
       const pending = this.commandResults.get(started.id)
       if (!pending) {
         json(response, 404, { error: `Unknown command ${started.id}` })
@@ -2091,6 +2105,11 @@ class DesktopE2EServer {
 
     if (request.method === 'POST' && url.pathname === '/results') {
       const result = await readRequestBody(request)
+      this.recordControlTransport('result-received', result.clientId, {
+        commandId: result.id,
+        actionSucceeded: result.ok,
+        pending: this.commandResults.has(result.id),
+      })
       const pending = this.commandResults.get(result.id)
       if (!pending) {
         json(response, 404, { error: `Unknown command ${result.id}` })
@@ -2148,6 +2167,12 @@ class DesktopE2EServer {
 
     if (isReplyPredictionRequest(body)) {
       this.writeLocalAssistantMessage(response, { protocol }, JSON.stringify({ suggestion: null }))
+      return
+    }
+
+    if (this.scenario === 'harness_app_models') {
+      this.recordScenarioRequest('harness_app_models', modelRequest)
+      this.writeLocalAssistantMessage(response, { protocol }, 'HARNESS_APP_MODEL_OK')
       return
     }
 
@@ -4065,7 +4090,8 @@ class DesktopE2EServer {
           body,
           MCP_ELICITATION_NAMESPACE,
           MCP_ELICITATION_TOOL_NAME,
-          timeoutScenario ? { scenario: timeoutScenario } : {}
+          timeoutScenario ? { scenario: timeoutScenario } : {},
+          `${MCP_ELICITATION_SEARCH_ID}-${round}`
         )
         this.writeSse(response, [
           responseCreated(responseId),

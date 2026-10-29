@@ -25,6 +25,7 @@ from app.api.endpoints.openapi_responses import (
     _model_category_from_kind,
     _resolve_requested_model,
     _task_to_response_object,
+    create_response,
 )
 from app.core.security import get_password_hash
 from app.models.api_key import KEY_TYPE_PERSONAL, APIKey
@@ -35,6 +36,15 @@ from app.models.share_link import ResourceType
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+
+
+@pytest.fixture
+def test_client(test_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """Exercise the retained Python reference without changing production routes."""
+    app = test_client.app
+    monkeypatch.setattr(app.router, "routes", list(app.router.routes))
+    app.add_api_route("/api/v1/responses", create_response, methods=["POST"])
+    return test_client
 
 
 @pytest.mark.asyncio

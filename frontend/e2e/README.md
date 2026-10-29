@@ -118,7 +118,7 @@ e2e/
 
 ## 钉钉导入 remote 检索验证
 
-`tests/knowledge/dingtalk-import.spec.ts` 的 7 个场景由 CI 的
+`tests/knowledge/dingtalk-import.spec.ts` 的 8 个场景由 CI 的
 `provider-native-chromium` 项目执行。Backend 不再需要设置模式变量，只需设置
 `KNOWLEDGE_RUNTIME_URL`，并启动真实 Knowledge Runtime、Qdrant、MySQL 和 Redis。
 Runtime 与 Backend 共用数据库、`INTERNAL_SERVICE_TOKEN` 和 `GIT_TOKEN_AES_KEY/IV`，
@@ -192,6 +192,12 @@ Normal and coding ClaudeCode tests run through the actual executor-manager Docke
 The executor job builds `fixtures/claudecode-executor/Dockerfile`, which includes both Claude Code and Codex CLI, and starts a real `executor_manager` service on port `8001`. The agent conversation regression covers Docker-based Claude Code and Codex execution, while a real local ClaudeCode executor process provides device-mode coverage. The fixture image compiles the Rust executor once, exposes it at `/app/executor`, and the workflow extracts that same binary for the local executor process. Source files live under `/workspace/src` because executor-manager mounts the extracted `/app/executor` entrypoint volume at `/app` for custom base images.
 
 For GitHub Actions, `executor_manager` runs directly on the runner and task containers use Docker bridge networking with normal port mappings. Keep `DOCKER_HOST_ADDR=localhost` so the runner can dispatch to mapped container ports. Use the runner's Docker bridge IP for container-to-runner URLs such as `TASK_API_DOMAIN`, `CALLBACK_HOST`, and the coding-agent mock model base URLs.
+
+`tests/tasks/claudecode-compaction.spec.ts` runs in the same `executor-chromium` CI suite. It creates a 1M-context cloud Model CRD with an 8,000-token output limit and supplies only the model identity to the real Backend runtime API. A dedicated CLI/local test device starts the real Executor and Claude Code 2.1.310 and forwards through the local model proxy and authenticated Backend gateway, using the endpoint for the declared upstream protocol. The App device retains its existing remote-control restrictions. Only the model service is mocked: its reported cached usage crosses the auto-compact threshold, or it returns a provider-specific 400/460 overflow. The tests require a summary request before successful completion, verify that every upstream request uses the plain provider model ID and at most 8,000 output tokens, and require unrelated errors to leave the runtime turn failed. Each scenario records its ordered provider requests in the Playwright artifacts and runs independently without retries.
+
+Collaboration fixtures select the App device named by `E2E_DEVICE_ID` (executor suite) or `e2e-platform-device-${E2E_SHARD_INDEX}` (sharded suites), then use its database ID in the real device picker. They verify the canonical `app-record-*` execution target before preparing the project. Device list ordering must not select the separate CLI/local compaction device.
+
+Platform and Wework E2E jobs check out the PR head SHA for both build and test jobs. The desktop app, scenarios, gateway, and cross-workflow Executor artifact must use the same revision; mixing the merge preview with a PR-head Executor can report unsupported runtime methods and stale UI assertions.
 
 ## Page Object Model
 

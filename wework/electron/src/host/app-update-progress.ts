@@ -6,7 +6,15 @@ export interface WeworkUpdateFailure {
 export interface WeworkUpdateDownloadProgress {
   downloadedBytes: number
   totalBytes: number | null
-  phase?: 'preparing' | 'components' | 'host' | 'ready' | 'failed'
+  phase?:
+    | 'preparing'
+    | 'components'
+    | 'host'
+    | 'extracting'
+    | 'runtime'
+    | 'ready'
+    | 'installing'
+    | 'failed'
   completedComponents?: number
   totalComponents?: number
   failure?: WeworkUpdateFailure

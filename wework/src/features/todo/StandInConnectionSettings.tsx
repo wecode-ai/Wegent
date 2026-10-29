@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useState } from 'react'
 import { ArrowLeft, ChevronRight, Folder, MessageSquare, Plus } from 'lucide-react'
 import type { CollaborationProject } from '@wegent/collaboration'
@@ -6,6 +7,7 @@ import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/sta
 import { useTranslation } from '@/hooks/useTranslation'
 import { StandInConnections } from './StandInConnections'
 import { StandInSourceConnections } from './StandInSourceConnections'
+import { findStandInProject } from './standInProjects'
 
 const DINGTALK_PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
 
@@ -60,7 +62,8 @@ export function StandInConnectionSettings({
           })
       })
       .catch(cause => {
-        if (active) setCatalog({ key: catalogKey, api, items: [], error: String(cause) })
+        if (active)
+          setCatalog({ key: catalogKey, api, items: [], error: getStandInErrorMessage(cause) })
       })
     return () => {
       active = false
@@ -92,12 +95,7 @@ export function StandInConnectionSettings({
         ]
       : source.projects.map(ref => ({
           key: `project-${ref.store}-${ref.id}`,
-          name:
-            projects.find(
-              project =>
-                project.id === ref.id &&
-                (project.project_store === 'local' ? 'local' : 'cloud') === ref.store
-            )?.name ?? ref.id,
+          name: findStandInProject(projects, ref)?.name ?? ref.id,
           detail: t('standIn.personal.collaboration'),
           policy: standInPolicy(role, ref),
           view: 'projects',
@@ -128,7 +126,7 @@ export function StandInConnectionSettings({
       )
       setRefresh(value => value + 1)
     } catch (cause) {
-      setError(String(cause))
+      setError(getStandInErrorMessage(cause))
     } finally {
       setInstalling(false)
     }
@@ -151,6 +149,7 @@ export function StandInConnectionSettings({
             <StandInConnections
               role={role}
               projects={projects}
+              allowLocalProjects={deviceId === localDeviceId}
               focusedProjectId={focusedProjectId}
               disabled={disabled}
               onChange={onChange}

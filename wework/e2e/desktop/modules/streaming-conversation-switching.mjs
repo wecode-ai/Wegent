@@ -20,8 +20,10 @@ const PROMPT = 'WEWORK_NATIVE_ORDER_TASK_SWITCH'
 const OTHER = 'WEWORK_NATIVE_ORDER_OTHER_TASK'
 const PREFIX = 'TASK_SWITCH_RUNNING'
 const SUFFIX = '\n\nTASK_SWITCH_BACKGROUND_UPDATE'
+const LONG_RESPONSE_TIMEOUT_MS = 30_000
 
 export function createConversationSwitchingChecks({ uiTimeoutMs }) {
+  const longResponseTimeoutMs = Math.max(uiTimeoutMs, LONG_RESPONSE_TIMEOUT_MS)
   let releaseTail
   let releaseDone
   const tail = new Promise(resolve => {
@@ -79,7 +81,10 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
         await openNewChatWithE2EModel(control, uiTimeoutMs)
         await control.command('fill', COMPOSER_SELECTOR, { value: PROMPT })
         await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: PREFIX })
+        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+          text: PREFIX,
+          timeoutMs: longResponseTimeoutMs,
+        })
         const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         const address = debug.workbench?.currentRuntimeTask
         assert.ok(address?.taskId, 'The long running task has no address')
@@ -119,7 +124,10 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
           'clickWhenEnabled',
           `[data-testid="runtime-local-task-row-${address.taskId}"]`
         )
-        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, { text: SUFFIX.trim() })
+        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+          text: SUFFIX.trim(),
+          timeoutMs: longResponseTimeoutMs,
+        })
         await waitForWorkbenchDebugState(
           control,
           snapshot =>

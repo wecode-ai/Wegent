@@ -60,23 +60,6 @@ function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
   return { props, personalAgents, personalSave }
 }
 
-async function renderInitializedOverview(
-  props: ReturnType<typeof fixture>['props'],
-  settings: PersonalStandInSettings
-) {
-  let resolveInitial!: (value: PersonalStandInSettings) => void
-  vi.mocked(props.services.standInApi!.personalGet).mockReturnValueOnce(
-    new Promise(done => {
-      resolveInitial = done
-    })
-  )
-  render(<StandInOverviewPage {...props} />)
-  expect(screen.queryByTestId('identity-conversation')).not.toBeInTheDocument()
-  // Finish initial loading and its subscription effects before publishing a reload.
-  await act(async () => resolveInitial(settings))
-  return screen.getByTestId('identity-conversation')
-}
-
 it('lists existing stand-ins without execution history and keeps project names separate', async () => {
   const role = newStandInRole('device', 'default')
   role.collaboration = {
@@ -135,17 +118,33 @@ it('keeps the active conversation mounted while settings reload', async () => {
   const { props } = fixture()
   const api = props.services.standInApi!
   const settings = await api.personalGet(7, 'device')
+  let resolveInitial!: (value: typeof settings) => void
+  const initial = new Promise<typeof settings>(done => {
+    resolveInitial = done
+  })
   let resolve!: (value: typeof settings) => void
   const pending = new Promise<typeof settings>(done => {
     resolve = done
   })
-  const conversation = await renderInitializedOverview(props, settings)
-  vi.mocked(api.personalGet).mockReturnValueOnce(pending)
-  act(() => publishPersonalStandIn(settings))
-  await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
-  expect(screen.getByTestId('identity-conversation')).toBe(conversation)
-  await act(async () => resolve(settings))
-  expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+  vi.mocked(api.personalGet).mockReturnValueOnce(initial)
+  render(<StandInOverviewPage {...props} />)
+  try {
+    await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(2))
+    // Settle initialization and its device-scoped subscription before reloading.
+    await act(async () => resolveInitial(settings))
+    const conversation = await screen.findByTestId('identity-conversation')
+    vi.mocked(api.personalGet).mockReturnValueOnce(pending)
+    act(() => publishPersonalStandIn(settings))
+    await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
+    expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+    await act(async () => resolve(settings))
+    expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+  } finally {
+    await act(async () => {
+      resolveInitial(settings)
+      resolve(settings)
+    })
+  }
 })
 
 it('hides empty message associations while preserving existing execution history', async () => {
@@ -351,11 +350,16 @@ it('preserves the mounted conversation when settings refresh fails', async () =>
   const { props } = fixture()
   const api = props.services.standInApi!
   const settings = await api.personalGet(7, 'device')
-  const conversation = await renderInitializedOverview(props, settings)
-  vi.mocked(api.personalGet).mockRejectedValueOnce(new Error('settings unavailable'))
+  render(<StandInOverviewPage {...props} />)
+  const conversation = await screen.findByTestId('identity-conversation')
+  await screen.findByTestId('stand-in-overview-role-default')
+  vi.mocked(api.personalGet).mockRejectedValue(new Error('settings unavailable'))
   act(() => publishPersonalStandIn(settings))
-  expect(await screen.findByRole('alert')).toHaveTextContent('settings unavailable')
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '分身操作失败，请稍后重试；如仍失败，请查看执行设备日志。'
+  )
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
+  vi.mocked(api.personalGet).mockResolvedValue(settings)
   await userEvent.click(screen.getByTestId('stand-in-overview-inline-retry'))
   await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)

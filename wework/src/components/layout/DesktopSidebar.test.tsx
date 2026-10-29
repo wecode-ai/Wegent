@@ -32,6 +32,7 @@ import {
 } from './workbenchPaneDrag'
 import {
   cacheRuntimeConversationQueuePaused,
+  applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
 } from '@/features/workbench/runtimeConversationCache'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
@@ -1001,6 +1002,28 @@ describe('DesktopSidebar', () => {
 
     expect(disconnect).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('settings-menu')).not.toBeInTheDocument()
+  })
+
+  test('keeps cloud logout available without a configured backend URL', async () => {
+    const disconnect = vi.fn()
+    renderSidebar(
+      {},
+      {
+        status: 'connected',
+        isConnected: true,
+        backendUrl: 'http://localhost:8000',
+        user: { id: 7, user_name: 'cloud-user', email: 'cloud@example.com' },
+        disconnect,
+      }
+    )
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+
+    expect(screen.getByTestId('logout-menu-button')).toHaveTextContent('退出登录')
+
+    await userEvent.click(screen.getByTestId('logout-menu-button'))
+
+    expect(disconnect).toHaveBeenCalledTimes(1)
   })
 
   test('shows an exposed update button in the account row when an app update is available', async () => {
@@ -3957,6 +3980,47 @@ describe('DesktopSidebar', () => {
     )
     expect(screen.queryByTestId('runtime-local-task-waiting-codex-idle')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-local-task-running-codex-waiting')).not.toBeInTheDocument()
+
+    const address = { deviceId: 'local-device', taskId: 'codex-running' }
+    act(() => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_started',
+        subtaskId: 'retry-turn',
+      })
+      applyRuntimeConversationAction(address, {
+        type: 'block_created',
+        subtaskId: 'retry-turn',
+        block: {
+          id: 'rate-limit-retry',
+          type: 'tool',
+          toolName: 'runtime_reconnecting',
+          toolInput: { retry_reason: 'rate_limit' },
+          status: 'streaming',
+          createdAt: Date.now(),
+        },
+      })
+    })
+    const rateLimitStatus = screen.getByTestId('runtime-local-task-rate-limit-wait-codex-running')
+    expect(rateLimitStatus).toHaveAttribute('aria-label', '限流等待，自动重试中')
+    expect(rateLimitStatus.querySelector('.animate-spin')).toBeNull()
+    expect(screen.queryByTestId('runtime-local-task-running-codex-running')).not.toBeInTheDocument()
+    act(() => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_chunk',
+        subtaskId: 'retry-turn',
+        itemId: 'resumed-message',
+        content: 'Resumed',
+      })
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-local-task-running-codex-running')).toHaveAttribute(
+        'aria-label',
+        '运行中，有目标'
+      )
+    )
+    expect(
+      screen.queryByTestId('runtime-local-task-rate-limit-wait-codex-running')
+    ).not.toBeInTheDocument()
 
     await userEvent.click(waitingStatus)
     expect(onOpenRuntimeTask).toHaveBeenCalledWith(

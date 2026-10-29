@@ -84,6 +84,14 @@ assert_warmup_case "Wework Electron lock" "$node_and_wework_target" \
 assert_warmup_case "Wework source" \
   "${warmup_all_false/wework_target=false/wework_target=true}" \
   "wework/src/main.ts"
+for build_input in wework/electron/src/main.ts wework/vite.config.ts \
+  wework/public/icon.svg wework/resources/plugins/skills/SKILL.md \
+  wework/harness-runtime/core.ts .github/scripts/wework-windows-e2e-build-key.mjs; do
+  assert_warmup_case "Windows build input: $build_input" \
+    "${warmup_all_false/wework_target=false/wework_target=true}" "$build_input"
+done
+assert_warmup_case "Desktop E2E selection does not rebuild packages" \
+  "$warmup_all_false" "wework/e2e/desktop/checkpoints.mjs"
 assert_warmup_case "Wework runtime artifact downloader" \
   "${warmup_all_false/wework_target=false/wework_target=true}" \
   ".github/scripts/download-actions-artifact.sh"
@@ -91,7 +99,7 @@ assert_warmup_case "Chat Core source" "$node_and_wework_target" \
   "packages/chat-core/src/index.ts"
 assert_warmup_case "Collaboration source" "$node_and_wework_target" \
   "packages/collaboration/src/issue-detail/issueTimestamp.ts"
-if ! grep -Fq '"packages/collaboration/**"' \
+if ! grep -Fq '"packages/**"' \
   "$workflow_dir/ci-cache-warmup.yml"; then
   fail "Collaboration changes must trigger cache warmup"
 fi
@@ -107,10 +115,40 @@ executor_lock="${executor_lock/wework_target=false/wework_target=true}"
 assert_warmup_case "executor lock" "$executor_lock" "executor/Cargo.lock"
 backend_rs_lock="${warmup_all_false/wework_target=false/wework_target=true}"
 assert_warmup_case "Backend Rust lock" "$backend_rs_lock" "backend-rs/Cargo.lock"
+assert_warmup_case "Backend Rust OCI resolver" "$backend_rs_lock" \
+  ".github/scripts/resolve-backend-rs-e2e-runtime.sh"
+assert_warmup_case "Backend Rust OCI recipe" "$backend_rs_lock" \
+  ".github/runtime-images/backend-rs-e2e.Dockerfile"
 assert_warmup_case "Backend Rust source" "$backend_rs_lock" \
   "backend-rs/src/hybrid.rs"
 assert_warmup_case "Executor source warms desktop sidecar" "$executor_lock" \
   "executor/src/main.rs"
+assert_warmup_case "Executor dependency source warms desktop sidecar" "$executor_lock" \
+  "executor/vendor/tf-rust-socketio/src/ack_id.rs"
+
+if ! ruby - "$workflow_dir" "$script_dir/../.." <<'RUBY'
+workflow_dir, root = ARGV
+['ci-cache-warmup.yml', 'wework-e2e.yml', 'e2e-tests.yml'].each do |name|
+  File.read(File.join(workflow_dir, name)).scan(/hashFiles\([^)]*\)/).each do |expression|
+    next unless expression.include?("'executor/src/")
+    abort "#{name} omits vendored Executor dependencies from its source digest" unless expression.include?("'executor/vendor/**'")
+  end
+end
+[
+  'docker/executor/Dockerfile',
+  'docker/device/Dockerfile',
+  'docker/standalone/Dockerfile',
+  'frontend/e2e/fixtures/claudecode-executor/Dockerfile'
+].each do |name|
+  lines = File.readlines(File.join(root, name))
+  copy = lines.index { |line| line.start_with?('COPY executor/vendor ') }
+  build = lines.index { |line| line.include?('cargo build') }
+  abort "#{name} must copy Executor dependencies before compiling" unless copy && build && copy < build
+end
+RUBY
+then
+  fail "Executor dependency sources must participate in runtime builds and cache keys"
+fi
 
 docker_only="${warmup_all_false/docker=false/docker=true}"
 assert_warmup_case "Executor E2E resolver" "$docker_only" \
@@ -219,6 +257,35 @@ for action_file in "$action_dir"/*/action.yml; do
 done
 
 platform_e2e_workflow="$workflow_dir/e2e-tests.yml"
+if ! ruby -ryaml - "$platform_e2e_workflow" <<'RUBY'
+workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+job = workflow.fetch("jobs").fetch("e2e-tests")
+raise "Platform shards must retain their browser container" unless job["container"]
+
+environment = job.fetch("env")
+raise "Container Python must be selected explicitly" unless environment["UV_PYTHON"] == "3.11"
+raise "Container Python must not use the host tool cache" unless environment["UV_MANAGED_PYTHON"] == "true"
+
+steps = job.fetch("steps")
+setup = steps.find { |step| step["uses"] == "./.github/actions/setup-python-uv-cache" }
+raise "Container must retain the shared uv cache" unless setup
+inputs = setup.fetch("with")
+raise "Host Python setup must stay disabled inside the container" unless inputs["setup-python"] == "false"
+raise "Container must use the image's uv" unless inputs["setup-uv"] == "false"
+
+prepare = steps.index { |step| step["run"].to_s.match?(/^\s*uv python install\b/) }
+dependencies = steps.index { |step| step["run"].to_s.match?(/\buv (?:venv|sync)\b/) }
+raise "Container Python must be prepared before dependency environments" unless prepare && dependencies && prepare < dependencies
+command = steps.fetch(prepare).fetch("run")
+raise "Container Python must verify SSL before network use" unless command.include?("import ssl")
+raise "Container Python must install its unversioned commands" unless command.match?(/uv python install\s+--default\b/)
+raise "Container Python must be exported for later steps" unless command.include?("GITHUB_PATH") && command.include?("uv python dir --bin")
+raise "Container Python must verify command discovery" unless command.include?("command -v python")
+RUBY
+then
+  fail "Platform E2E Python must be owned and verified by the container"
+fi
+
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
 if ! grep -Fq -- '--shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}' \
@@ -261,10 +328,10 @@ fi
 node_manifests=(
   frontend/package.json
   package.json
-  "packages/*/package.json"
+  "packages/**"
   pnpm-lock.yaml
   pnpm-workspace.yaml
-  wework/package.json
+  "wework/**"
 )
 for manifest in "${node_manifests[@]}"; do
   if ! grep -Fq -- "- \"$manifest\"" "$warmup_workflow"; then
@@ -315,7 +382,7 @@ Dir.mktmpdir('sccache-policy-') do |root|
   File.write(executable, <<~'SH')
     #!/usr/bin/env bash
     set -euo pipefail
-    [[ "$#" == 1 && "$1" == '--start-server' ]]
+    [[ "$#" == 2 && "$1" == 'rustc' && "$2" == '-vV' ]]
     [[ "$SCCACHE_GHA_ENABLED" == true ]]
     [[ "$SCCACHE_BASEDIRS" == "$GITHUB_WORKSPACE" ]]
     [[ "$SCCACHE_GHA_VERSION" == 'wegent-sccache-v1-Linux-X64' ]]
@@ -372,7 +439,7 @@ Dir.mktmpdir('sccache-policy-') do |root|
       raise "Unexpected sccache environment: #{published}" unless published == expected
     else
       raise 'Failed sccache startup must not publish compiler cache settings' unless published.empty?
-      unless stdout.include?('::warning::sccache is unavailable; continuing without Rust compiler caching')
+      unless stdout.include?('::warning::sccache could not start; continuing without Rust compiler caching')
         raise 'Failed sccache startup must report its unavailable cache'
       end
     end
@@ -704,10 +771,12 @@ if grep -Fq 'warm-wework-desktop-target:' "$warmup_workflow" ||
   fail "Wework desktop builds must reuse content-addressed artifacts and shared Rust runtimes"
 fi
 
+ruby "$script_dir/test-backend-rs-e2e-runtime.rb"
 bash "$script_dir/test-wework-core-e2e-runtimes.sh"
 
 bash "$script_dir/test-build-macos-e2e-runtimes.sh"
 bash "$script_dir/test-macos-e2e-runtime-oci.sh"
+node --test "$script_dir/macos-e2e-source-digest.test.mjs"
 bash "$script_dir/test-wework-macos-e2e-build.sh"
 bash "$script_dir/test-wework-core-e2e-build-oci.sh"
 bash "$script_dir/test-restore-executor-e2e-runtime.sh"

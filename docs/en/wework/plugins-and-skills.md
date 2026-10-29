@@ -8,6 +8,8 @@ A Skill gives AI task-specific instructions and resources. A plugin can package 
 
 Open **Plugins** to inspect installed plugins and manage their capabilities. Review a plugin's tools and permissions before enabling it for a workspace.
 
+When installing an unofficial plugin from Enterprise, Personal, or an external marketplace, including public community submissions, the confirmation dialog warns that it may execute code, access local files, or send data to external services. Public visibility does not establish official provenance. Only continue if you trust its source. Focus starts on **Cancel**, and Escape closes the dialog. Trying an uninstalled unofficial plugin also requires confirmation before installation and placing the example in a new conversation. OpenAI official and Wework official plugins retain their existing installation flow. Personal ZIP imports show the same source warning in the preview dialog.
+
 ## Conversation picker and app authorization
 
 The marketplace, plugin manager, and conversation picker share the installed inventory for the current account and device. The picker retains all installed, enabled plugins; scroll or search when the visible list has a fixed height. Plugins awaiting authorization remain selectable. Disabled plugins stay in the management list but are excluded from new conversation pickers.
@@ -19,6 +21,10 @@ Other Codex apps use their own provided authorization entry. Complete that app's
 Selecting a plugin and sending a message do not check login in advance. When actual plugin use reports missing or expired authentication, Wework uses the exact plugin identity to show the local login card and continues from the blocked step after authorization. Cancelling, sending another message, or switching conversations prevents an obsolete task from continuing automatically. Pending authorization does not block ordinary chat.
 
 For cloud-managed plugins, uninstall completes when the account removal is committed; local cleanup synchronizes asynchronously. The backend retains pending cleanup for disconnected devices or failed cleanup and resumes it on later connections, rather than keeping the marketplace button waiting for a device response. Update the backend, desktop, and executor together for these behaviors; no new database migration is required.
+
+When installing a cloud-managed plugin, the account installation is saved first and the request waits only for the current device to synchronize. Other online devices receive the change in the background without synchronizing the current device again, and offline devices catch up on their next connection. If the current device fails to synchronize, the account installation is retained and the interface shows the device as pending synchronization with a retry action. Reinstalling an installed plugin preserves its enabled state, component selections and update policy. Runtimes supporting targeted synchronization update only the affected plugin and preserve other plugin installations. Devices are addressed by the record route id assigned during registration, so historical device records for the same computer no longer make sync results ambiguous. While online, the Runtime also checks for plugin drift on a jittered low-frequency cycle as a fallback for missed notifications.
+
+After switching accounts or backends, wait for the current device to register before installing, upgrading, or synchronizing plugins. Account plugin lists and enabled preferences remain available while the connection is pending; device state synchronizes after connection.
 
 ## Refresh and repair installation state
 

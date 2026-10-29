@@ -128,6 +128,18 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 const mockResourceLibraryApi = resourceLibraryApi as jest.Mocked<typeof resourceLibraryApi>
+const marketplaceTags = {
+  version: 1,
+  items: [
+    {
+      id: 'technical_development',
+      name_zh: '技术开发',
+      name_en: 'Technical Development',
+      sort: 10,
+      enabled: true,
+    },
+  ],
+}
 
 function createListing(overrides: Partial<ResourceLibraryListing> = {}): ResourceLibraryListing {
   return {
@@ -168,18 +180,7 @@ describe('DiscoverResources', () => {
       next_cursor: null,
       limit: 20,
     })
-    mockResourceLibraryApi.getMarketplaceTags.mockResolvedValue({
-      version: 1,
-      items: [
-        {
-          id: 'technical_development',
-          name_zh: '技术开发',
-          name_en: 'Technical Development',
-          sort: 10,
-          enabled: true,
-        },
-      ],
-    })
+    mockResourceLibraryApi.getMarketplaceTags.mockResolvedValue(marketplaceTags)
     mockResourceLibraryApi.getListing.mockResolvedValue(createListing())
     mockResourceLibraryApi.installListing.mockResolvedValue({
       id: 9,
@@ -297,6 +298,12 @@ describe('DiscoverResources', () => {
   })
 
   it('shows an external source after Featured and switches to its inline content', async () => {
+    let resolveTags!: (tags: typeof marketplaceTags) => void
+    mockResourceLibraryApi.getMarketplaceTags.mockReturnValueOnce(
+      new Promise(resolve => {
+        resolveTags = resolve
+      })
+    )
     function SkillMarketplace() {
       const [activeMarketplaceKey, setActiveMarketplaceKey] = useState<string | null>(null)
       return (
@@ -324,7 +331,12 @@ describe('DiscoverResources', () => {
     render(<SkillMarketplace />)
 
     const featured = await screen.findByTestId('marketplace-tag-filter-all')
-    const category = screen.getByTestId('marketplace-tag-filter-technical_development')
+    expect(
+      screen.queryByTestId('marketplace-tag-filter-technical_development')
+    ).not.toBeInTheDocument()
+    const categoryReady = screen.findByTestId('marketplace-tag-filter-technical_development')
+    await act(async () => resolveTags(marketplaceTags))
+    const category = await categoryReady
     const divider = screen.getByTestId('marketplace-source-divider')
     const externalSource = screen.getByTestId('marketplace-external-source-community')
     const partnerSource = screen.getByTestId('marketplace-external-source-partner')
@@ -350,8 +362,7 @@ describe('DiscoverResources', () => {
   it('includes regular marketplace resources after selecting a category', async () => {
     render(<DiscoverResources resourceType="agent" systemOnly />)
 
-    await screen.findByTestId('marketplace-tag-filter-all')
-    fireEvent.click(screen.getByTestId('marketplace-tag-filter-technical_development'))
+    fireEvent.click(await screen.findByTestId('marketplace-tag-filter-technical_development'))
 
     await waitFor(() =>
       expect(mockResourceLibraryApi.listListings).toHaveBeenLastCalledWith({

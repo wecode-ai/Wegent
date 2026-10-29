@@ -7,9 +7,10 @@ use std::{
     sync::{Mutex, MutexGuard, OnceLock},
 };
 
-use serde_json::json;
+use serde_json::{json, Value};
 use wegent_executor::{
     agents::{build_claude_command, build_codex_app_server_command, AgentCommandPlanner},
+    artifact_cli::AGENT_INSTRUCTIONS,
     protocol::ExecutionRequest,
 };
 
@@ -49,6 +50,26 @@ impl Drop for EnvGuard {
     }
 }
 
+fn assert_stream_json_prompt(input: &str, prompt: &str) {
+    let frame = input
+        .strip_suffix('\n')
+        .expect("stdin must end with a newline");
+    assert_eq!(
+        input.lines().count(),
+        1,
+        "stdin must contain one JSON frame"
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(frame).unwrap(),
+        json!({
+            "type": "user",
+            "session_id": "",
+            "message": {"role": "user", "content": prompt},
+            "parent_tool_use_id": null,
+        })
+    );
+}
+
 #[test]
 fn claude_command_sends_text_prompt_through_stream_json_stdin() {
     let request = ExecutionRequest {
@@ -74,14 +95,13 @@ fn claude_command_sends_text_prompt_through_stream_json_stdin() {
             "EnterWorktree",
             "--permission-mode",
             "bypassPermissions",
+            "--append-system-prompt",
+            AGENT_INSTRUCTIONS,
             "--model",
             "claude-sonnet-4-6"
         ]
     );
-    assert_eq!(
-        spec.stdin_input().unwrap(),
-        "{\"message\":{\"content\":\"implement feature\",\"role\":\"user\"},\"parent_tool_use_id\":null,\"session_id\":\"\",\"type\":\"user\"}\n"
-    );
+    assert_stream_json_prompt(spec.stdin_input().unwrap(), "implement feature");
 }
 
 #[test]
@@ -98,10 +118,7 @@ fn claude_command_sends_leading_hyphen_prompt_through_stream_json_stdin() {
     assert_eq!(spec.args()[0], "-p");
     assert_eq!(spec.args()[1], "--input-format");
     assert_eq!(spec.args()[2], "stream-json");
-    assert_eq!(
-        spec.stdin_input().unwrap(),
-        "{\"message\":{\"content\":\"--- 转发的消息 ---\\n\\n[用户]:\\n测试\",\"role\":\"user\"},\"parent_tool_use_id\":null,\"session_id\":\"\",\"type\":\"user\"}\n"
-    );
+    assert_stream_json_prompt(spec.stdin_input().unwrap(), prompt);
 }
 
 #[test]
@@ -116,15 +133,13 @@ fn claude_command_sends_empty_prompt_through_stream_json_stdin() {
     assert_eq!(spec.args()[0], "-p");
     assert_eq!(spec.args()[1], "--input-format");
     assert_eq!(spec.args()[2], "stream-json");
-    assert_eq!(
-        spec.stdin_input().unwrap(),
-        "{\"message\":{\"content\":\"\",\"role\":\"user\"},\"parent_tool_use_id\":null,\"session_id\":\"\",\"type\":\"user\"}\n"
-    );
+    assert_stream_json_prompt(spec.stdin_input().unwrap(), "");
 }
 
 #[test]
 fn claude_command_maps_nested_model_env_to_process_environment() {
     let _lock = env_lock();
+    let _managed_home = EnvGuard::remove("WEGENT_CLAUDE_HOME");
     let home = unique_dir("claude-nested-model-home");
     let project_dir = unique_dir("claude-nested-model-project");
     let _home = EnvGuard::set("HOME", &home.display().to_string());
@@ -285,6 +300,197 @@ fn claude_command_applies_context_window_precedence() {
             .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
             .unwrap(),
         "262144"
+    );
+}
+
+#[test]
+fn claude_command_configures_autocompact_for_long_context_models() {
+    let _lock = env_lock();
+    let _process_context = EnvGuard::remove("CLAUDE_CODE_MAX_CONTEXT_TOKENS");
+    let _process_output = EnvGuard::remove("CLAUDE_CODE_MAX_OUTPUT_TOKENS");
+    let request = ExecutionRequest {
+        prompt: json!("run locally"),
+        model_config: json!({
+            "model": "claude",
+            "model_id": "huoshan-deepseek-v4.1-flash",
+            "context_window": 1_000_000,
+            "max_output_tokens": 128_000,
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+
+    let model_index = spec
+        .args()
+        .iter()
+        .position(|argument| argument == "--model")
+        .expect("model flag");
+    assert_eq!(
+        spec.args()[model_index + 1],
+        "huoshan-deepseek-v4.1-flash[1m]"
+    );
+    assert_eq!(
+        spec.envs().get("CLAUDE_CODE_MAX_CONTEXT_TOKENS").unwrap(),
+        "1000000"
+    );
+    assert_eq!(
+        spec.envs().get("CLAUDE_CODE_AUTO_COMPACT_WINDOW").unwrap(),
+        "800000"
+    );
+    assert_eq!(
+        spec.envs().get("CLAUDE_CODE_MAX_OUTPUT_TOKENS").unwrap(),
+        "96000"
+    );
+    assert_eq!(
+        spec.envs().get("ANTHROPIC_MODEL").unwrap(),
+        "huoshan-deepseek-v4.1-flash[1m]"
+    );
+}
+
+#[test]
+fn claude_command_keeps_standard_context_models_unchanged() {
+    let _lock = env_lock();
+    let _process_context = EnvGuard::remove("CLAUDE_CODE_MAX_CONTEXT_TOKENS");
+    let _process_output = EnvGuard::remove("CLAUDE_CODE_MAX_OUTPUT_TOKENS");
+
+    for window in [200_000_u64, 262_144] {
+        let request = ExecutionRequest {
+            prompt: json!("run locally"),
+            model_config: json!({
+                "model_id": "claude-sonnet-4",
+                "context_window": window,
+                "max_output_tokens": 64_000,
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        let spec = build_claude_command(&request, "claude");
+
+        let model_index = spec
+            .args()
+            .iter()
+            .position(|argument| argument == "--model")
+            .expect("model flag");
+        assert_eq!(spec.args()[model_index + 1], "claude-sonnet-4");
+        assert_eq!(
+            spec.envs().get("CLAUDE_CODE_MAX_CONTEXT_TOKENS").unwrap(),
+            &window.to_string()
+        );
+        assert!(!spec.envs().contains_key("CLAUDE_CODE_AUTO_COMPACT_WINDOW"));
+        assert!(!spec.envs().contains_key("CLAUDE_CODE_MAX_OUTPUT_TOKENS"));
+        assert!(!spec.envs().contains_key("ANTHROPIC_MODEL"));
+    }
+}
+
+#[test]
+fn claude_command_preserves_existing_long_context_suffix() {
+    let _lock = env_lock();
+    let _process_context = EnvGuard::remove("CLAUDE_CODE_MAX_CONTEXT_TOKENS");
+    let _process_output = EnvGuard::remove("CLAUDE_CODE_MAX_OUTPUT_TOKENS");
+
+    for model_id in ["deepseek-v4.1-flash[1m]", "deepseek-v4.1-flash+1M"] {
+        let request = ExecutionRequest {
+            prompt: json!("run locally"),
+            model_config: json!({
+                "model_id": model_id,
+                "context_window": 1_000_000,
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        let spec = build_claude_command(&request, "claude");
+
+        let model_index = spec
+            .args()
+            .iter()
+            .position(|argument| argument == "--model")
+            .expect("model flag");
+        assert_eq!(spec.args()[model_index + 1], model_id);
+        assert_eq!(spec.envs().get("ANTHROPIC_MODEL").unwrap(), model_id);
+    }
+}
+
+#[test]
+fn claude_command_defaults_and_caps_long_context_output_budget() {
+    let _lock = env_lock();
+    let _process_context = EnvGuard::remove("CLAUDE_CODE_MAX_CONTEXT_TOKENS");
+    let _process_output = EnvGuard::remove("CLAUDE_CODE_MAX_OUTPUT_TOKENS");
+
+    let cases = [
+        (None, "96000"),
+        (Some(json!(0)), "96000"),
+        (Some(json!("invalid")), "96000"),
+        (Some(json!(1)), "1"),
+        (Some(json!(8_000)), "8000"),
+        (Some(json!("8000")), "8000"),
+        (Some(json!(16_000)), "16000"),
+        (Some(json!(500_000)), "96000"),
+    ];
+
+    for (max_output_tokens, expected) in cases {
+        let configured_limit = max_output_tokens.as_ref().and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+                .filter(|value| *value > 0)
+        });
+        let mut model_config = json!({
+            "model_id": "deepseek-v4.1-flash",
+            "context_window": 1_000_000,
+        });
+        if let Some(max_output_tokens) = max_output_tokens {
+            model_config["max_output_tokens"] = max_output_tokens;
+        }
+        let request = ExecutionRequest {
+            prompt: json!("run locally"),
+            model_config,
+            ..ExecutionRequest::default()
+        };
+
+        let spec = build_claude_command(&request, "claude");
+
+        assert_eq!(
+            spec.envs().get("CLAUDE_CODE_MAX_OUTPUT_TOKENS").unwrap(),
+            expected
+        );
+        if let Some(configured_limit) = configured_limit {
+            let output_limit: u64 = spec.envs()["CLAUDE_CODE_MAX_OUTPUT_TOKENS"]
+                .parse()
+                .unwrap();
+            assert!(output_limit <= configured_limit);
+        }
+        assert_eq!(
+            spec.envs().get("CLAUDE_CODE_AUTO_COMPACT_WINDOW").unwrap(),
+            "800000"
+        );
+    }
+}
+
+#[test]
+fn claude_command_keeps_explicit_output_budget_environment() {
+    let _lock = env_lock();
+    let _process_context = EnvGuard::remove("CLAUDE_CODE_MAX_CONTEXT_TOKENS");
+    let _process_output = EnvGuard::remove("CLAUDE_CODE_MAX_OUTPUT_TOKENS");
+    let request = ExecutionRequest {
+        prompt: json!("run locally"),
+        model_config: json!({
+            "model_id": "deepseek-v4.1-flash",
+            "context_window": 1_000_000,
+            "env": {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "32000"},
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+
+    assert_eq!(
+        spec.envs().get("CLAUDE_CODE_MAX_OUTPUT_TOKENS").unwrap(),
+        "32000"
+    );
+    assert_eq!(
+        spec.envs().get("CLAUDE_CODE_AUTO_COMPACT_WINDOW").unwrap(),
+        "800000"
     );
 }
 
@@ -459,7 +665,10 @@ fn claude_command_uses_bot_system_prompt_when_request_prompt_absent() {
         .position(|arg| arg == "--append-system-prompt")
         .expect("Claude system prompt append flag should be present");
 
-    assert_eq!(spec.args()[append_flag_index + 1], "You are helpful.");
+    assert_eq!(
+        spec.args()[append_flag_index + 1],
+        format!("You are helpful.\n\n{AGENT_INSTRUCTIONS}")
+    );
 }
 
 #[test]
@@ -818,6 +1027,7 @@ fn claude_command_uses_workspace_task_dir_for_chat_turn_state() {
 #[test]
 fn claude_project_task_uses_global_capability_dirs() {
     let _lock = env_lock();
+    let _managed_home = EnvGuard::remove("WEGENT_CLAUDE_HOME");
     let home = unique_dir("claude-project-home");
     let project_dir = unique_dir("claude-project-workspace");
     let _home = EnvGuard::set("HOME", &home.display().to_string());
@@ -952,6 +1162,7 @@ fn claude_non_project_request_includes_local_tracking_headers() {
 #[test]
 fn claude_standalone_project_zero_keeps_global_capabilities_and_project_header() {
     let _lock = env_lock();
+    let _managed_home = EnvGuard::remove("WEGENT_CLAUDE_HOME");
     let home = unique_dir("claude-standalone-zero-home");
     let workspace_root = unique_dir("claude-standalone-zero-workspace");
     let _home = EnvGuard::set("HOME", &home.display().to_string());

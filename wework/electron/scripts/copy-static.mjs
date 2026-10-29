@@ -4,6 +4,8 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+await mkdir(resolve(root, 'dist/runtime'), { recursive: true })
+await cp(resolve(root, 'src/runtime/upgrade-policy.mjs'), resolve(root, 'dist/runtime/upgrade-policy.mjs'))
 await mkdir(resolve(root, 'dist/shell'), { recursive: true })
 await cp(resolve(root, 'src/shell'), resolve(root, 'dist/shell'), {
   recursive: true,

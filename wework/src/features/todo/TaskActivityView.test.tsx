@@ -11,6 +11,7 @@ import {
   cacheRuntimeConversationQueuedMessagesByKey,
 } from '@/features/workbench/runtimeConversationCache'
 import { TaskActivityView } from './TaskActivityView'
+import type { IssueAssignmentReceiptState } from './IssueAssignmentReceipts'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import type { Attachment, DeviceInfo } from '@/types/api'
 import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
@@ -317,7 +318,11 @@ describe('TaskActivityView', () => {
         bottom: 400,
         height: 400,
       } as DOMRect)
-      const project = { id: '11', name: 'Wework', location } as never
+      const project = {
+        id: '11',
+        name: 'Wework',
+        project_store: location === 'local' ? 'local' : 'backend',
+      } as never
       const task = {
         id: 'WEG-1',
         title: 'Inspect changes',
@@ -372,6 +377,91 @@ describe('TaskActivityView', () => {
       expect(expectedRead).toHaveBeenCalledOnce()
       expect(location === 'local' ? cloudRead : localRead).not.toHaveBeenCalled()
       expect(markLoopItemRead).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    ['current assignment', {}, {}, true],
+    ['different Issue', {}, { issueId: 'other' }, false],
+    ['older version', {}, { version: 0 }, false],
+    ['different recipient', {}, { assigneeUserId: 3 }, false],
+    ['unassigned', { action: 'unassign' }, {}, false],
+    ['agent assignment', { to_type: 'agent' }, {}, false],
+    ['different history recipient', { to_id: '3' }, {}, false],
+  ])(
+    'scopes timeline receipts to the latest %s',
+    async (_name, entryOverrides, receiptOverrides, visible) => {
+      const entry = {
+        by_user_id: 1,
+        to_type: 'user',
+        to_id: '2',
+        action: 'assign',
+        at: '2026-10-10T01:00:01Z',
+      }
+      const task = {
+        id: 'WEG-1',
+        title: 'Assignment receipts',
+        status: 'in_progress',
+        version: 1,
+        assignee_user_id: 2,
+        // Deliberately unsorted, with the same recipient assigned more than once.
+        assignment_history: [{ ...entry, ...entryOverrides, at: '2026-10-10T01:00:02Z' }, entry],
+      }
+      const state: IssueAssignmentReceiptState = {
+        issueId: task.id,
+        version: 1,
+        assigneeUserId: 2,
+        error: false,
+        rows: [
+          {
+            id: 'assignment',
+            target_type: 'human',
+            target_id: '2',
+            target_name: 'Grace',
+            receipt_tracking: true,
+            human_read_at: null,
+            stand_in_received_at: null,
+          },
+        ],
+        ...receiptOverrides,
+      }
+      const view = (assignmentReceipts = state) => (
+        <TaskActivityView
+          project={{ id: '11', name: 'Wework' } as never}
+          task={task as never}
+          assignmentReceipts={assignmentReceipts}
+          issueTimeline
+          linear
+        />
+      )
+      const { rerender } = render(view())
+      const latest = await screen.findByTestId('cloud-task-assignment-event-0')
+      expect(
+        within(screen.getByTestId('cloud-task-assignment-event-1')).queryByText('未读')
+      ).toBeNull()
+      if (!visible) {
+        expect(screen.queryByTestId('issue-assignment-activity-receipts')).toBeNull()
+        return
+      }
+      expect(within(latest).getByText('未读')).toBeInTheDocument()
+      rerender(
+        view({
+          ...state,
+          rows: [
+            {
+              ...state.rows[0],
+              human_read_at: '2026-10-27T02:00:00Z',
+              stand_in_received_at: '2026-10-27T02:01:00Z',
+            },
+          ],
+        })
+      )
+      expect(within(latest).getByText(/本人已读/)).toBeInTheDocument()
+      expect(within(latest).getByText(/分身已接收/)).toBeInTheDocument()
+      rerender(view({ ...state, error: true }))
+      expect(within(latest).getByText('回执同步失败')).toBeInTheDocument()
+      rerender(view())
+      expect(within(latest).getByText('未读')).toBeInTheDocument()
     }
   )
 
@@ -573,6 +663,38 @@ describe('TaskActivityView', () => {
       />
     )
     await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledExactlyOnceWith(task.id, 2))
+  })
+
+  it('acknowledges notifications on a visible visit to an already-read Issue', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 400,
+      height: 400,
+    } as DOMRect)
+    const task = {
+      id: 'WEG-1',
+      version: 1,
+      is_unread: false,
+      content_revision: 1,
+      activity_read_sequence: 0,
+    } as never
+    markLoopItemRead.mockResolvedValue(task)
+    const view = (requestKey: string) => (
+      <TaskActivityView
+        project={{ id: '11', name: 'Wework' } as never}
+        task={task}
+        issueTimeline
+        linear
+        focusedCommentRequestKey={requestKey}
+      />
+    )
+    const rendered = render(view('first-open'))
+    await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledExactlyOnceWith(task.id, 0))
+    rendered.rerender(view('first-open'))
+    expect(markLoopItemRead).toHaveBeenCalledOnce()
+    rendered.rerender(view('second-open'))
+    await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledTimes(2))
+    expect(markLoopItemRead).toHaveBeenLastCalledWith(task.id, 0)
   })
 
   it('keeps failed reads retryable and clears the read error after a successful scroll retry', async () => {
@@ -786,7 +908,7 @@ describe('TaskActivityView', () => {
           {
             id: '11',
             name: 'Wework',
-            location: 'local',
+            project_store: 'local',
           } as never
         }
         task={
@@ -1678,6 +1800,15 @@ describe('TaskActivityView', () => {
   }, 10_000)
 
   it('persists the visible Issue activity cursor without reading offscreen comments', async () => {
+    const frames = new Map<number, FrameRequestCallback>()
+    let nextFrame = 0
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+      frames.set(++nextFrame, callback)
+      return nextFrame
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => {
+      frames.delete(id)
+    })
     const task = {
       id: 'WEG-1',
       title: 'Unread activities',
@@ -1727,7 +1858,15 @@ describe('TaskActivityView', () => {
         linear
       />
     )
-    await waitFor(() => expect(markLoopItemRead).toHaveBeenCalledWith(task.id, 2))
+    await screen.findByText('Activity 2')
+    expect(markLoopItemRead).not.toHaveBeenCalled()
+    expect(frames.size).toBeGreaterThan(0)
+    await act(async () => {
+      const pending = [...frames.values()]
+      frames.clear()
+      for (const callback of pending) callback(performance.now())
+    })
+    expect(markLoopItemRead).toHaveBeenCalledWith(task.id, 2)
     expect(markLoopItemRead).not.toHaveBeenCalledWith(task.id, 3)
     expect(onTaskRead).toHaveBeenCalledWith(updated)
     expect(onTaskUpdated).not.toHaveBeenCalled()
@@ -2116,7 +2255,7 @@ describe('TaskActivityView', () => {
         <TaskActivityView
           client={humanAssignmentClient(messages)}
           currentUserId={1}
-          project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+          project={{ id: '11', name: 'Cloud', project_store: 'backend' } as never}
           task={{ id: 'WEG-1', title: 'CPU', status: 'in_progress', version: 1 } as never}
           issueTimeline
           linear
@@ -2166,7 +2305,13 @@ describe('TaskActivityView', () => {
         <TaskActivityView
           client={client}
           currentUserId={1}
-          project={{ id: '11', name: 'Wework', location } as never}
+          project={
+            {
+              id: '11',
+              name: 'Wework',
+              project_store: location === 'local' ? 'local' : 'backend',
+            } as never
+          }
           task={
             {
               id: 'WEG-1',
@@ -2248,7 +2393,7 @@ describe('TaskActivityView', () => {
         <TaskActivityView
           client={client}
           currentUserId={1}
-          project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+          project={{ id: '11', name: 'Cloud', project_store: 'backend' } as never}
           task={{ id: 'WEG-1', title: 'CPU', status: 'in_progress', version: 1 } as never}
           issueTimeline
           linear
@@ -2345,7 +2490,7 @@ describe('TaskActivityView', () => {
           <TaskActivityView
             client={client}
             currentUserId={1}
-            project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+            project={{ id: '11', name: 'Cloud', project_store: 'backend' } as never}
             task={{ id: 'WEG-1', title: 'Image comment', status: 'inbox', version: 1 } as never}
             issueTimeline
             linear
@@ -2420,7 +2565,7 @@ describe('TaskActivityView', () => {
         <TaskActivityView
           client={client}
           currentUserId={1}
-          project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+          project={{ id: '11', name: 'Cloud', project_store: 'backend' } as never}
           task={{ id: 'WEG-1', title: 'Image comment', status: 'inbox', version: 1 } as never}
           issueTimeline
           linear
@@ -2510,7 +2655,7 @@ describe('TaskActivityView', () => {
         <TaskActivityView
           client={client}
           currentUserId={1}
-          project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+          project={{ id: '11', name: 'Cloud', project_store: 'backend' } as never}
           task={{ id: 'WEG-1', title: 'Image comment', status: 'inbox', version: 1 } as never}
           issueTimeline
           linear
@@ -2583,7 +2728,7 @@ describe('TaskActivityView', () => {
         <TaskActivityView
           client={client}
           currentUserId={1}
-          project={{ id: '11', name: 'Local', location: 'local' } as never}
+          project={{ id: '11', name: 'Local', project_store: 'local' } as never}
           task={
             {
               id: 'WEG-1',
@@ -3517,7 +3662,7 @@ describe('TaskActivityView', () => {
     render(
       <TaskActivityView
         currentUserId={1}
-        project={{ id: '11', name: 'Wework', location: 'local' } as never}
+        project={{ id: '11', name: 'Wework', project_store: 'local' } as never}
         task={
           {
             ...completedTask,
@@ -5086,7 +5231,7 @@ it('starts a cloud issue comment through the project service when the assigned a
     <TaskActivityView
       client={client}
       currentUserId={2}
-      project={{ id: '11', name: 'Cloud', location: 'cloud' } as never}
+      project={{ id: '11', name: 'Cloud', project_store: 'backend' } as never}
       task={
         {
           id: 'WEG-1',

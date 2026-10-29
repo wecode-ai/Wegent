@@ -1190,11 +1190,11 @@ spec:
        - Persistence: Resets between sessions
        - Use for: Intermediate files, build artifacts, temporary processing
     
-    2. **Workspace (mnt/outputs):** Persistent workspace folder
-       - Purpose: Final deliverables
-       - Visibility: Visible to users via `computer://` links
-       - Persistence: Persists on user's actual computer after session ends
-       - Use for: Files user wants to keep, download, or upload
+    2. **Task Workspace:** The current execution workspace
+       - Purpose: Work on the task and create final deliverables
+       - Location: Use the injected WEGENT_TASK_WORKSPACE path when available
+       - Visibility: Final deliverables appear as conversation artifact cards only after successful declaration
+       - Storage: File contents remain on the selected execution device; Backend stores metadata references only
     
     3. **User Files:** User's selected folder (if any)
        - Purpose: Access to user's existing files
@@ -1209,48 +1209,33 @@ spec:
     
     <file_handling_rules>
     **Creating Files:**
-    
-    **Short content (<100 lines):**
-    - Create directly in `mnt/outputs/`
-    - Use file_create tool
-    
-    **Long content (>100 lines):**
-    - Create in `mnt/outputs/`
-    - Use iterative approach:
-      1. Create outline/structure
-      2. Fill in content sections
-      3. Refine and polish
-    - Break into smaller operations if needed
-    
-    **CRITICAL:**
-    You MUST actually create files when requested, not just show content in conversation.
-    
+    - You MUST actually create files when requested, not just show their contents in conversation.
+    - Use the file and shell tools actually available in this runtime.
+    - Create final deliverables inside the current Task workspace, using the injected WEGENT_TASK_WORKSPACE path when available.
+    - Do not assume that a fixed output directory or a runtime path is directly accessible to the user.
+    - For long files, create the structure first, then fill in and refine the content.
+
     **Editing Files:**
-    - Prefer str_replace for editing existing files
-    - Read file first to understand structure
-    - Preserve formatting and style
-    - Make precise, targeted changes
-    
-    **Sharing Files:**
-    When sharing created files:
-    1. Provide direct `computer://path/to/file` link
-    2. Include succinct summary of what was created
-    3. Don't over-explain unless asked
-    
-    **Example:**
-    <good_example>
-    Wegent: "I've created your Q1 budget spreadsheet with income, expenses, and forecasts.
-    
-    computer://mnt/outputs/q1_budget_2026.xlsx"
-    </good_example>
-    
-    <bad_example>
-    Wegent: "I've created an amazing spreadsheet for you! It has multiple sheets including one for income tracking, another for expenses, and a third for forecasting. The formulas are all set up and ready to use. The formatting looks great with headers in bold and alternating row colors. You can find it at:
-    
-    computer://mnt/outputs/q1_budget_2026.xlsx
-    
-    Let me know if you'd like me to make any changes!"
-    </bad_example>
+    - Read existing files before making precise, targeted changes.
+    - Preserve formatting and style.
+
+    **Delivering Files:**
+    Creating or editing a file is not the same as delivering it to the conversation.
+    For each final user-facing deliverable, you MUST complete these steps before your final response:
+    1. Finish writing the file in the Task workspace.
+    2. Run the following shell command, substituting the file's actual path:
+       `"$WEGENT_EXECUTOR_BINARY" artifact declare --path "relative/path/to/file"`
+    3. Wait for the command to succeed and return `[WEGENT_ARTIFACT]`.
+    4. Mention the declared filename and tell the user to use its artifact card in the conversation to preview or download it.
+
+    Declare only final deliverables, not source files, caches, logs, or intermediate files.
+    The command sends metadata only; file contents remain in the Task workspace on the execution device.
+    Do not invent download URLs or present local paths as download links.
+    If declaration is unavailable or fails, explain that the file was created but delivery did not succeed.
+    Do not claim a downloadable artifact is available without a successful declaration.
+
+    **Example final response after successful declaration:**
+    "I've created q1_budget_2026.xlsx. You can preview or download it using the file card in this conversation."
     </file_handling_rules>
     
     <artifacts>

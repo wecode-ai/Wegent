@@ -124,7 +124,7 @@ RUN dnf install -y \
     redis \
     # MySQL server for standalone mode (embedded)
     mysql-server \
-    && npm install -g @anthropic-ai/claude-code@2.1.277 @openai/codex@0.155.1 \
+    && npm install -g @anthropic-ai/claude-code@2.1.310 @openai/codex@0.155.1 \
     && { ! getcap /usr/libexec/mysqld | grep -q . || setcap -r /usr/libexec/mysqld; } \
     && test -z "$(getcap /usr/libexec/mysqld)" \
     && /usr/sbin/mysqld --version \
@@ -161,7 +161,8 @@ ARG APP_VERSION=dev
 
 WORKDIR /app
 
-RUN dnf install -y gcc ca-certificates openssl-devel pkgconf-pkg-config \
+# turbojpeg-sys builds libjpeg-turbo from source with CMake.
+RUN dnf install -y gcc gcc-c++ cmake ca-certificates openssl-devel pkgconf-pkg-config \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain stable \
     && dnf clean all \
@@ -170,6 +171,7 @@ RUN dnf install -y gcc ca-certificates openssl-devel pkgconf-pkg-config \
 ENV PATH=/root/.cargo/bin:${PATH}
 
 COPY executor/Cargo.toml executor/Cargo.lock /app/executor/
+COPY executor/vendor /app/executor/vendor
 COPY executor/src /app/executor/src
 COPY sdk/plugin-auth /app/sdk/plugin-auth
 COPY sdk/plugin-creator /app/sdk/plugin-creator

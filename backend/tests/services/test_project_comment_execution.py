@@ -213,6 +213,72 @@ async def test_old_thread_survives_reassignment(scenario):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("offset", [None, 360 * 1024])
+async def test_project_transcript_relays_lossless_chunks_under_the_bound_identity(
+    scenario, offset
+):
+    from app.schemas.runtime_transcript_transport import (
+        RuntimeTranscriptTransferRequest,
+    )
+    from app.schemas.runtime_work import RuntimeTranscriptRequest
+    from app.services.runtime_work_service import get_runtime_transcript
+
+    s = scenario
+    snapshot_id = "a" * 64
+    transfer = {"snapshotId": snapshot_id, "offset": offset} if offset else None
+    request = RuntimeTranscriptRequest(
+        deviceId="admin-cloud",
+        taskId="original-session",
+        workspacePath="/untrusted",
+        runtimeHandle={"threadId": "unrelated-private-thread"},
+        projectSession={"projectId": str(s.project.id), "issueId": s.issue.id},
+        transcriptProtocolVersion=2,
+        transcriptTransfer=transfer,
+        limit=5,
+        refresh=True,
+    )
+    chunk = {
+        "success": True,
+        "transcriptProtocolVersion": 2,
+        "transfer": {
+            "snapshotId": snapshot_id,
+            "encoding": "gzip+base64+json",
+            "offset": offset or 0,
+            "totalBytes": 2 * 360 * 1024,
+            "nextOffset": None if offset else 360 * 1024,
+            "payload": "cGF5bG9hZA==",
+        },
+    }
+    s.rpc.return_value = chunk
+
+    response = await get_runtime_transcript(
+        db=s.db, user_id=s.member.id, address=request
+    )
+
+    assert response.model_dump(by_alias=True) == chunk
+    assert s.rpc.await_args.kwargs["user_id"] == s.owner.id
+    assert s.rpc.await_args.kwargs["allow_app_device_task_reading"] is True
+    assert s.rpc.await_args.kwargs["payload"] == {
+        "deviceId": "admin-cloud",
+        "taskId": "original-session",
+        "limit": 5,
+        "refresh": True,
+        "transcriptProtocolVersion": 2,
+        **({"transcriptTransfer": transfer} if transfer else {}),
+    }
+
+    s.db.delete(s.grant)
+    s.db.commit()
+    request.transcript_transfer = RuntimeTranscriptTransferRequest(
+        snapshotId=snapshot_id, offset=360 * 1024
+    )
+    with pytest.raises(HTTPException) as denied:
+        await get_runtime_transcript(db=s.db, user_id=s.member.id, address=request)
+    assert denied.value.status_code == 404
+    assert s.rpc.await_count == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "boundary",
     [
@@ -640,8 +706,9 @@ async def test_invalid_runtime_transcript_returns_explicit_gateway_error(scenari
     "change",
     ["outsider", "wrong_issue", "wrong_task", "wrong_device", "conflicting_owner"],
 )
+@pytest.mark.parametrize("continuation", [False, True])
 async def test_project_transcript_rejects_unbound_or_unauthorized_requests(
-    scenario, change
+    scenario, change, continuation
 ):
     from app.schemas.runtime_work import RuntimeTranscriptRequest
     from app.services.runtime_work_service import get_runtime_transcript
@@ -651,6 +718,10 @@ async def test_project_transcript_rejects_unbound_or_unauthorized_requests(
         deviceId="admin-cloud",
         taskId="original-session",
         projectSession={"projectId": str(s.project.id), "issueId": s.issue.id},
+        transcriptProtocolVersion=2,
+        transcriptTransfer=(
+            {"snapshotId": "a" * 64, "offset": 360 * 1024} if continuation else None
+        ),
     )
     if change == "outsider":
         s.db.delete(s.grant)
@@ -709,16 +780,17 @@ async def test_project_transcript_uses_manual_binding_and_reports_real_device_fa
         projectSession={"projectId": str(s.project.id), "issueId": s.issue.id},
     )
     with pytest.raises(HTTPException) as exc:
-        await get_runtime_transcript(db=s.db, user_id=s.member.id, address=request)
+        await get_runtime_transcript(db=s.db, user_id=s.owner.id, address=request)
     assert exc.value.status_code == 502
     assert "admin-cloud" in exc.value.detail
     assert s.rpc.await_args.kwargs["user_id"] == s.owner.id
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("continuation", [False, True])
 @pytest.mark.parametrize("search", [False, True])
 async def test_project_transcript_websocket_uses_same_authorization(
-    scenario, monkeypatch, search
+    scenario, monkeypatch, search, continuation
 ):
     from contextlib import contextmanager
 
@@ -747,7 +819,23 @@ async def test_project_transcript_websocket_uses_same_authorization(
             "deviceId": "forged-device",
             "taskId": "original-session",
             "projectSession": {"projectId": str(s.project.id), "issueId": s.issue.id},
-            **({"query": "needle", "limit": 250} if search else {}),
+            **(
+                {"query": "needle", "limit": 250}
+                if search
+                else {
+                    "transcriptProtocolVersion": 2,
+                    **(
+                        {
+                            "transcriptTransfer": {
+                                "snapshotId": "a" * 64,
+                                "offset": 360 * 1024,
+                            }
+                        }
+                        if continuation
+                        else {}
+                    ),
+                }
+            ),
         },
         timeout_seconds=30,
     )
@@ -755,7 +843,23 @@ async def test_project_transcript_websocket_uses_same_authorization(
     assert s.rpc.await_args.kwargs["payload"] == {
         "deviceId": "admin-cloud",
         "taskId": "original-session",
-        **({"query": "needle", "limit": 250} if search else {}),
+        **(
+            {"query": "needle", "limit": 250}
+            if search
+            else {
+                "transcriptProtocolVersion": 2,
+                **(
+                    {
+                        "transcriptTransfer": {
+                            "snapshotId": "a" * 64,
+                            "offset": 360 * 1024,
+                        }
+                    }
+                    if continuation
+                    else {}
+                ),
+            }
+        ),
     }
 
 

@@ -40,7 +40,7 @@ import {
   createAppliedRuntimeGuidanceMessage,
   createOptimisticRuntimeGuidanceMessage,
 } from './runtimeGuidanceMessages'
-import { updateRuntimeGoalContinuation } from '@/lib/runtime-goal'
+import { reconcileRuntimeGoal, updateRuntimeGoalContinuation } from '@/lib/runtime-goal'
 import {
   cacheBoundedEntry,
   cacheRuntimeConversationQueuedMessagesByKey,
@@ -52,6 +52,7 @@ import {
   goalSnapshotVersionsByConversation,
   hydrationByConversation,
   interruptedGuidanceIdsByConversation,
+  markRuntimeConversationArchived,
   metadataByConversation,
   MAX_RUNTIME_SUBAGENT_STATUSES,
   notifyRuntimeConversation,
@@ -64,6 +65,7 @@ import {
   threadIdsByConversation,
   supersededTurnIdsByConversation,
   turnContainsClientUserMessage,
+  unmarkRuntimeConversationArchived as unmarkArchivedConversationKey,
   type RuntimeConversationMetadata,
 } from './runtimeConversationCacheStore'
 export {
@@ -154,16 +156,6 @@ function invalidateRuntimeGoalSnapshots(address: RuntimeTaskAddress): void {
   const key = runtimeConversationKey(address)
   goalSnapshotVersionsByConversation.set(key, nextRuntimeGoalSnapshotVersion)
   nextRuntimeGoalSnapshotVersion += 1
-}
-
-function reconcileRuntimeGoal(
-  current: RuntimeGoal | null,
-  next: RuntimeGoal | null
-): RuntimeGoal | null {
-  if (!next || !current) return next
-  // Native Goals replace optimistic drafts even when their timestamps are rounded to seconds.
-  if (current.threadId === 'pending' && next.threadId !== 'pending') return next
-  return next.updatedAt < current.updatedAt ? current : next
 }
 
 export function applyRuntimeConversationGoalContinuation(
@@ -932,6 +924,15 @@ export function evictRuntimeConversation(address: RuntimeTaskAddress) {
     pendingConversationOperations.delete(operation)
   }
   evictRuntimeConversationKey(key)
+}
+
+export function archiveRuntimeConversation(address: RuntimeTaskAddress) {
+  markRuntimeConversationArchived(runtimeConversationKey(address))
+  evictRuntimeConversation(address)
+}
+
+export function unmarkRuntimeConversationArchived(address: RuntimeTaskAddress) {
+  unmarkArchivedConversationKey(runtimeConversationKey(address))
 }
 
 export function clearRuntimeConversationCacheForTests() {

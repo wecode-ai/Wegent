@@ -89,6 +89,9 @@ vi.mock('@wegent/collaboration', async importOriginal => ({
       <button onClick={() => props.host.navigate({ ...props.host.location, issueId: issue.id })}>
         Open Issue
       </button>
+      <button onClick={() => props.host.navigate({ ...props.host.location, issueId: 'TEST-2' })}>
+        Open another Issue
+      </button>
       <button
         data-testid="save-execution-environment"
         onClick={async () => {
@@ -133,7 +136,7 @@ vi.mock('@wegent/collaboration', async importOriginal => ({
         props.renderIssueDetail?.({
           api: props.api,
           project: { id: 'project' } as never,
-          issue,
+          issue: { ...issue, id: props.host.location.issueId },
           allIssues: [issue],
           assignments: [],
           taskBindings,
@@ -160,9 +163,7 @@ vi.mock('./CloudTodoBoardCard', () => ({
     const previewPinned = props.previewPinned ?? localPreviewPinned
     return (
       <>
-        <button data-column-key={props.columnKey} onClick={props.onClick}>
-          Open project card
-        </button>
+        <button onClick={props.onClick}>Open project card</button>
         <button onClick={props.issueDetailOnly ? props.onClick : undefined}>Open task area</button>
         <button
           disabled={props.previewDisabled || props.issueDetailOnly}
@@ -187,6 +188,7 @@ vi.mock('./TodoEditor', () => ({
     return (
       <section
         data-testid="cloud-todo-detail"
+        data-issue-id={props.item?.id}
         data-has-global-team-directory={props.teamApi ? 'true' : 'false'}
         data-read-first={props.readFirst ? 'true' : 'false'}
         data-selected-task-id={props.selectedTaskId ?? ''}
@@ -300,6 +302,20 @@ function Project({
             ]),
           },
           issues: {},
+          taskBindings: {
+            list: vi.fn(async () =>
+              ['run-1', 'run-2'].map(taskId => ({
+                id: `binding-${taskId}`,
+                projectId: 'project',
+                issueId: issue.id,
+                taskUserId: 9001,
+                deviceId: 'device',
+                taskId,
+                backendTaskId: null,
+                linkedAt: '2026-09-20T00:00:00Z',
+              }))
+            ),
+          },
         } as never
       }
       project={
@@ -321,6 +337,7 @@ function Project({
       services={
         {
           teamApi: { listTeams: vi.fn(async () => []) },
+          standInApi: { readTask: vi.fn(async () => ({ success: true })) },
         } as never
       }
       runtimeWork={runtimeWork}
@@ -332,15 +349,17 @@ function Project({
 }
 
 describe('Wework Issue conversation drawers', () => {
-  it('keeps lane identities distinct for the same Issue in multiple tag columns', () => {
+  it('opens the same Issue from either rendered tag column', async () => {
     boardColumnKeys = ['tag-backend', 'tag-shared']
     render(<Project />)
 
-    expect(
-      screen
-        .getAllByRole('button', { name: 'Open project card' })
-        .map(card => card.getAttribute('data-column-key'))
-    ).toEqual(['tag-backend', 'tag-shared'])
+    expect(screen.getAllByRole('button', { name: 'Open project card' })).toHaveLength(2)
+    for (const index of [0, 1]) {
+      await userEvent.click(screen.getAllByRole('button', { name: 'Open project card' })[index])
+      expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-issue-id', issue.id)
+      await userEvent.click(screen.getByTestId('cloud-todo-detail-close'))
+      expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
+    }
   })
 
   it('keeps the missing environment explanation visible after opening environment settings', async () => {
@@ -766,6 +785,27 @@ describe('Wework Issue conversation drawers', () => {
     await motion.finish()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByText('Open Issue')).toHaveFocus()
+  })
+
+  it('does not let a previous Issue exit dismiss the next Issue', async () => {
+    const user = userEvent.setup()
+    render(<Project />)
+    await user.click(screen.getByText('Open Issue'))
+    const motion = startMotion()
+    await user.click(screen.getByTestId('cloud-todo-detail-close'))
+    expect(screen.getByTestId('issue-conversation-drawers')).toHaveAttribute(
+      'data-dismissing',
+      'true'
+    )
+
+    await user.click(screen.getByText('Open another Issue'))
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-issue-id', 'TEST-2')
+    expect(screen.getByTestId('issue-conversation-drawers')).toHaveAttribute(
+      'data-dismissing',
+      'false'
+    )
+    await motion.finish()
+    expect(screen.getByTestId('cloud-todo-detail')).toHaveAttribute('data-issue-id', 'TEST-2')
   })
 
   it('finishes exit when reduced motion cancels the transition', async () => {

@@ -1,8 +1,44 @@
 import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { test, expect, vi } from 'vitest'
+import { test, expect, vi, onTestFinished } from 'vitest'
 import { watchDevelopmentBuild } from './lib/development-build-watch.mjs'
+
+test('rebuilds input edits reported only as a directory-self notification', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'development-build-self-'))
+  const source = path.join(root, 'entry.js')
+  await writeFile(source, 'one')
+  let notify
+  const close = vi.fn()
+  const watchDirectory = vi.fn((_directory, _options, callback) => {
+    notify = callback
+    return { on: vi.fn(), close }
+  })
+  let published
+  const onError = vi.fn()
+  const build = vi.fn(async () => {
+    published = await readFile(source, 'utf8')
+  })
+  const watcher = await watchDevelopmentBuild({
+    directories: [root],
+    files: [],
+    build,
+    onError,
+    debounceMs: 20,
+    watchDirectory,
+  })
+  onTestFinished(async () => {
+    await watcher.close()
+    await rm(root, { recursive: true, force: true })
+  })
+  expect(published).toBe('one')
+  await writeFile(source, 'two')
+  notify('rename', path.basename(root))
+  await expect.poll(() => published).toBe('two')
+  expect(build).toHaveBeenCalledTimes(2)
+  expect(watchDirectory).toHaveBeenCalledTimes(1)
+  expect(onError).not.toHaveBeenCalled()
+})
 
 test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules/checkout'])(
   'builds changes under %s, recovers from failure, and ignores output',
@@ -15,12 +51,15 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
     const source = path.join(root, 'entry.js')
     await writeFile(source, 'one')
     let published = ''
-    const onError = vi.fn()
+    const failedBuild = Promise.withResolvers()
+    const recoveredBuild = Promise.withResolvers()
+    const onError = vi.fn(error => failedBuild.resolve(error))
     const build = vi.fn(async () => {
       const snapshot = await readFile(source, 'utf8')
       if (snapshot === 'invalid') throw new Error('compile failed')
       published = snapshot
       await writeFile(path.join(output, 'bundle.js'), snapshot)
+      if (snapshot === 'two') recoveredBuild.resolve()
     })
     const watcher = await watchDevelopmentBuild({
       directories: [root],
@@ -30,18 +69,21 @@ test.each(['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules
       onError,
       debounceMs: 20,
     })
-    try {
-      expect(published).toBe('one')
-      await writeFile(source, 'invalid')
-      await expect.poll(() => onError.mock.calls.length).toBe(1)
-      expect(published).toBe('one')
-      await writeFile(source, 'two')
-      await expect.poll(() => published).toBe('two')
-      expect(build).toHaveBeenCalledTimes(3)
-    } finally {
+    onTestFinished(async () => {
       await watcher.close()
       await rm(temporary, { recursive: true, force: true })
-    }
+    })
+    expect(published).toBe('one')
+    await writeFile(source, 'invalid')
+    // Await native build callbacks under Vitest's test deadline, with cleanup
+    // registered separately so a missing notification cannot leak the watcher.
+    expect(await failedBuild.promise).toEqual(new Error('compile failed'))
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(published).toBe('one')
+    await writeFile(source, 'two')
+    await recoveredBuild.promise
+    expect(published).toBe('two')
+    expect(build).toHaveBeenCalledTimes(3)
   }
 )
 

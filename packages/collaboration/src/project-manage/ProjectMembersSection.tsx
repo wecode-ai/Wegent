@@ -13,7 +13,7 @@ import type { useProjectMembers } from './useProjectMembers'
 const grid =
   'grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.8fr)_2.25rem] md:gap-4'
 const focus =
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/70 focus-visible:ring-offset-2'
+  'focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 keyboard:focus-visible:ring-offset-2'
 const roles = ['Maintainer', 'Developer', 'Viewer'] as const
 
 function roleLabel(role: ProjectManageRole, host: ProjectManageHost) {
@@ -63,6 +63,8 @@ export function ProjectMembersSection<
   const {
     members,
     loading,
+    loadError,
+    retryLoad,
     membersOpen,
     setMembersOpen,
     memberComposerRef,
@@ -100,7 +102,7 @@ export function ProjectMembersSection<
               <h2 className="heading-base text-text-primary">
                 {host.translate('todo.project_members', '项目成员')}
               </h2>
-              {!loading && (
+              {!loading && !loadError && (
                 <span
                   className="rounded-md bg-muted px-2 py-0.5 text-xs text-text-secondary"
                   data-testid="cloud-project-member-count"
@@ -136,7 +138,7 @@ export function ProjectMembersSection<
                   data-testid="cloud-project-member-picker"
                   className="absolute right-0 top-full z-50 mt-2 w-72 max-w-[calc(100vw-3rem)] rounded-xl border border-border bg-background p-3 shadow-lg"
                 >
-                  <label className="flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 focus-within:ring-2 focus-within:ring-focus/70 md:min-h-9">
+                  <label className="flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 keyboard:focus-within:ring-2 keyboard:focus-within:ring-focus/70 md:min-h-9">
                     <Search className="h-4 w-4 shrink-0 text-text-muted" />
                     <input
                       ref={memberSearchInputRef}
@@ -411,6 +413,23 @@ export function ProjectMembersSection<
             })}
           </div>
         </div>
+        {loadError && (
+          <div
+            role="alert"
+            className="my-4 flex items-center gap-3 text-sm text-destructive"
+            data-testid="cloud-project-members-error"
+          >
+            <span>{loadError}</span>
+            <button
+              type="button"
+              className="min-h-11 rounded-md px-3 text-text-primary hover:bg-hover md:min-h-8"
+              data-testid="cloud-project-members-retry"
+              onClick={retryLoad}
+            >
+              {host.translate('common.retry', '重试')}
+            </button>
+          </div>
+        )}
         {loading && (
           <p
             role="status"
@@ -420,7 +439,7 @@ export function ProjectMembersSection<
             {host.translate('todo.project_members_loading', '正在加载成员…')}
           </p>
         )}
-        {!loading && !members.length && (
+        {!loading && !loadError && !members.length && (
           <p
             className="py-8 text-center text-sm text-text-muted"
             data-testid="cloud-project-members-empty"
@@ -428,7 +447,7 @@ export function ProjectMembersSection<
             {host.translate('todo.project_members_empty', '暂无项目成员')}
           </p>
         )}
-        {!loading && members.length > 0 && (
+        {members.length > 0 && (
           <footer className="mt-4 flex flex-col gap-1 text-xs leading-relaxed text-text-muted">
             {inherited && (
               <p data-testid="cloud-project-members-inheritance-note">

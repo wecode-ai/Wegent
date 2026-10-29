@@ -73,6 +73,7 @@ export interface ChatInputCardProps extends Omit<
   mentionTasks?: Task[]
   currentTaskId?: number | null
   enableTaskMentions?: boolean
+  onMentionMenuOpen?: () => void
   onSelectConversation?: (task: Task) => void
 
   // Drag and drop
@@ -227,6 +228,7 @@ export function ChatInputCard({
   mentionTasks = [],
   currentTaskId,
   enableTaskMentions = false,
+  onMentionMenuOpen,
   onSelectConversation,
   isDragging,
   onDragEnter,
@@ -801,6 +803,7 @@ export function ChatInputCard({
               mentionTasks={mentionTasks}
               currentTaskId={currentTaskId}
               enableTaskMentions={enableTaskMentions}
+              onMentionMenuOpen={onMentionMenuOpen}
               onSelectConversation={onSelectConversation}
               onPasteFile={onPasteFile}
               hasNoTeams={hasNoTeams}

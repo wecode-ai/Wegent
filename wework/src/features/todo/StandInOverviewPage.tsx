@@ -1,3 +1,5 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import { useContext, useEffect, useRef, useState, type ComponentProps } from 'react'
 import { Brain, MessageSquare, Plus, Settings } from 'lucide-react'
 import { createPortal } from 'react-dom'
@@ -73,7 +75,7 @@ export function StandInOverviewPage({
           setProposalError(null)
         }
       } catch (cause) {
-        if (active) setProposalError(String(cause))
+        if (active) setProposalError(getStandInErrorMessage(cause))
       } finally {
         if (active) timer = setTimeout(poll, 3000)
       }
@@ -86,6 +88,11 @@ export function StandInOverviewPage({
   }, [api, deviceId, props.userId, roleId])
   const roles = state.draft?.roles ?? []
   const role = roles.find(value => value.id === roleId)
+  useStandInOpened(
+    profile === 'memory' ? 'memory' : profile === 'primary' ? 'settings' : 'overview',
+    roleId ? 'role' : 'primary',
+    active && profile !== 'role' && profile !== 'create'
+  )
   const title = role
     ? standInRoleName(role, roles.indexOf(role), t('standIn.personal.default_role'))
     : t('standIn.title')
@@ -288,7 +295,7 @@ export function StandInOverviewPage({
                 className="flex items-center gap-3 px-5 py-2 text-sm text-error"
               >
                 <span className="flex-1">
-                  {value.source.name} · {value.error.message}
+                  {value.source.name} · {getStandInErrorMessage(value.error)}
                 </span>
                 <button
                   type="button"
@@ -299,7 +306,7 @@ export function StandInOverviewPage({
                       await api?.retrySource(props.userId, deviceId!, value.source)
                       inbox.refresh()
                     } catch (cause) {
-                      setProposalError(String(cause))
+                      setProposalError(getStandInErrorMessage(cause))
                     }
                   }}
                 >
@@ -350,7 +357,7 @@ export function StandInOverviewPage({
                           setProposal(null)
                           reload()
                         } catch (cause) {
-                          setProposalError(String(cause))
+                          setProposalError(getStandInErrorMessage(cause))
                         } finally {
                           setResolving(false)
                         }

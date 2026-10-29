@@ -25,7 +25,6 @@ concurrency:
 jobs:
   changes:
     name: Detect CI Changes
-    if: github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.classify.outputs.backend }}
@@ -47,11 +46,16 @@ jobs:
       - name: Classify changed paths
         id: classify
         env:
+          EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           FORCE_ALL: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all') }}
         run: |
-          if [[ "$FORCE_ALL" == "true" ]]; then
+          if [[ "$EVENT_NAME" == "merge_group" ]]; then
+            # Always verify Backend and Rust against the queued merge commit.
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            echo "backend_rs=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$FORCE_ALL" == "true" ]]; then
             # ci:all is the explicit full-regression path.
             .github/scripts/classify-ci-changes.sh --all
           else
@@ -68,6 +72,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Python 3.11 and uv
         uses: ./.github/actions/setup-python-uv-cache
@@ -91,7 +97,22 @@ jobs:
         working-directory: ./backend
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v
+        run: |
+          set -o pipefail
+          mkdir -p ../.ci-artifacts/backend-tests
+          git rev-parse HEAD > ../.ci-artifacts/backend-tests/sha.txt
+          echo 'uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v --junitxml=../.ci-artifacts/backend-tests/results.xml' > ../.ci-artifacts/backend-tests/command.txt
+          uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v \
+            --junitxml=../.ci-artifacts/backend-tests/results.xml \
+            2>&1 | tee ../.ci-artifacts/backend-tests/pytest.log
+
+      - name: Upload backend test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-evidence
+          path: .ci-artifacts/backend-tests/
+          if-no-files-found: error
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -109,12 +130,44 @@ jobs:
     env:
       CARGO_PROFILE_TEST_DEBUG: 0
       CARGO_PROFILE_DEV_DEBUG: 0
+      WEGENT_TEST_MYSQL_ADDRESS: 127.0.0.1:3306
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+      mysql:
+        image: mysql:8.0.25
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Configure backend Rust target directory
         run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/backend-rs-target" >> "$GITHUB_ENV"
+
+      - name: Set up Python and uv for gateway tests
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.11"
+
+      - name: Prepare stdlib-only Python environment for gateway tests
+        run: uv venv --python 3.11 backend/.venv
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
@@ -128,9 +181,66 @@ jobs:
         working-directory: backend-rs
         run: cargo fmt --check
 
+      - name: Record signal runtime for gateway tests
+        run: /bin/kill --version
+
       - name: Run Rust backend tests
         working-directory: backend-rs
-        run: cargo test --locked
+        run: |
+          set -o pipefail
+          mkdir -p ../.ci-artifacts/backend-rs-tests
+          git rev-parse HEAD > ../.ci-artifacts/backend-rs-tests/sha.txt
+          echo 'cargo test --locked' > ../.ci-artifacts/backend-rs-tests/command.txt
+          cargo test --locked 2>&1 | tee ../.ci-artifacts/backend-rs-tests/cargo-test.log
+
+      - name: Verify attachment API key authentication with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib attachments_task_all::auth::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/attachment-auth-mysql.log
+
+      - name: Verify handoff title search with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib tasks_search::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/tasks-search-mysql.log
+
+      - name: Verify assignment index schema compatibility with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib loop_tasks::assignment_index::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignment-index-mysql.log
+
+      - name: Verify batched project roster permission compatibility with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib cloud_projects::members::roster_mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-roster-mysql.log
+
+      - name: Verify Responses HTTP E2E with large JSON and long conversations
+        working-directory: backend-rs
+        env:
+          DATABASE_URL: mysql://root@127.0.0.1:3306/mysql
+          REDIS_URL: redis://127.0.0.1:6379/0
+          WEGENT_BACKEND_RS_ENV_FILE: /dev/null
+          RATE_LIMIT_GET_RESPONSE: 120/minute
+          EXECUTOR_MANAGER_URL: http://127.0.0.1:1
+          SECRET_KEY: responses-fixture-signing-key
+        run: |
+          set -o pipefail
+          cargo test --locked --test responses_large_json -- --ignored --test-threads=1 --nocapture 2>&1 | tee ../.ci-artifacts/backend-rs-tests/responses-mysql.log
+
+      - name: Upload Rust backend test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-rs-test-evidence
+          path: .ci-artifacts/backend-rs-tests/
+          if-no-files-found: error
 
       - name: Check Rust backend lints
         working-directory: backend-rs
@@ -178,6 +288,21 @@ jobs:
           PLUGIN_AUTH_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
           PLUGIN_AUTH_REDIS_TEST_URL: redis://127.0.0.1:6379/15
         run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py integration_checks/test_plugin_write_races_mysql.py integration_checks/test_plugin_connection_requests_mysql.py integration_checks/test_plugin_policy_bootstrap_mysql.py -n 0
+
+      - name: Verify MCP OAuth refresh and authorization races with InnoDB and Redis
+        working-directory: backend
+        env:
+          MCP_OAUTH_TEST_MYSQL_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
+          MCP_OAUTH_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+        run: uv run pytest integration_checks/test_user_mcp_oauth_mysql.py -n 0 --junitxml=reports/mcp-oauth-mysql.xml
+
+      - name: Upload MCP OAuth concurrency results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-oauth-mysql-results
+          path: backend/reports/mcp-oauth-mysql.xml
+          if-no-files-found: error
 
       - name: Verify namespace grants with MySQL connection collations
         working-directory: backend
@@ -333,7 +458,9 @@ jobs:
         working-directory: ./executor
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
-        run: cargo test --all-features --lib worktree_metadata_can_exceed_the_windows_max_path_limit
+        run: |
+          cargo test --all-features --lib worktree_metadata_can_exceed_the_windows_max_path_limit
+          cargo test --all-features --lib deferred_worktree_rebases_project_roots_using_path_identity
 
       - name: Run native clone platform regressions
         if: ${{ !cancelled() }}
@@ -342,6 +469,19 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: cargo test --all-features --lib clones_and_reuses_repositories_beyond_windows_max_path
+
+      - name: Run bounded executor and interrupted Goal platform regressions
+        if: ${{ !cancelled() }}
+        shell: bash
+        working-directory: ./executor
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
+        run: |
+          cargo test --all-features --lib local::plugin_import::hash_tests
+          cargo test --all-features --lib runtime_rpc_dispatch_fits_a_bounded_worker_stack
+          cargo test --all-features --lib agents::codex::tests::stopping_
+          cargo test --all-features --lib closed_notification_stream
+          cargo test --all-features --lib stopped_active_goal_does_not_emit_a_terminal_result_or_discard_its_status
 
       - name: Set up Node for native package filesystem regressions
         if: ${{ !cancelled() }}
@@ -687,10 +827,12 @@ jobs:
         test-wegent-cli,
         test-wegent-cli-integration,
       ]
-    if: always() && !cancelled() && github.event_name != 'merge_group'
+    if: always() && !cancelled()
 
     steps:
       - name: Check test results
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           echo "All test jobs completed"
           assert_result() {
@@ -704,6 +846,11 @@ jobs:
           }
 
           [[ "${{ needs.changes.result }}" == "success" ]]
+          if [[ "$EVENT_NAME" == "merge_group" ]]; then
+            # Missing outputs must not turn required merge checks into skips.
+            [[ "${{ needs.changes.outputs.backend }}" == "true" ]]
+            [[ "${{ needs.changes.outputs.backend_rs }}" == "true" ]]
+          fi
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-backend.result }}" "Backend tests"
           assert_result "${{ needs.changes.outputs.backend_rs }}" "${{ needs.test-backend-rs.result }}" "Backend Rust tests"
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-plugin-auth-mysql.result }}" "Plugin auth MySQL transactions"
@@ -716,12 +863,3 @@ jobs:
           assert_result "${{ needs.changes.outputs.wework }}" "${{ needs.test-wework.result }}" "Wework tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli.result }}" "wegent CLI tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli-integration.result }}" "wegent CLI integration tests"
-
-  merge-queue-summary:
-    name: Test Summary
-    if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Confirm E2E-only merge queue
-        run: echo "Unit tests are completed before the merge queue"

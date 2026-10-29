@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import '@/i18n'
+import i18n from '@/i18n'
 import type {
   CollaborationApp,
   CollaborationPlatformLocation,
@@ -46,6 +46,7 @@ import {
 } from './WeworkCollaborationPlatform'
 import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
 import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
+import type { TodoEditor } from './TodoEditor'
 import {
   loadProjectSpaceCodeWorkspacePreference,
   saveProjectSpaceCodeWorkspacePreference,
@@ -264,6 +265,8 @@ vi.mock('@wegent/collaboration', async importOriginal => {
           'data-refresh-key': refreshKey ?? '',
           'data-workspace-locations': host.capabilities.workspaceLocations?.join(',') ?? '',
           'data-issue-id': host.location.issueId ?? '',
+          'data-project-view': host.location.projectView,
+          'data-project-settings-section': host.location.projectSettingsSection ?? '',
         },
         createElement(
           'span',
@@ -357,6 +360,20 @@ vi.mock('@wegent/collaboration', async importOriginal => {
             type: 'button',
           },
           'Open issue'
+        ),
+        createElement(
+          'button',
+          {
+            'data-testid': 'collaboration-platform-manage-project',
+            onClick: () =>
+              host.navigate({
+                ...host.location,
+                projectView: 'manage',
+                projectSettingsSection: 'environments',
+              }),
+            type: 'button',
+          },
+          'Manage project'
         ),
         showLocalProject
           ? renderProject?.({
@@ -1379,6 +1396,112 @@ describe('Wework collaboration workspace API', () => {
     )
   })
 
+  it('does not reapply an unchanged notification focus after selecting another Issue', async () => {
+    const project = {
+      id: 'project-a',
+      name: 'Project A',
+      workspace_id: 'cloud-workspace',
+      project_store: 'backend',
+    }
+    const props = {
+      user: { id: 1, user_name: 'admin', email: 'admin@example.com' } as never,
+      localProjects: [],
+      services: {
+        sharedWorkspaceApi: { projects: { get: vi.fn().mockResolvedValue(project) } },
+      } as never,
+      activeProjectRef: { projectStore: 'backend' as const, projectId: project.id },
+      focusedItemId: 'notification-issue',
+      focusedCommentRequestKey: 'first-request',
+    }
+    const view = render(createElement(WeworkCollaborationPlatform, props))
+    await waitFor(() =>
+      expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+        'data-issue-id',
+        'notification-issue'
+      )
+    )
+
+    await act(async () => screen.getByTestId('collaboration-platform-open-issue').click())
+    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+      'data-issue-id',
+      'issue-1'
+    )
+    await act(async () => {
+      view.rerender(
+        createElement(WeworkCollaborationPlatform, {
+          ...props,
+          activeProjectRef: { ...props.activeProjectRef },
+        })
+      )
+    })
+    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+      'data-issue-id',
+      'issue-1'
+    )
+
+    view.rerender(
+      createElement(WeworkCollaborationPlatform, {
+        ...props,
+        focusedCommentRequestKey: 'second-request',
+      })
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+        'data-issue-id',
+        'notification-issue'
+      )
+    )
+  })
+
+  it('preserves project settings when changing locale without a routed Issue focus', async () => {
+    const previousLanguage = i18n.language
+    const project = {
+      id: 'project-a',
+      name: 'Project A',
+      workspace_id: 'cloud-workspace',
+      project_store: 'backend',
+    }
+    render(
+      createElement(WeworkCollaborationPlatform, {
+        user: { id: 1, user_name: 'admin', email: 'admin@example.com' } as never,
+        localProjects: [],
+        services: {
+          sharedWorkspaceApi: {
+            workspaces: {},
+            projects: { get: vi.fn().mockResolvedValue(project) },
+          },
+          projectSpaceApis: { local: createLocalDeliveryApi() },
+        } as never,
+        activeProjectRef: { projectStore: 'backend', projectId: project.id },
+      })
+    )
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await act(async () => screen.getByTestId('collaboration-platform-manage-project').click())
+    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+      'data-project-view',
+      'manage'
+    )
+    try {
+      await act(async () => {
+        await i18n.changeLanguage(previousLanguage.startsWith('zh') ? 'en' : 'zh-CN')
+      })
+      expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+        'data-project-view',
+        'manage'
+      )
+      expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+        'data-project-settings-section',
+        'environments'
+      )
+    } finally {
+      await act(async () => {
+        await i18n.changeLanguage(previousLanguage)
+      })
+    }
+  })
+
   it.each([
     { destination: 'an Issue in the same project', projectId: 'project-a' },
     { destination: 'an Issue in another project', projectId: 'project-b' },
@@ -1566,6 +1689,129 @@ describe('Wework collaboration workspace API', () => {
       issueExecution,
     })
   })
+
+  it.each([
+    'active',
+    'archived',
+    'foreign',
+    'unlinked',
+    'local',
+    'superseded',
+    'superseded-error',
+    'dismissed',
+  ] as const)(
+    'checks %s linked task availability through the shared project drawer',
+    async status => {
+      const project = {
+        id: `availability-${status}`,
+        name: 'Availability',
+        project_store: status === 'local' ? 'local' : 'backend',
+      }
+      const issue = { id: 'ISSUE-AVAILABILITY', title: 'Availability', sequence_number: 1 }
+      const binding = {
+        id: 'binding',
+        projectId: project.id,
+        issueId: issue.id,
+        taskUserId: status === 'local' ? 0 : status === 'foreign' ? 2 : 1,
+        deviceId: 'device',
+        taskId: 'task',
+        taskTitle: 'Personal task',
+        backendTaskId: null,
+        linkedAt: '2026-10-20T00:00:00Z',
+      }
+      const pendingRead = deferred<{ success: boolean; code?: string }>()
+      const delayed =
+        status === 'superseded' || status === 'superseded-error' || status === 'dismissed'
+      const laterBinding = { ...binding, id: 'later', taskId: 'later-task' }
+      const readTask = vi.fn((_deviceId: string, taskId: string) =>
+        delayed && taskId === binding.taskId
+          ? pendingRead.promise
+          : Promise.resolve(
+              status === 'archived' ? { success: false, code: 'task_archived' } : { success: true }
+            )
+      )
+      render(
+        createElement(WeworkSharedProject, {
+          api: {
+            projects: { list: vi.fn().mockResolvedValue([project]) },
+            issues: {},
+            taskBindings: {
+              list: vi.fn().mockResolvedValue(status === 'unlinked' ? [] : [binding, laterBinding]),
+            },
+          } as unknown as SharedWorkspaceApi,
+          localProjects: [],
+          locale: 'zh-CN',
+          location: {
+            platformView: 'project',
+            workspaceId: 'workspace',
+            workspaceView: 'projects',
+            projectId: project.id,
+            projectView: 'board',
+            issueId: issue.id,
+          },
+          project: project as never,
+          runtimePort: { bindTask: vi.fn(), unbindTask: vi.fn() },
+          services: { standInApi: { readTask } } as never,
+          setLocation: vi.fn(),
+          userId: 1,
+          workspace: { id: 'workspace', name: 'Workspace' } as never,
+        })
+      )
+      const detail = () =>
+        renderedProjectControls.get(project.id)!.renderIssueDetail!({
+          api: { issues: {} },
+          issue,
+          allIssues: [issue],
+          assignments: [],
+          taskBindings: [],
+          onChange: vi.fn(),
+          onClose: vi.fn(),
+          onCreateTask: vi.fn(),
+          onDelete: vi.fn(),
+        }) as {
+          props: {
+            conversation: ReactNode
+            onClose(): void
+            children(close: () => void): { props: ComponentProps<typeof TodoEditor> }
+          }
+        }
+      const editor = detail().props.children(vi.fn())
+      await act(async () => {
+        editor.props.onOpenTaskConversation?.(toWeworkIssueTaskBinding(binding))
+      })
+      if (delayed) {
+        await waitFor(() => expect(readTask).toHaveBeenCalledWith('device', 'task'))
+        await act(async () => {
+          if (status === 'dismissed') detail().props.onClose()
+          else editor.props.onOpenTaskConversation?.(toWeworkIssueTaskBinding(laterBinding))
+        })
+        const latestConversation = detail().props.conversation
+        if (status !== 'dismissed') expect(latestConversation).not.toBeNull()
+        await act(async () => {
+          pendingRead.resolve(
+            status === 'superseded-error'
+              ? { success: false, code: 'task_archived' }
+              : { success: true }
+          )
+        })
+        expect(detail().props.conversation).toBe(latestConversation)
+        expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
+        return
+      }
+      if (status === 'active' || status === 'local') {
+        await waitFor(() => expect(detail().props.conversation).not.toBeNull())
+        expect(readTask).toHaveBeenCalledWith('device', 'task')
+      } else {
+        expect(await screen.findByTestId('transient-notice')).toHaveTextContent(
+          status === 'archived'
+            ? '该任务已归档，请先在归档任务中恢复后再查看。'
+            : '无法打开该任务，任务可能已被删除，请刷新后重试。'
+        )
+        expect(detail().props.conversation).toBeNull()
+        if (status !== 'archived') expect(readTask).not.toHaveBeenCalled()
+      }
+    }
+  )
 
   it('opens the personal task an assignment notification asks for wherever the reader was', async () => {
     const project = {
@@ -2401,6 +2647,36 @@ describe('Wework collaboration workspace API', () => {
     expect(terminalSignature).toContain(':succeeded')
     expect(runningSignature).toContain(':running')
     expect(runningSignature).not.toBe(terminalSignature)
+  })
+
+  it('retains the project API when its full workspace catalog arrives', async () => {
+    const listProjects = vi.fn(async () => [{ id: 'project' }])
+    const props = {
+      api: { projects: { list: listProjects }, issues: {} } as unknown as SharedWorkspaceApi,
+      localProjects: [],
+      locale: 'zh-CN' as const,
+      location: { projectId: 'project', projectView: 'board' } as CollaborationPlatformLocation,
+      project: { id: 'project', name: 'Project', project_store: 'backend' } as never,
+      services: {} as never,
+      setLocation: vi.fn(),
+      userId: 1,
+      workspace: { id: 'workspace', name: 'Workspace' } as never,
+    }
+    const { rerender } = render(createElement(WeworkSharedProject, props))
+    const api = renderedProjectApis.get('project')!
+    await api.projects.list()
+    expect(listProjects).toHaveBeenLastCalledWith()
+
+    rerender(
+      createElement(WeworkSharedProject, {
+        ...props,
+        workspace: { id: 'workspace', name: 'Workspace', access_role: 'Owner' } as never,
+      })
+    )
+
+    expect(renderedProjectApis.get('project')).toBe(api)
+    await api.projects.list()
+    expect(listProjects).toHaveBeenLastCalledWith('workspace')
   })
 
   it('refreshes only the cloud project bound to a changed Runtime task', async () => {

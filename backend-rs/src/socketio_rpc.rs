@@ -22,7 +22,6 @@
 //! command replies.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -43,6 +42,8 @@ const CHANNEL: &[u8] = b"socketio";
 const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 /// In-flight callbacks retained per process.
 const MAX_WAITERS: usize = 1024;
+/// Per-socket ack-id counters retained per process.
+const MAX_SID_COUNTERS: usize = 4096;
 /// Connection and authentication budget.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Bounded reconnect budget after one subscription is lost.
@@ -52,6 +53,9 @@ const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
 
 type CallbackKey = (String, String, u64);
 type Waiters = Mutex<HashMap<CallbackKey, oneshot::Sender<Value>>>;
+/// Receives adapter `emit` messages so the local Socket.IO sessions can deliver
+/// them to their rooms.
+pub type EmitSink = Arc<dyn Fn(Value) + Send + Sync>;
 
 /// A failed Socket.IO RPC round trip.
 #[derive(Debug)]
@@ -79,7 +83,10 @@ impl std::error::Error for RpcError {}
 /// The process-lifetime Socket.IO subscription and its callback waiters.
 pub struct SocketIoRpc {
     waiters: Arc<Waiters>,
-    next_id: AtomicU64,
+    emit_sink: Arc<Mutex<Option<EmitSink>>>,
+    /// `base_manager._generate_ack_id`: one `itertools.count(1)` per socket
+    /// id, dropped when the socket goes away.
+    next_ids: Mutex<HashMap<String, u64>>,
     /// Dropping the last sender stops the subscription worker.
     _shutdown: watch::Sender<bool>,
 }
@@ -92,6 +99,7 @@ impl SocketIoRpc {
     #[must_use]
     pub fn start(config: &RedisConfig) -> Arc<Self> {
         let waiters: Arc<Waiters> = Arc::new(Mutex::new(HashMap::new()));
+        let emit_sink: Arc<Mutex<Option<EmitSink>>> = Arc::new(Mutex::new(None));
         let (shutdown, receiver) = watch::channel(false);
         let endpoint = Endpoint {
             host: config.host.clone(),
@@ -100,22 +108,26 @@ impl SocketIoRpc {
             password: config.password.clone(),
         };
         let worker_waiters = Arc::clone(&waiters);
-        tokio::spawn(run(worker_waiters, endpoint, receiver));
+        let worker_sink = Arc::clone(&emit_sink);
+        tokio::spawn(run(worker_waiters, worker_sink, endpoint, receiver));
         Arc::new(Self {
             waiters,
-            next_id: AtomicU64::new(0),
+            emit_sink,
+            next_ids: Mutex::new(HashMap::new()),
             _shutdown: shutdown,
         })
     }
 
+    /// Installs the adapter `emit` receiver for local session delivery.
+    pub fn set_emit_sink(&self, sink: EmitSink) {
+        if let Ok(mut slot) = self.emit_sink.lock() {
+            *slot = Some(sink);
+        }
+    }
+
     /// Register one callback waiter before its `emit` is published.
     pub fn begin(&self, sid: &str, namespace: &str) -> Result<SocketIoCall, RpcError> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
-        let id = if id == 0 {
-            self.next_id.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
-        } else {
-            id
-        };
+        let id = self.next_callback_id(sid)?;
         let key = (sid.to_string(), namespace.to_string(), id);
         let (sender, receiver) = oneshot::channel();
         {
@@ -136,6 +148,60 @@ impl SocketIoRpc {
             receiver,
             waiters: Arc::clone(&self.waiters),
         })
+    }
+
+    /// Deliver an acknowledgement to a waiter owned by this process.
+    ///
+    /// `async_pubsub_manager.py::_return_callback` returns the callback
+    /// locally when the emitting host is this host and only publishes
+    /// `{"method": "callback", ...}` for another host. Resolving the local
+    /// waiter directly keeps the adapter channel free of a frame the source
+    /// never sends; the caller publishes only when this returns `false`.
+    pub fn deliver_local(&self, sid: &str, namespace: &str, id: u64, args: &Value) -> bool {
+        let Ok(mut waiters) = self.waiters.lock() else {
+            return false;
+        };
+        let key = (sid.to_string(), namespace.to_string(), id);
+        let Some(sender) = waiters.remove(&key) else {
+            return false;
+        };
+        // A dropped receiver means the caller already timed out; the waiter is
+        // still ours, so the frame must not be published for someone else.
+        let _ = sender.send(args.clone());
+        true
+    }
+
+    /// `_generate_ack_id`: the next ack id of one socket, counting from 1.
+    ///
+    /// The counter is per socket id, so a fresh socket always starts at 1 no
+    /// matter how many calls the process has made elsewhere. Counters of
+    /// sockets with no pending call are dropped before the table grows past
+    /// [`MAX_SID_COUNTERS`], which is also where a disconnected socket's
+    /// counter (deleted by the source on disconnect) is released.
+    fn next_callback_id(&self, sid: &str) -> Result<u64, RpcError> {
+        let mut counters = self
+            .next_ids
+            .lock()
+            .map_err(|_| RpcError::Unavailable("callback id counter table is poisoned".into()))?;
+        if !counters.contains_key(sid) && counters.len() >= MAX_SID_COUNTERS {
+            let active = self
+                .waiters
+                .lock()
+                .map_err(|_| RpcError::Unavailable("callback waiter table is poisoned".into()))?
+                .keys()
+                .map(|(waiter_sid, _, _)| waiter_sid.clone())
+                .collect::<std::collections::HashSet<_>>();
+            counters.retain(|candidate, _| active.contains(candidate));
+            if counters.len() >= MAX_SID_COUNTERS {
+                return Err(RpcError::Unavailable(
+                    "too many Socket.IO callback id counters".into(),
+                ));
+            }
+        }
+        let next = counters.entry(sid.to_owned()).or_insert(1);
+        let id = *next;
+        *next = next.checked_add(1).unwrap_or(1);
+        Ok(id)
     }
 }
 
@@ -179,7 +245,12 @@ struct Endpoint {
     password: Option<String>,
 }
 
-async fn run(waiters: Arc<Waiters>, endpoint: Endpoint, mut shutdown: watch::Receiver<bool>) {
+async fn run(
+    waiters: Arc<Waiters>,
+    emit_sink: Arc<Mutex<Option<EmitSink>>>,
+    endpoint: Endpoint,
+    mut shutdown: watch::Receiver<bool>,
+) {
     let mut attempts = 0_u32;
     loop {
         let outcome = tokio::select! {
@@ -189,7 +260,7 @@ async fn run(waiters: Arc<Waiters>, endpoint: Endpoint, mut shutdown: watch::Rec
                 }
                 continue;
             }
-            outcome = subscribe_and_read(&endpoint, &waiters) => outcome,
+            outcome = subscribe_and_read(&endpoint, &waiters, &emit_sink) => outcome,
         };
         match outcome {
             Ok(()) => attempts = 0,
@@ -230,7 +301,11 @@ fn fail_waiters(waiters: &Waiters) {
     }
 }
 
-async fn subscribe_and_read(endpoint: &Endpoint, waiters: &Waiters) -> anyhow::Result<()> {
+async fn subscribe_and_read(
+    endpoint: &Endpoint,
+    waiters: &Waiters,
+    emit_sink: &Mutex<Option<EmitSink>>,
+) -> anyhow::Result<()> {
     let mut stream = timeout(
         CONNECT_TIMEOUT,
         TcpStream::connect((endpoint.host.as_str(), endpoint.port)),
@@ -263,7 +338,7 @@ async fn subscribe_and_read(endpoint: &Endpoint, waiters: &Waiters) -> anyhow::R
             match parse_reply(&pending) {
                 Ok(ParseResult::Complete { value, consumed }) => {
                     let _ = buffer.split_to(consumed);
-                    dispatch(value, waiters);
+                    dispatch(value, waiters, emit_sink);
                 }
                 Ok(ParseResult::Incomplete) => break,
                 Err(error) => return Err(anyhow::Error::from(error)),
@@ -305,10 +380,14 @@ async fn expect_ok(stream: &mut TcpStream) -> anyhow::Result<()> {
     }
 }
 
-/// Route one inbound adapter frame. Only `callback` messages addressed to this
-/// process are consumed; subscription confirmations and peer traffic are
-/// ignored.
-fn dispatch(value: brz_redis::types::Value, waiters: &Waiters) {
+/// Route one inbound adapter frame. `callback` messages addressed to this
+/// process resolve their waiter, `emit` messages reach the local Socket.IO
+/// sessions, and subscription confirmations are ignored.
+fn dispatch(
+    value: brz_redis::types::Value,
+    waiters: &Waiters,
+    emit_sink: &Mutex<Option<EmitSink>>,
+) {
     let brz_redis::types::Value::Array(items) = value else {
         return;
     };
@@ -327,8 +406,17 @@ fn dispatch(value: brz_redis::types::Value, waiters: &Waiters) {
     let Ok(message) = serde_json::from_slice::<Value>(payload) else {
         return;
     };
-    if message.get("method").and_then(Value::as_str) != Some("callback") {
-        return;
+    match message.get("method").and_then(Value::as_str) {
+        Some("callback") => {}
+        Some("emit") => {
+            if let Ok(sink) = emit_sink.lock()
+                && let Some(sink) = sink.as_ref()
+            {
+                sink(message);
+            }
+            return;
+        }
+        _ => return,
     }
     if message.get("host_id").and_then(Value::as_str) != Some(crate::socketio_emit::host_id()) {
         return;
@@ -366,6 +454,29 @@ mod tests {
         ])
     }
 
+    fn no_sink() -> Mutex<Option<EmitSink>> {
+        Mutex::new(None)
+    }
+
+    #[test]
+    fn adapter_emits_reach_the_registered_sink() {
+        let waiters: Waiters = Mutex::new(HashMap::new());
+        let seen: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&seen);
+        let sink: Mutex<Option<EmitSink>> = Mutex::new(Some(Arc::new(move |message| {
+            captured.lock().unwrap().push(message)
+        })));
+        dispatch(
+            push(
+                r#"{"method":"emit","event":"device:online","data":[{"device_id":"d"}],"namespace":"/chat","room":"user:1"}"#,
+            ),
+            &waiters,
+            &sink,
+        );
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert_eq!(seen.lock().unwrap()[0]["event"], "device:online");
+    }
+
     #[test]
     fn callback_frames_are_routed_to_the_matching_waiter() {
         let waiters: Waiters = Mutex::new(HashMap::new());
@@ -380,6 +491,7 @@ mod tests {
                 crate::socketio_emit::host_id()
             )),
             &waiters,
+            &no_sink(),
         );
         assert_eq!(
             receiver.try_recv().unwrap(),
@@ -401,6 +513,7 @@ mod tests {
                 r#"{"method":"callback","host_id":"00000000000000000000000000000000","sid":"sid","namespace":"/local-executor","id":1,"args":[]}"#,
             ),
             &waiters,
+            &no_sink(),
         );
         assert!(receiver.try_recv().is_err());
         assert_eq!(waiters.lock().unwrap().len(), 1);
@@ -411,6 +524,7 @@ mod tests {
                 Value::BulkString(Bytes::from_static(b"{}")),
             ]),
             &waiters,
+            &no_sink(),
         );
         assert_eq!(waiters.lock().unwrap().len(), 1);
     }
@@ -419,7 +533,8 @@ mod tests {
     fn dropping_a_call_removes_its_waiter() {
         let rpc = SocketIoRpc {
             waiters: Arc::new(Mutex::new(HashMap::new())),
-            next_id: AtomicU64::new(0),
+            emit_sink: Arc::new(Mutex::new(None)),
+            next_ids: Mutex::new(HashMap::new()),
             _shutdown: watch::channel(false).0,
         };
         let call = rpc.begin("sid", "/local-executor").unwrap();
@@ -429,14 +544,48 @@ mod tests {
         assert!(rpc.waiters.lock().unwrap().is_empty());
     }
 
-    #[test]
-    fn callback_ids_start_at_one() {
+    #[tokio::test]
+    async fn a_local_ack_resolves_the_waiter() {
         let rpc = SocketIoRpc {
             waiters: Arc::new(Mutex::new(HashMap::new())),
-            next_id: AtomicU64::new(0),
+            emit_sink: Arc::new(Mutex::new(None)),
+            next_ids: Mutex::new(HashMap::new()),
             _shutdown: watch::channel(false).0,
         };
+        let call = rpc.begin("sid-1", "/local-executor").unwrap();
+        let id = call.id();
+        assert!(rpc.deliver_local("sid-1", "/local-executor", id, &serde_json::json!(["ok"])));
+        assert_eq!(
+            call.wait(Duration::from_secs(1)).await.unwrap(),
+            serde_json::json!(["ok"])
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_callback_is_not_delivered_locally() {
+        let rpc = SocketIoRpc {
+            waiters: Arc::new(Mutex::new(HashMap::new())),
+            emit_sink: Arc::new(Mutex::new(None)),
+            next_ids: Mutex::new(HashMap::new()),
+            _shutdown: watch::channel(false).0,
+        };
+        assert!(!rpc.deliver_local("sid-1", "/local-executor", 1, &serde_json::json!([])));
+    }
+
+    #[test]
+    fn callback_ids_are_allocated_per_socket() {
+        let rpc = SocketIoRpc {
+            waiters: Arc::new(Mutex::new(HashMap::new())),
+            emit_sink: Arc::new(Mutex::new(None)),
+            next_ids: Mutex::new(HashMap::new()),
+            _shutdown: watch::channel(false).0,
+        };
+        // Every fresh socket starts at 1, independent of the calls other
+        // sockets already made in this process.
         assert_eq!(rpc.begin("a", "/n").unwrap().id(), 1);
+        assert_eq!(rpc.begin("a", "/n").unwrap().id(), 2);
+        assert_eq!(rpc.begin("b", "/n").unwrap().id(), 1);
+        assert_eq!(rpc.begin("a", "/n").unwrap().id(), 3);
         assert_eq!(rpc.begin("b", "/n").unwrap().id(), 2);
     }
 }

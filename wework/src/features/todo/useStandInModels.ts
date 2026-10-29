@@ -1,8 +1,9 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useMemo, useState } from 'react'
 import {
-  cloudRunnerModels,
+  runnerModelCatalog,
   runnerModelKey,
-  runnerModelToUnifiedModel,
+  type RunnerModelCatalogEntry,
   type RunnerModelIdentity,
   type WorkspaceProjectAgent,
   type WorkspaceStandInSettings,
@@ -10,6 +11,7 @@ import {
 } from '@wegent/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { UnifiedModel } from '@/types/api'
+import { isSameModelSelection } from '@wegent/collaboration/controls/model-ui'
 
 /** Model references remain device-scoped; credentials are resolved by the Executor. */
 export function useStandInModels(
@@ -20,9 +22,8 @@ export function useStandInModels(
   const [catalog, setCatalog] = useState<{
     deviceId: string
     runtime: string
-    models: UnifiedModel[]
+    entries: RunnerModelCatalogEntry[]
     defaultIdentity: RunnerModelIdentity | null
-    identities: Map<string, RunnerModelIdentity>
     error: string | null
   } | null>(null)
   const runtime = agent?.runtime === 'claude_code' ? 'claude_code' : 'codex'
@@ -37,36 +38,19 @@ export function useStandInModels(
       services.modelApi.listModels(),
     ]).then(([native, cloud]) => {
       if (!active) return
-      const identities = new Map<string, RunnerModelIdentity>()
-      const candidates = [
-        ...(native.status === 'fulfilled' ? native.value.models : []),
-        ...(cloud.status === 'fulfilled' ? cloudRunnerModels(cloud.value.data) : []),
-      ].filter(model => model.runtime === runtime)
-      const models = candidates.map(model => {
-        const name = runnerModelKey(model)
-        identities.set(name, {
-          runtime: model.runtime,
-          provider: model.provider,
-          model_id: model.model_id,
-          source: model.source,
-          cloud_model: model.cloud_model,
-        })
-        return runnerModelToUnifiedModel(
-          model,
-          cloud.status === 'fulfilled' ? cloud.value.data : []
-        )
-      })
+      const entries = runnerModelCatalog(
+        native.status === 'fulfilled' ? native.value.models : [],
+        cloud.status === 'fulfilled' ? cloud.value.data : [],
+        runtime
+      )
       const failure = native.status === 'rejected' ? native.reason : null
-      const defaultModel = candidates.find(model => model.is_default) ?? candidates[0]
+      const defaultModel = entries.find(entry => entry.isDefault) ?? entries[0]
       setCatalog({
         deviceId,
         runtime,
-        models,
-        identities,
-        defaultIdentity: defaultModel
-          ? (identities.get(runnerModelKey(defaultModel)) ?? null)
-          : null,
-        error: failure ? String(failure) : null,
+        entries,
+        defaultIdentity: defaultModel?.identity ?? null,
+        error: failure ? getStandInErrorMessage(failure) : null,
       })
     })
     return () => {
@@ -76,30 +60,49 @@ export function useStandInModels(
   const readyCatalog =
     catalog?.deviceId === draft.executionDeviceId && catalog.runtime === runtime ? catalog : null
   const identity = fixedModel ?? draft.model ?? readyCatalog?.defaultIdentity
+  const selectedEntry = useMemo(
+    () =>
+      identity
+        ? readyCatalog?.entries.find(
+            entry => runnerModelKey(entry.identity) === runnerModelKey(identity)
+          )
+        : undefined,
+    [identity, readyCatalog]
+  )
+  const models = useMemo(
+    () => readyCatalog?.entries.map(entry => entry.model) ?? [],
+    [readyCatalog]
+  )
   const selectedModel = useMemo(
     () =>
       identity
-        ? (readyCatalog?.models.find(model => model.name === runnerModelKey(identity)) ?? {
-            name: runnerModelKey(identity),
+        ? (selectedEntry?.model ?? {
+            name: identity.model_id,
             type: 'runtime' as const,
             displayName: identity.model_id,
             modelId: identity.model_id,
           })
         : null,
-    [identity, readyCatalog]
+    [identity, selectedEntry]
   )
+  const resolve = (model: UnifiedModel | null) =>
+    model
+      ? (readyCatalog?.entries.find(entry => isSameModelSelection(entry.model, model))?.identity ??
+        null)
+      : null
   return {
     loading: Boolean(services?.standInApi && draft.executionDeviceId && !readyCatalog),
-    models: readyCatalog?.models ?? [],
+    models,
     selectedModel,
     fixed: Boolean(fixedModel),
     fixedIdentity: fixedModel,
     defaultIdentity: fixedModel ? null : readyCatalog?.defaultIdentity,
     error: readyCatalog?.error,
-    unavailable: Boolean(
-      identity && readyCatalog && !readyCatalog.identities.has(runnerModelKey(identity))
-    ),
-    resolve: (model: UnifiedModel | null) =>
-      model ? (readyCatalog?.identities.get(model.name) ?? null) : null,
+    unavailable: Boolean(identity && readyCatalog && !selectedEntry),
+    resolve,
+    getModelOptionId: (model: UnifiedModel) => {
+      const identity = resolve(model)
+      return identity ? runnerModelKey(identity) : model.name
+    },
   }
 }

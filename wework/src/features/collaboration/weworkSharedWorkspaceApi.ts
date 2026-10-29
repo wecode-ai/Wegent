@@ -66,6 +66,7 @@ export interface WeworkAutomationSharedWorkspaceApi {
 export interface WeworkDeliverySharedWorkspaceApi {
   projects: Pick<SharedWorkspaceApi['projects'], ProjectMethod>
   myWork: NonNullable<SharedWorkspaceApi['myWork']>
+  assignmentReceipts: NonNullable<SharedWorkspaceApi['assignmentReceipts']>
   issues: SharedWorkspaceApi['issues']
   attachments: SharedWorkspaceApi['attachments']
   collaborators: SharedWorkspaceApi['collaborators']
@@ -79,6 +80,7 @@ export interface WeworkDeliverySharedWorkspaceApi {
 export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
   projects: ['list', 'get', 'create', 'update', 'archive'],
   myWork: ['list'],
+  assignmentReceipts: ['list', 'acknowledge'],
   issues: [
     'list',
     'listPage',
@@ -120,7 +122,7 @@ export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
     'accessDeliveryFile',
     'readDeliveryFile',
   ],
-  deliveries: ['list', 'get', 'create', 'addAsset', 'finalize', 'discardDraft'],
+  deliveries: ['list', 'get', 'create', 'addAsset', 'finalize', 'discardDraft', 'update'],
   executions: ['list', 'stop'],
 } as const satisfies {
   [Domain in keyof WeworkDeliverySharedWorkspaceApi]: readonly (keyof WeworkDeliverySharedWorkspaceApi[Domain])[]
@@ -386,6 +388,11 @@ export function createWeworkDeliverySharedWorkspaceApi(
   deliveryApi: DeliveryApi
 ): WeworkDeliverySharedWorkspaceApi {
   return {
+    assignmentReceipts: {
+      list: issueId => deliveryApi.getIssueAssignmentReceipts(issueId),
+      acknowledge: (issueId, assignmentId, userId) =>
+        deliveryApi.acknowledgeIssueAssignment(issueId, assignmentId, userId),
+    },
     projects: {
       async list() {
         return (await deliveryApi.listCloudProjects()).items.map(toProject)
@@ -433,6 +440,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
                 DeliveryApi['updateCloudProject']
               >[1]['provider_config'],
               board_config: input.boardConfig,
+              board_views: input.boardViews,
+              tag_change: input.tagChange,
               card_display: input.cardDisplay,
               pull_request_automation: input.pullRequestAutomation as Parameters<
                 DeliveryApi['updateCloudProject']
@@ -699,6 +708,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
       async create(issueId, input) {
         return mapWorkspaceDeliveryDto(
           await deliveryApi.createDelivery(issueId, {
+            title: input.title,
             markdown: input.markdown,
             chat: input.chat,
             source_task: input.sourceTask
@@ -725,6 +735,9 @@ export function createWeworkDeliverySharedWorkspaceApi(
       },
       discardDraft(deliveryId) {
         return deliveryApi.discardDraft(deliveryId)
+      },
+      async update(deliveryId, input) {
+        return mapWorkspaceDeliveryDto(await deliveryApi.updateDelivery(deliveryId, input))
       },
     },
     executions: {

@@ -278,9 +278,10 @@ fn decode_tool_choice(value: &Value) -> Option<ToolChoice> {
 fn encode_messages_request(request: &HarnessRequest, model_id: Option<&str>) -> Value {
     let mut raw = request.raw_messages_request.clone();
     if let Some(object) = raw.as_object_mut() {
+        let model = model_id.unwrap_or(&request.model);
         object.insert(
             "model".to_owned(),
-            Value::String(model_id.unwrap_or(&request.model).to_owned()),
+            Value::String(super::long_context::strip_long_context_suffix(model).to_owned()),
         );
         object.insert("stream".to_owned(), Value::Bool(true));
     }
@@ -343,7 +344,9 @@ fn encode_chat_request(request: &HarnessRequest, model_id: Option<&str>) -> Valu
         }
     }
     compact_object(json!({
-        "model": model_id.unwrap_or(&request.model),
+        "model": super::long_context::strip_long_context_suffix(
+            model_id.unwrap_or(&request.model)
+        ),
         "messages": messages,
         "stream": true,
         "stream_options": {"include_usage": true},
@@ -413,7 +416,9 @@ fn encode_responses_request(request: &HarnessRequest, model_id: Option<&str>) ->
         }
     }
     compact_object(json!({
-        "model": model_id.unwrap_or(&request.model),
+        "model": super::long_context::strip_long_context_suffix(
+            model_id.unwrap_or(&request.model)
+        ),
         "instructions": blocks_text(&request.system),
         "input": input,
         "stream": true,
@@ -937,6 +942,36 @@ mod tests {
             messages["messages"][0]["content"][0]["cache_control"]["type"],
             "ephemeral"
         );
+    }
+
+    #[test]
+    fn adapters_strip_long_context_model_suffixes() {
+        let source = serde_json::to_vec(&json!({
+            "model": "deepseek-v4.1-flash[1m]",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hello"}]
+        }))
+        .unwrap();
+
+        for upstream_format in [
+            "anthropic-messages",
+            "openai-chat-completions",
+            "openai-responses",
+        ] {
+            let adapted: Value = serde_json::from_slice(
+                &adapt_messages_request(&source, upstream_format, None).unwrap(),
+            )
+            .unwrap();
+
+            assert_eq!(adapted["model"], "deepseek-v4.1-flash");
+        }
+
+        let routed: Value = serde_json::from_slice(
+            &adapt_messages_request(&source, "anthropic-messages", Some("routed-model[1M]"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(routed["model"], "routed-model");
     }
 
     fn responses_input_shape(source: &[u8]) -> Vec<(String, Option<String>)> {

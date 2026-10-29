@@ -116,6 +116,19 @@ allocation or registry lookup, including the first update. Timing slots remain
 64 bytes and scalar slots 8 bytes. Protocol encoding and buffering may still
 allocate independently of metric recording.
 
+## Background jobs
+
+Rust 后台任务复用 `SCHEDULED_TASKS_ENABLED`（本进程调度）和 `EMBEDDED_CELERY_ENABLED`（本进程原生 worker），默认均为 `true`。`WEGENT_RS_JOB_ALLOWLIST` 默认空，只限制 Rust 执行范围，因此默认不运行任务。Python 保留全部 Celery 行为，不转投任务，Rust 不消费 Celery 队列；部署时避免同一执行族并行调度。通用调度框架与 Redis provider 独立发布，业务适配留在 Wegent；配置与验证步骤见[中文指南](docs/zh/background-jobs.md)。
+
+Rust background jobs reuse `SCHEDULED_TASKS_ENABLED` for this process's scheduler
+and `EMBEDDED_CELERY_ENABLED` for its native worker, both defaulting to `true`.
+`WEGENT_RS_JOB_ALLOWLIST` defaults to empty and limits only Rust execution, so
+Rust runs no jobs by default. Python retains all Celery behavior without task
+forwarding, and Rust does not consume Celery queues. Avoid scheduling the same
+family concurrently in both processes. The scheduling core and Redis provider
+are separate packages; Wegent owns its business adapters. See the
+[English guide](docs/en/background-jobs.md) for configuration and verification.
+
 ## Library boundary
 
 `Application` owns an `Arc<AppState>` and the public routes exported through
@@ -135,3 +148,16 @@ CORS to match FastAPI's outer exception handler; ordinary business errors,
 including other 500 responses, retain the public CORS policy. The gateway
 consumes the internal metadata before public delivery. Python fallback origins
 cannot choose this policy through response metadata.
+
+## 网关测试依赖
+
+知识接口回迁测试通过真实本地 Python HTTP 上游验证网关转发，并检查正常结束和启动超时后的进程清理。运行这些常规 Cargo 测试前，需要安装 `uv`、Python 3.11 或符合 Backend 项目要求的 Python，并准备 Backend 虚拟环境：
+
+```bash
+# Run from the repository root; an existing Backend environment can be reused.
+uv venv --python 3.11 backend/.venv
+cd backend-rs
+cargo test --locked --test knowledge_python_rollback
+```
+
+测试上游只使用 Python 标准库；不需要安装 Backend 业务依赖，不连接生产服务。测试通过 `uv run --no-sync --offline` 启动上游，因此环境应在测试前准备好。Rust CI 使用现有 Python/uv 安装 action 创建该环境。上述命令属于本地网关集成测试，不是产品 E2E 或 `ai:verify`。
