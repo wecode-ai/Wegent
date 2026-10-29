@@ -15,6 +15,7 @@
 import * as http from 'http'
 import { closePreviewFileSource, handlePreviewFileSource } from './preview-file-source'
 import { writeAnthropicStreamingResponse, writeAnthropicJsonResponse } from './mock-anthropic'
+import { MockResponseGate } from './mock-response-gate'
 import {
   writeAnthropicStreamingToolCalls,
   writeAnthropicJsonToolCalls,
@@ -71,6 +72,7 @@ interface StreamRule {
   responseTools?: ToolResponse[]
   chunkDelayMs?: number
   doneDelayMs?: number
+  holdResponse?: boolean
 }
 
 interface ToolScenarioStep {
@@ -93,6 +95,7 @@ interface ToolScenario {
 // Store captured requests for verification
 const capturedRequests: CapturedRequest[] = []
 const streamRules: StreamRule[] = []
+const responseGates = new Map<string, MockResponseGate>()
 const toolScenarios: ToolScenario[] = []
 const servedToolRuleCounts = new Map<string, number>()
 
@@ -603,6 +606,7 @@ const server = http.createServer((req, res) => {
       '/captured-requests',
       '/clear-requests',
       '/stream-rules',
+      '/stream-rules/release',
       '/tool-scenarios',
     ].includes(pathname)
   ) {
@@ -697,6 +701,12 @@ const server = http.createServer((req, res) => {
       req.url?.includes('/responses') ||
       req.url?.includes('/chat/completions') ||
       (req.url?.includes('/messages') && !req.url.includes('/messages/count_tokens'))
+    const streamRule = modelEndpoint ? findStreamRule(parsedBody) : undefined
+    const responseGate = streamRule && responseGates.get(streamRule.matchText)
+    if (responseGate) {
+      await responseGate.wait(res)
+      if (res.destroyed) return
+    }
     const toolScenario = modelEndpoint ? findToolScenario(parsedBody, req.headers) : undefined
     if (toolScenario && parsedBody) {
       toolScenario.capturedRequests.push(parsedBody)
@@ -725,7 +735,6 @@ const server = http.createServer((req, res) => {
           return
         }
       }
-      const streamRule = findStreamRule(parsedBody)
       const responseContent =
         scenarioStep?.responseContent ||
         streamRule?.responseContent ||
@@ -757,7 +766,6 @@ const server = http.createServer((req, res) => {
           return
         }
       }
-      const streamRule = findStreamRule(parsedBody)
       const responseContent =
         scenarioStep?.responseContent ||
         streamRule?.responseContent ||
@@ -834,7 +842,6 @@ const server = http.createServer((req, res) => {
           return
         }
       }
-      const streamRule = findStreamRule(parsedBody)
       const responseContent =
         scenarioStep?.responseContent ||
         streamRule?.responseContent ||
@@ -870,6 +877,14 @@ const server = http.createServer((req, res) => {
       capturedRequests.length = 0
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ message: 'Requests cleared' }))
+    } else if (req.url === '/stream-rules/release' && req.method === 'POST') {
+      const matchText = parseJsonBody<{ matchText: string }>(body)?.matchText
+      const gate = matchText && responseGates.get(matchText)
+      if (!gate) {
+        writeJson(res, 404, { error: 'Held stream rule not found' })
+        return
+      }
+      writeJson(res, 200, { released: gate.release() })
     } else if (req.url === '/stream-rules' && req.method === 'GET') {
       writeJson(res, 200, streamRules)
     } else if (req.url === '/stream-rules' && req.method === 'POST') {
@@ -887,6 +902,11 @@ const server = http.createServer((req, res) => {
       }
 
       const existingIndex = streamRules.findIndex(rule => rule.matchText === streamRule.matchText)
+      responseGates.get(streamRule.matchText)?.release()
+      responseGates.delete(streamRule.matchText)
+      if (streamRule.holdResponse) {
+        responseGates.set(streamRule.matchText, new MockResponseGate())
+      }
       servedToolRuleCounts.delete(streamRule.matchText)
       if (existingIndex >= 0) {
         streamRules[existingIndex] = streamRule
@@ -900,12 +920,16 @@ const server = http.createServer((req, res) => {
       const matchText = url.searchParams.get('matchText')
 
       if (matchText) {
+        responseGates.get(matchText)?.release()
+        responseGates.delete(matchText)
         const ruleIndex = streamRules.findIndex(rule => rule.matchText === matchText)
         if (ruleIndex >= 0) {
           streamRules.splice(ruleIndex, 1)
         }
         servedToolRuleCounts.delete(matchText)
       } else {
+        for (const gate of responseGates.values()) gate.release()
+        responseGates.clear()
         streamRules.length = 0
         servedToolRuleCounts.clear()
       }

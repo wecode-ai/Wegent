@@ -96,7 +96,7 @@ An explicit Anthropic Messages configuration is never overridden. Operators must
 
 When a task runs on a cloud or remote device, the model selector also shows local models configured on the current desktop. On first use or after a configuration change, Wework asks for confirmation, synchronizes the custom Codex model catalog to the target Executor, restarts its Codex app-server while the device is idle, verifies that the model was loaded, and only then sends the task. Built-in Codex models and cloud Model CRDs continue to work directly with either local or cloud execution.
 
-Generic cloud models can reuse the Wework GPT 5.6 compatibility catalog as a capability baseline while cloud model metadata overrides the context window. Compatibility entries must not impose a fixed `max_context_window` on the cloud model; the field remains unset so the runtime uses the cloud-provided window configuration. Official Codex GPT 5.6 catalog entries retain their explicit maximum window.
+Generic cloud models use the `wework-gpt-6.1-sol` shared compatibility catalog through the same catalog and cloud-model flow previously used by `wework-gpt-5.6-sol`, without requiring an official account. The shared profile preserves the previous protocol capabilities without forcing reasoning levels or enabling official-only code mode or Responses Lite. Cloud model metadata can override the context window; `max_context_window` stays unset so the compatibility profile does not cap it. Official Codex models retain their own capabilities and window limits.
 
 ### Model Rate-Limit Retries
 
