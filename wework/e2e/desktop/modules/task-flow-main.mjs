@@ -1383,9 +1383,12 @@ async function main() {
       WEWORK_E2E_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
       // The telemetry-identity checkpoint is the only place that runs with a
       // distribution-installed policy; every other checkpoint keeps the public
-      // anonymous posture so its assertions stay meaningful.
+      // anonymous posture so its assertions stay meaningful. The launch side
+      // and the assertions both key off the selected checkpoint, so a range
+      // entry such as `--from-segment telemetry-identity` cannot start the app
+      // with a policy that disagrees with the checks.
       WEWORK_E2E_TELEMETRY_POLICY:
-        DESKTOP_SEGMENT === 'telemetry-identity' ? 'identified' : 'anonymous',
+        SELECTED_DESKTOP_SEGMENT === 'telemetry-identity' ? 'identified' : 'anonymous',
       WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
       WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
       WEWORK_E2E_SAVE_DIALOG_PATH: join(resultDir, 'conversation-export-e2e.zip'),
@@ -2388,12 +2391,15 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
     // Runs only as its own segment: the identified policy fixture is chosen
     // when the app launches, so it cannot share a run with the anonymous
-    // telemetry-consent checkpoint.
-    if (DESKTOP_SEGMENT === 'telemetry-identity') {
+    // telemetry-consent checkpoint. The runner expands `--from-segment` into
+    // per-segment launches, so a range entry reaches this checkpoint too.
+    if (SELECTED_DESKTOP_SEGMENT === 'telemetry-identity') {
       phase = 'telemetry-identity'
       await verifyIdentifiedTelemetryIdentity(control)
-      console.log(`Wework desktop telemetry-identity checkpoint passed. Evidence: ${resultDir}`)
-      return
+      if (shouldStopAfterDesktopCheckpoint('telemetry-identity')) {
+        console.log(`Wework desktop telemetry-identity checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
     }
 
     if (shouldRunDesktopCheckpoint('fork-provider-preservation')) {

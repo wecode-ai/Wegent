@@ -12,6 +12,7 @@ import {
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
+import { checkpointLaunchArgs, requestedCheckpointSelection } from './checkpoint-selection.mjs'
 import { UPGRADE_CHECKPOINTS, UPGRADE_PACKAGE_CHECKPOINTS } from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
@@ -676,16 +677,7 @@ async function prepareSharedHarnessRuntime(appBinary, parentDirectory) {
 }
 
 function requestedCheckpointRange(args) {
-  if (args.length !== 2) return null
-  const [flag, checkpoint] = args
-  if (flag === '--segment') return expandDesktopCheckpoints([checkpoint])
-  if (flag === '--from-segment') {
-    const startCheckpoint = COMPOSITE_CHECKPOINTS.get(checkpoint)?.[0] ?? checkpoint
-    const startIndex = DEFAULT_DESKTOP_CHECKPOINTS.indexOf(startCheckpoint)
-    if (startIndex < 0) return null
-    return DEFAULT_DESKTOP_CHECKPOINTS.slice(startIndex)
-  }
-  return null
+  return requestedCheckpointSelection(args, DEFAULT_DESKTOP_CHECKPOINTS)?.checkpoints ?? null
 }
 
 function requestedParallelCheckpoints(args) {
@@ -728,8 +720,8 @@ async function runRequestedArgs() {
   const parallelCheckpoints = requestedParallelCheckpoints(requestedArgs)
   if (parallelCheckpoints) return runParallelCheckpoints(parallelCheckpoints)
 
-  const checkpoints = requestedCheckpointRange(requestedArgs)
-  if (checkpoints) return runCheckpoints(checkpoints)
+  const selection = requestedCheckpointSelection(requestedArgs, DEFAULT_DESKTOP_CHECKPOINTS)
+  if (selection) return runCheckpoints(selection.checkpoints, selection.extraArgs)
 
   const label = requestedArgs.join(' ') || 'desktop task flow'
   const sharedEnv = await sharedBuildEnvironment()
@@ -841,16 +833,14 @@ async function runParallelCheckpoints(checkpoints) {
   }
 }
 
-async function runCheckpoints(checkpoints) {
+async function runCheckpoints(checkpoints, extraArgs = []) {
   const sharedEnv = await sharedBuildEnvironment(process.env, checkpoints)
   const failures = []
 
   for (const checkpoint of checkpoints) {
     const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
     console.log(`\n[desktop-e2e] START ${checkpoint}`)
-    const args = CLOUD_ONLY_CHECKPOINTS.has(checkpoint)
-      ? ['--cloud-only', '--segment', checkpoint]
-      : ['--segment', checkpoint]
+    const args = checkpointLaunchArgs(checkpoint, extraArgs, CLOUD_ONLY_CHECKPOINTS.has(checkpoint))
     const result = await runTaskFlow(args, env, checkpoint)
 
     if (result.code === 0) {
