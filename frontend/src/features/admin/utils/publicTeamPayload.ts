@@ -43,6 +43,22 @@ export const buildPublicTeamJson = (data: {
     baseSpec.capability && typeof baseSpec.capability === 'object'
       ? (baseSpec.capability as Record<string, unknown>)
       : null
+  // The basic editor rebuilds members from its bot list and has no role control, so
+  // roles it never rendered would otherwise be dropped on save: a Code Wiki team's
+  // reviewer/writer would silently become ordinary members.
+  const baseMemberRoles = new Map<string, string>()
+  for (const member of Array.isArray(baseSpec.members) ? baseSpec.members : []) {
+    const record = member as Record<string, unknown>
+    const botRef =
+      record.botRef && typeof record.botRef === 'object'
+        ? (record.botRef as Record<string, unknown>)
+        : null
+    const botName = botRef?.name
+    const role = record.role
+    if (typeof botName === 'string' && typeof role === 'string' && role) {
+      baseMemberRoles.set(botName, role)
+    }
+  }
 
   return {
     ...baseJson,
@@ -75,7 +91,7 @@ export const buildPublicTeamJson = (data: {
           namespace: 'default',
         },
         botPrompt: member.botPrompt || undefined,
-        role: member.role || undefined,
+        role: member.role || baseMemberRoles.get(member.botName) || undefined,
         requireConfirmation: member.requireConfirmation || undefined,
         contextPassing:
           member.contextPassing && member.contextPassing !== 'none'

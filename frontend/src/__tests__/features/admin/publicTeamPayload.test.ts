@@ -119,6 +119,46 @@ describe('publicTeamPayload', () => {
     })
   })
 
+  it('keeps roles the basic editor never rendered when it rebuilds members', () => {
+    const teamJson = buildPublicTeamJson({
+      baseJson: {
+        spec: {
+          members: [
+            { botRef: { name: 'code-wiki-bot', namespace: 'default' }, role: 'leader' },
+            { botRef: { name: 'code-wiki-reviewer', namespace: 'default' }, role: 'reviewer' },
+            {
+              botRef: { name: 'code-wiki-section-writer', namespace: 'default' },
+              role: 'writer',
+            },
+          ],
+        },
+      },
+      name: 'code-wiki-team',
+      displayName: 'Code Wiki',
+      description: '',
+      bindMode: ['chat'],
+      icon: null,
+      requiresWorkspace: true,
+      mode: 'coordinate',
+      members: [
+        { botName: 'code-wiki-bot', botPrompt: '', role: 'leader' },
+        { botName: 'code-wiki-reviewer', botPrompt: '' },
+        { botName: 'code-wiki-section-writer', botPrompt: '' },
+        { botName: 'new-bot', botPrompt: '' },
+      ],
+    })
+
+    const members = (teamJson.spec as { members: { botRef: { name: string }; role?: string }[] })
+      .members
+
+    expect(members.map(member => [member.botRef.name, member.role])).toEqual([
+      ['code-wiki-bot', 'leader'],
+      ['code-wiki-reviewer', 'reviewer'],
+      ['code-wiki-section-writer', 'writer'],
+      ['new-bot', undefined],
+    ])
+  })
+
   it('stores video mode behavior without duplicating the Bot model binding', () => {
     const modeSpec = syncPublicTeamVideoModeSpec(
       {
