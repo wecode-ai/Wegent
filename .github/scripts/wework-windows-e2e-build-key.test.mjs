@@ -50,6 +50,7 @@ test('PR builds and trusted main warmup share exact artifacts and complete nativ
     'wegent-backend-rs.exe',
     'codex.exe',
     'socket.io-client.cjs',
+    'yaml.cjs',
   ]) {
     assert.ok(verify.run.includes(binary))
   }

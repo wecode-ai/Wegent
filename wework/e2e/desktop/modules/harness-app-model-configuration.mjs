@@ -3,7 +3,9 @@ import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
-const { parse } = createRequire(join(import.meta.dirname, '../../../electron/package.json'))('yaml')
+const { parse } = createRequire(join(import.meta.dirname, '../../../electron/package.json'))(
+  process.env.WEWORK_E2E_YAML_PARSER || 'yaml'
+)
 
 export async function readActiveHarnessModelRoutes(instanceDirectory) {
   const profile = parse(

@@ -1,6 +1,8 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { copyFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { afterEach, expect, it } from 'vitest'
 import {
   readActiveHarnessModelRoutes,
@@ -80,3 +82,52 @@ it('reads pending routes when an invalid profile prevents DSH from starting', as
     },
   ])
 })
+
+it('reads model routes from the shared artifact without workspace dependencies', async () => {
+  const directory = await instance()
+  const artifact = join(directory, 'e2e-client')
+  const bundled = spawnSync(
+    process.execPath,
+    [join(import.meta.dirname, 'build-desktop-e2e-client.mjs'), artifact],
+    { encoding: 'utf8', timeout: 10_000 }
+  )
+  expect(bundled.error).toBeUndefined()
+  expect(bundled.status, bundled.stdout + bundled.stderr).toBe(0)
+
+  const fixture = join(directory, 'workspace', 'wework', 'e2e', 'desktop', 'modules')
+  await mkdir(fixture, { recursive: true })
+  const modulePath = join(fixture, 'harness-app-model-configuration.mjs')
+  await copyFile(
+    join(import.meta.dirname, '../e2e/desktop/modules/harness-app-model-configuration.mjs'),
+    modulePath
+  )
+  await writeFile(
+    join(directory, 'profiles', 'smoke', 'cordis.patch.yml'),
+    '- id: llm-pi-ai\n  config:\n    providers:\n      bundled: { baseURL: http://127.0.0.1:9000/model }\n'
+  )
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `const {createRequire} = await import('node:module')
+const {io} = createRequire(import.meta.url)(process.argv[3])
+if (typeof io !== 'function') throw new Error('The bundled Socket.IO client is unavailable')
+const {readActiveHarnessModelRoutes} = await import(process.argv[1])
+console.log(JSON.stringify(await readActiveHarnessModelRoutes(process.argv[2])))`,
+      pathToFileURL(modulePath).href,
+      directory,
+      join(artifact, 'socket.io-client.cjs'),
+    ],
+    {
+      env: { ...process.env, WEWORK_E2E_YAML_PARSER: join(artifact, 'yaml.cjs'), NODE_PATH: '' },
+      encoding: 'utf8',
+      timeout: 10_000,
+    }
+  )
+  expect(result.error).toBeUndefined()
+  expect(result.status, result.stderr).toBe(0)
+  expect(JSON.parse(result.stdout)).toEqual([
+    { id: 'bundled', displayName: '', baseUrl: 'http://127.0.0.1:9000/model' },
+  ])
+}, 15_000)
