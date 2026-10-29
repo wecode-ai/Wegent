@@ -1,7 +1,10 @@
 //! Exercise assignment index initialization and reads on real LoopNode schemas.
 
 use super::super::loop_repository::LoopItemRepository;
+use super::super::{assignments::list_assignment_items, auth::FlexibleUser};
 use super::*;
+use serde_json::{Value, json};
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Copy)]
@@ -137,6 +140,93 @@ struct StoredIndex {
     public_id: Option<String>,
     project_key: Option<String>,
     storage_prefix: Option<String>,
+}
+
+fn reader() -> FlexibleUser {
+    let at = chrono::NaiveDate::from_ymd_opt(2026, 10, 27)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    FlexibleUser(crate::auth::UserRow {
+        id: 7,
+        user_name: "assignment-reader".into(),
+        users_password_hash: String::new(),
+        email: None,
+        git_info: brz_mysql::Json(brz_json::OpaqueJson::from(json!([]))),
+        is_active: 1,
+        role: "user".into(),
+        auth_source: "password".into(),
+        preferences: "{}".into(),
+        created_at: at,
+        updated_at: at,
+    })
+}
+
+async fn assert_listing_without_index_or_write_locks(mysql: &MysqlService) -> Value {
+    mysql
+        .execute(
+            "UPDATE loop_items SET created_by_user_id = 7 WHERE resource_type = 'comment'",
+            (),
+        )
+        .await
+        .unwrap();
+    // A normal assignment writer owns these locks until the listing completes.
+    let listing = mysql
+        .with_transaction(async |tx| {
+            let _: Vec<IndexRow> = tx
+                .fetch_all(
+                    "SELECT id FROM loop_items WHERE id = 'issue-1'
+                     OR loop_item_id = 'issue-1' FOR UPDATE",
+                    (),
+                )
+                .await?;
+            Ok(tokio::time::timeout(
+                Duration::from_secs(3),
+                list_assignment_items(mysql, "issue-1", &reader()),
+            )
+            .await)
+        })
+        .await
+        .unwrap()
+        .expect("assignment GET must finish while a writer holds Issue and comment locks")
+        .unwrap();
+    let value = crate::json_contract_tests::serialized(listing).unwrap();
+    assert_eq!(
+        value["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["12", "13"]
+    );
+    assert_eq!(value["items"][0]["receipt_tracking"], true);
+    assert_eq!(value["items"][0]["human_read_at"], "2026-10-27T00:00:00Z");
+    assert_eq!(value["items"][0]["stand_in_received_at"], Value::Null);
+    assert_eq!(
+        value["items"][0]["created_by_user_name"],
+        "assignment-reader"
+    );
+    assert!(
+        list_assignment_items(mysql, "empty-issue", &reader())
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    let nodes: Vec<StoredIndex> = mysql
+        .fetch_all(
+            "SELECT loop_item_id, public_id, project_key, storage_prefix FROM loop_items
+             WHERE resource_type = 'assignment_index'",
+            (),
+        )
+        .await
+        .unwrap();
+    assert!(
+        nodes.is_empty(),
+        "assignment GET must not initialize an index"
+    );
+    value
 }
 
 async fn assert_initialization(mysql: &MysqlService, sentinel: bool) {
@@ -395,7 +485,16 @@ async fn initializes_nullable_and_sentinel_indexes_without_changing_assignment_e
         ] {
             seed(&test_mysql, schema).await;
             let sentinel = !matches!(schema, Schema::Nullable);
+            let unindexed = assert_listing_without_index_or_write_locks(&test_mysql).await;
             assert_initialization(&test_mysql, sentinel).await;
+            let indexed = list_assignment_items(&test_mysql, "issue-1", &reader())
+                .await
+                .unwrap();
+            assert_eq!(
+                crate::json_contract_tests::serialized(indexed).unwrap(),
+                unindexed,
+                "listing must preserve the initialized index's complete response"
+            );
             assert_rollback_and_recovery(&test_mysql).await;
             assert_automation_maintains_index(&test_mysql).await;
             test_mysql
