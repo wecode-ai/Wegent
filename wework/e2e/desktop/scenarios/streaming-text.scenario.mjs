@@ -277,6 +277,12 @@ export function createDesktopScenario({
       'http_headers = { Authorization = "Bearer wework-e2e-test-key", "x-openai-actor-authorization" = "wework-desktop-e2e" }\n',
     appEnvironment: {
       WEWORK_E2E_SEED_LOCAL_MODELS: 'false',
+      ...(checkpoint === 'streaming-conversation-switching'
+        ? {
+            WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir,
+            WEWORK_E2E_RENDERER_CPU_PROFILE_LIMIT: '3',
+          }
+        : {}),
     },
 
     async prepareApp({ appEnvironment, codexHome }) {

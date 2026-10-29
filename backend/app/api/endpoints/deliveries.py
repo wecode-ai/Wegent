@@ -69,7 +69,6 @@ from app.schemas.delivery import (
 from app.schemas.issue_assignment import (
     IssueAssignmentCreate,
     IssueAssignmentCreateResponse,
-    IssueAssignmentListResponse,
     IssueAssignmentResponse,
 )
 from app.schemas.project_chat import LoopItemAssign
@@ -856,39 +855,6 @@ def list_loop_item_comments(
     ]
 
 
-# MIGRATION-CANDIDATE(api="GET /api/v1/loop-items/*/assignments"): remove after final confirmation.
-# @router.get(
-#     "/loop-items/{item_id}/assignments",
-#     response_model=IssueAssignmentListResponse,
-# )
-def list_issue_assignments(
-    item_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> IssueAssignmentListResponse:
-    if external_loop_item_provider.is_external_item(db, item_id):
-        external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
-    project, _ = issue_assignment_service.project_for_issue(
-        db,
-        issue_id=item_id,
-        user_id=current_user.id,
-    )
-    rows = issue_assignment_service.list(
-        db,
-        project_id=int(project.id),
-        issue_id=item_id,
-        user_id=current_user.id,
-    )
-    return IssueAssignmentListResponse(
-        items=[
-            IssueAssignmentResponse.model_validate(
-                issue_assignment_service.response_values(db, row)
-            )
-            for row in rows
-        ]
-    )
-
-
 @router.post(
     "/loop-items/{item_id}/assignments",
     response_model=IssueAssignmentCreateResponse,
@@ -1196,21 +1162,6 @@ def delete_loop_item_attachment(
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> None:
     loop_item_attachment_provider_router.delete(db, attachment_id, current_user.id)
-
-
-# MIGRATION-CANDIDATE(api="GET /api/v1/loop-items/*/tasks"): remove after final confirmation.
-# @router.get(
-#     "/loop-items/{item_id}/tasks",
-#     response_model=list[LoopItemTaskBindingResponse],
-# )
-def list_loop_item_tasks(
-    item_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> list[LoopItemTaskBindingResponse]:
-    external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
-    bindings = loop_item_service.list_task_bindings(db, item_id, current_user.id)
-    return [LoopItemTaskBindingResponse.model_validate(binding) for binding in bindings]
 
 
 @router.delete(

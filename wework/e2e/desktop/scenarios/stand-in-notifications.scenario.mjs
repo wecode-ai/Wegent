@@ -1,5 +1,5 @@
 import { verifyIssueAssignmentReceipts } from '../modules/issue-assignment-receipts.mjs'
-import { openProjectStandIn } from '../modules/stand-in-flows.mjs'
+import { openCollaborationNotifications, openProjectStandIn } from '../modules/stand-in-flows.mjs'
 import { verifyLocalStandInStatuses } from '../modules/stand-in-status-flows.mjs'
 import { createStandInFailureRegression } from '../modules/stand-in-failure-notification.mjs'
 import { createSubscriptionConfigRegression } from '../modules/stand-in-subscription-config.mjs'
@@ -24,15 +24,6 @@ const PROJECT = `分身通知-${process.pid}`
 const MARKER = `STAND_IN_NOTIFICATION_${process.pid}`
 const FOLLOW_UP = `${MARKER}_FOLLOW_UP`
 const selector = id => `[data-testid=${JSON.stringify(id)}]`
-
-export async function openStandInNotifications(control) {
-  const entry = '[data-testid="wework-notifications-button"]'
-  const category = '[data-testid="wework-notifications-category-collaboration"]'
-  await control.command('waitFor', entry)
-  await control.command('click', entry)
-  await control.command('waitFor', category)
-  await control.command('click', category)
-}
 
 export function createDesktopScenario({
   uiTimeoutMs,
@@ -118,7 +109,7 @@ export function createDesktopScenario({
       }
       assert.ok(binding, 'Stand-in execution must finish')
       const id = `stand-in:${encodeURIComponent(`${binding.device_id}\0${binding.task_id}`)}`
-      await openStandInNotifications(control)
+      await openCollaborationNotifications(control)
       await control.command('waitFor', selector(`notification-processing-${id}`))
       await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
         text: '处理完毕',
@@ -172,7 +163,7 @@ export function createDesktopScenario({
       const readyBeforeReload = control.readyCount
       await control.command('reloadApp', 'body')
       await control.awaitReadyAfter(readyBeforeReload)
-      await openStandInNotifications(control)
+      await openCollaborationNotifications(control)
       await control.command('waitFor', selector(`notification-stand-in-status-${id}`), {
         text: '处理完毕',
       })
@@ -206,11 +197,7 @@ export function createDesktopScenario({
       })
       for (const target of ['icon', 'edge', 'bottom', 'processing-space']) {
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-        await control.command('click', '[data-testid="wework-notifications-button"]')
-        await control.command(
-          'click',
-          '[data-testid="wework-notifications-category-collaboration"]'
-        )
+        await openCollaborationNotifications(control)
         await control.command('waitFor', row)
         await control.command('waitFor', selector(`notification-stand-in-reply-open-${id}`))
         const [bounds] = JSON.parse(await control.command('getElementMetrics', row))

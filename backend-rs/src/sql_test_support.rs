@@ -6,6 +6,9 @@
 #[path = "../tests/support/mysql_pool_server.rs"]
 pub(crate) mod mysql_pool_server;
 
+#[path = "../tests/support/mysql_rows.rs"]
+pub(crate) mod mysql_rows;
+
 use brz_mysql::{
     FromMysqlRow, Mysql, MysqlArgs, MysqlExecution, MysqlResult, MysqlRouteKey, MysqlRouting,
     MysqlService, MysqlTransactionService,

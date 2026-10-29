@@ -225,7 +225,7 @@ export async function verifyIssueTranscriptTransfer({
   await reloadMainWindow(control, 'The large Issue history did not reload')
   // The reload remounts the tab strip, so the fixed board tab is not queryable yet.
   await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]', {
-    timeoutMs,
+    visible: true,
   })
   await control.command(
     'waitFor',

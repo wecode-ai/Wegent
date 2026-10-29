@@ -812,8 +812,6 @@ async def materialize_runtime_task_endpoint(
     )
 
 
-# MIGRATION-CANDIDATE(api="POST /api/runtime-work/llm-responses-proxy/responses"): remove after final confirmation.
-# @router.post("/llm-responses-proxy/responses")
 @router.post("/llm-responses-proxy/chat/completions")
 @router.post("/llm-responses-proxy/messages")
 @router.post("/llm-responses-proxy/v1/messages")

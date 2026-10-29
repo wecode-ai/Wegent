@@ -3,8 +3,10 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { test } from 'vitest'
 
-import { openProjectStandIn } from '../e2e/desktop/modules/stand-in-flows.mjs'
-import { openStandInNotifications } from '../e2e/desktop/scenarios/stand-in-notifications.scenario.mjs'
+import {
+  openCollaborationNotifications,
+  openProjectStandIn,
+} from '../e2e/desktop/modules/stand-in-flows.mjs'
 
 const entry = '[data-workspace-tab-content][aria-hidden="false"] [data-testid="stand-in-open"]'
 
@@ -88,20 +90,18 @@ test('notification entry waits for the reloaded shell and category before clicki
   const control = {
     async command(action, selector) {
       calls.push([action, selector])
-      if (action === 'waitFor' && selector === notificationEntry) await shellReady
+      if (action === 'clickWhenEnabled' && selector === notificationEntry) await shellReady
     },
   }
 
-  const opened = openStandInNotifications(control)
-  assert.deepEqual(calls, [['waitFor', notificationEntry]])
+  const opened = openCollaborationNotifications(control)
+  assert.deepEqual(calls, [['clickWhenEnabled', notificationEntry]])
   mountShell()
   await opened
 
   assert.deepEqual(calls, [
-    ['waitFor', notificationEntry],
-    ['click', notificationEntry],
-    ['waitFor', category],
-    ['click', category],
+    ['clickWhenEnabled', notificationEntry],
+    ['clickWhenEnabled', category],
   ])
 })
 
@@ -115,6 +115,6 @@ test('missing notification entry remains a checkpoint failure', async () => {
     },
   }
 
-  await assert.rejects(openStandInNotifications(control), error => error === failure)
-  assert.deepEqual(calls, [['waitFor', '[data-testid="wework-notifications-button"]']])
+  await assert.rejects(openCollaborationNotifications(control), error => error === failure)
+  assert.deepEqual(calls, [['clickWhenEnabled', '[data-testid="wework-notifications-button"]']])
 })

@@ -21,6 +21,7 @@ import {
   emitResponseApiEvent,
   RESPONSE_API_STREAM_EVENTS,
 } from './responseApiStream'
+import { measureRuntimeStreamEvent } from './runtimeStreamDiagnostics'
 
 export type WorkbenchSocket = SocketClientSocket
 
@@ -32,7 +33,9 @@ export function createChatStream(
       const responseState = createResponseApiStreamState()
       const responseHandlers = RESPONSE_API_STREAM_EVENTS.map(eventName => {
         const handler = (payload: unknown) => {
-          emitResponseApiEvent(handlers, eventName, payload, responseState)
+          measureRuntimeStreamEvent(eventName, () => {
+            emitResponseApiEvent(handlers, eventName, payload, responseState)
+          })
         }
         socket.on(eventName, handler)
         return { eventName, handler }

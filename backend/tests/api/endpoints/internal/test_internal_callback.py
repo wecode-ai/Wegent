@@ -102,10 +102,13 @@ async def test_retained_single_callback_preserves_http_contract(
     assert response.json()["status"] == "ok"
     emitter.emit.assert_awaited_once()
     emitter.close.assert_awaited_once()
+    callback.session_manager.publish_callback_event.assert_awaited_once()
+    callback.forward_event_to_channel_callbacks.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_streaming_callback_does_not_open_database_session(monkeypatch):
+@pytest.mark.parametrize("batch", [False, True], ids=["single", "batch"])
+async def test_streaming_callback_does_not_open_database_session(monkeypatch, batch):
     state = {"open": False}
     emitter = _patch_emitters(monkeypatch, state)
     monkeypatch.setattr(
@@ -114,13 +117,16 @@ async def test_streaming_callback_does_not_open_database_session(monkeypatch):
         lambda: pytest.fail("streaming callback must not open a database session"),
     )
 
-    response = await callback.handle_callback(
-        callback.CallbackRequest(
-            event_type=ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
-            task_id=1,
-            subtask_id=2,
-            data={"delta": "thinking"},
-        )
+    request = callback.CallbackRequest(
+        event_type=ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
+        task_id=1,
+        subtask_id=2,
+        data={"delta": "thinking"},
+    )
+    response = await (
+        callback.handle_batch_callback([request])
+        if batch
+        else callback.handle_callback(request)
     )
 
     assert response.status == "ok"
@@ -128,7 +134,8 @@ async def test_streaming_callback_does_not_open_database_session(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_terminal_callback_closes_database_before_async_emit(monkeypatch):
+@pytest.mark.parametrize("batch", [False, True], ids=["single", "batch"])
+async def test_terminal_callback_closes_database_before_async_emit(monkeypatch, batch):
     state = {"open": False}
     session = object()
     emitter = _patch_emitters(monkeypatch, state)
@@ -143,13 +150,16 @@ async def test_terminal_callback_closes_database_before_async_emit(monkeypatch):
         lambda db, **kwargs: SimpleNamespace(user_id=7),
     )
 
-    response = await callback.handle_callback(
-        callback.CallbackRequest(
-            event_type=ResponsesAPIStreamEvents.ERROR.value,
-            task_id=1,
-            subtask_id=2,
-            data={"message": "failed", "code": "runtime_error"},
-        )
+    request = callback.CallbackRequest(
+        event_type=ResponsesAPIStreamEvents.ERROR.value,
+        task_id=1,
+        subtask_id=2,
+        data={"message": "failed", "code": "runtime_error"},
+    )
+    response = await (
+        callback.handle_batch_callback([request])
+        if batch
+        else callback.handle_callback(request)
     )
 
     assert response.status == "ok"

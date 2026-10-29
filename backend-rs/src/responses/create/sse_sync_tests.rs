@@ -13,7 +13,6 @@
 // infer production ownership for the local test servers spawned below.
 #![cfg(test)]
 
-use std::future::pending;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -61,12 +60,13 @@ fn executor_manager() -> ExecutorManager {
     ExecutorManager::new("http://127.0.0.1:1").expect("client")
 }
 
-/// Holds the first `fetch_optional` forever and signals that it was reached, so
-/// a test can stop the terminal persistence mid-step without a timer.
+/// Holds the first `fetch_optional` until released and signals that it was
+/// reached, so a test can stop persistence mid-step without a timer.
 #[derive(Default)]
 struct Gate {
     first_call: AtomicBool,
     reached: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    release: tokio::sync::Notify,
 }
 
 impl Gate {
@@ -75,6 +75,7 @@ impl Gate {
         let gate = Arc::new(Self {
             first_call: AtomicBool::new(true),
             reached: Mutex::new(Some(sender)),
+            release: tokio::sync::Notify::new(),
         });
         (gate, receiver)
     }
@@ -86,7 +87,11 @@ impl Gate {
         if let Some(sender) = self.reached.lock().unwrap().take() {
             let _ = sender.send(());
         }
-        pending::<()>().await;
+        self.release.notified().await;
+    }
+
+    fn release(&self) {
+        self.release.notify_one();
     }
 }
 
@@ -547,40 +552,6 @@ async fn spawn_stream_server(frames: Vec<&'static str>) -> String {
     format!("http://{addr}")
 }
 
-/// As [`spawn_stream_server`], but signals after the frames were flushed and
-/// keeps the connection open, so a test can act while the terminal drain is
-/// still reading the delayed EOF.
-async fn spawn_stream_server_holding(
-    frames: Vec<&'static str>,
-) -> (String, tokio::sync::oneshot::Receiver<()>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let (flushed, flushed_receiver) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        let Ok((mut stream, _)) = listener.accept().await else {
-            return;
-        };
-        if !read_http_request(&mut stream).await {
-            return;
-        }
-        let _ = stream
-            .write_all(
-                b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n",
-            )
-            .await;
-        for frame in frames {
-            let _ = stream
-                .write_all(format!("data: {frame}\n\n").as_bytes())
-                .await;
-        }
-        let _ = stream.flush().await;
-        let _ = flushed.send(());
-        let mut byte = [0_u8; 1];
-        let _ = stream.read(&mut byte).await;
-    });
-    (format!("http://{addr}"), flushed_receiver)
-}
-
 async fn read_http_request(stream: &mut TcpStream) -> bool {
     let mut buffer = Vec::new();
     loop {
@@ -764,9 +735,10 @@ async fn cancel_is_observed_during_a_slow_persistence_step() {
 /// GETs through the drain.
 #[tokio::test]
 async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
-    let (url, frames_flushed) = spawn_stream_server_holding(vec![CREATED, DELTA, COMPLETED]).await;
+    let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
+    let (gate, persistence_started) = Gate::new();
     let redis = RecordingRedis::default();
-    let mysql = RecordingMysql::default();
+    let mysql = RecordingMysql::gated(gate.clone());
     let executor = executor_manager();
     let ctx = ConsumerContext {
         mysql: &mysql,
@@ -780,13 +752,46 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
     let dispatch = collect(&ctx, &url, &request, "req-test", Some(2));
     tokio::pin!(dispatch);
     tokio::select! {
-        flushed = frames_flushed => flushed.expect("the terminal frames were flushed"),
+        started = persistence_started => started.expect("the terminal persistence was reached"),
         result = &mut dispatch => panic!("the dispatch ended before the terminal: {result:?}"),
     }
 
+    // Separate the one-second poll and drain deadlines without changing either
+    // budget. Persistence keeps the drain from starting while the poll is aged.
+    tokio::time::pause();
+    let (poll_started, release_poll) = redis.arm_cancel_gate();
+    tokio::time::advance(CANCEL_POLL_INTERVAL).await;
+    tokio::select! {
+        started = poll_started => started.expect("the existing cancellation poll is admitted"),
+        result = &mut dispatch => panic!("the dispatch ended during persistence: {result:?}"),
+    }
+    release_poll.send(()).unwrap();
+    assert!(poll_once(dispatch.as_mut()).await.is_none());
+    let polls_before_drain = redis.count("GET chat:cancel:");
+    tokio::time::advance(CANCEL_POLL_INTERVAL / 2).await;
+    gate.release();
+    assert!(poll_once(dispatch.as_mut()).await.is_none());
+
     // The terminal already won; arm the cross-worker flag while the drain is
     // still reading the held-open tail.
+    let (drain_poll_started, release_drain_poll) = redis.arm_cancel_gate();
     redis.mark_cancelled();
+    // Observe the GET itself instead of assuming a clock advance has already
+    // delivered its timer wake to the consumer.
+    tokio::select! {
+        started = drain_poll_started => started.expect("a cancellation GET runs during the drain"),
+        result = &mut dispatch => panic!("the drain ended before the next poll: {result:?}"),
+    }
+    assert!(
+        redis.count("GET chat:cancel:") > polls_before_drain,
+        "a new cancellation GET must run after the terminal enters its drain: {:?}",
+        redis.calls()
+    );
+    release_drain_poll.send(()).unwrap();
+    assert!(
+        poll_once(dispatch.as_mut()).await.is_none(),
+        "the in-drain cancel must not end the held-open tail"
+    );
     let collected = tokio::time::timeout(Duration::from_secs(5), &mut dispatch)
         .await
         .expect("the bounded drain completes")

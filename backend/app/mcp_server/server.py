@@ -23,7 +23,6 @@ The knowledge MCP server uses a decorator-based auto-registration system:
 """
 
 import contextvars
-import json
 import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
@@ -49,7 +48,6 @@ from app.mcp_server.auth import (
 )
 from app.mcp_server.context import (
     MCPRequestContext,
-    get_token_info_from_context,
     reset_mcp_context,
     set_mcp_context,
 )
@@ -1115,8 +1113,6 @@ def _apply_mount_prefix(spec: McpAppSpec, prefix: str) -> McpAppSpec:
             effective_spec,
             transport_methods=(
                 "GET",
-                # MIGRATION-CANDIDATE(api="POST /api/mcp/interactive-form-question/sse"): remove after final confirmation.
-                # "POST",
                 "DELETE",
                 "OPTIONS",
             ),

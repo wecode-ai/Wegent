@@ -12,6 +12,8 @@ export function summarizeRuntimeTaskExecution(task: RuntimeTaskSummary | null) {
     turnStatus: task.turnStatus ?? null,
     completedAt: task.completedAt ?? null,
     updatedAt: task.updatedAt ?? null,
+    goalStatus: task.goalStatus ?? null,
+    goalExecutionStatus: task.goalExecutionStatus ?? null,
   }
 }
 

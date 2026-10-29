@@ -36,6 +36,7 @@ use crate::teams::group_membership::{
     DirectoryMembership, ErpContext, effective_roles, user_group_memberships,
 };
 
+mod catalog;
 mod group_members;
 mod params;
 
@@ -801,7 +802,7 @@ async fn unified_skills(
         )
     };
 
-    let mut skill_kinds = match fetch_kinds(mysql, scope_sql.as_str()).await {
+    let skill_kinds = match fetch_kinds(mysql, scope_sql.as_str()).await {
         Ok(kinds) => kinds,
         Err(error) => return Err(dependency_error(error)),
     };
@@ -819,73 +820,19 @@ async fn unified_skills(
         bound_skill_ids.extend(group_shared_skill_ids.iter().copied());
     }
 
-    // Bound-but-not-listed skills.
-    let direct_ids: HashSet<i32> = skill_kinds.iter().map(|kind| kind.kinds_id).collect();
-    let mut missing: Vec<i32> = bound_skill_ids.difference(&direct_ids).copied().collect();
-    missing.sort_unstable();
-    if !missing.is_empty() {
-        let list = missing
-            .iter()
-            .map(|id| id.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
-            "SELECT {KIND_COLUMNS} \
-             FROM kinds \
-             WHERE kinds.id IN ({list}) AND kinds.kind = 'Skill' \
-             AND kinds.is_active = true ORDER BY kinds.created_at DESC"
-        );
-        match fetch_kinds(mysql, sql.as_str()).await {
-            Ok(rows) => skill_kinds.extend(rows),
-            Err(error) => return Err(dependency_error(error)),
-        }
-    }
-
-    // Convert user/group skills (dedup by (namespace, name)).
-    let mut skills: Vec<SkillItem> = Vec::new();
-    let mut user_skill_keys: HashSet<(String, String)> = HashSet::new();
-    let mut user_skill_names: HashSet<String> = HashSet::new();
-    for kind in &skill_kinds {
-        let key = (kind.kinds_namespace.clone(), kind.kinds_name.clone());
-        if user_skill_keys.insert(key) {
-            user_skill_names.insert(kind.kinds_name.clone());
-            skills.push(user_skill_item(
-                kind,
-                group_shared_skill_ids.contains(&kind.kinds_id),
-                &user_default_ids,
-            ));
-        }
-    }
-
-    // Public skills not shadowed by a user/group skill of the same name.
-    let public_sql = format!(
-        "SELECT {KIND_COLUMNS} \
-         FROM kinds \
-         WHERE kinds.user_id = 0 AND kinds.kind = 'Skill' \
-         AND kinds.namespace = 'default' AND kinds.is_active = true \
-         ORDER BY kinds.created_at DESC"
-    );
-    let public_kinds = match fetch_kinds(mysql, public_sql.as_str()).await {
-        Ok(kinds) => kinds,
-        Err(error) => return Err(dependency_error(error)),
-    };
-    for kind in &public_kinds {
-        if user_skill_names.insert(kind.kinds_name.clone()) {
-            let mut item = user_skill_item(
-                kind,
-                group_shared_skill_ids.contains(&kind.kinds_id),
-                &user_default_ids,
-            );
-            item.is_public = true;
-            item.source = None;
-            skills.push(item);
-        }
-    }
-
-    // Pagination (`user_skills[skip : skip + limit]`).
-    let page: Vec<SkillItem> = skills.into_iter().skip(skip).take(limit).collect();
-
-    Ok(page)
+    catalog::assemble(
+        skill_kinds,
+        catalog::CatalogSelection {
+            bound_ids: &bound_skill_ids,
+            shared_ids: &group_shared_skill_ids,
+            default_ids: &user_default_ids,
+            skip,
+            limit,
+        },
+        |sql| async move { fetch_kinds(mysql, &sql).await },
+    )
+    .await
+    .map_err(dependency_error)
 }
 
 fn dependency_error(error: brz_mysql::MysqlError) -> FastApiError {

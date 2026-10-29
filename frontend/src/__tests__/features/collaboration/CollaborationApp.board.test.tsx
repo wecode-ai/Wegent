@@ -134,7 +134,6 @@ class BoardPointerEvent extends MouseEvent {
 }
 
 async function dragCardTo(card: HTMLElement, target: HTMLElement) {
-  jest.useFakeTimers()
   const originalPointerEvent = window.PointerEvent
   window.PointerEvent = BoardPointerEvent as unknown as typeof PointerEvent
   const rect = jest
@@ -163,7 +162,7 @@ async function dragCardTo(card: HTMLElement, target: HTMLElement) {
     await act(async () => {
       fireEvent.pointerUp(document, { clientX: 420, clientY: 20 })
       // dnd-kit suppresses the click after a drop for 50ms.
-      await jest.advanceTimersByTimeAsync(50)
+      await new Promise(resolve => window.setTimeout(resolve, 50))
     })
     await waitFor(() =>
       expect(screen.queryByTestId('project-board-drag-overlay')).not.toBeInTheDocument()
@@ -171,7 +170,6 @@ async function dragCardTo(card: HTMLElement, target: HTMLElement) {
   } finally {
     rect.mockRestore()
     window.PointerEvent = originalPointerEvent
-    jest.useRealTimers()
   }
 }
 

@@ -83,6 +83,13 @@ export async function verifyTerminalHistory(control, timeoutMs) {
         target: `${panel} [data-testid="background-terminal-xterm"]`,
       })
     )
+    const { nativeTerminalKeys } = JSON.parse(
+      await control.command('getWorkbenchDebugSnapshot', 'body')
+    )
+    const before = nativeTerminalKeys.samples.findLast(
+      sample => sample.phase === 'native-event' && sample.event?.key === 'PageUp'
+    )
+    assert.equal(before?.event.isTrusted, true, 'Paging must use a real native key event')
     position = Number(observation.viewportBefore)
     assert.ok(Number.isSafeInteger(position) && position > 0, 'Missing native page-up baseline')
     const next = Number(observation.viewportAfter)
@@ -111,6 +118,10 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
 }) {
   const capture = (control, name) => captureScreenshot(control, name, 'body')
+  const captureTerminalKeys = async (control, name) => {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    await writeFile(join(resultDir, name), JSON.stringify(snapshot.nativeTerminalKeys, null, 2))
+  }
   let active = false
   let launched = false
   const toolResults = []
@@ -224,6 +235,7 @@ export function createDesktopScenario({
       )
       await control.command('waitFor', '[data-testid="background-terminal-output-panel"] .xterm')
       await verifyTerminalHistory(control, uiTimeoutMs)
+      await captureTerminalKeys(control, 'background-terminal-keys-initial.json')
       await control.command('waitFor', '[data-testid^="right-workspace-background-terminal:"]', {
         text: MARKERS[0],
       })
@@ -268,6 +280,7 @@ export function createDesktopScenario({
         `${SECTION} [data-testid^="open-background-terminal-"][title*="${MARKERS[0]}"]`
       )
       await verifyTerminalHistory(control, uiTimeoutMs)
+      await captureTerminalKeys(control, 'background-terminal-keys-restored.json')
       await capture(control, 'background-terminals-04b-restored-output.png')
       await showSummary(control)
       await control.command('hover', `${SECTION} [data-testid^="open-background-terminal-"]`)

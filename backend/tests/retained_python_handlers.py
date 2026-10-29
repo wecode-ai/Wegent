@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""HTTP component contracts for Python functions retained after Rust cutover.
+"""Temporary HTTP contracts for chat history pending reference-replay parity.
 
 The production application's routes are never changed. Each opt-in module gets
 an independent FastAPI application with cloned production routes and explicitly
@@ -22,91 +22,13 @@ from fastapi.testclient import TestClient
 # Only components used by HTTP contracts that cannot be replaced by a direct
 # function call without losing authentication or request/response assertions.
 _COMPONENTS = {
-    "attachment_detail": (
-        "adapter.attachments",
-        "get_attachment",
-        "GET",
-        "/api/attachments/{attachment_id}",
-        "AttachmentDetailResponse",
-    ),
-    "attachment_download": (
-        "adapter.attachments",
-        "download_attachment",
-        "GET",
-        "/api/attachments/{attachment_id}/download",
-        None,
-    ),
-    "restore_sandbox": (
-        "internal.workspace_archives",
-        "restore_sandbox_workspace",
-        "POST",
-        "/api/internal/workspace-archives/{task_id}/restore-sandbox",
-        "SandboxRestoreResponse",
-    ),
-    "runtime_rpc": (
-        "internal.robot_queue",
-        "emit_runtime_rpc",
-        "POST",
-        "/api/internal/robot-queue/emit-runtime-rpc",
-        None,
-    ),
-    "groups": ("groups", "list_groups", "GET", "/api/groups", "GroupListResponse"),
     "chat_history": (
         "internal.chat_storage",
         "get_chat_history",
         "GET",
         "/api/internal/chat/history/{session_id}",
         "HistoryResponse",
-    ),
-    "llm_responses": (
-        "runtime_work",
-        "llm_responses_proxy_endpoint",
-        "POST",
-        "/api/runtime-work/llm-responses-proxy/responses",
-        None,
-    ),
-    "project_members": (
-        "cloud_projects",
-        "list_cloud_project_members",
-        "GET",
-        "/api/v1/cloud-projects/{project_id}/members",
-        "list[CloudProjectMemberResponse]",
-    ),
-    "issue_assignments": (
-        "deliveries",
-        "list_issue_assignments",
-        "GET",
-        "/api/v1/loop-items/{item_id}/assignments",
-        "IssueAssignmentListResponse",
-    ),
-    "issue_tasks": (
-        "deliveries",
-        "list_loop_item_tasks",
-        "GET",
-        "/api/v1/loop-items/{item_id}/tasks",
-        "list[LoopItemTaskBindingResponse]",
-    ),
-    "execution_statuses": (
-        "loop_item_executions",
-        "execution_statuses",
-        "POST",
-        "/api/v1/cloud-projects/{project_id}/executions/statuses",
-        None,
-    ),
-    "projects": (
-        "projects",
-        "list_projects",
-        "GET",
-        "/api/projects",
-        "ProjectListResponse",
-    ),
-    "workspaces": (
-        "workspaces",
-        "list_workspaces",
-        "GET",
-        "/api/v1/workspaces",
-        "WorkspaceListResponse",
-    ),
+    )
 }
 
 

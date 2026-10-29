@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { expandCompletedProcessing } from '../../e2e/desktop/modules/streaming-text-fixture.mjs'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import * as desktopHost from '@/api/dsh/desktopHost'
+import { getDesktopControlDiagnostics } from './desktop-control-diagnostics'
 import {
   fillDesktopControlElement,
   isWeworkAutomationEnabled,
@@ -169,6 +170,11 @@ describe('Electron desktop E2E automation', () => {
     expect(activate).not.toHaveBeenCalled()
     acknowledgeResult(new Response('{}'))
     await client
+    expect(
+      getDesktopControlDiagnostics()
+        .filter(entry => entry.commandId === 'menu-refresh')
+        .map(entry => entry.phase)
+    ).toEqual(['command-decoded', 'start-acknowledged', 'action-completed', 'result-acknowledged'])
     expect(activate).toHaveBeenCalledExactlyOnceWith('e2e.activateApplicationMenu', {
       id: 'view.refresh',
     })

@@ -11,14 +11,11 @@ import pytest
 from app.api.endpoints.internal import callback as internal_callback
 from app.core.events import EventBus, TaskCompletedEvent
 from app.models.delivery import LoopItem, ProjectAutomationRule, ProjectAutomationRun
-from app.models.kind import Kind
-from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.router import CommunicationMode, ExecutionRouter
-from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_automation_managed_execution import (
     ManagedTeamExecutionHandle,
     project_automation_managed_execution_service,
@@ -655,11 +652,12 @@ async def test_completion_handler_persists_comment_and_run_once(
 
 
 @pytest.mark.asyncio
-@pytest.mark.asyncio
+@pytest.mark.parametrize("batch", [False, True], ids=["single", "batch"])
 async def test_executor_callback_projects_managed_parent_comment(
     test_db,
     test_user,
     monkeypatch,
+    batch,
 ):
     task = TaskResource(
         user_id=test_user.id,
@@ -790,26 +788,29 @@ async def test_executor_callback_projects_managed_parent_comment(
         AsyncMock(),
     )
 
-    response = await internal_callback.handle_callback(
-        internal_callback.CallbackRequest(
-            event_type=ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
-            task_id=task.id,
-            subtask_id=73,
-            data={
-                "response": {
-                    "output": [
-                        {
-                            "content": [
-                                {
-                                    "type": "output_text",
-                                    "text": "No suitable project assignee",
-                                }
-                            ]
-                        }
-                    ]
-                }
-            },
-        )
+    request = internal_callback.CallbackRequest(
+        event_type=ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
+        task_id=task.id,
+        subtask_id=73,
+        data={
+            "response": {
+                "output": [
+                    {
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": "No suitable project assignee",
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+    )
+    response = await (
+        internal_callback.handle_batch_callback([request])
+        if batch
+        else internal_callback.handle_callback(request)
     )
 
     test_db.refresh(run)

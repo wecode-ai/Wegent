@@ -286,6 +286,7 @@ export function createDesktopScenario({
       assert.equal((await rpc('runtime.stand_in.memory.list', { userId: USER })).items.length, 1)
       await captureScreenshot(control, '14-last-role-deleted-primary-kept.png')
       await control.command('click', '[data-testid="stand-in-create-role"]')
+      await control.command('waitFor', '[data-testid="stand-in-role-name"]', { visible: true })
       await control.command('fill', '[data-testid="stand-in-role-name"]', {
         value: '重新创建的角色',
       })

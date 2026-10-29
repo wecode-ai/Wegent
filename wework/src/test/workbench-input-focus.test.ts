@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import postcss from 'postcss'
+import postcss, { type Root } from 'postcss'
 import tailwindcss from 'tailwindcss'
 import loadConfig from 'tailwindcss/loadConfig'
-import { afterEach, beforeAll, expect, test } from 'vitest'
+import { afterAll, beforeAll, expect, test } from 'vitest'
 
 const readSource = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8')
 const sources = {
@@ -28,6 +28,7 @@ const variants = `
 `
 let css = ''
 type Modality = 'pointer' | 'keyboard' | undefined
+const frames = new Map<string, HTMLIFrameElement>()
 
 function sourceClass(source: string, expression: RegExp) {
   const match = source.match(expression)
@@ -43,28 +44,64 @@ function container(classes: string, child = '<button data-focus>Choose</button>'
   return `<div data-target class="${classes}">${child}</div>`
 }
 
+function normalizeFixtureColors(root: Root) {
+  // jsdom's stylesheet cascade ignores space-separated rgb() and opacity variables.
+  // Preserve selectors and color values; browsers consume the original CSS.
+  root.walkDecls(/^(border|background|outline)-color$/, declaration => {
+    declaration.value = declaration.value.replace(
+      /rgb\((\d+)\s+(\d+)\s+(\d+)\s*\/\s*(\d*\.?\d+|var\(--tw-(?:border|bg)-opacity(?:,\s*\d*\.?\d+)?\))\)/g,
+      (match: string, red: string, green: string, blue: string, alpha: string) => {
+        const variable = alpha.match(/^var\((--tw-(?:border|bg)-opacity)(?:,\s*\d*\.?\d+)?\)$/)
+        if (variable) {
+          const opacity = declaration.parent?.nodes.find(
+            node => node.type === 'decl' && node.prop === variable[1]
+          )
+          if (opacity?.type !== 'decl') return match
+          alpha = opacity.value
+        }
+        return /^\d*\.?\d+$/.test(alpha) ? `rgba(${red}, ${green}, ${blue}, ${alpha})` : match
+      }
+    )
+  })
+}
+
+function fixtureFrame(modality: Modality, theme: string) {
+  const key = JSON.stringify([modality, theme])
+  const existing = frames.get(key)
+  if (existing) return existing
+
+  // Keep root attributes fixed to avoid jsdom's stale modality selector cache.
+  // Parse the full stylesheet once per mode, with fresh controls for every probe.
+  const frame = document.createElement('iframe')
+  document.body.append(frame)
+  const copy = frame.contentDocument!
+  if (modality) copy.documentElement.dataset.inputModality = modality
+  copy.documentElement.classList.toggle('dark', theme === 'dark')
+  const style = copy.createElement('style')
+  style.textContent = css
+  copy.head.append(style)
+  frames.set(key, frame)
+  return frame
+}
+
 function computed(markup: string, modality: Modality, { focus = true, theme = 'light' } = {}) {
   // This checks cascade results; jsdom does not composite variable-based shadows.
   // Real pointer/Tab events and the rendered ring layers need browser verification.
-  // A fresh document avoids jsdom's stale selector cache after modality changes.
-  const frame = document.createElement('iframe')
-  document.body.append(frame)
+  const frame = fixtureFrame(modality, theme)
+  const copy = frame.contentDocument!
+  const view = frame.contentWindow as Window & typeof globalThis
   try {
-    const copy = frame.contentDocument!
-    if (modality) copy.documentElement.dataset.inputModality = modality
-    copy.documentElement.classList.toggle('dark', theme === 'dark')
-    const style = copy.createElement('style')
-    style.textContent = css
-    copy.head.append(style)
     copy.body.innerHTML = markup
     const target = copy.querySelector<HTMLElement>('[data-target]')!
     const control = copy.querySelector<HTMLElement>('[data-focus]')!
     if (focus) {
+      // Exercise suppression even when native focus-visible matches the control.
+      copy.dispatchEvent(new view.KeyboardEvent('keydown', { key: 'Tab' }))
       control.focus()
       expect(copy.activeElement).toBe(control)
       expect(control.matches(':focus-visible')).toBe(true)
     }
-    const result = frame.contentWindow!.getComputedStyle(target)
+    const result = view.getComputedStyle(target)
     const property = (name: string) => result.getPropertyValue(name).trim()
     return {
       border: result.borderColor,
@@ -83,7 +120,7 @@ function computed(markup: string, modality: Modality, { focus = true, theme = 'l
       radius: result.borderRadius,
     }
   } finally {
-    frame.remove()
+    copy.body.replaceChildren()
   }
 }
 
@@ -118,22 +155,7 @@ beforeAll(async () => {
   compiled.walkDecls(/^--tw-/, declaration => {
     if (!declaration.value.trim()) declaration.remove()
   })
-  // jsdom's computed styles reject modern rgb() syntax, even when :focus matches.
-  // Preserve concrete utility colors using the equivalent legacy rgba() notation.
-  compiled.walkDecls(declaration => {
-    declaration.value = declaration.value.replace(
-      /rgb\((\d+) (\d+) (\d+) \/ (var\((--tw-(?:bg|border)-opacity), ([\d.]+)\)|[\d.]+)\)/g,
-      (original, red, green, blue, alpha, variable, fallback) => {
-        if (variable) {
-          const opacity = declaration.parent?.nodes.find(
-            node => node.type === 'decl' && node.prop === variable
-          )
-          alpha = opacity?.type === 'decl' ? opacity.value : fallback
-        }
-        return /^[\d.]+$/.test(alpha) ? `rgba(${red}, ${green}, ${blue}, ${alpha})` : original
-      }
-    )
-  })
+  normalizeFixtureColors(compiled)
   // jsdom ignores the entire selector list when a universal rule includes pseudos.
   // Pseudo-element defaults do not affect these element-only fixture assertions.
   compiled.walkRules(rule => {
@@ -164,9 +186,17 @@ beforeAll(async () => {
     }
     ${compiled.toString()}
   `
+  for (const theme of ['light', 'dark']) {
+    for (const modality of ['pointer', 'keyboard', undefined] as const) {
+      fixtureFrame(modality, theme)
+    }
+  }
 })
 
-afterEach(() => document.body.replaceChildren())
+afterAll(() => {
+  for (const frame of frames.values()) frame.remove()
+  frames.clear()
+})
 
 test.each(['light', 'dark'])(
   '%s theme keeps an arbitrary border opacity without a pointer restoration rule',
@@ -174,9 +204,11 @@ test.each(['light', 'dark'])(
     const markup = field('border border-[#737373]/[.37] keyboard:focus:border-[#339cff]/70')
     const { baseline, pointer } = expectPointerBaseline(markup, theme)
     expect(baseline.border).not.toBe('')
+    expect(baseline.border).toBe('rgba(115, 115, 115, 0.37)')
     for (const modality of ['keyboard', undefined] as const) {
       const keyboard = computed(markup, modality, { theme })
       expect(keyboard.border).not.toBe(pointer.border)
+      expect(keyboard.border).toBe('rgba(51, 156, 255, 0.7)')
       expect(keyboard.borderWidth).toBe(baseline.borderWidth)
     }
   }
@@ -326,6 +358,8 @@ test('pointer suppression preserves focus backgrounds instead of disabling every
   expect(baseline.background).toMatch(/255[ ,]+255[ ,]+255/)
   expect(pointer.background).toMatch(/238[ ,]+238[ ,]+238/)
   expect(pointer.background).not.toBe(baseline.background)
+  expect(baseline.background).toBe('rgb(255, 255, 255)')
+  expect(pointer.background).toBe('rgb(238, 238, 238)')
   expect(pointer.background).toBe(computed(markup, 'keyboard').background)
   expect(pointer.borderWidth).toBe(baseline.borderWidth)
 })
