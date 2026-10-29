@@ -1206,6 +1206,13 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       })
       return
     }
+    if (publishTarget === 'team' && availableWritableGroupsError) {
+      toast({
+        variant: 'destructive',
+        title: t('resource-library:messages.groups_load_failed'),
+      })
+      return
+    }
     if (publishTarget === 'marketplace' && marketplaceTags.length === 0) {
       toast({
         variant: 'destructive',

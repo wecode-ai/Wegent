@@ -177,6 +177,7 @@ export function CapabilityScopeSelector({
               >
                 <Checkbox
                   checked={selectedGroupNames.includes(group.name)}
+                  disabled={Boolean(groupsError)}
                   onCheckedChange={checked => toggleGroup(group.name, Boolean(checked))}
                   data-testid={`capability-scope-group-${group.name}`}
                 />
@@ -208,6 +209,7 @@ export function CapabilityScopeSelector({
             <select
               id="capability-scope-group"
               value={groupName || ''}
+              disabled={Boolean(groupsError)}
               onChange={event => onChange('team', event.target.value)}
               className="h-11 w-full rounded-md border border-border bg-base px-3 font-normal"
               data-testid="capability-scope-group"

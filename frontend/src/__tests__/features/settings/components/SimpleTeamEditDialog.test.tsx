@@ -1183,6 +1183,54 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
+  it('blocks a team save when the group list failed to refresh', async () => {
+    ;(listGroups as jest.Mock)
+      .mockResolvedValueOnce({
+        total: 1,
+        items: [{ id: 7, name: 'engineering', display_name: 'Engineering', my_role: 'Developer' }],
+      })
+      .mockRejectedValueOnce(new Error('group load failed'))
+
+    const toast = jest.fn()
+    const renderDialog = (open: boolean) => (
+      <TeamEditDialog
+        open={open}
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={toast}
+      />
+    )
+
+    const { rerender } = render(renderDialog(true))
+    await waitFor(() => {
+      expect(listGroups).toHaveBeenCalledTimes(1)
+    })
+
+    rerender(renderDialog(false))
+    rerender(renderDialog(true))
+
+    fireEvent.change(await screen.findByLabelText('Display name'), {
+      target: { value: 'Blocked agent' },
+    })
+    fireEvent.click(screen.getByTestId('capability-scope-team'))
+
+    expect(await screen.findByTestId('capability-scope-groups-error')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(toast).toHaveBeenCalledWith({
+        variant: 'destructive',
+        title: 'resource-library:messages.groups_load_failed',
+      })
+    })
+    expect(mockedCreateBot).not.toHaveBeenCalled()
+  })
+
   it('skips writable group loading when the create target is fixed', async () => {
     render(
       <TeamEditDialog

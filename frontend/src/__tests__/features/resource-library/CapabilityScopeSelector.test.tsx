@@ -77,4 +77,22 @@ describe('CapabilityScopeSelector', () => {
     await user.click(screen.getByTestId('capability-scope-groups-retry'))
     expect(onRetryGroups).toHaveBeenCalledTimes(1)
   })
+
+  it('disables stale group choices while the group list failed to load', () => {
+    const onChange = jest.fn()
+
+    render(
+      <CapabilityScopeSelector
+        value="team"
+        groups={groups}
+        groupNames={['team-a']}
+        multipleGroups
+        onChange={onChange}
+        groupsError={new Error('group load failed')}
+      />
+    )
+
+    expect(screen.getByTestId('capability-scope-group-team-a')).toBeDisabled()
+    expect(screen.getByTestId('capability-scope-group-team-b')).toBeDisabled()
+  })
 })

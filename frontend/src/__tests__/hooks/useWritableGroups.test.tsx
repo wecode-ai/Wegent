@@ -118,7 +118,7 @@ describe('useWritableGroups', () => {
     expect(result.current.groups.map(group => group.name)).toEqual(['developer'])
   })
 
-  it('clears groups when a refresh fails so stale permissions are not selectable', async () => {
+  it('keeps cached groups visible when a refresh fails', async () => {
     ;(listGroups as jest.Mock)
       .mockResolvedValueOnce({
         total: 1,
@@ -136,7 +136,7 @@ describe('useWritableGroups', () => {
       await result.current.reload()
     })
 
-    expect(result.current.groups).toEqual([])
+    expect(result.current.groups.map(group => group.name)).toEqual(['developer'])
     expect(result.current.error?.message).toBe('refresh failed')
   })
 
