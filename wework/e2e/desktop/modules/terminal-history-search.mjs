@@ -762,13 +762,9 @@ export async function verifyNativeTerminalHistorySearch(control, address, timeou
       'Native search indexed a hidden terminal body or omitted useful output'
     )
   }
-  await control.command(
-    'nativePress',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`,
-    {
-      key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
-    }
-  )
+  await control.command('nativePress', `${ACTIVE_WORKBENCH_SELECTOR} [role="scrollbar"]`, {
+    key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
+  })
   // The first newer page finishes the partially loaded neighbor before advancing a turn.
   // Native hydration already includes turn 14 before the complete question turn 15.
   await verifyTerminalHistorySearch(
