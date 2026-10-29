@@ -1,14 +1,16 @@
-import { useCollaborationPortalTheme } from '../theme'
+import { useCollaborationPortalTheme, useDocumentTheme } from '../theme'
 import { useMarkdownServices } from './MarkdownServices'
-import FileViewer from '@file-viewer/react'
-import engineeringRenderers from '@file-viewer/preset-engineering'
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { DiagramImageActions } from './DiagramImageActions'
 import { useEscapeKey } from './useEscapeKey'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import { useDiagramViewport } from './useDiagramViewport'
 import { useDiagramDiagnostics } from './useDiagramDiagnostics'
+import { useDiagramArtifact } from './useDiagramArtifact'
+import { diagramKind, DIAGRAM_PREVIEW_HEIGHT_REM } from './diagramLayout'
+import { DiagramCanvas } from './DiagramCanvas'
+import type { DiagramArtifact } from './diagramArtifact'
 
 interface MarkdownDiagramPreviewProps {
   code: string
@@ -26,7 +28,9 @@ const FOCUSABLE_SELECTOR = [
 
 export function MarkdownDiagramPreview({ code, language }: MarkdownDiagramPreviewProps) {
   const portalTheme = useCollaborationPortalTheme()
+  const documentTheme = useDocumentTheme()
   const { translate: t, theme, plantumlServerUrl } = useMarkdownServices()
+  const resolvedTheme = theme === 'system' ? (portalTheme['data-theme'] ?? documentTheme) : theme
   const containerRef = useRef<HTMLElement>(null)
   const renderViewer = useDiagramViewport(containerRef)
   const fullscreenDialogRef = useRef<HTMLDivElement>(null)
@@ -34,31 +38,34 @@ export function MarkdownDiagramPreview({ code, language }: MarkdownDiagramPrevie
   const fullscreenTriggerRef = useRef<HTMLButtonElement>(null)
   const restoreFullscreenFocusRef = useRef(false)
   const [fullscreen, setFullscreen] = useState(false)
-  const normalizedLanguage = language.toLowerCase()
-  const diagramType =
-    normalizedLanguage === 'mmd' || normalizedLanguage === 'mermaid' ? 'mermaid' : 'plantuml'
+  const diagramType = diagramKind(language) ?? 'mermaid'
+  const result = useDiagramArtifact(
+    { code, kind: diagramType, theme: resolvedTheme, plantumlServerUrl },
+    renderViewer
+  )
+  const artifact = result.status === 'ready' ? result.artifact : undefined
+  const [imageResult, setImageResult] = useState<{
+    artifact: DiagramArtifact
+    failed: boolean
+  } | null>(null)
+  const onReady = useCallback(() => {
+    if (artifact) setImageResult({ artifact, failed: false })
+  }, [artifact])
+  const onError = useCallback(() => {
+    if (artifact) setImageResult({ artifact, failed: true })
+  }, [artifact])
+  const failed =
+    result.status === 'error' ||
+    (imageResult?.artifact === artifact && imageResult?.failed === true)
+  const ready = Boolean(artifact && imageResult?.artifact === artifact && !failed)
   useDiagramDiagnostics(containerRef, {
     code,
     language: diagramType,
-    theme,
+    theme: resolvedTheme,
     renderViewer,
     fullscreen,
+    status: !renderViewer ? 'idle' : failed ? 'error' : ready ? 'ready' : 'loading',
   })
-  const file = useMemo(
-    () =>
-      new File([code], `diagram.${diagramType}`, {
-        type: 'text/plain',
-      }),
-    [code, diagramType]
-  )
-  const options = useMemo(
-    () => ({
-      preset: [engineeringRenderers],
-      drawing: { plantumlServerUrl: plantumlServerUrl },
-      theme,
-    }),
-    [theme, plantumlServerUrl]
-  )
 
   const closeFullscreen = () => setFullscreen(false)
   const openFullscreen = () => {
@@ -70,7 +77,9 @@ export function MarkdownDiagramPreview({ code, language }: MarkdownDiagramPrevie
 
   useEffect(() => {
     if (fullscreen) {
-      const frameId = window.requestAnimationFrame(() => fullscreenExitButtonRef.current?.focus())
+      const frameId = window.requestAnimationFrame(() => {
+        fullscreenExitButtonRef.current?.focus()
+      })
       return () => window.cancelAnimationFrame(frameId)
     }
     if (!restoreFullscreenFocusRef.current) return
@@ -107,31 +116,55 @@ export function MarkdownDiagramPreview({ code, language }: MarkdownDiagramPrevie
     <section
       data-testid="assistant-diagram-preview"
       data-language={diagramType}
+      data-diagram-status={!renderViewer ? 'idle' : failed ? 'error' : ready ? 'ready' : 'loading'}
       data-scroll-anchor
       ref={containerRef}
       className={cn(
-        'wework-diagram-preview relative max-w-full overflow-hidden bg-background',
-        fullscreen ? 'h-full w-full' : 'mb-3 mt-2 h-96 rounded-lg border border-border'
+        'relative max-w-full overflow-hidden bg-background',
+        fullscreen ? 'h-full w-full' : 'mb-3 mt-2 rounded-lg border border-border'
       )}
+      style={fullscreen ? undefined : { height: `${DIAGRAM_PREVIEW_HEIGHT_REM}rem` }}
     >
       <span hidden data-diagram-search-source>
         {code}
       </span>
-      {renderViewer && (
-        <FileViewer
-          file={file}
-          filename={file.name}
-          type={diagramType}
-          size={file.size}
-          className="h-full w-full"
-          options={options}
-        />
+      {artifact && !failed && (
+        <DiagramCanvas artifact={artifact} onReady={onReady} onError={onError} />
+      )}
+      {renderViewer && !ready && (
+        <div
+          data-search-excluded
+          className="absolute inset-0 overflow-auto bg-background p-4"
+          role={failed ? 'alert' : 'status'}
+        >
+          <p className="text-sm text-text-secondary">
+            {failed
+              ? t('workbench.diagram_render_failed', '图表渲染失败，源码如下')
+              : t('workbench.diagram_loading', '正在渲染图表…')}
+          </p>
+          {failed && (
+            <>
+              <button
+                type="button"
+                data-testid="diagram-retry-button"
+                onClick={() => {
+                  setImageResult(null)
+                  result.retry()
+                }}
+                className="mt-2 min-h-11 rounded-md border border-border px-3 text-sm md:min-h-7"
+              >
+                {t('workbench.diagram_retry', '重试')}
+              </button>
+              <pre className="mt-3 whitespace-pre-wrap text-code">{code}</pre>
+            </>
+          )}
+        </div>
       )}
       {renderViewer && (
         <DiagramImageActions
-          containerRef={containerRef}
+          getArtifact={artifact && ready ? () => artifact : undefined}
           filename={`${diagramType}-diagram.png`}
-          theme={theme}
+          theme={resolvedTheme}
           fullscreen={fullscreen}
           fullscreenButtonRef={fullscreen ? fullscreenExitButtonRef : fullscreenTriggerRef}
           onToggleFullscreen={fullscreen ? closeFullscreen : openFullscreen}
@@ -142,7 +175,15 @@ export function MarkdownDiagramPreview({ code, language }: MarkdownDiagramPrevie
 
   return (
     <>
-      {fullscreen ? <div aria-hidden="true" className="mb-3 mt-2 h-96 max-w-full" /> : preview}
+      {fullscreen ? (
+        <div
+          aria-hidden="true"
+          className="mb-3 mt-2 max-w-full"
+          style={{ height: `${DIAGRAM_PREVIEW_HEIGHT_REM}rem` }}
+        />
+      ) : (
+        preview
+      )}
       {fullscreen && typeof document !== 'undefined'
         ? createPortal(
             <div

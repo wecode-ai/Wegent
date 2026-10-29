@@ -714,7 +714,7 @@ export async function verifyTerminalHistorySearch(
 }
 
 export async function verifyNativeTerminalHistorySearch(control, address, timeoutMs, search) {
-  const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
+  const historyStart = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-transcript-history-start"]`
   const loadNewer = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-newer-runtime-transcript-button"]`
   const latest = `Native search answer ${TERMINAL_HISTORY_TURN_COUNT - 1}`
   assert.ok(address.threadId, 'Native history requires a resolved thread identity')
@@ -731,7 +731,7 @@ export async function verifyNativeTerminalHistorySearch(control, address, timeou
         timeoutMs
       )
     ).pane
-  await control.command('waitFor', loadOlder, { timeoutMs })
+  await control.command('waitFor', historyStart, { timeoutMs })
   await control.command('waitFor', ANSWERS, { text: latest })
   // Seeded content can stay visible while the resolved thread identity triggers a reload.
   const original = await settledPane()
@@ -753,9 +753,13 @@ export async function verifyNativeTerminalHistorySearch(control, address, timeou
       'Native search indexed a hidden terminal body or omitted useful output'
     )
   }
-  await control.command('nativePress', loadOlder, {
-    key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
-  })
+  await control.command(
+    'nativePress',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`,
+    {
+      key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
+    }
+  )
   // The first newer page finishes the partially loaded neighbor before advancing a turn.
   // Native hydration already includes turn 14 before the complete question turn 15.
   await verifyTerminalHistorySearch(

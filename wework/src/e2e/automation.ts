@@ -2874,9 +2874,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       activeScrollStabilitySample = sample
       return ''
     }
+    case 'stopScrollStabilitySampling':
     case 'getScrollStabilitySample': {
       const sample = activeScrollStabilitySample
       if (!sample) throw new Error('Scroll stability sampling has not started')
+      if (command.action === 'stopScrollStabilitySampling') sample.stop()
       return JSON.stringify({
         done: sample.done,
         frames: sample.frames,
@@ -3691,7 +3693,6 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       cache: 'no-store',
       headers: desktopControlHeaders(),
     })
-  let commandRequest = pollForCommand()
   await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
@@ -3701,10 +3702,12 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
   if (!readyResponse.ok) {
     throw new Error(`Desktop E2E control registration failed with ${readyResponse.status}`)
   }
+  let commandRequest = pollForCommand()
 
   while (true) {
     try {
       const response = await commandRequest
+      if (response.status === 410) return
       if (response.status === 204) {
         commandRequest = pollForCommand()
         continue

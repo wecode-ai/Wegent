@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, test, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 import {
   ConversationTranslationProvider,
@@ -37,6 +37,7 @@ function renderArea(
 }
 
 describe('shared conversation scroll area without desktop services', () => {
+  afterEach(() => vi.unstubAllGlobals())
   test.each(['en', 'zh-CN'] as const)('renders the native loading copy in %s', locale => {
     renderArea({ messages: [], loading: true }, locale)
     expect(screen.getByTestId('chat-loading-state')).toHaveTextContent(
@@ -46,13 +47,52 @@ describe('shared conversation scroll area without desktop services', () => {
 
   test('does not enable history loading without a host loader', () => {
     renderArea({ hasMoreBefore: true })
-    expect(screen.getByTestId('load-older-runtime-transcript-button')).toBeDisabled()
+    expect(screen.getByTestId('runtime-transcript-history-start')).toBeInTheDocument()
+    expect(screen.queryByTestId('load-older-runtime-transcript-button')).not.toBeInTheDocument()
   })
 
-  test('loads history through the actual host callback', () => {
+  test('shows history loading feedback outside the transcript layout until loading finishes', () => {
+    const props = { messages: [message], hasMoreBefore: true }
+    const content = (loadingMoreBefore: boolean, autoScrollSuspended = false) => (
+      <ConversationTranslationProvider translate={createCollaborationTranslator('en')}>
+        <ScrollableMessageArea
+          {...props}
+          loadingMoreBefore={loadingMoreBefore}
+          autoScrollSuspended={autoScrollSuspended}
+        />
+      </ConversationTranslationProvider>
+    )
+    const view = render(content(false))
+    expect(screen.queryByTestId('runtime-transcript-history-loading')).not.toBeInTheDocument()
+    view.rerender(content(true))
+    const indicator = screen.getByRole('status', { name: 'Loading...' })
+    expect(indicator).toHaveClass('absolute', 'pointer-events-none')
+    expect(screen.getByTestId('chat-message-scroll-area')).not.toContainElement(indicator)
+    expect(indicator.querySelector('.animate-spin')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-transcript-history-start')).toHaveClass('h-px')
+    view.rerender(content(true, true))
+    expect(screen.queryByTestId('runtime-transcript-history-loading')).not.toBeInTheDocument()
+    view.rerender(content(false))
+    expect(screen.queryByTestId('runtime-transcript-history-loading')).not.toBeInTheDocument()
+  })
+
+  test('loads history through the actual host callback', async () => {
+    let intersect!: IntersectionObserverCallback
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          intersect = callback
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
     const load = vi.fn().mockResolvedValue(undefined)
     renderArea({ hasMoreBefore: true, onLoadMoreBefore: load })
-    fireEvent.click(screen.getByTestId('load-older-runtime-transcript-button'))
+    await act(async () =>
+      intersect([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+    )
     expect(load).toHaveBeenCalledOnce()
   })
 

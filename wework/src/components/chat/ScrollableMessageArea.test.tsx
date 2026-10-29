@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { createRef } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 import { getConversationDiagnosticsSnapshot } from '@wegent/collaboration/conversation/conversationDiagnostics'
 import {
@@ -224,7 +225,7 @@ describe('ScrollableMessageArea: presentation', () => {
     expect(messageList?.nextElementSibling).toBe(footer)
   })
 
-  test('keeps older transcript loading controls at the top of the message flow', () => {
+  test('keeps a silent history prefetch boundary at the top of the message flow', () => {
     render(
       <ScrollableMessageArea
         hasMoreBefore
@@ -241,94 +242,231 @@ describe('ScrollableMessageArea: presentation', () => {
     )
 
     expect(screen.getByTestId('chat-message-scroll-area-content')).not.toHaveClass('justify-end')
-    expect(screen.getByTestId('load-older-runtime-transcript-button')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-transcript-history-start')).toHaveClass('h-px')
+    expect(screen.queryByTestId('load-older-runtime-transcript-button')).not.toBeInTheDocument()
   })
 
-  test('preserves the visible text when older transcript messages are prepended', () => {
-    const resizeCallbacks: ResizeObserverCallback[] = []
-    vi.stubGlobal(
-      'ResizeObserver',
-      class ResizeObserverMock {
-        constructor(callback: ResizeObserverCallback) {
-          resizeCallbacks.push(callback)
-          allResizeCallbacks.add(callback)
+  test.each(['messages', 'guidance', 'turn items', 'processing segments', 'processing prefix'])(
+    'preserves visible text when older %s are automatically prepended',
+    async kind => {
+      const resizeCallbacks: ResizeObserverCallback[] = []
+      vi.stubGlobal(
+        'ResizeObserver',
+        class ResizeObserverMock {
+          constructor(callback: ResizeObserverCallback) {
+            resizeCallbacks.push(callback)
+            allResizeCallbacks.add(callback)
+          }
+          observe() {}
+          disconnect() {}
         }
-        observe() {}
-        disconnect() {}
-      }
-    )
-    const onLoadMoreBefore = vi.fn()
-    const currentMessages = [
-      {
-        id: 'current',
-        role: 'assistant' as const,
-        content: 'Current page',
-        status: 'done' as const,
-        createdAt: '2026-08-10T00:00:01.000Z',
-      },
-    ]
-    const { rerender } = render(
-      <ScrollableMessageArea
-        conversationKey="paginated-scroll"
-        hasMoreBefore
-        messages={currentMessages}
-        onLoadMoreBefore={onLoadMoreBefore}
-      />
-    )
-
-    const scroller = screen.getByTestId('chat-message-scroll-area')
-    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
-    let scrollHeight = 1_000
-    Object.defineProperty(scroller, 'scrollHeight', {
-      get: () => scrollHeight,
-      configurable: true,
-    })
-    Object.defineProperty(scroller, 'scrollTop', {
-      value: 300,
-      writable: true,
-      configurable: true,
-    })
-    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
-      scroller.scrollTop = Number(top)
-    })
-    flushScheduledTimers()
-    scroller.scrollTop = 300
-    fireEvent.wheel(scroller)
-    fireEvent.scroll(scroller)
-
-    let anchorPosition = 340
-    const anchor = messageText('Current page')
-    mockRect(scroller, 0, 300)
-    anchor.getBoundingClientRect = () =>
-      new DOMRect(0, anchorPosition - scroller.scrollTop, 320, 80)
-    fireEvent.click(screen.getByTestId('load-older-runtime-transcript-button'))
-    expect(onLoadMoreBefore).toHaveBeenCalledOnce()
-
-    scrollHeight = 1_600
-    anchorPosition += 600
-    rerender(
-      <ScrollableMessageArea
-        conversationKey="paginated-scroll"
-        messages={[
+      )
+      const onLoadMoreBefore = vi.fn().mockResolvedValue(undefined)
+      let intersect!: IntersectionObserverCallback
+      vi.stubGlobal(
+        'IntersectionObserver',
+        class {
+          constructor(callback: IntersectionObserverCallback) {
+            intersect = callback
+          }
+          observe() {}
+          disconnect() {}
+        }
+      )
+      const currentMessages: WorkbenchMessage[] = [
+        {
+          id: 'current',
+          role: 'assistant' as const,
+          content: 'Current page',
+          status: 'done' as const,
+          createdAt: '2026-08-10T00:00:01.000Z',
+        },
+      ]
+      if (kind === 'turn items') {
+        currentMessages[0].runtimeDisplayItems = [
+          { id: 'current-content', type: 'assistant_text', content: 'Current page' },
+          { id: 'after', type: 'block' },
+        ]
+        currentMessages[0].blocks = [
           {
-            id: 'older',
-            role: 'user',
-            content: 'Older page',
+            id: 'after',
+            type: 'text',
+            content: 'After current page',
+            subtaskId: 'turn',
             status: 'done',
-            createdAt: '2026-08-10T00:00:00.000Z',
+            createdAt: 0,
           },
-          ...currentMessages,
-        ]}
-        onLoadMoreBefore={onLoadMoreBefore}
-      />
-    )
-    act(() => {
-      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
-    })
+        ]
+        currentMessages.unshift({
+          id: 'user',
+          role: 'user',
+          content: 'Original prompt',
+          status: 'done',
+          createdAt: '',
+        })
+      }
+      if (kind.startsWith('processing')) {
+        currentMessages[0].content = ''
+        currentMessages[0].blocks = [
+          {
+            id: 'current-process',
+            type: 'text',
+            content: 'Current page',
+            subtaskId: 'turn',
+            status: 'done',
+            createdAt: 0,
+          },
+          {
+            id: 'current-tool',
+            type: 'tool',
+            toolName: 'shell',
+            subtaskId: 'turn',
+            status: 'done',
+            createdAt: 0,
+          },
+        ]
+      }
+      const { rerender } = render(
+        <ScrollableMessageArea
+          conversationKey={`paginated-scroll-${kind}`}
+          hasMoreBefore
+          messages={currentMessages}
+          onLoadMoreBefore={onLoadMoreBefore}
+        />
+      )
 
-    expect(scroller.scrollTop).toBe(900)
-    expect(anchor.getBoundingClientRect().top).toBe(40)
-  })
+      const scroller = screen.getByTestId('chat-message-scroll-area')
+      Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+      let scrollHeight = 1_000
+      Object.defineProperty(scroller, 'scrollHeight', {
+        get: () => scrollHeight,
+        configurable: true,
+      })
+      Object.defineProperty(scroller, 'scrollTop', {
+        value: 300,
+        writable: true,
+        configurable: true,
+      })
+      scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+        scroller.scrollTop = Number(top)
+      })
+      flushScheduledTimers()
+      scroller.scrollTop = 300
+      fireEvent.wheel(scroller)
+      fireEvent.scroll(scroller)
+
+      let anchorPosition = 340
+      const anchor = messageText('Current page')
+      mockRect(scroller, 0, 300)
+      const originalRect = HTMLElement.prototype.getBoundingClientRect
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: HTMLElement
+      ) {
+        return this === anchor ||
+          this.textContent === 'Current page' ||
+          this.dataset.processingBlockId === 'current-process'
+          ? new DOMRect(0, anchorPosition - scroller.scrollTop, 320, 80)
+          : originalRect.call(this)
+      })
+      await act(async () =>
+        intersect(
+          [{ isIntersecting: true } as IntersectionObserverEntry],
+          {} as IntersectionObserver
+        )
+      )
+      expect(onLoadMoreBefore).toHaveBeenCalledOnce()
+
+      scrollHeight = 1_600
+      anchorPosition += 600
+      const earlierMessages: WorkbenchMessage[] = kind.startsWith('processing')
+        ? [
+            {
+              ...currentMessages[0],
+              blocks: [
+                {
+                  id: 'older-process',
+                  type: 'text',
+                  content: 'Older progress',
+                  subtaskId: 'turn',
+                  status: 'done',
+                  createdAt: 0,
+                },
+                ...(kind === 'processing segments'
+                  ? [
+                      {
+                        id: 'older-tool',
+                        type: 'tool' as const,
+                        toolName: 'shell',
+                        subtaskId: 'turn',
+                        status: 'done' as const,
+                        createdAt: 0,
+                      },
+                    ]
+                  : []),
+                ...currentMessages[0].blocks!,
+              ],
+            },
+          ]
+        : kind === 'turn items'
+          ? [
+              currentMessages[0],
+              {
+                ...currentMessages[1],
+                blocks: [
+                  {
+                    id: 'before',
+                    type: 'text',
+                    content: 'Before current page',
+                    subtaskId: 'turn',
+                    status: 'done',
+                    createdAt: 0,
+                  },
+                  ...currentMessages[1].blocks!,
+                ],
+                runtimeDisplayItems: [
+                  { id: 'before', type: 'block' },
+                  ...currentMessages[1].runtimeDisplayItems!,
+                ],
+              },
+            ]
+          : [
+              {
+                id: 'older',
+                role: kind === 'guidance' ? 'assistant' : 'user',
+                runtimeGuidance: kind === 'guidance',
+                content: 'Older page',
+                status: 'done',
+                createdAt: '2026-08-10T00:00:00.000Z',
+              },
+              ...currentMessages,
+            ]
+      rerender(
+        <ScrollableMessageArea
+          conversationKey={`paginated-scroll-${kind}`}
+          messages={earlierMessages}
+          hasMoreBefore={kind === 'turn items'}
+          onLoadMoreBefore={onLoadMoreBefore}
+        />
+      )
+      act(() => {
+        resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+      })
+
+      expect(scroller.scrollTop).toBe(900)
+      expect(messageText('Current page').getBoundingClientRect().top).toBe(40)
+      if (kind === 'turn items') {
+        // The first user and assistant IDs stay unchanged: earlier items alone re-arm prefetch.
+        await act(async () =>
+          intersect(
+            [{ isIntersecting: true } as IntersectionObserverEntry],
+            {} as IntersectionObserver
+          )
+        )
+        expect(onLoadMoreBefore).toHaveBeenCalledTimes(2)
+        expect(anchor.getBoundingClientRect().top).toBe(40)
+      }
+    }
+  )
 
   test('shows a scroll-to-bottom button when messages overflow above the bottom', async () => {
     render(
@@ -378,6 +516,49 @@ describe('ScrollableMessageArea: presentation', () => {
       top: fromBottom(scroller, 0),
       behavior: 'auto',
     })
+  })
+
+  test('retains an expanded tool group when older tools merge into its beginning', () => {
+    const message: WorkbenchMessage = {
+      id: 'expanded-history',
+      role: 'assistant',
+      content: '',
+      status: 'done',
+      createdAt: '',
+      blocks: [
+        {
+          id: 'current-tool',
+          subtaskId: 'turn',
+          type: 'tool',
+          toolName: 'shell',
+          toolInput: { command: 'pwd' },
+          status: 'done',
+          createdAt: 0,
+        },
+      ],
+    }
+    const view = render(
+      <ScrollableMessageArea conversationKey="expanded-history" messages={[message]} />
+    )
+    fireEvent.click(screen.getByTestId('processing-summary-toggle'))
+    expect(screen.getByTestId('processing-summary-toggle')).toHaveAttribute('aria-expanded', 'true')
+    view.rerender(
+      <ScrollableMessageArea
+        conversationKey="expanded-history"
+        messages={[
+          {
+            ...message,
+            blocks: [{ ...message.blocks![0], id: 'older-tool' }, ...message.blocks!],
+          },
+        ]}
+      />
+    )
+    expect(screen.getByTestId('processing-summary-toggle')).toHaveAttribute('aria-expanded', 'true')
+    view.rerender(<ScrollableMessageArea conversationKey="another-history" messages={[message]} />)
+    expect(screen.getByTestId('processing-summary-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
   })
 
   test('keeps following the bottom after the scroll button is clicked during layout growth', () => {

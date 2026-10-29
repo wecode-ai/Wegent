@@ -139,6 +139,7 @@ export function ScrollableMessageArea({
           visibleSearchPage ? `${props.conversationKey ?? ''}:find` : props.conversationKey
         }
         hasMoreBefore={visibleSearchPage ? visibleSearchPage.hasMoreBefore : props.hasMoreBefore}
+        historyLoadingMode={visibleSearchPage ? 'manual' : props.historyLoadingMode}
         loadingMoreBefore={
           visibleSearchPage
             ? visibleSearchPage.loadingMoreBefore || visibleSearchPage.loadingMoreAfter

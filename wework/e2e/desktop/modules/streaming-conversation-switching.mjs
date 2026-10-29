@@ -14,6 +14,8 @@ import {
   streamingEvents,
   textDeltaEvents,
   waitForRuntimePaneReadyToSend,
+  SCROLLER_SELECTOR,
+  getSingleElementMetrics,
 } from './streaming-text-fixture.mjs'
 
 const PROMPT = 'WEWORK_NATIVE_ORDER_TASK_SWITCH'
@@ -161,6 +163,83 @@ export function createConversationSwitchingChecks({ uiTimeoutMs }) {
           pane.text.split(SUFFIX.trim()).length - 1,
           1,
           'Restoration duplicated a background update'
+        )
+        // A running task's warm cache already contains its entire streamed turn. Reload the
+        // renderer so pagination must fetch records absent from the displayed native page.
+        await control.command('reloadApp', 'body')
+        await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+          text: SUFFIX.trim(),
+          timeoutMs: longResponseTimeoutMs,
+        })
+        await waitForWorkbenchDebugState(
+          control,
+          snapshot =>
+            snapshot.pane?.currentRuntimeTask?.taskId === address.taskId &&
+            snapshot.pane?.transcript?.loading === false &&
+            snapshot.pane?.transcript?.hasMoreBefore === true,
+          'The cold native history page did not expose the earlier records'
+        )
+        const coldMessages = JSON.parse(
+          await control.command('getRuntimeConversationMessages', 'body', {
+            value: JSON.stringify(address),
+          })
+        )
+        const coldPage = coldMessages.find(
+          message => message.role === 'assistant' && message.turnId === turn.id
+        )
+        assert.ok(coldPage?.runtimeDisplayItems.length, 'The cold native page has no items')
+        assert.ok(
+          coldPage.runtimeDisplayItems.length < 521,
+          'The pagination fixture retained the complete warm cache'
+        )
+        // This cursor prepends items inside the same assistant row, not new message rows.
+        const anchorId = coldPage.runtimeDisplayItems[0].id
+        const anchorSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-runtime-item-id="${anchorId}"], ${ACTIVE_WORKBENCH_SELECTOR} [data-processing-block-id="${anchorId}"]`
+        await control.command('scrollIntoViewAsUser', anchorSelector, { value: 'start' })
+        await waitForWorkbenchDebugState(
+          control,
+          snapshot =>
+            snapshot.pane?.currentRuntimeTask?.taskId === address.taskId &&
+            snapshot.pane?.transcript?.loadingMoreBefore === false &&
+            snapshot.pane?.transcript?.hasMoreBefore === false,
+          'Scrolling to the history boundary did not automatically fetch the earlier items'
+        )
+        await control.command('waitFor', anchorSelector, { stableMs: 750 })
+        const anchorMetrics = await getSingleElementMetrics(
+          control,
+          anchorSelector,
+          'The retained history item'
+        )
+        const viewportMetrics = await getSingleElementMetrics(
+          control,
+          SCROLLER_SELECTOR,
+          'The history viewport'
+        )
+        assert.ok(
+          Math.abs(anchorMetrics.top - viewportMetrics.top) <= 8,
+          'Prepending older items moved the reader away from the retained history item'
+        )
+        assert.ok(
+          viewportMetrics.scrollHeight - viewportMetrics.clientHeight - viewportMetrics.scrollTop >
+            8,
+          'Automatic history pagination returned the reader to the bottom'
+        )
+        const hydratedMessages = JSON.parse(
+          await control.command('getRuntimeConversationMessages', 'body', {
+            value: JSON.stringify(address),
+          })
+        )
+        const hydrated = hydratedMessages.find(
+          message => message.role === 'assistant' && message.turnId === turn.id
+        )
+        assert.ok(
+          hydrated.runtimeDisplayItems.length > coldPage.runtimeDisplayItems.length,
+          'Automatic pagination did not prepend any older items'
+        )
+        assert.equal(
+          new Set(hydrated.runtimeDisplayItems.map(item => item.id)).size,
+          hydrated.runtimeDisplayItems.length,
+          'Automatic pagination duplicated an item in the running turn'
         )
       } finally {
         releaseTail?.()

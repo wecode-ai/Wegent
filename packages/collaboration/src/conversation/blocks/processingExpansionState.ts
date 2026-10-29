@@ -1,4 +1,4 @@
-import { useCallback, useState, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 
 const MAX_STORED_EXPANSION_STATES = 2000;
 const expansionStateByKey = new Map<string, boolean | string>();
@@ -18,44 +18,40 @@ export function getProcessingDetailStateKey(
 }
 
 export function usePersistentProcessingExpansion(
-  key: string | undefined,
-  initialValue = false,
+  key: string | readonly string[] | undefined,
+  initialValue = false
 ): readonly [boolean, (update: ExpansionUpdate) => void] {
   const [localExpanded, setLocalExpanded] = useState(initialValue);
+  const keys = useMemo(() => (typeof key === "string" ? (key ? [key] : []) : (key ?? [])), [key]);
   const subscribe = useCallback(
     (listener: () => void) => {
-      if (!key) return () => {};
+      if (keys.length === 0) return () => {};
       expansionStateListeners.add(listener);
       return () => expansionStateListeners.delete(listener);
     },
-    [key],
+    [keys]
   );
   const getSnapshot = useCallback(
-    () => readExpansionState(key, initialValue),
-    [initialValue, key],
+    () =>
+      keys.length === 0 ? initialValue : keys.some(key => readExpansionState(key, initialValue)),
+    [initialValue, keys]
   );
-  const persistedExpanded = useSyncExternalStore(
-    subscribe,
-    getSnapshot,
-    getSnapshot,
-  );
-  const expanded = key ? persistedExpanded : localExpanded;
+  const persistedExpanded = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const expanded = keys.length > 0 ? persistedExpanded : localExpanded;
 
   const setPersistentExpanded = useCallback(
     (update: ExpansionUpdate) => {
-      if (!key) {
-        setLocalExpanded((current) =>
-          typeof update === "function" ? update(current) : update,
-        );
+      if (keys.length === 0) {
+        setLocalExpanded(current => (typeof update === "function" ? update(current) : update));
         return;
       }
 
-      const current = readExpansionState(key, initialValue);
+      const current = keys.some(key => readExpansionState(key, initialValue));
       const next = typeof update === "function" ? update(current) : update;
-      rememberExpansionState(key, next);
+      for (const key of keys) rememberExpansionState(key, next);
       emitExpansionStateChange();
     },
-    [initialValue, key],
+    [initialValue, keys]
   );
 
   return [expanded, setPersistentExpanded];

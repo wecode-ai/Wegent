@@ -54,6 +54,25 @@ target is treated as unordered and the drag result is lost.
 | Attachment/model/skill selection      | `projectChat` context                                                                                                                                                                    | Send payload, composer controls                                                                                    | In-task option locking is derived from `projectChat.isOptionsLocked`                                                                                                                                                                        |
 | Device availability                   | `state.devices` + current task/project device selection                                                                                                                                  | Composer disabled reason, device prompts                                                                           | Use only for send preconditions; never for assistant streaming status                                                                                                                                                                       |
 
+## Conversation Scrolling and Diagram Rendering
+
+TanStack Virtual and its native ResizeObserver own message measurements. Keep message content visible during scrolling and reuse rows by message identity. Do not introduce a second height writer, replace scrolling content with placeholders, or estimate Markdown height on every frame.
+
+Opening a conversation initially positions it at the latest content; returning to a reader position restores the saved location. A boundary observer rooted in the current scroll container prefetches the previous page before the reader reaches loaded history. Prepending history preserves the reader position through stable message, content-item, and paragraph identities. Loading feedback floats above the transcript without affecting measurements. Search context retains explicit pagination, hidden panes suspend automatic loading, and failures offer retry at the same boundary.
+
+Diagram previews cache sanitized static SVG artifacts and dimensions by document, source, theme, and server address. Mermaid compilation is serialized, and concurrent requests for the same artifact share one compilation. Ordinary message rows mount static images; the zoom canvas mounts only when the reader opens the full diagram. Remounting an offscreen row must not recompile the same diagram or retain a full viewer for every row.
+
+```mermaid
+flowchart LR
+  A[Scroll container] --> B[History boundary prefetch]
+  B --> C[Prepend history]
+  C --> D[Restore semantic reader anchor]
+  B --> E[Floating loading feedback]
+  F[Message row] --> G[Diagram artifact cache]
+  G --> H[Static image preview]
+  H -->|Open full diagram| I[Zoom canvas]
+```
+
 ## Board Conversation Split Views
 
 The project-space board Hover task panel is a split view of the original task conversation, not a separate preview conversation. The Task page, Hover panel, and card summary must use the same runtime task address and read the same canonical `RuntimeConversationTurn[]` from `runtimeConversationCache`.

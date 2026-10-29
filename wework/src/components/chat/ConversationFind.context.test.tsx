@@ -22,6 +22,7 @@ vi.mock('@wegent/collaboration/conversation', async importOriginal => ({
       data-testid="visible-conversation"
       data-search-message-id={props.searchTarget?.messageId ?? ''}
       data-search-navigation-paused={String(Boolean(props.searchNavigationPaused))}
+      data-history-loading-mode={props.historyLoadingMode ?? 'automatic'}
     >
       {props.hasMoreBefore ? (
         <button
@@ -96,8 +97,16 @@ describe('conversation search context', () => {
     render(<ScrollableMessageArea {...props} />)
     expect(screen.getByText('Latest conversation message')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Live conversation footer' })).toBeInTheDocument()
+    expect(screen.getByTestId('visible-conversation')).toHaveAttribute(
+      'data-history-loading-mode',
+      'automatic'
+    )
 
     await openSearch()
+    expect(screen.getByTestId('visible-conversation')).toHaveAttribute(
+      'data-history-loading-mode',
+      'manual'
+    )
     expect(screen.getByText('needle first reply')).toBeInTheDocument()
     expect(screen.getByTestId('context-before-control')).toBeEnabled()
     expect(screen.getByTestId('load-newer-runtime-transcript-button')).toBeEnabled()
@@ -120,6 +129,10 @@ describe('conversation search context', () => {
     const releases = vi.mocked(props.onReleaseSearchPage!).mock.calls.length
     fireEvent.click(screen.getByTestId('conversation-find-close-button'))
     expect(screen.getByText('Latest conversation message')).toBeInTheDocument()
+    expect(screen.getByTestId('visible-conversation')).toHaveAttribute(
+      'data-history-loading-mode',
+      'automatic'
+    )
     expect(screen.getByRole('button', { name: 'Live conversation footer' })).toBeInTheDocument()
     expect(screen.queryByText('needle first reply')).not.toBeInTheDocument()
     expect(screen.queryByTestId('load-newer-runtime-transcript-button')).not.toBeInTheDocument()

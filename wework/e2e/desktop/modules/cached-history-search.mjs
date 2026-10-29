@@ -302,7 +302,11 @@ export async function verifyCachedHistorySearch(
   search,
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
-  await control.command('waitFor', OLDER, { timeoutMs })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-transcript-history-start"]`,
+    { timeoutMs }
+  )
   await control.command('waitFor', ANSWERS, { text: LAST_ANSWER, timeoutMs })
   await waitForBottom(control, 'The initial cached conversation', timeoutMs)
   const original = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane

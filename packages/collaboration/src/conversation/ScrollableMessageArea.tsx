@@ -3,9 +3,11 @@ import { memo, useCallback, useMemo } from 'react'
 
 import { useConversationTranslation } from './ConversationTranslation'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
+import { CompositedSpinner } from '../issue-detail/CompositedSpinner'
 
 import { MessageList } from './MessageList'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
+import { ConversationHistoryBoundary } from './ConversationHistoryBoundary'
 
 import { getConversationScrollSnapshot } from './conversationViewportCache'
 import type { ScrollableMessageAreaProps } from './scrollableMessageTypes'
@@ -32,6 +34,7 @@ function ScrollableMessagePaneContent({
   isWaitingForAssistant = false,
   hasMoreBefore = false,
   loadingMoreBefore = false,
+  historyLoadingMode = 'automatic',
   turnNavigation,
   loadedTranscriptRanges,
   className,
@@ -95,6 +98,7 @@ function ScrollableMessagePaneContent({
     handleContentLayoutChange,
     handleScrollToBottom,
     preserveScrollPositionForNextLayout,
+    prepareForHistoryPrepend,
     preserveUserMessagePosition,
     renderTranscriptGapAfterMessage,
     onVirtualScrollAdjustment,
@@ -114,6 +118,22 @@ function ScrollableMessagePaneContent({
     initialScrollPosition,
   })
   const hasMessages = messages.length > 0
+  const firstMessage = messages[0]
+  const firstAssistantMessage = messages.find(message => message.role === 'assistant')
+  const historyBoundaryKey = JSON.stringify([
+    loadedTranscriptRanges?.[0]?.start,
+    firstMessage?.id,
+    firstAssistantMessage?.id,
+    firstAssistantMessage?.runtimeDisplayItems?.[0]?.id,
+    firstAssistantMessage?.blocks?.[0]?.id,
+  ])
+  const prepareHistory = useCallback(
+    (automatic: boolean) => {
+      if (automatic) prepareForHistoryPrepend()
+      else preserveScrollPositionForNextLayout()
+    },
+    [prepareForHistoryPrepend, preserveScrollPositionForNextLayout]
+  )
   // Initial virtual positioning belongs to the list mount, not subsequent search scrolling.
   const initialDistanceFromBottomPx = useMemo(
     () =>
@@ -165,6 +185,18 @@ function ScrollableMessagePaneContent({
 
   return (
     <div className={cn('relative min-h-0 flex-1', className)}>
+      {loadingMoreBefore && !autoScrollSuspended && (
+        <div
+          role="status"
+          aria-label={t('workbench.loading_older_messages')}
+          data-testid="runtime-transcript-history-loading"
+          className="pointer-events-none absolute inset-x-0 top-2 z-20 flex justify-center"
+        >
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-background/90 text-text-secondary">
+            <CompositedSpinner className="h-4 w-4" />
+          </span>
+        </div>
+      )}
       {turnNavigationLoading && (
         <div
           className="pointer-events-none absolute left-1/2 top-5 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-background/95 px-3 py-1.5 text-xs font-medium text-text-secondary shadow-[0_8px_22px_rgba(15,23,42,0.12)]"
@@ -220,22 +252,17 @@ function ScrollableMessagePaneContent({
             <>
               {historyError}
               {hasMoreBefore && (
-                <div className="flex justify-center px-4 pb-2 pt-4">
-                  <button
-                    type="button"
-                    data-testid="load-older-runtime-transcript-button"
-                    onClick={() => {
-                      preserveScrollPositionForNextLayout()
-                      void onLoadMoreBefore?.()
-                    }}
-                    disabled={loadingMoreBefore || !onLoadMoreBefore}
-                    className="flex h-11 min-w-[44px] items-center justify-center rounded-md border border-border bg-surface px-4 text-xs font-medium text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-60"
-                  >
-                    {loadingMoreBefore
-                      ? t('workbench.loading_older_messages')
-                      : t('workbench.load_older_messages')}
-                  </button>
-                </div>
+                <ConversationHistoryBoundary
+                  key={`history:${currentScrollKey ?? 'keyless-conversation'}`}
+                  boundaryKey={historyBoundaryKey}
+                  loading={loading || loadingMoreBefore}
+                  failed={Boolean(historyError)}
+                  suspended={autoScrollSuspended}
+                  manual={historyLoadingMode === 'manual'}
+                  scrollRef={scrollRef}
+                  onPrepare={prepareHistory}
+                  onLoad={onLoadMoreBefore}
+                />
               )}
               <MessageList
                 userMessageServices={userMessageServices}
