@@ -864,6 +864,71 @@ describe('pluginMarketplaceCache', () => {
     ])
   })
 
+  test('persists source ownership changes even when canonical records are unchanged', () => {
+    const key = pluginMarketplaceCacheKey('http://api', 'token-sources')
+    const plugin = installedItem('tool@market', 'market', 'tool').raw
+    const identity = 'market:tool'
+    const snapshot = {
+      cacheKey: key,
+      deviceId: 'device',
+      fetchedAt: Date.now(),
+      marketplaceItems: [],
+      installedPlugins: [plugin],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+    }
+    setPluginMarketplaceCache(
+      {
+        ...snapshot,
+        localInstalledSources: { codex: [identity], store: [] },
+        localInstalledSourceStatus: { codex: 'fulfilled', store: 'fulfilled' },
+      },
+      { persistImmediately: true }
+    )
+    setPluginMarketplaceCache(
+      {
+        ...snapshot,
+        localInstalledSources: { codex: [], store: [identity] },
+        localInstalledSourceStatus: { codex: 'rejected', store: 'fulfilled' },
+      },
+      { persistImmediately: true }
+    )
+
+    resetPluginMarketplaceCacheMemory()
+    const restored = getPluginMarketplaceCache(key)!
+    expect(restored.installedPlugins).toHaveLength(1)
+    expect(restored.localInstalledSources).toEqual({ codex: [], store: [identity] })
+    expect(restored.localInstalledSourceStatus).toEqual({ codex: 'rejected', store: 'fulfilled' })
+  })
+
+  test('remaps native ownership when a cloud response projects a new canonical identity', () => {
+    const key = pluginMarketplaceCacheKey('http://api', 'token-project-source')
+    const raw = installedItem('tool@market', 'market', 'tool').raw
+    raw.spec.sourcePayload = { cloudPluginId: 42, managedByWegent: true }
+    const base = {
+      cacheKey: key,
+      deviceId: 'device',
+      fetchedAt: Date.now(),
+      marketplaceItems: [],
+      marketplaces: [],
+      selectedMarketplaceKey: '',
+    }
+    setPluginMarketplaceCache(
+      { ...base, installedPlugins: [raw], localInstalledSources: { store: ['market:tool'] } },
+      { persistImmediately: true }
+    )
+    const cloud = { ...raw, spec: { ...raw.spec, pluginId: 42 } }
+    setPluginMarketplaceCache({ ...base, installedPlugins: [cloud] }, { persistImmediately: true })
+    resetPluginMarketplaceCacheMemory()
+    expect(getPluginMarketplaceCache(key)?.localInstalledSources?.store).toEqual(['cloud:42'])
+    removePluginMarketplaceInstallation(key, {
+      installedIds: ['tool@market'],
+      pluginKeys: ['tool'],
+      marketplaceItemIds: [],
+    })
+    expect(getPluginMarketplaceCache(key)?.localInstalledSources?.store).toEqual([])
+  })
+
   test('flushPluginMarketplaceCachePersist writes the pending snapshot immediately', () => {
     vi.useFakeTimers()
     const key = pluginMarketplaceCacheKey('http://api', 'token-flush')

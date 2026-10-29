@@ -234,8 +234,77 @@ export async function verifyPluginCatalogBoundaries({
     }
   }
 
+  async function catalogBeforeMembership(entry) {
+    const index = apiProxy.requests.length
+    const originalRule = apiProxy.rule
+    apiProxy.rule = request =>
+      request.method === 'GET' && request.path === installedPath
+        ? 'hold-response'
+        : originalRule(request)
+    try {
+      listing = {
+        ...(await cloud.publishPluginRelease({
+          slug: `${fixturePrefix}listing`,
+          version: '1.0.0',
+        })),
+        slug: `${fixturePrefix}listing`,
+      }
+      // This listing did not exist before the hold, so a warm row cannot mask
+      // catalog loading that incorrectly waits for installed membership.
+      await openPlugin(control, { slug: fixturePrefix })
+      await until(
+        () => requestsSince(index),
+        requests =>
+          hasSuccess(requests, catalogPath) &&
+          hasGet(requests, installedPath, request => request.committedResponseHeld === true),
+        'Catalog must return while the real installed response is held'
+      )
+      await control.command('waitFor', row(listing), { visible: true })
+      const pending = requestsSince(index).filter(request => request.fault === 'hold-response')
+      entry.observed = {
+        listingRow: await present(row(listing)),
+        heldInstalledResponses: pending.length,
+        installedDelivered: pending.some(request => request.responseCompleted === true),
+      }
+      check(
+        entry,
+        'The new cloud catalog row appears before installed membership',
+        entry.observed.listingRow
+      )
+      check(
+        entry,
+        'Installed membership is still pending',
+        pending.length > 0 && !entry.observed.installedDelivered
+      )
+      entry.heldScreenshot = 'plugin-catalog-before-installed-membership.png'
+      await captureScreenshot(control, entry.heldScreenshot, 'body')
+    } finally {
+      apiProxy.rule = originalRule
+      // Freeze the finite request set after clearing the hold rule. Release the
+      // original upstream bytes even when the early-row assertion fails.
+      const pending = requestsSince(index).filter(request => request.fault === 'hold-response')
+      await Promise.all(
+        pending.map(async request => {
+          await until(
+            () => typeof request.release === 'function',
+            Boolean,
+            'The held installed response did not finish receiving from the real Backend'
+          )
+          assert.equal(await request.release(), true, 'Held installed membership was not delivered')
+        })
+      )
+    }
+  }
+
   try {
     assert.ok(deviceId, 'Catalog boundary fixtures need a real connected app device')
+    const before = await pluginApi(cloud, '/plugins/marketplace')
+    assert.ok(
+      !before.items.some(item => item.name === `${fixturePrefix}listing`),
+      'The progressive catalog fixture must not already exist'
+    )
+    await phase('catalog-before-installed-membership', catalogBeforeMembership)
+    assert.ok(listing, 'The progressive cloud catalog fixture was not published')
     installed = await installFixture(
       cloud,
       control,
@@ -243,13 +312,6 @@ export async function verifyPluginCatalogBoundaries({
       deviceId,
       workbenchReadyTimeoutMs
     )
-    listing = {
-      ...(await cloud.publishPluginRelease({
-        slug: `${fixturePrefix}listing`,
-        version: '1.0.0',
-      })),
-      slug: `${fixturePrefix}listing`,
-    }
     const membership = await pluginApi(cloud, '/plugins/installed')
     assert.ok(membership.items.some(item => item.spec.source.pluginKey === installed.slug))
     assert.ok(!membership.items.some(item => item.spec.source.pluginKey === listing.slug))

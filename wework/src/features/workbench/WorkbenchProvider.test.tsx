@@ -3835,6 +3835,138 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(pluginApiMocks.cloudListInstalledPlugins).not.toHaveBeenCalled()
   })
 
+  test('does not restore Codex ownership from a composer refresh after a source-only change', async () => {
+    setElectronRuntime()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now())
+    const cacheKey = pluginMarketplaceCacheKey('', '')
+    const identity = 'team-market:shared-tool'
+    const nativeInstalled = deferred<{ marketplaces: unknown[] }>()
+    const plugin: InstalledPlugin = {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'InstalledPlugin',
+      metadata: {
+        name: 'shared-tool',
+        namespace: 'team-market',
+        labels: { id: 'shared-tool@team-market' },
+      },
+      spec: {
+        source: {
+          type: 'marketplace',
+          providerKey: 'team-market',
+          pluginKey: 'shared-tool',
+          marketplace: 'team-market',
+        },
+        displayName: 'Shared Tool',
+        description: 'Available from Codex and the managed store',
+        enabled: true,
+        installState: 'installed',
+        components: emptyPluginComponents(),
+      },
+      status: { state: 'enabled' },
+    }
+    writePluginInventory(cacheKey, 'local-device', {
+      installedPlugins: [plugin],
+      installedPluginsFetchedAt: 1,
+      localInstalledSources: { codex: [identity], store: [identity] },
+      localInstalledSourceStatus: { codex: 'fulfilled', store: 'fulfilled' },
+    })
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
+        if (method === 'executor.plugins.personal.list')
+          return { marketplacePath: '/personal', plugins: [] }
+        if (method === 'executor.codex_home.config.read') return { enabledPluginKeys: [] }
+        if (method === 'executor.plugins.links.list') return []
+        if (method === 'executor.plugins.store.list')
+          return {
+            storePath: '/store',
+            plugins: [
+              {
+                name: 'shared-tool',
+                packageId: 'shared-tool@team-market',
+                marketplace: 'team-market',
+                enabled: true,
+                pluginPath: '/store/shared-tool',
+              },
+            ],
+          }
+        if (method === 'codex.app_server_request') {
+          const request = params as { method?: string }
+          if (request.method === 'app/list') return { data: [], nextCursor: null }
+          if (request.method === 'plugin/installed') return nativeInstalled.promise
+        }
+        return {}
+      }
+    )
+
+    try {
+      renderWorkbench(<RuntimeTaskSkillsProbe />)
+      await userEvent.click(screen.getByText('list local apps'))
+      await waitFor(() =>
+        expect(screen.getByTestId('composer-apps-result')).toHaveTextContent(
+          'loaded:plugin:shared-tool'
+        )
+      )
+      await waitFor(() =>
+        expect(
+          localExecutorMocks.requestLocalExecutor.mock.calls.some(
+            ([method, params]) =>
+              method === 'codex.app_server_request' &&
+              (params as { method?: string }).method === 'plugin/installed'
+          )
+        ).toBe(true)
+      )
+      const snapshot = getPluginMarketplaceCache(cacheKey)!
+      expect(snapshot.localInstalledSources).toMatchObject({
+        codex: [identity],
+        store: [identity],
+      })
+
+      act(() => {
+        writePluginInventory(cacheKey, 'local-device', {
+          installedPlugins: snapshot.installedPlugins,
+          installedPluginsFetchedAt: snapshot.installedPluginsFetchedAt,
+          localInstalledSources: { ...snapshot.localInstalledSources, codex: [] },
+        })
+      })
+      const sourceOnlySnapshot = getPluginMarketplaceCache(cacheKey)!
+      expect(sourceOnlySnapshot.installedPlugins).toEqual(snapshot.installedPlugins)
+      expect(sourceOnlySnapshot.fetchedAt).toBe(snapshot.fetchedAt)
+      expect(sourceOnlySnapshot.installedPluginsFetchedAt).toBe(snapshot.installedPluginsFetchedAt)
+      expect(sourceOnlySnapshot.mutationRevision).toBe(snapshot.mutationRevision)
+
+      await act(async () => {
+        nativeInstalled.resolve({
+          marketplaces: [
+            {
+              name: 'team-market',
+              path: '/team-market',
+              plugins: [
+                {
+                  name: 'shared-tool',
+                  id: 'shared-tool@team-market',
+                  installed: true,
+                  enabled: true,
+                },
+              ],
+            },
+          ],
+        })
+        await new Promise(resolve => window.setTimeout(resolve, 0))
+      })
+
+      expect(getPluginMarketplaceCache(cacheKey)?.localInstalledSources).toMatchObject({
+        codex: [],
+        store: [identity],
+      })
+      expect(getPluginMarketplaceCache(cacheKey)?.installedPlugins).toEqual(
+        sourceOnlySnapshot.installedPlugins
+      )
+    } finally {
+      now.mockRestore()
+    }
+  })
+
   test('does not let an inactive workspace provider replace the composer inventory source', async () => {
     setElectronRuntime()
     const cacheKey = pluginMarketplaceCacheKey('https://cloud.example/api', 'test-token')

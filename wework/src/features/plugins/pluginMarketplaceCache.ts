@@ -12,6 +12,13 @@ import { compressToUTF16, decompressFromUTF16 } from 'lz-string'
 import { applyInstalledPluginsToMarketplaceItems } from '@/api/local/codexPlugins'
 import { isOpenAiOfficialRemoteMarketplaceId } from './marketplaceIdentity'
 import { reconcileCodexInstallations } from '@/api/local/codexPluginInstallation'
+import {
+  inventoryIdentity,
+  indexLocalPluginSources,
+  localPluginSourceItems,
+  type LocalInstalledSources,
+  type LocalInstalledSourceStatus,
+} from './pluginInventorySources'
 
 export interface PluginMarketplaceCacheSnapshot {
   /** Confirmed mutations invalidate reads started before this revision. */
@@ -20,6 +27,9 @@ export interface PluginMarketplaceCacheSnapshot {
   marketplaceItems: PluginMarketplaceItem[]
   /** Full domain records; presentation fields are derived by each consumer. */
   installedPlugins: InstalledPlugin[]
+  /** Source membership references the canonical records instead of duplicating them. */
+  localInstalledSources?: LocalInstalledSources
+  localInstalledSourceStatus?: LocalInstalledSourceStatus
   /** A complete installed-only refresh succeeded, including an empty inventory. */
   installedPluginsFetchedAt?: number
   /** Only a successful remote catalog read updates this timestamp, including empty results. */
@@ -282,6 +292,8 @@ function snapshotPersistSignature(next: PluginMarketplaceCacheSnapshot): string 
     next.marketplaces.map(entry => `${entry.key}:${entry.id}:${entry.path ?? ''}`).join(','),
     JSON.stringify(next.marketplaceItems),
     JSON.stringify(next.installedPlugins),
+    JSON.stringify(next.localInstalledSources ?? {}),
+    JSON.stringify(next.localInstalledSourceStatus ?? {}),
     String(Boolean(next.installedPluginsFetchedAt)),
     String(next.openAiCatalogFetchedAt ?? ''),
     JSON.stringify(next.apps ?? []),
@@ -455,6 +467,18 @@ export function setPluginMarketplaceCache(
   }
   next = {
     ...next,
+    localInstalledSources:
+      next.localInstalledSources ??
+      (sameDevice && previous?.localInstalledSources
+        ? indexLocalPluginSources(
+            next.installedPlugins,
+            localPluginSourceItems(previous),
+            next.deviceId
+          )
+        : undefined),
+    localInstalledSourceStatus:
+      next.localInstalledSourceStatus ??
+      (sameDevice ? previous?.localInstalledSourceStatus : undefined),
     mutationRevision: (previous?.mutationRevision ?? 0) + (options?.mutation ? 1 : 0),
     apps: next.apps ?? (sameDevice ? previous?.apps : undefined) ?? [],
     connectorApps: next.connectorApps ?? (sameDevice ? previous?.connectorApps : undefined) ?? [],
@@ -469,6 +493,15 @@ export function setPluginMarketplaceCache(
         : undefined,
     connectorAppsFetchedAt:
       next.connectorAppsFetchedAt ?? (sameDevice ? previous?.connectorAppsFetchedAt : undefined),
+  }
+  if (next.localInstalledSources) {
+    const present = new Set(next.installedPlugins.map(inventoryIdentity))
+    next.localInstalledSources = Object.fromEntries(
+      Object.entries(next.localInstalledSources).map(([source, ids]) => [
+        source,
+        Array.isArray(ids) ? ids.filter(id => typeof id === 'string' && present.has(id)) : [],
+      ])
+    )
   }
   snapshot = { ...next, logosStripped: false }
   if (options?.persistImmediately) {

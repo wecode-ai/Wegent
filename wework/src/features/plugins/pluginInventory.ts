@@ -16,6 +16,14 @@ import {
 } from './pluginMarketplaceCache'
 import { publishPluginInvocationCatalog } from './pluginInvocationTelemetry'
 import { installedPluginHasRelativeLogo } from '@/components/plugins/plugin-assets'
+import {
+  indexLocalPluginSources,
+  inventoryIdentity as installationIdentity,
+  resolveLocalPluginInventory,
+  sameLocalPluginSources,
+  localPluginSourceItems,
+  type LocalPluginInventoryRead,
+} from './pluginInventorySources'
 
 /** Detail reads may enrich surviving records, but never restore removed packages. */
 export async function hydratePluginInventoryLogos(
@@ -82,7 +90,13 @@ export function writePluginInventory(
   deviceId: string,
   update: Pick<
     Partial<PluginMarketplaceCacheSnapshot>,
-    'installedPlugins' | 'installedPluginsFetchedAt' | 'apps' | 'connectorApps' | 'marketplaceItems'
+    | 'installedPlugins'
+    | 'installedPluginsFetchedAt'
+    | 'localInstalledSources'
+    | 'localInstalledSourceStatus'
+    | 'apps'
+    | 'connectorApps'
+    | 'marketplaceItems'
   >,
   options?: { mutation?: boolean }
 ): PluginMarketplaceCacheSnapshot {
@@ -96,6 +110,8 @@ export function writePluginInventory(
     marketplaces: catalog?.marketplaces ?? [],
     selectedMarketplaceKey: catalog?.selectedMarketplaceKey ?? '',
     installedPlugins: previous?.installedPlugins ?? [],
+    localInstalledSources: previous?.localInstalledSources,
+    localInstalledSourceStatus: previous?.localInstalledSourceStatus,
     apps: previous?.apps ?? [],
     connectorApps: previous?.connectorApps ?? [],
     appsFetchedAt: update.apps ? Date.now() : previous?.appsFetchedAt,
@@ -164,22 +180,6 @@ export function updatePluginInventoryInstallation(
   writePluginInventory(cacheKey, current.deviceId, { installedPlugins }, { mutation: true })
 }
 
-/** A disk peek is additive; only complete device inventory can establish absence. */
-function mergePartialInventory(previous: InstalledPlugin[], incoming: InstalledPlugin[]) {
-  const plugins = new Map(previous.map(plugin => [installationIdentity(plugin), plugin]))
-  for (const plugin of incoming) {
-    const key = installationIdentity(plugin)
-    if (!plugins.has(key)) plugins.set(key, plugin)
-  }
-  return [...plugins.values()]
-}
-
-function installationIdentity(plugin: InstalledPlugin): string {
-  return plugin.spec.pluginId != null
-    ? `cloud:${plugin.spec.pluginId}`
-    : `${plugin.spec.source.marketplace || plugin.spec.source.providerKey}:${plugin.spec.source.pluginKey}`
-}
-
 /** Commit accepted install/copy results before notifying any composer or catalog reader. */
 export function commitPluginInventoryInstallation(
   cacheKey: string,
@@ -190,16 +190,28 @@ export function commitPluginInventoryInstallation(
   const current = getPluginMarketplaceCache(cacheKey)
   if (current?.deviceId && current.deviceId !== deviceId) return
   const identity = installationIdentity(plugin)
+  const installedPlugins = [
+    plugin,
+    ...(current?.installedPlugins ?? []).filter(item => installationIdentity(item) !== identity),
+  ]
+  const sourceItems = localPluginSourceItems(current?.deviceId === deviceId ? current : null)
+  if (!isCloudManagedInstalledPlugin(plugin)) {
+    const accepted = resolveLocalPluginInventory(null, { items: [plugin] }, deviceId)
+    for (const source of ['codex', 'store', 'personal'] as const) {
+      const entries = accepted.sourceItems[source]
+      if (!entries?.length) continue
+      sourceItems[source] = [
+        ...entries,
+        ...(sourceItems[source] ?? []).filter(item => installationIdentity(item) !== identity),
+      ]
+    }
+  }
   writePluginInventory(
     cacheKey,
     deviceId,
     {
-      installedPlugins: [
-        plugin,
-        ...(current?.installedPlugins ?? []).filter(
-          item => installationIdentity(item) !== identity
-        ),
-      ],
+      installedPlugins,
+      localInstalledSources: indexLocalPluginSources(installedPlugins, sourceItems, deviceId),
       ...(marketplaceItems ? { marketplaceItems } : {}),
     },
     { mutation: true }
@@ -226,31 +238,49 @@ export function hasLoadedPluginInventory(snapshot: PluginMarketplaceCacheSnapsho
 export async function refreshInstalledPluginInventory(options: {
   cacheKey: string
   deviceId?: string
-  readLocal: () => Promise<{ items: InstalledPlugin[]; deviceId?: string; partial?: boolean }>
+  readLocal: () => Promise<LocalPluginInventoryRead>
   readCloud: (deviceId: string | undefined) => Promise<{ items: InstalledPlugin[] }>
   isCurrent: () => boolean
 }): Promise<void> {
   let expected = getPluginMarketplaceCache(options.cacheKey)
   let deviceId = options.deviceId || expected?.deviceId || ''
+  let localInventory: ReturnType<typeof resolveLocalPluginInventory> | undefined
   const canPublish = () => {
     const current = getPluginMarketplaceCache(options.cacheKey)
     return (
       options.isCurrent() &&
       (current === expected || !current?.deviceId || current.deviceId === deviceId) &&
       pluginInventoryReadIsCurrent(options.cacheKey, expected) &&
+      sameLocalPluginSources(current, expected) &&
       current?.installedPluginsFetchedAt === expected?.installedPluginsFetchedAt &&
       (current === expected ||
         samePluginInstallations(current?.installedPlugins ?? [], expected?.installedPlugins ?? []))
     )
   }
   const publishInventory = (installedPlugins: InstalledPlugin[], complete = false) => {
+    const localSources = localInventory
+      ? {
+          localInstalledSources: indexLocalPluginSources(
+            installedPlugins,
+            localInventory.sourceItems,
+            deviceId
+          ),
+          localInstalledSourceStatus: localInventory.localInstalledSourceStatus,
+        }
+      : {}
     if (
       complete ||
       (expected && expected.deviceId !== deviceId) ||
+      (localInventory &&
+        (JSON.stringify(expected?.localInstalledSources) !==
+          JSON.stringify(localSources.localInstalledSources) ||
+          JSON.stringify(expected?.localInstalledSourceStatus) !==
+            JSON.stringify(localSources.localInstalledSourceStatus))) ||
       JSON.stringify(expected?.installedPlugins ?? []) !== JSON.stringify(installedPlugins)
     ) {
       expected = writePluginInventory(options.cacheKey, deviceId, {
         installedPlugins,
+        ...localSources,
         ...(complete ? { installedPluginsFetchedAt: Date.now() } : {}),
       })
     }
@@ -313,8 +343,18 @@ export async function refreshInstalledPluginInventory(options: {
     local = { status: 'rejected', reason: new Error('Local plugin device changed during refresh') }
   }
   if (local.status === 'fulfilled') {
-    deviceId = local.value.deviceId || deviceId
-    localItemsRead = local.value.items
+    try {
+      const resolvedDeviceId = local.value.deviceId || deviceId
+      localInventory = resolveLocalPluginInventory(
+        getPluginMarketplaceCache(options.cacheKey),
+        local.value,
+        resolvedDeviceId
+      )
+      deviceId = resolvedDeviceId
+      localItemsRead = localInventory.items
+    } catch (reason) {
+      local = { status: 'rejected', reason }
+    }
   }
   if (!canPublish()) return
   // Replace only the successful source while the other membership read is pending.
@@ -326,7 +366,7 @@ export async function refreshInstalledPluginInventory(options: {
     publishInventory(
       mergeInstalledPlugins(
         cloudItems ?? previous.filter(isCloudManagedInstalledPlugin),
-        local.value.items,
+        localItemsRead!,
         deviceId,
         Boolean(cloudItems)
       )
@@ -342,17 +382,20 @@ export async function refreshInstalledPluginInventory(options: {
   if (!canPublish()) return
   const current = getPluginMarketplaceCache(options.cacheKey)
   const previous = current?.deviceId === deviceId ? current.installedPlugins : []
-  // The local API already retains only failed sources; preserve its fresh membership and details.
+  // Failed native sources retain only their same-scope persisted membership.
   const localItems =
     local.status === 'fulfilled'
-      ? local.value.items
+      ? localItemsRead!
       : previous.filter(plugin => !isCloudManagedInstalledPlugin(plugin))
   const cloudItems =
     cloud.status === 'fulfilled'
       ? cloud.value.items
       : previous.filter(isCloudManagedInstalledPlugin)
   const complete =
-    local.status === 'fulfilled' && !local.value.partial && cloud.status === 'fulfilled'
+    local.status === 'fulfilled' &&
+    !local.value.partial &&
+    !Object.values(localInventory?.localInstalledSourceStatus ?? {}).includes('rejected') &&
+    cloud.status === 'fulfilled'
   const installedPlugins = mergeInstalledPlugins(
     cloudItems,
     localItems,
@@ -374,14 +417,14 @@ export async function refreshInstalledPluginInventory(options: {
 export async function loadPluginInventory(options: {
   cacheKey: string
   deviceId: string
-  readLocalInstalledPlugins: () => Promise<InstalledPlugin[]>
-  listCloudInstalledPlugins: () => Promise<InstalledPlugin[]>
+  readLocalInstalledPlugins: () => Promise<LocalPluginInventoryRead>
+  listCloudInstalledPlugins: () => Promise<InstalledPlugin[] | undefined>
   isCurrent: () => boolean
   partial?: boolean
   cloudMembershipAuthoritative?: boolean
 }): Promise<PluginMarketplaceCacheSnapshot | null> {
   const initial = getPluginMarketplaceCache(options.cacheKey)
-  const [local, cloud] = await Promise.all([
+  const [localRead, cloudRead] = await Promise.all([
     options.readLocalInstalledPlugins(),
     options.listCloudInstalledPlugins(),
   ])
@@ -391,24 +434,39 @@ export async function loadPluginInventory(options: {
   // request was in flight wins. Late reads cannot resurrect removed plugins.
   if (
     !pluginInventoryReadIsCurrent(options.cacheKey, initial) ||
+    !sameLocalPluginSources(current, initial) ||
     (current !== initial &&
       !samePluginInstallations(current?.installedPlugins ?? [], initial?.installedPlugins ?? []))
   ) {
     return current
   }
+  const localInventory = resolveLocalPluginInventory(current, localRead, options.deviceId)
+  const local = localInventory.items
+  const cloud =
+    cloudRead ??
+    (current?.deviceId === options.deviceId
+      ? current.installedPlugins.filter(isCloudManagedInstalledPlugin)
+      : [])
+  const installedPlugins = mergeInstalledPlugins(
+    cloud,
+    local,
+    options.deviceId,
+    cloudRead !== undefined && options.cloudMembershipAuthoritative
+  )
   publishPluginInvocationCatalog(options.deviceId, local, cloud)
   return writePluginInventory(options.cacheKey, options.deviceId, {
-    ...(!options.partial ? { installedPluginsFetchedAt: Date.now() } : {}),
-    installedPlugins: options.partial
-      ? mergePartialInventory(
-          current?.deviceId === options.deviceId ? current.installedPlugins : [],
-          mergeInstalledPlugins(
-            cloud,
-            local,
-            options.deviceId,
-            options.cloudMembershipAuthoritative
-          )
-        )
-      : mergeInstalledPlugins(cloud, local, options.deviceId, options.cloudMembershipAuthoritative),
+    ...(!options.partial &&
+    cloudRead !== undefined &&
+    !localRead.partial &&
+    !Object.values(localInventory.localInstalledSourceStatus).includes('rejected')
+      ? { installedPluginsFetchedAt: Date.now() }
+      : {}),
+    localInstalledSources: indexLocalPluginSources(
+      installedPlugins,
+      localInventory.sourceItems,
+      options.deviceId
+    ),
+    localInstalledSourceStatus: localInventory.localInstalledSourceStatus,
+    installedPlugins,
   })
 }

@@ -1,4 +1,5 @@
 import { beginOperation } from '@/telemetry/operationBus'
+import type { LocalPluginInventoryRead } from '@/features/plugins/pluginInventorySources'
 import type {
   CodexPluginMarketplaceEntry,
   CodexPluginSummary,
@@ -108,6 +109,7 @@ function validateLocalPluginPackageArtifact(
 
 export interface LocalCodexPluginsState {
   partial?: boolean
+  sourceReads?: LocalPluginInventoryRead['sourceReads']
   marketplaceItems: PluginMarketplaceItem[]
   installedPlugins: InstalledPlugin[]
   marketplaces: LocalCodexMarketplace[]
@@ -288,7 +290,7 @@ export interface LocalCodexPluginApi {
     shareInflight?: boolean
     /** Read current membership and reject partial inventory instead of assuming absence. */
     requireComplete?: boolean
-  }): Promise<InstalledPluginListResponse & { deviceId?: string; partial?: boolean }>
+  }): Promise<InstalledPluginListResponse & LocalPluginInventoryRead>
   listSkills(params?: { cwds?: string[]; forceReload?: boolean }): Promise<LocalDeviceSkill[]>
   listApps(params?: {
     forceRefetch?: boolean
@@ -622,6 +624,7 @@ function toDurableReadState(state: CachedPluginsState): CachedPluginsState {
     // Installed membership belongs to the renderer inventory and live plugin/installed.
     // Persisting it here created a second seven-day source that survived uninstall.
     installedPlugins: [],
+    sourceReads: undefined,
     installedSources: undefined,
     // Legacy snapshots have only a combined partial flag; preserve that uncertainty.
     catalogPartial: state.catalogPartial ?? Boolean(state.partial),
@@ -1556,7 +1559,11 @@ function codexAndPersonalInstallations(
 
 /** Reads installed local packages without starting either Codex online catalog. */
 export async function listLocalInstalledPluginsFromDisk(): Promise<InstalledPlugin[]> {
-  if (!isElectronRuntime()) return []
+  return (await readLocalInstalledInventoryFromDisk()).items
+}
+
+export async function readLocalInstalledInventoryFromDisk(): Promise<LocalPluginInventoryRead> {
+  if (!isElectronRuntime()) return { items: [] }
   const deviceId = getKnownLocalExecutorDeviceId()?.trim() ?? ''
   resetInMemoryReadStateForDevice(deviceId)
   const generation = nextReadStateGeneration++
@@ -1602,6 +1609,8 @@ export async function listLocalInstalledPluginsFromDisk(): Promise<InstalledPlug
   let partial =
     linksFailed ||
     [personalResult, storeResult, configResult].some(result => result.status === 'rejected')
+  let personalComplete =
+    Boolean(personal && config) || personal?.plugins.length === 0 || enabledKeys?.size === 0
   try {
     if (personal && config)
       personalInstalled = personal.plugins
@@ -1644,6 +1653,7 @@ export async function listLocalInstalledPluginsFromDisk(): Promise<InstalledPlug
       )
   } catch (error) {
     partial = true
+    personalComplete = false
     if (storeResult.status === 'rejected' && !previous) throw error
   }
   personalInstalled = applyPluginCloudLinks(personalInstalled, cloudLinks, {
@@ -1654,6 +1664,10 @@ export async function listLocalInstalledPluginsFromDisk(): Promise<InstalledPlug
     storeResult.status === 'fulfilled'
       ? storeResult.value
       : (previous?.installedSources?.store ?? [])
+  const sourceReads: LocalPluginInventoryRead['sourceReads'] = {
+    personal: { status: personalComplete ? 'fulfilled' : 'rejected', items: personalInstalled },
+    store: { status: storeResult.status, items: storePlugins },
+  }
   if (
     deviceId &&
     deviceId === getKnownLocalExecutorDeviceId() &&
@@ -1668,6 +1682,7 @@ export async function listLocalInstalledPluginsFromDisk(): Promise<InstalledPlug
       ...(previous ?? emptyState),
       deviceId,
       installedSources,
+      sourceReads: { ...previous?.sourceReads, ...sourceReads },
       installedPartial: partial || previous?.installedPartial,
       partial: partial || previous?.partial,
       installedPlugins: mergeLocalInstalledWithStorePackages(
@@ -1677,7 +1692,12 @@ export async function listLocalInstalledPluginsFromDisk(): Promise<InstalledPlug
     }
     cachedStateGeneration = generation
   }
-  return mergeLocalInstalledWithStorePackages(personalInstalled, storePlugins)
+  return {
+    items: mergeLocalInstalledWithStorePackages(personalInstalled, storePlugins),
+    deviceId,
+    partial,
+    sourceReads,
+  }
 }
 
 function filteredMarketplaces(
@@ -2226,13 +2246,32 @@ async function loadReadStateSnapshot(
   // plugin/installed is authoritative for membership. Fold in the device store
   // inventory from the same live read, but never revive rows from an older cache.
   const installedSources = installedRead?.installedSources ?? previous?.installedSources
+  const cloudLinkOptions = {
+    authoritative: Boolean(personalMarketplace?.path),
+    retainCachedDeviceId: catalogFailed || linksFailed ? deviceId : undefined,
+  }
   const installedPlugins = mergeLocalInstalledWithStorePackages(
-    applyPluginCloudLinks(codexAndPersonalInstallations(installedSources), cloudLinks, {
-      authoritative: Boolean(personalMarketplace?.path),
-      retainCachedDeviceId: catalogFailed || linksFailed ? deviceId : undefined,
-    }),
+    applyPluginCloudLinks(
+      codexAndPersonalInstallations(installedSources),
+      cloudLinks,
+      cloudLinkOptions
+    ),
     installedSources?.store ?? []
   )
+  const sourceReads: LocalPluginInventoryRead['sourceReads'] = {
+    ...(installedRead?.sourceReads ?? {
+      codex: { status: 'rejected' },
+      store: { status: 'rejected' },
+    }),
+  }
+  for (const source of ['codex', 'personal'] as const) {
+    const result = sourceReads[source]
+    if (result?.items)
+      sourceReads[source] = {
+        ...result,
+        items: applyPluginCloudLinks(result.items, cloudLinks, cloudLinkOptions),
+      }
+  }
   const marketplaceItems = applyLocalCatalogMembership(availableMarketplaceItems, installedPlugins)
   const loadedState: CachedPluginsState = {
     marketplaceItems,
@@ -2247,6 +2286,7 @@ async function loadReadStateSnapshot(
     deviceId,
     installedSources,
     catalogPartial: catalogFailed,
+    sourceReads,
     installedPartial: !installedRead || installedRead.partial || linksFailed,
     installedReadGeneration: generation,
     ...(partial ? { partial: true } : {}),
@@ -2465,6 +2505,7 @@ async function loadInstalledPluginsOnly(
   deviceId: string
   partial?: boolean
   installedSources: CachedPluginsState['installedSources']
+  sourceReads: LocalPluginInventoryRead['sourceReads']
 }> {
   const executorStatus = startedExecutor ?? (await ensureLocalExecutorStarted())
   const deviceId = executorStatus.deviceId?.trim() ?? ''
@@ -2506,17 +2547,26 @@ async function loadInstalledPluginsOnly(
   }
   // Composer / auth gates only need membership. Never call plugin/list here — it
   // reconciles for ~10s and stalls Codex turns on the shared app-server.
-  const installedPlugins = mergeLocalInstalledWithStorePackages(
-    applyPluginCloudLinks(codexAndPersonalInstallations(installedSources), cloudLinks, {
+  const codexPlugins = applyPluginCloudLinks(
+    codexAndPersonalInstallations(installedSources),
+    cloudLinks,
+    {
       authoritative: Boolean(personalPath) && !options.skipCloudLinks,
       retainCachedDeviceId: linksFailed ? deviceId : undefined,
-    }),
+    }
+  )
+  const installedPlugins = mergeLocalInstalledWithStorePackages(
+    codexPlugins,
     installedSources.store ?? []
   )
   return {
     installedPlugins,
     deviceId,
     installedSources,
+    sourceReads: {
+      codex: { status: installedResult.status, items: codexPlugins },
+      store: { status: storeResult.status, items: installedSources.store ?? [] },
+    },
     ...(failures.length || linksFailed ? { partial: true } : {}),
   }
 }
@@ -2966,7 +3016,11 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           Boolean(peeked) &&
           (isLocalCodexPluginsReadStateFresh(mergeParams) || isLocalCodexPluginsReadStateFresh())
         if (peeked && !peeked.partial && peeked.installedPlugins.length > 0 && peekedIsFresh) {
-          return { items: peeked.installedPlugins, deviceId: peeked.deviceId }
+          return {
+            items: peeked.installedPlugins,
+            deviceId: peeked.deviceId,
+            sourceReads: peeked.sourceReads,
+          }
         }
       }
       const generation = nextReadStateGeneration++
@@ -2987,6 +3041,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           ...previous,
           installedPlugins,
           installedSources: loaded.installedSources,
+          sourceReads: loaded.sourceReads,
           deviceId: loaded.deviceId,
           installedPartial: loaded.partial,
           installedReadGeneration: generation,
@@ -3000,6 +3055,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return {
         items: installedPlugins,
         deviceId: loaded.deviceId,
+        sourceReads: loaded.sourceReads,
         ...(loaded.partial ? { partial: true } : {}),
       }
     },

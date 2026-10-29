@@ -105,6 +105,11 @@ import {
   pluginInventoryReadIsCurrent,
   commitPluginInventoryInstallation,
 } from '@/features/plugins/pluginInventory'
+import {
+  indexLocalPluginSources,
+  resolveLocalPluginInventory,
+  sameLocalPluginSources,
+} from '@/features/plugins/pluginInventorySources'
 import { useMarketplaceFilters } from './hooks/useMarketplaceFilters'
 import { usePluginMarketplaceCatalog } from './hooks/usePluginMarketplaceCatalog'
 import {
@@ -478,7 +483,6 @@ export function PluginsWorkspace({
   const [selectedMarketplaceKey, setSelectedMarketplaceKey] = useState(
     () => initialMarketplaceCache?.selectedMarketplaceKey || rememberedMarketplaceKey()
   )
-  const authoritativeInventoryRefreshRef = useRef(false)
   // Always open the marketplace on the "全部" distribution tab; do not restore a
   // previously selected local marketplace filter when navigating back from another route.
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>(() => {
@@ -584,6 +588,10 @@ export function PluginsWorkspace({
           (knownExecutorDeviceId && snapshot.deviceId !== knownExecutorDeviceId)
         )
           return
+        if (Object.values(snapshot.localInstalledSourceStatus ?? {}).includes('rejected')) {
+          inventoryCompleteRef.current = false
+          setLocalInstalledStateReadyKey(null)
+        }
         const next = snapshot.installedPlugins.map(toInstalledPluginItem)
         const items = snapshot.marketplaceItems
         installedPluginsRef.current = next
@@ -800,6 +808,19 @@ export function PluginsWorkspace({
 
   const applyLiveCodexCatalog = useCallback(
     (localState: Awaited<ReturnType<typeof localPluginApi.readState>>) => {
+      const deviceId =
+        knownExecutorDeviceId || localState.deviceId || currentDeviceIdRef.current || ''
+      const localInventory = resolveLocalPluginInventory(
+        getPluginMarketplaceCache(marketplaceCacheKeyValue),
+        {
+          items: localState.installedPlugins,
+          deviceId: localState.deviceId,
+          partial: localState.partial,
+          sourceReads: localState.sourceReads,
+        },
+        deviceId
+      )
+      const localInstalled = localInventory.items
       startTransition(() => {
         const previousItems = pluginMarketplaceStateRef.current.items
         const previousCloudItems = previousItems.filter(item => !isCodexCatalogItem(item))
@@ -821,7 +842,7 @@ export function PluginsWorkspace({
           .filter(plugin => typeof plugin.spec.pluginId === 'number')
         const nextInstalledRaw = mergeInstalledPlugins(
           cloudInstalledRaw,
-          localState.installedPlugins,
+          localInstalled,
           localState.deviceId || currentDeviceIdRef.current || ''
         ).map(toInstalledPluginItem)
         // Keep existing cloud rows (device pending/failed inclusive). Only refresh the
@@ -831,7 +852,7 @@ export function PluginsWorkspace({
           pluginMarketplaceStateRef.current.items.map(item => [String(item.id), item] as const)
         )
         const localPluginKeys = new Set(
-          localState.installedPlugins.flatMap(plugin => {
+          localInstalled.flatMap(plugin => {
             const name = String(plugin.spec.source.pluginKey || plugin.metadata.name || '')
               .trim()
               .toLowerCase()
@@ -852,7 +873,7 @@ export function PluginsWorkspace({
             return keys.filter(Boolean)
           })
         )
-        const localStoreDirs = localState.installedPlugins.flatMap(plugin => {
+        const localStoreDirs = localInstalled.flatMap(plugin => {
           const id = String(
             plugin.spec.source.catalogItemId ||
               (plugin.metadata.labels && typeof plugin.metadata.labels === 'object'
@@ -871,7 +892,7 @@ export function PluginsWorkspace({
             ),
             ...localState.marketplaceItems,
           ],
-          localState.installedPlugins
+          localInstalled
         ).map(item => {
           const previous = previousById.get(String(item.id))
           const withDeviceState = previous?.currentDeviceInstallation
@@ -907,28 +928,34 @@ export function PluginsWorkspace({
         setInstalledPlugins(previous =>
           sameInstalledPlugins(previous, nextInstalled) ? previous : nextInstalled
         )
+        const cachedSnapshot = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+        if (cachedSnapshot) {
+          setPluginMarketplaceCache(
+            {
+              ...cachedSnapshot,
+              marketplaceItems: heldBack.items,
+              installedPlugins: nextInstalled.map(plugin => plugin.raw),
+              localInstalledSources: indexLocalPluginSources(
+                nextInstalled.map(plugin => plugin.raw),
+                localInventory.sourceItems,
+                deviceId
+              ),
+              localInstalledSourceStatus: localInventory.localInstalledSourceStatus,
+              marketplaces: toMarketplaceOptions(
+                localState.marketplaces,
+                cloudMarketplaceAvailable,
+                t('workbench.plugins_wework_cloud_marketplace', 'Wework 云端市场')
+              ),
+              deviceId,
+              fetchedAt: Date.now(),
+            },
+            { persistImmediately: true }
+          )
+        }
         setPluginMarketplaceState(previous => {
           const items = heldBack.items
           if (sameMarketplaceItems(previous.items, items) && !previous.error) {
             return { ...previous, isLoading: false, error: null }
-          }
-          const cachedSnapshot = getPluginMarketplaceCache(marketplaceCacheKeyValue)
-          if (cachedSnapshot) {
-            setPluginMarketplaceCache(
-              {
-                ...cachedSnapshot,
-                marketplaceItems: items,
-                installedPlugins: nextInstalled.map(plugin => plugin.raw),
-                marketplaces: toMarketplaceOptions(
-                  localState.marketplaces,
-                  cloudMarketplaceAvailable,
-                  t('workbench.plugins_wework_cloud_marketplace', 'Wework 云端市场')
-                ),
-                deviceId: localState.deviceId || cachedSnapshot.deviceId,
-                fetchedAt: Date.now(),
-              },
-              { persistImmediately: true }
-            )
           }
           return {
             items: getPluginMarketplaceCache(marketplaceCacheKeyValue)?.marketplaceItems ?? items,
@@ -944,6 +971,7 @@ export function PluginsWorkspace({
       cloudMarketplaceAvailable,
       localPluginApi,
       marketplaceCacheKeyValue,
+      knownExecutorDeviceId,
       t,
     ]
   )
@@ -1730,7 +1758,6 @@ export function PluginsWorkspace({
       },
     },
     onComplete: () => {
-      authoritativeInventoryRefreshRef.current = true
       setReconciliationRevision(previous => previous + 1)
       refreshLocalMarketplace({ reloadCatalog: true })
       setPluginOperationNotice({
@@ -3010,6 +3037,7 @@ export function PluginsWorkspace({
   useEffect(() => {
     let isCurrent = true
     const inventoryAtStart = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+    let sourceExpected = inventoryAtStart
     const cached =
       knownExecutorDeviceId && inventoryAtStart?.deviceId !== knownExecutorDeviceId
         ? null
@@ -3023,12 +3051,13 @@ export function PluginsWorkspace({
     const inventoryReadIsCurrent = () =>
       isCurrent &&
       (!knownExecutorDeviceId || getKnownLocalExecutorDeviceId() === knownExecutorDeviceId) &&
+      sameLocalPluginSources(getPluginMarketplaceCache(marketplaceCacheKeyValue), sourceExpected) &&
       (getPluginMarketplaceCache(marketplaceCacheKeyValue) === inventoryAtStart ||
         pluginInventoryReadIsCurrent(marketplaceCacheKeyValue, inventoryReadBaseline))
     inventoryCompleteRef.current = false
     setLocalInstalledStateReadyKey(null)
     const reportReadFailure = () => {
-      if (!isCurrent) return
+      if (!inventoryReadIsCurrent()) return
       inventoryCompleteRef.current = false
       setLocalInstalledStateReadyKey(null)
       setPluginOperationNotice({
@@ -3039,9 +3068,6 @@ export function PluginsWorkspace({
     }
     const hasCachedCatalog = Boolean(cached?.marketplaceItems.length)
     const isExplicitRefresh = marketplaceRefreshTick > lastMarketplaceRefreshTickRef.current
-    const authoritativeInventoryRefresh =
-      isExplicitRefresh && authoritativeInventoryRefreshRef.current
-    authoritativeInventoryRefreshRef.current = false
     if (isExplicitRefresh) {
       lastMarketplaceRefreshTickRef.current = marketplaceRefreshTick
     }
@@ -3123,15 +3149,37 @@ export function PluginsWorkspace({
     // plugin/install.
     let localInstalledReadFailed = false
     let personalDiskReadFailed = false
+    let localInventory: ReturnType<typeof resolveLocalPluginInventory> | null = null
+    const localSourceMetadata = (installed: InstalledPlugin[], deviceId: string) =>
+      localInventory
+        ? {
+            localInstalledSources: indexLocalPluginSources(
+              installed,
+              localInventory.sourceItems,
+              deviceId
+            ),
+            localInstalledSourceStatus: localInventory.localInstalledSourceStatus,
+          }
+        : {}
     const membershipPromise = localPluginApi
       .listInstalledPlugins({
         refresh: true,
         shareInflight: !isExplicitRefresh,
       })
       .then(result => {
-        localInstalledReadFailed = result.partial === true
+        if (!inventoryReadIsCurrent()) return result
+        const deviceId =
+          knownExecutorDeviceId ||
+          result.deviceId ||
+          currentDeviceIdRef.current ||
+          deviceIdHint ||
+          ''
+        localInventory = resolveLocalPluginInventory(currentCache(), result, deviceId)
+        localInstalledReadFailed =
+          result.partial === true ||
+          Object.values(localInventory.localInstalledSourceStatus).includes('rejected')
         if (localInstalledReadFailed) reportReadFailure()
-        return result
+        return { ...result, items: localInventory.items, partial: localInstalledReadFailed }
       })
       .catch(error => {
         localInstalledReadFailed = true
@@ -3192,11 +3240,10 @@ export function PluginsWorkspace({
     ) => {
       if (!inventoryReadIsCurrent()) return
       const preferredLocal = (
-        localState && (peekedLocalState == null || localState !== peekedLocalState)
+        liveLocalInstalledForMerge ??
+        (localState && (peekedLocalState == null || localState !== peekedLocalState)
           ? localState.installedPlugins
-          : (liveLocalInstalledForMerge ??
-            localState?.installedPlugins ??
-            installedPluginsRef.current.map(plugin => plugin.raw))
+          : (localState?.installedPlugins ?? installedPluginsRef.current.map(plugin => plugin.raw)))
       ).filter(hasLocalCodexMaterialization)
       const nextInstalledRaw = mergeInstalledPlugins(
         cloudInstalled ??
@@ -3237,8 +3284,7 @@ export function PluginsWorkspace({
         previousInstalled: installedPluginsRef.current,
         nextInstalled: nextInstalledRaw,
         previousStateMatchesScope: marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
-        authoritativeInstalledState:
-          liveLocalInstalledForMerge !== null && !localInstalledReadFailed && !installedReadFailed,
+        authoritativeInstalledState: localInventory !== null,
       })
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: retained.items,
@@ -3287,6 +3333,10 @@ export function PluginsWorkspace({
           cacheKey: marketplaceCacheKeyValue,
           marketplaceItems: mergedItems,
           installedPlugins: nextInstalled.map(plugin => plugin.raw),
+          ...localSourceMetadata(
+            nextInstalled.map(plugin => plugin.raw),
+            localState?.deviceId || deviceIdHint || currentDeviceIdRef.current || ''
+          ),
           marketplaces: nextMarketplaces,
           selectedMarketplaceKey: selectedMarketplaceKeyRef.current,
           deviceId: localState?.deviceId || deviceIdHint || currentDeviceIdRef.current || '',
@@ -3294,6 +3344,7 @@ export function PluginsWorkspace({
         },
         { persistImmediately: true }
       )
+      sourceExpected = getPluginMarketplaceCache(marketplaceCacheKeyValue)
       if (!options?.deferInventoryReady) markAutoSyncInventoryReady()
     }
 
@@ -3325,7 +3376,11 @@ export function PluginsWorkspace({
         localStateForMerge = localState
         // A successful live readState snapshot is authoritative, including an
         // empty install list after the user uninstalls the last package.
-        if ((peekedLocalState == null || localState !== peekedLocalState) && !localState.partial) {
+        if (
+          !localInventory &&
+          (peekedLocalState == null || localState !== peekedLocalState) &&
+          !localState.partial
+        ) {
           liveLocalInstalledForMerge = localState.installedPlugins
         }
         setCurrentDeviceId(localState.deviceId)
@@ -3461,8 +3516,7 @@ export function PluginsWorkspace({
         previousInstalled: installedPluginsRef.current,
         nextInstalled: nextInstalledRaw,
         previousStateMatchesScope: marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
-        authoritativeInstalledState:
-          liveLocalInstalledForMerge !== null && !localInstalledReadFailed && !installedReadFailed,
+        authoritativeInstalledState: localInventory !== null,
       })
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: retained.items,
@@ -3490,8 +3544,15 @@ export function PluginsWorkspace({
           writePluginInventory(
             marketplaceCacheKeyValue,
             deviceIdHint || currentDeviceIdRef.current || '',
-            { installedPlugins: nextInstalled.map(plugin => plugin.raw) }
+            {
+              installedPlugins: nextInstalled.map(plugin => plugin.raw),
+              ...localSourceMetadata(
+                nextInstalled.map(plugin => plugin.raw),
+                deviceIdHint || currentDeviceIdRef.current || ''
+              ),
+            }
           )
+          sourceExpected = getPluginMarketplaceCache(marketplaceCacheKeyValue)
         }
         if (cloudInstalledForMerge) {
           setIsMarketplaceRefreshing(options.keepRefreshing)
@@ -3513,11 +3574,16 @@ export function PluginsWorkspace({
         cacheKey: marketplaceCacheKeyValue,
         marketplaceItems: mergedItems,
         installedPlugins: nextInstalled.map(plugin => plugin.raw),
+        ...localSourceMetadata(
+          nextInstalled.map(plugin => plugin.raw),
+          localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || ''
+        ),
         marketplaces: progressiveMarketplaces,
         selectedMarketplaceKey: selectedMarketplaceKeyRef.current,
         deviceId: localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || '',
         fetchedAt: Date.now(),
       })
+      sourceExpected = getPluginMarketplaceCache(marketplaceCacheKeyValue)
       setPluginMarketplaceState(previous => {
         const items =
           getPluginMarketplaceCache(marketplaceCacheKeyValue)?.marketplaceItems ?? mergedItems
@@ -3568,17 +3634,19 @@ export function PluginsWorkspace({
             diskPersonalItems
           )
           const cachedInstalledRaw = cached?.installedPlugins ?? []
-          const localInstalledForMerge = resolveProgressiveLocalInstalledRaw({
-            hasCachedSnapshot: cached != null,
-            cachedInstalledRaw,
-            localInstalledRaw: localStateForMerge?.installedPlugins,
-            localStateIsPeek:
-              peekedLocalState != null &&
-              localStateForMerge != null &&
-              localStateForMerge === peekedLocalState,
-            cachedDeviceId: cached?.deviceId,
-            localDeviceId: localStateForMerge?.deviceId,
-          })
+          const localInstalledForMerge =
+            localInventory?.items ??
+            resolveProgressiveLocalInstalledRaw({
+              hasCachedSnapshot: cached != null,
+              cachedInstalledRaw,
+              localInstalledRaw: localStateForMerge?.installedPlugins,
+              localStateIsPeek:
+                peekedLocalState != null &&
+                localStateForMerge != null &&
+                localStateForMerge === peekedLocalState,
+              cachedDeviceId: cached?.deviceId,
+              localDeviceId: localStateForMerge?.deviceId,
+            })
           const nextInstalledRaw = mergeInstalledPlugins(
             cloudInstalledForMerge ??
               (cloudMarketplaceAvailable && cached != null
@@ -3599,11 +3667,7 @@ export function PluginsWorkspace({
             nextInstalled: nextInstalledRaw,
             previousStateMatchesScope:
               marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
-            authoritativeInstalledState:
-              authoritativeInventoryRefresh &&
-              liveLocalInstalledForMerge !== null &&
-              !localInstalledReadFailed &&
-              !installedReadFailed,
+            authoritativeInstalledState: localInventory !== null,
           })
           const heldBack = holdBackInFlightMarketplaceInstalls({
             items: retained.items,
@@ -3622,8 +3686,13 @@ export function PluginsWorkspace({
             {
               installedPlugins: nextInstalled.map(plugin => plugin.raw),
               marketplaceItems: mergedItems,
+              ...localSourceMetadata(
+                nextInstalled.map(plugin => plugin.raw),
+                localStateForMerge?.deviceId || deviceIdHint || currentDeviceIdRef.current || ''
+              ),
             }
           )
+          sourceExpected = getPluginMarketplaceCache(marketplaceCacheKeyValue)
           return
         }
         // Always paint disk personal rows, even when a cloud cache already filled the
@@ -3675,7 +3744,7 @@ export function PluginsWorkspace({
     // (OpenAI GitHub reconcile) before auto-sync or device-gap overlay.
     void membershipPromise
       .then(membership => {
-        if (!isCurrent) return
+        if (!inventoryReadIsCurrent()) return
         liveLocalInstalledForMerge = membership.items
         if (membership.deviceId) {
           setCurrentDeviceId(membership.deviceId)
@@ -3692,17 +3761,11 @@ export function PluginsWorkspace({
       })
       .catch(reportReadFailure)
 
-    void Promise.allSettled([cloudPromise, installedPromise])
-      .then(([cloudResult, installedResult]) => {
+    void cloudPromise
+      .then(cloud => {
         if (!isCurrent || catalogSettled) return
-        const cloudItems = cloudResult.status === 'fulfilled' ? cloudResult.value.items : undefined
-        const cloudInstalled =
-          installedResult.status === 'fulfilled' ? installedResult.value.items : undefined
-        if (cloudResult.status === 'rejected') reportReadFailure()
-
         paintPartialCatalog({
-          cloudItems,
-          cloudInstalled,
+          cloudItems: cloud.items,
           localState: localStateForMerge,
           diskPersonalItems: diskPersonalItemsForMerge ?? undefined,
           keepRefreshing: isExplicitRefresh,
@@ -3723,6 +3786,9 @@ export function PluginsWorkspace({
       if (manualRequest && manualRequest.tick <= marketplaceRefreshTick) {
         manualReconciliationTickRef.current = null
       }
+      setMarketplaceLoadingMessage('')
+      setIsMarketplaceRefreshing(false)
+      if (!inventoryReadIsCurrent()) return
       if (
         manualRequest &&
         manualRequest.tick <= marketplaceRefreshTick &&
@@ -3752,9 +3818,6 @@ export function PluginsWorkspace({
           })
         }
       }
-      setMarketplaceLoadingMessage('')
-      setIsMarketplaceRefreshing(false)
-
       if (diskResult.status === 'fulfilled' && diskResult.value !== null) {
         diskPersonalItemsForMerge = diskResult.value
       }
@@ -4226,6 +4289,13 @@ export function PluginsWorkspace({
       .then(localState => {
         if (cancelled) return
         if (!pluginInventoryReadIsCurrent(marketplaceCacheKeyValue, inventoryAtStart)) return
+        if (
+          !sameLocalPluginSources(
+            getPluginMarketplaceCache(marketplaceCacheKeyValue),
+            inventoryAtStart
+          )
+        )
+          return
         if (deferredCodexCatalogRequestRef.current !== requestKey) return
         if (localState.partial) {
           inventoryCompleteRef.current = false
