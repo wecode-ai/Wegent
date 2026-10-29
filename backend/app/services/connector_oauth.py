@@ -393,6 +393,10 @@ class ConnectorOAuthService:
         refresh_token = connection.refresh_token()
         if not refresh_token:
             return None
+        # Every write below is conditional on this grant still being stored.
+        # Two refreshes, a re-authorization or a disconnect can race the token
+        # endpoint call; the older result must never overwrite the newer state.
+        grant = connection.refresh_token_encrypted or ""
         try:
             if connection.slug == "github":
                 _require_github_config()
@@ -439,7 +443,7 @@ class ConnectorOAuthService:
                 else connection.granted_scopes
             )
             expires_in = payload.get("expires_in")
-            return connector_connection_service.save_oauth_connection(
+            saved = connector_connection_service.save_oauth_connection(
                 db,
                 slug=connection.slug,
                 user_id=connection.user_id,
@@ -454,22 +458,57 @@ class ConnectorOAuthService:
                     if expires_in
                     else None
                 ),
+                expected_refresh_token_encrypted=grant,
+            )
+            if saved is not None:
+                return saved
+            return connector_connection_service.get(
+                db, slug=connection.slug, user_id=connection.user_id
             )
         except httpx.HTTPStatusError as error:
             # The endpoint answered, so a rejected grant is final.
-            if error.response.status_code < 500:
-                connector_connection_service.clear_refresh_token(db, connection)
-            connector_connection_service.set_status(db, connection, "expired")
-            return None
+            return ConnectorOAuthService._record_refresh_failure(
+                db,
+                connection,
+                grant=grant,
+                clear_refresh_token=error.response.status_code < 500,
+            )
         except ValueError:
             # The payload carried an OAuth error such as `invalid_grant`.
-            connector_connection_service.clear_refresh_token(db, connection)
-            connector_connection_service.set_status(db, connection, "expired")
-            return None
+            return ConnectorOAuthService._record_refresh_failure(
+                db, connection, grant=grant, clear_refresh_token=True
+            )
         except httpx.HTTPError:
             # Transport failures are transient; keep the refresh token for a retry.
-            connector_connection_service.set_status(db, connection, "expired")
+            return ConnectorOAuthService._record_refresh_failure(
+                db, connection, grant=grant, clear_refresh_token=False
+            )
+
+    @staticmethod
+    def _record_refresh_failure(
+        db: Session,
+        connection: ConnectorConnection,
+        *,
+        grant: str,
+        clear_refresh_token: bool,
+    ) -> ConnectorConnection | None:
+        """Record a vetoed refresh unless a newer grant already replaced it.
+
+        A superseded request returns the current connection so the caller can
+        use the credentials another request just committed; the refresh that
+        actually failed returns ``None`` and lets the caller ask for consent.
+        """
+        recorded = connector_connection_service.reject_refresh_if_current(
+            db,
+            connection=connection,
+            expected_refresh_token_encrypted=grant,
+            clear_refresh_token=clear_refresh_token,
+        )
+        if recorded is not None:
             return None
+        return connector_connection_service.get(
+            db, slug=connection.slug, user_id=connection.user_id
+        )
 
     @staticmethod
     async def _exchange_code(*, code: str, verifier: str) -> dict:

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
-  awaitConnectorAuthorizationWindow,
   closeConnectorAuthorizationWindow,
   isConnectorAuthorizationUrl,
+  isConnectorAuthorizationWindowOpen,
   openConnectorAuthorizationWindow,
 } from './connector-authorization-window.js'
 
@@ -109,22 +109,37 @@ describe('connector authorization window', () => {
     expect(mocks.window.close).toHaveBeenCalledTimes(1)
   })
 
-  test('awaiting an attempt resolves when its window closes', async () => {
+  test('reports the attempt as open until its window closes', async () => {
+    const closedAttempts: string[] = []
     await openConnectorAuthorizationWindow({
       url: 'https://provider.example/authorize',
       parent,
       requestId: 'attempt-1',
+      onClosed: requestId => closedAttempts.push(requestId),
     })
-    let released = false
-    const waiting = awaitConnectorAuthorizationWindow('attempt-1').then(() => {
-      released = true
-    })
-    await Promise.resolve()
-    expect(released).toBe(false)
+    expect(isConnectorAuthorizationWindowOpen('attempt-1')).toBe(true)
+    expect(closedAttempts).toEqual([])
 
     mocks.listeners.get('closed')?.()
-    await waiting
-    expect(released).toBe(true)
+
+    expect(isConnectorAuthorizationWindowOpen('attempt-1')).toBe(false)
+    expect(closedAttempts).toEqual(['attempt-1'])
     expect(mocks.clearStorageData).toHaveBeenCalled()
+  })
+
+  test('notifies the owning attempt once, including on an early close', async () => {
+    const closedAttempts: string[] = []
+    await openConnectorAuthorizationWindow({
+      url: 'https://provider.example/authorize',
+      parent,
+      requestId: 'attempt-1',
+      onClosed: requestId => closedAttempts.push(requestId),
+    })
+
+    closeConnectorAuthorizationWindow('attempt-1')
+    mocks.listeners.get('closed')?.()
+    closeConnectorAuthorizationWindow('attempt-1')
+
+    expect(closedAttempts).toEqual(['attempt-1'])
   })
 })

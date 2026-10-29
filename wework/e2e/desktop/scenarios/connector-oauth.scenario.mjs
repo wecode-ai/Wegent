@@ -61,6 +61,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   const modelRequests = []
   let replySequence = 0
   let catalogAtResume = null
+  let localSyncHold = null
 
   async function api(path, { method = 'GET', body } = {}) {
     const response = await fetch(`${backend.backendUrl}${path}`, {
@@ -162,9 +163,36 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
       // The card opens the provider inside the app; the provider auto-approves,
       // so the grant completes without leaving the workbench.
+      //
+      // Barrier: hold the local executor's connector sync so the checkpoint
+      // proves the continuation waits for the runtime to apply the app list
+      // instead of resuming as soon as the cloud catalog is ready.
+      await control.command('holdLocalExecutorRequests', 'body', {
+        value: JSON.stringify({
+          method: 'runtime.connectors.apps.sync',
+          phase: 'before-dispatch',
+        }),
+      })
       await control.command('clickWhenEnabled', '[data-testid="cloud-connector-auth-authorize"]', {
         timeoutMs: uiTimeoutMs,
       })
+      const held = JSON.parse(await control.command('awaitLocalExecutorRequestHold', 'body'))
+      localSyncHold = held
+      assert.equal(held?.method, 'runtime.connectors.apps.sync')
+      assert.ok(held.heldCount > 0, 'The consent flow never reached the local connector sync')
+      const waitingSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.ok(
+        waitingSnapshot.testIds.includes('cloud-connector-auth-card'),
+        'The blocked step resumed before the local executor applied the connector'
+      )
+      assert.equal(
+        modelRequests.filter(isResumeRequest).length,
+        0,
+        'The continuation must not start while the local connector sync is held'
+      )
+      await control.command('releaseLocalExecutorRequestHold', 'body')
       await control.command('waitFor', '[data-testid="cloud-connector-auth-card"]', {
         visible: false,
         timeoutMs: uiTimeoutMs,
@@ -210,6 +238,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         authorizeRequests: provider?.authorizeRequests ?? 0,
         tokenRequests: provider?.tokenRequests ?? 0,
         catalogAtResume,
+        localSyncHold,
       }
     },
 

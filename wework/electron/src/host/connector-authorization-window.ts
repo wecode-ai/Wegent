@@ -60,11 +60,16 @@ export function closeConnectorAuthorizationWindow(requestId: string): void {
   if (!entry.window.isDestroyed()) entry.window.close()
 }
 
-/** Resolve once the attempt's window closes; a finished attempt resolves at once. */
-export async function awaitConnectorAuthorizationWindow(requestId: string): Promise<void> {
-  const entry = tracked.get(requestId)
-  if (!entry) return
-  await entry.closed
+/**
+ * Whether the attempt's consent window is still open.
+ *
+ * The renderer learns about a close through the durable host event stream
+ * instead of holding one long-lived request: an authorization can stay open
+ * far longer than any single host request may, and a timed-out request would
+ * silently drop the close it was waiting for.
+ */
+export function isConnectorAuthorizationWindowOpen(requestId: string): boolean {
+  return tracked.has(requestId)
 }
 
 export interface ConnectorAuthorizationWindowOptions {
@@ -72,6 +77,8 @@ export interface ConnectorAuthorizationWindowOptions {
   parent: BrowserWindow
   /** The renderer's id for this authorization attempt. */
   requestId: string
+  /** Notified once, whether the user dismissed the window or the flow ended. */
+  onClosed?: (requestId: string) => void
 }
 
 /**
@@ -105,12 +112,19 @@ export async function openConnectorAuthorizationWindow(
   const closed = new Promise<void>(resolve => {
     resolveClosed = resolve
   })
+  let notified = false
+  const notifyClosed = () => {
+    if (notified) return
+    notified = true
+    options.onClosed?.(options.requestId)
+  }
   window.once('closed', () => {
     if (tracked.get(options.requestId)?.window === window) {
       tracked.delete(options.requestId)
     }
     void isolated.clearStorageData().catch(() => undefined)
     resolveClosed()
+    notifyClosed()
   })
   tracked.set(options.requestId, { window, closed })
 
@@ -119,6 +133,7 @@ export async function openConnectorAuthorizationWindow(
   } catch (error) {
     closeConnectorAuthorizationWindow(options.requestId)
     await closed
+    notifyClosed()
     throw error
   }
 }

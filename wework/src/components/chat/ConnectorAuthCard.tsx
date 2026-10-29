@@ -6,6 +6,8 @@ import { githubVerificationUrl, isGithubCliTarget } from '@/api/local/githubCli'
 import { useTranslation } from '@/hooks/useTranslation'
 import { authorizeWegentConnector, waitForConnectorToolCatalog } from '@/api/cloud/connectorApps'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
+import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
+import { synchronizeConnectorApps } from '@/features/cloud-connection/connectorAppSync'
 import type {
   LocalConnectorAuthResult,
   LocalConnectorAuthTarget,
@@ -63,11 +65,21 @@ export function CloudConnectorAuthCard({
         setError(t('workbench.plugins_connector_auth_failed', { name: slug }))
         return
       }
-      // Resume only once the catalog lists this app's tools, so the continued
-      // step sees the connector instead of an empty surface.
+      // Resume only once the cloud catalog lists this app's tools *and* the
+      // local executor has applied them: the continuation runs on the local
+      // runtime, so a cloud-only confirmation would still start it without the
+      // connector. A timeout keeps the card retryable instead of resuming.
       const catalogReady = await waitForConnectorToolCatalog(apiBaseUrl, token, slug)
       if (!catalogReady) {
-        console.warn(`[ConnectorAuthCard] ${slug} tools did not reach the catalog before resuming`)
+        setError(t('workbench.plugins_connector_sync_timeout', { name: slug }))
+        return
+      }
+      if (isLocalFirstAppRuntime()) {
+        const sync = await synchronizeConnectorApps({ apiBaseUrl, token })
+        if (!sync.callableSlugs.includes(slug)) {
+          setError(t('workbench.plugins_connector_sync_timeout', { name: slug }))
+          return
+        }
       }
       onSuccess()
     } catch (cause) {

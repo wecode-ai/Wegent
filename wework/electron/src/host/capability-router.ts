@@ -11,7 +11,7 @@ export const HOST_CAPABILITIES = [
   'app.relaunch',
   'auth.openConnectorAuthorization',
   'auth.closeConnectorAuthorization',
-  'auth.awaitConnectorAuthorization',
+  'auth.getConnectorAuthorizationState',
   'appUpdate.check',
   'appUpdate.download',
   'appUpdate.downloadProgress',

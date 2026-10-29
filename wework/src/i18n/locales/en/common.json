@@ -2609,6 +2609,7 @@
     "plugins_connector_auth_blocked": "The app authorization lookup was rejected (403 or a security check). Check your network, proxy, or account permissions and retry. Authorization has not been confirmed.",
     "plugins_connector_auth_account_required": "The app authorization lookup requires a valid OpenAI account session. Sign in to your OpenAI account again and retry. App authorization has not been confirmed.",
     "plugins_connector_auth_failed": "Could not check app authorization. Check your network or proxy and retry. Authorization has not been confirmed.",
+    "plugins_connector_sync_timeout": "{{name}} is authorized, but the local executor has not picked up its tools yet, so the task did not continue. Retry authorization shortly or send the message again.",
     "plugins_connector_auth_not_complete": "Authorization for {{name}} is not confirmed. Complete authorization in the browser, then verify again.",
     "plugin_connect_after_install": "Connect after installing",
     "plugins_wegent_cloud_marketplace": "Wegent Cloud Marketplace",

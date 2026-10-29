@@ -59,8 +59,8 @@ import type { BrowserAnnotationController } from './browser-annotation-controlle
 import { RotatingLog } from '../runtime/rotating-log.js'
 import { registerMicrophoneDiagnostics } from './microphone-diagnostics.js'
 import {
-  awaitConnectorAuthorizationWindow,
   closeConnectorAuthorizationWindow,
+  isConnectorAuthorizationWindowOpen,
   isConnectorAuthorizationUrl,
   openConnectorAuthorizationWindow,
 } from './connector-authorization-window.js'
@@ -1087,13 +1087,19 @@ export function createElectronCapabilityRouter(
       url,
       requestId: stringParam(params, 'requestId'),
       parent: requiredWindow(window),
+      // The consent window can stay open far longer than one host request may
+      // live, so the close travels as a durable event instead of a long call.
+      onClosed: requestId =>
+        desktopServices.events.publish('connectorAuthorization.closed', { requestId }),
     })
   })
   // The poll loop owns the terminal state, so it also owns closing the window;
   // an early close is how a user cancels. Both are scoped to one attempt.
-  router.register('auth.awaitConnectorAuthorization', params =>
-    awaitConnectorAuthorizationWindow(stringParam(params, 'requestId'))
-  )
+  // The state read keeps cancellation working even if the close event is
+  // missed, so no caller depends on one durable delivery.
+  router.register('auth.getConnectorAuthorizationState', params => ({
+    open: isConnectorAuthorizationWindowOpen(stringParam(params, 'requestId')),
+  }))
   router.register('auth.closeConnectorAuthorization', params => {
     closeConnectorAuthorizationWindow(stringParam(params, 'requestId'))
   })

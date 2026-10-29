@@ -39,6 +39,16 @@ def _parse_last_error(value: Any) -> str | None:
     return None
 
 
+def _grant_snapshot(spec: dict[str, Any]) -> str:
+    """Identify the grant a refresh started from.
+
+    Refresh results are only written back while this value still matches, so a
+    request that was overtaken by another refresh, a re-authorization or a
+    disconnect cannot resurrect or overwrite the newer credentials.
+    """
+    return str(spec.get("refreshTokenEncrypted") or "")
+
+
 @dataclass
 class ConnectorConnection:
     """Runtime view of one user's connector authorization."""
@@ -138,53 +148,69 @@ class ConnectorConnectionService:
         granted_scopes: list[str],
         external_account_name: str | None,
         expires_at: datetime | None,
-    ) -> ConnectorConnection:
-        row = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == CONNECTOR_CONNECTION_KIND,
-                Kind.namespace == CONNECTOR_CONNECTION_NAMESPACE,
-                Kind.name == slug,
-                Kind.user_id == user_id,
-            )
-            .first()
-        )
-        payload = {
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": CONNECTOR_CONNECTION_KIND,
-            "metadata": {
-                "name": slug,
-                "namespace": CONNECTOR_CONNECTION_NAMESPACE,
-            },
-            "spec": {
-                "connectorAppSlug": slug,
-                "status": "connected",
-                "externalAccountName": external_account_name,
-                "grantedScopes": sorted(set(granted_scopes)),
-                "expiresAt": expires_at.isoformat() if expires_at else None,
-                "accessTokenEncrypted": encrypt_sensitive_data(access_token),
-                "refreshTokenEncrypted": (
-                    encrypt_sensitive_data(refresh_token) if refresh_token else None
-                ),
-                "tokenType": token_type or "bearer",
-            },
+        expected_refresh_token_encrypted: str | None = None,
+    ) -> ConnectorConnection | None:
+        """Persist a grant for ``slug``.
+
+        ``expected_refresh_token_encrypted`` turns the write into a conditional
+        one: a refresh only commits while the grant it started from is still
+        the stored grant. Racing refreshes, re-authorizations and disconnects
+        then win over the older result, which returns ``None`` so the caller can
+        re-read the current connection instead of trusting a stale snapshot.
+        """
+        spec = {
+            "connectorAppSlug": slug,
+            "status": "connected",
+            "externalAccountName": external_account_name,
+            "grantedScopes": sorted(set(granted_scopes)),
+            "expiresAt": expires_at.isoformat() if expires_at else None,
+            "accessTokenEncrypted": encrypt_sensitive_data(access_token),
+            "refreshTokenEncrypted": (
+                encrypt_sensitive_data(refresh_token) if refresh_token else None
+            ),
+            "tokenType": token_type or "bearer",
         }
-        if row:
-            row.json = payload
-            row.is_active = True
-        else:
+        row = ConnectorConnectionService._lock_row(db, slug=slug, user_id=user_id)
+        if row is None:
+            if expected_refresh_token_encrypted is not None:
+                db.commit()
+                return None
             row = Kind(
                 user_id=user_id,
                 kind=CONNECTOR_CONNECTION_KIND,
                 namespace=CONNECTOR_CONNECTION_NAMESPACE,
                 name=slug,
-                json=payload,
+                json={
+                    "apiVersion": "agent.wecode.io/v1",
+                    "kind": CONNECTOR_CONNECTION_KIND,
+                    "metadata": {
+                        "name": slug,
+                        "namespace": CONNECTOR_CONNECTION_NAMESPACE,
+                    },
+                    "spec": spec,
+                },
                 is_active=True,
             )
             db.add(row)
-        db.commit()
-        db.refresh(row)
-        return ConnectorConnectionService._row_to_connection(row)
+            db.commit()
+            db.refresh(row)
+            return ConnectorConnectionService._row_to_connection(row)
+        current = dict((row.json or {}).get("spec") or {})
+        if expected_refresh_token_encrypted is not None and (
+            not row.is_active
+            or _grant_snapshot(current) != expected_refresh_token_encrypted
+        ):
+            # Someone else committed a newer grant or disconnected first.
+            db.commit()
+            return None
+        if row.is_active:
+            # A refresh keeps the existing discovery result: the account and the
+            # tools it can see did not change, only the tokens.
+            for key in ("toolSummaries", "toolsDiscoveredAt"):
+                if key in current:
+                    spec[key] = current[key]
+        row.is_active = True
+        return ConnectorConnectionService._save_spec(db, row=row, spec=spec)
 
     @staticmethod
     def set_status(
@@ -192,14 +218,15 @@ class ConnectorConnectionService:
         connection: ConnectorConnection,
         status: str,
     ) -> ConnectorConnection:
-        payload = dict(connection.row.json or {})
-        spec = dict(payload.get("spec") or {})
+        row = ConnectorConnectionService._lock_row(
+            db, slug=connection.slug, user_id=connection.user_id
+        )
+        if row is None:
+            db.commit()
+            return connection
+        spec = dict((row.json or {}).get("spec") or {})
         spec["status"] = status
-        payload["spec"] = spec
-        connection.row.json = payload
-        db.commit()
-        db.refresh(connection.row)
-        return ConnectorConnectionService._row_to_connection(connection.row)
+        return ConnectorConnectionService._save_spec(db, row=row, spec=spec)
 
     @staticmethod
     def clear_refresh_token(
@@ -207,14 +234,46 @@ class ConnectorConnectionService:
         connection: ConnectorConnection,
     ) -> ConnectorConnection:
         """Stop offering a grant the token endpoint already rejected."""
-        payload = dict(connection.row.json or {})
-        spec = dict(payload.get("spec") or {})
+        row = ConnectorConnectionService._lock_row(
+            db, slug=connection.slug, user_id=connection.user_id
+        )
+        if row is None:
+            db.commit()
+            return connection
+        spec = dict((row.json or {}).get("spec") or {})
         spec["refreshTokenEncrypted"] = None
-        payload["spec"] = spec
-        connection.row.json = payload
-        db.commit()
-        db.refresh(connection.row)
-        return ConnectorConnectionService._row_to_connection(connection.row)
+        return ConnectorConnectionService._save_spec(db, row=row, spec=spec)
+
+    @staticmethod
+    def reject_refresh_if_current(
+        db: Session,
+        *,
+        connection: ConnectorConnection,
+        expected_refresh_token_encrypted: str,
+        clear_refresh_token: bool,
+    ) -> ConnectorConnection | None:
+        """Record a failed refresh unless a newer grant already replaced it.
+
+        Returns the connection that still carries the grant the caller started
+        from, or ``None`` when another request committed a newer grant or
+        disconnected the account first.
+        """
+        row = ConnectorConnectionService._lock_row(
+            db, slug=connection.slug, user_id=connection.user_id
+        )
+        if row is None:
+            db.commit()
+            return None
+        spec = dict((row.json or {}).get("spec") or {})
+        if not row.is_active or (
+            _grant_snapshot(spec) != expected_refresh_token_encrypted
+        ):
+            db.commit()
+            return None
+        spec["status"] = "expired"
+        if clear_refresh_token:
+            spec["refreshTokenEncrypted"] = None
+        return ConnectorConnectionService._save_spec(db, row=row, spec=spec)
 
     @staticmethod
     def is_usable(connection: ConnectorConnection | None) -> bool:
@@ -233,22 +292,59 @@ class ConnectorConnectionService:
         return status == "expired" and bool(connection.refresh_token())
 
     @staticmethod
+    def _lock_row(db: Session, *, slug: str, user_id: int) -> Kind | None:
+        """Re-read one connection under a row lock before writing to it.
+
+        Every writer merges into the stored document instead of replacing it
+        with the snapshot it read earlier. ``populate_existing`` drops a stale
+        identity-map copy so the merge starts from the committed row, and the
+        lock keeps the read-compare-write window closed for other requests.
+        """
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.kind == CONNECTOR_CONNECTION_KIND,
+                Kind.namespace == CONNECTOR_CONNECTION_NAMESPACE,
+                Kind.name == slug,
+                Kind.user_id == user_id,
+            )
+            .populate_existing()
+            .with_for_update()
+            .first()
+        )
+
+    @staticmethod
+    def _save_spec(
+        db: Session,
+        *,
+        row: Kind,
+        spec: dict[str, Any],
+    ) -> ConnectorConnection:
+        payload = dict(row.json or {})
+        payload["spec"] = spec
+        row.json = payload
+        db.commit()
+        db.refresh(row)
+        return ConnectorConnectionService._row_to_connection(row)
+
+    @staticmethod
     def save_tool_summaries(
         db: Session,
         connection: ConnectorConnection,
         summaries: list[dict[str, Any]],
     ) -> ConnectorConnection:
-        payload = dict(connection.row.json or {})
-        spec = dict(payload.get("spec") or {})
+        row = ConnectorConnectionService._lock_row(
+            db, slug=connection.slug, user_id=connection.user_id
+        )
+        if row is None:
+            db.commit()
+            return connection
+        spec = dict((row.json or {}).get("spec") or {})
         spec["toolSummaries"] = summaries
         spec["toolsDiscoveredAt"] = datetime.now(timezone.utc).isoformat()
         # A successful discovery clears the previous upstream failure.
         spec["lastError"] = None
-        payload["spec"] = spec
-        connection.row.json = payload
-        db.commit()
-        db.refresh(connection.row)
-        return ConnectorConnectionService._row_to_connection(connection.row)
+        return ConnectorConnectionService._save_spec(db, row=row, spec=spec)
 
     @staticmethod
     def record_tool_error(
@@ -257,26 +353,26 @@ class ConnectorConnectionService:
         message: str,
     ) -> ConnectorConnection:
         """Remember a discovery failure without changing the authorization."""
-        payload = dict(connection.row.json or {})
-        spec = dict(payload.get("spec") or {})
+        row = ConnectorConnectionService._lock_row(
+            db, slug=connection.slug, user_id=connection.user_id
+        )
+        if row is None:
+            db.commit()
+            return connection
+        spec = dict((row.json or {}).get("spec") or {})
         spec["lastError"] = {
             "message": message[:500],
             "at": datetime.now(timezone.utc).isoformat(),
         }
-        payload["spec"] = spec
-        connection.row.json = payload
-        db.commit()
-        db.refresh(connection.row)
-        return ConnectorConnectionService._row_to_connection(connection.row)
+        return ConnectorConnectionService._save_spec(db, row=row, spec=spec)
 
     @staticmethod
     def disconnect(db: Session, *, slug: str, user_id: int) -> bool:
-        connection = ConnectorConnectionService.get(db, slug=slug, user_id=user_id)
-        if not connection:
+        row = ConnectorConnectionService._lock_row(db, slug=slug, user_id=user_id)
+        if row is None or not row.is_active:
+            db.commit()
             return False
-        connection.row.is_active = False
-        payload = dict(connection.row.json or {})
-        spec = dict(payload.get("spec") or {})
+        spec = dict((row.json or {}).get("spec") or {})
         spec.update(
             {
                 "status": "disconnected",
@@ -285,9 +381,8 @@ class ConnectorConnectionService:
                 "toolSummaries": [],
             }
         )
-        payload["spec"] = spec
-        connection.row.json = payload
-        db.commit()
+        row.is_active = False
+        ConnectorConnectionService._save_spec(db, row=row, spec=spec)
         return True
 
     @staticmethod

@@ -2607,6 +2607,7 @@
     "plugins_connector_auth_blocked": "查询应用授权状态的请求被拒绝（403 或安全验证）。请检查网络、代理或账户权限后重试；未确认授权成功。",
     "plugins_connector_auth_account_required": "查询应用授权状态需要有效的 OpenAI 账户登录。请重新登录 OpenAI 账户后重试；未确认应用授权成功。",
     "plugins_connector_auth_failed": "查询应用授权状态失败。请检查网络或代理后重试；未确认授权成功。",
+    "plugins_connector_sync_timeout": "{{name}} 已授权，但本地执行器还没有同步到该应用的工具，任务未自动继续。请稍后重试授权，或重新发送消息。",
     "plugins_connector_auth_not_complete": "尚未确认 {{name}} 授权成功。请完成浏览器中的授权后再次验证。",
     "plugin_connect_after_install": "安装后可连接",
     "plugins_wegent_cloud_marketplace": "Wegent 云端市场",

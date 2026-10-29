@@ -304,6 +304,11 @@ async def test_expired_grant_refreshes_and_a_rejected_refresh_reauths(
         external_account_name=None,
         expires_at=datetime.now(timezone.utc) - timedelta(hours=1),
     )
+    # The refresh entry point rereads the row, so hand it the committed grant.
+    connection = connector_connection_service.get(
+        test_db, slug="loop-app", user_id=test_user.id
+    )
+    assert connection is not None
 
     refreshed = await ConnectorOAuthService.refresh_connection(test_db, connection)
     assert refreshed is not None

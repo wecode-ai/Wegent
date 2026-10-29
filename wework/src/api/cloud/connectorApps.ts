@@ -201,6 +201,12 @@ export async function authorizeWegentConnector(
     const intervalMs = Math.max(500, session.poll_interval_seconds * 1000)
     while (Date.now() < session.expires_at * 1000) {
       await delay(intervalMs)
+      // The close notification is the fast path; ask the host for the real
+      // state too so a late or lost notification still cancels promptly.
+      if (!windowClosed && authorizationHandle?.isOpen) {
+        const open = await authorizationHandle.isOpen().catch(() => true)
+        if (!open) windowClosed = true
+      }
       const result = await pollConnectorOAuthSession(apiBaseUrl, token, session)
       if (result.status === 'pending') {
         if (windowClosed) {

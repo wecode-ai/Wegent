@@ -190,6 +190,108 @@ describe('connector OAuth client', () => {
     expect(close).toHaveBeenCalledTimes(1)
   })
 
+  test('cancels when consent closes long after the host request timeout', async () => {
+    vi.useFakeTimers()
+    const close = vi.fn().mockResolvedValue(undefined)
+    let closeWindow: () => void = () => undefined
+    const openAuthorization = vi.fn().mockResolvedValue({
+      closed: new Promise<void>(resolve => {
+        closeWindow = resolve
+      }),
+      close,
+    })
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+    onTestFinished(() => process.off('unhandledRejection', onUnhandled))
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      const body = url.includes('/poll')
+        ? { status: 'pending' }
+        : {
+            session_id: 'long-session',
+            poll_token: 'poll-token',
+            authorize_url: 'https://provider.example/authorize',
+            expires_at: Math.floor(Date.now() / 1000) + 600,
+            poll_interval_seconds: 30,
+          }
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const authorization = authorizeWegentConnector(
+      'https://backend.example.test/api',
+      'cloud-token',
+      'slow-connector',
+      openAuthorization
+    )
+    const outcome = authorization.catch((error: Error) => error)
+
+    // Well past the 120 second host request budget the consent page is still
+    // open and the poll loop is still running.
+    for (let tick = 0; tick < 6; tick += 1) {
+      await vi.advanceTimersByTimeAsync(30_000)
+    }
+    closeWindow()
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    const error = await outcome
+    expect(error).toBeInstanceOf(Error)
+    expect(String((error as Error).message)).toContain('关闭')
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(unhandled).toEqual([])
+  })
+
+  test('cancels within one poll when the close notification is missed', async () => {
+    vi.useFakeTimers()
+    const close = vi.fn().mockResolvedValue(undefined)
+    let stateReads = 0
+    const openAuthorization = vi.fn().mockResolvedValue({
+      // The notification never arrives; only the authoritative state read can
+      // tell the poll loop the user dismissed the window.
+      closed: new Promise<void>(() => undefined),
+      isOpen: async () => {
+        stateReads += 1
+        return stateReads < 2
+      },
+      close,
+    })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      const body = url.includes('/poll')
+        ? { status: 'pending' }
+        : {
+            session_id: 'lost-event-session',
+            poll_token: 'poll-token',
+            authorize_url: 'https://provider.example/authorize',
+            expires_at: Math.floor(Date.now() / 1000) + 600,
+            poll_interval_seconds: 1,
+          }
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const authorization = authorizeWegentConnector(
+      'https://backend.example.test/api',
+      'cloud-token',
+      'slow-connector',
+      openAuthorization
+    )
+    const outcome = authorization.catch((error: Error) => error)
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    const error = await outcome
+    expect(error).toBeInstanceOf(Error)
+    expect(String((error as Error).message)).toContain('关闭')
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+
   test('closes the consent window when the session expires', async () => {
     vi.useFakeTimers()
     const close = vi.fn().mockResolvedValue(undefined)
