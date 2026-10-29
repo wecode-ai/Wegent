@@ -1,9 +1,10 @@
 import type { GlassColorScheme } from 'expo-glass-effect'
 import { StatusBar } from 'expo-status-bar'
-import { NavigationContainer, type LinkingOptions } from '@react-navigation/native'
+import { NavigationContainer } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
-import { useMemo, useState } from 'react'
-import { StyleSheet, useColorScheme } from 'react-native'
+import * as WebBrowser from 'expo-web-browser'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Linking, StyleSheet, useColorScheme } from 'react-native'
 import { Dialog, PaperProvider, Portal, Snackbar, Text, useTheme } from 'react-native-paper'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 
@@ -14,6 +15,7 @@ import { ConversationScreen } from '@/components/ConversationScreen'
 import { LiquidGlassButton } from '@/components/LiquidGlass'
 import { ModelPickerScreen } from '@/components/ModelPickerDialog'
 import { ProjectDialog } from '@/components/ProjectDialog'
+import { parseWeworkIssueWebUrl } from '@/domain/weworkIssueLink'
 import { useMobileRuntime } from '@/hooks/useMobileRuntime'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
 import { darkTheme, lightTheme } from '@/theme'
@@ -25,17 +27,6 @@ type RuntimeStackParamList = {
 }
 
 const RuntimeStack = createNativeStackNavigator<RuntimeStackParamList>()
-
-const linking: LinkingOptions<RuntimeStackParamList> = {
-  prefixes: ['wework://', 'wegent://', 'io.wecode.wework://'],
-  config: {
-    screens: {
-      // Board links do not have a Mobile screen yet. Opening the conversation
-      // list still lands the recipient inside Wework instead of a blank app.
-      conversationList: '*',
-    },
-  },
-}
 
 export default function App() {
   const auth = useWegentAuth()
@@ -86,6 +77,26 @@ function RuntimeApplication({
   const [search, setSearch] = useState('')
   const [conversationEntryRevision, setConversationEntryRevision] = useState(0)
 
+  const openIssueLink = useCallback(
+    (url: string | null) => {
+      if (!url || !config.webUrl) return
+      const issueUrl = parseWeworkIssueWebUrl(url, config.webUrl)
+      if (!issueUrl) return
+      void WebBrowser.openBrowserAsync(issueUrl).catch(() => undefined)
+    },
+    [config.webUrl]
+  )
+
+  useEffect(() => {
+    void Linking.getInitialURL()
+      .then(openIssueLink)
+      .catch(() => undefined)
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      openIssueLink(url)
+    })
+    return () => subscription.remove()
+  }, [openIssueLink])
+
   const workspaces = useMemo(
     () =>
       runtime.work.projects.flatMap(project =>
@@ -108,7 +119,7 @@ function RuntimeApplication({
   )
   return (
     <>
-      <NavigationContainer linking={linking}>
+      <NavigationContainer>
         <RuntimeStack.Navigator screenOptions={{ headerShown: false }}>
           <RuntimeStack.Screen name="conversationList" options={{ animation: 'none' }}>
             {({ navigation }) => (
