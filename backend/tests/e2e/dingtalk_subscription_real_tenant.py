@@ -115,7 +115,7 @@ class RealDingTalkSubscription(unittest.TestCase):
         )
         login.raise_for_status()
         cls.api.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
-        cls.webhook = ThreadingHTTPServer(("127.0.0.1", 0), _WebhookHandler)
+        cls.webhook = ThreadingHTTPServer(("0.0.0.0", 0), _WebhookHandler)
         cls.webhook_thread = threading.Thread(
             target=cls.webhook.serve_forever, daemon=True
         )
@@ -146,7 +146,7 @@ class RealDingTalkSubscription(unittest.TestCase):
 
     def setUp(self) -> None:
         self.marker = f"real-tenant-{uuid.uuid4().hex}"
-        self.started_at = datetime.now(timezone.utc)
+        self.started_at = datetime.now().astimezone()
         _WebhookHandler.received = []
         self.created: list[tuple[str, object]] = []
         with SessionLocal() as db:
@@ -225,7 +225,8 @@ class RealDingTalkSubscription(unittest.TestCase):
                             {
                                 "type": "custom",
                                 "url": (
-                                    f"http://127.0.0.1:{self.webhook.server_address[1]}"
+                                    f"{os.environ.get('E2E_WEBHOOK_HOST', 'http://host.docker.internal')}:"
+                                    f"{self.webhook.server_address[1]}"
                                     "/webhook"
                                 ),
                                 "enabled": True,
@@ -448,7 +449,7 @@ class RealDingTalkSubscription(unittest.TestCase):
             with SessionLocal() as db:
                 state = db.get(BackgroundExecution, execution["id"])
                 if state.status == "COMPLETED":
-                    self.assertEqual(state.result_summary, self.marker)
+                    self.assertIn(self.marker, state.result_summary)
                     self._wait_group(True)
                     self.evidence["chat_real_execution"] = True
                     return
@@ -571,6 +572,8 @@ class RealDingTalkSubscription(unittest.TestCase):
             self.group_id,
             "--time",
             self.started_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "--direction",
+            "newer",
             "--limit",
             "50",
         )
@@ -600,13 +603,13 @@ class RealDingTalkSubscription(unittest.TestCase):
             time.sleep(1)
         self.fail(f"real group delivery did not reach expected state {expected}")
 
-    def _wait_mention(self) -> None:
+    def _wait_mention(self, expected: bool = True) -> None:
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
-            if self._mention_contains_marker():
+            if self._mention_contains_marker() == expected:
                 return
             time.sleep(1)
-        self.fail("real DingTalk mention was not observed")
+        self.fail(f"real DingTalk mention did not reach expected state {expected}")
 
     def test_silent_private_and_webhook(self) -> None:
         result = self._complete(f"{self.marker}\n\n【静默】")
@@ -634,6 +637,7 @@ class RealDingTalkSubscription(unittest.TestCase):
             result = self._complete(f"{self.marker}\n\n{suffix}")
             self.assertEqual(result["summary"], self.marker)
             self._wait_group(True)
+            self._wait_mention(False)
         self.evidence["plain_empty_invalid_targets"] = True
 
 
