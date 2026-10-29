@@ -22,6 +22,7 @@ import json
 import uuid
 from typing import Any
 from unittest.mock import patch
+from urllib.parse import urlencode
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -319,11 +320,14 @@ def _assert_card(
         f"{settings.FRONTEND_URL.rstrip('/')}/collaboration/{project.id}"
         f"/issues/{item_id}"
     )
-    wework_url = f"wework://boards/{project.id}/issues/{item_id}"
+    wework_handoff_url = (
+        f"{settings.FRONTEND_URL.rstrip('/')}/open-wework?"
+        + urlencode({"projectId": project.id, "itemId": item_id})
+    )
     assert params["primaryLabel"] == WEB_LINK_LABEL
     assert params["primaryUrl"] == web_url
     assert params["secondaryLabel"] == WEWORK_LINK_LABEL
-    assert params["secondaryUrl"] == wework_url
+    assert params["secondaryUrl"] == wework_handoff_url
 
 
 def _make_manager_agent(
