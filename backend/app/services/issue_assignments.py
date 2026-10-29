@@ -156,7 +156,8 @@ class IssueAssignmentService:
         self._lock_issue(db, issue_id)
         normalized_type = self._member_type(member_type)
         normalized_id = member_id.strip()
-        # A just-inserted Issue has no history; locking its empty range can deadlock.
+        # A newly inserted Issue cannot have history or index rows. Locking that
+        # absent range would block independent first assignments in InnoDB.
         current = (
             {}
             if initial_assignment
@@ -226,11 +227,12 @@ class IssueAssignmentService:
         else:
             comment.metadata_json = metadata
         db.flush()
-        assignment = AssignmentEvent(comment=comment, metadata=metadata)
-        self._refresh_active_index(
-            db, issue_id, initial_event=assignment if initial_assignment else None
-        )
-        return assignment, True
+        event = AssignmentEvent(comment=comment, metadata=metadata)
+        if initial_assignment:
+            self._insert_active_index(db, issue_id, [event])
+        else:
+            self._refresh_active_index(db, issue_id)
+        return event, True
 
     def remove(
         self,
@@ -289,23 +291,19 @@ class IssueAssignmentService:
     def _lock_issue(db: Session, issue_id: str) -> None:
         db.query(LoopItem.id).filter(LoopItem.id == issue_id).with_for_update().one()
 
-    def _refresh_active_index(
-        self,
-        db: Session,
-        issue_id: str,
-        *,
-        initial_event: AssignmentEvent | None = None,
-    ) -> None:
+    def _refresh_active_index(self, db: Session, issue_id: str) -> None:
         """Rebuild only on assignment changes, never on receipt reads or writes."""
-        if initial_event is None:
-            active = list(self._active_events(db, issue_id, for_update=True).values())
-            db.query(LoopItemActiveAssignment).filter(
-                LoopItemActiveAssignment.parent_id == issue_id,
-                LoopItemActiveAssignment.resource_type == "assignment_index",
-            ).delete(synchronize_session=False)
-        else:
-            # No index exists for a new Issue, so do not lock an empty DELETE range.
-            active = [initial_event]
+        active = self._active_events(db, issue_id, for_update=True)
+        db.query(LoopItemActiveAssignment).filter(
+            LoopItemActiveAssignment.parent_id == issue_id,
+            LoopItemActiveAssignment.resource_type == "assignment_index",
+        ).delete(synchronize_session=False)
+        self._insert_active_index(db, issue_id, list(active.values()))
+
+    @staticmethod
+    def _insert_active_index(
+        db: Session, issue_id: str, active: list[AssignmentEvent]
+    ) -> None:
         db.add_all(
             [
                 LoopItemActiveAssignment(

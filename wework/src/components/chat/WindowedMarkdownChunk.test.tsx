@@ -108,6 +108,28 @@ describe('Markdown viewport windowing', () => {
     vi.unstubAllGlobals()
   })
 
+  test.each(['mermaid', 'mmd', 'plantuml', 'puml'])(
+    'reserves the fixed diagram geometry for offscreen %s fences regardless of source length',
+    language => {
+      const harness = viewportHarness()
+      for (const lines of [2, 100]) {
+        const view = harness.mount(
+          ['```' + language, ...Array.from({ length: lines }, () => 'A --> B'), '```'].join('\n')
+        )
+        expect(view.container.querySelector('[data-markdown-window-chunk]')).toHaveStyle({
+          minHeight: '404px',
+        })
+        view.unmount()
+      }
+      harness.scope.rootFontSize = 20
+      const view = harness.mount('```' + language + '\nA --> B\n```')
+      expect(view.container.querySelector('[data-markdown-window-chunk]')).toHaveStyle({
+        minHeight: '505px',
+      })
+      view.unmount()
+    }
+  )
+
   test('preserves rich layout without computing or recording diagnostic details outside capture', () => {
     const context = vi.spyOn(conversationDiagnostics, 'getConversationDiagnosticContext')
     const record = vi.spyOn(conversationDiagnostics, 'recordConversationDiagnostic')

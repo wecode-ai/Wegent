@@ -50,6 +50,25 @@ sidebar_position: 18
 | 附件/模型/技能选择            | `projectChat` context                                                                                                           | send payload、composer 控件                                                                            | 当前 LocalTask 内选项锁定由 `projectChat.isOptionsLocked` 派生                                                                                                                  |
 | 设备可用性                    | `state.devices` + 当前任务/项目设备选择                                                                                         | composer disabled reason、设备提示                                                                     | 只用于发送前置条件，不参与 assistant streaming 判断                                                                                                                             |
 
+## 会话滚动与图表渲染
+
+消息列表的尺寸由 TanStack Virtual 和原生 ResizeObserver 统一维护。滚动期间继续显示正文，行组件按消息身份复用；不要再添加第二套行高写入、滚动占位正文或逐帧 Markdown 高度估算。
+
+首次进入会话定位到最新内容，恢复阅读时使用保存的位置。接近已加载历史顶部时，由当前滚动容器内的边界观察器提前请求上一页；新记录插入上方，通过稳定的消息、内容块和段落身份保持阅读位置。边界标记始终为 1px，加载提示和分页操作通过 portal 浮在正文外，不参与高度计算。搜索打开时保留显式加载入口，隐藏面板暂停自动加载；请求失败或完成后边界未推进时保留手动恢复入口，避免循环请求。手动重试期间保留按钮和键盘焦点。
+
+图表预览按文档、源码、主题和服务地址缓存清洗后的静态 SVG 产物及尺寸。Mermaid 编译串行执行，同一产物的并发请求共享一次编译；消息挂载静态图片和轻量缩放画布，全屏复用相同产物。内联图表允许纵向触摸滚动会话，全屏保留自由拖动。离屏重挂载不应重新编译同一图表，也不应保留每行独立的完整文件查看器。
+
+```mermaid
+flowchart LR
+  A[滚动容器] --> B[历史边界预取]
+  B --> C[上方插入历史]
+  C --> D[恢复语义阅读锚点]
+  B --> E[正文外加载提示或分页按钮]
+  F[消息行] --> G[图表产物缓存]
+  G --> H[静态图片与轻量缩放]
+  H -->|打开大图| I[全屏展示相同产物]
+```
+
 ## 看板会话分屏
 
 项目空间看板上的 Hover 任务面板是原任务会话的分屏视图，不是独立预览会话。任务页、Hover 面板和卡片摘要必须使用同一个 runtime task address，并读取 `runtimeConversationCache` 中同一份 canonical `RuntimeConversationTurn[]`。
