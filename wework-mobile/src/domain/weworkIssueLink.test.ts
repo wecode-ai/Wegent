@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { parseWeworkIssueLink, parseWeworkIssueWebUrl, weworkIssueWebUrl } from './weworkIssueLink'
+import {
+  parseWeworkIssueLink,
+  parseWeworkIssueWebUrl,
+  weworkAppLinkOrigins,
+  weworkIssueWebUrl,
+} from './weworkIssueLink'
 
 describe('parseWeworkIssueLink', () => {
   it('parses the cloud board Issue scheme', () => {
@@ -19,6 +24,29 @@ describe('parseWeworkIssueLink', () => {
     })
   })
 
+  it('parses the HTTPS App Link handoff URL only for a trusted origin', () => {
+    const input = 'https://wegent.example/open-wework?projectId=12&itemId=gitlab%3A12%2Fissue%233'
+
+    expect(parseWeworkIssueLink(input, ['https://wegent.example'])).toEqual({
+      projectId: '12',
+      itemId: 'gitlab:12/issue#3',
+    })
+    expect(parseWeworkIssueLink(input, ['https://other.example'])).toBeNull()
+  })
+
+  it('collects trusted App Link origins from the Web URL and build configuration', () => {
+    const previousHost = process.env.EXPO_PUBLIC_WEWORK_APP_LINK_HOST
+    process.env.EXPO_PUBLIC_WEWORK_APP_LINK_HOST = 'links.example'
+
+    expect(weworkAppLinkOrigins('https://wegent.example/path')).toEqual([
+      'https://wegent.example',
+      'https://links.example',
+    ])
+
+    if (previousHost === undefined) delete process.env.EXPO_PUBLIC_WEWORK_APP_LINK_HOST
+    else process.env.EXPO_PUBLIC_WEWORK_APP_LINK_HOST = previousHost
+  })
+
   it.each([
     'wework://tasks/device/task',
     'wework://boards/12',
@@ -27,8 +55,13 @@ describe('parseWeworkIssueLink', () => {
     'wework://boards/12/issues/ISSUE-1?redirect=https://evil.test',
     'wework://user@boards/12/issues/ISSUE-1',
     'wework://boards/12/issues/%ZZ',
+    'https://wegent.example/open-wework?projectId=12',
+    'https://wegent.example/open-wework?projectId=12&itemId=ISSUE-1&redirect=https://evil.test',
+    'https://wegent.example/open-wework?projectId=12&itemId=ISSUE-1&itemId=ISSUE-2',
+    'https://wegent.example/open-wework?projectId=0&itemId=ISSUE-1',
+    'https://wegent.example/other?projectId=12&itemId=ISSUE-1',
   ])('rejects unsupported destinations: %s', input => {
-    expect(parseWeworkIssueLink(input)).toBeNull()
+    expect(parseWeworkIssueLink(input, ['https://wegent.example'])).toBeNull()
   })
 })
 

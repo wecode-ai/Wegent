@@ -3,6 +3,11 @@ apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
+def weworkAppLinkHost = (
+    System.getenv("WEWORK_APP_LINK_HOST")
+        ?: findProperty("weworkAppLinkHost")
+        ?: "applink.invalid"
+).trim()
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -94,6 +99,7 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "0.1.0"
+        manifestPlaceholders = [weworkAppLinkHost: weworkAppLinkHost]
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }

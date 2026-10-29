@@ -1,9 +1,8 @@
 import type { GlassColorScheme } from 'expo-glass-effect'
 import { StatusBar } from 'expo-status-bar'
-import { NavigationContainer } from '@react-navigation/native'
+import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
-import * as WebBrowser from 'expo-web-browser'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Linking, StyleSheet, useColorScheme } from 'react-native'
 import { Dialog, PaperProvider, Portal, Snackbar, Text, useTheme } from 'react-native-paper'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
@@ -15,7 +14,12 @@ import { ConversationScreen } from '@/components/ConversationScreen'
 import { LiquidGlassButton } from '@/components/LiquidGlass'
 import { ModelPickerScreen } from '@/components/ModelPickerDialog'
 import { ProjectDialog } from '@/components/ProjectDialog'
-import { parseWeworkIssueWebUrl } from '@/domain/weworkIssueLink'
+import { WebIssueScreen } from '@/components/WebIssueScreen'
+import {
+  parseWeworkIssueLink,
+  weworkAppLinkOrigins,
+  type WeworkIssueLink,
+} from '@/domain/weworkIssueLink'
 import { useMobileRuntime } from '@/hooks/useMobileRuntime'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
 import { darkTheme, lightTheme } from '@/theme'
@@ -24,6 +28,7 @@ type RuntimeStackParamList = {
   conversationList: undefined
   conversation: undefined
   modelPicker: undefined
+  webIssue: WeworkIssueLink
 }
 
 const RuntimeStack = createNativeStackNavigator<RuntimeStackParamList>()
@@ -76,16 +81,29 @@ function RuntimeApplication({
   const [settingsVisible, setSettingsVisible] = useState(false)
   const [search, setSearch] = useState('')
   const [conversationEntryRevision, setConversationEntryRevision] = useState(0)
+  const navigationRef = useNavigationContainerRef<RuntimeStackParamList>()
+  const pendingIssueRef = useRef<WeworkIssueLink | null>(null)
 
   const openIssueLink = useCallback(
     (url: string | null) => {
-      if (!url || !config.webUrl) return
-      const issueUrl = parseWeworkIssueWebUrl(url, config.webUrl)
-      if (!issueUrl) return
-      void WebBrowser.openBrowserAsync(issueUrl).catch(() => undefined)
+      if (!url) return
+      const issue = parseWeworkIssueLink(url, weworkAppLinkOrigins(config.webUrl))
+      if (!issue) return
+      if (!navigationRef.isReady()) {
+        pendingIssueRef.current = issue
+        return
+      }
+      navigationRef.navigate('webIssue', issue)
     },
-    [config.webUrl]
+    [config.webUrl, navigationRef]
   )
+
+  const openPendingIssue = useCallback(() => {
+    const issue = pendingIssueRef.current
+    if (!issue) return
+    pendingIssueRef.current = null
+    navigationRef.navigate('webIssue', issue)
+  }, [navigationRef])
 
   useEffect(() => {
     void Linking.getInitialURL()
@@ -119,7 +137,7 @@ function RuntimeApplication({
   )
   return (
     <>
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef} onReady={openPendingIssue}>
         <RuntimeStack.Navigator screenOptions={{ headerShown: false }}>
           <RuntimeStack.Screen name="conversationList" options={{ animation: 'none' }}>
             {({ navigation }) => (
@@ -223,6 +241,23 @@ function RuntimeApplication({
                 onSelect={runtime.selectModel}
                 selectedModel={runtime.selectedModel}
                 selectedOptions={runtime.selectedModelOptions}
+              />
+            )}
+          </RuntimeStack.Screen>
+          <RuntimeStack.Screen
+            name="webIssue"
+            options={{
+              headerShown: true,
+              title: 'Issue',
+              headerBackTitle: '返回',
+            }}
+          >
+            {({ route }) => (
+              <WebIssueScreen
+                accessToken={config.accessToken}
+                itemId={route.params.itemId}
+                projectId={route.params.projectId}
+                webUrl={config.webUrl || config.backendUrl}
               />
             )}
           </RuntimeStack.Screen>

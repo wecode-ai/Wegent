@@ -129,6 +129,22 @@ const nextConfig = {
   // Note: API proxying is now handled by /api/[...path]/route.ts
   // This allows RUNTIME_INTERNAL_API_URL to be read at runtime instead of build time
 
+  // Next.js ignores App Router directories whose names begin with a dot.
+  // Keep the route handlers outside `.well-known` and expose the platform
+  // association URLs through rewrites.
+  async rewrites() {
+    return [
+      {
+        source: '/.well-known/assetlinks.json',
+        destination: '/api/app-links/assetlinks',
+      },
+      {
+        source: '/.well-known/apple-app-site-association',
+        destination: '/api/app-links/apple-app-site-association',
+      },
+    ]
+  },
+
   // Disable ETag generation to prevent Safari conditional caching issues
   // Safari may use stale ETag and receive 304 Not Modified after deployment
   generateEtags: false,

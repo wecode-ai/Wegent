@@ -57,7 +57,13 @@ For a layout that separates the notification type, item, detail, and actions, im
 
 1. In the [DingTalk card platform](https://open-dev.dingtalk.com/fe/card), create an ordinary message card for the robot application that sends notifications. Import the JSON in the editor, review the preview, then save and publish it.
 2. Copy the ID of the **new template in your organization**. Turn on "Send task notifications as cards" for the DingTalk channel and enter that ID. The test organization's template ID cannot be reused across organizations.
-3. Ensure production `FRONTEND_URL` is a reachable HTTPS address. In a real DingTalk client, check mentions, assignments, each run state, and both actions. The custom card's Wework action first opens a Wegent handoff page: desktop launches the desktop Wework application, while phones try to launch Wework Mobile. The View task action always opens the task web page.
+3. Ensure production `FRONTEND_URL` is a reachable HTTPS address. In a real DingTalk client, check mentions, assignments, each run state, and both actions. The custom card's Wework action first opens a Wegent handoff page: desktop launches the desktop Wework application, while an installed Wework Mobile app handles the `/open-wework` App Link directly. Without the app, the phone stays on the handoff page and tries the Wework Mobile scheme. The View task action always opens the task web page.
+
+Mobile App Links require the Web deployment to serve `/.well-known/assetlinks.json` and
+`/.well-known/apple-app-site-association`. Configure the Android signing certificate SHA-256 with
+`WEWORK_ANDROID_APP_LINK_SHA256`; iOS defaults can be overridden with
+`WEWORK_IOS_APP_LINK_TEAM_ID` and `WEWORK_IOS_APP_LINK_BUNDLE_ID`. Mobile builds must set the public
+Web host in both `WEWORK_APP_LINK_HOST` and `EXPO_PUBLIC_WEWORK_APP_LINK_HOST`.
 
 The custom template defines these 13 ordinary variables, which the backend fills when delivering a card:
 

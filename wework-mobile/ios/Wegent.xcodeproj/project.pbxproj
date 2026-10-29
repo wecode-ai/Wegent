@@ -382,6 +382,7 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VERSIONING_SYSTEM = "apple-generic";
+				WEWORK_APP_LINK_HOST = "applink.invalid";
 			};
 			name = Debug;
 		};
@@ -416,6 +417,7 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VERSIONING_SYSTEM = "apple-generic";
+				WEWORK_APP_LINK_HOST = "applink.invalid";
 			};
 			name = Release;
 		};

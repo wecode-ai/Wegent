@@ -59,3 +59,9 @@ Set an optional build-time Backend default with `EXPO_PUBLIC_BACKEND_URL`. When 
 the app asks the user for the Backend address before login and remembers a successfully connected
 address on the device. The app reads the Web and Socket.IO origins from `/api/auth/wework/config`;
 users never enter or copy an access token.
+
+Release builds that receive Wework notification App Links must set
+`WEWORK_APP_LINK_HOST` to the public Web host and bake the same value into the JavaScript bundle
+with `EXPO_PUBLIC_WEWORK_APP_LINK_HOST`. The host must serve
+`/.well-known/assetlinks.json` and `/.well-known/apple-app-site-association`; the notification
+handoff path is `/open-wework`.

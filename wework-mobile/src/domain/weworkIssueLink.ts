@@ -3,6 +3,8 @@ export interface WeworkIssueLink {
   itemId: string
 }
 
+const APP_LINK_PATH = '/open-wework'
+const APP_LINK_PARAMS = new Set(['projectId', 'itemId', 'commentId'])
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
 
 function validProjectId(value: string): boolean {
@@ -36,14 +38,7 @@ function decodeSegment(value: string): string | null {
   }
 }
 
-export function parseWeworkIssueLink(input: string): WeworkIssueLink | null {
-  let url: URL
-  try {
-    url = new URL(input)
-  } catch {
-    return null
-  }
-  if (!['wework:', 'wegent:'].includes(url.protocol)) return null
+function parseSchemeLink(url: URL): WeworkIssueLink | null {
   if (
     url.hostname !== 'boards' ||
     url.username ||
@@ -64,6 +59,64 @@ export function parseWeworkIssueLink(input: string): WeworkIssueLink | null {
   if (!validProjectId(projectId) || !validItemId(itemId)) return null
 
   return { projectId, itemId }
+}
+
+function parseAppLink(url: URL): WeworkIssueLink | null {
+  if (url.pathname !== APP_LINK_PATH || url.username || url.password || url.hash) {
+    return null
+  }
+
+  const seen = new Set<string>()
+  for (const key of url.searchParams.keys()) {
+    if (!APP_LINK_PARAMS.has(key) || seen.has(key)) return null
+    seen.add(key)
+  }
+
+  const projectId = url.searchParams.get('projectId')
+  const itemId = url.searchParams.get('itemId')
+  if (!projectId || !/^[1-9]\d*$/.test(projectId)) return null
+  if (!itemId || !validProjectId(projectId) || !validItemId(itemId)) return null
+
+  return { projectId, itemId }
+}
+
+export function parseWeworkIssueLink(
+  input: string,
+  appLinkOrigins: readonly string[] = []
+): WeworkIssueLink | null {
+  let url: URL
+  try {
+    url = new URL(input)
+  } catch {
+    return null
+  }
+  if (['wework:', 'wegent:'].includes(url.protocol)) return parseSchemeLink(url)
+  if (url.protocol !== 'https:' || !appLinkOrigins.includes(url.origin)) return null
+  return parseAppLink(url)
+}
+
+export function weworkAppLinkOrigins(webUrl?: string): string[] {
+  const origins = new Set<string>()
+  if (webUrl) {
+    try {
+      const url = new URL(webUrl)
+      if (['http:', 'https:'].includes(url.protocol)) origins.add(url.origin)
+    } catch {
+      // Ignore an invalid Backend-provided Web address.
+    }
+  }
+  const configuredHost = process.env.EXPO_PUBLIC_WEWORK_APP_LINK_HOST?.trim()
+  if (configuredHost) origins.add(`https://${configuredHost}`)
+  return [...origins]
+}
+
+export function weworkWebOrigin(webUrl: string): string | null {
+  try {
+    const url = new URL(webUrl)
+    return ['http:', 'https:'].includes(url.protocol) ? url.origin : null
+  } catch {
+    return null
+  }
 }
 
 export function weworkIssueWebUrl(webUrl: string, issue: WeworkIssueLink): string {
