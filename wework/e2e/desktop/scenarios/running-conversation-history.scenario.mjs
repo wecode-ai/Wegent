@@ -970,7 +970,7 @@ export function createDesktopScenario({
         await gates.wait('paged-search-initial-transcript', undefined, WORKBENCH_READY_TIMEOUT_MS)
         // Open find before the real initial response arrives. Find owns its
         // isolated history and suspends automatic pagination of the reading view.
-        await control.command('nativePress', `${ACTIVE_WORKBENCH_SELECTOR} [role="scrollbar"]`, {
+        await control.command('nativePress', COMPOSER_SELECTOR, {
           key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
         })
         await assertFindInputFocus(control, findInput)
