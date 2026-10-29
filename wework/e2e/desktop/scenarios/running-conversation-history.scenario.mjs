@@ -1082,7 +1082,9 @@ export function createDesktopScenario({
         restoredSearchPane.transcript.loadedRanges,
         originalSearchPane.transcript.loadedRanges
       )
-      await gates.release('paged-search-restored-pagination')
+      // Restoration need not cross the prefetch threshold. Remove the guard
+      // whether or not an automatic read reached it during the assertions.
+      await gates.reset()
       releasePagedResponseResolve()
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: PAGED_COMPLETION,
