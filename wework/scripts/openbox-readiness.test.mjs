@@ -74,29 +74,43 @@ echo '_NET_SUPPORTING_WM_CHECK: no such atom on any window.'
   expect(result.stderr).toContain('Openbox exited before registering')
 })
 
-it('restarts the window manager when the display is not accepting connections yet', () => {
+it('starts the window manager only after the display accepts connections', () => {
   const result = runFixture(
-    `#!/bin/sh
-directory="$OPENBOX_TEST_DIR"
-starts=0
-if [ -f "$directory/starts" ]; then starts=$(cat "$directory/starts"); fi
-starts=$((starts + 1))
-echo "$starts" > "$directory/starts"
-if [ "$starts" -lt 2 ]; then
-  echo 'Openbox-Message: Failed to open the display from the DISPLAY environment variable.' >&2
-  exit 1
-fi
-echo $$ > "$directory/pid"
-while true; do sleep 1; done
+    `#!/usr/bin/env node
+const fs = require('node:fs')
+const directory = process.env.OPENBOX_TEST_DIR
+fs.writeFileSync(directory + '/pid', String(process.pid))
+if (Number(fs.readFileSync(directory + '/queries', 'utf8')) < 3) process.exit(1)
+fs.writeFileSync(directory + '/registered', '')
+setInterval(() => {}, 1000)
 `,
     `#!/bin/sh
-echo 2 > "$OPENBOX_TEST_DIR/queries"
-echo '_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x1234'
+queries=0
+if [ -f "$OPENBOX_TEST_DIR/queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/queries"); fi
+queries=$((queries + 1))
+echo "$queries" > "$OPENBOX_TEST_DIR/queries"
+if [ "$queries" -lt 3 ]; then exit 1; fi
+if [ -f "$OPENBOX_TEST_DIR/registered" ]; then
+  echo '_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x1234'
+else
+  echo '_NET_SUPPORTING_WM_CHECK: no such atom on any window.'
+fi
 `
   )
   expect(result.status, result.stderr).toBe(0)
-  // The first start died on the not-yet-ready display; the launcher retried
-  // instead of reporting the checkpoint as failed.
-  expect(result.stderr).toContain('Failed to open the display')
-  expect(result.stderr).toContain('[desktop-e2e-window-manager] ready')
 })
+
+it('fails without launching the window manager when the display never connects', () => {
+  const result = runFixture(
+    `#!/bin/sh
+echo 'The window manager must not start' >&2
+exit 1
+`,
+    `#!/bin/sh
+exit 1
+`
+  )
+  expect(result.status).toBe(1)
+  expect(result.stderr).toContain('Xvfb did not accept connections on :1234')
+  expect(result.stderr).not.toContain('The window manager must not start')
+}, 10_000)

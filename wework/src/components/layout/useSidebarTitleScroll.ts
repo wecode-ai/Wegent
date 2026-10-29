@@ -87,8 +87,9 @@ export function useSidebarTitleScroll(
         actionsVisible && actionBounds && actionBounds.width > 0
           ? Math.max(0, Math.min(bounds.width, actionBounds.left - bounds.left - 4))
           : bounds.width
-      viewport.style.width = `${width}px`
+      // The text is max-content sized, independent of the clipping viewport.
       distance = width > 0 ? Math.max(0, content.scrollWidth - width) : 0
+      viewport.style.width = `${width}px`
       container.dataset.overflow = distance > 0 ? 'true' : 'false'
     }
     const start = () => {

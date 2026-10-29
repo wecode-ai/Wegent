@@ -1,43 +1,28 @@
-import { ProjectBoardCardContext } from "./projectBoardCardContext";
-import {
-  Plus,
-  ChevronDown,
-  ChevronRight,
-  Search,
-  Maximize2,
-  Minimize2,
-} from "lucide-react";
-import { Tooltip } from "../issue-detail/Tooltip";
+import { ProjectBoardCardContext } from './projectBoardCardContext'
+import { registerBoardCursorPolicy } from './boardCursorPolicy'
+import { Plus, ChevronDown, ChevronRight, Search, Maximize2, Minimize2 } from 'lucide-react'
+import { Tooltip } from '../issue-detail/Tooltip'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ReactNode } from "react";
-import {
-  KanbanBoard,
-  type KanbanBoardProps,
-  type KanbanEmptyState,
-} from "../kanban/KanbanBoard";
-import type { ProjectBoardGroupBy } from "./useProjectBoardState";
-import type {
-  ProjectBoardSort,
-  ProjectBoardSortLabels,
-} from "./projectBoardSorting";
-import { ProjectBoardColumnSortPicker } from "./ProjectBoardColumnSortPicker";
-import { isExecutionBoardColumn } from "./projectBoardColumns";
+import type { ReactNode } from 'react'
+import { KanbanBoard, type KanbanBoardProps, type KanbanEmptyState } from '../kanban/KanbanBoard'
+import type { ProjectBoardGroupBy } from './useProjectBoardState'
+import type { ProjectBoardSort, ProjectBoardSortLabels } from './projectBoardSorting'
+import { ProjectBoardColumnSortPicker } from './ProjectBoardColumnSortPicker'
+import { isExecutionBoardColumn } from './projectBoardColumns'
 
-function classNames(
-  ...values: Array<string | false | null | undefined>
-): string {
-  return values.filter(Boolean).join(" ");
+function classNames(...values: Array<string | false | null | undefined>): string {
+  return values.filter(Boolean).join(' ')
 }
 
 export function ProjectBoardScrollArea({
   children,
   viewportRef,
 }: {
-  children: ReactNode;
-  viewportRef: React.RefObject<HTMLDivElement | null>;
+  children: ReactNode
+  viewportRef: React.RefObject<HTMLDivElement | null>
 }) {
   return (
     <div
@@ -52,141 +37,131 @@ export function ProjectBoardScrollArea({
         {children}
       </div>
     </div>
-  );
+  )
 }
 
 export interface ProjectBoardColumn {
-  type?: ProjectBoardGroupBy;
-  dotClass: string;
-  groupValue: string;
-  key: string;
-  label: string;
-  status: string;
+  type?: ProjectBoardGroupBy
+  dotClass: string
+  groupValue: string
+  key: string
+  label: string
+  status: string
 }
 
 export interface ProjectBoardBreadcrumbItem {
-  id: string;
-  title: string;
+  id: string
+  title: string
 }
 
 export interface ProjectBoardGroupField {
-  id: ProjectBoardGroupBy;
-  name: string;
+  id: ProjectBoardGroupBy
+  name: string
 }
 
 export interface ProjectBoardStatePort {
-  externalGroupFilter: string;
-  externalQuery: string;
-  focusExecutionColumns: boolean;
-  groupBy: ProjectBoardGroupBy;
-  groupFilter: string;
-  query: string;
-  getColumnSort(columnKey: string): ProjectBoardSort;
-  quickCreateStatus: string | null;
-  scrollRef: React.RefObject<HTMLDivElement | null>;
-  selectGroupBy(groupBy: ProjectBoardGroupBy): void;
-  selectColumnSort(columnKey: string, sortBy: ProjectBoardSort): void;
-  setExternalGroupFilter(value: string): void;
-  setExternalQuery(value: string): void;
-  setGroupFilter(value: string): void;
-  setQuery(value: string): void;
-  setQuickCreateStatus(value: string | null): void;
-  toggleFocusExecutionColumns(): void;
+  externalGroupFilter: string
+  externalQuery: string
+  focusExecutionColumns: boolean
+  groupBy: ProjectBoardGroupBy
+  groupFilter: string
+  query: string
+  getColumnSort(columnKey: string): ProjectBoardSort
+  quickCreateStatus: string | null
+  scrollRef: React.RefObject<HTMLDivElement | null>
+  selectGroupBy(groupBy: ProjectBoardGroupBy): void
+  selectColumnSort(columnKey: string, sortBy: ProjectBoardSort): void
+  setExternalGroupFilter(value: string): void
+  setExternalQuery(value: string): void
+  setGroupFilter(value: string): void
+  setQuery(value: string): void
+  setQuickCreateStatus(value: string | null): void
+  toggleFocusExecutionColumns(): void
 }
 
 export interface ProjectBoardLocalProjectOption {
-  id: number;
-  name: string;
+  id: number
+  name: string
 }
 
 export interface ProjectBoardBodyProps<TItem> {
-  emptyState?: ReactNode;
-  viewNavigation?: ReactNode;
-  viewNotice?: ReactNode;
-  customView?: boolean;
-  dropFeedback?: { itemId: string; columnKey: string; message: string } | null;
-  activeDragItemId: string | null;
-  boardError: string | null;
-  boardItemsLoading: boolean;
-  breadcrumb: readonly ProjectBoardBreadcrumbItem[];
-  columns: readonly ProjectBoardColumn[];
-  currentParent: ProjectBoardBreadcrumbItem | null;
-  currentParentId: string | null;
-  dnd: KanbanBoardProps<ProjectBoardColumn, TItem>["dnd"];
-  dndContextProps: Record<string, unknown>;
-  externalGroupLabel: string;
-  externalGroupValues: readonly string[];
-  externalManagedLabel: string;
-  externalSearchPlaceholder: string;
+  emptyState?: ReactNode
+  viewNavigation?: ReactNode
+  viewNotice?: ReactNode
+  customView?: boolean
+  dropFeedback?: { itemId: string; columnKey: string; message: string } | null
+  activeDragItemId: string | null
+  boardError: string | null
+  boardItemsLoading: boolean
+  breadcrumb: readonly ProjectBoardBreadcrumbItem[]
+  columns: readonly ProjectBoardColumn[]
+  currentParent: ProjectBoardBreadcrumbItem | null
+  currentParentId: string | null
+  dnd: KanbanBoardProps<ProjectBoardColumn, TItem>['dnd']
+  dndContextProps: Record<string, unknown>
+  externalGroupLabel: string
+  externalGroupValues: readonly string[]
+  externalManagedLabel: string
+  externalSearchPlaceholder: string
   focusLabels: {
-    enter: string;
-    exit: string;
-    title: string;
-  };
-  getColumnDragHint(column: ProjectBoardColumn): string | undefined;
+    enter: string
+    exit: string
+    title: string
+  }
+  getColumnDragHint(column: ProjectBoardColumn): string | undefined
   getColumnEmptyState(
     column: ProjectBoardColumn,
-    items: readonly TItem[],
-  ): KanbanEmptyState | undefined;
-  getColumnItems(
-    column: ProjectBoardColumn,
-    state: ProjectBoardStatePort,
-  ): readonly TItem[];
-  getItemKey(item: TItem): string;
-  groupFields: readonly ProjectBoardGroupField[];
-  isExternalBoard: boolean;
-  isMyTasksBoard: boolean;
-  layerCount: number;
+    items: readonly TItem[]
+  ): KanbanEmptyState | undefined
+  getColumnItems(column: ProjectBoardColumn, state: ProjectBoardStatePort): readonly TItem[]
+  getItemKey(item: TItem): string
+  groupFields: readonly ProjectBoardGroupField[]
+  isExternalBoard: boolean
+  isMyTasksBoard: boolean
+  layerCount: number
   localProjectFilter?: {
-    activeId: string;
-    allLabel: string;
-    ariaLabel: string;
-    label: string;
-    options: readonly ProjectBoardLocalProjectOption[];
-    selectedName: string;
-    onChange(value: string): void;
-  };
-  onBreadcrumbSelect(id: string | null): void;
-  onSaveGlobalGroupBy(): Promise<void> | void;
+    activeId: string
+    allLabel: string
+    ariaLabel: string
+    label: string
+    options: readonly ProjectBoardLocalProjectOption[]
+    selectedName: string
+    onChange(value: string): void
+  }
+  onBreadcrumbSelect(id: string | null): void
+  onSaveGlobalGroupBy(): Promise<void> | void
   renderColumnFooter?(
     column: ProjectBoardColumn,
     items: readonly TItem[],
-    state: ProjectBoardStatePort,
-  ): ReactNode;
+    state: ProjectBoardStatePort
+  ): ReactNode
   renderColumnHeaderActions?(
     column: ProjectBoardColumn,
     items: readonly TItem[],
-    state: ProjectBoardStatePort,
-  ): ReactNode;
-  renderDragOverlay(): ReactNode;
-  renderExternalGroupPicker(): ReactNode;
-  renderItem(
-    item: TItem,
-    column: ProjectBoardColumn,
-    state: ProjectBoardStatePort,
-  ): ReactNode;
-  renderItemsFooter?(
-    column: ProjectBoardColumn,
-    items: readonly TItem[],
-  ): ReactNode;
-  renderQuickStart?(state: ProjectBoardStatePort): ReactNode;
-  renderSkeleton(): ReactNode;
-  renderStatus?(): ReactNode;
+    state: ProjectBoardStatePort
+  ): ReactNode
+  renderDragOverlay(): ReactNode
+  renderExternalGroupPicker(): ReactNode
+  renderItem(item: TItem, column: ProjectBoardColumn, state: ProjectBoardStatePort): ReactNode
+  renderItemsFooter?(column: ProjectBoardColumn, items: readonly TItem[]): ReactNode
+  renderQuickStart?(state: ProjectBoardStatePort): ReactNode
+  renderSkeleton(): ReactNode
+  renderStatus?(): ReactNode
   renderGroupPicker(
     value: ProjectBoardGroupBy,
-    onChange: (value: ProjectBoardGroupBy) => void,
-  ): ReactNode;
-  renderBoardSettingsAction?(): ReactNode;
-  toolbarAction?: ReactNode;
-  rootLabel: string;
-  rootUnitLabel: string;
-  searchPlaceholder: string;
-  sortLabels?: ProjectBoardSortLabels;
-  saveGlobalDisabled: boolean;
-  saveGlobalLabel: string;
-  showQuickStart: boolean;
-  showSaveGlobal: boolean;
-  state: ProjectBoardStatePort;
+    onChange: (value: ProjectBoardGroupBy) => void
+  ): ReactNode
+  renderBoardSettingsAction?(): ReactNode
+  toolbarAction?: ReactNode
+  rootLabel: string
+  rootUnitLabel: string
+  searchPlaceholder: string
+  sortLabels?: ProjectBoardSortLabels
+  saveGlobalDisabled: boolean
+  saveGlobalLabel: string
+  showQuickStart: boolean
+  showSaveGlobal: boolean
+  state: ProjectBoardStatePort
 }
 
 export function ProjectBoardBody<TItem>({
@@ -243,29 +218,24 @@ export function ProjectBoardBody<TItem>({
   state,
 }: ProjectBoardBodyProps<TItem>) {
   const isExecutionColumn = (column: ProjectBoardColumn) =>
-    isExecutionBoardColumn(column, state.groupBy);
+    isExecutionBoardColumn(column, state.groupBy)
   return (
-    <div
-      data-board-cursor-policy="arrow"
-      className="flex min-h-0 min-w-0 flex-1 flex-col pt-4"
-    >
+    <div ref={registerBoardCursorPolicy} className="flex min-h-0 min-w-0 flex-1 flex-col pt-4">
       {isExternalBoard ? (
         <div className="flex shrink-0 items-center gap-2 px-6 pb-3">
           {renderExternalGroupPicker()}
           <span className="relative inline-flex h-8 items-center rounded-lg border border-border bg-background px-3 text-xs text-text-secondary">
             {state.externalGroupFilter || `全部${externalGroupLabel}`}
-            <ChevronDown className={"ml-2 h-3 w-3"} />
+            <ChevronDown className={'ml-2 h-3 w-3'} />
             <select
               data-testid="dingtalk-board-assignee-filter"
               value={state.externalGroupFilter}
-              onChange={(event) =>
-                state.setExternalGroupFilter(event.target.value)
-              }
+              onChange={event => state.setExternalGroupFilter(event.target.value)}
               className="absolute inset-0 cursor-pointer opacity-0"
               aria-label="分组值筛选"
             >
               <option value="">全部</option>
-              {externalGroupValues.map((name) => (
+              {externalGroupValues.map(name => (
                 <option key={name} value={name}>
                   {name}
                 </option>
@@ -277,48 +247,39 @@ export function ProjectBoardBody<TItem>({
             <input
               data-testid="dingtalk-board-search"
               value={state.externalQuery}
-              onChange={(event) => state.setExternalQuery(event.target.value)}
+              onChange={event => state.setExternalQuery(event.target.value)}
               placeholder={externalSearchPlaceholder}
               className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
             />
           </label>
-          <span className="ml-auto text-xs text-text-muted">
-            {externalManagedLabel}
-          </span>
+          <span className="ml-auto text-xs text-text-muted">{externalManagedLabel}</span>
         </div>
       ) : (
         <div
           data-testid="cloud-board-toolbar"
           className="scrollbar-none flex shrink-0 items-center gap-2 overflow-x-auto overscroll-x-contain px-6 pb-3"
         >
-          {isMyTasksBoard &&
-          localProjectFilter &&
-          localProjectFilter.options.length > 0 ? (
+          {isMyTasksBoard && localProjectFilter && localProjectFilter.options.length > 0 ? (
             <label className="relative inline-flex h-8 min-w-40 shrink-0 cursor-pointer items-center rounded-lg border border-border bg-background pl-3 pr-8 text-xs font-medium text-text-primary hover:bg-muted">
               <span className="sr-only">{localProjectFilter.ariaLabel}</span>
               <span className="pointer-events-none min-w-0 truncate">
-                {localProjectFilter.label.replace(
-                  "{{project}}",
-                  localProjectFilter.selectedName,
-                )}
+                {localProjectFilter.label.replace('{{project}}', localProjectFilter.selectedName)}
               </span>
               <ChevronDown
-                className={
-                  "pointer-events-none absolute right-2.5 h-3.5 w-3.5 text-text-muted"
-                }
+                className={'pointer-events-none absolute right-2.5 h-3.5 w-3.5 text-text-muted'}
               />
               <select
                 data-testid="cloud-local-project-filter"
                 aria-label={localProjectFilter.ariaLabel}
                 value={localProjectFilter.activeId}
-                onChange={(event) => {
-                  state.setQuickCreateStatus(null);
-                  localProjectFilter.onChange(event.target.value);
+                onChange={event => {
+                  state.setQuickCreateStatus(null)
+                  localProjectFilter.onChange(event.target.value)
                 }}
                 className="absolute inset-0 cursor-pointer opacity-0"
               >
                 <option value="all">{localProjectFilter.allLabel}</option>
-                {localProjectFilter.options.map((project) => (
+                {localProjectFilter.options.map(project => (
                   <option key={project.id} value={project.id}>
                     {project.name}
                   </option>
@@ -330,20 +291,19 @@ export function ProjectBoardBody<TItem>({
           <label className="relative inline-flex h-8 shrink-0 cursor-pointer items-center whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted">
             <span data-testid="cloud-board-group-filter-label">
               {state.groupFilter
-                ? columns.find((column) => column.key === state.groupFilter)
-                    ?.label
-                : `全部${groupFields.find((field) => field.id === state.groupBy)?.name ?? "任务"}`}
+                ? columns.find(column => column.key === state.groupFilter)?.label
+                : `全部${groupFields.find(field => field.id === state.groupBy)?.name ?? '任务'}`}
             </span>
-            <ChevronDown className={"ml-2 h-3 w-3"} />
+            <ChevronDown className={'ml-2 h-3 w-3'} />
             <select
               data-testid="cloud-board-group-filter"
               value={state.groupFilter}
-              onChange={(event) => state.setGroupFilter(event.target.value)}
+              onChange={event => state.setGroupFilter(event.target.value)}
               className="absolute inset-0 cursor-pointer opacity-0"
               aria-label="分组值筛选"
             >
               <option value="">全部</option>
-              {columns.map((column) => (
+              {columns.map(column => (
                 <option key={column.key} value={column.key}>
                   {column.label}
                 </option>
@@ -355,7 +315,7 @@ export function ProjectBoardBody<TItem>({
             <input
               data-testid="cloud-board-search"
               value={state.query}
-              onChange={(event) => state.setQuery(event.target.value)}
+              onChange={event => state.setQuery(event.target.value)}
               placeholder={searchPlaceholder}
               className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
             />
@@ -366,28 +326,18 @@ export function ProjectBoardBody<TItem>({
             className="ml-auto flex shrink-0 items-center gap-2"
           >
             {columns.some(isExecutionColumn) ? (
-              <Tooltip
-                label={
-                  state.focusExecutionColumns
-                    ? focusLabels.exit
-                    : focusLabels.enter
-                }
-              >
+              <Tooltip label={state.focusExecutionColumns ? focusLabels.exit : focusLabels.enter}>
                 <button
                   type="button"
                   data-testid="cloud-board-focus-running"
                   aria-pressed={state.focusExecutionColumns}
-                  aria-label={
-                    state.focusExecutionColumns
-                      ? focusLabels.exit
-                      : focusLabels.enter
-                  }
+                  aria-label={state.focusExecutionColumns ? focusLabels.exit : focusLabels.enter}
                   onClick={state.toggleFocusExecutionColumns}
                   className={classNames(
-                    "inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-medium transition focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30",
+                    'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-xs font-medium transition focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30',
                     state.focusExecutionColumns
-                      ? "border-text-primary/20 bg-text-primary text-background hover:bg-text-primary/90"
-                      : "border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary",
+                      ? 'border-text-primary/20 bg-text-primary text-background hover:bg-text-primary/90'
+                      : 'border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary'
                   )}
                 >
                   {state.focusExecutionColumns ? (
@@ -416,11 +366,7 @@ export function ProjectBoardBody<TItem>({
         </div>
       )}
       {viewNotice}
-      <nav
-        data-testid="cloud-todo-board-breadcrumb"
-        aria-label="任务层级"
-        className="px-6"
-      >
+      <nav data-testid="cloud-todo-board-breadcrumb" aria-label="任务层级" className="px-6">
         {currentParent ? (
           <>
             <div className="flex h-7 items-center gap-1 text-xs">
@@ -431,22 +377,16 @@ export function ProjectBoardBody<TItem>({
               >
                 Issue
               </button>
-              {breadcrumb.map((parent) => (
-                <span
-                  key={parent.id}
-                  className="flex min-w-0 items-center gap-1"
-                >
-                  <ChevronRight
-                    className={"h-3.5 w-3.5 shrink-0 text-text-muted"}
-                  />
+              {breadcrumb.map(parent => (
+                <span key={parent.id} className="flex min-w-0 items-center gap-1">
+                  <ChevronRight className={'h-3.5 w-3.5 shrink-0 text-text-muted'} />
                   <button
                     type="button"
                     data-testid={`cloud-todo-board-breadcrumb-${parent.id}`}
                     onClick={() => onBreadcrumbSelect(parent.id)}
                     className={classNames(
-                      "max-w-48 truncate rounded-lg px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary",
-                      parent.id === currentParentId &&
-                        "font-medium text-text-primary",
+                      'max-w-48 truncate rounded-lg px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary',
+                      parent.id === currentParentId && 'font-medium text-text-primary'
                     )}
                   >
                     {parent.title}
@@ -455,9 +395,7 @@ export function ProjectBoardBody<TItem>({
               ))}
             </div>
             <div className="flex items-baseline gap-3 px-2 pb-3.5 pt-1.5">
-              <h1 className="text-heading-sm font-semibold">
-                {currentParent.title}
-              </h1>
+              <h1 className="text-heading-sm font-semibold">{currentParent.title}</h1>
               <span className="text-xs text-text-muted">
                 {layerCount} 个任务 · 仅显示当前层的直接子任务
               </span>
@@ -500,14 +438,12 @@ export function ProjectBoardBody<TItem>({
               dndContextProps={dndContextProps}
               dropIdPrefix="todo-column:"
               testIdPrefix="cloud-todo"
-              getColumnKey={(column) => column.key}
-              getColumnLabel={(column) => column.label}
-              getColumnDotClassName={(column) => column.dotClass}
-              getColumnItems={(column) => getColumnItems(column, state)}
-              getColumnWidthClassName={(column) =>
-                state.focusExecutionColumns && isExecutionColumn(column)
-                  ? "w-[480px]"
-                  : "w-[292px]"
+              getColumnKey={column => column.key}
+              getColumnLabel={column => column.label}
+              getColumnDotClassName={column => column.dotClass}
+              getColumnItems={column => getColumnItems(column, state)}
+              getColumnWidthClassName={column =>
+                state.focusExecutionColumns && isExecutionColumn(column) ? 'w-[480px]' : 'w-[292px]'
               }
               getColumnDragHint={getColumnDragHint}
               renderColumnHeaderActions={(column, items) => (
@@ -519,9 +455,7 @@ export function ProjectBoardBody<TItem>({
                       columnLabel={column.label}
                       labels={sortLabels}
                       value={state.getColumnSort(column.key)}
-                      onChange={(value) =>
-                        state.selectColumnSort(column.key, value)
-                      }
+                      onChange={value => state.selectColumnSort(column.key, value)}
                     />
                   ) : null}
                 </>
@@ -529,8 +463,7 @@ export function ProjectBoardBody<TItem>({
               getItemKey={getItemKey}
               renderItem={(item, column) => {
                 const highlighted =
-                  dropFeedback?.itemId === getItemKey(item) &&
-                  dropFeedback.columnKey === column.key
+                  dropFeedback?.itemId === getItemKey(item) && dropFeedback.columnKey === column.key
                 // Preserve the card's drag registration when feedback changes.
                 return (
                   <ProjectBoardCardContext.Provider
@@ -548,14 +481,12 @@ export function ProjectBoardBody<TItem>({
               renderItemsFooter={renderItemsFooter}
               getColumnEmptyState={getColumnEmptyState}
               renderAddIcon={() => <Plus className="h-5 w-5" />}
-              renderColumnFooter={(column, items) =>
-                renderColumnFooter?.(column, items, state)
-              }
+              renderColumnFooter={(column, items) => renderColumnFooter?.(column, items, state)}
               renderDragOverlay={renderDragOverlay}
             />
           )}
         </ProjectBoardScrollArea>
       )}
     </div>
-  );
+  )
 }

@@ -4168,7 +4168,14 @@
     "app_update_rollback_restore_description": "回退到 v{{version}} 需要恢复更新前的数据。更新后新增的本地数据会另行保留；源码仓库和云端数据不受影响。",
     "app_update_rollback_confirm": "回退并重启",
     "app_update_rollback_failed": "回退失败，请查看更新日志。",
-    "app_update_rollback_load_failed": "暂时无法读取可回退版本。"
+    "app_update_rollback_load_failed": "暂时无法读取可回退版本。",
+    "diagram_zoom_out": "缩小",
+    "diagram_zoom_in": "放大",
+    "diagram_fit": "适应窗口",
+    "diagram_preview": "图表预览",
+    "diagram_loading": "正在渲染图表…",
+    "diagram_render_failed": "图表渲染失败，源码如下",
+    "diagram_retry": "重试"
   },
   "delivery": {
     "action": "交付",

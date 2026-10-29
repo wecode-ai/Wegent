@@ -28,6 +28,7 @@ import { MarkdownCodeBlock } from './MarkdownCodeBlock'
 import { MarkdownTable } from './MarkdownTable'
 import { createTableMarkdownRehypePlugins } from './markdownTableSource'
 import { MarkdownDiagramPreview } from './MarkdownDiagramPreview'
+import { diagramKind } from './diagramLayout'
 import {
   hasMarkdownReferenceDefinitions,
   splitStaticMarkdownChunks,
@@ -60,7 +61,6 @@ const tableMarkdownRehypePlugins = [
   ...createTableMarkdownRehypePlugins()!,
   rehypeAssistantAnnotations,
 ]
-const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mmd', 'plantuml', 'puml'])
 const STREAMING_DIAGRAM_LANGUAGES = new Map([
   ['weworkstreamingmermaid', 'mermaid'],
   ['weworkstreamingmmd', 'mmd'],
@@ -415,7 +415,7 @@ function MarkdownCode({ className, children, node, compact = false, ...props }: 
         </MarkdownCodeBlock>
       )
     }
-    if (DIAGRAM_LANGUAGES.has(lang.toLowerCase())) {
+    if (diagramKind(lang) !== null) {
       return <MarkdownDiagramPreview code={text.trimEnd()} language={lang} />
     }
     return (
@@ -498,7 +498,7 @@ function markUnclosedDiagramFence(content: string): string {
     }
   }
 
-  if (!openingFence || !DIAGRAM_LANGUAGES.has(openingFence.language)) return content
+  if (!openingFence || diagramKind(openingFence.language) === null) return content
 
   const [, indent, fence, spacing, , remainder] = openingFence.match
   lines[openingFence.lineIndex] =
