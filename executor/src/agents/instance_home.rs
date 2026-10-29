@@ -611,7 +611,7 @@ pub(crate) fn task_skills_directory_at(
     Ok(skills)
 }
 
-fn agent_homes(agents: &Path) -> Result<Vec<PathBuf>, String> {
+pub(crate) fn agent_homes(agents: &Path) -> Result<Vec<PathBuf>, String> {
     let mut directories = vec![agents.to_path_buf()];
     for _ in 0..3 {
         let mut children = Vec::new();
@@ -680,3 +680,7 @@ fn active_task_lease(home: &Path, root: &Path, task_id: &str) -> Result<bool, St
 #[cfg(test)]
 #[path = "instance_home_tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "pipeline_session_archive_tests.rs"]
+mod pipeline_session_archive_tests;
