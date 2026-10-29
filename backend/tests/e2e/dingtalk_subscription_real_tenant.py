@@ -116,6 +116,11 @@ class RealDingTalkSubscription(unittest.TestCase):
         login.raise_for_status()
         cls.api.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
         cls.webhook = ThreadingHTTPServer(("0.0.0.0", 0), _WebhookHandler)
+        if expected_port := os.environ.get("E2E_WEBHOOK_PORT"):
+            cls.webhook.server_close()
+            cls.webhook = ThreadingHTTPServer(
+                ("0.0.0.0", int(expected_port)), _WebhookHandler
+            )
         cls.webhook_thread = threading.Thread(
             target=cls.webhook.serve_forever, daemon=True
         )

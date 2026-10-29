@@ -29,7 +29,9 @@ Inject these values from protected CI settings:
 | `E2E_DWS_PROFILE` | Optional isolated DWS account profile |
 | `E2E_DWS_CONFIG_DIR` | Isolated DWS config directory, never a personal config |
 | `E2E_API_URL` | Real Backend gateway for the isolated test services |
-| `E2E_WEBHOOK_HOST` | Optional reachable webhook origin for local runs; defaults to the isolated Docker host alias |
+| `E2E_WEBHOOK_HOST` | Reachable webhook origin from the isolated Backend |
+| `E2E_WEBHOOK_PORT` | Preallocated host port for the webhook receiver |
+| `E2E_MODEL_URL` | Reachable model-stub origin ending in `/v1` |
 | `WEGENT_HYBRID_STATE_FILE` | Real hybrid gateway process state |
 | `E2E_REPORT_DIR` | Sanitized result directory |
 

@@ -13,14 +13,19 @@ set -euo pipefail
 : "${E2E_DINGTALK_MODEL_IMAGE:?protected model harness image required}"
 : "${E2E_DINGTALK_BOOTSTRAP_ADMIN_PASSWORD:?isolated test password required}"
 : "${E2E_DINGTALK_INTERNAL_SERVICE_TOKEN:?isolated internal service token required}"
+: "${E2E_WEBHOOK_HOST:?reachable isolated webhook origin required}"
+: "${E2E_WEBHOOK_PORT:?allocated isolated webhook port required}"
+: "${E2E_API_URL:?reachable isolated backend origin required}"
+: "${E2E_MODEL_URL:?reachable isolated model origin required}"
 
 test "${E2E_DINGTALK_REAL_TENANT}" = "1"
 test -x "${DWS_BINARY_PATH}"
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 export E2E_REPORT_DIR="${E2E_REPORT_DIR:-$ROOT/.ci-artifacts/dingtalk-real-tenant}"
-export E2E_API_URL="${E2E_API_URL:-http://localhost:8000}"
-export E2E_MODEL_URL="${E2E_MODEL_URL:-http://localhost:9999/v1}"
+export E2E_API_URL
+export E2E_MODEL_URL
+export E2E_WEBHOOK_HOST
 export E2E_BOOTSTRAP_ADMIN_PASSWORD="${E2E_DINGTALK_BOOTSTRAP_ADMIN_PASSWORD}"
 export WEGENT_HYBRID_STATE_FILE="${WEGENT_HYBRID_STATE_FILE:-$ROOT/backend/backend-hybrid.state}"
 export DATABASE_URL="${DATABASE_URL:-mysql+pymysql://root:test123@mysql:3306/wegent_test}"
@@ -64,6 +69,7 @@ docker run -d --name "$redis" --network "$network" --network-alias redis \
 docker run -d --name "$model" --network "$network" --network-alias localhost \
   --network-alias host.docker.internal --network-alias model \
   -e MOCK_MODEL_PORT=9999 \
+  -p "${E2E_MODEL_URL##*:}":9999 \
   --entrypoint pnpm "$E2E_DINGTALK_MODEL_IMAGE" \
   exec tsx e2e/utils/mock-model-server.ts >/dev/null
 
@@ -77,7 +83,7 @@ done
 
 docker run -d --name "$backend" --network "$network" --network-alias backend \
   --network-alias localhost --network-alias host.docker.internal \
-  -p 8000:8000 \
+  -p "${E2E_API_URL##*:}":8000 \
   -e PORT=8000 \
   -e DATABASE_URL="$DATABASE_URL" \
   -e REDIS_URL="$REDIS_URL" \
@@ -113,6 +119,11 @@ for attempt in $(seq 1 120); do
   sleep 1
 done
 
+if ! curl -fsS --max-time 3 "${E2E_MODEL_URL%/v1}/health" >/dev/null; then
+  echo "The isolated model service is not reachable" >&2
+  exit 1
+fi
+
 docker run -d --name "$chat_shell" --network "$network" --network-alias chat-shell \
   -e CHAT_SHELL_STORAGE_TYPE=remote \
   -e CHAT_SHELL_REMOTE_STORAGE_URL=http://backend:8000/api/internal \
@@ -145,6 +156,18 @@ docker run -d --name "$worker" --network "$network" --network-alias worker \
   -A app.core.celery_app worker --pool=threads --concurrency=1 \
   --queues="$CELERY_TASK_DEFAULT_QUEUE" --hostname=dingtalk-real-e2e@localhost \
   --loglevel=INFO >/dev/null
+
+for attempt in $(seq 1 60); do
+  if docker logs "$worker" 2>&1 | grep -q ' ready.'; then
+    break
+  fi
+  docker ps -q --filter "name=$worker" | grep -q . || {
+    docker logs "$worker" --tail 100
+    exit 1
+  }
+  test "$attempt" -lt 60 || { docker logs "$worker" --tail 100; exit 1; }
+  sleep 1
+done
 
 docker cp "$backend":/app/backend-hybrid.state "$WEGENT_HYBRID_STATE_FILE"
 cd "$ROOT/backend"
