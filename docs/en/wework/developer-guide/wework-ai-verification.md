@@ -28,6 +28,8 @@ The command prints a session file path and a local control URL. It creates a sep
 
 ## Shared desktop E2E runtime images
 
+Non-draft PRs that trigger only Wework desktop E2E must also start the Backend Rust runtime producer in `e2e-tests.yml`; platform E2E eligibility alone is insufficient. The producer checks the content-addressed image first, reuses it on a cache hit, and builds and publishes it on a cache miss for the desktop build to consume. `ruby .github/scripts/test-backend-rs-e2e-runtime.rb` covers producer eligibility for platform, desktop, and draft PRs.
+
 Linux desktop E2E builds and cache warmup consume the Rust Backend OCI image produced by `e2e-tests.yml`. Consumers must use the producer's exact `SOURCE_DIGEST` expression, including example sources. Hashing only the main program generates an unpublished image tag and eventually times out with `manifest unknown`. When changing runtime image inputs, run `bash .github/scripts/test-wework-core-e2e-runtimes.sh` to verify that both the desktop and warmup consumers match the producer.
 
 ## Operate and assert

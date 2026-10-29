@@ -28,6 +28,8 @@ pnpm --filter wework ai:verify start
 
 ## 共享桌面 E2E 运行时镜像
 
+非草稿 PR 只触发 Wework 桌面 E2E 时，也必须启动 `e2e-tests.yml` 中的 Backend Rust 运行时生产任务，不能只以平台 E2E 是否运行作为条件。生产任务先检查内容寻址镜像是否存在，缓存命中时复用既有镜像；缓存未命中时构建并发布，供桌面构建消费。`ruby .github/scripts/test-backend-rs-e2e-runtime.rb` 覆盖平台、桌面和草稿 PR 的生产条件。
+
 Linux 桌面 E2E 构建和缓存预热使用 `e2e-tests.yml` 生产的 Rust Backend OCI 镜像。消费者必须与生产方的 `SOURCE_DIGEST` 表达式保持一致，包括示例程序源码；只哈希主程序会生成无人发布的镜像标签，最终以 `manifest unknown` 超时失败。修改运行时镜像输入时，运行 `bash .github/scripts/test-wework-core-e2e-runtimes.sh`，检查桌面验证和缓存预热两个消费者与生产方的摘要契约。
 
 ## 操作与断言

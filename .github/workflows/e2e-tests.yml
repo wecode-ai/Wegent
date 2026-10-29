@@ -183,7 +183,7 @@ jobs:
   build-backend-rs-e2e-runtime:
     name: Build Backend Rust E2E Runtime
     needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.platform_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true'))
     # Match the Noble containers consuming these dynamically linked binaries.
     runs-on: ubuntu-24.04
     timeout-minutes: 25
