@@ -1,18 +1,31 @@
 import { createServer } from 'node:http'
 import { createInterface } from 'node:readline'
 import { PassThrough } from 'node:stream'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { loopbackFetch } from '../../test/fixtures/loopback-fetch.mjs'
 import { HostCapabilityRouter } from '../host/capability-router.js'
 import { HostPipeServer } from '../host/host-pipe.js'
 import { DshRuntime } from './dsh-runtime.js'
 
-const { browserFetch } = vi.hoisted(() => ({ browserFetch: vi.fn() }))
-vi.mock('electron', () => ({ session: { defaultSession: { fetch: browserFetch } } }))
+const { browserFetch, netFetch } = vi.hoisted(() => ({
+  browserFetch: vi.fn(),
+  netFetch: vi.fn(),
+}))
+vi.mock('electron', () => ({
+  net: { fetch: netFetch },
+  session: { defaultSession: { fetch: browserFetch } },
+}))
 
 const servers: Array<ReturnType<typeof createServer>> = []
 
+beforeEach(() => {
+  netFetch.mockImplementation(loopbackFetch)
+})
+
 afterEach(async () => {
   vi.unstubAllGlobals()
+  netFetch.mockReset()
+  browserFetch.mockReset()
   await Promise.all(
     servers.splice(0).map(
       server =>
@@ -24,10 +37,29 @@ afterEach(async () => {
 })
 
 describe('DSH runtime readiness', () => {
+  test('uses Chromium without session credentials and forwards HTTPS URLs and abort signals', async () => {
+    const nodeFetch = vi.fn(() => {
+      throw new Error('Anonymous readiness must not use Node fetch')
+    })
+    vi.stubGlobal('fetch', nodeFetch)
+    netFetch.mockResolvedValueOnce(new Response('', { status: 200 }))
+    const url = 'https://runtime.example.test/health?generation=2'
+
+    await new DshRuntime({ url }).start()
+
+    expect(netFetch).toHaveBeenCalledExactlyOnceWith(url, {
+      credentials: 'omit',
+      signal: expect.any(AbortSignal),
+    })
+    expect(netFetch.mock.calls[0][1].signal.aborted).toBe(false)
+    expect(browserFetch).not.toHaveBeenCalled()
+    expect(nodeFetch).not.toHaveBeenCalled()
+  })
+
   test.each(['before', 'after'])(
     'authenticates a dynamically bound port with credentials sent %s its announcement',
     async order => {
-      browserFetch.mockImplementation((url, init) => fetch(url, init))
+      browserFetch.mockImplementation(loopbackFetch)
       const runtime = new DshRuntime({
         url: 'http://127.0.0.1:0/',
         command: process.execPath,
@@ -65,6 +97,7 @@ describe('DSH runtime readiness', () => {
           origin + '/executor',
         ])
         expect(runtime.url()).not.toContain('token')
+        expect(netFetch).not.toHaveBeenCalled()
       } finally {
         await runtime.stop()
         browserFetch.mockReset()
@@ -146,8 +179,13 @@ describe('DSH runtime readiness', () => {
       expect(runtimes[0].url()).not.toBe(runtimes[1].url())
       for (const runtime of runtimes) {
         expect(Number(new URL(runtime.url()).port)).toBeGreaterThan(0)
-        const response = await fetch(`${runtime.url()}/requests`)
+        const response = await loopbackFetch(`${runtime.url()}/requests`)
         expect(await response.json()).toEqual(['/host', '/executor', '/requests'])
+      }
+      expect(netFetch.mock.calls.length).toBeGreaterThan(0)
+      for (const [, init] of netFetch.mock.calls) {
+        expect(init.credentials).toBe('omit')
+        expect(init.signal).toBeInstanceOf(AbortSignal)
       }
     } finally {
       await Promise.all(runtimes.map(runtime => runtime.stop()))
@@ -199,7 +237,7 @@ describe('DSH runtime readiness', () => {
       process.kill(firstPid, 'SIGKILL')
       await vi.waitFor(
         async () => {
-          const response = await fetch(origin)
+          const response = await loopbackFetch(origin)
           expect(Number(await response.text())).not.toBe(firstPid)
         },
         { timeout: 3_000 }
@@ -218,12 +256,17 @@ describe('DSH runtime readiness', () => {
         signal.addEventListener('abort', () => reject(signal.reason), { once: true })
       })
     })
-    vi.stubGlobal('fetch', fetchMock)
+    netFetch.mockImplementation(fetchMock)
 
     await expect(new DshRuntime({ url: 'http://127.0.0.1/pending' }).start(10)).rejects.toThrow(
       'DSH startup timed out'
     )
     expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock.mock.calls[0][1]).toEqual({
+      credentials: 'omit',
+      signal: expect.any(AbortSignal),
+    })
+    expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true)
   })
 
   test('does not treat a missing route as ready', async () => {

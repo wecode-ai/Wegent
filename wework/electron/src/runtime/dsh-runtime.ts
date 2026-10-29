@@ -3,11 +3,15 @@ import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 import { createInterface } from 'node:readline'
 import type { HostPipeServer } from '../host/host-pipe.js'
+import { cloudFetch } from '../host/lazy-cloud-fetch.js'
 import { RuntimeSupervisor } from './runtime-supervisor.js'
 
 type HttpRequest = (url: string, init?: RequestInit) => Promise<Response>
 
 const LOCAL_READINESS_RETRY_INTERVAL_MS = 25
+// Chromium's default session must not attach cookies to anonymous readiness probes.
+const anonymousReadinessRequest: HttpRequest = (url, init) =>
+  cloudFetch(url, { ...init, credentials: 'omit' })
 
 export interface DshRuntimeOptions {
   url: string
@@ -66,7 +70,7 @@ export class DshRuntime {
             }
             const request = browserAuthentication
               ? await authenticateBrowser(child, this.listeningUrl, signal)
-              : fetch
+              : anonymousReadinessRequest
             await waitForHttpEndpoints(
               runtimeProbeUrls(options, this.listeningUrl),
               signal,
@@ -161,7 +165,7 @@ function waitForListeningUrl(
 async function waitForHttpEndpoints(
   urls: string[],
   signal: AbortSignal,
-  request: HttpRequest = fetch
+  request: HttpRequest = anonymousReadinessRequest
 ): Promise<void> {
   for (const url of urls) {
     await waitForHttp(url, signal, request)
