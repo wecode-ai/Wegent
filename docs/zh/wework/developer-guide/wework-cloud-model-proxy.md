@@ -94,7 +94,7 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 云端或远端设备执行任务时，模型选择器同时展示当前桌面端配置的本地模型。首次使用或配置变化后，Wework 会要求用户确认，将自定义 Codex 模型目录同步到目标 Executor，并在设备空闲时重启其 Codex app-server、校验模型已加载，然后再发送任务。Codex 内置模型和云端 Model CRD 仍可直接用于本机或云端执行。
 
-通用云端模型可以复用 Wework 的 GPT 5.6 兼容目录作为能力基线，并由云端模型元数据覆盖上下文窗口。兼容目录不得通过 `max_context_window` 固定限制云端模型的有效窗口；该字段保持为空，由运行时采用云端下发的窗口配置。Codex 官方 GPT 5.6 目录仍保留自身明确的最大窗口限制。
+通用云端模型使用 `wework-gpt-6.1-sol` 共享兼容目录作为能力基线，沿用原来 `wework-gpt-5.6-sol` 的目录获取与云端模型调用链路，无需登录官方账号。共享目录保留原有的协议能力，不强制添加推理档位，不启用官方专用的 code mode 或 Responses Lite。云端模型元数据可以覆盖上下文窗口；兼容目录的 `max_context_window` 保持为空，不固定限制云端模型的有效窗口。Codex 官方模型仍保留各自的能力和窗口限制。
 
 ### 模型限流重试
 
