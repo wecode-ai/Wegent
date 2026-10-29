@@ -1,7 +1,7 @@
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, FileText, Folder, GitBranch, MessageSquare, Paperclip, Plus, X } from 'lucide-react'
+import { FileText, Folder, GitBranch, MessageSquare, Paperclip, Plus, X } from 'lucide-react'
 import type { WorkbenchMessage } from '@/types/workbench'
 import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 import type { LocalWorkItem } from '@/features/todo/todoModel'
@@ -59,6 +59,7 @@ export function DeliveryDialog({
   onDelivered,
 }: DeliveryDialogProps) {
   const { t } = useTranslation('common')
+  const [title, setTitle] = useState(item.title)
   const [markdown, setMarkdown] = useState('')
   const [chatScope, setChatScope] = useState<ChatScope>('selected')
   const [selectedMessages, setSelectedMessages] = useState<number[]>([])
@@ -67,13 +68,9 @@ export function DeliveryDialog({
   const [submitting, setSubmitting] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [completed, setCompleted] = useState(false)
   const activeDialogRef = useDialogKeyboard<HTMLDivElement>(() => {
     if (!submitting) onCancel()
-  }, !completed)
-  const completedDialogRef = useDialogKeyboard<HTMLDivElement>(() => {
-    if (!submitting) onDelivered()
-  }, completed)
+  })
   const selectedCount = chatScope === 'conversation' ? messages.length : selectedMessages.length
   const chatMessages = useMemo(
     () =>
@@ -134,6 +131,7 @@ export function DeliveryDialog({
         ? deliveryApi.bindTask(item.id, runtimeTask, runtimeTaskTitle)
         : deliveryApi.bindTask(item.id, runtimeTask))
       const delivery = await deliveryApi.createDelivery(item.id, {
+        title: title.trim(),
         markdown,
         ...(chatScope !== 'none' && chatMessages.length > 0
           ? { chat: { scope: chatScope, messages: chatMessages } }
@@ -166,7 +164,6 @@ export function DeliveryDialog({
         setUploadProgress({ done: files.length + index + 1, total: totalAssets })
       }
       await deliveryApi.finalizeDelivery(delivery.id)
-      setCompleted(true)
       track('delivery_completed', {
         asset_count:
           totalAssets === 0 ? '0' : totalAssets === 1 ? '1' : totalAssets <= 5 ? '2-5' : '6+',
@@ -186,42 +183,12 @@ export function DeliveryDialog({
           ? submitError.message
           : t('delivery.failed', '交付失败，请重试')
       )
+      return
     } finally {
       setSubmitting(false)
       setUploadProgress(null)
     }
-  }
-
-  if (completed) {
-    return createPortal(
-      <div className="fixed inset-0 z-system flex items-center justify-center bg-black/30">
-        <div
-          ref={completedDialogRef}
-          role="dialog"
-          aria-modal="true"
-          aria-label={t('delivery.completed', '交付完成')}
-          data-testid="delivery-complete-dialog"
-          className="w-[360px] rounded-xl border border-border bg-background p-6 text-center shadow-lg"
-        >
-          <span className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-green-500/10 text-green-600">
-            <Check className="h-5 w-5" />
-          </span>
-          <h2 className="heading-sm mt-4">{t('delivery.completed', '交付完成')}</h2>
-          <p className="mt-2 text-sm text-text-secondary">
-            {t('delivery.completed_hint', '当前任务与 TODO 已完成，交付快照不会再被修改。')}
-          </p>
-          <button
-            type="button"
-            data-testid="delivery-complete-confirm"
-            onClick={onDelivered}
-            className="mt-5 h-8 rounded-md bg-text-primary px-4 text-sm font-medium text-background"
-          >
-            {t('delivery.back_to_todo', '返回 TODO')}
-          </button>
-        </div>
-      </div>,
-      document.body
-    )
+    onDelivered()
   }
 
   return createPortal(
@@ -254,9 +221,25 @@ export function DeliveryDialog({
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col px-5 py-4">
+          <label className="mb-3 flex flex-col gap-1 text-sm">
+            {t('delivery.title_label')}
+            <input
+              data-testid="delivery-title"
+              value={title}
+              maxLength={255}
+              onChange={event => setTitle(event.target.value)}
+              disabled={submitting}
+              className="h-8 rounded-md border border-border bg-background px-2"
+            />
+          </label>
+          <label htmlFor="delivery-notes" className="mb-1 text-sm">
+            {t('delivery.notes_label')}
+          </label>
           <textarea
+            id="delivery-notes"
             data-testid="delivery-markdown"
             value={markdown}
+            disabled={submitting}
             onChange={event => setMarkdown(event.target.value)}
             placeholder={t('delivery.markdown_placeholder', '写下交付说明、关键结论和后续建议…')}
             className="min-h-0 flex-1 resize-none bg-transparent text-base leading-6 text-text-primary outline-none placeholder:text-text-muted"
@@ -424,9 +407,7 @@ export function DeliveryDialog({
         <footer className="flex h-14 shrink-0 items-center border-t border-border px-5">
           {error && <p className="min-w-0 flex-1 truncate text-xs text-red-600">{error}</p>}
           {!error && (
-            <p className="min-w-0 flex-1 text-xs text-text-muted">
-              {t('delivery.immutable_hint', '确认后将完成当前任务与 TODO，并生成不可变快照。')}
-            </p>
+            <p className="min-w-0 flex-1 text-xs text-text-muted">{t('delivery.immutable_hint')}</p>
           )}
           <button
             type="button"
@@ -438,7 +419,7 @@ export function DeliveryDialog({
           <button
             type="button"
             data-testid="delivery-confirm"
-            disabled={submitting || !hasChatSelection}
+            disabled={submitting || !hasChatSelection || !title.trim()}
             onClick={() => void submit()}
             className="ml-2 flex h-8 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
           >

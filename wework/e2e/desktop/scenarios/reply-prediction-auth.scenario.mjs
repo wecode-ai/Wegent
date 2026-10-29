@@ -116,7 +116,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
             ...shellCommandResponse(
               body,
               ENV_CALL,
-              `test -x "$WEGENT_EXECUTOR_BINARY" && test "$WEGENT_TASK_WORKSPACE" = "$PWD" && printf '${ENV_OK}\\n'`,
+              `node -e 'const fs = require("node:fs"); const assert = require("node:assert/strict"); assert.ok(fs.statSync(process.env.WEGENT_EXECUTOR_BINARY).isFile()); fs.accessSync(process.env.WEGENT_EXECUTOR_BINARY, fs.constants.X_OK); assert.equal(fs.realpathSync(process.env.WEGENT_TASK_WORKSPACE), fs.realpathSync(process.cwd())); console.log("${ENV_OK}")'`,
               workspacePath
             ),
             responseCompleted(id),

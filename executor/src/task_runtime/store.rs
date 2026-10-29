@@ -15,10 +15,12 @@ use serde_json::{json, Value};
 use thiserror::Error;
 use uuid::Uuid;
 
+mod assignment_receipts;
 mod code_projects;
 pub(crate) mod execution_workspace;
 mod issue_badges;
 mod ordering;
+mod project_tags;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
@@ -63,7 +65,10 @@ mod stand_in_memories;
 #[path = "stand_in_inbox.rs"]
 mod stand_in_inbox;
 
-const LOCAL_SCHEMA_VERSION: i64 = 10;
+#[path = "stand_in_telemetry.rs"]
+pub(crate) mod stand_in_telemetry;
+
+const LOCAL_SCHEMA_VERSION: i64 = 11;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
 const DEFAULT_WORK_ITEM_PROJECT_KEY: &str = "WORK";
 const RUNTIME_PROJECTION_METADATA_KEY: &str = "runtime_projection";
@@ -75,6 +80,8 @@ pub enum TaskRuntimeError {
     Database(#[from] rusqlite::Error),
     #[error("invalid task data: {0}")]
     Invalid(String),
+    #[error("invalid task data: Project-scoped agents can only receive work from their project")]
+    StandInProjectConnections,
     #[error("project not found")]
     ProjectNotFound,
     #[error("task not found")]
@@ -326,6 +333,20 @@ impl LocalTaskStore {
         project_id: &str,
         input: ProjectUpdate,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        if let Some(change) = input.tag_change.as_ref() {
+            let mut fields = serde_json::to_value(&input)
+                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
+            fields
+                .as_object_mut()
+                .unwrap()
+                .retain(|key, value| key != "version" && key != "tag_change" && !value.is_null());
+            if !fields.as_object().unwrap().is_empty() {
+                return Err(TaskRuntimeError::Invalid(
+                    "Tag changes cannot be combined with other project updates".into(),
+                ));
+            }
+            return self.change_project_tag(project_id, input.version, change);
+        }
         let project = self.get_project(project_id)?;
         if project.version != input.version {
             return Err(TaskRuntimeError::VersionConflict);
@@ -336,6 +357,7 @@ impl LocalTaskStore {
         let provider = task_provider(&project)?;
         let mut metadata = project.metadata;
         if let Some(tags) = input.tags {
+            super::tagging::validate_tags(&tags)?;
             metadata["tags"] = json!(tags);
         }
         if let Some(provider_config) = input.provider_config {
@@ -348,6 +370,10 @@ impl LocalTaskStore {
         }
         if let Some(board_config) = input.board_config {
             metadata["board_config"] = board_config;
+        }
+        if let Some(board_views) = input.board_views {
+            super::board_views::validate_update(&metadata["board_views"], &board_views)?;
+            metadata["board_views"] = board_views;
         }
         if let Some(card_display) = input.card_display {
             metadata["card_display"] = card_display;
@@ -516,6 +542,7 @@ impl LocalTaskStore {
         validate_name(&input.title, "task title")?;
         validate_status(&input.status)?;
         validate_priority(&input.priority)?;
+        super::tagging::validate_tags(&input.tags)?;
         validate_schedule_range(start_at.as_deref(), due_at.as_deref())?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -635,6 +662,7 @@ impl LocalTaskStore {
                 input.assignee_user_id,
             ],
         )?;
+        assignment_receipts::sync_assignment_receipt(&transaction, project_id, &id, &metadata)?;
         if let Some(group) = assigned_group.as_ref() {
             dispatch_collaboration_group_assignment(
                 &transaction,
@@ -704,6 +732,9 @@ impl LocalTaskStore {
         }
         if let Some(priority) = input.priority.as_deref() {
             validate_priority(priority)?;
+        }
+        if let Some(tags) = input.tags.as_ref() {
+            super::tagging::validate_tags(tags)?;
         }
         let selected_agent = input
             .assignee_agent_id
@@ -915,6 +946,7 @@ impl LocalTaskStore {
         if changed != 1 {
             return Err(TaskRuntimeError::VersionConflict);
         }
+        assignment_receipts::sync_assignment_receipt(&transaction, project_id, task_id, &metadata)?;
         if let Some(position) = input.position.as_ref() {
             ordering::move_task(
                 &transaction,
@@ -3800,6 +3832,7 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
            WHERE id = NEW.id;
          END;",
     )?;
+    stand_in_telemetry::migrate(connection)?;
     ensure_default_work_item_project(connection)?;
     local_execution_activity::repair_missing_execution_activity(connection)?;
     connection.execute(
@@ -5092,6 +5125,7 @@ fn record_assignment_change(
         .expect("assignment history must be an array");
     entries.push(json!({
         "by_user_id": by_user_id,
+        "receipt_tracking": true,
         "to_type": to_type,
         "to_id": to_id,
         "to_name": to_name,
@@ -7275,6 +7309,7 @@ mod tests {
                     &human_task_id,
                     true,
                     DeliveryCreate {
+                        title: String::new(),
                         markdown: "Human review confirms the evidence.".to_owned(),
                         chat: None,
                         source_task: None,
@@ -7537,6 +7572,7 @@ mod tests {
                 &issue.id,
                 true,
                 DeliveryCreate {
+                    title: String::new(),
                     markdown: "CPU load confirmed at 42%.".to_owned(),
                     chat: None,
                     source_task: Some(address),
@@ -10773,6 +10809,7 @@ mod tests {
                 &task.id,
                 true,
                 DeliveryCreate {
+                    title: String::new(),
                     markdown: "# Done".to_owned(),
                     chat: None,
                     source_task: None,
@@ -10831,6 +10868,7 @@ mod tests {
                 "42",
                 false,
                 DeliveryCreate {
+                    title: String::new(),
                     markdown: "External result".to_owned(),
                     chat: None,
                     source_task: None,
@@ -10921,6 +10959,7 @@ mod tests {
                 &task.id,
                 true,
                 DeliveryCreate {
+                    title: String::new(),
                     markdown: "# Done".to_owned(),
                     chat: Some(json!({"messages": [{"role": "assistant", "content": "done"}]})),
                     source_task: Some(address),

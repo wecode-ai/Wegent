@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::agents::CODEX_APP_SERVER_EXECUTOR_SHUTDOWN;
+use crate::agents::{CODEX_APP_SERVER_ACTIVE_GOAL_INTERRUPTED, CODEX_APP_SERVER_EXECUTOR_SHUTDOWN};
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
@@ -26,10 +26,9 @@ const WORKTREE_PREPARATION_STOP_WAIT_MS: u64 = 50;
 static RUNTIME_TURN_QUEUE_WRITE_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
 static RUNTIME_TURN_QUEUE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-fn interrupted_by_executor_shutdown(
-    result: &Result<crate::agents::CodexAppServerTurn, String>,
-) -> bool {
-    matches!(result, Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN)
+fn interrupted_by_runtime_stop(result: &Result<crate::agents::CodexAppServerTurn, String>) -> bool {
+    matches!(result, Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
+        || error == CODEX_APP_SERVER_ACTIVE_GOAL_INTERRUPTED)
 }
 
 fn initial_turn_presentation(request: &ExecutionRequest) -> Option<(String, Option<String>)> {
@@ -696,10 +695,22 @@ impl RuntimeWorkRpcHandler {
             .map_err(|error| AppIpcError::new(worktree_error_code(&error), error))?;
         turn.request.project_workspace_path = Some(record.path.clone());
         for root in &mut turn.request.runtime_workspace_roots {
-            if *root == previous_root {
+            if crate::runtime_work::worktrees::same_path(root, &previous_root) {
                 *root = record.path.clone();
             }
         }
+        log_executor_event(
+            "runtime worktree permission roots resolved",
+            &[
+                ("local_task_id", turn.local_task_id.clone()),
+                ("source_path", previous_root),
+                ("workspace_path", record.path.clone()),
+                (
+                    "runtime_workspace_roots",
+                    json!(turn.request.runtime_workspace_roots).to_string(),
+                ),
+            ],
+        );
         self.store.update_task(&turn.local_task_id, |link| {
             link.workspace_path = record.path.clone();
             link.updated_at = now_ms();
@@ -1397,8 +1408,22 @@ impl RuntimeWorkRpcHandler {
             });
             let recovery_handler = handler.clone();
             let recovery_local_task_id = turn_local_task_id.clone();
+            let recovery_event_request = request.clone();
             let overload_turn_recovering: CodexActiveTurnCallback = Box::new(move |_, turn_id| {
                 recovery_handler.record_overload_recovery_turn(&recovery_local_task_id, &turn_id);
+                let mut event_request = recovery_event_request.clone();
+                event_request.subtask_id = turn_id.clone();
+                // A recoverable overload is not a terminal failure. Tell the
+                // renderer before the retry request starts so a transcript
+                // refresh cannot leave a stale error card on screen.
+                emit_response_event(
+                    &recovery_handler.event_tx,
+                    &recovery_handler.device_id,
+                    "response.recovered",
+                    &recovery_local_task_id,
+                    &event_request,
+                    json!({"turnId": turn_id}),
+                );
             });
             let result = async {
                 stand_in_context?;
@@ -1431,9 +1456,9 @@ impl RuntimeWorkRpcHandler {
                     .await
             }
             .await;
-            let interrupted_by_shutdown = interrupted_by_executor_shutdown(&result);
+            let runtime_was_stopped = interrupted_by_runtime_stop(&result);
             let goal_execution_needs_attention = match result.as_ref() {
-                Err(_) if interrupted_by_shutdown => false,
+                Err(_) if runtime_was_stopped => false,
                 Err(_) => true,
                 Ok(turn) => matches!(
                     turn.outcome,
@@ -1509,7 +1534,7 @@ impl RuntimeWorkRpcHandler {
                     ExecutionOutcome::Failed { .. } => "failed",
                     ExecutionOutcome::Running => "inProgress",
                 },
-                Err(_) if interrupted_by_executor_shutdown(&result) => "inProgress",
+                Err(_) if interrupted_by_runtime_stop(&result) => "inProgress",
                 Err(_) => "failed",
             };
             handler
@@ -1527,7 +1552,7 @@ impl RuntimeWorkRpcHandler {
             );
             handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
             handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
-            if interrupted_by_shutdown {
+            if runtime_was_stopped {
                 return;
             }
             if goal_execution_needs_attention
@@ -1712,9 +1737,9 @@ impl RuntimeWorkRpcHandler {
         active_turn: Option<&ActiveCodexTurn>,
         result: Result<crate::agents::CodexAppServerTurn, String>,
     ) {
-        if interrupted_by_executor_shutdown(&result) {
+        if interrupted_by_runtime_stop(&result) {
             log_executor_event(
-                "runtime work turn interrupted by executor shutdown",
+                "runtime work turn interrupted by runtime stop",
                 &[
                     ("local_task_id", local_task_id.to_owned()),
                     ("execution_id", execution_id.to_string()),

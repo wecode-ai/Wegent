@@ -323,7 +323,7 @@ describe("ProjectIssueTable", () => {
   });
 
   it("selects visible issues and applies a batch status update", async () => {
-    const onBulkStatusChange = vi.fn().mockResolvedValue(undefined);
+    const onBulkStatusChange = vi.fn().mockResolvedValue([]);
     act(() => {
       root.render(
         <ProjectIssueTable
@@ -381,8 +381,77 @@ describe("ProjectIssueTable", () => {
     ).toBeNull();
   });
 
+  it.each(['all', 'partial', 'unexpected'] as const)(
+    'shows %s failures and keeps only failed issues selected for recovery',
+    async mode => {
+      const failures = (mode === 'all' ? [issue, secondIssue] : [secondIssue]).map(item => ({
+        issueId: item.id,
+        message: 'Permission denied',
+      }))
+      const onBulkStatusChange = vi.fn().mockResolvedValue(failures)
+      if (mode === 'unexpected')
+        onBulkStatusChange.mockRejectedValueOnce(new Error('Network unavailable'))
+      act(() =>
+        root.render(
+          <ProjectIssueTable
+            issues={[issue, secondIssue]}
+            assignmentsByIssueId={{}}
+            emptyLabel="Empty"
+            issueLabel="Issue"
+            statusLabel="Status"
+            assignmentsLabel="Assignments"
+            updatedLabel="Updated"
+            availableStatuses={['inbox', 'in_progress']}
+            onOpen={vi.fn()}
+            onBulkStatusChange={onBulkStatusChange}
+          />
+        )
+      )
+      act(() =>
+        (
+          container.querySelector(
+            '[data-testid="collaboration-issue-table-select-all"]'
+          ) as HTMLInputElement
+        ).click()
+      )
+      act(() => {
+        const select = container.querySelector(
+          '[data-testid="collaboration-issue-table-batch-status"]'
+        ) as HTMLSelectElement
+        select.value = 'in_progress'
+        select.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+      const apply = () =>
+        (
+          container.querySelector(
+            '[data-testid="collaboration-issue-table-batch-apply"]'
+          ) as HTMLButtonElement
+        ).click()
+      await act(async () => apply())
+      const error = container.querySelector(
+        '[data-testid="collaboration-issue-table-batch-error"]'
+      )!
+      expect(error.getAttribute('role')).toBe('alert')
+      expect(error.textContent).toContain(secondIssue.title)
+      expect(error.textContent).toContain(
+        mode === 'unexpected' ? 'Network unavailable' : 'Permission denied'
+      )
+      const selected = [
+        ...container.querySelectorAll<HTMLInputElement>('tbody input[type="checkbox"]'),
+      ].filter(input => input.checked)
+      expect(selected).toHaveLength(mode === 'partial' ? 1 : 2)
+      onBulkStatusChange.mockResolvedValue([])
+      await act(async () => apply())
+      expect(onBulkStatusChange.mock.calls[1][0]).toEqual(
+        mode === 'partial' ? [secondIssue] : [issue, secondIssue]
+      )
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+      expect(container.querySelector('[data-testid="collaboration-issue-table-batch"]')).toBeNull()
+    }
+  )
+
   it("limits batch actions to selected issues that remain visible", async () => {
-    const onBulkStatusChange = vi.fn().mockResolvedValue(undefined);
+    const onBulkStatusChange = vi.fn().mockResolvedValue([]);
     act(() => {
       root.render(
         <ProjectIssueTable

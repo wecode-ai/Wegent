@@ -83,7 +83,7 @@ executor 的权威快照。流式 assistant 已明确存在时返回的 `running
 Codex provider 可能只发送带完整正文的 `item/completed`，而不发送
 `item/agentMessage/delta`。executor 必须在当前最终回复尚未接收任何 delta 时把该完整
 正文转换为一次 `response.output_text.delta`；已接收 delta 时则忽略完成快照，避免
-重复正文。临时聊天是 ephemeral thread，不能依赖 `thread/read(includeTurns)` 补回
+重复正文。临时聊天的实时正文不能依赖 `thread/read(includeTurns)` 补回
 丢失的实时文本。
 
 任务在后台结算后，用户切回 pane 时可能先加载到只包含上一轮的旧 transcript。
@@ -417,22 +417,24 @@ Electron 聊天中的 assistant Markdown 图片可以引用本机绝对路径或
 
 - 项目空间看板任务弹窗和项目空间任务 Tab 创建新 runtime task 时，必须统一调用 `useProjectRuntimeTaskComposer`，再进入 `createProjectRuntimeTask` 的同一条底层创建链路。`TemporaryChatPanel` 只构造一次带稳定 id 的 optimistic user message，并把同一个消息对象传入创建链路；`sendPreparedRuntimeMessage` 统一负责把该 id 发送给 executor，并将消息写入 `runtimeConversationCache`。入口组件不得各自追加首条消息，否则实时界面会同时保留本地消息和 transcript 消息，刷新后才恢复为一条。
 - 每个临时聊天 tab 都有独立的 `chat:<id>` 实例标识，允许在右侧工作区同时打开多个临时聊天。
-- 创建 runtime 线程前，`TemporaryChatPanel` 以实例标识作为 `conversationKey`。线程创建后，pane workspace state 保存该 tab 的 runtime 地址，消息则由 `runtimeConversationCache` 的实时投影恢复。临时线程不支持 `thread/turns/list`，因此切换主会话导致面板卸载、再切回时，不能依赖 transcript 补回内容。
-- `TemporaryChatPanel` 默认使用与主会话相同的 DOM 底部原点滚动模型。首次显示已有消息或切换回会话时，虚拟列表必须在 layout commit 内直接恢复到底部或已保存的阅读位置，不能先绘制顶部位置再向下校正；只有明确需要顶部原点语义的调用方才可覆盖该默认值。
+- 创建 runtime 线程前，`TemporaryChatPanel` 以实例标识作为 `conversationKey`。线程创建后，pane workspace state 保存该 tab 的 runtime 地址，消息优先由 `runtimeConversationCache` 的实时投影恢复。切换主会话后，已结束会话的无订阅缓存可以在 5 分钟后回收；缓存缺失时，面板通过共享 `runtime.tasks.transcript` 加载 executor 保存的侧聊正文，并保留加载、错误重试与过期请求隔离。不能直接读取原生 fork 的完整历史，否则会把继承的主会话正文混入侧聊。
+- `TemporaryChatPanel` 与主会话统一使用正常 DOM 滚动坐标，顶部为零，溢出会话的底部为 `scrollHeight - clientHeight`。短会话从顶部排列；首次显示已有长会话或切换回会话时，在 layout commit 内直接恢复到底部或已保存的阅读位置，不能先绘制顶部位置再向下校正。
 - 每个临时聊天的附件选择、上传进度和错误状态也按实例隔离，不能复用主聊天 composer 的附件状态；首条消息必须把该实例的附件显式传给 `createTemporaryRuntimeTask`。
 - 每条发送成功或进入乐观展示的 user message 都必须保存对应的持久化附件引用，包含首条消息、普通 follow-up 和队列发送。清空 composer 附件只清理当前输入状态，不能让已经发送的附件从消息列表消失；本地 `blob:` 预览地址必须转换为可恢复的本地路径。
 - 右侧工作区只打开一个临时聊天时，默认使用紧凑的 `420px` 面板宽度；打开其他工作区 tab 后恢复通用分栏默认值，用户手动调整的宽度仍然优先。
-- 首条消息通过 `createTemporaryRuntimeTask` 创建 `ephemeral` runtime task，并携带当前主线程的 `sideSource`。该任务不写入左侧任务列表，也不触发主 pane 导航。
-- 后续消息必须继续使用已加载的临时线程。Codex app-server 路径使用 `direct_thread_id` 直接 `turn/start`，不能走普通 `resume_thread_id` 的 `thread/resume` 路径，否则会因为临时线程没有 rollout 映射而出现 `no rollout found`。
+- 首条消息通过 `createTemporaryRuntimeTask` 创建 `ephemeral` runtime task，并携带当前主线程的 `sideSource`。该标记控制任务可见性：任务不写入左侧任务列表，也不触发主 pane 导航。新建的多轮侧聊由 executor 在保存的执行请求中设置 `persist_runtime_thread`，使用正常持久化的 Codex 原生线程；任务隐藏与原生线程是否落盘必须分别判断。
+- 新建侧聊的后续消息使用 `thread/resume` 恢复同一个原生线程，因此能力变更导致 Codex app-server 重启后仍能续聊。旧版未持久化的侧聊继续使用 `direct_thread_id`，线程丢失时明确提示新建临时聊天，不能伪造历史或悄悄开启丢失上下文的新线程。正文仍从 executor 的侧聊缓存读取；executor 整体重启后的正文恢复不由此路径保证。
+- 回复预测仅对可恢复的源线程执行 resume/fork；旧版纯内存侧聊返回无建议。预测 fork 和一次性文本生成仍使用原生 ephemeral 线程，不能继承多轮侧聊的持久化标记。
+- 能力同步按实际生效内容判定变化。相同内容重复同步不能增加 capability revision；真实变更以及部分失败后已生效的变更必须使下一轮加载新能力，过期请求或成功回滚不能凭同步次数触发重启。
 - 普通 follow-up 必须在等待 `runtime.tasks.sendMessage` 返回前先把 user message 写入会话缓存，使它稳定出现在当前 turn 的“正在思考”指示器之前；发送失败时再按同一 client message id 回滚。
 - `BufferedChatInput` 传入的运行中发送选项必须由 `TemporaryChatPanel` 原样处理。用户选择“引导当前回复”或从队列卡片触发引导时，临时聊天必须调用 `runtime.tasks.guidance`，并以 `clientGuidanceId` 结算对应队列项；不能把引导降级成当前 turn 结束后的普通 follow-up。
 - 临时聊天只复用当前工作区和当前线程上下文；如果没有可用的主线程 source，应阻止发送并提示用户先打开已有对话。
 - 临时聊天默认用于轻量、非变更式探索。边界之前的主线程消息、计划和工具结果只作为参考，不能在临时聊天中继续执行；但用户在边界之后明确要求修改文件、源码、Git、配置或工作区状态时，允许在当前线程既有权限范围内执行，并且修改必须最小化、局限于本次请求。未收到明确变更请求时不得写入，也不得自行申请更宽权限。
 - runtime work 列表刷新后，reducer 必须用同一设备、同一任务的权威 `threadId/runtimeHandle` 水合当前任务地址；不能因为设备仍在线就保留缺少 thread 的 optimistic address，否则右侧临时聊天无法建立 `sideSource`。
 
-维护规则：不要用 fallback 在 UI 里把临时聊天补进左侧任务列表，也不要在 executor 中为临时线程伪造 rollout。临时聊天的主路径是 `ephemeral + sideSource + direct_thread_id`。
+维护规则：不要用 fallback 在 UI 里把临时聊天补进左侧任务列表，也不要在 executor 中伪造 rollout。多轮临时聊天使用隐藏的 runtime task、`sideSource` 与可恢复的原生线程；一次性辅助生成使用原生 ephemeral 线程。
 
-修改该链路后运行 `pnpm --filter wework e2e:desktop --segment temporary-chat`。独立真实 Electron 场景会保持 assistant response 运行，断言普通 follow-up 位于“正在思考”之前，并在首次显示消息和切换回会话后确认滚动容器保持底部原点及底部锚定，同时确认临时聊天的首条消息和 follow-up 都能恢复；关键阶段截图写入 `wework/test-results/desktop-e2e/<run-id>/`。
+该链路的 CI 回归入口是 `pnpm --filter wework e2e:desktop --segment temporary-chat`，仅在用户明确要求时本地执行。独立真实 Electron 场景会保持 assistant response 运行，断言普通 follow-up 位于“正在思考”之前，并在首次显示消息和切换回会话后确认正常滚动坐标及底部锚定，同时确认临时聊天的首条消息和 follow-up 都能恢复；关键阶段截图写入 `wework/test-results/desktop-e2e/<run-id>/`。
 
 ## 顶层页面切换
 

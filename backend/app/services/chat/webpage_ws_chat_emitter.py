@@ -159,6 +159,7 @@ class WebPageSocketEmitter:
         offset: int,
         result: Optional[Dict[str, Any]] = None,
         message_id: Optional[int] = None,
+        contexts: Optional[list[Dict[str, Any]]] = None,
     ) -> None:
         """
         Emit chat:done event to task room.
@@ -169,6 +170,7 @@ class WebPageSocketEmitter:
             offset: Final offset
             result: Optional result data
             message_id: Message ID for ordering (primary sort key)
+            contexts: Committed context briefs for the completed assistant message
         """
         await self.sio.emit(
             ServerEvents.CHAT_DONE,
@@ -178,12 +180,17 @@ class WebPageSocketEmitter:
                 "offset": offset,
                 "result": sanitize_client_payload(result or {}),
                 "message_id": message_id,
+                "contexts": contexts,
             },
             room=f"task:{task_id}",
             namespace=self.namespace,
         )
-        logger.debug(
-            f"[WS] emit chat:done task={task_id} subtask={subtask_id} message_id={message_id}"
+        logger.info(
+            "[WS] emit chat:done task=%s subtask=%s message_id=%s contexts_count=%s",
+            task_id,
+            subtask_id,
+            message_id,
+            len(contexts) if contexts is not None else None,
         )
 
     async def emit_chat_error(

@@ -1,3 +1,5 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { useStandInOpened } from '@/telemetry/useStandInOpened'
 import {
   useCallback,
   useContext,
@@ -77,6 +79,7 @@ export function StandInSettingsPage({
   onOpenPersonalSettings?(roleId: string, deviceId: string): void
   ref?: Ref<StandInSettingsHandle>
 }) {
+  useStandInOpened('settings', initialProfileId === '@primary' ? 'primary' : 'role')
   const { t } = useTranslation('common')
   const cloudConnection = useContext(CloudConnectionContext)
   const canLoadPersonalAgents = cloudConnection?.isConnected ?? true
@@ -147,7 +150,7 @@ export function StandInSettingsPage({
           })
       })
       .catch(cause => {
-        if (active) setError(String(cause))
+        if (active) setError(getStandInErrorMessage(cause))
       })
     return () => {
       active = false
@@ -166,7 +169,7 @@ export function StandInSettingsPage({
         if (active) setRuntimeWork(value)
       })
       .catch(cause => {
-        if (active) setError(String(cause))
+        if (active) setError(getStandInErrorMessage(cause))
       })
     return () => {
       active = false

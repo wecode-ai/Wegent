@@ -12,7 +12,7 @@ import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
 import dynamic from 'next/dynamic'
-import type { Components } from 'react-markdown'
+import type { Components, Options } from 'react-markdown'
 import katex from 'katex'
 import { Check, Copy, Code, ChevronDown, ChevronUp } from 'lucide-react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
@@ -42,6 +42,8 @@ interface EnhancedMarkdownProps {
   /** Custom components to override default rendering */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   components?: Record<string, React.ComponentType<any>>
+  /** Optional feature-local transforms; default Markdown rendering is unchanged. */
+  rehypePlugins?: Options['rehypePlugins']
 }
 
 type ContentPart =
@@ -637,6 +639,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   source,
   theme,
   components,
+  rehypePlugins: extraRehypePlugins,
 }: EnhancedMarkdownProps) {
   // Extract frontmatter before processing
   const { frontmatter, body } = useMemo(() => extractFrontmatter(source), [source])
@@ -755,8 +758,9 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
       ])
     }
     plugins.push(rehypeRaw)
+    if (extraRehypePlugins) plugins.push(...extraRehypePlugins)
     return plugins
-  }, [hasMath])
+  }, [hasMath, extraRehypePlugins])
 
   // URL transform to allow wegent:// and attachment:// scheme URLs
   const urlTransform = useMemo(() => createSchemeAwareUrlTransform(['wegent:', 'attachment:']), [])

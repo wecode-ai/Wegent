@@ -182,6 +182,71 @@ def test_resolve_runtime_route_identity_prefers_app_when_app_id_is_shared(test_d
     )
 
 
+def test_duplicate_app_records_share_app_device_id(test_db):
+    """Historical duplicate App registrations must not resolve by shared alias.
+
+    Regression: several Device records share one appDeviceId with different
+    runtimeInstanceId values. Resolving the shared alias must fail instead of
+    guessing, while each record's route id addresses exactly that record.
+    """
+    test_db.add(
+        _device(
+            logical_id="app-logical-a",
+            runtime_id="app-runtime-a",
+            runtime_instance_id="runtime-original",
+            app_device_id="electron-app",
+            device_type="app",
+        )
+    )
+    test_db.add(
+        _device(
+            logical_id="app-logical-b",
+            runtime_id="app-runtime-b",
+            runtime_instance_id="runtime-replacement",
+            app_device_id="electron-app",
+            device_type="app",
+        )
+    )
+    test_db.commit()
+    records = {
+        device.name: device
+        for device in test_db.query(Kind)
+        .filter_by(user_id=7, kind="Device", namespace="default")
+        .all()
+    }
+    route_a = f"app-record-{records['app-logical-a'].id}"
+    route_b = f"app-record-{records['app-logical-b'].id}"
+
+    # The shared alias is ambiguous and must not resolve.
+    assert (
+        resolve_runtime_route_identity(
+            test_db,
+            user_id=7,
+            submitted_device_id="electron-app",
+        )
+        is None
+    )
+
+    # Each record route addresses exactly its own Runtime registration.
+    identity_a = resolve_runtime_route_identity(
+        test_db,
+        user_id=7,
+        submitted_device_id=route_a,
+    )
+    identity_b = resolve_runtime_route_identity(
+        test_db,
+        user_id=7,
+        submitted_device_id=route_b,
+    )
+
+    assert identity_a is not None
+    assert identity_a.logical_device_id == route_a
+    assert identity_a.runtime_instance_id == "runtime-original"
+    assert identity_b is not None
+    assert identity_b.logical_device_id == route_b
+    assert identity_b.runtime_instance_id == "runtime-replacement"
+
+
 def test_normalize_execution_device_id_returns_canonical_runtime_route(test_db):
     app = _device(
         logical_id="app-logical",

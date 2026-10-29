@@ -99,7 +99,6 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
     onOpenAssistantPlan,
     onRequestUserInputSubmit,
     onRequestUserInputIgnore,
-    scrollOrigin,
     hasMoreBefore,
     loadingMoreBefore,
     onLoadMoreBefore,
@@ -123,14 +122,13 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
       answers: Record<string, { answers: string[] }>
     }) => void
     onRequestUserInputIgnore?: (payload: { kind: string; request_id: string }) => void
-    scrollOrigin?: 'top' | 'bottom'
     hasMoreBefore?: boolean
     loadingMoreBefore?: boolean
     onLoadMoreBefore?: () => void
     transcriptError?: string | null
     onRetryTranscript?: () => void
   }) => (
-    <div data-testid="mock-message-list" data-scroll-origin={scrollOrigin}>
+    <div data-testid="mock-message-list">
       {messages.map(message => (
         <span key={message.id}>{message.content}</span>
       ))}
@@ -801,40 +799,6 @@ describe('TemporaryChatPanel', () => {
     expect(screen.getByTestId('mock-composer')).not.toHaveAttribute('data-trial-plugin')
   })
 
-  it('uses bottom-origin scrolling by default and allows an explicit override', () => {
-    mocks.conversationMessages = [
-      {
-        id: 'existing-message',
-        role: 'assistant',
-        content: 'existing conversation',
-        status: 'done',
-        createdAt: '2026-09-15T00:00:00.000Z',
-      },
-    ]
-    const { rerender } = render(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={address}
-        instanceId="bottom-origin-default"
-        initialAddress={address}
-      />
-    )
-
-    expect(screen.getByTestId('mock-message-list')).toHaveAttribute('data-scroll-origin', 'bottom')
-
-    rerender(
-      <TemporaryChatPanel
-        currentProject={null}
-        source={address}
-        instanceId="top-origin-override"
-        initialAddress={address}
-        scrollOrigin="top"
-      />
-    )
-
-    expect(screen.getByTestId('mock-message-list')).toHaveAttribute('data-scroll-origin', 'top')
-  })
-
   it('passes the collapsed idle state through to the shared composer', () => {
     render(
       <TemporaryChatPanel
@@ -937,6 +901,7 @@ describe('TemporaryChatPanel', () => {
         }),
       })
     )
+    expect(mocks.loadRuntimeTranscriptForPane).not.toHaveBeenCalled()
   })
 
   it('notifies the parent with the resolved task address instead of its optimistic route', async () => {

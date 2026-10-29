@@ -130,7 +130,11 @@ export async function createHarnessPackage(
   resultDir,
   installationId,
   dshVersion,
-  { archiveName = installationId, version = '0.1.0' } = {}
+  {
+    archiveName = installationId,
+    version = '0.1.0',
+    cordisPatch = '- id: ui-model-selection\n  config:\n    provider: fixture\n    model: fixture\n',
+  } = {}
 ) {
   const packagePath = join(resultDir, `${archiveName}.zip`)
   const root = `harness-e2e-plugin-${installationId}`
@@ -174,8 +178,7 @@ export async function createHarnessPackage(
       2
     ),
     [`${root}/packages/bundle/smoke-app/lib/index.js`]: 'export default {}\n',
-    [`${root}/packages/bundle/smoke-app/cordis.patch.yml`]:
-      '- id: ui-model-selection\n  config:\n    provider: fixture\n    model: fixture\n',
+    [`${root}/packages/bundle/smoke-app/cordis.patch.yml`]: cordisPatch,
   })
   return packagePath
 }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createLocalAppServices, createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
 import { getLocalRuntimeSourceIdentity } from '@/lib/local-runtime-sidebar-identity'
 import { updateRuntimeWorkProject } from '@/lib/runtime-project-update'
@@ -15,6 +15,7 @@ import {
   saveLocalProxyUrl,
 } from '@/features/model-settings/localProxySettings'
 import {
+  awaitLocalExecutorRequestHoldForE2E,
   connectLocalExecutorToBackend,
   disconnectLocalExecutorFromBackend,
   ensureBundledPluginInstalled,
@@ -22,11 +23,14 @@ import {
   resumeBundledPluginUpdates,
   ensureLocalExecutorAvailable,
   ensureLocalExecutorStarted,
-  getInitializedBundledPluginMarketplace,
   getBundledPluginUpdateState,
+  getInitializedBundledPluginMarketplace,
+  getLocalExecutorRequestHoldSnapshotForE2E,
   getKnownLocalExecutorDeviceId,
   getLocalExecutorStatus,
+  holdLocalExecutorRequestsForE2E,
   readLocalExecutorLog,
+  releaseLocalExecutorRequestHoldForE2E,
   requestLocalExecutor,
   resetLocalExecutorStateForTests,
   subscribeLocalExecutorEvents,
@@ -201,6 +205,102 @@ describe('localExecutor', () => {
         ([method]) => method === 'runtime.codex.ensure_started'
       )
     ).toHaveLength(2)
+  })
+
+  test('uses the refreshed plugin route for the same Runtime without restarting Codex', async () => {
+    const description = {
+      protocol_version: 1,
+      device_id: 'electron-device',
+      runtime_instance_id: 'electron-runtime',
+      version: '1.8.6',
+      capabilities: ['executor.plugins'],
+      renderer_methods: ['runtime.*'],
+      transports: ['local-endpoint-ndjson'],
+    }
+    describeDshExecutorMock.mockResolvedValue({
+      ...description,
+      device_route_id: 'app-record-70',
+    })
+    const started = await ensureLocalExecutorStarted()
+    expect(started.deviceRouteId).toBe('app-record-70')
+    expect(getKnownLocalExecutorDeviceId()).toBe('electron-device')
+
+    describeDshExecutorMock.mockResolvedValue({
+      ...description,
+      device_route_id: ' app-record-71 ',
+    })
+    const refreshed = await ensureLocalExecutorAvailable({ refresh: true })
+
+    expect(refreshed.deviceId).toBe('electron-device')
+    expect(refreshed.runtimeInstanceId).toBe('electron-runtime')
+    expect(refreshed.deviceRouteId).toBe('app-record-71')
+    expect(getKnownLocalExecutorDeviceId()).toBe('electron-device')
+    await ensureLocalExecutorStarted()
+    expect(
+      requestDshExecutorMock.mock.calls.filter(
+        ([method]) => method === 'runtime.codex.ensure_started'
+      )
+    ).toHaveLength(1)
+  })
+
+  test('clears an initialized plugin route when a fresh description is no longer registered', async () => {
+    const description = await describeDshExecutorMock()
+    describeDshExecutorMock.mockResolvedValue({ ...description, device_route_id: 'app-record-70' })
+    const started = await ensureLocalExecutorStarted()
+    expect(started.deviceRouteId).toBe('app-record-70')
+
+    describeDshExecutorMock.mockResolvedValue(description)
+    const refreshed = await ensureLocalExecutorAvailable({ refresh: true })
+
+    expect(refreshed.deviceRouteId).toBeUndefined()
+    expect(getKnownLocalExecutorDeviceId()).toBe('electron-device')
+  })
+
+  test('retains the local plugin catalog cache across record-route changes and rejects another device', async () => {
+    const {
+      clearLocalCodexPluginsReadStateCache,
+      createLocalCodexPluginApi,
+      peekLocalCodexPluginsReadState,
+    } = await import('@/api/local/codexPlugins')
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    clearLocalCodexPluginsReadStateCache()
+    const description = await describeDshExecutorMock()
+    describeDshExecutorMock.mockResolvedValue({ ...description, device_route_id: 'app-record-70' })
+    const defaultRequest = requestDshExecutorMock.getMockImplementation()!
+    requestDshExecutorMock.mockImplementation(async (...args) => {
+      if (args[0] === 'codex.app_server_request') return { marketplaces: [] }
+      if (args[0] === 'executor.plugins.links.list') return []
+      if (args[0] === 'executor.plugins.store.list') return { storePath: '/tmp/store', plugins: [] }
+      return defaultRequest(...args)
+    })
+    try {
+      const params = { mergeAllMarketplaces: true }
+      const state = await createLocalCodexPluginApi().readState(params)
+      expect(state.deviceId).toBe('electron-device')
+      expect(peekLocalCodexPluginsReadState(params)?.deviceId).toBe('electron-device')
+      const persisted = localStorage.getItem('wework.plugins.codexCatalog.v1')
+      expect(persisted).toBeTruthy()
+
+      describeDshExecutorMock.mockResolvedValue({
+        ...description,
+        device_route_id: 'app-record-71',
+      })
+      const refreshed = await ensureLocalExecutorAvailable({ refresh: true })
+      expect(refreshed.deviceRouteId).toBe('app-record-71')
+      expect(peekLocalCodexPluginsReadState(params)?.deviceId).toBe('electron-device')
+
+      clearLocalCodexPluginsReadStateCache()
+      localStorage.setItem('wework.plugins.codexCatalog.v1', persisted!)
+      requestDshExecutorMock.mockRejectedValue(new Error('Offline'))
+      expect(peekLocalCodexPluginsReadState(params)?.deviceId).toBe('electron-device')
+
+      describeDshExecutorMock.mockResolvedValue({ ...description, device_id: 'another-device' })
+      await ensureLocalExecutorAvailable({ refresh: true })
+      expect(peekLocalCodexPluginsReadState(params)).toBeNull()
+    } finally {
+      delete window.__WEWORK_RUNTIME_CONFIG__
+      clearLocalCodexPluginsReadStateCache()
+    }
   })
 
   test('rejects a fresh sidebar status check when a cached executor is no longer reachable', async () => {
@@ -898,5 +998,55 @@ describe('localExecutor', () => {
     })
     unlisten()
     expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  describe('E2E request ordering holds', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+      resetLocalExecutorStateForTests()
+    })
+
+    test('keeps an accepted executor response pending until the gate opens', async () => {
+      vi.stubEnv('VITE_WEWORK_E2E', 'true')
+      requestDshExecutorMock.mockResolvedValue({ accepted: true })
+      holdLocalExecutorRequestsForE2E('runtime.tasks.send')
+      const request = requestLocalExecutor('runtime.tasks.send', { taskId: 'task-1' })
+      await expect(awaitLocalExecutorRequestHoldForE2E()).resolves.toBe(1)
+      expect(getLocalExecutorRequestHoldSnapshotForE2E()).toMatchObject({
+        completedCount: 0,
+        heldCount: 1,
+        phase: 'after-response',
+        released: false,
+      })
+
+      let resolved = false
+      void request.then(() => {
+        resolved = true
+      })
+      await Promise.resolve()
+      expect(resolved).toBe(false)
+
+      expect(releaseLocalExecutorRequestHoldForE2E()).toBe(true)
+      await expect(request).resolves.toEqual({ accepted: true })
+      expect(getLocalExecutorRequestHoldSnapshotForE2E()).toMatchObject({
+        completedCount: 1,
+        released: true,
+      })
+    })
+
+    test('can hold a stale executor request before dispatch', async () => {
+      vi.stubEnv('VITE_WEWORK_E2E', 'true')
+      requestDshExecutorMock.mockResolvedValue({ accepted: false })
+      holdLocalExecutorRequestsForE2E('runtime.tasks.send', 'before-dispatch')
+      const request = requestLocalExecutor('runtime.tasks.send', { taskId: 'task-1' })
+      await expect(awaitLocalExecutorRequestHoldForE2E()).resolves.toBe(1)
+      expect(requestDshExecutorMock).not.toHaveBeenCalled()
+
+      releaseLocalExecutorRequestHoldForE2E()
+      await expect(request).resolves.toEqual({ accepted: false })
+      expect(requestDshExecutorMock).toHaveBeenCalledExactlyOnceWith('runtime.tasks.send', {
+        taskId: 'task-1',
+      })
+    })
   })
 })

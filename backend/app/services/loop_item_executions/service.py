@@ -296,9 +296,24 @@ def execution_ai_state(
 
     if execution.status == STATUS_PENDING_APPROVAL:
         return None
-    state = dict(existing) if isinstance(existing, dict) else {}
     agent = db.get(ProjectChatAgent, execution.agent_id) if execution.agent_id else None
     team = db.get(Kind, execution.team_id) if execution.team_id else None
+    return execution_ai_state_from_resources(
+        execution, existing=existing, agent=agent, team=team
+    )
+
+
+def execution_ai_state_from_resources(
+    execution: LoopItemExecution,
+    *,
+    existing: object = None,
+    agent: ProjectChatAgent | None = None,
+    team: Kind | None = None,
+) -> dict[str, object] | None:
+    """Render execution state using resources loaded by the caller."""
+    if execution.status == STATUS_PENDING_APPROVAL:
+        return None
+    state = dict(existing) if isinstance(existing, dict) else {}
 
     def iso(value: datetime) -> str | None:
         optional = _optional_datetime(value)
@@ -2236,6 +2251,7 @@ class LoopItemExecutionService:
         expected_version: Optional[int] = None,
         observed_at: Optional[datetime] = None,
         event_seq: Optional[int] = None,
+        reconciled: bool = False,
     ) -> Optional[LoopItemExecution]:
         """Mark a run completed and release its device slot."""
 
@@ -2251,6 +2267,7 @@ class LoopItemExecutionService:
             observed_at=observed_at,
             event_seq=event_seq,
             termination_reason="runtime_succeeded",
+            reconciled=reconciled,
         )
         return result
 
@@ -2475,6 +2492,7 @@ class LoopItemExecutionService:
         observed_at: Optional[datetime] = None,
         event_seq: Optional[int] = None,
         termination_reason: Optional[str] = None,
+        reconciled: bool = False,
     ) -> Optional[LoopItemExecution]:
         """Atomically choose and project the first terminal outcome.
 
@@ -2554,6 +2572,7 @@ class LoopItemExecutionService:
                 error=error,
                 summary_note=note,
                 completed_at=now,
+                reconciled=reconciled,
             )
             notify_execution_lifecycle(
                 db,
@@ -2738,6 +2757,7 @@ class LoopItemExecutionService:
         error: Optional[str],
         summary_note: Optional[str],
         completed_at: datetime,
+        reconciled: bool = False,
     ) -> ProjectChatMessage | None:
         """Apply the elected execution outcome without committing or pushing."""
 
@@ -2754,6 +2774,10 @@ class LoopItemExecutionService:
                 error=error,
             )
             metadata = dict(activity.metadata_json or {})
+            if reconciled and isinstance(metadata.get("runtime_turn_id"), str):
+                # Outcome-only observations must retain eligibility for the
+                # matching final event to supply text after this transaction.
+                metadata.setdefault("runtime_completed_at", completed_at.isoformat())
             activity.metadata_json = {
                 **metadata,
                 "run_status": terminal_status,
@@ -3001,6 +3025,29 @@ class LoopItemExecutionService:
             ):
                 return candidate
         return None
+
+    @staticmethod
+    def _bind_activity_runtime_turn(
+        db: Session,
+        execution: LoopItemExecution,
+        payload: dict,
+    ) -> None:
+        """Bind the current Runtime turn so later snapshots match exactly."""
+
+        raw_turn_id = payload.get("subtaskId") or payload.get("subtask_id")
+        if not isinstance(raw_turn_id, str):
+            return
+        turn_id = raw_turn_id.strip()
+        if not turn_id:
+            return
+        activity = LoopItemExecutionService._linked_activity(db, execution)
+        if activity is None or activity.status not in {"pending", "streaming"}:
+            return
+        metadata = dict(activity.metadata_json or {})
+        if metadata.get("runtime_turn_id") == turn_id:
+            return
+        metadata["runtime_turn_id"] = turn_id
+        activity.metadata_json = metadata
 
     @staticmethod
     def _is_subagent_activity(activity: ProjectChatMessage) -> bool:
@@ -3306,6 +3353,9 @@ class LoopItemExecutionService:
                 commit=False,
                 push=False,
             )
+        # Any accepted observation identifies the current turn, even when the
+        # created event lost a concurrent lease update or arrived out of order.
+        self._bind_activity_runtime_turn(db, row, payload)
         db.commit()
         db.refresh(row)
         return row
@@ -4426,6 +4476,7 @@ class LoopItemExecutionService:
                 content="",
                 expected_status=row.status,
                 expected_version=row.version,
+                reconciled=True,
             )
         if terminal == STATUS_FAILED:
             self.open_execution_activity(

@@ -1,10 +1,7 @@
 import {
-  cacheConversationScrollSnapshot,
-  cacheConversationVirtualMeasurements,
+  migrateConversationViewport,
   clearConversationViewportCache,
   evictConversationViewport,
-  getConversationScrollSnapshot,
-  getConversationVirtualMeasurements,
   getConversationViewportCacheStats,
 } from '@wegent/collaboration/conversation/conversationViewportCache'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
@@ -50,6 +47,7 @@ export const projectedMessagesByConversation = new Map<
 export const metadataByConversation = new Map<string, RuntimeConversationMetadata>()
 const listenersByConversation = new Map<string, Set<Subscription>>()
 const retainingListenersByConversation = new Map<string, Set<Subscription>>()
+const archivedConversationKeys = new Set<string>()
 export const hydrationByConversation = new Map<
   string,
   { token: symbol; bufferedActions: RuntimePaneMessageAction[] }
@@ -186,15 +184,7 @@ function migrateRuntimeConversation(previousKey: string, nextKey: string): void 
   moveEntry(interruptedGuidanceIdsByConversation, previousKey, nextKey, mergeSets)
   moveEntry(goalSnapshotVersionsByConversation, previousKey, nextKey, Math.max)
   reconcileAcceptedQueuedMessages(nextKey, turnsByConversation.get(nextKey) ?? [])
-  const scroll = getConversationScrollSnapshot(previousKey)
-  if (scroll && !getConversationScrollSnapshot(nextKey)) {
-    cacheConversationScrollSnapshot(nextKey, scroll)
-  }
-  const measurements = getConversationVirtualMeasurements(previousKey)
-  if (measurements && !getConversationVirtualMeasurements(nextKey)) {
-    cacheConversationVirtualMeasurements(nextKey, measurements)
-  }
-  evictConversationViewport(previousKey)
+  migrateConversationViewport(previousKey, nextKey)
 }
 
 function moveEntry<T>(
@@ -288,6 +278,7 @@ export function notifyRuntimeConversation(key: string, action?: RuntimePaneMessa
 }
 
 export function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTurn[]): void {
+  if (archivedConversationKeys.has(key)) return
   projectedMessagesByConversation.delete(key)
   cacheBoundedEntry(turnsByConversation, key, turns, evictedKey => {
     projectedMessagesByConversation.delete(evictedKey)
@@ -302,6 +293,7 @@ export function cacheRuntimeConversationQueuedMessagesByKey(
   key: string,
   messages: RuntimePaneQueuedMessage[]
 ): void {
+  if (archivedConversationKeys.has(key)) return
   if (messages.length === 0) {
     queuedMessagesByConversation.delete(key)
     scheduleTerminalConversationEviction(key)
@@ -350,6 +342,14 @@ export function evictRuntimeConversationKey(key: string): void {
   evictConversationViewport(key)
 }
 
+export function markRuntimeConversationArchived(key: string): void {
+  archivedConversationKeys.add(key)
+}
+
+export function unmarkRuntimeConversationArchived(key: string): void {
+  archivedConversationKeys.delete(key)
+}
+
 export function getRuntimeConversationCacheStats() {
   return { messageEntries: turnsByConversation.size, ...getConversationViewportCacheStats() }
 }
@@ -361,6 +361,7 @@ export function clearRuntimeConversationCacheStore(): void {
     entries.clear()
   }
   canonicalDeviceIdByAlias.clear()
+  archivedConversationKeys.clear()
   revisionByValue = new WeakMap()
   nextRevision = 1
   clearConversationViewportCache()

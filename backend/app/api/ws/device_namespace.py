@@ -989,6 +989,8 @@ def _project_chat_runtime_event_sync(
             event_name=event_name,
             payload=payload,
             owner_user_id=user_id,
+            accepted_terminal=matched_execution is not None
+            and matched_execution.status == "completed",
         )
         if projected is None:
             return {
@@ -1829,7 +1831,13 @@ class DeviceNamespace(socketio.AsyncNamespace):
             f"[Device WS] Device registered: user={user_id}, device={payload.device_id}"
         )
 
-        return {"success": True, "device_id": payload.device_id}
+        # Return the canonical record-scoped route so the Runtime can address
+        # this exact installation even when historical records share its name.
+        return {
+            "success": True,
+            "device_id": payload.device_id,
+            "device_route_id": route_id,
+        }
 
     @trace_async("device.register.capability_sync", tracer_name="backend.device")
     async def _sync_global_capabilities_to_registered_device(

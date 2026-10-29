@@ -1,4 +1,5 @@
 import { createStandInExecutorApi } from '@/api/standIn'
+import type { McpAppRequest } from '@/api/mcpApps'
 import { createLocalProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { requestRunnerSelection } from '@/lib/runner-selection'
 import {
@@ -2927,6 +2928,9 @@ export function createRuntimeWorkApiFromIpc(
         localDeviceId
       )
     },
+    async requestMcpApp<T = unknown>(data: McpAppRequest): Promise<T> {
+      return requestWithLocalDevice<T, McpAppRequest>('runtime.mcp_apps.request', data)
+    },
     async cleanRuntimeBackgroundTerminals(
       address: RuntimeTaskAddress
     ): Promise<{ success: boolean; error?: string }> {
@@ -4543,7 +4547,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       async resolveLaunch(
         harnessId: LocalHarnessId,
         option: LocalHarnessModelOption | null,
-        scope?: string
+        scope?: string,
+        includeContext = true
       ) {
         if (!option) return null
         await ensureStatus()
@@ -4555,7 +4560,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
           }
         )
         const launch = harnessLaunchThroughMessagesProxy(harnessId, option, registration)
-        if (harnessId !== 'opencode') return launch
+        if (harnessId !== 'opencode' || !includeContext) return launch
         try {
           const context = await request<HarnessContextRegistration>(
             'runtime.harness_context.register',

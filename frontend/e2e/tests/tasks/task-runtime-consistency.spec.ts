@@ -5,9 +5,8 @@
  * runtime-check pull path only as a lightweight convergence checkpoint.
  */
 
-import { APIRequestContext, BrowserContext, Page, expect, test } from '@playwright/test'
-import { ADMIN_USER } from '../../config/test-users'
-import { ApiClient, createApiClient } from '../../utils/api-client'
+import { APIRequestContext, BrowserContext, Page, expect } from '@playwright/test'
+import { test } from '../../fixtures/task-runtime'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -54,18 +53,15 @@ type CapturedModelRequest = {
 test.describe.configure({ mode: 'serial', timeout: 120_000 })
 
 test.describe('Task runtime consistency', () => {
-  let apiClient: ApiClient
   let token = ''
   let createdModel = false
   let createdBotId: number | null = null
   let createdTeamId: number | null = null
   let streamRulesForCleanup: string[] = []
 
-  test.beforeAll(async ({ request }) => {
-    apiClient = createApiClient(request)
-    const loginResponse = await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
-    token = loginResponse.data?.access_token || ''
-    expect(token, 'Admin login should return an access token').toBeTruthy()
+  test.beforeAll(async ({ runtimeAccount }) => {
+    const { request } = runtimeAccount
+    token = runtimeAccount.token
 
     const healthResponse = await request.get(`${MOCK_MODEL_SERVER_URL}/health`)
     expect(healthResponse.status(), 'Mock model server should be running').toBe(200)
@@ -976,31 +972,8 @@ test.describe('Task runtime consistency', () => {
 
   async function ensureTestTeamSelected(page: Page): Promise<void> {
     const messageInput = page.getByTestId('message-input')
-    if (await messageInput.isVisible({ timeout: 5000 }).catch(() => false)) {
-      return
-    }
-
-    const agentSelector = page
-      .locator('[data-testid="agent-skill-selector-button"], [data-testid="team-selector"]')
-      .first()
-    await expect(agentSelector).toBeVisible({ timeout: 45_000 })
-    await agentSelector.click({ force: true })
-
-    const searchInput = page
-      .locator('input[placeholder*="Search"], input[placeholder*="搜索"]')
-      .last()
-    if (await searchInput.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await searchInput.fill(TEST_TEAM_NAME)
-    }
-
-    const teamOption = page
-      .locator(
-        `[data-testid="team-option-${TEST_TEAM_NAME}"], [role="button"]:has-text("${TEST_TEAM_NAME}"), [role="option"]:has-text("${TEST_TEAM_NAME}")`
-      )
-      .first()
-    await expect(teamOption).toBeVisible({ timeout: 10000 })
-    await teamOption.click({ force: true })
-    await expect(messageInput).toBeVisible({ timeout: 10000 })
+    await expect(messageInput).toBeVisible({ timeout: 45_000 })
+    await expect(messageInput).toHaveAttribute('data-team-id', String(createdTeamId))
   }
 
   function authHeaders(): Record<string, string> {

@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto'
 import { prepareHarnessAppUi } from '../modules/harness-app-bootstrap.mjs'
 import { verifyHarnessDevelopment } from '../modules/harness-app-development.mjs'
 import { verifyHarnessLifecycle } from '../modules/harness-app-lifecycle.mjs'
+import { verifyHarnessAppModels } from '../modules/harness-app-models.mjs'
 
 export async function createDesktopScenario({
   checkpoint,
@@ -214,6 +215,15 @@ export async function createDesktopScenario({
     },
 
     async verify(control) {
+      if (checkpoint === 'harness-app-models') {
+        await verifyHarnessAppModels(control, {
+          uiTimeoutMs,
+          resultDir,
+          captureScreenshot,
+          electronUserDataDirectory,
+        })
+        return
+      }
       const { legacyRuntimeCache } = await prepareHarnessAppUi(control, {
         legacyPackagePath,
         uiTimeoutMs,
@@ -249,8 +259,7 @@ export async function createDesktopScenario({
             }
           }
         }
-      } else {
-        assert.equal(checkpoint, 'harness-app-lifecycle')
+      } else if (checkpoint === 'harness-app-lifecycle') {
         await verifyHarnessLifecycle(control, {
           packagePath,
           uiTimeoutMs,

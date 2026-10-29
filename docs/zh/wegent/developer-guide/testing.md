@@ -281,8 +281,23 @@ Executor Manager、Knowledge Engine、Shared 和 CLI 测试；修改
 在 PR 上添加 `ci:all` 标签可以跳过路径分类，强制运行全部模块测试、平台 E2E、
 Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径分类可能遗漏
 影响面的改动。三个测试 workflow 都会响应标签事件；没有 `ci:all` 标签时仍按
-改动路径决定测试范围。Wework macOS 内存门禁仅在带有 `ci:memory` 或 `ci:all` 标签的非 Draft PR 中运行；
+改动路径决定测试范围。Wework macOS 内存门禁仅在带有 `ci:all` 标签的非 Draft PR 中运行；
 普通 PR、定时任务和手动任务均不触发内存 E2E。
+
+Windows 桌面构建由 `build-wework-windows-e2e` 共享 action 负责，主分支缓存预热与
+PR 使用同一路径。只有 `main` 可以写入共享缓存；完整桌面包按源码输入、Node、
+Rust 和 runner 镜像版本精确匹配，不使用前缀匹配。命中后直接验证并上传原始构建包，
+保留生成时的构建身份；未命中时复用 pnpm、Codex、Electron、Executor 和 Backend
+编译缓存后构建。这里只复用 E2E 构建，不产生升级兼容性证据。
+
+Windows Core 使用 `.github/ci/wework-windows-checkpoint-durations.json` 中带有
+Actions 来源链接的成功检查点耗时中位数，单独均衡串行分片；Linux 分组不变。
+调度保留十个 runner 的预算、两个独占基准分片和全部检查点。包含未测量检查点的
+分片整体保持原样，待有成功日志后更新耗时数据。失败和取消的检查点不计入基线；
+共享 CLI、Electron 或对象存储准备的检查点一起调度，保持原有准备任务数量。
+负载也计入带有 job 来源链接的条件准备耗时，避免冷构建对象存储的分片额外拖尾；
+缓存命中后这部分成本可能降低。
+估算负载不包含 runner 排队、公共初始化和清理时间，最终收益以完整 CI 实测为准。
 
 功能分支不在普通 `push` 事件中运行重复 CI；创建 PR 后由 `pull_request` 事件验证。
 同一 PR 或 `main` 上有更新提交时，旧的未完成运行会被取消。`test-summary` 和
@@ -623,3 +638,17 @@ pnpm --filter wecode-ai-assistant test -- src/__tests__/utils/test_example.test.
 - [Testing Library](https://testing-library.com/)
 - [Jest 文档](https://jestjs.io/)
 - [GitHub Actions](https://docs.github.com/en/actions)
+
+## E2E 资源复用与分片分配
+
+Milvus 和 etcd 由 shard 4 的知识库测试入口按需启动，复用现有容器网络与 MinIO；其他分片不启动这两个服务。启动顺序显式检查 etcd `/health` 和 MinIO `/minio/health/ready`，再启动 Milvus 并等待真实 `/healthz` 响应，总启动预算保持 180 秒。容器退出立即失败，测试失败保留原退出码；所有路径都保存容器状态、健康检查配置与历史、完整日志并清理容器。诊断制品为 `knowledge-provider-lifecycle-e2e`。这避免了 [40609610685](https://github.com/wecode-ai/Wegent/actions/runs/40609610685) 中服务在 checkout 前失败、后续步骤无法保存健康检查详情的问题；四个 runner 与两个知识库测试入口保持不变。
+
+平台 E2E 保持四个既有分片，S3 上传测试复用 shard 2 的 MySQL、Redis 和 MinIO，媒体托管测试复用 shard 3 的相同服务。测试入口、断言和证据制品保持不变；Redis 使用独立逻辑库，媒体校验工具预装在共享镜像中。复制测试在 shard 3 按需启动专用副本和 broker，结束或失败时保存日志并删除容器，不在其他分片常驻。副本的健康探针通过 TCP 认证执行 `SELECT 1`，避免把初始化期间仅监听 Unix socket 的临时实例误判为就绪。知识远程索引测试移至 shard 4。
+
+该分配参考成功运行 [40548056927](https://github.com/wecode-ai/Wegent/actions/runs/40548056927) 和 [40547828678](https://github.com/wecode-ai/Wegent/actions/runs/40547828678)：shard 1 的知识索引步骤耗时 149–164 秒，复制步骤耗时 20–26 秒，媒体测试耗时 24–26 秒，S3 测试约 6 秒。移走 shard 1 的额外步骤，并在现有较轻分片承载附件测试；不增加机器，不以增加并行 job 缩短墙钟时间。后续按实际测试步骤耗时与累计 runner 时间复核分配，不计排队时间。
+
+平台 E2E 的普通标签事件不运行测试分类，仅 `ci:all` 标签触发完整回归。桌面 Plugins 的选中场景在一个 job 内依次运行，保留每个场景的独立初始化与失败结果。macOS 共享 job 显示为 `Wework Desktop macOS E2E`：Inspector 按受影响路径自动运行，memory 步骤仍仅对带 `ci:all` 的 PR 执行；定时运行和手动运行不会自动执行 memory 步骤。
+
+首次集成运行 [40558717377](https://github.com/wecode-ai/Wegent/actions/runs/40558717377) 中，五个测试 job 的累计 runner 执行时间为 44 分 20 秒，两次七个 job 的基线分别为 48 分 18 秒与 51 分 53 秒，均从 job 首个步骤开始计时、排除排队。该轮 Provider-native 的逻辑分片 1 用时 120 秒，逻辑分片 3 基本为空，因此将它们分别交给物理 shard 3 与 shard 1；其他 Provider-native 分片不变，普通浏览器分片和各机器的用户身份也不变。矩阵契约检查保证仍只有四个物理分片，所有四个 Provider-native 逻辑分片恰好执行一次。
+
+插件安装或卸载尚未结束时，后台设备补同步与显式刷新对账共用前台操作的 busy 状态，不能把过程中可见的 pending 记录当成缺包而触发第二次全量下发。前台操作结束后，真正未完成的设备同步仍会恢复。组件回归覆盖“安装请求挂起时收到 pending 目录”和“请求结束后恢复补同步”；原多 Runtime 隔离 E2E 的逐设备一次下发断言保持不变。

@@ -11,13 +11,14 @@ import type { SmartAppVerificationContract } from './smart-app-verification-type
 import { copySmartAppDeliveryFiles } from './smart-app-package-validator.js'
 
 describe('verifySmartAppRuntime', () => {
-  test('uses unique temporary homes and ports, preflights, starts, probes, and cleans up', async () => {
+  test('requests OS-assigned ports and probes each started runtime address in an isolated home', async () => {
     const prepared: Array<{ dataDirectory: string; port: number; environment: NodeJS.ProcessEnv }> =
       []
     const stop = vi.fn().mockResolvedValue(undefined)
     const runCommand = vi.fn().mockResolvedValue(undefined)
     const verifyPage = vi.fn().mockResolvedValue({ issues: [] })
     const runProbe = vi.fn().mockResolvedValue({ issues: [] })
+    let nextPort = 41001
     const dependencies = fixtureDependencies({
       prepareLaunch: async options => {
         prepared.push({
@@ -27,7 +28,22 @@ describe('verifySmartAppRuntime', () => {
         })
         return launch(options.dataDirectory, options.port)
       },
-      createRuntime: () => ({ start: vi.fn().mockResolvedValue(undefined), stop }),
+      createRuntime: runtimeOptions => {
+        expect(runtimeOptions.url).toBe('http://127.0.0.1:0/')
+        expect(runtimeOptions.args?.slice(-2)).toEqual(['--port', '0'])
+        const baseUrl = `http://127.0.0.1:${nextPort++}/`
+        let started = false
+        return {
+          start: vi.fn(async () => {
+            started = true
+          }),
+          url: () => {
+            expect(started).toBe(true)
+            return baseUrl
+          },
+          stop,
+        }
+      },
       runCommand,
       verifyPage,
       runProbe,
@@ -38,18 +54,22 @@ describe('verifySmartAppRuntime', () => {
 
     expect(prepared).toHaveLength(2)
     expect(prepared[0]?.dataDirectory).not.toBe(prepared[1]?.dataDirectory)
-    expect(prepared[0]?.port).not.toBe(prepared[1]?.port)
+    expect(prepared.map(item => item.port)).toEqual([0, 0])
     expect(runCommand.mock.calls[0]?.[1]).toContain('--dump-config')
-    expect(verifyPage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        baseUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:/),
-        path: '/',
-        readySelector: '[data-testid="smart-app-ready"]',
-      })
-    )
-    expect(runProbe).toHaveBeenCalledWith(
-      expect.objectContaining({ baseUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:/) })
-    )
+    for (const [index, baseUrl] of [
+      'http://127.0.0.1:41001/',
+      'http://127.0.0.1:41002/',
+    ].entries()) {
+      expect(verifyPage).toHaveBeenNthCalledWith(
+        index + 1,
+        expect.objectContaining({
+          baseUrl,
+          path: '/',
+          readySelector: '[data-testid="smart-app-ready"]',
+        })
+      )
+      expect(runProbe).toHaveBeenNthCalledWith(index + 1, expect.objectContaining({ baseUrl }))
+    }
     expect(stop).toHaveBeenCalledTimes(2)
     for (const item of prepared) {
       await expect(stat(item.dataDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -158,6 +178,7 @@ describe('verifySmartAppRuntime', () => {
           return launch(options.dataDirectory, options.port)
         },
         createRuntime: () => ({
+          url: () => 'http://127.0.0.1:41001/',
           start:
             failure === 'start'
               ? vi.fn().mockRejectedValue(new Error('start failed'))
@@ -196,6 +217,7 @@ describe('verifySmartAppRuntime', () => {
         return launch(options.dataDirectory, options.port)
       },
       createRuntime: () => ({
+        url: () => 'http://127.0.0.1:41001/',
         start: () => {
           controller.abort(new Error('cancelled'))
           return new Promise(() => {})
@@ -274,13 +296,13 @@ function fixtureDependencies(
     prepareLaunch: async options => launch(options.dataDirectory, options.port),
     createRuntime: () => ({
       start: vi.fn().mockResolvedValue(undefined),
+      url: () => 'http://127.0.0.1:41001/',
       stop: vi.fn().mockResolvedValue(undefined),
     }),
     runCommand: vi.fn().mockResolvedValue(undefined),
     verifyPage: vi.fn().mockResolvedValue({ issues: [] }),
     runProbe: vi.fn().mockResolvedValue({ issues: [] }),
     copyProject: vi.fn().mockResolvedValue(undefined),
-    reservePort: vi.fn().mockResolvedValueOnce(41001).mockResolvedValueOnce(41002),
     ...overrides,
   }
 }

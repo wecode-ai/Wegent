@@ -11,6 +11,30 @@
 
 use brz_mysql::MysqlRow;
 
+// Leave ample headroom below MySQL's 65,535 prepared-statement parameters.
+const SUBTASK_IDS_PER_BATCH: usize = 1_000;
+
+/// Read the complete owner-filtered conversation without sorting large JSON
+/// columns. All reads use the same handle, including any deployment route.
+pub async fn ordered_subtasks_for_user<M: brz_mysql::Mysql>(
+    mysql: &M,
+    table: &str,
+    task_id: i64,
+    user_id: i32,
+) -> brz_mysql::MysqlResult<Vec<MysqlRow>> {
+    let rows: Vec<MysqlRow> = mysql
+        .fetch_all(
+            crate::task_store_statements::subtask_ids_by_owner_statement(table),
+            (task_id, user_id),
+        )
+        .await?;
+    let ids = rows
+        .iter()
+        .map(|row| row.get_required::<i64>("id"))
+        .collect::<brz_mysql::MysqlResult<Vec<_>>>()?;
+    load_subtasks_by_ids(mysql, table, &ids).await
+}
+
 /// `subtask_store.list_by_task` page parameters. `owner_user_id` carries the
 /// non-member filter the caller's `is_member` produced (`Some` restricts to
 /// that owner).
@@ -95,17 +119,19 @@ pub async fn load_subtasks_by_ids<M: brz_mysql::Mysql>(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let rows: Vec<MysqlRow> = mysql
-        .fetch_all(
-            crate::task_store_statements::subtasks_by_ids_statement(table, ids.len()),
-            ids.to_vec(),
-        )
-        .await?;
     let mut by_id: std::collections::HashMap<i64, MysqlRow> =
-        std::collections::HashMap::with_capacity(rows.len());
-    for row in rows {
-        let id: i64 = row.get_required("id")?;
-        by_id.insert(id, row);
+        std::collections::HashMap::with_capacity(ids.len());
+    for batch in ids.chunks(SUBTASK_IDS_PER_BATCH) {
+        let rows: Vec<MysqlRow> = mysql
+            .fetch_all(
+                crate::task_store_statements::subtasks_by_ids_statement(table, batch.len()),
+                batch.to_vec(),
+            )
+            .await?;
+        for row in rows {
+            let id: i64 = row.get_required("id")?;
+            by_id.insert(id, row);
+        }
     }
     let mut ordered: Vec<MysqlRow> = Vec::with_capacity(ids.len());
     for id in ids {
@@ -162,42 +188,6 @@ pub struct OwnedTaskPage {
     pub ids: Vec<i64>,
 }
 
-/// `task_store.list_personal_task_candidates` for the single-table store: the
-/// keyset-paged candidate rows for one owner, read from the `tasks` table.
-pub async fn personal_task_candidates<M: brz_mysql::Mysql>(
-    mysql: &M,
-    user_id: i64,
-    limit: i64,
-    cursor: Option<(chrono::NaiveDateTime, i64)>,
-    client_origin: Option<&str>,
-) -> brz_mysql::MysqlResult<Vec<MysqlRow>> {
-    use crate::task_store_statements::{
-        StatementArg, TASKS_TABLE, personal_task_candidates_statement,
-    };
-    // Argument order follows the predicate order: `user_id`, the optional
-    // origin, the optional keyset (`created_at` twice, then `id`), `limit`.
-    let mut args: Vec<StatementArg> = vec![StatementArg::Int(user_id)];
-    if let Some(origin) = client_origin {
-        args.push(StatementArg::Str(origin.to_string()));
-    }
-    if let Some((created_at, id)) = cursor {
-        args.push(StatementArg::DateTime(created_at));
-        args.push(StatementArg::DateTime(created_at));
-        args.push(StatementArg::Int(id));
-    }
-    args.push(StatementArg::Int(limit));
-    mysql
-        .fetch_all(
-            personal_task_candidates_statement(
-                TASKS_TABLE,
-                client_origin.is_some(),
-                cursor.is_some(),
-            ),
-            args,
-        )
-        .await
-}
-
 /// `task_store.list_owned_task_ids`: the distinct count plus one page of the
 /// owner's task ids.
 pub async fn owned_task_id_page<M: brz_mysql::Mysql>(
@@ -214,12 +204,23 @@ pub async fn owned_task_id_page<M: brz_mysql::Mysql>(
     let total = totals
         .first()
         .map_or(Ok(0), |row: &MysqlRow| row.get_required::<i64>("count_1"))?;
-    let rows = mysql
-        .fetch_all(
-            owned_task_ids_statement(TASKS_TABLE, skip > 0),
-            (user_id, limit, skip),
-        )
-        .await?;
+    // The statement omits `OFFSET ?` on the first page, so the bind list must
+    // omit `skip` too; an extra bind shifts the parameters and returns no rows.
+    let rows = if skip > 0 {
+        mysql
+            .fetch_all(
+                owned_task_ids_statement(TASKS_TABLE, true),
+                (user_id, limit, skip),
+            )
+            .await?
+    } else {
+        mysql
+            .fetch_all(
+                owned_task_ids_statement(TASKS_TABLE, false),
+                (user_id, limit),
+            )
+            .await?
+    };
     let ids = rows
         .iter()
         .map(|row: &MysqlRow| row.get_required::<i64>("id"))
@@ -337,6 +338,29 @@ pub async fn ordered_subtasks_by_task<M: brz_mysql::Mysql>(
         .fetch_all(
             crate::task_store_statements::subtasks_by_message_ordered_statement(table),
             (task_id,),
+        )
+        .await?;
+    Ok(SubtaskListing {
+        rows,
+        contexts: None,
+    })
+}
+
+#[cfg(test)]
+#[path = "task_store_listing_tests.rs"]
+mod tests;
+
+/// [`ordered_subtasks_by_task`] on the caller's request transaction.
+pub async fn ordered_subtasks_by_task_on(
+    sql: &mut dyn crate::request_sql::RequestSql,
+    table: &str,
+    task_id: i64,
+) -> brz_mysql::MysqlResult<SubtaskListing> {
+    let rows = sql
+        .fetch_all_rows(
+            crate::request_sql::RouteKey::Task(task_id as u64),
+            &crate::task_store_statements::subtasks_by_message_ordered_statement(table),
+            vec![crate::task_store_statements::StatementArg::Int(task_id)],
         )
         .await?;
     Ok(SubtaskListing {

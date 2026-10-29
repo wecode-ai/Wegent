@@ -52,7 +52,9 @@ const electronMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('electron', () => ({
+  protocol: { handle: vi.fn(), unhandle: vi.fn() },
   app: {
+    once: vi.fn(),
     getPath: electronMocks.appGetPath,
     getVersion: electronMocks.appGetVersion,
   },
@@ -114,6 +116,33 @@ describe('Smart App verification capabilities', () => {
       router.invoke(WEWORK_APP_PRINCIPAL, 'smartApps.createDirectory', input)
     ).resolves.toEqual({ id: 'created-app' })
     expect(createDirectory).toHaveBeenCalledWith(input)
+  })
+
+  test('passes separate model routes to Smart App startup', async () => {
+    const start = vi.fn(async () => ({ state: 'running' }))
+    const { router } = createIsolatedClipboardRouter(true, undefined, { start })
+    const additionalModels = [
+      {
+        modelKey: 'second-model',
+        displayName: 'Second model',
+        baseUrl: 'http://127.0.0.1:9000/v1/harness-router/second-token',
+      },
+    ]
+
+    await router.invoke(WEWORK_APP_PRINCIPAL, 'smartApps.start', {
+      installationId: 'app-1',
+      modelBaseUrl: 'http://127.0.0.1:9000/v1/harness-router/default-token',
+      additionalModels,
+    })
+
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ additionalModels }))
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'smartApps.start', {
+        installationId: 'app-1',
+        additionalModels: [{ modelKey: 'second-model', displayName: 'Second model' }],
+      })
+    ).rejects.toThrow()
+    expect(start).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -318,7 +347,10 @@ function createWebContents(input: {
 function createIsolatedClipboardRouter(
   focused = true,
   popoutHost?: Partial<ElectronE2EHost>,
-  smartApps?: { createDirectory: (input: Record<string, string>) => Promise<unknown> },
+  smartApps?: {
+    createDirectory?: (input: Record<string, string>) => Promise<unknown>
+    start?: (input: Record<string, unknown>) => Promise<unknown>
+  },
   services?: Partial<ElectronDesktopServices>,
   storedPreferences: Record<string, unknown> = { workbenchMode: 'developer' }
 ) {

@@ -1020,9 +1020,16 @@ class TaskRequestBuilder:
             "User-facing file access:",
             "- Do not assume the user can access local paths, container paths, "
             "terminal sessions, or files you create directly.",
-            "- If you create, edit, or download files for the user, tell the user "
-            'to click "View the task files" / "查看任务文件" in the Wegent task '
-            "page to browse, preview, or download them.",
+            "- For final user-facing deliverables, follow the runtime-provided "
+            "artifact declaration or file-delivery instructions before your final "
+            "response. Writing a file alone does not publish an artifact card.",
+            "- After successful delivery, mention the filename and direct the user "
+            "to its artifact card in the conversation to preview or download it. "
+            "Do not claim a downloadable artifact is available if delivery failed "
+            "or was not performed.",
+            '- Use "View the task files" / "查看任务文件" only for browsing workspace '
+            "files, such as source code or intermediate files, not as a substitute "
+            "for delivering final user-facing files.",
             "- Keep paths in your answer as useful context when relevant, but do "
             "not present a runtime path as the only way for the user to get a file.",
             "",
@@ -1030,7 +1037,8 @@ class TaskRequestBuilder:
             "- Match Wegent's web interaction model instead of giving generic "
             "sandbox or local-terminal instructions.",
             "- If the task runs on a selected device, remember that generated "
-            "files may live on that device or be exposed through Wegent task files.",
+            "files remain on that device; the artifact card provides access after "
+            "successful declaration, without uploading file contents to Backend.",
             WEB_RUNTIME_GUIDANCE_CLOSE,
         ]
         guidance = "\n".join(guidance_lines)

@@ -223,7 +223,10 @@ export async function verifyIssueTranscriptTransfer({
 
   // Reload clears the renderer cache so the drawer must use its HTTP read path.
   await reloadMainWindow(control, 'The large Issue history did not reload')
-  await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
+  // The reload remounts the tab strip, so the fixed board tab is not queryable yet.
+  await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]', {
+    timeoutMs,
+  })
   await control.command(
     'waitFor',
     scope(`[data-testid="collaboration-workspace-project-${fixture.project.id}"]`)
@@ -235,6 +238,21 @@ export async function verifyIssueTranscriptTransfer({
   await control.command(
     'clickWhenEnabled',
     scope(`[data-testid="cloud-todo-card-${fixture.issue.id}"]`)
+  )
+  // Reload also refreshes the runtime token and replaces its cloud connection.
+  // History transfer starts only after the new registration is acknowledged.
+  const registrationDeadline = Date.now() + timeoutMs
+  let registration
+  do {
+    registration = JSON.parse(
+      await control.command('getPluginSyncDiagnostics', 'body', { value: address.deviceId })
+    )
+    if (registration.rendererConnected && registration.backend.connected) break
+    await new Promise(resolve => setTimeout(resolve, 100))
+  } while (Date.now() < registrationDeadline)
+  assert.ok(
+    registration.rendererConnected && registration.backend.connected,
+    'The reloaded client must complete its runtime registration before reading Issue history'
   )
   await control.command(
     'click',

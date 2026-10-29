@@ -135,6 +135,8 @@ describe('conversation find navigation', () => {
     frame()
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({ top: 342, behavior: 'smooth' })
     expect(scroller.scrollTo).toHaveBeenCalledTimes(2)
+    expect(navigation).toHaveBeenLastCalledWith('target')
+    act(() => scroller.dispatchEvent(new Event('scrollend')))
     expect(navigation).toHaveBeenLastCalledWith(null)
     unmount()
     expect(scroller.scrollTo).toHaveBeenCalledTimes(2)
@@ -304,17 +306,14 @@ describe('conversation find navigation', () => {
       frame()
     }
     expect(scroller.scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 60, behavior: 'smooth' })
+    expect(navigation).toHaveBeenLastCalledWith('target')
+    act(() => scroller.dispatchEvent(new Event('scrollend')))
     expect(navigation).toHaveBeenLastCalledWith(null)
   })
 
-  test.each([
-    [true, false],
-    [true, true],
-    [false, false],
-    [false, true],
-  ])(
-    'centers the selected occurrence with bottom origin=%s and reduced motion=%s',
-    async (bottomOrigin, reducedMotion) => {
+  test.each([false, true])(
+    'centers the selected occurrence with reduced motion=%s',
+    async reducedMotion => {
       const preference = window.matchMedia('(prefers-reduced-motion: reduce)')
       vi.spyOn(window, 'matchMedia').mockReturnValue({ ...preference, matches: reducedMotion })
       const highlights = new Map<string, Set<Range>>()
@@ -350,8 +349,7 @@ describe('conversation find navigation', () => {
         return range
       })
       const scroller = document.createElement('div')
-      if (bottomOrigin) scroller.dataset.scrollOrigin = 'bottom'
-      scroller.scrollTop = bottomOrigin ? 0 : 900
+      scroller.scrollTop = 900
       Object.defineProperties(scroller, {
         scrollHeight: { value: 1200 },
         clientHeight: { value: 300 },
@@ -389,16 +387,16 @@ describe('conversation find navigation', () => {
       })
       await waitFor(() =>
         expect(scroller.scrollTo).toHaveBeenCalledWith({
-          top: bottomOrigin ? -540 : 360,
+          top: 360,
           behavior: reducedMotion ? 'auto' : 'smooth',
         })
       )
       expect(vi.mocked(scroller.scrollTo).mock.calls.map(([options]) => options)).toEqual(
         reducedMotion
-          ? [{ top: bottomOrigin ? -540 : 360, behavior: 'auto' }]
+          ? [{ top: 360, behavior: 'auto' }]
           : [
-              { top: bottomOrigin ? -550 : 350, behavior: 'auto' },
-              { top: bottomOrigin ? -540 : 360, behavior: 'smooth' },
+              { top: 350, behavior: 'auto' },
+              { top: 360, behavior: 'smooth' },
             ]
       )
       const active = [...highlights.entries()].find(([name]) => name.endsWith('-active'))?.[1]

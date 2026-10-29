@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useState } from 'react'
 import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
 
@@ -57,7 +58,14 @@ export function useStandInWorkOrganization({
         (await api.workMessages(userId, deviceId, source.workId)).messages.map(
           message => message.recordId
         )
-      const result = await api.organizeWork(userId, deviceId, source.workId, ids, target?.id)
+      const result = await api.organizeWork(
+        userId,
+        deviceId,
+        source.workId,
+        ids,
+        target?.id,
+        !target ? 'split' : source.messageIds ? 'move' : 'merge'
+      )
       setUndo({
         sourceId: source.workId,
         destinationId: result.id,
@@ -67,7 +75,7 @@ export function useStandInWorkOrganization({
       onSelect(result)
       onRefresh?.()
     } catch (cause) {
-      setError(String(cause))
+      setError(getStandInErrorMessage(cause))
     } finally {
       setBusy(false)
     }
@@ -82,13 +90,14 @@ export function useStandInWorkOrganization({
         deviceId,
         undo.destinationId,
         undo.ids,
-        undo.sourceId
+        undo.sourceId,
+        'undo'
       )
       setUndo(null)
       onSelect(result)
       onRefresh?.()
     } catch (cause) {
-      setError(String(cause))
+      setError(getStandInErrorMessage(cause))
     } finally {
       setBusy(false)
     }

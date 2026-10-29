@@ -6,9 +6,24 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
 from app.api.endpoints.internal import callback
 from shared.models.responses_api import ResponsesAPIStreamEvents
+
+
+@pytest.fixture
+def reference_app(test_app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
+    """Mount the retained Python handler only for its HTTP contract tests."""
+    monkeypatch.setattr(test_app.router, "routes", list(test_app.router.routes))
+    test_app.add_api_route(
+        "/api/internal/callback",
+        callback.handle_callback,
+        methods=["POST"],
+        response_model=callback.CallbackResponse,
+    )
+    return test_app
 
 
 class _SessionContext:
@@ -48,6 +63,45 @@ def _patch_emitters(monkeypatch, state):
         AsyncMock(),
     )
     return emitter
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "data"),
+    [
+        (
+            ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
+            {"delta": "thinking"},
+        ),
+        (
+            ResponsesAPIStreamEvents.ERROR.value,
+            {"message": "failed", "code": "runtime_error"},
+        ),
+    ],
+)
+async def test_retained_single_callback_preserves_http_contract(
+    reference_app, monkeypatch, event_type, data
+):
+    emitter = _patch_emitters(monkeypatch, {"open": False})
+    monkeypatch.setattr(callback, "_get_task_status_user_id", lambda *args: 7)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=reference_app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/internal/callback",
+            json={
+                "event_type": event_type,
+                "task_id": 1,
+                "subtask_id": 2,
+                "data": data,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    emitter.emit.assert_awaited_once()
+    emitter.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio

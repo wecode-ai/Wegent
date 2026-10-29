@@ -166,7 +166,7 @@ fn claude_settings_env_value(key: &str) -> String {
 
 fn default_claude_settings_env_value(key: &str) -> &'static str {
     match key {
-        "ENABLE_TOOL_SEARCH" => "false",
+        "ENABLE_TOOL_SEARCH" => "true",
         _ => "0",
     }
 }
@@ -465,16 +465,25 @@ fn is_user_selected_kb(request: &ExecutionRequest) -> bool {
 
 fn execution_system_prompt(request: &ExecutionRequest) -> Option<String> {
     let prompt = request.system_prompt.trim();
-    if !prompt.is_empty() {
-        return Some(prompt.to_owned());
+    let base_prompt = if !prompt.is_empty() {
+        Some(prompt)
+    } else {
+        primary_bot(request)
+            .and_then(|bot| bot.get("system_prompt"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    if request.extra.get("enable_tools").and_then(Value::as_bool) == Some(false) {
+        return base_prompt.map(ToOwned::to_owned);
     }
-
-    primary_bot(request)
-        .and_then(|bot| bot.get("system_prompt"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+    Some(
+        [base_prompt, Some(crate::artifact_cli::AGENT_INSTRUCTIONS)]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+    )
 }
 
 pub(crate) fn model_id(request: &ExecutionRequest) -> Option<String> {
@@ -1208,6 +1217,58 @@ mod tests {
             .expect("permission mode flag");
 
         assert_eq!(command.args()[permission_index + 1], "bypassPermissions");
+    }
+
+    #[test]
+    fn execution_prompt_tells_tool_enabled_agents_to_declare_deliverables() {
+        let request = ExecutionRequest {
+            system_prompt: "Follow the user request".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        let prompt = execution_system_prompt(&request).unwrap();
+
+        assert!(prompt.contains("Follow the user request"));
+        assert!(prompt.contains("artifact declare --path"));
+        assert!(prompt.contains("sends metadata only"));
+    }
+
+    #[test]
+    fn legacy_ghost_keeps_stored_rules_and_appends_runtime_declaration_rules() {
+        let legacy = "Create files in mnt/outputs and share computer://path/to/file links.";
+        let request = ExecutionRequest {
+            system_prompt: legacy.to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        let command = build_claude_command(&request, "claude");
+        let index = command
+            .args()
+            .iter()
+            .position(|argument| argument == "--append-system-prompt")
+            .expect("append system prompt flag");
+        let instructions = &command.args()[index + 1];
+
+        assert_eq!(request.system_prompt, legacy);
+        assert!(instructions.starts_with(legacy));
+        assert!(instructions.ends_with(crate::artifact_cli::AGENT_INSTRUCTIONS));
+        assert!(instructions.contains("artifact declare --path"));
+    }
+
+    #[test]
+    fn execution_prompt_skips_artifact_command_when_tools_are_disabled() {
+        let mut request = ExecutionRequest {
+            system_prompt: "Generate text only".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        request
+            .extra
+            .insert("enable_tools".to_owned(), Value::Bool(false));
+
+        let prompt = execution_system_prompt(&request).unwrap();
+
+        assert_eq!(prompt, "Generate text only");
+        assert!(!prompt.contains("artifact declare --path"));
     }
 
     #[test]

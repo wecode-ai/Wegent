@@ -91,8 +91,8 @@ pub(super) fn configure(
     if !applies(request) {
         return Ok(());
     }
-    // Retain configured connectors and network access. Every MCP invocation goes
-    // through the native reviewer; source text cannot select or disable it.
+    // Retain configured connectors and network access. External MCP invocations
+    // use the native reviewer; collaboration retains server-side authorization.
     let overrides = super::stand_in_approval::stand_in_mcp_approval_overrides(
         request,
         home,
@@ -101,10 +101,6 @@ pub(super) fn configure(
     )?;
     config.config_overrides.extend(overrides);
     config.thread_config.extend(permission_config(request));
-    #[cfg(windows)]
-    config
-        .thread_config
-        .insert("windows.sandbox".into(), json!("unelevated"));
     config
         .thread_config
         .insert("approvals_reviewer".into(), json!(reviewer(request)));
@@ -179,6 +175,7 @@ mod tests {
         configure(&request(false), &mut launch, root.path()).unwrap();
         let mut params = Map::new();
         append_thread_launch_params(&mut params, &launch);
+        assert!(params["config"].get("windows.sandbox").is_none());
         assert_eq!(
             params["config"]["permissions.wework-source-project.network.enabled"],
             true

@@ -614,7 +614,9 @@ async def test_legacy_current_device_still_retries_when_other_device_uses_v2(
     sync = AsyncMock(return_value=recovered)
     record = Mock()
     monkeypatch.setattr(
-        module.device_capability_sync_service, "sync_installed_plugin_to_device", sync
+        module.device_capability_sync_service,
+        "sync_installed_plugin_to_device_result",
+        sync,
     )
     monkeypatch.setattr(
         module.plugin_device_installation_service, "record_plugin_sync_response", record

@@ -57,17 +57,26 @@ pub struct ProjectDescriptor {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ProjectUpdate {
     pub version: i64,
+    pub tag_change: Option<ProjectTagChange>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
     pub provider_config: Option<Value>,
     pub board_config: Option<Value>,
+    pub board_views: Option<Value>,
     pub card_display: Option<Value>,
     pub pull_request_automation: Option<Value>,
     pub workflow_definition: Option<Value>,
     pub collaboration_groups: Option<Value>,
     pub automatic_processing_rules: Option<Value>,
     pub execution_environment: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProjectTagChange {
+    pub source: String,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -511,6 +520,8 @@ pub struct DeliveryAsset {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Delivery {
     pub id: String,
+    pub title: String,
+    pub version: i64,
     pub loop_item_id: String,
     pub created_by_user_id: i64,
     pub source_task_binding_id: Option<String>,
@@ -534,6 +545,8 @@ pub struct DeliveryDetail {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DeliveryCreate {
     #[serde(default)]
+    pub title: String,
+    #[serde(default)]
     pub markdown: String,
     #[serde(default)]
     pub chat: Option<Value>,
@@ -545,6 +558,23 @@ pub struct DeliveryCreate {
 pub struct DeliveryFinalize {
     #[serde(default)]
     pub fulfillments: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DeliveryUpdate {
+    pub title: String,
+    pub version: i64,
+    pub markdown: String,
+    pub chat: Option<Value>,
+    pub retained_asset_ids: Vec<String>,
+    #[serde(default)]
+    pub files: Vec<DeliveryUpdateFile>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DeliveryUpdateFile {
+    pub relative_path: String,
+    pub file: BinaryInput,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

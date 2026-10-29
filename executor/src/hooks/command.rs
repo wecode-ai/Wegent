@@ -267,9 +267,6 @@ fn failed_outcome(error: String) -> CommandHookOutcome {
 mod tests {
     use std::fs;
 
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
-
     #[cfg(windows)]
     use base64::Engine;
     use serde_json::json;
@@ -304,15 +301,9 @@ mod tests {
     #[tokio::test]
     async fn writes_json_and_closes_stdin() {
         let directory = tempdir().unwrap();
-        let script = directory.path().join("reader.sh");
-        fs::write(
-            &script,
-            "#!/bin/sh\ninput=$(cat)\nprintf '{\"received\":%s}' \"$input\"\n",
-        )
-        .unwrap();
-        #[cfg(unix)]
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
-        let hook = config("./reader.sh".to_owned());
+        // A parallel fork can inherit a freshly written script's writer and cause ETXTBSY.
+        let plugin_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let hook = config("./hook-stdin-reader.sh".to_owned());
         #[cfg(windows)]
         let hook = CommandHookConfig {
             command_windows: Some(windows_command(
@@ -320,13 +311,8 @@ mod tests {
             )),
             ..hook
         };
-        let outcome = execute_command_hook(
-            &hook,
-            directory.path(),
-            directory.path(),
-            &json!({"ok": true}),
-        )
-        .await;
+        let outcome =
+            execute_command_hook(&hook, &plugin_dir, directory.path(), &json!({"ok": true})).await;
         assert_eq!(outcome.exit_code, Some(0), "{outcome:?}");
         assert!(outcome.response.is_some());
         assert!(outcome.stdout.contains("\"ok\":true"));

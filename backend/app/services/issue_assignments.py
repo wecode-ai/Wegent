@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from hashlib import sha256
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -15,6 +16,7 @@ from app.db.timezone import database_datetime_as_utc
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    LoopItemActiveAssignment,
     LoopItemComment,
     ProjectChatAgent,
     loop_datetime_is_unset,
@@ -102,6 +104,20 @@ class IssueAssignmentService:
         """Return active assignments in activity order without a second data source."""
         return list(self._active_events(db, issue_id).values())
 
+    def active_for_issues(
+        self, db: Session, issue_ids: list[str]
+    ) -> dict[str, list[AssignmentEvent]]:
+        """Read assignment histories together and apply the same event reduction."""
+        grouped: dict[str, list[LoopItemComment]] = {key: [] for key in issue_ids}
+        if issue_ids:
+            comments = self._assignment_comments(db, issue_ids)
+            for comment in comments:
+                grouped[comment.loop_item_id].append(comment)
+        return {
+            key: list(self._reduce_events(comments).values())
+            for key, comments in grouped.items()
+        }
+
     def active(
         self,
         db: Session,
@@ -136,14 +152,12 @@ class IssueAssignmentService:
         replace_root_assignments: bool = False,
     ) -> tuple[AssignmentEvent, bool]:
         del workspace_id
+        self._lock_issue(db, issue_id)
         normalized_type = self._member_type(member_type)
         normalized_id = member_id.strip()
-        existing = self.active(
-            db,
-            issue_id=issue_id,
-            member_type=normalized_type,
-            member_id=normalized_id,
-            workflow_step=workflow_step,
+        current = self._active_events(db, issue_id, for_update=True)
+        existing = current.get(
+            (normalized_type, normalized_id, self._workflow_step(workflow_step))
         )
         if (
             existing is not None
@@ -156,7 +170,7 @@ class IssueAssignmentService:
         if (
             normalized_type == "human" or replace_root_assignments
         ) and not self._workflow_step(workflow_step):
-            for previous in self._active_events(db, issue_id).values():
+            for previous in current.values():
                 if previous.workflow_step:
                     continue
                 db.add(
@@ -189,6 +203,7 @@ class IssueAssignmentService:
             "workflow_step": self._workflow_step(workflow_step),
             "notify": bool(notify),
             "trigger": trigger,
+            "receipt_tracking": True,
         }
         comment = db.get(LoopItemComment, comment_id) if comment_id else None
         if comment is None:
@@ -205,6 +220,7 @@ class IssueAssignmentService:
         else:
             comment.metadata_json = metadata
         db.flush()
+        self._refresh_active_index(db, issue_id)
         return AssignmentEvent(comment=comment, metadata=metadata), True
 
     def remove(
@@ -224,10 +240,11 @@ class IssueAssignmentService:
             issue_creator_user_id=item.created_by_user_id,
             user_id=user_id,
         )
+        self._lock_issue(db, issue_id)
         assignment = next(
             (
                 event
-                for event in self._active_events(db, issue_id).values()
+                for event in self._active_events(db, issue_id, for_update=True).values()
                 if event.id == str(assignment_id)
             ),
             None,
@@ -256,7 +273,38 @@ class IssueAssignmentService:
         )
         db.add(comment)
         db.flush()
+        self._refresh_active_index(db, issue_id)
         return assignment
+
+    @staticmethod
+    def _lock_issue(db: Session, issue_id: str) -> None:
+        db.query(LoopItem.id).filter(LoopItem.id == issue_id).with_for_update().one()
+
+    def _refresh_active_index(self, db: Session, issue_id: str) -> None:
+        """Rebuild only on assignment changes, never on receipt reads or writes."""
+        active = self._active_events(db, issue_id, for_update=True)
+        db.query(LoopItemActiveAssignment).filter(
+            LoopItemActiveAssignment.parent_id == issue_id,
+            LoopItemActiveAssignment.resource_type == "assignment_index",
+        ).delete(synchronize_session=False)
+        db.add_all(
+            [
+                LoopItemActiveAssignment(
+                    id=sha256(f"assignment-index:{issue_id}".encode()).hexdigest(),
+                    parent_id=issue_id,
+                )
+            ]
+            + [
+                LoopItemActiveAssignment(
+                    id=sha256(f"active-assignment:{event.id}".encode()).hexdigest(),
+                    parent_id=issue_id,
+                    loop_item_id=event.id,
+                    sort_order=position,
+                )
+                for position, event in enumerate(active.values())
+            ]
+        )
+        db.flush()
 
     def require_canonical_member(
         self,
@@ -357,17 +405,38 @@ class IssueAssignmentService:
         item.version += 1
 
     def _active_events(
-        self, db: Session, issue_id: str
+        self, db: Session, issue_id: str, *, for_update: bool = False
     ) -> dict[tuple[str, str, str], AssignmentEvent]:
-        comments = (
+        if for_update:
+            return self._reduce_events(
+                self._assignment_comments(db, [issue_id], for_update=True)
+            )
+        return {
+            (event.member_type, event.member_id, event.workflow_step): event
+            for event in self.active_for_issues(db, [issue_id])[issue_id]
+        }
+
+    @staticmethod
+    def _assignment_comments(
+        db: Session, issue_ids: list[str], *, for_update: bool = False
+    ) -> list[LoopItemComment]:
+        query = (
             db.query(LoopItemComment)
             .filter(
-                LoopItemComment.loop_item_id == issue_id,
+                LoopItemComment.loop_item_id.in_(issue_ids),
                 loop_datetime_is_unset(LoopItemComment.deleted_at),
+                LoopItemComment.metadata_json["event_type"].as_string()
+                == ASSIGNMENT_EVENT_TYPE,
             )
             .order_by(LoopItemComment.created_at, LoopItemComment.id)
-            .all()
         )
+        if for_update:
+            query = query.populate_existing().with_for_update()
+        return query.all()
+
+    def _reduce_events(
+        self, comments: list[LoopItemComment]
+    ) -> dict[tuple[str, str, str], AssignmentEvent]:
         cancelled_event_ids = {
             str(metadata.get("assignment_event_id") or "")
             for comment in comments

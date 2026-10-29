@@ -1,3 +1,4 @@
+import type { IssueAssignmentReceipt } from '@/api/deliveries'
 import type { RunnerSelection } from '@wegent/collaboration'
 import { createRequestCache } from '@wegent/chat-core/request-cache'
 import type {
@@ -281,6 +282,7 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
       !Array.isArray(record.metadata.provider_config)
         ? (record.metadata.provider_config as CloudProject['provider_config'])
         : {},
+    board_views: record.metadata.board_views as CloudProject['board_views'],
     board_config:
       record.metadata.board_config &&
       typeof record.metadata.board_config === 'object' &&
@@ -1067,10 +1069,12 @@ export function createLocalDeliveryApi(
     async updateCloudProject(
       projectId: CloudProjectId,
       data: {
+        tag_change?: { source: string; target: string | null }
         name?: string
         description?: string
         tags?: string[]
         board_config?: CloudProject['board_config']
+        board_views?: CloudProject['board_views']
         card_display?: CloudProject['card_display']
         pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
@@ -1325,6 +1329,23 @@ export function createLocalDeliveryApi(
       })
       taskProjects.set(record.id, projectId)
       return localTask(record)
+    },
+    async getIssueAssignmentReceipts(itemId: string): Promise<IssueAssignmentReceipt[]> {
+      const projectId = await resolveProjectId(itemId)
+      return request('todos.assignment_receipts', { project_id: projectId, task_id: itemId })
+    },
+    async acknowledgeIssueAssignment(
+      itemId: string,
+      assignmentId: string,
+      userId: number
+    ): Promise<unknown> {
+      const projectId = await resolveProjectId(itemId)
+      return request('todos.acknowledge_assignment', {
+        project_id: projectId,
+        task_id: itemId,
+        assignment_id: assignmentId,
+        user_id: userId,
+      })
     },
     async markLoopItemRead(itemId: string, activitySequence?: number) {
       const projectId = await resolveProjectId(itemId)
@@ -1612,7 +1633,13 @@ export function createLocalDeliveryApi(
       })
       return { items: records.map(localProjectFile) }
     },
-    listProjectDeliveryFiles: async () => ({ items: [] }),
+    async listProjectDeliveryFiles(projectId: CloudProjectId) {
+      const items = await request<import('@/api/deliveries').ProjectDeliveryFile[]>(
+        'deliveries.list_files',
+        { project_id: projectId }
+      )
+      return { items }
+    },
     async createCloudFolder(projectId: CloudProjectId, path: string) {
       const record = await request<LocalProjectFileRecord>('files.create_folder', {
         project_id: projectId,
@@ -1665,6 +1692,23 @@ export function createLocalDeliveryApi(
         project_id: projectId,
         item_id: itemId,
         delivery: data,
+      })
+    },
+    async updateDelivery(
+      deliveryId: string,
+      input: import('@wegent/collaboration').WorkspaceDeliveryUpdate
+    ) {
+      return request<DeliveryDetail>('deliveries.update', {
+        delivery_id: deliveryId,
+        delivery: {
+          ...input,
+          files: await Promise.all(
+            input.files.map(async entry => ({
+              relative_path: entry.relative_path,
+              file: await fileInput(entry.file),
+            }))
+          ),
+        },
       })
     },
     async addAsset(deliveryId: string, file: File, relativePath: string) {

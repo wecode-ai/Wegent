@@ -115,12 +115,16 @@ export function createDesktopScenario(options) {
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
           const stopped = await waitForWorkbenchDebugState(
             control,
-            snapshot => snapshot.pane?.goal?.status === 'blocked',
+            snapshot =>
+              snapshot.pane?.goal?.status === 'blocked' &&
+              snapshot.pane.goal.threadId !== 'pending' &&
+              snapshot.workbench?.activeLifecycle?.goalStatus === 'blocked',
             'The overloaded turn did not stop its Goal'
           )
           address = stopped.workbench.currentRuntimeTask
           const before = (await rpc('runtime.tasks.goal.get', { address })).goal
           assert.equal(before.status, 'blocked')
+          assert.equal(before.threadId, stopped.pane.goal.threadId)
           if (continuing) {
             if (action === 'resume')
               await rpc('runtime.tasks.goal.set', { address, status: 'active' })

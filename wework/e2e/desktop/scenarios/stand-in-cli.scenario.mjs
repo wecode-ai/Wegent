@@ -2,10 +2,17 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 
-export function createDesktopScenario({ uiTimeoutMs }) {
+export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) {
   return {
     async verify(control) {
-      const catalog = await requestExecutor(control, 'runtime.connections.catalog', {}, uiTimeoutMs)
+      // The first catalog request initializes the connection dependency inventory.
+      // Keep ordinary permission checks and the warm recovery request on the UI budget.
+      const catalog = await requestExecutor(
+        control,
+        'runtime.connections.catalog',
+        {},
+        workbenchReadyTimeoutMs
+      )
       const provider = catalog.items.find(
         item => item.id === '@wegent/dsh-connection-dingtalk/dingtalk'
       )

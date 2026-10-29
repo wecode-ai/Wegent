@@ -1,3 +1,7 @@
+import {
+  IssueAssignmentReceipts,
+  type IssueAssignmentReceiptState,
+} from './IssueAssignmentReceipts'
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { LockKeyhole, Send } from 'lucide-react'
 import {
@@ -93,6 +97,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   showCurrentTaskOnly?: boolean
   defaultAssistant?: import('@wegent/collaboration').CollaborationDefaultAssistant
   taskRefreshKey?: string | number
+  getRuntimeTranscript?: NonNullable<WorkbenchServices['runtimeWorkApi']>['getRuntimeTranscript']
   initialTaskBindings?: LoopItemTaskBinding[]
   taskExecutionStates?: Readonly<Record<string, SharedIssueDetailTaskExecutionState>>
   deviceNamesById?: Readonly<Record<string, string>>
@@ -134,6 +139,7 @@ function canCreatePersonalTask(props: TodoEditorProps): boolean {
 
 export function TodoEditor(props: TodoEditorProps) {
   const { t, i18n } = useTranslation('common')
+  const taskOwnerUserId = props.project?.project_store === 'local' ? 0 : props.currentUserId
   const showPersonalTaskAction = canCreatePersonalTask(props)
   const [previewAttachment, setPreviewAttachment] = useState<{
     id: string
@@ -158,13 +164,41 @@ export function TodoEditor(props: TodoEditorProps) {
       },
     }
   }, [props.api, props.projectChatAgentApi, props.sharedApi])
-  const port = useMemo(
+  const [assignmentReceipts, setAssignmentReceipts] = useState<IssueAssignmentReceiptState | null>(
+    null
+  )
+  const receiptApi = useMemo(
     () =>
-      createSharedIssueDetailPort(workspaceApi, async (blob, filename) => {
-        await saveBlobToDownloads(blob, filename)
-      }),
+      workspaceApi.assignmentReceipts
+        ? {
+            getIssueAssignmentReceipts: workspaceApi.assignmentReceipts.list,
+            acknowledgeIssueAssignment: workspaceApi.assignmentReceipts.acknowledge,
+            getLoopItem: workspaceApi.issues.get,
+          }
+        : undefined,
     [workspaceApi]
   )
+  const port = useMemo(() => {
+    const detailPort = createSharedIssueDetailPort(
+      workspaceApi,
+      async (blob, filename) => {
+        await saveBlobToDownloads(blob, filename)
+      },
+      props.getRuntimeTranscript
+    )
+    return {
+      ...detailPort,
+      taskBindings: {
+        async list(...args: Parameters<typeof detailPort.taskBindings.list>) {
+          const tasks = await detailPort.taskBindings.list(...args)
+          return tasks.filter(
+            task =>
+              taskOwnerUserId !== undefined && String(task.task_user_id) === String(taskOwnerUserId)
+          )
+        },
+      },
+    }
+  }, [workspaceApi, taskOwnerUserId, props.getRuntimeTranscript])
   const loadTeams = useCallback(
     () => props.teamApi?.listTeams() ?? Promise.resolve([]),
     [props.teamApi]
@@ -189,6 +223,7 @@ export function TodoEditor(props: TodoEditorProps) {
     renderActivity: context =>
       props.projectChatClient ? (
         <TaskActivityView
+          assignmentReceipts={assignmentReceipts}
           commentAssignment={context.commentAssignment}
           key={context.item.id}
           client={props.projectChatClient}
@@ -223,6 +258,18 @@ export function TodoEditor(props: TodoEditorProps) {
           api={props.aitableApi}
           project={context.project as CloudProject}
           item={context.item as CloudLoopItem}
+        />
+      ) : null,
+    renderAssignmentReceipts: item =>
+      receiptApi ? (
+        <IssueAssignmentReceipts
+          key={item.id}
+          api={receiptApi}
+          issueId={item.id}
+          version={item.version}
+          currentUserId={props.currentUserId}
+          assigneeUserId={item.assignee_user_id}
+          onStateChange={setAssignmentReceipts}
         />
       ) : null,
     renderAssignmentHistory: context => (
@@ -293,7 +340,9 @@ export function TodoEditor(props: TodoEditorProps) {
     showCurrentTaskOnly: props.showCurrentTaskOnly,
     defaultAssistant: props.defaultAssistant,
     taskRefreshKey: props.taskRefreshKey,
-    initialTaskBindings: props.initialTaskBindings as SharedIssueDetailTaskBinding[] | undefined,
+    initialTaskBindings: props.initialTaskBindings?.filter(
+      task => taskOwnerUserId !== undefined && String(task.task_user_id) === String(taskOwnerUserId)
+    ) as SharedIssueDetailTaskBinding[] | undefined,
     taskExecutionStates: props.taskExecutionStates,
     deviceNamesById: props.deviceNamesById,
     headerActions: props.headerActions,

@@ -23,6 +23,7 @@
 use brz_json::OpaqueJson;
 use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow};
 use chrono::NaiveDateTime;
+use serde_json::Value;
 
 /// One `tasks`/`tasks_{:04}` row projection used by the response flow.
 #[derive(Debug)]
@@ -58,8 +59,10 @@ pub struct SubtaskRow {
     pub role: String,
     /// Status enum text (`PENDING` / `RUNNING` / ...).
     pub status: String,
-    /// `result` JSON column; SQL NULL stays `None`.
-    pub result: Option<Json<brz_json::JsonProjection<super::output_builder::ResultInput>>>,
+    /// `result` JSON column kept as the raw document: SQL NULL stays `None`
+    /// and any present value (object or not) is retained, so the builder can
+    /// apply the source's `isinstance(result, dict)` guard itself.
+    pub result: Option<Json<Value>>,
 }
 
 impl SubtaskRow {
@@ -282,6 +285,21 @@ pub async fn get_task_by_states_active_owned(
     row.as_ref().map(TaskRow::from_row).transpose()
 }
 
+/// [`get_task_by_states_active_owned`] on the caller's request transaction:
+/// the source resolves the `previous_response_id` Task on the request's own
+/// session, before team and model resolution.
+pub async fn get_task_by_states_active_owned_on(
+    sql: &mut dyn crate::request_sql::RequestSql,
+    task_store: &dyn crate::task_store::TaskStore,
+    task_id: i64,
+    owner_user_id: i32,
+) -> MysqlResult<Option<TaskRow>> {
+    let row = task_store
+        .get_active_task_owned_on(sql, task_id, owner_user_id)
+        .await?;
+    row.as_ref().map(TaskRow::from_row).transpose()
+}
+
 /// `resolve_task_ref_team` owner selector: an explicit `teamRef.user_id`
 /// (non-null, numeric) selects the direct owner query; otherwise the source
 /// `resolve_task_ref_team` runs only when the ref carries a user id, so the
@@ -393,6 +411,9 @@ mod sql_tests {
         assert_eq!(queries[0].sql, queries[1].sql);
         assert_eq!(queries[2].first_integer, Some(7));
         assert!(queries[3].sql.ends_with("ORDER BY message_id ASC"));
+        assert!(queries[3].sql.starts_with("SELECT id FROM"));
+        assert!(queries[3].sql.contains("WHERE task_id = ? AND user_id = ?"));
+        assert_eq!(queries[3].args, 2);
         assert!(queries[4].sql.contains("is_active IN (1) AND user_id = ?"));
     }
 }

@@ -249,9 +249,7 @@ fn validate_connections(role: &Value) -> Result<(), TaskRuntimeError> {
             .as_array()
             .is_some_and(|rows| !rows.is_empty())
     {
-        return Err(TaskRuntimeError::Invalid(
-            "Project-scoped agents can only receive work from their project".into(),
-        ));
+        return Err(TaskRuntimeError::StandInProjectConnections);
     }
     let source = &role["collaboration"];
     let valid = role.get("collaboration").map_or(true, valid_collaboration)
@@ -459,6 +457,7 @@ impl LocalTaskStore {
         value["userId"] = json!(user);
         value["version"] = json!(previous["version"].as_i64().unwrap_or(0) + 1);
         write_personal(connection, &value)?;
+        super::stand_in_telemetry::configuration_changes(connection, user, &previous, &value);
         Ok(value)
     }
 

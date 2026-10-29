@@ -12,11 +12,15 @@ where
     pub(super) fn connection_closed_handler(&self) -> ConnectionClosedHandler {
         let connection_status = Arc::clone(&self.connection_status);
         let connection_epoch = Arc::clone(&self.connection_epoch);
+        let device_route_id = Arc::clone(&self.device_route_id);
         Arc::new(move || {
             {
                 let mut epoch = connection_epoch.lock().expect("connection epoch lock");
                 *epoch = epoch.wrapping_add(1);
                 connection_status.store(false, Ordering::Release);
+                if let Ok(mut route_id) = device_route_id.lock() {
+                    *route_id = None;
+                }
             }
             write_executor_log_line("local backend connection closed; reconnect requested");
         })
@@ -25,10 +29,12 @@ where
     pub(super) fn task_handler(&self) -> EventHandler {
         let runner = self.runner.clone();
         let config = Arc::clone(&self.client.config);
+        let connection_snapshot = Arc::clone(&self.connection_snapshot);
         let cancellations = self.cancellations.clone();
         Arc::new(move |payload| {
             let runner = runner.clone();
             let config = Arc::clone(&config);
+            let connection_snapshot = Arc::clone(&connection_snapshot);
             let cancellations = cancellations.clone();
             Box::pin(async move {
                 write_executor_log_line(&format_executor_log(
@@ -60,6 +66,10 @@ where
                         ("cwd", request.cwd().unwrap_or("<missing>").to_owned()),
                     ],
                 ));
+                let Some(config) = task_config_from_snapshot(&config, &connection_snapshot) else {
+                    write_executor_log_line("task:execute ignored for stale backend connection");
+                    return None;
+                };
                 normalize_local_task_request(&mut request, &config);
                 cancellations.register_task(&request);
                 let result = runner.submit(request).await;
@@ -119,6 +129,9 @@ where
             let command_handler = Arc::clone(&command_handler);
             Box::pin(async move {
                 if let Some(command_key) = payload.get("command_key").and_then(Value::as_str) {
+                    if command_key == "task_artifact" {
+                        return Some(json!(crate::artifact_workspace::command(payload).await));
+                    }
                     if command_key == "environment_prepare" {
                         let args = payload
                             .get("args")
@@ -555,6 +568,25 @@ where
     }
 }
 
+fn task_config_from_snapshot(
+    config: &LocalBackendConfig,
+    snapshot: &Mutex<Option<ConnectionConfig>>,
+) -> Option<LocalBackendConfig> {
+    let connection = snapshot
+        .lock()
+        .expect("backend connection snapshot lock")
+        .clone()?;
+    if connection.backend_url != config.backend_url
+        || connection.socket_url != config.socket_url
+        || super::config::normalize_token(&connection.auth_token) != config.auth_token
+    {
+        return None;
+    }
+    let mut config = config.clone();
+    config.runtime_auth_token = super::config::normalize_token(&connection.runtime_auth_token);
+    Some(config)
+}
+
 fn log_capability_sync_items(response: &Value, field: &str, capability_type: &str) {
     let Some(items) = response.get(field).and_then(Value::as_array) else {
         return;
@@ -637,4 +669,63 @@ fn positive_u64(value: Option<&Value>) -> Result<u64, &'static str> {
         .and_then(Value::as_u64)
         .filter(|sequence| *sequence > 0)
         .ok_or("sequence must be a positive JSON integer")
+}
+
+#[cfg(test)]
+mod connection_tests {
+    use super::*;
+
+    fn config_fixture() -> LocalBackendConfig {
+        LocalBackendConfig::from_device_config(DeviceConfig {
+            connection: ConnectionConfig {
+                backend_url: "https://backend.example.com".to_owned(),
+                auth_token: "socket-token".to_owned(),
+                runtime_auth_token: "runtime-before".to_owned(),
+                ..ConnectionConfig::default()
+            },
+            ..DeviceConfig::default()
+        })
+    }
+
+    #[test]
+    fn task_credentials_follow_runtime_token_rotation_and_disconnect() {
+        let config = config_fixture();
+        let snapshot = Mutex::new(connection_snapshot_from_config(&config));
+        snapshot
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .runtime_auth_token = "runtime-after".to_owned();
+        let current = task_config_from_snapshot(&config, &snapshot).unwrap();
+        let mut request = ExecutionRequest::default();
+        normalize_local_task_request(&mut request, &current);
+        assert_eq!(request.runtime_auth_token.as_deref(), Some("runtime-after"));
+        assert_eq!(config.runtime_auth_token, "runtime-before");
+        *snapshot.lock().unwrap() = None;
+        assert!(task_config_from_snapshot(&config, &snapshot).is_none());
+    }
+
+    #[test]
+    fn task_credentials_cannot_cross_backend_sessions() {
+        let config = config_fixture();
+        let connection = connection_snapshot_from_config(&config).unwrap();
+        for changed in [
+            ConnectionConfig {
+                backend_url: "https://other.example.com".to_owned(),
+                ..connection.clone()
+            },
+            ConnectionConfig {
+                auth_token: "another-session".to_owned(),
+                ..connection.clone()
+            },
+            ConnectionConfig {
+                socket_url: "https://other-socket.example.com".to_owned(),
+                ..connection.clone()
+            },
+        ] {
+            let snapshot = Mutex::new(Some(changed));
+            assert!(task_config_from_snapshot(&config, &snapshot).is_none());
+        }
+    }
 }

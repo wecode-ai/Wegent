@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { rejectModelWebSocketUpgrade } from '../modules/reject-model-upgrade.mjs'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -80,20 +81,13 @@ export function createCatalogContextVerification({
   let active = false
   let requests = 0
   let compactions = 0
+  let heldResponse
 
   return {
     attachServer(server) {
       // The model fixture implements the HTTP Responses transport.
       server.on('upgrade', (_request, socket) => {
-        // Upgrade sockets leave HTTP's error handling. A client may reset the
-        // rejected connection while switching back to the HTTP transport.
-        socket.on('error', error => {
-          socket.destroy()
-          if (error.code !== 'ECONNRESET') server.emit('error', error)
-        })
-        socket.end(
-          'HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'
-        )
+        rejectModelWebSocketUpgrade(server, socket)
       })
     },
     async handleHttp(request, response, url) {
@@ -137,7 +131,9 @@ export function createCatalogContextVerification({
         total_tokens: prewarm ? 0 : 300_020,
       }
       response.writeHead(200, { 'Content-Type': 'text/event-stream' })
-      response.end(createSse([...stream.start, ...stream.finish]))
+      response.write(createSse(stream.start))
+      if (!prewarm && heldResponse) await heldResponse.promise
+      response.end(createSse(stream.finish))
       return true
     },
     async verify(control, modelLabel) {
@@ -188,6 +184,67 @@ export function createCatalogContextVerification({
       } finally {
         active = false
       }
+    },
+    async verifyActiveRestartProtection(control) {
+      active = true
+      let release
+      heldResponse = {
+        promise: new Promise(resolve => {
+          release = resolve
+        }),
+      }
+      const expected = requests + 1
+      try {
+        await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+          value: `${PROMPT} active restart confirmation`,
+        })
+        await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+        await waitForWorkbenchDebugState(
+          control,
+          snapshot => requests === expected && snapshot.pane?.status?.isBusy === true,
+          'The active Catalog confirmation fixture never entered a real model turn'
+        )
+        const logPath = join(resultDir, 'executor.log')
+        const before =
+          (await readFile(logPath, 'utf8')).match(/codex shared app-server process starting /g)
+            ?.length ?? 0
+        const restart = JSON.parse(
+          await control.command('restartLocalCodexAppServerIfIdle', 'body')
+        )
+        assert.equal(
+          restart.restarted,
+          false,
+          'An active model task was restarted without confirmation'
+        )
+        assert.equal(restart.requiresConfirmation, true)
+        assert.ok(restart.activeTaskCount > 0, JSON.stringify(restart))
+        const after =
+          (await readFile(logPath, 'utf8')).match(/codex shared app-server process starting /g)
+            ?.length ?? 0
+        assert.equal(after, before, 'The active Codex process was replaced before confirmation')
+        await writeFile(
+          join(resultDir, 'codex-active-restart-protection.json'),
+          JSON.stringify(
+            { restart, processStartsBefore: before, processStartsAfter: after },
+            null,
+            2
+          )
+        )
+        await control.command('waitFor', '[data-testid="pause-response-button"]')
+      } finally {
+        release()
+        heldResponse = null
+      }
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: `${PROMPT} complete ${expected}`,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.pane?.status?.isBusy === false,
+        'The active Catalog task did not finish after declining an idle restart'
+      )
+      active = false
     },
   }
 }

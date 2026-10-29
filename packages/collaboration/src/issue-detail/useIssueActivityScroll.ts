@@ -9,6 +9,7 @@ export function useIssueActivityScroll({
   readSequence: storedReadSequence = 0,
   unread = true,
   unreadRevision,
+  readRequestKey,
   onReadSequence,
   linear = true,
   compact = true,
@@ -20,6 +21,7 @@ export function useIssueActivityScroll({
   readSequence?: number
   unread?: boolean
   unreadRevision?: number
+  readRequestKey?: string | null
   onReadSequence?(sequence: number): Promise<void> | void
   linear?: boolean
   compact?: boolean
@@ -31,11 +33,25 @@ export function useIssueActivityScroll({
   const readStateRef = useRef<VisibleReadState>({
     issueId,
     sequence: storedReadSequence,
+    requestKey: readRequestKey,
     pending: new Set(),
   })
   useEffect(() => {
     if (readStateRef.current.issueId !== issueId) {
-      readStateRef.current = { issueId, sequence: storedReadSequence, pending: new Set() }
+      readStateRef.current = {
+        issueId,
+        sequence: storedReadSequence,
+        requestKey: readRequestKey,
+        pending: new Set(),
+      }
+    } else if (readStateRef.current.requestKey !== readRequestKey) {
+      // A fresh navigation consumes later notifications without resetting scroll progress.
+      readStateRef.current = {
+        ...readStateRef.current,
+        requestKey: readRequestKey,
+        revision: undefined,
+        pending: new Set(),
+      }
     }
     const state = readStateRef.current
     if (!loading && state.baseline === undefined) {
@@ -46,7 +62,7 @@ export function useIssueActivityScroll({
     }
     const sequence = storedReadSequence > 0 || unread ? storedReadSequence : (state.baseline ?? 0)
     state.sequence = Math.max(state.sequence, sequence)
-  }, [issueId, loading, storedReadSequence, threadMessages, unread])
+  }, [issueId, loading, storedReadSequence, threadMessages, unread, readRequestKey])
   const markVisibleRead = useCallback(
     (scroller: HTMLElement) => {
       const state = readStateRef.current
@@ -59,7 +75,7 @@ export function useIssueActivityScroll({
         threadMessages.length === 0
       )
     },
-    [issueId, onReadSequence, threadMessages.length, unreadRevision]
+    [issueId, onReadSequence, threadMessages.length, unreadRevision, readRequestKey]
   )
   const scrollTaskCommentsToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto') => {
@@ -215,6 +231,7 @@ interface VisibleReadState {
   baseline?: number
   sequence: number
   revision?: number
+  requestKey?: string | null
   pending: Set<string>
 }
 

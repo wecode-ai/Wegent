@@ -473,6 +473,28 @@ describe('workbench DSH runtime', () => {
     await fixture.root.remove()
   })
 
+  test('adds separate model providers while preserving the selected model', async () => {
+    const fixture = await decisionRouteFixture('workbench-dsh-multi-model-')
+    const launch = await prepareWorkbenchDshLaunch({
+      ...decisionRouteOptions(fixture),
+      modelBaseUrl: 'http://127.0.0.1:9000/v1/harness-router/default-token',
+      additionalModels: [
+        {
+          modelKey: 'wework:public:default::fast',
+          displayName: 'Fast model',
+          baseUrl: 'http://127.0.0.1:9000/v1/harness-router/fast-token',
+        },
+      ],
+    })
+
+    const settings = await readFile(join(launch.dshHome, 'settings.yaml'), 'utf8')
+    expect(settings).toContain('baseURL: http://127.0.0.1:9000/v1/harness-router/default-token')
+    expect(settings).toContain('baseURL: http://127.0.0.1:9000/v1/harness-router/fast-token')
+    expect(settings).toContain('name: "Fast model"')
+    expect(settings.match(/- id: wework-selected/g)).toHaveLength(2)
+    await fixture.root.remove()
+  })
+
   test('leaves the decision route out of the environment when none is registered', async () => {
     const fixture = await decisionRouteFixture('workbench-dsh-no-decision-route-')
     const launch = await prepareWorkbenchDshLaunch(decisionRouteOptions(fixture))

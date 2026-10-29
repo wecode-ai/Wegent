@@ -67,6 +67,10 @@ import {
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
 import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
+import {
+  createLocalDevicePluginApi,
+  resolveLocalPluginDeviceRouteId,
+} from '@/features/plugins/pluginDeviceApi'
 import { mergeInstalledPlugins } from '@wegent/chat-core/installed-plugin-merge'
 import { publishPluginInvocationCatalog } from '@/features/plugins/pluginInvocationTelemetry'
 import {
@@ -352,14 +356,20 @@ export function WorkbenchProvider({
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
     const runtime = getRuntimeConfig()
-    const apiBaseUrl = cloudConnection.apiBaseUrl || runtime.apiBaseUrl
-    return createPluginApi(
-      createHttpClient({
-        baseUrl: apiBaseUrl,
-        getToken: () => cloudConnection.token,
-        redirectOnUnauthorized: false,
-      }),
-      apiBaseUrl
+    const profile = {
+      apiBaseUrl: cloudConnection.apiBaseUrl || runtime.apiBaseUrl,
+      token: cloudConnection.token,
+    }
+    return createLocalDevicePluginApi(
+      createPluginApi(
+        createHttpClient({
+          baseUrl: profile.apiBaseUrl,
+          getToken: () => profile.token,
+          redirectOnUnauthorized: false,
+        }),
+        profile.apiBaseUrl
+      ),
+      deviceId => resolveLocalPluginDeviceRouteId(deviceId, profile)
     )
   }, [cloudConnection.apiBaseUrl, cloudConnection.token])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
@@ -2698,7 +2708,8 @@ export function WorkbenchProvider({
       activeModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelCatalogReady: modelSelection.isCatalogReady,
-      isModelSelectionReady: modelSelection.isSelectionReady,
+      isModelSelectionReady:
+        modelSelection.isSelectionReady && modelSelection.selectedModelAvailable,
       onModelSelectorOpenChange: handleModelSelectorOpenChange,
       input: draftInput,
       composerError,
@@ -2740,6 +2751,8 @@ export function WorkbenchProvider({
       addExistingAttachmentForScope: attachmentSelection.addExistingAttachmentForScope,
       removeAttachment: attachmentSelection.removeAttachment,
       removeAttachmentForScope: attachmentSelection.removeAttachmentForScope,
+      dismissAttachmentError: attachmentSelection.dismissAttachmentError,
+      dismissAttachmentErrorForScope: attachmentSelection.dismissAttachmentErrorForScope,
       resetAttachments: attachmentSelection.resetAttachments,
       resetAttachmentsForScope: attachmentSelection.resetAttachmentsForScope,
       listLocalSkills,
@@ -2756,6 +2769,8 @@ export function WorkbenchProvider({
       attachmentSelection.isAttachmentReadyToSend,
       attachmentSelection.removeAttachment,
       attachmentSelection.removeAttachmentForScope,
+      attachmentSelection.dismissAttachmentError,
+      attachmentSelection.dismissAttachmentErrorForScope,
       attachmentSelection.resetAttachments,
       attachmentSelection.resetAttachmentsForScope,
       attachmentSelection.stateByScope,
@@ -2780,6 +2795,7 @@ export function WorkbenchProvider({
       listLocalApps,
       modelSelection.isCatalogReady,
       modelSelection.isSelectionReady,
+      modelSelection.selectedModelAvailable,
       handleModelSelectorOpenChange,
       conversationModels,
       activeModel,

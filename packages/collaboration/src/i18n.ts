@@ -8,6 +8,7 @@ import { projectWorkMessages } from "./controls/projectWorkMessages";
 import { conversationMessages } from "./conversation/messages";
 import { boardCardMessages } from "./issue-card/messages";
 import { boardSortMessages } from "./project-board/messages";
+import { boardViewMessages } from "./project-board/viewMessages";
 import { composerMessages } from "./controls/messages";
 import { modelMessages } from "./controls/modelMessages";
 import { markdownMessages } from "./markdown/MarkdownServices";
@@ -382,7 +383,7 @@ const sharedMessages: Record<
       "浏览共享文件，以及按 Issue 和任务整理的交付快照。",
     "todo.shared_files": "共享文件",
     "todo.file_count": "{{count}} 个文件",
-    "todo.delivery_issue_count": "{{count}} 个 Issue · 只读交付快照",
+    "todo.delivery_issue_count": "{{count}} 个 Issue · 交付物",
     "todo.folder": "文件夹",
     "todo.task_with_id": "任务 · {{id}}",
     "todo.issue_with_id": "Issue · {{id}}",
@@ -453,10 +454,13 @@ const sharedMessages: Record<
     "todo.issue_security": "任务可见范围",
     "todo.issue_security_open": "项目可访问者可见",
     "todo.issue_security_related": "仅相关人员可见",
+    "todo.batch_status_failed": "部分任务更新失败，请查看以下原因并重试。",
     "todo.project_tags": "标签",
     "todo.project_tags_description": "用于区分任务类型并筛选看板。",
     "todo.create_tag": "新建标签",
     "todo.tag_name_placeholder": "输入标签名称",
+    "todo.tag_name_too_long": "标签名称不能超过 32 个字符",
+    "todo.tag_limit_exceeded": "最多添加 20 个不同标签",
     "todo.confirm_rename": "确认重命名",
     "todo.cancel_rename": "取消重命名",
     "todo.tag_menu": "{{tag}} 标签菜单",
@@ -505,6 +509,7 @@ const sharedMessages: Record<
     "todo.remove_member_confirm": "从项目中移除“{{name}}”？",
     "todo.delete_tag_confirm": "删除标签“{{tag}}”{{suffix}}？",
     "todo.delete_tag_usage_suffix": "，并从 {{count}} 个任务上移除",
+    "todo.load_collaboration_data_failed": "加载协作数据失败",
     "todo.load_project_failed": "加载项目失败",
     "todo.load_tag_catalog_failed": "加载标签目录失败",
     "todo.update_visibility_failed": "更新项目权限失败",
@@ -540,6 +545,22 @@ const sharedMessages: Record<
     "todo.back": "返回",
     "todo.delivered": "已交付",
     "todo.no_delivery_description": "无交付说明",
+    "delivery.title_label": "交付标题",
+    "delivery.notes_label": "备注",
+    "delivery.files_label": "文件",
+    "delivery.edit": "编辑",
+    "delivery.replace_file": "替换文件",
+    "delivery.conflict": "交付物已被更新，本次修改尚未保存。请重新加载后编辑。",
+    "delivery.reload": "重新加载（放弃本次修改）",
+    "delivery.save": "保存修改",
+    "delivery.saving": "正在保存…",
+    "delivery.save_failed": "保存失败，请重试",
+    "delivery.load_source_messages": "补选来源会话消息",
+    "delivery.source_unavailable":
+      "来源会话不可用，已收录的内容仍可保留或移除。",
+    "delivery.selected_chat": "\u9009\u62e9\u6d88\u606f",
+    "delivery.select_files": "\u9009\u62e9\u6587\u4ef6",
+    "delivery.remove_file": "\u79fb\u9664\u6587\u4ef6",
     "todo.delivery_notes": "交付说明",
     "todo.delivery_message_count": "{{count}} 条消息",
     "todo.delivery_summary_failed": "内容加载失败，点击查看",
@@ -901,8 +922,7 @@ const sharedMessages: Record<
       "Browse shared files and delivery snapshots organized by issue and task.",
     "todo.shared_files": "Shared files",
     "todo.file_count": "{{count}} files",
-    "todo.delivery_issue_count":
-      "{{count}} issues · read-only delivery snapshots",
+    "todo.delivery_issue_count": "{{count}} issues · deliveries",
     "todo.folder": "Folder",
     "todo.task_with_id": "Task · {{id}}",
     "todo.issue_with_id": "Issue · {{id}}",
@@ -977,10 +997,14 @@ const sharedMessages: Record<
     "todo.issue_security": "Issue visibility",
     "todo.issue_security_open": "Visible to project users",
     "todo.issue_security_related": "Related people only",
+    "todo.batch_status_failed":
+      "Some issues could not be updated. Review the errors and retry.",
     "todo.project_tags": "Tags",
     "todo.project_tags_description": "Classify issues and filter the board.",
     "todo.create_tag": "New tag",
     "todo.tag_name_placeholder": "Tag name",
+    "todo.tag_name_too_long": "Tag names cannot exceed 32 characters",
+    "todo.tag_limit_exceeded": "Cannot have more than 20 distinct tags",
     "todo.confirm_rename": "Confirm rename",
     "todo.cancel_rename": "Cancel rename",
     "todo.tag_menu": "{{tag}} tag menu",
@@ -1032,6 +1056,7 @@ const sharedMessages: Record<
     "todo.remove_member_confirm": "Remove “{{name}}” from the project?",
     "todo.delete_tag_confirm": "Delete tag “{{tag}}”{{suffix}}?",
     "todo.delete_tag_usage_suffix": " and remove it from {{count}} issues",
+    "todo.load_collaboration_data_failed": "Failed to load collaboration data",
     "todo.load_project_failed": "Failed to load project",
     "todo.load_tag_catalog_failed": "Failed to load tag catalog",
     "todo.update_visibility_failed": "Failed to update project visibility",
@@ -1068,6 +1093,23 @@ const sharedMessages: Record<
     "todo.back": "Back",
     "todo.delivered": "Delivered",
     "todo.no_delivery_description": "No delivery description",
+    "delivery.title_label": "Delivery title",
+    "delivery.notes_label": "Notes",
+    "delivery.files_label": "Files",
+    "delivery.edit": "Edit",
+    "delivery.replace_file": "Replace file",
+    "delivery.conflict":
+      "This delivery has changed. Your edits have not been saved. Reload before editing again.",
+    "delivery.reload": "Reload and discard edits",
+    "delivery.save": "Save changes",
+    "delivery.saving": "Saving…",
+    "delivery.save_failed": "Could not save changes. Try again.",
+    "delivery.load_source_messages": "Select more source messages",
+    "delivery.source_unavailable":
+      "The source conversation is unavailable. Existing messages can still be kept or removed.",
+    "delivery.selected_chat": "Selected messages",
+    "delivery.select_files": "Select files",
+    "delivery.remove_file": "Remove file",
     "todo.delivery_notes": "Delivery notes",
     "todo.delivery_message_count": "{{count}} messages",
     "todo.delivery_summary_failed": "Content unavailable, click to view",
@@ -1338,6 +1380,7 @@ export function createCollaborationTranslator(
       modelMessages[locale][key] ??
       boardCardMessages[locale][key] ??
       boardSortMessages[locale][key] ??
+      boardViewMessages[locale][key as keyof typeof boardViewMessages.en] ??
       markdownMessages[locale][key as keyof typeof markdownMessages.en] ??
       runtimeProfileMessages[locale][key] ??
       executionEnvironmentMessages[locale][key] ??

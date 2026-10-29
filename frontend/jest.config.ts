@@ -17,6 +17,8 @@ const createJestConfig = nextJest({
 
 const config: Config = {
   testEnvironment: 'jsdom',
+  // Recycle idle workers before accumulated JSDOM heaps cause host swapping.
+  workerIdleMemoryLimit: '512MB',
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
@@ -71,7 +73,7 @@ const config: Config = {
 // exclusions after resolution so the real shared Markdown parser runs in Jest,
 // including packages installed through pnpm's virtual store.
 const markdownPackages =
-  '(?:@chenglou[/+]pretext|unified|remark-[^/]+|rehype-[^/]+|mdast-util-[^/]+|micromark[^/]*|unist-util-[^/]+|vfile(?:-message)?|bail|devlop|extend|is-plain-obj|trough|zwitch|decode-named-character-reference|character-entities[^/]*|ccount|escape-string-regexp|longest-streak|markdown-table|property-information|comma-separated-tokens|space-separated-tokens|hast-util-[^/]+|html-void-elements|stringify-entities|trim-lines|web-namespaces)'
+  '(?:@chenglou[/+]pretext|unified|react-markdown|remark-[^/]+|rehype-[^/]+|mdast-util-[^/]+|micromark[^/]*|unist-util-[^/]+|estree-util-[^/]+|vfile(?:-message|-location)?|bail|devlop|extend|is-plain-obj|trough|zwitch|decode-named-character-reference|character-entities[^/]*|ccount|escape-string-regexp|longest-streak|markdown-table|property-information|comma-separated-tokens|space-separated-tokens|hastscript|hast-util-[^/]+|html-void-elements|html-url-attributes|stringify-entities|trim-lines|web-namespaces)'
 
 const resolveJestConfig = async () => {
   const resolved = await createJestConfig(config)()

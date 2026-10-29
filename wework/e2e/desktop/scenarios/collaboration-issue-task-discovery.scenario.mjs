@@ -115,6 +115,10 @@ export function createDesktopScenario({
     const panel = scoped('[data-testid="work-item-new-task-chat-panel"]')
     const composer = `${panel} [data-testid="chat-message-input"]`
     await control.command('waitFor', composer)
+    // Mounting the composer does not imply its asynchronous model selection is ready.
+    await control.command('waitFor', `${panel} [data-testid="send-message-button"]`, {
+      enabled: true,
+    })
     await control.command('press', composer, { key: 'Enter' })
     await control.command(
       'waitFor',
@@ -205,9 +209,19 @@ export function createDesktopScenario({
   }
   async function openIssueWorkspace(control) {
     await ensureExperimentalFeaturesEnabled(control)
-    await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]', {
+    await reloadMainWindow(
+      control,
+      'The workbench did not reload after enabling experimental features'
+    )
+    await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+      visible: true,
       timeoutMs: workbenchReadyTimeoutMs,
     })
+    await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
+      visible: true,
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
     await selectCollaborationDomain(control, CONTENT, 'cloud')
     await control.command(
       'waitFor',

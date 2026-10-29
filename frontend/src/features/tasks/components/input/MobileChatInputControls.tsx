@@ -316,6 +316,7 @@ export function MobileChatInputControls({
       isModelSelectionRequired,
       isAttachmentReadyToSend,
       hasNoTeams,
+      hasSelectedTeam: selectedTeam !== null,
       shouldHideChatInput,
       taskInputMessage,
       hasAttachments,

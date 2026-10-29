@@ -1,4 +1,3 @@
-import { isValidFileSize, MAX_FILE_SIZE } from '@/api/attachments'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getNativeFilePath } from '@/desktop/nativeFilePaths'
 import type { Attachment } from '@/types/api'
@@ -23,20 +22,6 @@ function fileExtension(fileName: string): string {
 
 function fileMimeType(file: File): string {
   return file.type || 'application/octet-stream'
-}
-
-function canReadTextLength(file: File): boolean {
-  const mimeType = fileMimeType(file).toLowerCase()
-  return mimeType.startsWith('text/') || fileExtension(file.name).toLowerCase() === '.txt'
-}
-
-async function maybeTextLength(file: File): Promise<number | null> {
-  if (!canReadTextLength(file)) return null
-  try {
-    return (await file.text()).length
-  } catch {
-    return null
-  }
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -90,21 +75,17 @@ async function saveElectronAttachment(
 export function createLocalAttachmentApi(): LocalAttachmentApi {
   return {
     async uploadAttachment(file, onProgress) {
-      if (!isValidFileSize(file.size)) {
-        throw new Error(`File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)} MB`)
-      }
       onProgress?.(0)
       const localPath = getNativeFilePath(file) ?? (await saveElectronAttachment(file, onProgress))
       onProgress?.(100)
 
-      const textLength = await maybeTextLength(file)
       return {
         id: nextLocalAttachmentId(),
         filename: file.name,
         file_size: file.size,
         mime_type: fileMimeType(file),
         status: 'ready',
-        text_length: textLength,
+        text_length: null,
         file_extension: fileExtension(file.name),
         created_at: new Date().toISOString(),
         local_path: localPath,

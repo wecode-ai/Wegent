@@ -112,8 +112,16 @@ function projectChatControls(overrides: Partial<ProjectChatControls> = {}): Proj
   }
 }
 
-function AttachmentChatInput({ upload }: { upload: (file: File) => Promise<Attachment> }) {
-  const [value, setValue] = useState('')
+function AttachmentChatInput({
+  upload,
+  variant = 'desktop',
+  initialValue = '',
+}: {
+  upload: (file: File) => Promise<Attachment>
+  variant?: 'desktop' | 'compact'
+  initialValue?: string
+}) {
+  const [value, setValue] = useState(initialValue)
   const attachments = useComposerAttachments({
     uploadAttachment: upload,
     deleteAttachment: vi.fn(),
@@ -124,7 +132,7 @@ function AttachmentChatInput({ upload }: { upload: (file: File) => Promise<Attac
       onChange={setValue}
       onSubmit={vi.fn()}
       disabled={false}
-      variant="desktop"
+      variant={variant}
       projectChat={projectChatControls(attachments)}
     />
   )
@@ -1026,9 +1034,13 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
 
-    expect(continueInNewConversation).toHaveBeenCalledWith(targetModel, undefined, {
-      draft: '继续排查',
-    })
+    expect(continueInNewConversation).toHaveBeenCalledWith(
+      targetModel,
+      { modelSelection: 'model' },
+      {
+        draft: '继续排查',
+      }
+    )
     expect(setSelectedModel).not.toHaveBeenCalled()
   })
 
@@ -1730,6 +1742,35 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('attachment-file-input')).not.toHaveAttribute('accept')
   })
 
+  test.each(['desktop', 'compact'] as const)(
+    'dismisses an attachment failure in the %s composer without losing the draft',
+    async variant => {
+      const upload = vi.fn().mockRejectedValue(new Error('test disk full'))
+      render(
+        <AttachmentChatInput upload={upload} variant={variant} initialValue="keep this draft" />
+      )
+      const editor = screen.getByTestId('chat-message-input')
+      await userEvent.click(editor)
+      expect(editor).toHaveValue('keep this draft')
+      const input = screen.getByTestId(
+        variant === 'desktop' ? 'attachment-file-input' : 'mobile-image-file-input'
+      )
+      await userEvent.upload(input, new File(['test'], 'failed.log'))
+
+      const error = await screen.findByTestId('attachment-error-badge')
+      expect(error).toHaveTextContent('failed.log')
+      expect(error).toHaveTextContent('test disk full')
+      expect(error).not.toHaveTextContent('failed.log:')
+      const dismiss = screen.getByTestId('dismiss-attachment-error-button')
+      dismiss.focus()
+      await userEvent.keyboard('{Enter}')
+
+      expect(screen.queryByTestId('attachment-error-badge')).not.toBeInTheDocument()
+      expect(editor).toHaveValue('keep this draft')
+      expect(upload).toHaveBeenCalledTimes(1)
+    }
+  )
+
   test.each([
     ['test-document.md', 'text/markdown'],
     ['test-document.txt', 'text/plain'],
@@ -2415,8 +2456,12 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('model-selector-tooltip')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-menu').parentElement).toHaveClass(
       'fixed',
-      'z-system-popover',
-      'w-[254px]'
+      'z-system-popover'
+    )
+    expect(screen.getByTestId('model-selector-menu')).toHaveClass('w-full')
+    expect(screen.getByTestId('model-selection-mode')).toHaveTextContent('固定模型')
+    expect(screen.getByTestId('model-slider-description')).toHaveTextContent(
+      '仅调整当前模型的推理强度'
     )
     expect(screen.getByTestId('model-selector-menu').parentElement?.parentElement).toBe(
       document.body
@@ -3133,6 +3178,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-option-default'))
 
     expect(setSelectedModelAndOptions).toHaveBeenCalledWith(solModel, {
+      modelSelection: 'runtime:gpt-5.6-sol:recommended',
       reasoning: 'medium',
       speed: 'standard',
     })
@@ -3438,6 +3484,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-option-preset-quality'))
 
     expect(setSelectedModelAndOptions).toHaveBeenCalledWith(cloudTerraModel, {
+      modelSelection: 'public:cloud-sol:quality',
       reasoning: 'high',
     })
 

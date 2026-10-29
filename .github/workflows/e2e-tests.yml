@@ -37,6 +37,7 @@ jobs:
           fetch-depth: 0
 
       - name: Classify changed paths
+        if: github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all'
         id: classify
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
@@ -182,7 +183,8 @@ jobs:
     name: Build Backend Rust E2E Runtime
     needs: changes
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
-    runs-on: ubuntu-latest
+    # Match the Noble containers consuming these dynamically linked binaries.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -199,9 +201,9 @@ jobs:
       - name: Resolve Backend Rust E2E runtime
         id: runtime
         env:
-          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**') }}
+          SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/examples/**', '.github/runtime-images/backend-rs-e2e.Dockerfile') }}
         run: |
-          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-backend-rs-e2e:v1-$SOURCE_DIGEST" \
+          echo "image=$(.github/scripts/resolve-backend-rs-e2e-runtime.sh)" \
             >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
@@ -252,10 +254,16 @@ jobs:
           cargo build \
             --release \
             --manifest-path backend-rs/Cargo.toml \
-            --bin wegent-backend-rs
+            --bin wegent-backend-rs \
+            --example attachment_s3_e2e \
+            --example attachment_hosting_e2e
           mkdir -p .ci-artifacts
           cp "$CARGO_TARGET_DIR/release/wegent-backend-rs" \
             .ci-artifacts/wegent-backend-rs
+          cp "$CARGO_TARGET_DIR/release/examples/attachment_s3_e2e" \
+            .ci-artifacts/attachment-s3-e2e
+          cp "$CARGO_TARGET_DIR/release/examples/attachment_hosting_e2e" \
+            .ci-artifacts/attachment-hosting-e2e
           chmod 0755 .ci-artifacts/wegent-backend-rs
 
       - name: Publish content-addressed Backend Rust E2E image
@@ -266,12 +274,12 @@ jobs:
           mkdir -p .ci-artifacts/backend-rs-image
           cp .ci-artifacts/wegent-backend-rs \
             .ci-artifacts/backend-rs-image/wegent-backend-rs
-          printf '%s\n' \
-            'FROM scratch' \
-            'COPY wegent-backend-rs /app/wegent-backend-rs' \
-            'ENTRYPOINT ["/app/wegent-backend-rs"]' \
-            > .ci-artifacts/backend-rs-image/Dockerfile
+          cp .ci-artifacts/attachment-s3-e2e \
+            .ci-artifacts/backend-rs-image/attachment-s3-e2e
+          cp .ci-artifacts/attachment-hosting-e2e \
+            .ci-artifacts/backend-rs-image/attachment-hosting-e2e
           docker build \
+            --file .github/runtime-images/backend-rs-e2e.Dockerfile \
             --tag "$IMAGE" \
             .ci-artifacts/backend-rs-image
           docker push "$IMAGE"
@@ -288,6 +296,12 @@ jobs:
           docker cp \
             "$container_id:/app/wegent-backend-rs" \
             .ci-artifacts/wegent-backend-rs
+          docker cp \
+            "$container_id:/app/attachment-s3-e2e" \
+            .ci-artifacts/attachment-s3-e2e
+          docker cp \
+            "$container_id:/app/attachment-hosting-e2e" \
+            .ci-artifacts/attachment-hosting-e2e
           chmod 0755 .ci-artifacts/wegent-backend-rs
 
       - name: Save Backend Rust Cargo sources
@@ -303,7 +317,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: backend-rs-e2e-runtime
-          path: .ci-artifacts/wegent-backend-rs
+          path: |
+            .ci-artifacts/wegent-backend-rs
+            .ci-artifacts/attachment-s3-e2e
+            .ci-artifacts/attachment-hosting-e2e
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -355,7 +372,7 @@ jobs:
       - name: Resolve Executor E2E runtime
         id: runtime
         env:
-          SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'shared/assets/**') }}
+          SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/vendor/**', 'shared/assets/**') }}
         run: .github/scripts/resolve-executor-e2e-runtime.sh
 
       - name: Check content-addressed Executor E2E image
@@ -448,17 +465,18 @@ jobs:
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
       ]
-    # setup-python uses the runner tool cache; match the noble container's ABI.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
       HOME: /root
+      UV_PYTHON: "3.11"
+      UV_MANAGED_PYTHON: "true"
     container:
       image: ${{ needs.prepare-platform-e2e-image.outputs.image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-      options: --add-host=host.docker.internal:host-gateway
+      options: --add-host=host.docker.internal:host-gateway ${{ matrix.shardIndex == 1 && '--cap-add=NET_ADMIN' || '' }}
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
     defaults:
@@ -467,8 +485,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shardIndex: [1, 2, 3, 4]
-        shardTotal: [4]
+        # Run 40558717377: provider shard 1 took 120s while shard 3 was empty.
+        # Exchange those logical shards without changing users or runner count.
+        include:
+          - shardIndex: 1
+            shardTotal: 4
+            providerShardIndex: 3
+          - shardIndex: 2
+            shardTotal: 4
+            providerShardIndex: 2
+          - shardIndex: 3
+            shardTotal: 4
+            providerShardIndex: 1
+          - shardIndex: 4
+            shardTotal: 4
+            providerShardIndex: 4
 
     services:
       mysql:
@@ -491,14 +522,6 @@ jobs:
           --health-timeout=5s
           --health-retries=15
 
-      etcd:
-        image: quay.io/coreos/etcd:v3.5.16
-        env:
-          ETCD_ADVERTISE_CLIENT_URLS: http://etcd:2379
-          ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
-          ETCD_DATA_DIR: /etcd
-
-      # Start storage before Milvus: the runner pulls and starts services sequentially.
       minio:
         image: bitnamilegacy/minio:2025.7.23-debian-12-r0
         env:
@@ -509,21 +532,6 @@ jobs:
           --health-interval=2s
           --health-timeout=5s
           --health-start-period=5s
-          --health-retries=30
-
-      milvus:
-        image: milvusdb/milvus:v2.5.4
-        command: milvus run standalone
-        env:
-          ETCD_ENDPOINTS: etcd:2379
-          MINIO_ADDRESS: minio:9000
-          MINIO_ACCESS_KEY_ID: wegent-e2e
-          MINIO_SECRET_ACCESS_KEY: wegent-e2e-secret
-        options: >-
-          --health-cmd="curl -f http://localhost:9091/healthz"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-start-period=30s
           --health-retries=30
 
       qdrant:
@@ -562,12 +570,23 @@ jobs:
         uses: ./.github/actions/setup-node-workspace
         with:
           setup-toolchain: "false"
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Set up Python 3.11 and uv
+      - name: Restore Python dependency cache
         uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: "3.11"
+          setup-python: "false"
           setup-uv: "false"
+
+      - name: Prepare container Python
+        run: |
+          uv python install --default "$UV_PYTHON"
+          python_bin_dir="$(uv python dir --bin)"
+          export PATH="$python_bin_dir:$PATH"
+          test "$(command -v python)" = "$python_bin_dir/python"
+          printf '%s\n' "$python_bin_dir" >> "$GITHUB_PATH"
+          uv run --no-project python -c 'import ssl; print(ssl.OPENSSL_VERSION)'
 
       - name: Install shared module
         working-directory: ./shared
@@ -643,6 +662,62 @@ jobs:
         run: |
           uv run --no-sync alembic upgrade head
 
+      # Runs 40548056927 and 40547828678: shard 1 was slowest; shard 3
+      # had the shortest browser phase and shard 4 had room for remote indexing.
+      - name: Run attachment storage E2E on shared services
+        if: matrix.shardIndex == 2 || matrix.shardIndex == 3
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/15
+          SECRET_KEY: attachment-s3-e2e-secret-key
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "false"
+          E2E_MINIO_ROOT_USER: wegent-e2e
+          E2E_MINIO_ROOT_PASSWORD: wegent-e2e-secret
+          E2E_MINIO_URL: http://127.0.0.1:9000
+          ATTACHMENT_PUBLIC_BASE_URL: ""
+          INTERNAL_SERVICE_TOKEN: attachment-hosting-e2e-service-token
+          PYTHONPATH: ..:.
+          E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
+          E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -o pipefail
+          suite=s3-upload
+          script=attachment_s3_upload.py
+          binary=attachment-s3-e2e
+          if [[ "$E2E_SHARD_INDEX" == "3" ]]; then
+            suite=media-hosting
+            script=attachment_media_hosting.py
+            binary=attachment-hosting-e2e
+          fi
+          export E2E_REPORT_DIR="$GITHUB_WORKSPACE/.ci-artifacts/attachment-$suite"
+          export WEGENT_RS_BINARY_PATH="$GITHUB_WORKSPACE/.ci-artifacts/$binary"
+          export WEGENT_HOSTING_BINARY_PATH="$WEGENT_RS_BINARY_PATH"
+          E2E_TEST_SHA="$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)"
+          export E2E_TEST_SHA
+          test "$E2E_TEST_SHA" = "$E2E_EXPECTED_SHA"
+          chmod 0755 "$WEGENT_RS_BINARY_PATH"
+          mkdir -p "$E2E_REPORT_DIR"
+          # Preserve the fixtures' loopback-only storage boundary while reusing MinIO.
+          socat TCP-LISTEN:9000,bind=127.0.0.1,reuseaddr,fork TCP:minio:9000 &
+          relay_pid=$!
+          trap 'kill "$relay_pid"; wait "$relay_pid" || true' EXIT
+          curl --fail --retry 10 --retry-connrefused --retry-delay 1 \
+            "$E2E_MINIO_URL/minio/health/live"
+          uv run --no-sync python "tests/e2e/$script" \
+            2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
+
+      - name: Upload attachment storage E2E evidence
+        if: always() && (matrix.shardIndex == 2 || matrix.shardIndex == 3)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: attachment-${{ matrix.shardIndex == 2 && 's3-upload' || 'media-hosting' }}-e2e
+          path: .ci-artifacts/attachment-${{ matrix.shardIndex == 2 && 's3-upload' || 'media-hosting' }}/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Verify DingTalk sync MySQL transaction rollback
         if: matrix.shardIndex == 1
         working-directory: ./backend
@@ -674,6 +749,10 @@ jobs:
           PROJECT_TASK_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           PYTHONPATH: ..:.
         run: uv run --no-sync python tests/integration/project_task_detachment_mysql.py
+
+      - name: Prepare isolated DingTalk HTTPS download fixture
+        if: matrix.shardIndex == 1
+        run: bash .github/scripts/setup-dingtalk-oauth-e2e.sh
 
       - name: Start backend server
         env:
@@ -884,7 +963,39 @@ jobs:
           uv run --no-sync python tests/e2e/dingtalk_ai_card_conversation.py
           uv run --no-sync python tests/e2e/dingtalk_notification_card_context.py
 
-      - name: Run knowledge Python gateway API E2E
+      - name: Run subscription callback Rust gateway E2E
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/0
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          E2E_API_URL: http://localhost:8000
+          WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
+          E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/subscription-callback-gateway
+          E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          E2E_RUST_LOG: ${{ github.workspace }}/logs/backend/rust/info.log
+          PYTHONPATH: ..:.
+        run: |
+          set -o pipefail
+          mkdir -p "$E2E_REPORT_DIR"
+          export E2E_TEST_SHA="$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)"
+          test "$E2E_TEST_SHA" = "$E2E_EXPECTED_SHA"
+          uv run --no-sync python tests/e2e/subscription_callback_gateway.py \
+            2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
+
+      - name: Upload subscription callback gateway E2E report
+        if: always() && matrix.shardIndex == 1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: subscription-callback-gateway-e2e
+          path: .ci-artifacts/subscription-callback-gateway/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Run knowledge and team Python gateway API E2E
         if: matrix.shardIndex == 1
         working-directory: ./backend
         env:
@@ -914,8 +1025,10 @@ jobs:
           test "$E2E_TEST_SHA" = "$E2E_EXPECTED_SHA"
           uv run --no-sync python tests/e2e/knowledge_python_gateway.py \
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
+          uv run --no-sync python tests/e2e/team_detail_gateway.py \
+            2>&1 | tee "$E2E_REPORT_DIR/team-detail.log"
 
-      - name: Upload knowledge Python gateway API E2E report
+      - name: Upload Python gateway API E2E reports
         if: always() && matrix.shardIndex == 1
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -924,8 +1037,41 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Run attachment upload MySQL replication E2E
+        if: matrix.shardIndex == 3
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          E2E_REPLICA_DATABASE_URL: mysql+pymysql://root:test123@mysql-replica:3306/wegent_test
+          E2E_REPLICATION_SOURCE_HOST: mysql
+          REDIS_URL: redis://attachment-redis:6379/0
+          EXECUTOR_MANAGER_URL: http://localhost:8001
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ENVIRONMENT: development
+          INTERNAL_SERVICE_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
+          WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-backend-rs
+          E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/attachment-upload-replica
+          E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PYTHONPATH: ..:.
+          E2E_DOCKER_NETWORK: ${{ job.container.network }}
+        run: |
+          set -o pipefail
+          mkdir -p "$E2E_REPORT_DIR"
+          ../.github/scripts/run-attachment-replica-e2e.sh \
+            2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
+
+      - name: Upload attachment upload replication E2E report
+        if: always() && matrix.shardIndex == 3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: attachment-upload-replica-e2e
+          path: .ci-artifacts/attachment-upload-replica/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Run knowledge remote index E2E
-        if: matrix.shardIndex == 1
+        id: knowledge_e2e
+        if: matrix.shardIndex == 4
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -941,16 +1087,58 @@ jobs:
           E2E_KNOWLEDGE_RUNTIME_LOG: ../knowledge_runtime/ci.log
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_BOOTSTRAP_ADMIN_USER: admin
+          E2E_DOCKER_NETWORK: ${{ job.container.network }}
+          E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/knowledge-provider-e2e
+          PYTHONPATH: ..:.
+        run: ../.github/scripts/run-knowledge-provider-e2e.sh
+
+      - name: Upload knowledge provider lifecycle diagnostics
+        if: always() && matrix.shardIndex == 4 && steps.knowledge_e2e.outcome != 'skipped' && steps.knowledge_e2e.outcome != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: knowledge-provider-lifecycle-e2e
+          path: .ci-artifacts/knowledge-provider-e2e/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Run DingTalk OAuth import and authorization E2E
+        if: matrix.shardIndex == 1
+        timeout-minutes: 10
+        working-directory: ./backend
+        env:
+          DINGTALK_OAUTH_E2E: "1"
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/0
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "false"
+          KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          E2E_QDRANT_URL: http://qdrant:6333
+          E2E_BOOTSTRAP_ADMIN_USER: admin
           PYTHONPATH: ..:.
         run: |
-          uv run --no-sync python tests/e2e/knowledge_remote_index.py
-          uv run --no-sync python tests/e2e/knowledge_milvus_e2e.py
+          uv run --no-sync python e2e_checks/check_dingtalk_provider.py
+          uv run --no-sync pytest e2e_checks/dingtalk_oauth -n 0 \
+            --junitxml=reports/dingtalk-oauth-e2e.xml
+
+      - name: Upload DingTalk OAuth E2E results
+        if: always() && matrix.shardIndex == 1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dingtalk-oauth-e2e-results
+          path: |
+            backend/reports/dingtalk-oauth-e2e.xml
+            backend/reports/dingtalk-oauth-e2e/*.json
+          if-no-files-found: error
 
       - name: Verify Chat Shell is running
         run: |
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
 
       - name: Run E2E tests (Sharded)
+        # The chromium project auto-discovers every browser spec under
+        # frontend/e2e/tests, including skill-management-scope.spec.ts.
         working-directory: ./frontend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -984,7 +1172,7 @@ jobs:
           node ./node_modules/@playwright/test/cli.js test \
             --project=provider-native-chromium \
             --workers=1 \
-            --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} \
+            --shard=${{ matrix.providerShardIndex }}/${{ matrix.shardTotal }} \
             --no-deps
 
       - name: Stop Backend index worker
@@ -1366,7 +1554,8 @@ jobs:
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
           PLUGIN_LEGACY_UPLOAD_ENABLED: "true"
-          ATTACHMENT_S3_ENDPOINT: localhost:9000
+          # Presigned archive URLs are also consumed inside bridge-networked executors.
+          ATTACHMENT_S3_ENDPOINT: ${{ env.E2E_DOCKER_BRIDGE_HOST }}:9000
           ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
           ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
           ATTACHMENT_S3_USE_SSL: "false"
@@ -1517,8 +1706,16 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: uv run pytest e2e_tests/ --no-cov -v
 
+      - name: Verify retired artifact revision against real MySQL
+        working-directory: ./backend
+        env:
+          WEGENT_MIGRATION_TEST_DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
+          PYTHONPATH: ${{ github.workspace }}
+        run: uv run pytest tests/models/test_wework_file_delivery_migration.py -n 0 --no-cov
+
       - name: Run Executor E2E tests
         env:
+          DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
           PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}
           E2E_BASE_URL: http://localhost:3000
           E2E_API_URL: http://localhost:8000
@@ -1553,6 +1750,7 @@ jobs:
             --env E2E_CODEX_MODEL_SERVER_URL \
             --env E2E_LOCAL_CLAUDE_MODEL_SERVER_URL \
             --env E2E_CLAUDE_EXECUTOR_IMAGE \
+            --env DATABASE_URL \
             --env E2E_DEVICE_ID \
             --env CI \
             "$PLATFORM_E2E_IMAGE" \

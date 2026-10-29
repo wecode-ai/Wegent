@@ -167,8 +167,14 @@ jobs:
       - name: Test CI change classifier
         run: .github/scripts/test-classify-ci-changes.sh
 
+      - name: Test E2E resource cleanup
+        run: node --test .github/scripts/test-e2e-resource-reuse.mjs
+
       - name: Test CI cache policy
         run: .github/scripts/test-ci-cache-policy.sh
+
+      - name: Test Windows E2E package caching and scheduling
+        run: node --test .github/scripts/wework-windows-e2e-build-key.test.mjs .github/scripts/balance-wework-windows-e2e.test.mjs
 
       - name: Test shared E2E runtime revisions
         run: bash .github/scripts/test-wework-core-e2e-runtimes.sh

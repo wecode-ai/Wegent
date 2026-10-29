@@ -19,6 +19,11 @@ interface PageState extends ProjectTaskPageState {
   nextCursor: string | null
 }
 
+interface PendingPageRequest {
+  request: symbol
+  promise: Promise<void>
+}
+
 export function useProjectTaskPages(
   accountKey: string | null,
   projectsRef: RefObject<ProjectWithTasks[]>,
@@ -26,7 +31,7 @@ export function useProjectTaskPages(
 ) {
   const [projectTaskPages, setProjectTaskPages] = useState<Record<number, PageState>>({})
   const pagesRef = useRef<Record<number, PageState>>({})
-  const requestsRef = useRef(new Map<number, symbol>())
+  const requestsRef = useRef(new Map<number, PendingPageRequest>())
   const headRequestsRef = useRef(new Map<number, symbol>())
   const accountRef = useRef(accountKey)
   const mountedRef = useRef(true)
@@ -58,11 +63,15 @@ export function useProjectTaskPages(
   }, [])
 
   const loadProjectTasks = useCallback(
-    async (projectId: number, loadMore: boolean = false): Promise<void> => {
+    (projectId: number, loadMore: boolean = false): Promise<void> => {
+      const inFlight = requestsRef.current.get(projectId)
+      if (inFlight) return inFlight.promise
       const project = projectsRef.current.find(item => item.id === projectId)
       const previous = pagesRef.current[projectId]
-      if (!accountRef.current || !project || requestsRef.current.has(projectId)) return
-      if (previous?.loaded && (!loadMore || !previous.hasMore)) return
+      if (!accountRef.current || !project) return Promise.resolve()
+      if (previous?.loaded && !previous.error && (!loadMore || !previous.hasMore)) {
+        return Promise.resolve()
+      }
 
       const cursor = previous?.nextCursor ?? undefined
       const request = Symbol()
@@ -70,53 +79,83 @@ export function useProjectTaskPages(
       const isCurrent = () =>
         mountedRef.current &&
         accountRef.current === requestAccount &&
-        requestsRef.current.get(projectId) === request
+        requestsRef.current.get(projectId)?.request === request
       const publish = (state: PageState) => {
         pagesRef.current = { ...pagesRef.current, [projectId]: state }
         setProjectTaskPages(pagesRef.current)
       }
 
-      requestsRef.current.set(projectId, request)
-      publish({
-        nextCursor: previous?.nextCursor ?? null,
-        loaded: previous?.loaded ?? false,
-        hasMore: previous?.hasMore ?? project.task_count > 0,
-        loading: true,
-      })
-
-      try {
-        const response = await projectApis.getProjectTasks(projectId, 50, cursor)
-        if (!isCurrent()) return
-        updateProjects(projects =>
-          projects.map(item => {
-            if (item.id !== projectId) return item
-            const tasks = new Map(
-              (previous?.loaded ? item.tasks : []).map(task => [task.task_id, task])
-            )
-            response.items.forEach(task => tasks.set(task.task_id, task))
-            return { ...item, tasks: [...tasks.values()], task_count: response.total }
-          })
-        )
-        publish({
-          nextCursor: response.next_cursor,
-          loading: false,
-          loaded: true,
-          hasMore: response.has_more,
-        })
-      } catch (err) {
-        if (!isCurrent()) return
+      const promise = (async () => {
         publish({
           nextCursor: previous?.nextCursor ?? null,
           loaded: previous?.loaded ?? false,
           hasMore: previous?.hasMore ?? project.task_count > 0,
-          loading: false,
-          error: err instanceof Error ? err.message : 'Failed to load project tasks',
+          loading: true,
         })
-      } finally {
-        if (isCurrent()) requestsRef.current.delete(projectId)
-      }
+
+        try {
+          const response = await projectApis.getProjectTasks(projectId, 50, cursor)
+          if (!isCurrent()) return
+          updateProjects(projects =>
+            projects.map(item => {
+              if (item.id !== projectId) return item
+              const tasks = new Map(
+                (previous?.loaded ? item.tasks : []).map(task => [task.task_id, task])
+              )
+              response.items.forEach(task => tasks.set(task.task_id, task))
+              return { ...item, tasks: [...tasks.values()], task_count: response.total }
+            })
+          )
+          publish({
+            nextCursor: response.next_cursor,
+            loading: false,
+            loaded: true,
+            hasMore: response.has_more,
+          })
+        } catch (err) {
+          if (!isCurrent()) return
+          publish({
+            nextCursor: previous?.nextCursor ?? null,
+            loaded: previous?.loaded ?? false,
+            hasMore: previous?.hasMore ?? project.task_count > 0,
+            loading: false,
+            error: err instanceof Error ? err.message : 'Failed to load project tasks',
+          })
+        } finally {
+          if (isCurrent()) requestsRef.current.delete(projectId)
+        }
+      })()
+      requestsRef.current.set(projectId, { request, promise })
+      return promise
     },
     [projectsRef, updateProjects]
+  )
+
+  const loadAllProjectTasks = useCallback(
+    async (projectId: number): Promise<void> => {
+      const project = projectsRef.current.find(item => item.id === projectId)
+      if (!accountRef.current || !project) return
+      const requestAccount = accountRef.current
+      const isCurrentAccount = () => accountRef.current === requestAccount
+
+      let page = pagesRef.current[projectId]
+      if (!page?.loaded || page.error) {
+        await loadProjectTasks(projectId, Boolean(page?.loaded))
+        if (!isCurrentAccount()) return
+        page = pagesRef.current[projectId]
+      }
+
+      while (page?.loaded && page.hasMore && !page.error) {
+        const cursor = page.nextCursor
+        await loadProjectTasks(projectId, true)
+        if (!isCurrentAccount()) return
+        const nextPage = pagesRef.current[projectId]
+        if (!nextPage || nextPage.error) return
+        if (nextPage.hasMore && nextPage.nextCursor === cursor) return
+        page = nextPage
+      }
+    },
+    [loadProjectTasks, projectsRef]
   )
 
   const refreshProjectTaskHead = useCallback(
@@ -152,5 +191,11 @@ export function useProjectTaskPages(
     [updateProjects]
   )
 
-  return { projectTaskPages, loadProjectTasks, resetProjectTasks, refreshProjectTaskHead }
+  return {
+    projectTaskPages,
+    loadProjectTasks,
+    loadAllProjectTasks,
+    resetProjectTasks,
+    refreshProjectTaskHead,
+  }
 }

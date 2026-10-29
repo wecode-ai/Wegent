@@ -6,6 +6,7 @@ import {
   selectProjectBoardSort,
 } from './collaboration-board-personal-view.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
+import { waitForBoardValue } from './collaboration-board-flows.mjs'
 import {
   assertLaneOrder,
   verifyBoardFieldDrag,
@@ -17,15 +18,32 @@ const TAGS = ['drag-A', 'drag-B', 'drag-C']
 const column = key => `[data-testid="cloud-todo-column-${key}"]`
 const card = (key, id) => `${column(key)} [data-testid="cloud-todo-card-${id}"]`
 
-async function assertIssueColumns(control, scoped, issueId, tags) {
-  for (const tag of TAGS) {
-    await control.command('waitFor', scoped(card(`tag-${tag}`, issueId)), {
-      visible: tags.includes(tag),
-    })
+export async function assertIssueColumns(control, scoped, issueId, tags, timeoutMs) {
+  const placements = [...TAGS.map(tag => `tag-${tag}`), 'tag-untagged']
+    .map(key => ({
+      selector: scoped(card(key, issueId)),
+      expected: key === 'tag-untagged' ? tags.length === 0 : tags.includes(key.slice(4)),
+    }))
+    .sort((left, right) => Number(right.expected) - Number(left.expected))
+  await waitForBoardValue(
+    async () => {
+      const counts = []
+      // Read required cards first so a loading board cannot satisfy absence checks.
+      for (const { selector } of placements) {
+        counts.push(Number(await control.command('getElementCount', selector)))
+      }
+      return counts
+    },
+    placements.map(({ expected }) => (expected ? 1 : 0)),
+    `Issue ${issueId} has incorrect column membership`,
+    timeoutMs
+  )
+  for (const { selector, expected } of placements) {
+    if (expected) {
+      await control.command('scrollIntoView', selector)
+      await control.command('waitFor', selector, { visible: true, timeoutMs })
+    }
   }
-  await control.command('waitFor', scoped(card('tag-untagged', issueId)), {
-    visible: tags.length === 0,
-  })
 }
 
 async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }) {
@@ -63,7 +81,7 @@ async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }
   await reloadMainWindow(control, 'The multi-tag board fixture did not load')
   await openProjectBoard(control, scoped, project)
   await selectProjectBoardGrouping(control, scoped, 'tag')
-  await assertIssueColumns(control, scoped, moving.id, TAGS.slice(0, 2))
+  await assertIssueColumns(control, scoped, moving.id, TAGS.slice(0, 2), uiTimeoutMs)
 
   const sameColumn = `tag-${TAGS[1]}`
   await selectProjectBoardSort(control, scoped, sameColumn, ['priority-desc', 'created-asc'])
@@ -105,7 +123,7 @@ async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }
   await reloadMainWindow(control, 'The same-column tag drag did not reload')
   await openProjectBoard(control, scoped, project)
   await assertLaneOrder(control, scoped, sameColumn, [moving.id, sameColumnAnchor.id])
-  await assertIssueColumns(control, scoped, moving.id, TAGS.slice(0, 2))
+  await assertIssueColumns(control, scoped, moving.id, TAGS.slice(0, 2), uiTimeoutMs)
   console.log(
     '[desktop-e2e] PASS board-drag: multi-tag compound sort blocks manual drag; manual order persists without changing tags'
   )
@@ -144,10 +162,10 @@ async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }
     assert.equal(after.status, before.status)
     assert.equal(after.priority, before.priority)
     assert.equal(after.assignee_user_id, before.assignee_user_id)
-    await assertIssueColumns(control, scoped, movedIssue.id, move.expected)
+    await assertIssueColumns(control, scoped, movedIssue.id, move.expected, uiTimeoutMs)
     await reloadMainWindow(control, 'A cross-column tag drag did not reload')
     await openProjectBoard(control, scoped, project)
-    await assertIssueColumns(control, scoped, movedIssue.id, move.expected)
+    await assertIssueColumns(control, scoped, movedIssue.id, move.expected, uiTimeoutMs)
     console.log(
       `[desktop-e2e] PASS board-drag: tag ${sourceKey} -> ${targetKey}, expected tags=${JSON.stringify(move.expected)} persisted and survived reload`
     )
@@ -156,6 +174,11 @@ async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }
 
 export async function verifyMultiTagBoardDrag(control, options) {
   const { scoped, request, project } = options
+  const previousWindowSize = JSON.parse(
+    await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify({ width: 1040, height: 760 }),
+    })
+  )
   const fixtureProject = await request(`/api/v1/workspaces/${project.workspace_id}/projects`, {
     method: 'POST',
     body: JSON.stringify({ name: `多标签拖放回归-${process.pid}` }),
@@ -164,11 +187,17 @@ export async function verifyMultiTagBoardDrag(control, options) {
     await verifyBoardFieldDrag(control, { ...options, project: fixtureProject })
     await verifyTagMoves(control, { ...options, project: fixtureProject })
   } finally {
-    const latest = await request(`/api/v1/cloud-projects/${fixtureProject.id}`)
-    await request(`/api/v1/cloud-projects/${fixtureProject.id}?version=${latest.version}`, {
-      method: 'DELETE',
-    })
-    await reloadMainWindow(control, 'The tag drag fixture cleanup did not reload')
-    await openProjectBoard(control, scoped, project)
+    try {
+      const latest = await request(`/api/v1/cloud-projects/${fixtureProject.id}`)
+      await request(`/api/v1/cloud-projects/${fixtureProject.id}?version=${latest.version}`, {
+        method: 'DELETE',
+      })
+    } finally {
+      await control.command('setMainWindowSize', 'body', {
+        value: JSON.stringify(previousWindowSize),
+      })
+      await reloadMainWindow(control, 'The tag drag fixture cleanup did not reload')
+      await openProjectBoard(control, scoped, project)
+    }
   }
 }

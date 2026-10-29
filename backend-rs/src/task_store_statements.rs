@@ -161,32 +161,6 @@ pub fn workspaces_by_ref_statement(table: &str, user_id: i64, refs: &[(String, S
     )
 }
 
-/// `list_personal_task_candidates_after`: the owner's task table read from
-/// `table`, ordered `created_at DESC, id DESC`, with the keyset cursor and the
-/// optional client-origin filter. The predicate order matches the source.
-pub fn personal_task_candidates_statement(
-    table: &str,
-    client_origin: bool,
-    cursor: bool,
-) -> String {
-    let mut sql = format!(
-        "SELECT id, user_id, kind, name, namespace, json, is_active, created_at, \
-                updated_at, project_id, client_origin, is_group_chat \
-         FROM `{table}` \
-         WHERE user_id = ? AND kind = 'Task' AND is_active = 1 \
-         AND namespace != 'system' AND is_group_chat = false"
-    );
-    if client_origin {
-        sql.push_str(" AND client_origin = ?");
-    }
-    sql.push_str(" AND project_id = 0");
-    if cursor {
-        sql.push_str(" AND (created_at < ? OR (created_at = ? AND id < ?))");
-    }
-    sql.push_str(" ORDER BY created_at DESC, id DESC LIMIT ?");
-    sql
-}
-
 /// `task_store.get_workspace_by_ref`: one workspace row by
 /// `(owner, name, namespace)`, read from `table`.
 pub fn workspace_by_ref_statement(table: &str) -> String {
@@ -198,13 +172,11 @@ pub fn workspace_by_ref_statement(table: &str) -> String {
     )
 }
 
-/// `SubtaskStore.list_by_task_for_user_ordered`: the rows of `table` filtered
-/// by `task_id` and `user_id`, ordered by `message_id`.
-pub fn subtasks_by_owner_statement(table: &str) -> String {
+/// `SubtaskStore.list_by_task_for_user_ordered`: sort only ids so a large
+/// JSON result never enters MySQL's filesort buffer.
+pub fn subtask_ids_by_owner_statement(table: &str) -> String {
     format!(
-        "SELECT id, user_id, task_id, team_id, title, bot_ids, `role`, executor_namespace, executor_name, \
-        executor_deleted_at, prompt, message_id, parent_id, status, progress, result, error_message, \
-        created_at, updated_at, completed_at, sender_type, sender_user_id, reply_to_subtask_id \n    \
+        "SELECT id \n    \
         FROM `{table}` \n    \
         WHERE task_id = ? AND user_id = ? \n    \
         ORDER BY message_id ASC"
@@ -887,6 +859,21 @@ pub fn regular_active_task_statement(table: &str) -> String {
     )
 }
 
+/// `task_store.get_task_by_states`
+/// (`db.query(TaskResource).filter(id == task_id, kind == 'Task',
+/// is_active.in_(TaskResource.is_active_query())).first()`): the active
+/// (`IN (1, 2)`) task of one id, read from `table` through the ORM's labeled
+/// projection. The source ends in `query.first()`, so the read takes no row
+/// lock.
+pub fn active_task_projection_statement(table: &str) -> String {
+    format!(
+        "SELECT {projection} \nFROM {table} \n\
+         WHERE {table}.id = ? AND {table}.kind = 'Task' \
+         AND {table}.is_active IN (1, 2) \n LIMIT 1",
+        projection = task_projection(table)
+    )
+}
+
 /// The completion flow emits [`owner_matches_task_id_statement`] before an
 /// owner-scoped assistant-subtask listing.
 ///
@@ -936,6 +923,7 @@ pub fn update_subtask_running_statement(table: &str) -> String {
 /// branch that also writes `error_message`.
 pub fn update_subtask_terminal_statement(
     table: &str,
+    with_result: bool,
     with_error: bool,
     with_executor: bool,
 ) -> String {
@@ -945,7 +933,12 @@ pub fn update_subtask_terminal_statement(
         sets.push("executor_name=?");
     }
     sets.push("status=?");
-    sets.push("result=?");
+    // `_update_subtask_sync` assigns `fields["result"]` only when the caller
+    // passed a result (`db.py:136`), so a terminal error without one leaves the
+    // stored result untouched.
+    if with_result {
+        sets.push("result=?");
+    }
     if with_error {
         sets.push("error_message=?");
     }
