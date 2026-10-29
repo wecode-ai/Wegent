@@ -1752,7 +1752,7 @@ describe('Wework collaboration workspace API', () => {
           project: project as never,
           runtimePort: { bindTask: vi.fn(), unbindTask: vi.fn() },
           services: { standInApi: { readTask } } as never,
-          setLocation: vi.fn(),
+          onNavigate: vi.fn(),
           userId: 1,
           workspace: { id: 'workspace', name: 'Workspace' } as never,
         })
@@ -1848,7 +1848,7 @@ describe('Wework collaboration workspace API', () => {
         unbindTask: vi.fn(),
       },
       services: {} as never,
-      setLocation: vi.fn(),
+      onNavigate: vi.fn(),
       userId: 1,
       workspace: {
         id: 'cloud-workspace',
@@ -1953,7 +1953,7 @@ describe('Wework collaboration workspace API', () => {
           unbindTask: vi.fn(),
         },
         services: {} as never,
-        setLocation: vi.fn(),
+        onNavigate: vi.fn(),
         userId: 1,
         workspace: {
           id: 'wework-local-workspace',
@@ -2073,7 +2073,7 @@ describe('Wework collaboration workspace API', () => {
             unbindTask: vi.fn(),
           },
           services: {} as never,
-          setLocation: vi.fn(),
+          onNavigate: vi.fn(),
           userId: 1,
           workspace: {
             id: 'wework-local-workspace',
@@ -2178,7 +2178,7 @@ describe('Wework collaboration workspace API', () => {
         project: project as never,
         runtimePort: { bindTask: vi.fn(), unbindTask: vi.fn() },
         services: {} as never,
-        setLocation: vi.fn(),
+        onNavigate: vi.fn(),
         userId: 1,
         workspace: { id: 'workspace', name: 'Workspace' } as never,
       })
@@ -2298,7 +2298,7 @@ describe('Wework collaboration workspace API', () => {
           runtimePort: { bindTask, unbindTask: vi.fn() },
           onOpenRuntimeTask,
           services: {} as never,
-          setLocation: vi.fn(),
+          onNavigate: vi.fn(),
           userId: 1,
           workspace: { id: 'workspace', name: 'Workspace' } as never,
         })
@@ -2437,7 +2437,7 @@ describe('Wework collaboration workspace API', () => {
           task_provider: 'gitlab',
         } as never,
         services: { deviceApi: { executeCommand } } as never,
-        setLocation: vi.fn(),
+        onNavigate: vi.fn(),
         userId: 1,
         workspace: { id: 'cloud-workspace', name: 'Cloud workspace' } as never,
       })
@@ -2519,7 +2519,7 @@ describe('Wework collaboration workspace API', () => {
           runtimeTask({ taskId, threadId: 'reply-thread', running: false, status: 'done' }),
         ]),
         services: { runtimeWorkApi: { getRuntimeTranscript } } as never,
-        setLocation: vi.fn(),
+        onNavigate: vi.fn(),
         userId: 1,
         workspace: { id: 'cloud-workspace', name: 'Cloud workspace' } as never,
       })
@@ -2658,7 +2658,7 @@ describe('Wework collaboration workspace API', () => {
       location: { projectId: 'project', projectView: 'board' } as CollaborationPlatformLocation,
       project: { id: 'project', name: 'Project', project_store: 'backend' } as never,
       services: {} as never,
-      setLocation: vi.fn(),
+      onNavigate: vi.fn(),
       userId: 1,
       workspace: { id: 'workspace', name: 'Workspace' } as never,
     }
@@ -2727,7 +2727,7 @@ describe('Wework collaboration workspace API', () => {
         project_store: 'backend',
       } as never,
       services: {} as never,
-      setLocation: vi.fn(),
+      onNavigate: vi.fn(),
       userId: 1,
       workspace: {
         id: 'cloud-workspace',
@@ -2856,7 +2856,7 @@ describe('Wework collaboration workspace API', () => {
         } as never,
         runtimeTaskLifecycle: lifecycleStore.getSnapshot(),
         services: {} as never,
-        setLocation: vi.fn(),
+        onNavigate: vi.fn(),
         userId: 1,
         workspace: {
           id: 'cloud-workspace',
@@ -2958,7 +2958,7 @@ describe('Wework collaboration workspace API', () => {
           project_store: project.projectStore,
         } as never,
         services: {} as never,
-        setLocation: vi.fn(),
+        onNavigate: vi.fn(),
         userId: 1,
         workspace: {
           id: 'snapshot-reconcile-workspace',
@@ -3023,7 +3023,7 @@ describe('Wework collaboration workspace API', () => {
         },
         project: currentProject as never,
         services: {} as never,
-        setLocation: vi.fn(),
+        onNavigate: vi.fn(),
         userId: 1,
         workspace: {
           id: 'restricted-workspace',
@@ -3067,7 +3067,7 @@ describe('Wework collaboration workspace API', () => {
         project_store: 'local',
       } as never,
       services: {} as never,
-      setLocation: vi.fn(),
+      onNavigate: vi.fn(),
       userId: 1,
       workspace: {
         id: 'local-workspace',
@@ -3192,7 +3192,7 @@ describe('Wework collaboration workspace API', () => {
         project_store: 'local',
       } as never,
       services: {} as never,
-      setLocation: vi.fn(),
+      onNavigate: vi.fn(),
       userId: 1,
       workspace: {
         id: 'local-workspace',
@@ -3277,7 +3277,7 @@ describe('Wework collaboration workspace API', () => {
         project_store: 'backend',
       } as never,
       services: {} as never,
-      setLocation: vi.fn(),
+      onNavigate: vi.fn(),
       userId: 1,
       workspace: {
         id: 'cloud-workspace',
@@ -3352,7 +3352,7 @@ describe('Wework collaboration workspace API', () => {
         project_store: 'backend',
       } as never,
       services: {} as never,
-      setLocation: vi.fn(),
+      onNavigate: vi.fn(),
       userId: 1,
       workspace: {
         id: 'cloud-workspace',
@@ -4423,7 +4423,7 @@ describe('Wework collaboration workspace API', () => {
           project_store: 'backend',
         } as never,
         services: {} as never,
-        setLocation: vi.fn(),
+        onNavigate: vi.fn(),
         userId: 1,
         workspace: {
           id: 'cloud-workspace',

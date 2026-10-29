@@ -19,9 +19,7 @@ import {
   useMemo,
   useRef,
   useState,
-  type Dispatch,
   type ReactNode,
-  type SetStateAction,
 } from 'react'
 import {
   CollaborationApp,
@@ -370,7 +368,7 @@ export function WeworkSharedProject({
   runtimeWork,
   runtimePort,
   services,
-  setLocation,
+  onNavigate,
   userId,
   workspace,
 }: {
@@ -396,7 +394,7 @@ export function WeworkSharedProject({
   runtimeWork?: RuntimeWorkListResponse | null
   runtimePort?: IssueRuntimeBindingPort
   services: WorkbenchServices
-  setLocation: Dispatch<SetStateAction<CollaborationPlatformLocation>>
+  onNavigate(location: CollaborationPlatformLocation): void
   userId: string | number
   workspace: CollaborationProjectRendererWorkspaceContext
 }) {
@@ -554,8 +552,8 @@ export function WeworkSharedProject({
       },
       navigate: next => {
         setTaskComposer(current => (current?.issue.id === next.issueId ? current : null))
-        setLocation(current => ({
-          ...current,
+        onNavigate({
+          ...location,
           workspaceId: workspace.id,
           workspaceView: 'projects',
           projectId: next.projectId,
@@ -563,7 +561,7 @@ export function WeworkSharedProject({
           projectSettingsSection:
             next.view === 'manage' ? (next.projectSettingsSection ?? null) : null,
           issueId: next.issueId,
-        }))
+        })
         if (!next.issueId && focusedItemId) onFocusedItemHandled?.()
       },
       notify,
@@ -595,9 +593,7 @@ export function WeworkSharedProject({
       services,
       userId,
       detailServices?.modelApi,
-      location.issueId,
-      location.projectSettingsSection,
-      location.projectView,
+      location,
       onFocusedItemHandled,
       onOpenSettings,
       onOpenStandInSettings,
@@ -605,7 +601,7 @@ export function WeworkSharedProject({
       notify,
       project.id,
       project.project_store,
-      setLocation,
+      onNavigate,
       workspace.id,
     ]
   )
@@ -1433,11 +1429,13 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
   const startupReadySent = useRef(false)
   const pendingNavigationProjectIdRef = useRef<string | null | undefined>(undefined)
   const navigationRequestRevisionRef = useRef(0)
+  const invalidatePendingNavigation = useCallback(() => ++navigationRequestRevisionRef.current, [])
   const resolvedWorkspaceProjectRef = useRef<string | null>(null)
   const returnFromPersonalSettings = (
     settings?: import('@wegent/collaboration').WorkspaceStandInSettings
   ) => {
     if (!personalSettingsTarget) return
+    invalidatePendingNavigation()
     const { project, returnLocation } = personalSettingsTarget
     if (settings)
       setProjectStandInDevices(current => ({
@@ -1572,6 +1570,62 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     )
   }
 
+  const navigate = (
+    nextLocation: CollaborationPlatformLocation,
+    knownProject?: CollaborationProject
+  ) => {
+    setPersonalSettingsTarget(null)
+    const navigationRevision = invalidatePendingNavigation()
+    const targetProject =
+      knownProject && String(knownProject.id) === String(nextLocation.projectId)
+        ? knownProject
+        : undefined
+    if (props.onActiveProjectChange) {
+      pendingNavigationProjectIdRef.current = nextLocation.projectId
+        ? String(nextLocation.projectId)
+        : null
+    }
+    setLocation({
+      ...nextLocation,
+      collaborationDomain: targetProject
+        ? targetProject.project_store === 'local'
+          ? 'local'
+          : 'cloud'
+        : nextLocation.collaborationDomain,
+      projectSettingsSection:
+        nextLocation.projectView === 'manage'
+          ? (nextLocation.projectSettingsSection ?? null)
+          : null,
+    })
+    if (!nextLocation.projectId) {
+      props.onActiveProjectChange?.(null)
+      return
+    }
+    const requestedProjectId = String(nextLocation.projectId)
+    const selectProject = (project: CollaborationProject) => {
+      props.onActiveProjectChange?.({
+        ...project,
+        location: project.project_store === 'local' ? 'local' : 'cloud',
+      })
+    }
+    if (targetProject) {
+      resolvedWorkspaceProjectRef.current = requestedProjectId
+      selectProject(targetProject)
+      return
+    }
+    void platformApi.projects
+      .get(requestedProjectId)
+      .then(project => {
+        if (navigationRequestRevisionRef.current !== navigationRevision) return
+        selectProject(project)
+      })
+      .catch(() => {
+        if (navigationRequestRevisionRef.current !== navigationRevision) return
+        pendingNavigationProjectIdRef.current = undefined
+        setNavigationSyncRevision(value => value + 1)
+      })
+  }
+
   return (
     <div className="h-full min-h-0 flex-1" data-testid="wework-collaboration-platform">
       {cloudLoginOpen && (
@@ -1680,55 +1734,21 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             workspaceLocations: ['local', 'cloud'],
             sidebarPresentation: 'full',
           },
-          navigate: nextLocation => {
-            setPersonalSettingsTarget(null)
-            const navigationRevision = ++navigationRequestRevisionRef.current
-            if (props.onActiveProjectChange) {
-              pendingNavigationProjectIdRef.current = nextLocation.projectId
-                ? String(nextLocation.projectId)
-                : null
-            }
-            setLocation({
-              ...nextLocation,
-              projectSettingsSection:
-                nextLocation.projectView === 'manage'
-                  ? (nextLocation.projectSettingsSection ?? null)
-                  : null,
-            })
-            if (!nextLocation.projectId) {
-              props.onActiveProjectChange?.(null)
-              return
-            }
-            const requestedProjectId = String(nextLocation.projectId)
-            void platformApi.projects
-              .get(requestedProjectId)
-              .then(project => {
-                if (navigationRequestRevisionRef.current !== navigationRevision) return
-                props.onActiveProjectChange?.({
-                  ...project,
-                  location: project.project_store === 'local' ? 'local' : 'cloud',
-                })
-              })
-              .catch(() => {
-                if (navigationRequestRevisionRef.current !== navigationRevision) return
-                pendingNavigationProjectIdRef.current = undefined
-                setNavigationSyncRevision(value => value + 1)
-              })
-          },
+          navigate,
           manageResource: (kind, resourceId, source) => {
             if (kind === 'environments') {
               props.onOpenSettings?.(resolveDeviceResourceSettingsOptions(resourceId, source))
               return
             }
-            setLocation(current => ({
-              ...current,
-              collaborationDomain: source ?? current.collaborationDomain,
-              rootView: current.workspaceId ? current.rootView : 'agents',
-              workspaceView: current.workspaceId ? 'agents' : 'home',
+            navigate({
+              ...location,
+              collaborationDomain: source ?? location.collaborationDomain,
+              rootView: location.workspaceId ? location.rootView : 'agents',
+              workspaceView: location.workspaceId ? 'agents' : 'home',
               projectId: null,
               projectSettingsSection: null,
               issueId: null,
-            }))
+            })
           },
           renderDeviceCreator: ({ source, workspaceId, hasCloudDevice, onClose, onCreated }) =>
             source === 'cloud' && workspaceId && api?.workspaces?.registerRunner ? (
@@ -1922,6 +1942,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               onFocusedItemHandled={props.onFocusedItemHandled}
               onOpenSettings={props.onOpenSettings}
               onOpenStandInSettings={(roleId, deviceId) => {
+                invalidatePendingNavigation()
                 setPersonalSettingsTarget({ roleId, deviceId, project, returnLocation: location })
                 pendingNavigationProjectIdRef.current = null
                 setLocation(current => ({
@@ -1943,7 +1964,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               runtimeWork={props.runtimeWork}
               runtimePort={runtimePort}
               services={props.services}
-              setLocation={setLocation}
+              onNavigate={nextLocation => navigate(nextLocation, project)}
               userId={props.user.id}
               workspace={workspace}
             />
