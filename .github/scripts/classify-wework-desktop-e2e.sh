@@ -932,7 +932,7 @@ classify_wework_path() {
       select_target "core:stand-in-workspace"
       return
       ;;
-    backend-rs/src/background_jobs/project_assignments.rs|backend-rs/src/loop_tasks/assignment_index*|backend-rs/src/loop_tasks/assignments.rs|wework/e2e/desktop/scenarios/stand-in-automation-assignment.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-notifications.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-suite.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-recovery.scenario.mjs|wework/e2e/desktop/modules/stand-in-round-assignment.mjs)
+    wework/e2e/desktop/scenarios/stand-in-automation-assignment.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-notifications.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-suite.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-recovery.scenario.mjs|wework/e2e/desktop/modules/stand-in-round-assignment.mjs)
       select_target "core:stand-in-assignment-notifications"
       return
       ;;

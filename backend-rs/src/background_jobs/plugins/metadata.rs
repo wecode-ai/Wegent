@@ -211,9 +211,9 @@ fn workbench(files: &BTreeMap<String, File>, root: &str, raw: &Value) -> Result<
             .ok_or_else(|| anyhow::anyhow!("Workbench package path is missing"))?;
         let path = normalize(&path)?;
         if path.is_empty()
-            || !files
+            || files
                 .get(&format!("{root}{path}"))
-                .is_some_and(|file| !file.directory)
+                .is_none_or(|file| file.directory)
         {
             bail!("Workbench entry is missing")
         }

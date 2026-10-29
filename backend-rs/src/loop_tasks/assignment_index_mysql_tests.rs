@@ -330,7 +330,7 @@ async fn assert_automation_maintains_index(mysql: &MysqlService) {
             assignments::record(tx, &issue, "human", "53", "Other", 7, true, "automation").await
         })
         .await;
-    assert!(failed.is_err());
+    assert_eq!(failed.unwrap_err().database_code(), Some(1062));
     assert_current(&first).await;
     mysql
         .execute("DELETE FROM loop_items WHERE id = ?", (marker.as_str(),))
