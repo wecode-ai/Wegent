@@ -21,6 +21,7 @@ const harness = vi.hoisted(() => ({
     openTab: vi.fn(),
     selectTab: vi.fn(),
   },
+  locks: new Map<string, Promise<unknown>>(),
   desktop: false,
   host: vi.fn(),
   hostListeners: new Set<(event: { type: string }) => void>(),
@@ -112,6 +113,18 @@ function view(
 
 beforeEach(() => {
   vi.clearAllMocks()
+  harness.locks.clear()
+  Object.defineProperty(navigator, 'locks', {
+    configurable: true,
+    value: {
+      request: (name: string, callback: () => unknown) => {
+        const previous = harness.locks.get(name) ?? Promise.resolve()
+        const next = previous.catch(() => undefined).then(callback)
+        harness.locks.set(name, next)
+        return next
+      },
+    },
+  })
   harness.desktop = false
   harness.hostListeners.clear()
   harness.host.mockReset()
@@ -122,9 +135,74 @@ beforeEach(() => {
   harness.list.mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
 })
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  Reflect.deleteProperty(navigator, 'locks')
+})
 
 describe('unified human response', () => {
+  it.each([true, false])(
+    'serializes replies across provider instances and permits retry only after failure (accepted=%s)',
+    async accepted => {
+      harness.list.mockResolvedValue({
+        projects: [],
+        chats: [{ ...interactionTask.workspace, tasks: [interactionTask.task] }],
+        totalTasks: 1,
+      })
+      view()
+      await waitFor(() => expect(context!.pending).toHaveLength(1))
+      const first = context!
+      view()
+      await waitFor(() => expect(context).not.toBe(first))
+      await waitFor(() => expect(context!.pending[0]?.cached).not.toBe(true))
+      const second = context!
+      let finish!: (result: { accepted: boolean }) => void
+      harness.send.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finish = resolve
+          })
+      )
+      let firstReply!: Promise<boolean>, secondReply!: Promise<boolean>
+      act(() => {
+        firstReply = first.respond(first.pending[0], 'first answer')
+      })
+      await waitFor(() => expect(harness.send).toHaveBeenCalledTimes(1))
+      act(() => {
+        secondReply = second.respond(second.pending[0], 'second answer')
+      })
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(harness.send).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        finish({ accepted })
+        expect(await firstReply).toBe(accepted)
+        expect(await secondReply).toBe(!accepted)
+      })
+      expect(harness.send).toHaveBeenCalledTimes(accepted ? 1 : 2)
+    }
+  )
+
+  it('settles a stale response without an error after its acceptance marker has been cleaned', async () => {
+    view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const item = context!.pending[0]
+    await act(async () => {
+      expect(await context!.respond(item, 'first answer')).toBe(true)
+    })
+    const marker = Object.keys(localStorage).find(key => key.includes(':accepted:'))!
+    expect(marker).toBeTruthy()
+    localStorage.removeItem(marker)
+    act(() => context!.setDraft(item.id, 'stale second answer'))
+    await act(async () => {
+      expect(await context!.respond(item, 'stale second answer')).toBe(false)
+    })
+    expect(harness.send).toHaveBeenCalledTimes(1)
+    expect(context!.errors).toEqual({})
+    expect(context!.drafts[item.id]).toBeUndefined()
+  })
+
   it('bounds unchanged history scans while forcing explicit refresh and summary changes', async () => {
     const intervals = vi.spyOn(window, 'setInterval')
     const rendered = view()

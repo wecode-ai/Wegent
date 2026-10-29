@@ -19,6 +19,7 @@ import {
 } from '../modules/response-protocol.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { verifyHumanInteractionOverBrowser } from '../modules/human-interaction-browser.mjs'
+import { verifyHumanInteractionAcrossWindows } from '../modules/human-interaction-windows.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
 import {
@@ -270,12 +271,27 @@ export function createDesktopScenario({
       await captureScreenshot(control, '05-pending-tab-with-shared-draft.png')
       await reloadMainWindow(control, 'The pending inbox did not reconnect after reload')
       await control.command('waitFor', page, { text: QUESTION, timeoutMs: modelResponseTimeoutMs })
+      await control.command(
+        'waitFor',
+        `${page} [data-testid="interaction-reply-input"]:not(:disabled)`,
+        { visible: true }
+      )
       assert.equal(
         await control.command('getValue', `${page} [data-testid="interaction-reply-input"]`),
         ANSWER
       )
       await captureScreenshot(control, '06-draft-survives-reload.png')
-      await control.command('click', `${page} [data-testid="interaction-reply-send"]`)
+      if (checkpoint === 'human-interactions') {
+        await verifyHumanInteractionAcrossWindows({
+          control,
+          page,
+          question: QUESTION,
+          answer: ANSWER,
+          captureScreenshot,
+        })
+      } else {
+        await control.command('click', `${page} [data-testid="interaction-reply-send"]`)
+      }
       await control.command('waitFor', `${page} [data-testid="interactions-pending-count"]`, {
         text: '0',
         timeoutMs: modelResponseTimeoutMs,
@@ -309,6 +325,29 @@ export function createDesktopScenario({
         ),
         0
       )
+      if (checkpoint === 'human-interactions') {
+        const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        const address = snapshot.workbench?.currentRuntimeTask
+        assert.ok(address?.taskId, 'The original task must own the visible conversation')
+        const transcript = await requestExecutor(
+          control,
+          'runtime.tasks.transcript',
+          {
+            taskId: address.taskId,
+            workspacePath: address.workspacePath,
+            includeFullContent: true,
+            limit: 100,
+          },
+          uiTimeoutMs
+        )
+        assert.equal(
+          transcript.messages.filter(
+            message => message.role === 'user' && JSON.stringify(message).includes(ANSWER)
+          ).length,
+          1,
+          'Two windows must persist exactly one human answer in the original runtime'
+        )
+      }
       await captureScreenshot(control, '09-original-task-resumes.png')
     },
   }

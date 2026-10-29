@@ -116,6 +116,7 @@ function RuntimeInteractionsState({
   const mounted = useRef(true)
   const [loading, setLoading] = useState(false)
   const [replyNotice, setReplyNotice] = useState<string | null>(null)
+  const acceptancePrefix = `wework.interactions:${accountKey}:accepted:`
   const historyKey = `wework.interactions:${accountKey}:history`
   const draftKey = `wework.interactions:${accountKey}:drafts`
   const [history, setHistory] = useState<InteractionHistory[]>(() =>
@@ -128,7 +129,6 @@ function RuntimeInteractionsState({
     () => new Set(history.map(item => item.id))
   )
   const submittedRef = useRef(submitted)
-  submittedRef.current = submitted
   const handledNativeReplies = useMemo(
     () => createStandInRecordStore(`wework.interactions:${accountKey}:native-replies`),
     [accountKey]
@@ -163,24 +163,37 @@ function RuntimeInteractionsState({
     return () => window.removeEventListener(NOTIFICATION_PREFERENCES_CHANGED_EVENT, update)
   }, [])
   useEffect(() => {
-    saveInteractionState(historyKey, history)
-  }, [historyKey, history])
-  useEffect(() => {
     saveInteractionState(draftKey, drafts)
   }, [draftKey, drafts])
 
-  const archive = useCallback((item: RuntimeInteraction, answeredAt = item.createdAt) => {
-    setHistory(current =>
-      archiveInteraction(current, {
-        id: item.id,
-        title: item.task.task.title,
-        question: item.question,
-        address: item.task.address,
-        originalUrl: interactionOriginalScheme(item),
-        answeredAt,
+  const archive = useCallback(
+    async (item: RuntimeInteraction, answeredAt = item.createdAt) => {
+      await navigator.locks.request(historyKey, () => {
+        const next = archiveInteraction(readInteractionHistory(historyKey), {
+          id: item.id,
+          title: item.task.task.title,
+          question: item.question,
+          address: item.task.address,
+          originalUrl: interactionOriginalScheme(item),
+          answeredAt,
+        })
+        saveInteractionState(historyKey, next)
+        if (mounted.current) setHistory(next)
       })
-    )
-  }, [])
+    },
+    [historyKey]
+  )
+  useEffect(() => {
+    const update = (event: StorageEvent) => {
+      if (event.key !== historyKey) return
+      const next = readInteractionHistory(historyKey)
+      setHistory(next)
+      submittedRef.current = new Set([...submittedRef.current, ...next.map(item => item.id)])
+      setSubmitted(submittedRef.current)
+    }
+    window.addEventListener('storage', update)
+    return () => window.removeEventListener('storage', update)
+  }, [historyKey])
 
   const refresh = useCallback(
     async (force = true) => {
@@ -279,8 +292,10 @@ function RuntimeInteractionsState({
                   delete next[item.key]
                   return next
                 })
-                for (const answered of requests.filter(request => request.answered))
-                  archive(answered)
+                for (const answered of requests.filter(request => request.answered)) {
+                  await archive(answered)
+                  localStorage.removeItem(acceptancePrefix + answered.id)
+                }
               } catch (error) {
                 successfulReads.current.delete(item.key)
                 if (!mounted.current) return
@@ -319,7 +334,7 @@ function RuntimeInteractionsState({
         if (mounted.current) setLoading(false)
       }
     },
-    [archive, t]
+    [acceptancePrefix, archive, t]
   )
   const signature = JSON.stringify(
     source?.items.map(item => [
@@ -383,79 +398,99 @@ function RuntimeInteractionsState({
       inFlight.current.add(item.id)
       setBusy(new Set(inFlight.current))
       try {
-        // Revalidate the exact request before answering; old notifications are not authority.
-        const live = (await readRuntimeInteractions(item.task, api)).find(
-          row => row.id === item.id && !row.answered
-        )
-        if (
-          !live ||
-          !canReplyToInteraction(live) ||
-          (live.payload.expiresAtUnixMs && live.payload.expiresAtUnixMs <= Date.now())
-        )
-          throw new Error(t('interactions.expired'))
-        if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return false
-        const response = interactionResponse(live.payload, {
-          [live.payload.questions![0].id!]: { answers: [answer] },
-        })
-        const previousClient = clientIds.current.get(item.id)
-        const id =
-          clientMessageId ??
-          (previousClient?.answer === answer ? previousClient.id : crypto.randomUUID())
-        clientIds.current.set(item.id, { answer, id })
-        const message = requestUserInputResponseText(response)
-        const asyncInput = isAsyncRequestUserInputPayload(live.payload)
-        const result = live.project
-          ? await replyToInteractionProject(
-              live,
-              message,
-              id,
-              sourceRef.current!.services!,
-              t('interactions.failed')
-            ).then(() => ({ accepted: true, error: undefined }))
-          : asyncInput && (live.running ?? live.task.lifecycle?.turn.active ?? false)
-            ? await api.guideRuntimeTask({
-                address: live.task.address,
+        return await navigator.locks.request(historyKey + ':' + item.id, async () => {
+          if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return false
+          // The request lock and persisted acceptance are shared by every workbench window.
+          if (
+            submittedRef.current.has(item.id) ||
+            localStorage.getItem(acceptancePrefix + item.id) !== null ||
+            readInteractionHistory(historyKey).some(row => row.id === item.id)
+          ) {
+            submittedRef.current = new Set(submittedRef.current).add(item.id)
+            setSubmitted(submittedRef.current)
+            setDraft(item.id, '')
+            setErrors(current => {
+              const next = { ...current }
+              delete next[item.id]
+              return next
+            })
+            return false
+          }
+          // Revalidate the exact request before answering; old notifications are not authority.
+          const live = (await readRuntimeInteractions(item.task, api)).find(
+            row => row.id === item.id && !row.answered
+          )
+          if (
+            !live ||
+            !canReplyToInteraction(live) ||
+            (live.payload.expiresAtUnixMs && live.payload.expiresAtUnixMs <= Date.now())
+          )
+            throw new Error(t('interactions.expired'))
+          if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return false
+          const response = interactionResponse(live.payload, {
+            [live.payload.questions![0].id!]: { answers: [answer] },
+          })
+          const previousClient = clientIds.current.get(item.id)
+          const id =
+            clientMessageId ??
+            (previousClient?.answer === answer ? previousClient.id : crypto.randomUUID())
+          clientIds.current.set(item.id, { answer, id })
+          const message = requestUserInputResponseText(response)
+          const asyncInput = isAsyncRequestUserInputPayload(live.payload)
+          const result = live.project
+            ? await replyToInteractionProject(
+                live,
                 message,
-                clientGuidanceId: id,
-              })
-            : await api.sendRuntimeMessage(
-                await prepareRuntimeContinuationModel(
-                  {
-                    address: live.task.address,
-                    message,
-                    ...(asyncInput
-                      ? {
-                          queueIfBusy: true,
-                        }
-                      : { requestUserInputResponse: response }),
-                    clientUserMessageId: id,
-                  },
-                  {
-                    projects: [],
-                    chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
-                    totalTasks: 1,
-                  },
-                  () => api.listRuntimeWork()
+                id,
+                sourceRef.current!.services!,
+                t('interactions.failed')
+              ).then(() => ({ accepted: true, error: undefined }))
+            : asyncInput && (live.running ?? live.task.lifecycle?.turn.active ?? false)
+              ? await api.guideRuntimeTask({
+                  address: live.task.address,
+                  message,
+                  clientGuidanceId: id,
+                })
+              : await api.sendRuntimeMessage(
+                  await prepareRuntimeContinuationModel(
+                    {
+                      address: live.task.address,
+                      message,
+                      ...(asyncInput
+                        ? {
+                            queueIfBusy: true,
+                          }
+                        : { requestUserInputResponse: response }),
+                      clientUserMessageId: id,
+                    },
+                    {
+                      projects: [],
+                      chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
+                      totalTasks: 1,
+                    },
+                    () => api.listRuntimeWork()
+                  )
                 )
-              )
-        const accepted = result.accepted ?? ('success' in result && result.success)
-        if (!accepted) throw new Error(result.error || t('notifications.failed'))
-        if (!mounted.current) return true
-        submittedRef.current = new Set(submittedRef.current).add(item.id)
-        setSubmitted(submittedRef.current)
-        setReplyNotice(t('interactions.reply_success'))
-        archive(item, Date.now())
-        setDraft(item.id, '')
-        setNoticeIds(current => current.filter(id => id !== item.id))
-        setErrors(current => {
-          const next = { ...current }
-          delete next[item.id]
-          return next
+          const accepted = result.accepted ?? ('success' in result && result.success)
+          if (!accepted) throw new Error(result.error || t('notifications.failed'))
+          saveInteractionState(acceptancePrefix + item.id, true)
+          await archive(item, Date.now())
+          if (!mounted.current) return true
+          submittedRef.current = new Set(submittedRef.current).add(item.id)
+          setSubmitted(submittedRef.current)
+          setReplyNotice(t('interactions.reply_success'))
+          setDraft(item.id, '')
+          setNoticeIds(current => current.filter(id => id !== item.id))
+          setErrors(current => {
+            const next = { ...current }
+            delete next[item.id]
+            return next
+          })
+          // Refresh failure must never turn an accepted answer into a failed send.
+          void sourceRef.current?.refresh?.().catch(console.error)
+          void refresh()
+          return true
         })
-        // Refresh failure must never turn an accepted answer into a failed send.
-        void sourceRef.current?.refresh?.().catch(console.error)
-        void refresh()
-        return true
       } catch (error) {
         console.error(
           '[Wework] Could not send interaction reply',
@@ -478,7 +513,7 @@ function RuntimeInteractionsState({
         if (mounted.current) setBusy(new Set(inFlight.current))
       }
     },
-    [archive, refresh, setDraft, t]
+    [acceptancePrefix, archive, historyKey, refresh, setDraft, t]
   )
 
   const open = useCallback(
