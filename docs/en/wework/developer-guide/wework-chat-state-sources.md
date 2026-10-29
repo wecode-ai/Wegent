@@ -60,7 +60,7 @@ TanStack Virtual and its native ResizeObserver own message measurements. Keep me
 
 Opening a conversation initially positions it at the latest content; returning to a reader position restores the saved location. A boundary observer rooted in the current scroll container prefetches the previous page before the reader reaches loaded history. Prepending history preserves the reader position through stable message, content-item, and paragraph identities. Loading feedback floats above the transcript without affecting measurements. Search context retains explicit pagination, hidden panes suspend automatic loading, and failures offer retry at the same boundary.
 
-Diagram previews cache sanitized static SVG artifacts and dimensions by document, source, theme, and server address. Mermaid compilation is serialized, and concurrent requests for the same artifact share one compilation. Ordinary message rows mount static images; the zoom canvas mounts only when the reader opens the full diagram. Remounting an offscreen row must not recompile the same diagram or retain a full viewer for every row.
+Diagram previews cache sanitized static SVG artifacts and dimensions by document, source, theme, and server address. Mermaid compilation is serialized, and concurrent requests for the same artifact share one compilation. Message rows mount static images with a lightweight zoom canvas, and fullscreen presentation reuses the same artifact. Remounting an offscreen row must not recompile the same diagram or retain a full file viewer for every row.
 
 ```mermaid
 flowchart LR
@@ -69,8 +69,8 @@ flowchart LR
   C --> D[Restore semantic reader anchor]
   B --> E[Floating loading feedback]
   F[Message row] --> G[Diagram artifact cache]
-  G --> H[Static image preview]
-  H -->|Open full diagram| I[Zoom canvas]
+  G --> H[Static image with lightweight zoom]
+  H -->|Open full diagram| I[Fullscreen presentation of same artifact]
 ```
 
 ## Board Conversation Split Views

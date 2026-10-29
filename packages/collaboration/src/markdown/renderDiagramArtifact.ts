@@ -13,7 +13,7 @@ function unsafeCss(value: string): boolean {
     )
   return (
     /@import/i.test(decoded) ||
-    Array.from(decoded.matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/gis)).some(
+    Array.from(decoded.matchAll(/url\(\s*(['"]?)([\s\S]*?)\1\s*\)/gi)).some(
       ([, , url]) => !url.trim().startsWith('#')
     )
   )

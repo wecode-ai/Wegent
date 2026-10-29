@@ -45,6 +45,9 @@ test('preserves multiline HTML label namespaces and local markers while removing
     <use id="external" href="https://tracker.invalid/asset.svg#arrow" />
     <foreignObject width="100" height="50"><div xmlns="http://www.w3.org/1999/xhtml" onclick="unsafe()">First<br/>Second<img src="https://tracker.invalid/image" /><script>unsafe()</script></div></foreignObject>
     <rect id="css-resource" style="fill:u\72l('https://tracker.invalid/image')" />
+    <rect id="multiline-css-resource" style="fill:url('
+https://tracker.invalid/image
+')" />
   </svg>`
   const clean = sanitizeDiagramSvg(document, source, true)
   expect(clean.getAttribute('onload')).toBeNull()
@@ -53,6 +56,7 @@ test('preserves multiline HTML label namespaces and local markers while removing
   expect(clean.querySelector('img')?.getAttribute('src')).toBeNull()
   expect(clean.querySelector('#external')?.getAttribute('href')).toBeNull()
   expect(clean.querySelector('#css-resource')?.getAttribute('style')).toBeNull()
+  expect(clean.querySelector('#multiline-css-resource')?.getAttribute('style')).toBeNull()
   expect(clean.querySelector('use')?.getAttribute('href')).toBe('#arrow')
   expect(clean.querySelector('[marker-end]')?.getAttribute('marker-end')).toBe('url(#arrow)')
   expect(clean.textContent).toContain('First')
