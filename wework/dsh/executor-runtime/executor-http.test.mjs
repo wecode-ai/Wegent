@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 import test from 'node:test'
+import { createRequestSecurity } from '../electron-host/request-security.js'
 import { apply, handleExecutorEvents, handleExecutorRpc } from './index.js'
 import { ExecutorRuntimeClient, ExecutorRuntimeError } from './executor-runtime-client.js'
 
@@ -76,6 +77,37 @@ test('describe remains unavailable until the bridge has a negotiated method tabl
   assert.equal(requests, 0)
 })
 
+test('describe rejects unauthenticated and rebinding requests before reading identity', async t => {
+  let reads = 0
+  const describe = await registeredDescribeHandler(t, {
+    describe: () => {
+      reads++
+      return { protocol_version: 1 }
+    },
+  })
+  for (const [headers, status] of [
+    [{ host: '127.0.0.1:3000' }, 401],
+    [
+      {
+        host: 'rebind.attacker.test:3000',
+        origin: 'http://rebind.attacker.test:3000',
+        cookie: 'session=authenticated',
+      },
+      403,
+    ],
+  ]) {
+    const request = executorEventRequest()
+    request.headers = headers
+    const response = responseFixture()
+
+    await describe(request, response)
+
+    assert.equal(response.status, status)
+    assert.equal(JSON.parse(response.body).ok, false)
+  }
+  assert.equal(reads, 0)
+})
+
 async function registeredDescribeHandler(t, client) {
   t.mock.method(ExecutorRuntimeClient, 'fromEnvironment', () => ({
     start: async () => {},
@@ -84,6 +116,13 @@ async function registeredDescribeHandler(t, client) {
   const handlers = new Map()
   await apply({
     sessions: {},
+    weworkRequestSecurity: createRequestSecurity(
+      {
+        requestRejection: request =>
+          request.headers.cookie === 'session=authenticated' ? undefined : 401,
+      },
+      3000
+    ),
     webServer: {
       register: ({ path, handler }) => handlers.set(path, handler),
     },
@@ -332,7 +371,7 @@ function executorEventRequest(query = '') {
   const request = new EventEmitter()
   request.method = 'GET'
   request.url = `/wework/executor/v1/events${query}`
-  request.headers = {}
+  request.headers = { host: '127.0.0.1:3000', cookie: 'session=authenticated' }
   request.socket = { remoteAddress: '127.0.0.1' }
   return request
 }
