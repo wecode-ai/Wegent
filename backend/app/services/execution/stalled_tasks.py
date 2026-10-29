@@ -20,8 +20,7 @@ from typing import List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
-from app.models.task import TaskResource
+from app.models.subtask import SubtaskStatus
 from app.services.execution.emitters import (
     StatusUpdatingEmitter,
     WebSocketResultEmitter,
@@ -31,6 +30,7 @@ from app.services.execution.executor_health import (
     executor_heartbeat_alive,
     executor_pod_missing,
 )
+from app.stores.tasks import subtask_store
 from shared.models import EventType, ExecutionEvent
 
 logger = logging.getLogger(__name__)
@@ -68,37 +68,20 @@ def list_stalled_candidates(
     limit: int,
 ) -> List[StalledCandidate]:
     """Return recent RUNNING assistant subtasks that have not reported since cutoff."""
-    rows = (
-        db.query(
-            Subtask.task_id,
-            Subtask.id,
-            TaskResource.user_id,
-            Subtask.executor_name,
-            Subtask.executor_namespace,
-            Subtask.updated_at,
-        )
-        .join(TaskResource, TaskResource.id == Subtask.task_id)
-        .filter(
-            Subtask.role == SubtaskRole.ASSISTANT,
-            Subtask.status == SubtaskStatus.RUNNING,
-            Subtask.updated_at <= cutoff,
-            # created_at is indexed, so a bounded recent window keeps this a
-            # range scan instead of filtering every RUNNING row.
-            Subtask.created_at >= max_age_cutoff,
-            TaskResource.is_active != TaskResource.STATE_DELETED,
-        )
-        .order_by(Subtask.updated_at.asc(), Subtask.id.asc())
-        .limit(limit)
-        .all()
+    rows = subtask_store.list_stalled_running_assistant_subtasks(
+        db,
+        cutoff=cutoff,
+        max_age_cutoff=max_age_cutoff,
+        limit=limit,
     )
     return [
         StalledCandidate(
-            task_id=row[0],
-            subtask_id=row[1],
-            user_id=row[2],
-            executor_name=(row[3] or "").strip(),
-            executor_namespace=(row[4] or "").strip(),
-            updated_at=row[5],
+            task_id=row.task_id,
+            subtask_id=row.subtask_id,
+            user_id=row.owner_user_id,
+            executor_name=row.executor_name,
+            executor_namespace=row.executor_namespace,
+            updated_at=row.updated_at,
         )
         for row in rows
     ]

@@ -42,6 +42,18 @@ class ExecutorReference:
 
 
 @dataclass(frozen=True)
+class StalledRunningSubtask:
+    """Running subtask that may have stopped reporting progress."""
+
+    task_id: int
+    subtask_id: int
+    owner_user_id: int
+    executor_name: str
+    executor_namespace: str
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
 class RecentTaskTeamRef:
     """Raw JSON values; validation belongs to the team service."""
 
@@ -962,6 +974,15 @@ class SubtaskStore(Protocol):
     def list_running_since(
         self, db: Session, *, created_after: datetime
     ) -> list[Subtask]: ...
+
+    def list_stalled_running_assistant_subtasks(
+        self,
+        db: Session,
+        *,
+        cutoff: datetime,
+        max_age_cutoff: datetime,
+        limit: int,
+    ) -> list[StalledRunningSubtask]: ...
 
     def list_session_task_ids(
         self, db: Session, *, skip: int, limit: int
