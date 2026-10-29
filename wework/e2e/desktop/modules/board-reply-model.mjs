@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { CLOUD_PUBLIC_MODEL_NAME } from './shared.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
 import {
   assistantMessage,
   createSse,
@@ -252,7 +253,11 @@ async function verifyExecutionDetail(control, scope, run, expectedText, timeoutM
   return badge
 }
 
-export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
+export function createBoardReplyModelRegression({
+  executorHome,
+  uiTimeoutMs,
+  workbenchReadyTimeoutMs,
+}) {
   let active = false
   let linkedIssueTask = null
   const upstreamModels = new Map()
@@ -320,6 +325,7 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
     },
 
     async verify(control, issue, scope, cloud) {
+      upstreamModels.clear()
       active = true
       try {
         const activity = scope(`[data-testid="cloud-task-activity-${issue.id}"]`)
@@ -396,6 +402,14 @@ export function createBoardReplyModelRegression({ executorHome, uiTimeoutMs }) {
         await control.command('fill', composer, { value: INITIAL })
         await control.command('press', composer, { key: 'Enter' })
         const [initialRun] = await readPersistedExecutions(cloud, issue.id, [INITIAL], uiTimeoutMs)
+        // A persisted dispatch address precedes native session/MCP startup on Windows.
+        // Establish runtime readiness before applying the separate UI response budget.
+        await waitForValue(
+          () => upstreamModels.has(INITIAL),
+          Boolean,
+          'The native board execution did not reach its configured cloud model',
+          workbenchReadyTimeoutMs
+        )
         const initialBadge = await verifyExecutionDetail(
           control,
           scope,

@@ -1697,11 +1697,13 @@ function ChatAreaContent({
   // Unified canSubmit flag
   const canSubmit = useMemo(() => {
     return (
+      chatState.selectedTeam !== null &&
       !submitBlockedReason &&
       (!streamHandlers.isStreaming || streamHandlers.canQueueMessage) &&
       chatState.isAttachmentReadyToSend
     )
   }, [
+    chatState.selectedTeam,
     chatState.isAttachmentReadyToSend,
     streamHandlers.isStreaming,
     streamHandlers.canQueueMessage,

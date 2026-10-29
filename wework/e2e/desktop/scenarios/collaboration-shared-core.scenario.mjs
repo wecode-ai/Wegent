@@ -187,7 +187,11 @@ export function createDesktopScenario({
   workbenchReadyTimeoutMs,
   executorHome,
 }) {
-  const boardReplyModel = createBoardReplyModelRegression({ executorHome, uiTimeoutMs })
+  const boardReplyModel = createBoardReplyModelRegression({
+    executorHome,
+    uiTimeoutMs,
+    workbenchReadyTimeoutMs,
+  })
   const projectOnlyNavigation = createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHome })
   let backendUrl = ''
   let authToken = ''

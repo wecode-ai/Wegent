@@ -12,6 +12,7 @@ on:
       - ".github/actions/**"
       - ".github/claude-code-cli/**"
       - ".github/scripts/classify-ci-cache-warmup.sh"
+      - ".github/scripts/wework-windows-e2e-build-key.mjs"
       - ".github/scripts/archive-wework-core-e2e-build.sh"
       - ".github/scripts/download-actions-artifact.sh"
       - ".github/scripts/publish-wework-core-e2e-build-oci.sh"
@@ -26,6 +27,7 @@ on:
       - ".github/workflows/lint.yml"
       - ".github/workflows/test.yml"
       - ".github/workflows/wework-e2e.yml"
+      - "backend-rs/**"
       - "backend/uv.lock"
       - "docker/wework-e2e/desktop.Dockerfile"
       - "executor/**"
@@ -34,22 +36,16 @@ on:
       - "frontend/package.json"
       - "frontend/src/**"
       - "knowledge_engine/uv.lock"
+      - ".cargo/**"
+      - ".npmrc"
       - "package.json"
-      - "packages/chat-core/**"
-      - "packages/collaboration/**"
-      - "packages/*/package.json"
+      - "packages/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "shared/assets/**"
       - "shared/uv.lock"
       - "wegent-cli/requirements.txt"
-      - "wework/package.json"
-      - "wework/codex-binaries.lock.json"
-      - "wework/electron/package.json"
-      - "wework/electron/pnpm-lock.yaml"
-      - "wework/resources/**"
-      - "wework/scripts/**"
-      - "wework/src/**"
+      - "wework/**"
   workflow_dispatch:
 
 permissions:
@@ -268,6 +264,26 @@ jobs:
       - name: Compile executor Clippy targets
         working-directory: ./executor
         run: cargo clippy --all-targets --all-features -- -D warnings
+
+  warm-wework-windows-electron:
+    name: Warm Wework Windows Desktop E2E Build
+    needs: changes
+    if: github.ref == 'refs/heads/main' && needs.changes.outputs.wework_target == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      ELECTRON_CACHE: ${{ github.workspace }}/.ci-cache/electron
+      WEGENT_CODEX_CACHE_DIR: ${{ github.workspace }}/.ci-cache/codex
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          filter: blob:none
+          persist-credentials: false
+      - name: Restore or build Windows Wework desktop E2E package
+        uses: ./.github/actions/build-wework-windows-e2e
+        with:
+          save-cache: "true"
 
   warm-wework-macos-electron:
     name: Warm Wework macOS Electron Build Cache

@@ -166,7 +166,7 @@ fn claude_settings_env_value(key: &str) -> String {
 
 fn default_claude_settings_env_value(key: &str) -> &'static str {
     match key {
-        "ENABLE_TOOL_SEARCH" => "false",
+        "ENABLE_TOOL_SEARCH" => "true",
         _ => "0",
     }
 }

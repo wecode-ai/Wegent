@@ -1,0 +1,124 @@
+name: Build Windows Wework desktop E2E artifact
+description: Restore or build the exact Windows desktop package, with main-owned shared caches
+
+inputs:
+  save-cache:
+    description: Whether the trusted main branch may populate shared caches
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: "24"
+    - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8f
+
+    - name: Resolve exact Windows build key
+      id: build-key
+      shell: bash
+      run: node .github/scripts/wework-windows-e2e-build-key.mjs >> "$GITHUB_OUTPUT"
+
+    - name: Restore exact Windows desktop package
+      id: build-cache
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: wework/electron/release/WeWork-win32-x64
+        key: ${{ steps.build-key.outputs.key }}
+
+    - name: Set up Node workspace
+      if: steps.build-cache.outputs.cache-hit != 'true'
+      uses: ./.github/actions/setup-node-workspace
+      with:
+        setup-toolchain: "false"
+        save-cache: ${{ inputs.save-cache }}
+
+    - name: Set up sccache
+      if: steps.build-cache.outputs.cache-hit != 'true'
+      uses: ./.github/actions/setup-sccache
+      with:
+        save-cache: ${{ inputs.save-cache }}
+
+    - name: Restore Windows build dependencies
+      if: steps.build-cache.outputs.cache-hit != 'true'
+      id: dependencies
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          ${{ runner.temp }}/executor-target
+          ${{ runner.temp }}/backend-rs-target
+          ${{ env.ELECTRON_CACHE }}
+        key: Windows-${{ runner.arch }}-wework-electron-e2e-v2-${{ steps.build-key.outputs.toolchain }}-${{ hashFiles('executor/Cargo.lock', 'backend-rs/Cargo.lock', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
+        restore-keys: |
+          Windows-${{ runner.arch }}-wework-electron-e2e-v2-${{ steps.build-key.outputs.toolchain }}-
+
+    - name: Restore bundled Codex cache
+      if: steps.build-cache.outputs.cache-hit != 'true'
+      id: codex
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ env.WEGENT_CODEX_CACHE_DIR }}
+        key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
+
+    - name: Build Windows Wework Electron E2E application
+      if: steps.build-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        CI: true
+        WEWORK_EXECUTOR_TARGET_DIR: ${{ runner.temp }}/executor-target
+        WEWORK_EXECUTOR_PROFILE: debug
+      run: |
+        pnpm --filter wework ai:verify:electron:build
+        node wework/scripts/build-desktop-e2e-client.mjs wework/electron/release/WeWork-win32-x64/resources/e2e-client
+
+    - name: Build Rust Backend Windows E2E gateway
+      if: steps.build-cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        $backendRsTarget = Join-Path $env:RUNNER_TEMP "backend-rs-target"
+        $env:CARGO_TARGET_DIR = $backendRsTarget
+        cargo build --locked --manifest-path backend-rs/Cargo.toml --bin wegent-backend-rs
+        $backendRsBin = Join-Path $backendRsTarget "debug/wegent-backend-rs.exe"
+        $appBackendRsBin = "wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe"
+        Copy-Item -LiteralPath $backendRsBin -Destination $appBackendRsBin -Force
+
+    - name: Verify complete Windows desktop package
+      shell: bash
+      run: |
+        test -f wework/electron/release/WeWork-win32-x64/WeWork.exe
+        test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
+        test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe
+        test -f wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
+        test -f wework/electron/release/WeWork-win32-x64/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json
+        test -f wework/electron/release/WeWork-win32-x64/resources/e2e-client/socket.io-client.cjs
+        test -f wework/electron/release/WeWork-win32-x64/resources/components.json
+
+    - name: Save Windows build dependencies
+      if: inputs.save-cache == 'true' && github.ref == 'refs/heads/main' && steps.build-cache.outputs.cache-hit != 'true' && steps.dependencies.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          ${{ runner.temp }}/executor-target
+          ${{ runner.temp }}/backend-rs-target
+          ${{ env.ELECTRON_CACHE }}
+        key: ${{ steps.dependencies.outputs.cache-primary-key }}
+
+    - name: Save bundled Codex cache
+      if: inputs.save-cache == 'true' && github.ref == 'refs/heads/main' && steps.build-cache.outputs.cache-hit != 'true' && steps.codex.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ env.WEGENT_CODEX_CACHE_DIR }}
+        key: ${{ steps.codex.outputs.cache-primary-key }}
+
+    - name: Save exact Windows desktop package
+      if: inputs.save-cache == 'true' && github.ref == 'refs/heads/main' && steps.build-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: wework/electron/release/WeWork-win32-x64
+        key: ${{ steps.build-key.outputs.key }}
