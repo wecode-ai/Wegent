@@ -58,7 +58,7 @@ target is treated as unordered and the drag result is lost.
 
 TanStack Virtual and its native ResizeObserver own message measurements. Keep message content visible during scrolling and reuse rows by message identity. Do not introduce a second height writer, replace scrolling content with placeholders, or estimate Markdown height on every frame.
 
-Opening a conversation initially positions it at the latest content; returning to a reader position restores the saved location. A boundary observer rooted in the current scroll container prefetches the previous page before the reader reaches loaded history. Prepending history preserves the reader position through stable message, content-item, and paragraph identities. Loading feedback floats above the transcript without affecting measurements. Open search retains explicit pagination, and hidden panes suspend automatic loading. Failures and completed requests that leave the boundary unchanged offer manual recovery without a request loop.
+Opening a conversation initially positions it at the latest content; returning to a reader position restores the saved location. A boundary observer rooted in the current scroll container prefetches the previous page before the reader reaches loaded history. Prepending history preserves the reader position through stable message, content-item, and paragraph identities. The boundary marker always occupies one pixel; loading feedback and pagination actions are portaled outside the transcript without affecting measurements. Open search retains explicit pagination, and hidden panes suspend automatic loading. Failures and completed requests that leave the boundary unchanged offer manual recovery without a request loop. Manual retries retain the control and keyboard focus.
 
 Diagram previews cache sanitized static SVG artifacts and dimensions by document, source, theme, and server address. Mermaid compilation is serialized, and concurrent requests for the same artifact share one compilation. Message rows mount static images with a lightweight zoom canvas, and fullscreen presentation reuses the same artifact. Inline diagrams allow vertical touch scrolling of the conversation; fullscreen retains unrestricted dragging. Remounting an offscreen row must not recompile the same diagram or retain a full file viewer for every row.
 
@@ -67,7 +67,7 @@ flowchart LR
   A[Scroll container] --> B[History boundary prefetch]
   B --> C[Prepend history]
   C --> D[Restore semantic reader anchor]
-  B --> E[Floating loading feedback]
+  B --> E[Loading feedback or pagination action outside transcript]
   F[Message row] --> G[Diagram artifact cache]
   G --> H[Static image with lightweight zoom]
   H -->|Open full diagram| I[Fullscreen presentation of same artifact]

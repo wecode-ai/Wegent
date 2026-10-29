@@ -1,9 +1,8 @@
 import { ArrowDown } from 'lucide-react'
-import { memo, useCallback, useMemo } from 'react'
+import { memo, useCallback, useMemo, useState } from 'react'
 
 import { useConversationTranslation } from './ConversationTranslation'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
-import { CompositedSpinner } from '../issue-detail/CompositedSpinner'
 
 import { MessageList } from './MessageList'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
@@ -81,6 +80,7 @@ function ScrollableMessagePaneContent({
   initialScrollPosition = 'restore',
 }: ScrollableMessageAreaProps) {
   const { t, translate } = useConversationTranslation()
+  const [historyControlsTarget, setHistoryControlsTarget] = useState<HTMLDivElement | null>(null)
   const {
     internalScrollRef,
     scrollRef,
@@ -184,19 +184,7 @@ function ScrollableMessagePaneContent({
   ) : null
 
   return (
-    <div className={cn('relative min-h-0 flex-1', className)}>
-      {loadingMoreBefore && !autoScrollSuspended && (
-        <div
-          role="status"
-          aria-label={t('workbench.loading_older_messages')}
-          data-testid="runtime-transcript-history-loading"
-          className="pointer-events-none absolute inset-x-0 top-2 z-20 flex justify-center"
-        >
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-background/90 text-text-secondary">
-            <CompositedSpinner className="h-4 w-4" />
-          </span>
-        </div>
-      )}
+    <div ref={setHistoryControlsTarget} className={cn('relative min-h-0 flex-1', className)}>
       {turnNavigationLoading && (
         <div
           className="pointer-events-none absolute left-1/2 top-5 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-background/95 px-3 py-1.5 text-xs font-medium text-text-secondary shadow-[0_8px_22px_rgba(15,23,42,0.12)]"
@@ -259,6 +247,7 @@ function ScrollableMessagePaneContent({
                   failed={Boolean(historyError)}
                   suspended={autoScrollSuspended}
                   manual={historyLoadingMode === 'manual'}
+                  controlsTarget={historyControlsTarget}
                   scrollRef={scrollRef}
                   onPrepare={prepareHistory}
                   onLoad={onLoadMoreBefore}

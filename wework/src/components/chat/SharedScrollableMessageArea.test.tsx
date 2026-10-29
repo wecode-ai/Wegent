@@ -66,7 +66,7 @@ describe('shared conversation scroll area without desktop services', () => {
     expect(screen.queryByTestId('runtime-transcript-history-loading')).not.toBeInTheDocument()
     view.rerender(content(true))
     const indicator = screen.getByRole('status', { name: 'Loading...' })
-    expect(indicator).toHaveClass('absolute', 'pointer-events-none')
+    expect(indicator.parentElement).toHaveClass('absolute', 'pointer-events-none')
     expect(screen.getByTestId('chat-message-scroll-area')).not.toContainElement(indicator)
     expect(indicator.querySelector('.animate-spin')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-transcript-history-start')).toHaveClass('h-px')
@@ -94,6 +94,32 @@ describe('shared conversation scroll area without desktop services', () => {
       intersect([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
     )
     expect(load).toHaveBeenCalledOnce()
+  })
+
+  test('keeps search pagination controls outside the unchanged transcript marker', () => {
+    const content = (manual: boolean) => (
+      <ConversationTranslationProvider translate={createCollaborationTranslator('en')}>
+        <ScrollableMessageArea
+          messages={[message]}
+          hasMoreBefore
+          historyLoadingMode={manual ? 'manual' : 'automatic'}
+          autoScrollSuspended={manual}
+          onLoadMoreBefore={vi.fn()}
+        />
+      </ConversationTranslationProvider>
+    )
+    const view = render(content(false))
+    const marker = screen.getByTestId('runtime-transcript-history-start')
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    view.rerender(content(true))
+    const button = screen.getByTestId('load-older-runtime-transcript-button')
+    expect(scroller).not.toContainElement(button)
+    expect(marker).toHaveClass('h-px')
+    expect(marker).toBeEmptyDOMElement()
+    view.rerender(content(false))
+    expect(screen.queryByTestId('load-older-runtime-transcript-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-transcript-history-start')).toBe(marker)
+    expect(marker).toHaveClass('h-px')
   })
 
   test('shows missing history without enabling an unavailable action', () => {

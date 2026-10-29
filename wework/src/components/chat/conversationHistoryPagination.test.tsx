@@ -51,6 +51,7 @@ function boundary(props: Partial<Parameters<typeof ConversationHistoryBoundary>[
         scrollRef={scrollRef}
         suspended={false}
         loading={false}
+        controlsTarget={document.body}
         onPrepare={vi.fn()}
         {...props}
       />
@@ -87,6 +88,25 @@ describe('automatic conversation history pagination', () => {
     expect(onLoad).toHaveBeenCalledOnce()
     // A committed earlier page, not a loading flag or a projection render, re-arms prefetch.
     view.rerender(boundary({ onLoad, onPrepare, boundaryKey: 'page-0' }))
+    intersect()
+    expect(onLoad).toHaveBeenCalledTimes(2)
+    await act(async () => resolve())
+  })
+
+  test('re-arms after a new page commits before the preceding request settles', async () => {
+    let resolve!: () => void
+    const onLoad = vi.fn(
+      () =>
+        new Promise<void>(done => {
+          resolve = done
+        })
+    )
+    const view = render(boundary({ onLoad }))
+    intersect()
+    view.rerender(boundary({ onLoad, boundaryKey: 'earlier-page' }))
+    intersect()
+    expect(onLoad).toHaveBeenCalledOnce()
+    await act(async () => resolve())
     intersect()
     expect(onLoad).toHaveBeenCalledTimes(2)
     await act(async () => resolve())
@@ -170,6 +190,37 @@ describe('automatic conversation history pagination', () => {
     await act(async () => intersect())
     expect(onLoad).toHaveBeenCalledTimes(3)
     expect(onPrepare).toHaveBeenLastCalledWith(true)
+  })
+
+  test('keeps the recovery button and keyboard focus throughout an asynchronous retry', async () => {
+    let resolve!: () => void
+    const onLoad = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>(done => {
+            resolve = done
+          })
+      )
+    const view = render(boundary({ onLoad }))
+    await act(async () => intersect())
+    const button = screen.getByTestId('load-older-runtime-transcript-button')
+    button.focus()
+    fireEvent.click(button)
+    view.rerender(boundary({ onLoad, loading: true }))
+    expect(screen.getByTestId('load-older-runtime-transcript-button')).toBe(button)
+    expect(button).toHaveFocus()
+    expect(button).toHaveAttribute('aria-disabled', 'true')
+    expect(button.querySelector('.animate-spin')).toBeInTheDocument()
+    fireEvent.click(button)
+    expect(onLoad).toHaveBeenCalledTimes(2)
+    await act(async () => resolve())
+    expect(screen.getByTestId('load-older-runtime-transcript-button')).toBe(button)
+    expect(button).toHaveFocus()
+    view.rerender(boundary({ onLoad }))
+    expect(button).toHaveAttribute('aria-disabled', 'false')
+    expect(screen.getByTestId('runtime-transcript-history-start')).toHaveClass('h-px')
   })
 
   test('ignores queued observer callbacks after suspension or unmount', () => {

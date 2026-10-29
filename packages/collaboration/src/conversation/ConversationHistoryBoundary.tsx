@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 
 import { useConversationTranslation } from './ConversationTranslation'
 import { CompositedSpinner } from '../issue-detail/CompositedSpinner'
@@ -9,6 +10,7 @@ interface ConversationHistoryBoundaryProps {
   failed?: boolean
   suspended: boolean
   manual?: boolean
+  controlsTarget: HTMLElement | null
   scrollRef: RefObject<HTMLDivElement | null>
   onPrepare: (automatic: boolean) => void
   onLoad?: () => Promise<void> | void
@@ -20,6 +22,7 @@ export function ConversationHistoryBoundary({
   failed = false,
   suspended,
   manual = false,
+  controlsTarget,
   scrollRef,
   onPrepare,
   onLoad,
@@ -29,8 +32,14 @@ export function ConversationHistoryBoundary({
   const pendingRef = useRef(false)
   const attemptedBoundaryRef = useRef<string | null>(null)
   const mountedRef = useRef(false)
-  const [status, setStatus] = useState<'idle' | 'loading' | 'failed'>('idle')
-  const [completedBoundaryKey, setCompletedBoundaryKey] = useState<string | null>(null)
+  const [request, setRequest] = useState<{
+    boundaryKey: string
+    automatic: boolean
+    status: 'loading' | 'completed' | 'failed'
+  } | null>(null)
+  const currentRequest = request?.boundaryKey === boundaryKey ? request : null
+  const status = currentRequest?.status ?? 'idle'
+  const requestPending = request?.status === 'loading'
   useEffect(() => {
     mountedRef.current = true
     return () => {
@@ -44,16 +53,15 @@ export function ConversationHistoryBoundary({
       if (automatic && attemptedBoundaryRef.current === boundaryKey) return
       attemptedBoundaryRef.current = boundaryKey
       pendingRef.current = true
-      setStatus('loading')
+      setRequest({ boundaryKey, automatic, status: 'loading' })
       try {
         onPrepare(automatic)
         await onLoad()
         if (mountedRef.current) {
-          setCompletedBoundaryKey(boundaryKey)
-          setStatus('idle')
+          setRequest({ boundaryKey, automatic, status: 'completed' })
         }
       } catch {
-        if (mountedRef.current) setStatus('failed')
+        if (mountedRef.current) setRequest({ boundaryKey, automatic, status: 'failed' })
       } finally {
         pendingRef.current = false
       }
@@ -69,7 +77,8 @@ export function ConversationHistoryBoundary({
       manual ||
       loading ||
       failed ||
-      status !== 'idle' ||
+      requestPending ||
+      status === 'failed' ||
       !onLoad ||
       !marker ||
       !scroller ||
@@ -93,36 +102,68 @@ export function ConversationHistoryBoundary({
       active = false
       observer.disconnect()
     }
-  }, [boundaryKey, failed, load, loading, manual, onLoad, scrollRef, status, suspended])
+  }, [
+    boundaryKey,
+    failed,
+    load,
+    loading,
+    manual,
+    onLoad,
+    requestPending,
+    scrollRef,
+    status,
+    suspended,
+  ])
 
+  const busy = loading || requestPending
   const showAction =
-    manual || failed || status === 'failed' || (!loading && completedBoundaryKey === boundaryKey)
-  const busy = loading || status === 'loading'
+    manual ||
+    failed ||
+    status === 'failed' ||
+    (request && !request.automatic && busy) ||
+    (currentRequest && (!currentRequest.automatic || (status === 'completed' && !loading)))
+  const showControls = showAction || (busy && !suspended)
   return (
-    <div
-      ref={markerRef}
-      data-testid="runtime-transcript-history-start"
-      aria-busy={busy}
-      className={showAction ? 'flex shrink-0 justify-center px-4 py-2' : 'h-px shrink-0'}
-    >
-      {showAction ? (
-        <button
-          type="button"
-          data-testid="load-older-runtime-transcript-button"
-          disabled={busy || !onLoad}
-          onClick={() => void load(false)}
-          className="flex h-11 items-center gap-2 rounded-md px-4 text-xs text-text-secondary hover:bg-muted disabled:opacity-60"
-        >
-          {busy && <CompositedSpinner className="h-4 w-4" />}
-          {busy
-            ? t('workbench.loading_older_messages')
-            : failed || status === 'failed'
-              ? t('workbench.load_older_messages_failed')
-              : t('workbench.load_older_messages')}
-        </button>
-      ) : (
-        <span className="sr-only">{busy ? t('workbench.loading_older_messages') : ''}</span>
-      )}
-    </div>
+    <>
+      <div
+        ref={markerRef}
+        data-testid="runtime-transcript-history-start"
+        aria-busy={busy}
+        className="h-px shrink-0"
+      />
+      {controlsTarget &&
+        showControls &&
+        createPortal(
+          <div className="pointer-events-none absolute inset-x-0 top-2 z-20 flex justify-center">
+            {showAction ? (
+              <button
+                type="button"
+                data-testid="load-older-runtime-transcript-button"
+                disabled={!onLoad}
+                aria-disabled={busy || !onLoad}
+                onClick={() => void load(false)}
+                className="pointer-events-auto flex h-11 items-center gap-2 rounded-md bg-background/95 px-4 text-xs text-text-secondary shadow-sm hover:bg-muted aria-disabled:opacity-60"
+              >
+                {busy && <CompositedSpinner className="h-4 w-4" />}
+                {busy
+                  ? t('workbench.loading_older_messages')
+                  : failed || status === 'failed'
+                    ? t('workbench.load_older_messages_failed')
+                    : t('workbench.load_older_messages')}
+              </button>
+            ) : (
+              <span
+                role="status"
+                aria-label={t('workbench.loading_older_messages')}
+                data-testid="runtime-transcript-history-loading"
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-background/90 text-text-secondary"
+              >
+                <CompositedSpinner className="h-4 w-4" />
+              </span>
+            )}
+          </div>,
+          controlsTarget
+        )}
+    </>
   )
 }
