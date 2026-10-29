@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import semver from 'semver'
+import { isSeq, parseDocument } from 'yaml'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 import * as tar from 'tar'
 import { materializeBundledRuntimes } from './bundled-runtime-materializer.js'
@@ -538,6 +539,15 @@ async function patchModelProvider(path: string): Promise<void> {
 }
 
 export function injectModelProviderPatch(source: string): string {
+  const document = parseDocument(source)
+  if (document.errors.length) {
+    throw new Error('Smart app model patch contains invalid YAML', {
+      cause: document.errors[0],
+    })
+  }
+  if (document.contents !== null && !isSeq(document.contents)) {
+    throw new Error('Smart app model patch must contain a plugin list')
+  }
   let provider = false
   let model = false
   const patched = source.split('\n').map(line => {

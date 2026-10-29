@@ -104,6 +104,52 @@ describe('workbench DSH runtime', () => {
     ).toThrow('Smart app exposes an incomplete provider/model pair')
   })
 
+  test.each(['- id: [unterminated\n', 'plugins: []\n'])(
+    'rejects an invalid model patch before injecting routes: %s',
+    source => {
+      expect(() => injectModelProviderPatch(source)).toThrow('Smart app model patch')
+    }
+  )
+
+  test('rejects invalid model YAML before installing or launching DSH', async () => {
+    const fixture = await decisionRouteFixture('workbench-invalid-model-patch-')
+    const options = decisionRouteOptions(fixture)
+    await writeFile(
+      join(options.packagePath, 'profile-bundle', 'cordis.patch.yml'),
+      '- id: [unterminated\n'
+    )
+    try {
+      await expect(
+        prepareWorkbenchDshLaunch({
+          ...options,
+          modelBaseUrl: 'http://127.0.0.1:9000/v1/harness-router/default-token',
+          additionalModels: [
+            {
+              modelKey: 'extra',
+              displayName: 'Extra',
+              baseUrl: 'http://127.0.0.1:9000/v1/harness-router/extra-token',
+            },
+          ],
+        })
+      ).rejects.toThrow('Smart app model patch')
+      expect(options.run).not.toHaveBeenCalled()
+      const settings = await readFile(
+        join(
+          options.dataDirectory,
+          'harness-apps',
+          'instances',
+          options.installationId,
+          'settings.yaml'
+        ),
+        'utf8'
+      )
+      expect(settings).toContain('/v1/harness-router/default-token')
+      expect(settings).toContain('/v1/harness-router/extra-token')
+    } finally {
+      await fixture.root.remove()
+    }
+  })
+
   test('makes the managed Node executable available to pnpm subprocesses', async () => {
     const root = await temporaryDirectory('workbench-dsh-node-path-')
     const runtimeRoot = join(root.path, 'runtime')
