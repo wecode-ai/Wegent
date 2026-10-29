@@ -402,7 +402,7 @@ function runTaskFlow(args, env, label) {
     const commandArgs = isolateDisplay
       ? [
           '-a',
-          '--server-args=-screen 0 1280x720x24',
+          '--server-args=-noreset -screen 0 1280x720x24',
           'sh',
           isolatedXvfbPath,
           process.execPath,

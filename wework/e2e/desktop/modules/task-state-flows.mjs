@@ -844,6 +844,7 @@ async function verifyBackgroundCompletionRestore({
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
 
+  await ensureTaskRowVisible(control, otherTaskRowTestId)
   await control.command('clickWhenEnabled', `[data-testid="${otherTaskRowTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
