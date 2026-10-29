@@ -12,6 +12,7 @@ import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import {
   isRuntimeGoalExecutionActive,
   isRuntimeTaskAuthoritativeCompletion,
+  isRuntimeTaskConfirmedActive,
   normalizeRuntimeTaskSummary,
   shouldReplaceRuntimeTaskProjection,
   summarizeRuntimeTaskExecution,
@@ -454,12 +455,13 @@ export class RuntimeTaskLifecycleStore {
       previous.turn.phase === 'awaiting' &&
       canonicalEvent.type === 'executor_snapshot_received' &&
       canonicalEvent.task.running === true
+    // Executor confirmation can admit a turn first seen in streaming history.
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
       !confirmsAcceptedSend &&
       (previous.turn.active
         ? previous.task !== null
-        : previous.turn.outcome !== null && !isRuntimeGoalExecutionActive(canonicalEvent.task)) &&
+        : previous.turn.outcome !== null && !isRuntimeTaskConfirmedActive(canonicalEvent.task)) &&
       typeof canonicalEvent.task.runtimeHandle?.lastTurnId === 'string' &&
       machine.isPriorTurn(canonicalEvent.task.runtimeHandle.lastTurnId)
     ) {

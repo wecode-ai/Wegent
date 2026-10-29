@@ -2597,6 +2597,8 @@ wework_windows_desktop_core_build_job="$(
     '/^  build-wework-desktop-windows-core-e2e:/,/^  wework-desktop-windows-core-e2e:/p' \
     "$wework_workflow"
 )"
+wework_windows_build_action="$(cat "$repo_root/.github/actions/build-wework-windows-e2e/action.yml")"
+wework_windows_desktop_core_build_job+="$wework_windows_build_action"
 if [[ "$wework_windows_desktop_core_build_job" != *"runs-on: windows-latest"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"needs.changes.outputs.windows_desktop_core_e2e == 'true'"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"pnpm --filter wework ai:verify:electron:build"* ]] ||
@@ -2618,7 +2620,7 @@ wework_windows_desktop_core_job="$(
 )"
 if [[ "$wework_windows_desktop_core_job" != *"runs-on: windows-latest"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"needs.changes.outputs.windows_desktop_core_e2e == 'true'"* ]] ||
-  [[ "$wework_windows_desktop_core_job" != *"fromJSON(needs.changes.outputs.wework_desktop_core_e2e_matrix)"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"fromJSON(needs.changes.outputs.windows_desktop_core_e2e_matrix)"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"max-parallel: 17"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"'* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"--parallel-segments"* ]] ||

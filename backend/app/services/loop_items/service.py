@@ -589,6 +589,7 @@ class LoopItemService:
             db.query(CloudProject)
             .filter(CloudProject.id == cloud_project_id)
             .with_for_update()
+            .populate_existing()
             .one()
         )
         sequence = project.next_item_number

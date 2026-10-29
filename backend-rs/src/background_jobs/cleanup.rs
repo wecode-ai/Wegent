@@ -429,7 +429,7 @@ async fn delete_group(
             latest = Some(latest.map_or(task.updated, |value| value.max(task.updated)));
         }
     }
-    if archive_failed && !latest.is_some_and(|at| at <= now - chrono::Duration::days(7)) {
+    if archive_failed && latest.is_none_or(|at| at > now - chrono::Duration::days(7)) {
         return Ok(false);
     }
     check_cancel(context)?;
