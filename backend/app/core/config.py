@@ -256,14 +256,15 @@ class Settings(BaseSettings):
     # failures are opt-in because not every executor image reports heartbeats;
     # enable only when every executor type in the deployment sets
     # HEARTBEAT_ENABLED=true.
-    # The sweep interval is intentionally coarser than the failure threshold:
-    # the query costs ~100ms on the production-sized table and one replica runs
-    # it per interval under a distributed lock.
-    TASK_STALLED_SWEEP_INTERVAL_SECONDS: int = 300
-    TASK_STALLED_TIMEOUT_SECONDS: int = 900
-    # Only look at subtasks created in this window. The column is indexed, so
-    # the sweep stays a bounded range scan instead of walking every RUNNING row;
-    # it also ignores ancient rows left behind by retired deployments.
+    # The sweep only considers subtasks created within TASK_STALLED_MAX_AGE_HOURS
+    # and uses the created_at index, so each run is a small range scan rather
+    # than a scan over every RUNNING row. One replica runs it per interval under
+    # a distributed lock, which keeps the cost negligible; worst-case detection
+    # is TASK_STALLED_TIMEOUT_SECONDS plus one sweep interval.
+    TASK_STALLED_SWEEP_INTERVAL_SECONDS: int = 10800
+    TASK_STALLED_TIMEOUT_SECONDS: int = 3600
+    # Only look at subtasks created in this window; older rows are left alone
+    # and cannot produce stale completion events.
     TASK_STALLED_MAX_AGE_HOURS: int = 24
     TASK_STALLED_HEARTBEAT_TIMEOUT_SECONDS: int = 1800
     TASK_STALLED_HEARTBEAT_CHECK_ENABLED: bool = False
