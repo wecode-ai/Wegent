@@ -1,10 +1,11 @@
 import {
   elementScroll,
+  observeElementOffset,
   useVirtualizer,
   type Virtualizer,
   type VirtualizerOptions,
 } from '@tanstack/react-virtual'
-import { useEffect, useLayoutEffect, useState, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import {
   CONVERSATION_SCROLL_WRITE_SOURCE,
   recordConversationScrollWrite,
@@ -39,6 +40,7 @@ export function useConversationVirtualizer({
   ...options
 }: Options) {
   const [prefix, setPrefix] = useState(0)
+  const readOffsetRef = useRef<((offset: number, scrolling: boolean) => void) | null>(null)
   const [viewportReady, setViewportReady] = useState(
     () => (scrollElementRef?.current?.clientHeight ?? 0) > 0
   )
@@ -51,6 +53,14 @@ export function useConversationVirtualizer({
     scrollMargin: prefix,
     paddingEnd: (options.paddingEnd ?? 0) + scrollTailHeight,
     getScrollElement: () => scrollElementRef?.current ?? null,
+    observeElementOffset: (instance, callback) => {
+      readOffsetRef.current = callback
+      const dispose = observeElementOffset(instance, callback)
+      return () => {
+        readOffsetRef.current = null
+        dispose?.()
+      }
+    },
     initialOffset: () =>
       Math.max(
         0,
@@ -74,7 +84,17 @@ export function useConversationVirtualizer({
           offset + (settings.adjustments ?? 0),
           () => elementScroll(offset, settings, instance)
         )
-      onScrollAdjustment?.((element?.scrollTop ?? before) - before)
+      const after = element?.scrollTop ?? before
+      // A clamped no-op write emits no native scroll event. Without its read-back,
+      // the engine can retain an estimated offset beyond a short conversation.
+      if (
+        element &&
+        settings.behavior !== 'smooth' &&
+        after === before &&
+        Math.abs(after - offset - (settings.adjustments ?? 0)) > 1
+      )
+        readOffsetRef.current?.(after, false)
+      onScrollAdjustment?.(after - before)
     },
   })
 
