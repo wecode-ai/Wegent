@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { stat, writeFile } from 'node:fs/promises'
-import test from 'node:test'
+import { test } from 'vitest'
 
 import { withXvfbDiagnostics } from '../e2e/desktop/xvfb-diagnostics.mjs'
 
