@@ -150,18 +150,17 @@ class IssueAssignmentService:
         comment_id: str | None = None,
         comment_body: str | None = None,
         replace_root_assignments: bool = False,
-        newly_created_issue: bool = False,
+        initial_assignment: bool = False,
     ) -> tuple[AssignmentEvent, bool]:
         del workspace_id
         self._lock_issue(db, issue_id)
         normalized_type = self._member_type(member_type)
         normalized_id = member_id.strip()
-        # Only the creator of an uncommitted Issue can know its history is empty.
-        # Locking an absent history range can deadlock unrelated Issue creations.
-        # Existing Issues must retain current reads, including after a lock wait.
+        # A newly inserted Issue cannot have history or index rows. Locking that
+        # absent range would block independent first assignments in InnoDB.
         current = (
             {}
-            if newly_created_issue
+            if initial_assignment
             else self._active_events(db, issue_id, for_update=True)
         )
         existing = current.get(
@@ -229,7 +228,7 @@ class IssueAssignmentService:
             comment.metadata_json = metadata
         db.flush()
         event = AssignmentEvent(comment=comment, metadata=metadata)
-        if newly_created_issue:
+        if initial_assignment:
             self._insert_active_index(db, issue_id, [event])
         else:
             self._refresh_active_index(db, issue_id)

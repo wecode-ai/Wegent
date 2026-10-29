@@ -9,7 +9,8 @@ import {
 } from './shared.mjs'
 
 export async function startRealObjectStorage(resultDir, timeoutMs) {
-  const port = await reservePort()
+  // Pinned MinIO checks its default console port even with MINIO_BROWSER=off.
+  const port = await reservePort(undefined, { excludedPorts: [13333] })
   const endpoint = `http://127.0.0.1:${port}`
   const dataDirectory = join(resultDir, 'minio-objects')
   await mkdir(dataDirectory, { recursive: true })

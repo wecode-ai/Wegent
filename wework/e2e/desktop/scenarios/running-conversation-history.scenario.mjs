@@ -392,19 +392,6 @@ async function reloadWorkbench(control) {
   )
 }
 
-async function restorePaginatedConversation(control, { taskId, taskRowId, uiTimeoutMs }) {
-  await reloadWorkbench(control)
-  await control.command('waitFor', `[data-testid="${taskRowId}"]`, { timeoutMs: uiTimeoutMs })
-  await control.command('click', `[data-testid="${taskRowId}"]`)
-  const restored = await waitForRestoredTranscript(control, taskId, WORKBENCH_READY_TIMEOUT_MS)
-  assert.equal(restored.pane.transcript.hasMoreBefore, true)
-  await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`,
-    { timeoutMs: uiTimeoutMs }
-  )
-}
-
 export async function verifyNativeTranscriptPageCursors(control, address) {
   const pageRequest = { address, limit: 50 }
   // Native history hydration and delivery keep their restoration budget on every
@@ -448,30 +435,27 @@ export async function verifyNativeTranscriptPageCursors(control, address) {
 }
 
 export async function verifyNativeItemPagination(control, { taskId, taskRowId, uiTimeoutMs }) {
-  await restorePaginatedConversation(control, { taskId, taskRowId, uiTimeoutMs })
-  const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
-  for (let page = 0; page < 2; page += 1) {
-    await control.command('click', loadOlder)
-    await waitForTranscriptState(
-      control,
-      snapshot => snapshot.pane?.transcript?.loadingMoreBefore === false,
-      'Native item pagination did not finish',
-      // This checkpoint deliberately delays transcript reads and restores 1,250 native
-      // items. Include queued reads and hydration in the existing restoration budget.
-      WORKBENCH_READY_TIMEOUT_MS
-    )
-  }
+  await reloadWorkbench(control)
+  await control.command('waitFor', `[data-testid="${taskRowId}"]`, { timeoutMs: uiTimeoutMs })
+  await control.command('click', `[data-testid="${taskRowId}"]`)
+  // A collapsed processing summary leaves the boundary near the viewport.
+  // Automatic pagination must restore the complete turn without a button.
+  await waitForTranscriptState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
+      snapshot.pane?.currentRuntimeTask?.taskId === taskId &&
+      snapshot.pane.transcript.loading === false &&
+      snapshot.pane.transcript.loadingMoreBefore === false &&
+      snapshot.pane.transcript.hasMoreBefore === false,
+    'Automatic native item pagination did not finish',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   const nativeSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
   assert.ok(
     nativeSnapshot.runtimeAssistantDisplayItemCount >= PAGED_ITEM_COUNT,
     'The UI did not restore the middle of the running native turn'
   )
-  // Restore a partially loaded live view before testing isolated search pages.
-  await restorePaginatedConversation(control, { taskId, taskRowId, uiTimeoutMs })
-  const originalSearchPane = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
-  ).pane
-  return { loadOlder, originalSearchPane }
 }
 
 export async function verifyRunningConversationRestoration(
@@ -1010,11 +994,41 @@ export function createDesktopScenario({
       const anchorMessageId = `runtime-view:${anchorSearch.matches[0].turnId}:assistant`
       await verifyNativeTranscriptPageCursors(control, pagedAddress)
 
-      const { loadOlder, originalSearchPane } = await verifyNativeItemPagination(control, {
+      await verifyNativeItemPagination(control, {
         taskId: pagedTaskId,
         taskRowId: pagedRowId,
         uiTimeoutMs,
       })
+      const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
+      // Restore a partially loaded live view before testing isolated search pages.
+      await control.command('click', taskRow)
+      await reloadWorkbench(control)
+      await control.command('waitFor', `[data-testid="${pagedRowId}"]`)
+      await gates.arm({
+        id: 'paged-search-initial-transcript',
+        kind: 'response',
+        name: 'runtime.tasks.transcript',
+        where: [{ path: 'params.taskId', equals: pagedTaskId }],
+      })
+      const findInput = '[data-testid="conversation-find-input"]'
+      try {
+        await control.command('click', `[data-testid="${pagedRowId}"]`)
+        await gates.wait('paged-search-initial-transcript', undefined, WORKBENCH_READY_TIMEOUT_MS)
+        // Open find before the real initial response arrives. Find owns its
+        // isolated history and suspends automatic pagination of the reading view.
+        await control.command('nativePress', COMPOSER_SELECTOR, {
+          key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
+        })
+        await assertFindInputFocus(control, findInput)
+      } finally {
+        await gates.release('paged-search-initial-transcript')
+      }
+      // Task-index readiness does not include the deliberately delayed transcript read.
+      await waitForRestoredTranscript(control, pagedTaskId, WORKBENCH_READY_TIMEOUT_MS)
+      await control.command('waitFor', loadOlder)
+      const originalSearchPane = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      ).pane
       const comparison = originalSearchPane.messageStyleComparison
       const partialAssistant = [comparison.transcriptLoaded, comparison.currentStreaming].find(
         message => message?.id === anchorMessageId
@@ -1025,11 +1039,6 @@ export function createDesktopScenario({
         partialAssistant.blockCount < PAGED_ITEM_COUNT,
         'The live turn was already complete'
       )
-      const findInput = '[data-testid="conversation-find-input"]'
-      await control.command('nativePress', COMPOSER_SELECTOR, {
-        key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
-      })
-      await assertFindInputFocus(control, findInput)
       await control.command('fill', findInput, { value: `${PAGED_PROMPT}_NO_MATCH` })
       await waitForHistorySearchCount(control, '0 个结果', uiTimeoutMs)
       assert.equal(
@@ -1096,13 +1105,18 @@ export function createDesktopScenario({
         0,
         'Loading the complete anchor turn must not report a history failure'
       )
+      await gates.arm({
+        id: 'paged-search-restored-pagination',
+        kind: 'response',
+        name: 'runtime.tasks.transcript',
+        where: [{ path: 'params.taskId', equals: pagedTaskId }],
+      })
       await control.command('nativePress', findInput, { key: 'Escape' })
-      await control.command('waitFor', loadOlder)
       await waitForTranscriptState(
         control,
         snapshot =>
           snapshot.pane?.transcript?.hasMoreBefore === true &&
-          snapshot.pane?.transcript?.loadingMoreBefore === false,
+          snapshot.pane?.transcript?.loading === false,
         'Search changed the original conversation pagination state',
         uiTimeoutMs
       )
@@ -1114,6 +1128,9 @@ export function createDesktopScenario({
         restoredSearchPane.transcript.loadedRanges,
         originalSearchPane.transcript.loadedRanges
       )
+      // Restoration need not cross the prefetch threshold. Remove the guard
+      // whether or not an automatic read reached it during the assertions.
+      await gates.reset()
       releasePagedResponseResolve()
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: PAGED_COMPLETION,

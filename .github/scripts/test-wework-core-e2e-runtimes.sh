@@ -14,6 +14,14 @@ ruby -ryaml -e '
   producer = workflow.fetch("jobs").fetch("build-backend-rs-e2e-runtime")
   raise "Backend Rust binaries must target the Noble consumer GLIBC" unless producer.fetch("runs-on") == "ubuntu-24.04"
   consumer_workflow = YAML.safe_load(File.read(ARGV[2]))
+  consumer_workflow.fetch("jobs").each do |name, job|
+    job.fetch("steps", []).each do |candidate|
+      next unless candidate["uses"]&.start_with?("actions/checkout@")
+      options = candidate.fetch("with", {})
+      next if options["fetch-depth"] == 0 || options.key?("sparse-checkout")
+      raise "#{name} must fetch its complete shallow checkout without a second promisor fetch" if options.key?("filter")
+    end
+  end
   consumer = consumer_workflow.fetch("jobs").fetch("build-wework-desktop-core-e2e")
   warmup = YAML.safe_load(File.read(ARGV[3]))
   runtime_steps = [

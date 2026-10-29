@@ -61,6 +61,11 @@ vi.mock('@tanstack/react-virtual', () => ({
     ),
   useVirtualizer: (options: {
     enabled: boolean
+    measureElement: (
+      row: HTMLElement,
+      entry: ResizeObserverEntry | undefined,
+      instance: unknown
+    ) => number
     count: number
     getItemKey: (index: number) => string | number
     rangeExtractor: (range: {
@@ -80,6 +85,7 @@ vi.mock('@tanstack/react-virtual', () => ({
         })
     const virtualizer = {
       options,
+      elementsCache: new Map(),
       cancelScroll: vi.fn(),
       measure: vi.fn(),
       indexFromElement: (element: HTMLElement) => Number(element.dataset.index),
@@ -109,7 +115,14 @@ vi.mock('@tanstack/react-virtual', () => ({
             (index === options.count - 1 ? virtualizerLayout.shift : 0),
           end: index * 120 + 100 + (index === options.count - 2 ? virtualizerLayout.shift : 0),
         })),
-      measureElement: measureElementMock,
+      measureElement: (row: HTMLElement | null) => {
+        measureElementMock(row)
+        if (!row) return
+        const index = Number(row.dataset.index)
+        virtualizer.elementsCache.set(options.getItemKey(index), row)
+        const size = options.measureElement(row, undefined, virtualizer)
+        if (size !== virtualizerMeasurementState.cachedSize) resizeItemMock(index, size)
+      },
       resizeItem: resizeItemMock,
       takeSnapshot: () => [
         { index: 0, key: options.getItemKey(0), start: 32, end: 132, size: 100, lane: 0 },
@@ -176,7 +189,7 @@ describe('MessageList desktop virtualization', () => {
 
   test.each([0, 2523.78])(
     'measures rich historical Markdown while scrolling using actual row height %s',
-    rowHeight => {
+    async rowHeight => {
       diagnosticsState.enabled = true
       virtualizerMeasurementState.isScrolling = true
       virtualizerMeasurementState.cachedSize = 1313
@@ -207,6 +220,7 @@ describe('MessageList desktop virtualization', () => {
         <MessageList messages={messages} scrollElementRef={{ current: createScrollElement(800) }} />
       )
 
+      await act(async () => {})
       if (rowHeight === 0) {
         expect(resizeItemMock).not.toHaveBeenCalled()
         expect(recordConversationDiagnosticMock.mock.calls.map(([name]) => name)).not.toContain(
@@ -392,8 +406,8 @@ describe('MessageList desktop virtualization', () => {
 
     expect(screen.getByText('last-streaming message 99')).toBeInTheDocument()
     expect(resizeItemMock).not.toHaveBeenCalled()
-    expect(measureElementMock).not.toHaveBeenCalled()
-    expect(useVirtualizerMock.mock.lastCall![0].measureElement).toBeUndefined()
+    expect(measureElementMock).toHaveBeenCalled()
+    expect(useVirtualizerMock.mock.lastCall![0].measureElement).toEqual(expect.any(Function))
   })
 
   test('follows the end when a user and streaming assistant are appended', () => {

@@ -1,7 +1,9 @@
 import { readFile, readdir } from 'node:fs/promises'
+import { verifyConversationDiagrams } from './conversation-diagrams.mjs'
 
 import { sendPrompt } from './conversation-navigation.mjs'
 import { verifyShortConversationTopAlignment } from './conversation-short-layout.mjs'
+import { verifyConversationPanelLayout } from './conversation-panel-layout.mjs'
 import { distanceFromBottom, distanceFromTop } from './streaming-text-fixture.mjs'
 import {
   verifyConversationShortcuts,
@@ -78,6 +80,7 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await verifyShortConversationTopAlignment(control, 'The initial four-message conversation')
+  await verifyConversationPanelLayout(control)
   const shortConversationTaskRowTestId = await waitForNewTaskRow(
     control,
     taskRowsBeforeConversation,
@@ -329,6 +332,7 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     DEFAULT_STEP_TIMEOUT_MS,
     'Pasting after copying a message did not transfer keyboard focus to the composer'
   )
+  await verifyConversationDiagrams(control, composerSelector, shortConversationTaskRowTestId)
   return shortConversationTaskRowTestId
 }
 

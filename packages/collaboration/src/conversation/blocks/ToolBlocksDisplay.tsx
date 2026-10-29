@@ -106,9 +106,16 @@ export function ToolBlocksDisplay({
   const hasRunningBlock = blocks.some(b => b.status !== 'done' && b.status !== 'error')
   const isRunning =
     (isStreaming && (processingPhase === 'live' || showInterToolThinking)) || hasRunningBlock
-  const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
-    stateKey ? `${stateKey}:processing` : undefined
+  const groupExpansionKeys = useMemo(
+    () =>
+      detailStateScopeKey
+        ? blocks.map(block => `${detailStateScopeKey}:group:${block.id}`)
+        : stateKey
+          ? [`${stateKey}:processing`]
+          : undefined,
+    [blocks, detailStateScopeKey, stateKey]
   )
+  const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(groupExpansionKeys)
   const [livePreviewCollapsed, setLivePreviewCollapsed] = useState(false)
   const [hasLocallyExpandedPreviewDetail, setHasLocallyExpandedPreviewDetail] = useState(false)
   const [mountedAt] = useState(() => Date.now())

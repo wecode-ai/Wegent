@@ -113,3 +113,44 @@ it.runIf(process.platform === 'linux')('reproduces the root-property reset witho
   const resetArguments = ISOLATED_XVFB_SERVER_ARGUMENTS.replace(' -noreset', '')
   expect(readRootPropertyAfterDisconnect(resetArguments)).toBe('reset')
 })
+
+it('starts the window manager only after the display accepts connections', () => {
+  const result = runFixture(
+    `#!/usr/bin/env node
+const fs = require('node:fs')
+const directory = process.env.OPENBOX_TEST_DIR
+fs.writeFileSync(directory + '/pid', String(process.pid))
+if (Number(fs.readFileSync(directory + '/queries', 'utf8')) < 3) process.exit(1)
+fs.writeFileSync(directory + '/registered', '')
+setInterval(() => {}, 1000)
+`,
+    `#!/bin/sh
+queries=0
+if [ -f "$OPENBOX_TEST_DIR/queries" ]; then queries=$(cat "$OPENBOX_TEST_DIR/queries"); fi
+queries=$((queries + 1))
+echo "$queries" > "$OPENBOX_TEST_DIR/queries"
+if [ "$queries" -lt 3 ]; then exit 1; fi
+if [ -f "$OPENBOX_TEST_DIR/registered" ]; then
+  echo '_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x1234'
+else
+  echo '_NET_SUPPORTING_WM_CHECK: no such atom on any window.'
+fi
+`
+  )
+  expect(result.status, result.stderr).toBe(0)
+})
+
+it('fails without launching the window manager when the display never connects', () => {
+  const result = runFixture(
+    `#!/bin/sh
+echo 'The window manager must not start' >&2
+exit 1
+`,
+    `#!/bin/sh
+exit 1
+`
+  )
+  expect(result.status).toBe(1)
+  expect(result.stderr).toContain('Xvfb did not accept connections on :1234')
+  expect(result.stderr).not.toContain('The window manager must not start')
+}, 10_000)

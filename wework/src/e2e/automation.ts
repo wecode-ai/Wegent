@@ -4,6 +4,7 @@ import { createDesktopControlFile } from './file-fixture'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { createNetworkTimingCapture, type NetworkTimingCapture } from './network-timing-capture'
+import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
 import { removeToken, setToken } from '@/api/auth'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
 import {
@@ -120,23 +121,6 @@ interface DesktopControlResult {
   ok: boolean
   value?: string
   error?: string
-}
-
-interface ScrollStabilitySamplePoint {
-  anchorTop: number
-  clientHeight: number
-  scrollHeight: number
-  scrollOrigin: 'bottom' | 'top'
-  scrollTop: number
-  time: number
-}
-
-interface ScrollStabilitySample {
-  done: boolean
-  frames: ScrollStabilitySamplePoint[]
-  missingFrames: number
-  scrollEvents: ScrollStabilitySamplePoint[]
-  stop: () => void
 }
 
 interface ElementMetricsSamplePoint {
@@ -2814,77 +2798,26 @@ async function executeDesktopControlCommand(
       if (!scrollerSelector) {
         throw new Error('sampleScrollStability requires scrollerSelector')
       }
-      const scroller = findDesktopControlElements(scrollerSelector)[0]
-      if (!scroller) throw new Error(`Unable to find selector "${scrollerSelector}"`)
+      if (!findDesktopControlElements(scrollerSelector).length)
+        throw new Error(`Unable to find selector "${scrollerSelector}"`)
       activeScrollStabilitySample?.stop()
-      const startedAt = performance.now()
-      let sampleTimer = 0
-      let mutationObserver: MutationObserver | null = null
-      const sample: ScrollStabilitySample = {
-        done: false,
-        frames: [],
-        missingFrames: 0,
-        scrollEvents: [],
-        stop: () => {},
-      }
-      const capture = (time: number): ScrollStabilitySamplePoint | null => {
-        const anchors = findDesktopControlElements(command.selector)
-        const anchor = options.anchorText
-          ? anchors.find(candidate => candidate.textContent?.includes(options.anchorText ?? ''))
-          : anchors[0]
-        if (!anchor) return null
-        return {
-          anchorTop: anchor.getBoundingClientRect().top,
-          clientHeight: scroller.clientHeight,
-          scrollHeight: scroller.scrollHeight,
-          scrollOrigin: scroller.dataset.scrollOrigin === 'bottom' ? 'bottom' : 'top',
-          scrollTop: scroller.scrollTop,
-          time: time - startedAt,
-        }
-      }
-      const handleScroll = () => {
-        const point = capture(performance.now())
-        if (point) sample.scrollEvents.push(point)
-      }
-      const finish = () => {
-        if (sample.done) return
-        sample.done = true
-        scroller.removeEventListener('scroll', handleScroll)
-        mutationObserver?.disconnect()
-      }
-      sample.stop = () => {
-        window.clearInterval(sampleTimer)
-        finish()
-      }
-      scroller.addEventListener('scroll', handleScroll)
-      mutationObserver = new MutationObserver(() => {
-        const point = capture(performance.now())
-        if (point) sample.frames.push(point)
-        else sample.missingFrames += 1
-      })
-      mutationObserver.observe(scroller, {
-        characterData: true,
-        childList: true,
-        subtree: true,
-      })
-      const captureFrame = () => {
-        const time = performance.now()
-        const point = capture(time)
-        if (point) sample.frames.push(point)
-        else sample.missingFrames += 1
-        if (time - startedAt >= durationMs) {
-          window.clearInterval(sampleTimer)
-          finish()
-        }
-      }
-      captureFrame()
-      sampleTimer = window.setInterval(captureFrame, 16)
-      activeScrollStabilitySample = sample
+      activeScrollStabilitySample = startScrollStabilitySampler(
+        () => {
+          const anchors = findDesktopControlElements(command.selector)
+          return options.anchorText
+            ? anchors.find(candidate => candidate.textContent?.includes(options.anchorText ?? ''))
+            : anchors[0]
+        },
+        () => findDesktopControlElements(scrollerSelector),
+        durationMs
+      )
       return ''
     }
+    case 'stopScrollStabilitySampling':
     case 'getScrollStabilitySample': {
       const sample = activeScrollStabilitySample
       if (!sample) throw new Error('Scroll stability sampling has not started')
+      if (command.action === 'stopScrollStabilitySampling') sample.stop()
       return JSON.stringify({
         done: sample.done,
         frames: sample.frames,
@@ -3700,7 +3633,6 @@ async function runDesktopControlSession(
       cache: 'no-store',
       headers: desktopControlHeaders(),
     })
-  let commandRequest = pollForCommand()
   await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
@@ -3710,10 +3642,12 @@ async function runDesktopControlSession(
   if (!readyResponse.ok) {
     throw new Error(`Desktop E2E control registration failed with ${readyResponse.status}`)
   }
+  let commandRequest = pollForCommand()
 
   while (true) {
     try {
       const response = await commandRequest
+      if (response.status === 410) return
       if (response.status === 204) {
         commandRequest = pollForCommand()
         continue

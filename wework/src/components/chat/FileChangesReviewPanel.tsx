@@ -41,6 +41,8 @@ import { ReviewFileTree } from './FileChangesReviewTree'
 
 const LARGE_DIFF_FILE_COUNT_THRESHOLD = 12
 const LARGE_DIFF_LINE_COUNT_THRESHOLD = 700
+const COPY_FEEDBACK_DURATION_MS = 1500
+const REFRESH_FEEDBACK_DURATION_MS = 600
 const PIERRE_DIFF_CSS = `
   :host {
     --diffs-light-bg: rgb(var(--color-bg-base));
@@ -138,6 +140,12 @@ export function FileChangesReviewPanel({
   const [actionError, setActionError] = useState<string | null>(null)
   const [commentSelection, setCommentSelection] = useState<DiffCommentSelection | null>(null)
   const [comment, setComment] = useState('')
+  // Kept here rather than in the toolbar, which unmounts while a refresh reloads the diff.
+  const [gitApplyCommandCopied, showGitApplyCommandCopied] =
+    useTransientFlag(COPY_FEEDBACK_DURATION_MS)
+  const [refreshFeedbackActive, showRefreshFeedback] = useTransientFlag(
+    REFRESH_FEEDBACK_DURATION_MS
+  )
   const diffLinesRef = useRef<HTMLDivElement>(null)
 
   const sections = useMemo(() => parseUnifiedDiff(diff), [diff])
@@ -218,8 +226,17 @@ export function FileChangesReviewPanel({
 
   const copyGitApplyCommand = () => {
     const patch = diff.trimEnd()
-    void navigator.clipboard?.writeText(`git apply <<'PATCH'\n${patch}\nPATCH`)
+    navigator.clipboard
+      ?.writeText(`git apply <<'PATCH'\n${patch}\nPATCH`)
+      .then(showGitApplyCommandCopied, () => undefined)
   }
+
+  const refresh = onRefresh
+    ? () => {
+        showRefreshFeedback()
+        onRefresh()
+      }
+    : undefined
 
   return (
     <div
@@ -245,13 +262,15 @@ export function FileChangesReviewPanel({
             fileTreeVisible={fileTreeVisible}
             diffStyle={diffStyle}
             canRefresh={Boolean(onRefresh)}
-            onRefresh={onRefresh}
+            refreshing={refreshFeedbackActive}
+            onRefresh={refresh}
             onToggleWrap={() => setWrapLines(value => !value)}
             onToggleHunks={() => setHunksCollapsed(value => !value)}
             onToggleFileTree={() => setFileTreeVisible(value => !value)}
             onToggleDiffStyle={() =>
               setDiffStyle(current => (current === 'unified' ? 'split' : 'unified'))
             }
+            gitApplyCommandCopied={gitApplyCommandCopied}
             onCopyGitApplyCommand={copyGitApplyCommand}
           />
           {isLargeDiff ? (
@@ -358,11 +377,13 @@ function ReviewToolbar({
   fileTreeVisible,
   diffStyle,
   canRefresh,
+  refreshing,
   onRefresh,
   onToggleWrap,
   onToggleHunks,
   onToggleFileTree,
   onToggleDiffStyle,
+  gitApplyCommandCopied,
   onCopyGitApplyCommand,
 }: {
   title?: string
@@ -376,11 +397,13 @@ function ReviewToolbar({
   fileTreeVisible: boolean
   diffStyle: 'unified' | 'split'
   canRefresh: boolean
+  refreshing: boolean
   onRefresh?: () => void
   onToggleWrap: () => void
   onToggleHunks: () => void
   onToggleFileTree: () => void
   onToggleDiffStyle: () => void
+  gitApplyCommandCopied: boolean
   onCopyGitApplyCommand: () => void
 }) {
   const { t } = useTranslation('chat')
@@ -455,6 +478,7 @@ function ReviewToolbar({
             onClick={onRefresh}
             disabled={!canRefresh}
             icon={RefreshCw}
+            iconClassName={refreshing ? 'animate-spin motion-reduce:animate-none' : undefined}
           />
           <ToolbarButton
             testId="toggle-file-tree-button"
@@ -498,9 +522,13 @@ function ReviewToolbar({
           />
           <ToolbarButton
             testId="copy-git-apply-command-button"
-            label={t('file_changes.actions.copy_git_apply')}
+            label={
+              gitApplyCommandCopied
+                ? t('file_changes.actions.copied_git_apply')
+                : t('file_changes.actions.copy_git_apply')
+            }
             onClick={onCopyGitApplyCommand}
-            icon={Copy}
+            icon={gitApplyCommandCopied ? Check : Copy}
           />
         </div>
       </div>
@@ -532,6 +560,7 @@ function ToolbarButton({
   disabled,
   pressed,
   icon: Icon,
+  iconClassName,
 }: {
   testId: string
   label: string
@@ -539,6 +568,7 @@ function ToolbarButton({
   disabled?: boolean
   pressed?: boolean
   icon: typeof FileText
+  iconClassName?: string
 }) {
   return (
     <button
@@ -554,9 +584,32 @@ function ToolbarButton({
         pressed && 'border-border bg-muted text-text-primary'
       )}
     >
-      <Icon className="h-4 w-4" />
+      <Icon className={cn('h-4 w-4', iconClassName)} />
     </button>
   )
+}
+
+function useTransientFlag(durationMs: number) {
+  const [active, setActive] = useState(false)
+  const timeoutRef = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current)
+    },
+    []
+  )
+
+  const show = useCallback(() => {
+    if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current)
+    setActive(true)
+    timeoutRef.current = window.setTimeout(() => {
+      timeoutRef.current = null
+      setActive(false)
+    }, durationMs)
+  }, [durationMs])
+
+  return [active, show] as const
 }
 
 function AllDiffSections({

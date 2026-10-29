@@ -105,7 +105,7 @@ describe('conversation find navigation', () => {
     const body = article.querySelector('div')!
     await act(async () => {
       body.innerHTML =
-        '<section class="wework-diagram-preview"><span hidden data-diagram-search-source>keyword</span><div class="drawing-viewer"><svg><text>keyword</text></svg></div></section>'
+        '<section><span hidden data-diagram-search-source>keyword</span><div data-search-excluded><span>keyword</span><img alt="keyword" /></div></section>'
       await Promise.resolve()
     })
     const section = body.querySelector('section')!
@@ -124,7 +124,7 @@ describe('conversation find navigation', () => {
     expect(scroller.scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 750, behavior: 'auto' })
     // Renderer changes must not invalidate the fixed section anchor or restart its two frames.
     await act(async () => {
-      body.querySelector('.drawing-viewer')!.innerHTML = '<svg><text>keyword rendered</text></svg>'
+      body.querySelector('[data-search-excluded]')!.innerHTML = '<img alt="keyword rendered" />'
       await Promise.resolve()
     })
     diagramTop = 400

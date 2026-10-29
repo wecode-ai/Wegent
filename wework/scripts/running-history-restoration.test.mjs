@@ -32,7 +32,8 @@ function restoration({
   restoredTaskId = taskId,
   restoredPaneTaskId = restoredTaskId,
   loading = false,
-  hasMoreBefore = true,
+  hasMoreBefore = false,
+  loadingMoreBefore = false,
   items = 1250,
   running = false,
   previousCompletion = true,
@@ -40,7 +41,6 @@ function restoration({
   let currentTaskId
   let paneTaskId
   let transcript
-  let pages = 0
   let reloads = 0
   const commands = []
   const captureScreenshot = vi.fn(async () => {})
@@ -75,20 +75,11 @@ function restoration({
         setTimeout(() => {
           currentTaskId = restoredTaskId
           paneTaskId = restoredPaneTaskId
-          transcript = { loading, hasMoreBefore, loadingMoreBefore: false }
+          transcript = { loading, hasMoreBefore, loadingMoreBefore }
         }, restorationDelayMs)
       }
       if (selector.includes('load-older-runtime-transcript-button')) {
-        assertRestored()
-        assert.equal(hasMoreBefore, true)
-        if (action === 'click') {
-          assert.equal(transcript.loadingMoreBefore, false)
-          pages += 1
-          transcript.loadingMoreBefore = true
-          setTimeout(() => {
-            transcript.loadingMoreBefore = false
-          }, 200)
-        }
+        throw new Error('Automatic pagination must not depend on a manual button')
       }
       if (action === 'waitFor' && selector.includes('message-user')) {
         assertRestored()
@@ -122,7 +113,9 @@ function restoration({
         })
       }
       if (action === 'performanceSnapshot') {
-        assert.equal(pages, 2, 'The fixture must load both older native pages')
+        assertRestored()
+        assert.equal(transcript.hasMoreBefore, false)
+        assert.equal(transcript.loadingMoreBefore, false)
         return JSON.stringify({ runtimeAssistantDisplayItemCount: items })
       }
       return ''
@@ -168,31 +161,24 @@ function restoration({
   }
 }
 
-test('both reloads await their target transcript before starting ordinary pagination UI', async () => {
+test('automatic pagination awaits the target transcript without using manual controls', async () => {
   const run = restoration()
   await vi.advanceTimersByTimeAsync(DEFAULT_STEP_TIMEOUT_MS + 1)
   assert.equal(run.settled(), false)
   assert.equal(run.olderWaits().length, 0)
 
-  await vi.advanceTimersByTimeAsync(restorationDelayMs + 1000 - Date.now())
-  assert.equal(run.reloads(), 2)
-  assert.equal(run.olderWaits().length, 1)
-  await vi.advanceTimersByTimeAsync(DEFAULT_STEP_TIMEOUT_MS + 1)
-  assert.equal(run.settled(), false)
-  assert.equal(run.olderWaits().length, 1, 'The second reload bypassed transcript readiness')
-
-  await vi.advanceTimersByTimeAsync(restorationDelayMs)
-  const { value, error } = await run.result
+  await vi.advanceTimersByTimeAsync(restorationDelayMs - Date.now())
+  const { error } = await run.result
   assert.equal(error, undefined)
-  assert.deepEqual(value.originalSearchPane.messageSummary, { restoredAfterReload: 2 })
-  assert.equal(run.olderWaits().length, 2)
+  assert.equal(run.reloads(), 1)
+  assert.equal(run.olderWaits().length, 0)
   assert.equal(
     run.commands.filter(
       command =>
         command.action === 'click' &&
         command.selector.includes('load-older-runtime-transcript-button')
     ).length,
-    2
+    0
   )
   for (const { action, options } of run.commands) {
     if (action === 'waitFor') assert.equal(options.timeoutMs, DEFAULT_STEP_TIMEOUT_MS)
@@ -205,21 +191,19 @@ test.each([
   ['a settled transcript for another task', { restoredTaskId: 'another-restored-task' }],
   ['a pane that still belongs to another task', { restoredPaneTaskId: 'another-restored-task' }],
   ['a target transcript that stays loading', { loading: true }],
+  ['an unfinished automatic page', { loadingMoreBefore: true }],
+  ['older native items that were never loaded', { hasMoreBefore: true }],
 ])('retains the restoration deadline for %s', async (_description, options) => {
   const run = restoration(options)
   await vi.advanceTimersByTimeAsync(WORKBENCH_READY_TIMEOUT_MS)
-  assert.match((await run.result).error?.message ?? '', /did not finish restoration/)
+  assert.match(
+    (await run.result).error?.message ?? '',
+    /Automatic native item pagination did not finish/
+  )
   assert.equal(run.olderWaits().length, 0)
 })
 
-test('rejects a restored page that no longer offers native pagination', async () => {
-  const run = restoration({ hasMoreBefore: false })
-  await vi.advanceTimersByTimeAsync(restorationDelayMs + 100)
-  assert.equal((await run.result).error?.code, 'ERR_ASSERTION')
-  assert.equal(run.olderWaits().length, 0)
-})
-
-test('still requires all 1250 native items after the two older-page reads', async () => {
+test('still requires all 1250 native items after automatic pagination', async () => {
   const run = restoration({ items: 1249 })
   await vi.advanceTimersByTimeAsync(restorationDelayMs + 1000)
   assert.match((await run.result).error?.message ?? '', /did not restore the middle/)

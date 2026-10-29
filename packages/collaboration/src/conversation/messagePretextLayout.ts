@@ -5,6 +5,8 @@ import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import { isImageAttachment } from '../issue-detail/attachmentPresentation'
 import { COLLAPSED_PROCESSING_HEIGHT } from './blocks/ToolBlocksDisplay'
 import { DEFAULT_CODE_FONT_SIZE, DEFAULT_UI_FONT_SIZE } from '../theme/typography'
+import { diagramPreviewHeight } from '../markdown/diagramLayout'
+import { splitMarkdownCodeBlocks } from '../markdown/markdownCodeBlocks'
 
 const DEFAULT_LAYOUT_WIDTH = 720
 const MIN_TEXT_WIDTH = 160
@@ -14,6 +16,7 @@ export interface MessageLayoutTypography {
   lineHeight: number
   userLineHeight: number
   codeLineHeight: number
+  rootFontSize: number
 }
 
 export function readMessageLayoutTypography(element?: HTMLElement | null): MessageLayoutTypography {
@@ -35,6 +38,7 @@ export function readMessageLayoutTypography(element?: HTMLElement | null): Messa
     ? Number.parseFloat(getComputedStyle(paragraph).lineHeight)
     : 0
   return {
+    rootFontSize: rootSize,
     font: `${weight} ${size}px ${family}`,
     userFont: `${weight} ${userSize}px ${family}`,
     lineHeight: paragraphLineHeight || rootSize * 1.5,
@@ -63,8 +67,6 @@ const STREAMING_MESSAGE_INTRINSIC_HEIGHT = 220
 // `MarkdownCodeBlock` renders fenced code in a horizontally scrolling `<pre>`: `--text-code` at
 // `line-height: 1.8`, a 40px header, 24px of padding and 20px of margin.
 const CODE_BLOCK_CHROME_HEIGHT = 84
-const FENCE_OPEN_PATTERN = /^ {0,3}(`{3,}|~{3,})/
-const FENCE_CLOSE_PATTERN = /^ {0,3}(`{3,}|~{3,})[ \t]*$/
 
 const messageLayoutHeightCache = new Map<string, number>()
 let messageObjectLayoutHeightCache = new WeakMap<WorkbenchMessage, Map<string, number>>()
@@ -205,7 +207,9 @@ function measureAssistantMarkdownHeight(
   for (const block of splitMarkdownCodeBlocks(message.content)) {
     height +=
       block.kind === 'code'
-        ? Math.max(1, block.lineCount) * typography.codeLineHeight + CODE_BLOCK_CHROME_HEIGHT
+        ? block.diagram
+          ? diagramPreviewHeight(typography.rootFontSize)
+          : Math.max(1, block.lineCount) * typography.codeLineHeight + CODE_BLOCK_CHROME_HEIGHT
         : measurePretextHeight(
             message,
             block.content,
@@ -215,54 +219,6 @@ function measureAssistantMarkdownHeight(
           )
   }
   return height
-}
-
-type MarkdownCodeBlock = { kind: 'text'; content: string } | { kind: 'code'; lineCount: number }
-
-/** Splits markdown into the wrapped prose the renderer reflows and the fenced code it does not. */
-function splitMarkdownCodeBlocks(source: string): MarkdownCodeBlock[] {
-  const blocks: MarkdownCodeBlock[] = []
-  let prose = ''
-  let openFence: { marker: string; length: number; code: string } | null = null
-  for (const line of source.match(/.*(?:\n|$)/g) ?? []) {
-    const trimmedLine = line.replace(/\r?\n$/, '')
-    if (openFence) {
-      const closing = trimmedLine.match(FENCE_CLOSE_PATTERN)?.[1]
-      if (closing?.startsWith(openFence.marker) && closing.length >= openFence.length) {
-        blocks.push({ kind: 'code', lineCount: countLines(openFence.code) })
-        openFence = null
-        continue
-      }
-      openFence.code += line
-      continue
-    }
-    const opening = trimmedLine.match(FENCE_OPEN_PATTERN)?.[1]
-    if (opening) {
-      if (prose) {
-        blocks.push({ kind: 'text', content: prose })
-        prose = ''
-      }
-      openFence = {
-        marker: opening[0] ?? '`',
-        length: opening.length,
-        code: '',
-      }
-      continue
-    }
-    prose += line
-  }
-  if (openFence) {
-    blocks.push({ kind: 'code', lineCount: countLines(openFence.code) })
-  }
-  if (prose) {
-    blocks.push({ kind: 'text', content: prose })
-  }
-  return blocks
-}
-
-function countLines(text: string): number {
-  const trimmed = text.replace(/\n$/, '')
-  return trimmed ? trimmed.split('\n').length : 0
 }
 
 function measurePretextHeight(
