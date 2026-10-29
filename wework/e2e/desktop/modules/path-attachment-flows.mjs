@@ -519,7 +519,21 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
 async function verifyDroppedWorkspacePaths({ composerSelector, control }) {
   const taskPrompt = 'WEWORK_DESKTOP_E2E_WORKSPACE_SELECTION_STREAMING'
   control.setScenario('workspace_selection_streaming')
-  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('markElementWithText', '[data-testid^="project-row-"]', {
+    text: 'workspace',
+    value: 'dropped-paths-project',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const projectSelector = '[data-e2e-anchor-id="dropped-paths-project"]'
+  await control.command('hover', projectSelector, { visible: true })
+  await control.command(
+    'click',
+    `${projectSelector} [data-testid="project-new-conversation-button"]`
+  )
+  await control.command('waitFor', '[data-testid="project-work-button"]', {
+    text: 'workspace',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
   await control.command('fill', composerSelector, {
     value: taskPrompt,

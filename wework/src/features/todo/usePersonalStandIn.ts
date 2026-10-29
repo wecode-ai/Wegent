@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { dequal } from 'dequal'
 import type {
@@ -49,7 +50,7 @@ export function usePersonalStandIn(
       setError(null)
     })()
       .catch(cause => {
-        if (active) setError(String(cause))
+        if (active) setError(getStandInErrorMessage(cause))
       })
       .finally(() => {
         if (active) setLoading(false)
@@ -74,7 +75,7 @@ export function usePersonalStandIn(
         }
       })
       .catch(cause => {
-        if (active) setAgentError(String(cause))
+        if (active) setAgentError(getStandInErrorMessage(cause))
       })
     return () => {
       active = false
@@ -102,7 +103,7 @@ export function usePersonalStandIn(
       setDraft(result)
       return result
     } catch (cause) {
-      setError(String(cause))
+      setError(getStandInErrorMessage(cause))
       return null
     } finally {
       setSaving(false)

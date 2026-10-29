@@ -474,6 +474,7 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
     handlers.onChatChunk ||
     handlers.onChatDone ||
     handlers.onChatError ||
+    handlers.onChatRecovered ||
     handlers.onBlockCreated ||
     handlers.onBlockUpdated ||
     handlers.onSubagentActivity ||

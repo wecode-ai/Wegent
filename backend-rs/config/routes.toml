@@ -488,12 +488,13 @@ path = "/api/v1/responses/:response_id"
 #[[routes]]
 #methods = ["POST"]
 #path = "/api/mcp/knowledge/sse"
-[[routes]]
-methods = ["GET"]
-path = "/api/mcp/subscription/sse"
-[[routes]]
-methods = ["POST"]
-path = "/api/mcp/subscription/sse"
+# Subscription tools remain Python-owned until preview and creation are migrated.
+#[[routes]]
+#methods = ["GET"]
+#path = "/api/mcp/subscription/sse"
+#[[routes]]
+#methods = ["POST"]
+#path = "/api/mcp/subscription/sse"
 # `POST /api/api/mcp/system`: the source's `get_mcp_system_config` advertises
 # the system MCP URL with a doubled `/api` prefix (`BACKEND_INTERNAL_URL` ends
 # in `/api` and `API_PREFIX` prefixes `/api` again), so FastAPI answers the
@@ -1058,3 +1059,12 @@ path = "/api/v1/loop-items/:item_id/assignments/:assignment_id/receipt"
 [[routes]]
 methods = ["PATCH"]
 path = "/api/v1/deliveries/:delivery_id"
+
+# Responses creation and executor callback migration.
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/responses"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/internal/callback"

@@ -362,7 +362,9 @@ it('preserves the mounted conversation when settings refresh fails', async () =>
   vi.mocked(api.personalGet).mockRejectedValue(new Error('settings unavailable'))
   act(() => publishPersonalStandIn(settings))
   await waitFor(() => expect(api.personalGet).toHaveBeenCalledTimes(3))
-  expect(await screen.findByRole('alert')).toHaveTextContent('settings unavailable')
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '分身操作失败，请稍后重试；如仍失败，请查看执行设备日志。'
+  )
   expect(screen.getByTestId('identity-conversation')).toBe(conversation)
   vi.mocked(api.personalGet).mockResolvedValue(settings)
   await userEvent.click(screen.getByTestId('stand-in-overview-inline-retry'))

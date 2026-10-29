@@ -123,7 +123,7 @@ export function createDesktopScenario({
       })
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
+      await control.command('clickWhenEnabled', '[data-testid="collaboration-primary-stand-in"]')
       await control.command('click', '[data-testid="stand-in-settings-open"]')
       await control.command('waitFor', PANEL)
       assert.equal(await control.command('getElementCount', `${PANEL} textarea`), '1')
@@ -208,7 +208,7 @@ export function createDesktopScenario({
       await control.awaitReadyAfter(readyCount)
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await control.command('click', '[data-testid="collaboration-primary-stand-in"]')
+      await control.command('clickWhenEnabled', '[data-testid="collaboration-primary-stand-in"]')
       await control.command('waitFor', '[data-testid="stand-in-memory-open"]')
       await control.command('click', '[data-testid="stand-in-memory-open"]')
       await control.command('waitFor', '[data-testid="stand-in-memory-item"]', {

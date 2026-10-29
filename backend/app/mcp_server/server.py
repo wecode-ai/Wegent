@@ -1117,15 +1117,6 @@ def _apply_mount_prefix(spec: McpAppSpec, prefix: str) -> McpAppSpec:
                 "OPTIONS",
             ),
         )
-    if effective_spec.mount_path == "/api/mcp/subscription":
-        return replace(
-            effective_spec,
-            transport_methods=(
-                "DELETE",
-                "OPTIONS",
-            ),
-        )
-
     return effective_spec
 
 

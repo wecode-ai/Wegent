@@ -290,6 +290,28 @@ events; without `ci:all`, test selection still follows the changed paths.
 The Wework macOS memory gate runs only for non-draft PRs carrying `ci:all`;
 Regular PRs, scheduled runs, and manual runs do not trigger memory E2E.
 
+Windows desktop builds share the `build-wework-windows-e2e` action between PRs
+and main-branch cache warmup. Only `main` writes shared caches. Complete packages
+require an exact match of source inputs, Node, Rust, and runner image versions;
+prefix matching is not used. A hit validates and uploads the original package,
+preserving its producer identity. A miss builds with shared pnpm, Codex, Electron,
+Executor, and Backend compilation caches. These are E2E builds, not evidence of
+upgrade compatibility.
+
+Windows Core independently balances serial shards using median successful
+checkpoint durations in `.github/ci/wework-windows-checkpoint-durations.json`,
+which records the source Actions runs. Linux grouping stays unchanged. Scheduling
+preserves the ten-runner budget, two exclusive benchmark shards, and every
+checkpoint. A shard containing an unmeasured checkpoint remains intact until
+successful logs provide evidence. Failed and cancelled checkpoints are excluded.
+Checkpoints sharing CLI, Electron, or object-storage preparation stay together,
+preserving the original number of preparation jobs.
+Loads also include measured conditional preparation costs with a source job link,
+so cold object-storage compilation does not sit on an otherwise full shard.
+Cache hits may reduce these costs.
+Estimated loads omit runner queues, common setup, and cleanup; validate actual
+savings with a complete CI run.
+
 Feature-branch pushes do not run a duplicate CI suite; the `pull_request` event
 validates the branch after a PR is opened. A newer commit to the same PR or to
 `main` cancels the older in-progress run. `test-summary` and `lint-summary`
@@ -657,6 +679,8 @@ pnpm --dir frontend test -- src/__tests__/utils/test_example.test.ts
 - [GitHub Actions](https://docs.github.com/en/actions)
 
 ## E2E resource reuse and shard allocation
+
+Shard 4's knowledge test entry point owns the on-demand Milvus and etcd containers, reusing the existing network and MinIO; other shards do not start these services. Startup checks etcd `/health` and MinIO `/minio/health/ready` before starting Milvus and polling its actual `/healthz`, within the existing 180-second budget. Container exit fails immediately, test failures preserve their exit code, and every path records container state, health-check configuration/history and complete logs before cleanup. Evidence is uploaded as `knowledge-provider-lifecycle-e2e`. This addresses the pre-checkout service failure in [40609610685](https://github.com/wecode-ai/Wegent/actions/runs/40609610685), where subsequent steps could not capture health details. The four runners and both knowledge test entry points remain unchanged.
 
 Platform E2E keeps its four existing shards. S3 uploads reuse shard 2's MySQL, Redis and MinIO; media hosting reuses the same services in shard 3. Test entry points, assertions and evidence artifacts are preserved. Redis uses a separate logical database, and media tools are installed in the shared image. Replication starts its dedicated replica and broker only in shard 3, saves logs and removes the containers on success or failure. The replica health probe authenticates over TCP and executes `SELECT 1`, so the entrypoint's temporary socket-only server cannot satisfy readiness. Remote knowledge indexing moves to shard 4.
 

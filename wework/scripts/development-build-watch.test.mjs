@@ -4,6 +4,42 @@ import path from 'node:path'
 import { test, expect, vi, onTestFinished } from 'vitest'
 import { watchDevelopmentBuild } from './lib/development-build-watch.mjs'
 
+test('rebuilds input edits reported only as a directory-self notification', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'development-build-self-'))
+  const source = path.join(root, 'entry.js')
+  await writeFile(source, 'one')
+  let notify
+  const close = vi.fn()
+  const watchDirectory = vi.fn((_directory, _options, callback) => {
+    notify = callback
+    return { on: vi.fn(), once: vi.fn(), close }
+  })
+  let published
+  const onError = vi.fn()
+  const build = vi.fn(async () => {
+    published = await readFile(source, 'utf8')
+  })
+  const watcher = await watchDevelopmentBuild({
+    directories: [root],
+    files: [],
+    build,
+    onError,
+    debounceMs: 20,
+    watchDirectory,
+  })
+  onTestFinished(async () => {
+    await watcher.close()
+    await rm(root, { recursive: true, force: true })
+  })
+  expect(published).toBe('one')
+  await writeFile(source, 'two')
+  notify('rename', path.basename(root))
+  await expect.poll(() => published).toBe('two')
+  expect(build).toHaveBeenCalledTimes(2)
+  expect(watchDirectory).toHaveBeenCalledTimes(1)
+  expect(onError).not.toHaveBeenCalled()
+})
+
 const checkouts = ['checkout', 'dist/checkout', '.git/worktrees/checkout', 'node_modules/checkout']
 
 test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [checkout, input])))(

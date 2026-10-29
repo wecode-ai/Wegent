@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useMemo, useState } from 'react'
 import {
   runnerModelCatalog,
@@ -49,7 +50,7 @@ export function useStandInModels(
         runtime,
         entries,
         defaultIdentity: defaultModel?.identity ?? null,
-        error: failure ? String(failure) : null,
+        error: failure ? getStandInErrorMessage(failure) : null,
       })
     })
     return () => {

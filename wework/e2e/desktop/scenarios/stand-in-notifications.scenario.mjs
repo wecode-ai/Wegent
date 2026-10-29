@@ -3,6 +3,7 @@ import { openCollaborationNotifications, openProjectStandIn } from '../modules/s
 import { verifyLocalStandInStatuses } from '../modules/stand-in-status-flows.mjs'
 import { createStandInFailureRegression } from '../modules/stand-in-failure-notification.mjs'
 import { createSubscriptionConfigRegression } from '../modules/stand-in-subscription-config.mjs'
+import { verifyStandInArchiveRecovery } from '../modules/stand-in-archive-recovery.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -245,6 +246,7 @@ export function createDesktopScenario({
       await verifyIssueAssignmentReceipts(control, project.id, uiTimeoutMs, captureScreenshot)
       await verifyLocalStandInStatuses(control, project.id, uiTimeoutMs, modelResponseTimeoutMs)
       await failureRegression.verify(control, project.id, uiTimeoutMs, modelResponseTimeoutMs)
+      await verifyStandInArchiveRecovery(control, project.id, uiTimeoutMs, modelResponseTimeoutMs)
       await subscriptionRegression.verify(
         control,
         project.id,

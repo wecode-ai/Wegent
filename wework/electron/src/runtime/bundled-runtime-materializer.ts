@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import semver from 'semver'
 import { extract } from 'tar'
-import { cloudFetch } from '../host/cloud-http.js'
+import { cloudFetch } from '../host/lazy-cloud-fetch.js'
 import { publishImmutableDirectory } from './immutable-directory.js'
 import { resolveRuntimeArchive } from './runtime-archive.js'
 

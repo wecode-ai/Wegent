@@ -5,7 +5,7 @@ import {
   getConversationScrollSnapshot,
   type ConversationScrollSnapshot,
 } from './conversationViewportCache'
-import { getDistanceFromBottom } from './bottomOriginScroll'
+import { getDistanceFromBottom } from './conversationViewportScroll'
 import {
   CONVERSATION_SCROLL_WRITE_SOURCE,
   recordConversationScrollWrite,
@@ -157,11 +157,8 @@ export function getTextOffsetRect(
   return null
 }
 
-export function createScrollSnapshot(
-  scroller: HTMLElement,
-  bottomOrigin: boolean
-): ConversationScrollSnapshot {
-  const distanceFromBottomPx = getDistanceFromBottom(scroller, bottomOrigin)
+export function createScrollSnapshot(scroller: HTMLElement): ConversationScrollSnapshot {
+  const distanceFromBottomPx = getDistanceFromBottom(scroller)
   const pinnedToBottom = distanceFromBottomPx <= SCROLLED_TO_BOTTOM_THRESHOLD
   const sample = pinnedToBottom ? null : createUserViewportAnchor(scroller, scroller)
   const root = sample?.element.closest<HTMLElement>(

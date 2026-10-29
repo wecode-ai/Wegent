@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { rejectModelWebSocketUpgrade } from '../modules/reject-model-upgrade.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -95,15 +96,7 @@ export function createCatalogContextVerification({
     attachServer(server) {
       // The model fixture implements the HTTP Responses transport.
       server.on('upgrade', (_request, socket) => {
-        // Upgrade sockets leave HTTP's error handling. A client may reset the
-        // rejected connection while switching back to the HTTP transport.
-        socket.on('error', error => {
-          socket.destroy()
-          if (error.code !== 'ECONNRESET') server.emit('error', error)
-        })
-        socket.end(
-          'HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'
-        )
+        rejectModelWebSocketUpgrade(server, socket)
       })
     },
     async handleHttp(request, response, url) {

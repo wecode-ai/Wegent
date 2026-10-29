@@ -36,6 +36,7 @@ pub struct BindingMetadata {
     pub dispatch_id: Option<String>,
     pub dispatch_round_id: Option<String>,
     pub assignment_id: Option<String>,
+    pub issue_assignment_id: Option<String>,
     pub change_requests: Option<serde_json::Value>,
 }
 
@@ -488,7 +489,7 @@ pub fn has_permission(user_role: &str, required_role: &str) -> bool {
 }
 
 /// Shared ordered assignment-event query for transactional and ordinary reads.
-pub(super) fn item_comments_query() -> String {
+pub(crate) fn item_comments_query() -> String {
     format!(
         "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
                      WHERE loop_items.loop_item_id = ? \

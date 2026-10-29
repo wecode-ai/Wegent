@@ -2,11 +2,11 @@
   "name": "@wegent/wework-electron",
   "private": true,
   "packageManager": "pnpm@11.7.0",
-  "version": "0.5.13-beta.7",
+  "version": "0.5.13-beta.8",
   "description": "Wework desktop workbench",
   "author": "Wecode",
   "type": "module",
-  "main": "dist/main.js",
+  "main": "dist/bootstrap.js",
   "scripts": {
     "stage:process-explorer": "node scripts/stage-process-explorer.mjs",
     "build": "pnpm run stage:process-explorer && tsc -p tsconfig.json && node scripts/copy-static.mjs",
@@ -36,7 +36,6 @@
   "dependencies": {
     "@trycua/cua-driver": "0.22.1",
     "archiver": "8.0.0",
-    "electron-updater": "6.8.9",
     "extract-zip": "2.0.1",
     "semver": "7.8.5",
     "systeminformation": "5.33.15",

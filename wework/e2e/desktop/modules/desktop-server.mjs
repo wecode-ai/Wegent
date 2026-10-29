@@ -932,6 +932,7 @@ class DesktopE2EServer {
         'skill_mention_display',
         'connector_auth_unmatched_resume',
         'supervisor',
+        'harness_app_models',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
@@ -1195,8 +1196,8 @@ class DesktopE2EServer {
     return this.commandForClient(clientId, action, selector, options)
   }
 
-  recordControlTransport(event, clientId) {
-    this.controlTransportHistory.push({ event, clientId, at: new Date().toISOString() })
+  recordControlTransport(event, clientId, details = {}) {
+    this.controlTransportHistory.push({ event, clientId, ...details, at: new Date().toISOString() })
     if (this.controlTransportHistory.length > 200) this.controlTransportHistory.shift()
   }
 
@@ -2100,7 +2101,7 @@ class DesktopE2EServer {
 
     if (request.method === 'POST' && url.pathname === '/started') {
       const started = await readRequestBody(request)
-      this.recordControlTransport('started', started.clientId)
+      this.recordControlTransport('started', started.clientId, { commandId: started.id })
       const pending = this.commandResults.get(started.id)
       if (!pending) {
         json(response, 404, { error: `Unknown command ${started.id}` })
@@ -2125,6 +2126,11 @@ class DesktopE2EServer {
 
     if (request.method === 'POST' && url.pathname === '/results') {
       const result = await readRequestBody(request)
+      this.recordControlTransport('result-received', result.clientId, {
+        commandId: result.id,
+        actionSucceeded: result.ok,
+        pending: this.commandResults.has(result.id),
+      })
       const pending = this.commandResults.get(result.id)
       if (!pending) {
         const diagnostic = this.commandHistory.find(
@@ -2201,6 +2207,12 @@ class DesktopE2EServer {
 
     if (isReplyPredictionRequest(body)) {
       this.writeLocalAssistantMessage(response, { protocol }, JSON.stringify({ suggestion: null }))
+      return
+    }
+
+    if (this.scenario === 'harness_app_models') {
+      this.recordScenarioRequest('harness_app_models', modelRequest)
+      this.writeLocalAssistantMessage(response, { protocol }, 'HARNESS_APP_MODEL_OK')
       return
     }
 

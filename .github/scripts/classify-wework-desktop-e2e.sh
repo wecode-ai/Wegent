@@ -8,6 +8,7 @@ core_segments=(
   workspace-tabs
   notification-tab-navigation
   collaboration-shared-core
+  project-space-tool-discovery
   collaboration-deliveries
   collaboration-delivery-editing
   collaboration-issue-task-discovery
@@ -135,6 +136,7 @@ core_segments=(
   local-harness
   harness-app-development
   harness-app-lifecycle
+  harness-app-models
   embedded-browser
   browser-toolbar-actions
   browser-annotation-core
@@ -223,21 +225,27 @@ cloud_shards=(
 # Run 39930854745: eight ordinary Core shards predict 323-332 seconds.
 # Co-locate CLI and Electron preparation; keep the two latency benchmarks exclusive.
 # workspace-tabs uses its successful 116-second baseline from run 39920301020.
+# Windows run 40562224610 measured 4m17s window, 3m45s model, 2m34s queue, and 22m49s permission flows.
+# Rebalance within ten shared shards to avoid the prior shard-3 timeout and extra per-shard setup.
+# Run 40629553780 measured Core 4 at 25m12s and Core 8 at 32m46s after moving board sorting.
+# Run 40657579676: Windows Core 4 passed all scenarios but exhausted 40 minutes during cleanup.
+# Run 40667094596: Core 6 spent 31m43s before history; its two Harness flows cost 9m53s.
+# Put Harness flows in Core 4 (24m baseline) and history in Core 6; retain ten runners and 40 minutes.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
   core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,streaming-conversation-switching,task-status-sync,goal-state-sync,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login,notification-tab-navigation
-  project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle
-  window-lifecycle,model-routing,collaboration-app-queue-identity,stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,permission-modes,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
-  collaboration-board-sorting,component-update,environment-panel-scroll,running-conversation-history,workspace-tabs,collaboration-board-move-recovery,collaboration-home-preload,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy
-  claude-runtime,device-artifact-declaration,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery
-  harness-app-lifecycle,task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,office-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import,collaboration-deliveries,collaboration-delivery-editing
-  harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference
-  conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome
+  project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle,window-lifecycle
+  stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
+  harness-app-lifecycle,harness-app-models,component-update,environment-panel-scroll,workspace-tabs,collaboration-board-move-recovery,collaboration-home-preload,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy,permission-modes
+  claude-runtime,device-artifact-declaration,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery,model-routing
+  task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,office-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import,collaboration-deliveries,collaboration-delivery-editing,running-conversation-history
+  harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference,collaboration-app-queue-identity
+  conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome,collaboration-board-sorting
   split-workbench
   collaboration-shared-core,runtime-input-answer-persistence
 )
 
-core_shards[1]+=',mcp-apps'
+core_shards[1]+=',mcp-apps,project-space-tool-discovery'
 
 validate_core_shards() {
   declare -A known_segments=()
@@ -325,6 +333,8 @@ validate_registered_checkpoint_coverage() {
   if ! (
     cd "$repository_root"
     node --input-type=module -e '
+      import { readFileSync } from "node:fs"
+      import { UPGRADE_CHECKPOINT_GROUP } from "./wework/e2e/desktop/upgrade-suite.mjs"
       import {
         DESKTOP_CHECKPOINTS,
         DESKTOP_CHECKPOINT_GROUPS,
@@ -335,7 +345,12 @@ validate_registered_checkpoint_coverage() {
         console.error("Registered desktop checkpoint catalog is empty")
         process.exit(1)
       }
-      const covered = new Set(expandDesktopCheckpoints(process.argv.slice(1)))
+      const upgradeWorkflow = readFileSync(".github/workflows/wework-upgrade-e2e.yml", "utf8")
+      if (!upgradeWorkflow.includes(`--parallel-segments ${UPGRADE_CHECKPOINT_GROUP}`)) {
+        console.error("The upgrade workflow must invoke its registered checkpoint group")
+        process.exit(1)
+      }
+      const covered = new Set(expandDesktopCheckpoints([...process.argv.slice(1), UPGRADE_CHECKPOINT_GROUP]))
       for (const checkpoint of registered) {
         if (!covered.has(checkpoint)) {
           console.error(`Registered desktop checkpoint missing from CI catalogs: ${checkpoint}`)
@@ -444,6 +459,10 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/e2e/desktop/scenarios/project-space-tool-discovery.scenario.mjs)
+      select_target "core:project-space-tool-discovery"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-home-preload.scenario.mjs)
       select_target "core:collaboration-home-preload"
       return
@@ -460,6 +479,7 @@ classify_wework_path() {
       wework/e2e/desktop/modules/harness-app-*)
       select_target "core:harness-app-development"
       select_target "core:harness-app-lifecycle"
+      select_target "core:harness-app-models"
       return
       ;;
     wework/e2e/desktop/scenarios/streaming-text.scenario.mjs | \
@@ -912,7 +932,7 @@ classify_wework_path() {
       select_target "core:stand-in-workspace"
       return
       ;;
-    wework/e2e/desktop/scenarios/stand-in-assignment-notifications.scenario.mjs)
+    wework/e2e/desktop/scenarios/stand-in-automation-assignment.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-notifications.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-suite.scenario.mjs|wework/e2e/desktop/scenarios/stand-in-assignment-recovery.scenario.mjs|wework/e2e/desktop/modules/stand-in-round-assignment.mjs)
       select_target "core:stand-in-assignment-notifications"
       return
       ;;
@@ -1031,6 +1051,7 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/modules/mcp-tool-results.mjs)
+      select_target "core:project-space-tool-discovery"
       select_target "core:collaboration-issue-mcp-comments"
       select_target "core:collaboration-remote-agent-dispatch"
       return
@@ -1276,6 +1297,7 @@ classify_wework_path() {
       executor/src/agents/codex/mcp_apps.rs | \
       executor/src/runtime_work/handler/mcp_apps.rs | \
       wework/e2e/desktop/scenarios/mcp-apps.scenario.mjs | \
+      wework/e2e/desktop/scenarios/ordinary-mcp-regression.mjs | \
       wework/e2e/utils/mcp-app-server.mjs)
       select_target "core:mcp-apps"
       return

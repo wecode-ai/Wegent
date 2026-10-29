@@ -131,20 +131,39 @@ def test_url_metadata_cleanup_preserves_shared_ssrf_validation() -> None:
     assert callable(url_metadata._validate_url_for_ssrf)
 
 
-def test_execution_callback_retains_python_owner() -> None:
+def test_execution_callback_retains_shared_python_implementation() -> None:
     from app.api.endpoints.internal import callback
 
-    assert ("POST", "/internal/callback") in PYTHON_ROUTES
-    assert ("POST", "/api/internal/callback") not in _rust_owned_routes()
+    assert ("POST", "/internal/callback") not in PYTHON_ROUTES
+    assert ("POST", "/api/internal/callback") in _rust_owned_routes()
+    assert callable(callback.handle_callback)
     route = next(
         route
         for route in api_router.routes
         if isinstance(route, APIRoute)
-        and route.path == "/internal/callback"
+        and route.path == "/internal/callback/batch"
         and "POST" in route.methods
     )
-    assert route.endpoint is callback.handle_callback
+    assert route.endpoint is callback.handle_batch_callback
     assert route.response_model is callback.CallbackResponse
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_subscription_mcp_retains_python_owner(
+    method: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi import FastAPI
+
+    from app.core.config import settings
+    from app.mcp_server.server import register_mcp_apps
+
+    assert (method, "/api/mcp/subscription/sse") not in _rust_owned_routes()
+    monkeypatch.setattr(settings, "EXTERNAL_KNOWLEDGE_MCP_ENABLED", False)
+    app = FastAPI()
+    register_mcp_apps(app, "/api")
+    mount = next(route for route in app.routes if route.path == "/api/mcp/subscription")
+    transport = next(route for route in mount.app.routes if route.path == "/sse")
+    assert method in transport.methods
 
 
 @pytest.mark.parametrize(

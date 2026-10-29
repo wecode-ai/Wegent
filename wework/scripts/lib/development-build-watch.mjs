@@ -10,6 +10,7 @@ export async function watchDevelopmentBuild({
   build,
   onError,
   debounceMs = 350,
+  watchDirectory = watch,
 }) {
   const roots = directories.map(directory => path.resolve(directory))
   const sourceFiles = files.map(file => path.resolve(file))
@@ -49,6 +50,7 @@ export async function watchDevelopmentBuild({
     }, debounceMs)
   }
   const observer = createDirectoryObserver({
+    watchDirectory,
     excluded,
     onUnknown: schedule,
     onError,
@@ -105,7 +107,7 @@ export async function watchDevelopmentBuild({
   }
 }
 
-function createDirectoryObserver({ excluded, onChange, onUnknown, onError }) {
+function createDirectoryObserver({ watchDirectory, excluded, onChange, onUnknown, onError }) {
   const watchers = new Map()
   const observe = (directory, root, stat, accept = () => true, key = `${root}\0${directory}`) => {
     const previous = watchers.get(key)
@@ -116,7 +118,7 @@ function createDirectoryObserver({ excluded, onChange, onUnknown, onError }) {
     try {
       // Directory inodes survive atomic file saves; recursive fs.watch on Linux
       // attaches to file inodes and can miss the next replacement.
-      watcher = watch(directory, { recursive: false }, (_event, filename) => {
+      watcher = watchDirectory(directory, { recursive: false }, (_event, filename) => {
         try {
           const current = statSync(directory, { bigint: true, throwIfNoEntry: false })
           if (!current?.isDirectory()) {
@@ -136,7 +138,10 @@ function createDirectoryObserver({ excluded, onChange, onUnknown, onError }) {
             else onUnknown()
             return
           }
-          const resolved = path.resolve(directory, String(filename))
+          // A directory-self notification must rescan the observed root.
+          const name = String(filename)
+          const resolved =
+            name === path.basename(directory) ? directory : path.resolve(directory, name)
           if (!excluded(resolved, root) && accept(resolved)) onChange(resolved, root)
         } catch (error) {
           onError(error)

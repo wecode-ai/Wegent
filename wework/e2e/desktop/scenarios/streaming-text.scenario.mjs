@@ -1,4 +1,5 @@
 import { createConversationSwitchingChecks } from '../modules/streaming-conversation-switching.mjs'
+import { createConversationScrollbarChecks } from '../modules/streaming-text-scrollbar.mjs'
 import { createFileCitationChecks } from '../modules/streaming-file-citations.mjs'
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 import {
@@ -111,6 +112,7 @@ export function createDesktopScenario({
   const fileCitations = createFileCitationChecks({ workspacePath, uiTimeoutMs })
   const transcriptIdentity = createStreamingTranscriptIdentityChecks({ uiTimeoutMs })
   const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs })
+  const conversationScrollbar = createConversationScrollbarChecks({ uiTimeoutMs })
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   const captureSubagent = (control, name) => captureScreenshot(control, name, 'body')
   const subagentToolRenderTimeoutMs =
@@ -336,6 +338,7 @@ export function createDesktopScenario({
       const responseId = `wework-streaming-text-${Date.now()}`
       if (await transcriptIdentity.handleModelRequest(body, response, responseId)) return true
       if (await conversationSwitching.handleModelRequest(body, response, responseId)) return true
+      if (await conversationScrollbar.handleModelRequest(body, response, responseId)) return true
       if (await fileCitations.handleModelRequest(body, response, responseId)) return true
       const latestInput = latestModelInputText(body)
       if (latestInput.includes(MARKDOWN_LINKS_PROMPT)) {
@@ -900,7 +903,13 @@ export function createDesktopScenario({
         ['streaming-timers', verifyTimers],
         ['streaming-scroll', verifyScroll],
         ['streaming-message-order', verifyStoppedTurnOrder],
-        ['streaming-conversation-switching', conversationSwitching.verify],
+        [
+          'streaming-conversation-switching',
+          async control => {
+            await conversationSwitching.verify(control)
+            await conversationScrollbar.verify(control)
+          },
+        ],
         ['streaming-subagents', verifySubagentStreamingPanel],
       ])
       const selectedCheckpoint = checkpoint?.startsWith('streaming-')

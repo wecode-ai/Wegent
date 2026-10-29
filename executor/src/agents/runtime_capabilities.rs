@@ -417,9 +417,7 @@ pub async fn prepare_claude_runtime(
             ),
         ],
     );
-    if managed_wework_mcp_required(request) {
-        crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
-    }
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     spec = claude_mcp::prepare(&config_dir, request, &global_mcps, spec)?;
     log_runtime_event(
         request,
@@ -431,20 +429,6 @@ pub async fn prepare_claude_runtime(
     );
 
     Ok(spec)
-}
-
-fn managed_wework_mcp_required(request: &ExecutionRequest) -> bool {
-    let notifications_available = request
-        .backend_url
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
-        && request
-            .auth_token
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty());
-    notifications_available
-        || crate::task_runtime::mcp::stand_in_identity(request).is_some()
-        || crate::task_runtime::mcp::encoded_space_context_grant(request).is_some()
 }
 
 fn inject_managed_wework_mcps(
@@ -475,9 +459,6 @@ fn inject_managed_wework_mcps(
                 "timeout": crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS * 1000,
             }),
         );
-    }
-    if crate::task_runtime::mcp::encoded_space_context_grant(request).is_none() {
-        return Ok(());
     }
     let config = crate::task_runtime::mcp::space_mcp_client_config(request)?;
     let headers = config
@@ -2790,7 +2771,7 @@ mod tests {
         inject_managed_wework_mcps(&request, &mut servers)
             .expect("notifications MCP should be injected");
 
-        assert!(!servers.contains_key(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME));
+        assert!(servers.contains_key(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME));
         let server = &servers[crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME];
         assert_eq!(server["type"], "http");
         let url = server["url"]
@@ -2804,6 +2785,27 @@ mod tests {
         let serialized = serde_json::to_string(server).expect("serialized Claude MCP config");
         assert!(!serialized.contains("https://wework.example.com"));
         assert!(!serialized.contains("runtime-token"));
+    }
+
+    #[test]
+    fn claude_discovers_project_space_without_a_project_binding() {
+        let mut servers = BTreeMap::new();
+        inject_managed_wework_mcps(&ExecutionRequest::default(), &mut servers).unwrap();
+        let server = &servers[crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME];
+        assert_eq!(server["type"], "http");
+        assert!(server["headers"]["X-Wework-Mcp-Context"].as_str().is_some());
+    }
+
+    #[test]
+    fn claude_rejects_incomplete_dispatch_instead_of_exposing_personal_tools() {
+        let mut request = ExecutionRequest::default();
+        request.extra.insert(
+            "origin".into(),
+            json!({
+                "type":"issue_dispatch", "dispatchRole":"manager", "cloudProjectId":"space-1"
+            }),
+        );
+        assert!(inject_managed_wework_mcps(&request, &mut BTreeMap::new()).is_err());
     }
 
     #[test]

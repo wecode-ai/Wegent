@@ -42,6 +42,25 @@ pub struct GitRepositoriesService {
 }
 
 impl GitRepositoriesService {
+    /// Refresh every configured domain directly, rather than reading cached pages.
+    pub async fn refresh_user_repositories(
+        &self,
+        resolver: &dyn RepositoryTokenResolver,
+        user_id: i32,
+        user_name: &str,
+        git_info: &OpaqueJson,
+    ) -> super::RepositoryRefreshReport {
+        super::maintenance::refresh_user(
+            &self.client,
+            self.cache.as_ref(),
+            resolver,
+            user_id,
+            user_name,
+            git_info,
+        )
+        .await
+    }
+
     /// Build the retained service. Called once at process startup so the
     /// refresh worker is initialization-owned.
     pub fn new(redis: Option<RedisService>) -> Result<Self, brz_http::Error> {

@@ -6,6 +6,7 @@ import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
 import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { createHybridWorkbenchServices } from './hybridServices'
+import { mergeDeviceLists, getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 
 const extensionCommandRouting = vi.hoisted(() =>
   vi.fn((commandKey: string) => commandKey === 'extension_command')
@@ -780,7 +781,10 @@ describe('qualified local sidebar routing', () => {
         name: 'Historical',
       },
     ])
-    await expect(services.cloudBackgroundApi!.listDevices!()).resolves.toHaveLength(1)
+    await expect(services.cloudBackgroundApi!.listDevices!()).resolves.toEqual([
+      expect.objectContaining({ device_id: identity.deviceId, device_type: 'local' }),
+      expect.objectContaining({ device_id: 'history', device_type: 'remote' }),
+    ])
     await expect(services.deviceApi.listDevices()).resolves.toHaveLength(2)
     await expect(services.runtimeWorkApi!.syncRuntimeRemoteProjects(request)).rejects.toThrow(
       'ambiguous-executor-identity:electron-shared'
@@ -1762,6 +1766,35 @@ describe('createHybridWorkbenchServices', () => {
     expect(devices.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
   })
 
+  it('publishes current app aliases to the background device refresh', async () => {
+    const services = createServices()
+    mocks.localListDevices.mockResolvedValue([
+      { device_id: 'native-device', runtime_instance_id: 'runtime-current', device_type: 'local' },
+    ])
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        device_id: 'app-record-current',
+        app_device_id: 'native-device',
+        runtime_instance_id: 'runtime-current',
+        device_type: 'app',
+      },
+      {
+        device_id: 'app-record-old',
+        app_device_id: 'native-device',
+        runtime_instance_id: 'runtime-old',
+        device_type: 'app',
+      },
+    ])
+    const local = await services.deviceApi.listDevices()
+    const background = await services.cloudBackgroundApi!.listDevices!()
+    const refreshed = mergeDeviceLists(local, background)
+
+    expect(refreshed).toHaveLength(1)
+    const aliases = getUnambiguousWorkbenchDeviceAliases(refreshed)
+    expect(aliases.get('app-record-current')).toBe('native-device')
+    expect(aliases.has('app-record-old')).toBe(false)
+  })
+
   it('loads current cloud devices for cloud project execution configuration', async () => {
     const services = createServices()
 
@@ -2363,7 +2396,8 @@ describe('createHybridWorkbenchServices', () => {
     await services.deviceApi.listDevices()
     const devices = await services.cloudBackgroundApi?.listDevices?.()
 
-    expect(devices?.map(device => device.device_id)).toEqual(['cloud-device'])
+    expect(devices?.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
+    expect(devices?.some(device => device.device_type === 'app')).toBe(false)
   })
 
   it('does not request runtime work from offline cloud devices', async () => {
@@ -2551,6 +2585,36 @@ describe('createHybridWorkbenchServices', () => {
       expect(mocks.cloudCreateRuntimeTask).not.toHaveBeenCalled()
     }
   )
+
+  it('publishes newly registered local APP aliases through background device refresh', async () => {
+    const local = {
+      id: 0,
+      device_id: 'electron-current',
+      name: 'Local Executor',
+      status: 'online' as const,
+      is_default: true,
+      device_type: 'local' as const,
+      runtime_instance_id: 'runtime-current',
+    }
+    mocks.localListDevices.mockResolvedValue([local])
+    mocks.cloudListDevices.mockResolvedValue([])
+    const services = createServices()
+    await services.deviceApi.listDevices()
+    mocks.cloudListDevices.mockResolvedValue([
+      { ...local, id: 2, device_type: 'app', socket_device_id: 'app-record-2' },
+    ])
+
+    const devices = await services.cloudBackgroundApi!.listDevices!()
+
+    expect(devices).toEqual([
+      expect.objectContaining({
+        device_id: local.device_id,
+        socket_device_id: 'app-record-2',
+        device_type: 'local',
+      }),
+    ])
+    expect(mocks.localListDevices).toHaveBeenCalledTimes(1)
+  })
 
   it('keeps APP-alias recovery on the validated local runtime while it is offline', async () => {
     const local = {

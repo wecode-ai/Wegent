@@ -2,7 +2,7 @@
 name = "wegent-backend-rs"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.94"
 description = "Incremental Rust migration gateway for the Wegent backend"
 license = "Apache-2.0"
 
@@ -14,15 +14,16 @@ async-trait = "0.1"
 base64 = "0.23.1"
 bcrypt = "0.19"
 cbc = { version = "0.1", features = ["alloc", "block-padding"] }
-brz-http = { version = "=0.0.13", features = ["json", "gzip", "metrics", "slow-log"] }
-brz-http-gateway = { version = "=0.2.11", features = ["fallback-log"] }
-brz-http-server = { version = "=0.0.32", features = ["macros", "metrics", "api-log", "slow-log"] }
-brz-logs = { version = "=0.0.16", features = ["metrics"] }
-# Keep the Breeze components on exact published versions and one metrics
-# registry revision in the final backend binary.
-brz-metrics = { version = "=0.0.12", features = ["tokio"] }
-brz-mysql = { version = "=0.0.24", features = ["metrics", "slow-log"] }
-brz-redis = { version = "=0.0.16", features = ["metrics", "slow-log"] }
+brz-http = { version = "=0.0.14", features = ["json", "gzip", "metrics", "slow-log"] }
+brz-http-gateway = { version = "=0.2.14", features = ["fallback-log"] }
+brz-http-server = { version = "=0.0.33", features = ["macros", "metrics", "api-log", "slow-log"] }
+brz-logs = { version = "=0.0.17", features = ["metrics"] }
+# Keep one published metrics registry across all Breeze components.
+brz-metrics = { version = "=0.0.13", features = ["tokio"] }
+brz-mysql = { version = "=0.0.25", features = ["metrics", "slow-log"] }
+brz-redis = { version = "=0.0.17", features = ["metrics", "slow-log"] }
+brz-schedule = "=0.0.1"
+brz-schedule-redis = "=0.0.1"
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 chrono-tz = { version = "0.10", default-features = false, features = ["std"] }
@@ -34,7 +35,15 @@ flate2 = { version = "1", default-features = false, features = ["zlib"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 getrandom = "0.2"
 hmac = "0.12"
+htmd = "=0.5.6"
+lettre = { version = "=0.11.23", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
+pep440_rs = "=0.7.3"
+rustpython-parser = { version = "=0.4.0", default-features = false, features = ["num-bigint"] }
+rustpython-ast = { version = "=0.4.0", default-features = false, features = ["num-bigint", "fold"] }
+unicode-normalization = "=0.1.25"
+pulldown-cmark = "0.13"
 http = "1"
+http-body-util = "0.1"
 hyper = { version = "1", features = ["http1", "server"] }
 jsonwebtoken = { version = "9.3", default-features = false }
 # `md5` for the repository-token digest and the URL-metadata cache key
@@ -47,7 +56,7 @@ brz-json = "=0.0.11"
 serde_json = { version = "1", features = ["preserve_order"] }
 sha1 = "0.10"
 sha2 = "0.10"
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 toml = "0.8"
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
@@ -61,9 +70,10 @@ yaml-rust2 = { version = "0.10.4", default-features = false }
 libz-sys = "1.1"
 brotli = { version = "8.0.4", default-features = false, features = ["std"] }
 zstd = { version = "0.13.1", features = ["arrays"] }
+zip = { version = "=6.0.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
 
 [lints.rust]
 # `deny` rather than `forbid` so `config::init_env` can relax it for the single

@@ -38,6 +38,14 @@ runs:
         path: ${{ steps.windows-store.outputs.path }}
         key: ${{ runner.os }}-node-24-pnpm-store-v1-${{ hashFiles('pnpm-lock.yaml') }}
 
+    - name: Identify workspace dependency cache
+      if: runner.os != 'Windows'
+      id: workspace-cache-context
+      shell: bash
+      run: |
+        # pnpm records absolute workspace paths; host and container caches cannot share them.
+        node --input-type=module -e "import { createHash } from 'node:crypto'; console.log('fingerprint=' + createHash('sha256').update(process.cwd()).digest('hex'))" >> "$GITHUB_OUTPUT"
+
     - name: Restore shared workspace dependencies
       if: runner.os != 'Windows'
       id: workspace-cache
@@ -49,7 +57,7 @@ runs:
           frontend/public/fonts
           wework/node_modules
           packages/*/node_modules
-        key: ${{ runner.os }}-node-24-workspace-v2-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'pnpm-workspace.yaml', 'frontend/package.json', 'wework/package.json', 'packages/*/package.json') }}
+        key: ${{ runner.os }}-node-24-workspace-v2-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'pnpm-workspace.yaml', 'frontend/package.json', 'wework/package.json', 'packages/*/package.json') }}-${{ steps.workspace-cache-context.outputs.fingerprint }}
 
     - name: Install workspace dependencies
       if: runner.os == 'Windows' || steps.workspace-cache.outputs.cache-hit != 'true'

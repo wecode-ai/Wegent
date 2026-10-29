@@ -172,6 +172,7 @@ def _task_binding_metadata(
         "dispatch_id",
         "dispatch_round_id",
         "assignment_id",
+        "issue_assignment_id",
     ):
         value = getattr(values, key)
         if value:
@@ -588,6 +589,7 @@ class LoopItemService:
             db.query(CloudProject)
             .filter(CloudProject.id == cloud_project_id)
             .with_for_update()
+            .populate_existing()
             .one()
         )
         sequence = project.next_item_number

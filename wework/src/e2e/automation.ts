@@ -1,4 +1,5 @@
 import { rendererCrashStore } from './rendererCrashStore'
+import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { createDesktopControlFile } from './file-fixture'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
@@ -684,16 +685,6 @@ function desktopControlElementMetrics(selector: string): string {
   )
 }
 
-function desktopControlContentScrollTop(element: HTMLElement): number {
-  if (element.dataset.scrollOrigin !== 'bottom') return element.scrollTop
-  return Math.max(0, element.scrollHeight - element.clientHeight + element.scrollTop)
-}
-
-function desktopControlDomScrollTop(element: HTMLElement, contentScrollTop: number): number {
-  if (element.dataset.scrollOrigin !== 'bottom') return contentScrollTop
-  return contentScrollTop - Math.max(0, element.scrollHeight - element.clientHeight)
-}
-
 async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Promise<string> {
   const scroller = findDesktopControlElements(command.selector)[0]
   if (!scroller) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -701,6 +692,7 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
     contentSelector?: string
     framesPerRatio?: number
     ratios?: number[]
+    scrollbarSelector?: string
   }
   const contentSelector = options.contentSelector?.trim()
   if (!contentSelector) {
@@ -717,6 +709,16 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
   if (!Number.isInteger(framesPerRatio) || framesPerRatio < 1 || framesPerRatio > 60) {
     throw new Error('sampleRapidMarkdownWindowing requires framesPerRatio between 1 and 60')
   }
+  const track = options.scrollbarSelector
+    ? findDesktopControlElements(options.scrollbarSelector)[0]
+    : null
+  const thumb = track?.querySelector<HTMLElement>(
+    '[data-testid="desktop-workbench-scrollbar-thumb"]'
+  )
+  if (options.scrollbarSelector && (!track || !thumb))
+    throw new Error('The requested scrollbar is missing')
+  let pointerY: number | null = null
+  let pointerOffset = 0
 
   const nextFrame = () =>
     new Promise<number>(resolve => window.requestAnimationFrame(time => resolve(time)))
@@ -791,6 +793,7 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
     }
     maxChunkHeightDelta = Math.max(maxChunkHeightDelta, frameHeightDelta)
     maxVisibleChunkHeightDelta = Math.max(maxVisibleChunkHeightDelta, frameVisibleHeightDelta)
+    const thumbBounds = thumb?.getBoundingClientRect()
     return {
       ratio,
       frame,
@@ -809,31 +812,60 @@ async function sampleRapidMarkdownWindowing(command: DesktopControlCommand): Pro
       hasVisibleText,
       maxChunkHeightDelta: frameHeightDelta,
       maxVisibleChunkHeightDelta: frameVisibleHeightDelta,
+      scrollbarPointerY: pointerY,
+      scrollbarGrabOffset: pointerOffset,
+      scrollbarThumbTop: thumbBounds?.top ?? null,
+      scrollbarPointerError:
+        thumbBounds && pointerY !== null
+          ? Math.abs(thumbBounds.top + pointerOffset - pointerY)
+          : null,
     }
   }
 
   startedAt = await nextFrame()
+  // Navigation can move the thumb during that frame; grab its current physical point.
+  const pointer = thumb ? { ...desktopControlEventOptions(thumb), buttons: 1 } : null
+  pointerOffset = thumb && pointer ? pointer.clientY! - thumb.getBoundingClientRect().top : 0
+  pointerY = pointer?.clientY ?? null
   const initial = capture(startedAt, 1, 0)
   const samples: ReturnType<typeof capture>[] = []
-  for (const ratio of ratios) {
-    await nextFrame()
-    const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-    const nextScrollTop = maximum * ratio
-    const currentScrollTop = desktopControlContentScrollTop(scroller)
-    scroller.dispatchEvent(
-      new WheelEvent('wheel', {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        deltaY: nextScrollTop < currentScrollTop ? -120 : 120,
-      })
-    )
-    scroller.scrollTop = desktopControlDomScrollTop(scroller, nextScrollTop)
-    scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
-    // Do not accept synchronous placeholder content in the turn that scrolls.
-    for (let frame = 1; frame <= framesPerRatio; frame += 1) {
-      samples.push(capture(await nextFrame(), ratio, frame))
+  if (thumb && pointer) dispatchDesktopControlPointerEvent(thumb, 'pointerdown', pointer)
+  try {
+    for (const ratio of ratios) {
+      await nextFrame()
+      const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      const nextScrollTop = maximum * ratio
+      const currentScrollTop = scroller.scrollTop
+      if (track && thumb && pointer) {
+        const movement = {
+          ...pointer,
+          clientY:
+            track.getBoundingClientRect().top +
+            pointerOffset +
+            ratio * (track.clientHeight - thumb.getBoundingClientRect().height),
+        }
+        pointerY = movement.clientY
+        dispatchDesktopControlPointerEvent(track, 'pointermove', movement)
+      } else {
+        scroller.dispatchEvent(
+          new WheelEvent('wheel', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            deltaY: nextScrollTop < currentScrollTop ? -120 : 120,
+          })
+        )
+        scroller.scrollTop = nextScrollTop
+        scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+      }
+      // Do not accept synchronous placeholder content in the turn that scrolls.
+      for (let frame = 1; frame <= framesPerRatio; frame += 1) {
+        samples.push(capture(await nextFrame(), ratio, frame))
+      }
     }
+  } finally {
+    if (track && pointer)
+      dispatchDesktopControlPointerEvent(track, 'pointerup', { ...pointer, buttons: 0 })
   }
   return JSON.stringify({
     initial,
@@ -2197,6 +2229,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'getHarnessAppLaunchDiagnostics':
+      return JSON.stringify(captureHarnessAppLaunchDiagnostics(command.value ?? ''))
     case 'dispatchLocalModelSettingsChangedThenMacrotask':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       await waitForDesktopControlTick()
@@ -2474,6 +2508,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     }
     case 'performanceSnapshot': {
+      const { collectMemory = true } = JSON.parse(command.value ?? '{}') as {
+        collectMemory?: boolean
+      }
       const debugSnapshot = getWorkbenchDebugSnapshot()
       const currentRuntimeTask = debugSnapshot.workbench?.currentRuntimeTask
       const runtimeMessages = currentRuntimeTask
@@ -2495,10 +2532,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         document.querySelectorAll<HTMLElement>('[data-testid="assistant-message-content"]')
       )
       const [processMemory, rendererHeap] = await Promise.all([
-        navigator.platform.toLowerCase().includes('mac')
+        collectMemory && navigator.platform.toLowerCase().includes('mac')
           ? invokeDesktopHost('e2e.getProcessSnapshot')
           : null,
-        invokeDesktopHost('e2e.getRendererHeapUsage'),
+        collectMemory ? invokeDesktopHost('e2e.getRendererHeapUsage') : null,
       ])
       return JSON.stringify({
         timestamp: Date.now(),
@@ -2937,6 +2974,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(await checkForWeworkUpdate('stable'))
     case 'getAppUpdateProgress':
       return JSON.stringify(await invokeDesktopHost('appUpdate.downloadProgress'))
+    case 'getInstalledAppVersion':
+      return JSON.stringify(await invokeDesktopHost('app.getVersion'))
+    case 'quitApp':
+      await invokeDesktopHost('app.quit')
+      return 'quitting'
     // Starts the host download without following it to completion, so a
     // scenario can observe that accepting the download does not wait for the
     // whole transfer. downloadPendingAppUpdate remains the end-to-end command.
@@ -2993,10 +3035,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           deltaY: 120,
         })
       )
-      element.scrollTop =
-        element.dataset.scrollOrigin === 'bottom'
-          ? 0
-          : Math.max(0, element.scrollHeight - element.clientHeight)
+      element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
       element.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(element.scrollTop)
     }
@@ -3017,10 +3056,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         })
       )
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-      scroller.scrollTop =
-        scroller.dataset.scrollOrigin === 'bottom'
-          ? -Math.min(distance, maxScrollTop)
-          : Math.max(0, maxScrollTop - distance)
+      scroller.scrollTop = Math.max(0, maxScrollTop - distance)
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
     }
@@ -3034,7 +3070,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
 
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
       const nextContentScrollTop = maxScrollTop * ratio
-      const currentContentScrollTop = desktopControlContentScrollTop(scroller)
+      const currentContentScrollTop = scroller.scrollTop
       scroller.dispatchEvent(
         new WheelEvent('wheel', {
           bubbles: true,
@@ -3043,7 +3079,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           deltaY: nextContentScrollTop < currentContentScrollTop ? -120 : 120,
         })
       )
-      scroller.scrollTop = desktopControlDomScrollTop(scroller, nextContentScrollTop)
+      scroller.scrollTop = nextContentScrollTop
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
     }
@@ -3070,7 +3106,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const viewport = scroller.getBoundingClientRect()
       const samples = ratios.map(ratio => {
         const nextContentScrollTop = maxScrollTop * ratio
-        const currentContentScrollTop = desktopControlContentScrollTop(scroller)
+        const currentContentScrollTop = scroller.scrollTop
         scroller.dispatchEvent(
           new WheelEvent('wheel', {
             bubbles: true,
@@ -3079,7 +3115,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
             deltaY: nextContentScrollTop < currentContentScrollTop ? -120 : 120,
           })
         )
-        scroller.scrollTop = desktopControlDomScrollTop(scroller, nextContentScrollTop)
+        scroller.scrollTop = nextContentScrollTop
         scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
 
         const hasVisibleContent = Array.from(
@@ -3107,7 +3143,18 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!desktopControlElementEnabled(element)) {
         throw new Error(`Selector "${command.selector}" is disabled`)
       }
+      const startedAt = Date.now()
+      logRuntimeTaskCreateStage(
+        'desktop-control-click-started',
+        { commandId: command.id, selector: command.selector },
+        'debug'
+      )
       element.click()
+      logRuntimeTaskCreateStage(
+        'desktop-control-click-dispatched',
+        { commandId: command.id, elapsedMs: Date.now() - startedAt },
+        'debug'
+      )
       return element.textContent?.trim() ?? ''
     }
     case 'clickThenMacrotask': {
@@ -3585,13 +3632,39 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
 }
 
 async function postDesktopControlResult(url: string, result: DesktopControlResult): Promise<void> {
-  const response = await fetch(`${url}/results`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-    body: JSON.stringify(result),
-  })
-  if (!response.ok) {
-    throw new Error(`Desktop E2E control result failed with ${response.status}`)
+  const startedAt = Date.now()
+  let lastTick = startedAt
+  let maxEventLoopLagMs = 0
+  let response: Response | undefined
+  const probe = window.setInterval(() => {
+    maxEventLoopLagMs = Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100)
+    lastTick = Date.now()
+  }, 100)
+  try {
+    response = await fetch(`${url}/results`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
+      body: JSON.stringify(result),
+    })
+    if (!response.ok) {
+      throw new Error(`Desktop E2E control result failed with ${response.status}`)
+    }
+  } finally {
+    window.clearInterval(probe)
+    logRuntimeTaskCreateStage(
+      'desktop-control-result-transport',
+      {
+        commandId: result.id,
+        clientId: result.clientId,
+        startedAt,
+        elapsedMs: Date.now() - startedAt,
+        maxEventLoopLagMs: Math.max(maxEventLoopLagMs, Date.now() - lastTick - 100),
+        responseStatus: response?.status ?? null,
+        serverReceivedAt: response?.headers.get('X-Wework-Control-Received-At') ?? null,
+        visibility: document.visibilityState,
+      },
+      'debug'
+    )
   }
 }
 
@@ -3622,15 +3695,19 @@ async function postDesktopControlStarted(
     throw new Error(`Desktop E2E control start acknowledgement failed with ${response.status}`)
   }
   if (Date.now() - startedAt > 1000) {
-    logRuntimeTaskCreateStage('desktop-control-slow-start-acknowledgement', {
-      commandId: command.id,
-      action: command.action,
-      startedAt,
-      elapsedMs: Date.now() - startedAt,
-      maxEventLoopLagMs,
-      serverReceivedAt: response.headers.get('X-Wework-Control-Received-At'),
-      visibility: document.visibilityState,
-    })
+    logRuntimeTaskCreateStage(
+      'desktop-control-slow-start-acknowledgement',
+      {
+        commandId: command.id,
+        action: command.action,
+        startedAt,
+        elapsedMs: Date.now() - startedAt,
+        maxEventLoopLagMs,
+        serverReceivedAt: response.headers.get('X-Wework-Control-Received-At'),
+        visibility: document.visibilityState,
+      },
+      'debug'
+    )
   }
 }
 
@@ -3668,10 +3745,10 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       const command = (await response.json()) as DesktopControlCommand
       recordDesktopControlPhase('command-decoded', command)
       const diagnostic = { commandId: command.id, action: command.action, clientId }
-      logRuntimeTaskCreateStage('desktop-control-received', diagnostic)
+      logRuntimeTaskCreateStage('desktop-control-received', diagnostic, 'debug')
       await postDesktopControlStarted(url, command, clientId)
       recordDesktopControlPhase('start-acknowledged', command)
-      logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic)
+      logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic, 'debug')
       let result: DesktopControlResult
       try {
         const value = await executeDesktopControlCommand(command)
@@ -3686,10 +3763,14 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       }
       recordDesktopControlPhase('action-completed', command)
       try {
-        logRuntimeTaskCreateStage('desktop-control-executed', { ...diagnostic, ok: result.ok })
+        logRuntimeTaskCreateStage(
+          'desktop-control-executed',
+          { ...diagnostic, ok: result.ok },
+          'debug'
+        )
         await postDesktopControlResult(url, result)
         recordDesktopControlPhase('result-acknowledged', command)
-        logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic)
+        logRuntimeTaskCreateStage('desktop-control-result-acknowledged', diagnostic, 'debug')
       } catch (error) {
         console.error(
           '[Wework] Desktop E2E result acknowledgement failed:',
