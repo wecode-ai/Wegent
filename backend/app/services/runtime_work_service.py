@@ -449,7 +449,7 @@ async def get_runtime_transcript(
     user_id: int,
     address: RuntimeTranscriptRequest | RuntimeTaskAddress,
 ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
-    """Read a LocalTask transcript from the owning local executor."""
+    """Read a session transcript, assembling device chunks for legacy HTTP callers."""
 
     if not isinstance(address, RuntimeTranscriptRequest):
         address = RuntimeTranscriptRequest.model_validate(address.model_dump())
@@ -457,6 +457,7 @@ async def get_runtime_transcript(
     async def read(
         request: RuntimeTranscriptRequest,
     ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
+        """Reauthorize the original caller before requesting each device packet."""
         return await _get_runtime_transcript_packet(
             db=db, user_id=user_id, address=request
         )
@@ -500,6 +501,7 @@ async def get_runtime_transcript(
 async def _get_runtime_transcript_packet(
     *, db: Session, user_id: int, address: RuntimeTranscriptRequest
 ) -> RuntimeTranscriptResponse | RuntimeTranscriptChunkResponse:
+    """Authorize the session and validate one canonical or chunked device response."""
     user_id, normalized_address = _resolve_runtime_session_read(db, user_id, address)
     payload = _runtime_transcript_payload(address, normalized_address)
     started_at = time.perf_counter()

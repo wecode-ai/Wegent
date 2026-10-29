@@ -586,6 +586,7 @@ async def test_new_root_preserves_real_queue_owner_and_comment_intent(scenario):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", [BaseRole.Developer, BaseRole.Viewer])
 async def test_member_reads_bound_transcript_using_original_owner(scenario, role):
+    """Read a granted project session through its original owner's device identity."""
     from app.schemas.runtime_work import RuntimeTranscriptRequest
     from app.services.runtime_work_service import get_runtime_transcript
 
@@ -633,6 +634,7 @@ async def test_member_reads_bound_transcript_using_original_owner(scenario, role
 async def test_group_transcript_reads_manager_session_without_changing_dispatch_identity(
     scenario, requested_task
 ):
+    """Resolve group history to the manager session without changing its binding."""
     from app.schemas.runtime_work import RuntimeTranscriptRequest
     from app.services.runtime_work_service import get_runtime_transcript
 

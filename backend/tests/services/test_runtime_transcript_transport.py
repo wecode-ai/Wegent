@@ -25,6 +25,7 @@ SNAPSHOT_ID = "a" * 64
 
 
 def packed_transcript_chunks() -> tuple[str, list[dict]]:
+    """Split high-entropy tool output into multiple valid device packet fixtures."""
     output = "\n".join(
         hashlib.sha256(str(index).encode()).hexdigest() for index in range(12_000)
     )
@@ -70,9 +71,11 @@ def packed_transcript_chunks() -> tuple[str, list[dict]]:
 async def test_legacy_http_read_uses_device_chunks_and_preserves_json(
     scenario, version, caplog
 ):
+    """Preserve legacy JSON and owner authorization without logging tool output."""
     output, chunks = packed_transcript_chunks()
 
     async def rpc(**values):
+        """Model a device that requires v2 for this oversized transcript."""
         payload = values["payload"]
         if payload.get("transcriptProtocolVersion") != 2:
             return {
@@ -109,9 +112,11 @@ async def test_legacy_http_read_uses_device_chunks_and_preserves_json(
 
 @pytest.mark.asyncio
 async def test_legacy_transfer_rechecks_access_before_reading_next_chunk(scenario):
+    """Stop assembly when the original caller loses access after the first chunk."""
     _, chunks = packed_transcript_chunks()
 
     async def revoke_access(**_values):
+        """Revoke the caller's grant as the device returns its first chunk."""
         scenario.db.delete(scenario.grant)
         scenario.db.commit()
         return chunks[0]
@@ -134,6 +139,7 @@ async def test_legacy_transfer_rechecks_access_before_reading_next_chunk(scenari
 async def test_legacy_transfer_rejects_inconsistent_or_corrupt_packets(
     scenario, failure
 ):
+    """Return a safe gateway error for corrupt data or inconsistent continuations."""
     output, packets = packed_transcript_chunks()
     chunks = copy.deepcopy(packets)
     if failure == "snapshot":
@@ -161,9 +167,11 @@ async def test_legacy_transfer_rejects_inconsistent_or_corrupt_packets(
 
 @pytest.mark.asyncio
 async def test_legacy_transfer_has_one_end_to_end_timeout(scenario, monkeypatch):
+    """Cancel a stalled device read within the existing whole-transfer budget."""
     cancelled = asyncio.Event()
 
     async def stalled(**_values):
+        """Keep the device request pending until the aggregation timeout cancels it."""
         try:
             await asyncio.Event().wait()
         finally:

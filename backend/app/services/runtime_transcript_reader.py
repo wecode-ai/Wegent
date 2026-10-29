@@ -35,6 +35,7 @@ class RuntimeTranscriptTransferError(ValueError):
 async def read_complete_transcript(
     address: RuntimeTranscriptRequest, read: TranscriptRead
 ) -> RuntimeTranscriptResponse:
+    """Assemble a validated v2 snapshot, reauthorizing through each read callback."""
     request = address.model_copy(
         update={"transcript_protocol_version": 2, "transcript_transfer": None}
     )
@@ -78,6 +79,7 @@ async def read_complete_transcript(
 
 
 def _decode_chunk(payload: str) -> bytes:
+    """Decode strict Base64 and enforce the nonempty per-packet byte limit."""
     try:
         chunk = base64.b64decode(payload, validate=True)
     except (ValueError, binascii.Error) as exc:
@@ -88,6 +90,7 @@ def _decode_chunk(payload: str) -> bytes:
 
 
 def _unpack_transcript(data: bytes, snapshot: str) -> RuntimeTranscriptResponse:
+    """Verify the snapshot digest and decode bounded JSON with restored strings."""
     if hashlib.sha256(data).hexdigest() != snapshot:
         raise RuntimeTranscriptTransferError("snapshot_digest_mismatch")
     try:
@@ -119,6 +122,7 @@ def _unpack_transcript(data: bytes, snapshot: str) -> RuntimeTranscriptResponse:
 def _restore_reference(
     transcript: dict[str, Any], strings: list[str], reference: Any
 ) -> None:
+    """Restore a string only into an existing empty slot with a valid typed path."""
     if not isinstance(reference, dict):
         raise RuntimeTranscriptTransferError("invalid_string_reference")
     path, index = reference.get("path"), reference.get("index")
