@@ -1,6 +1,19 @@
 #!/bin/sh
 set -eu
 
+echo "[desktop-e2e-window-manager] waiting for X display: display=${DISPLAY:-unset}" >&2
+display_attempt=0
+display_error=''
+while ! display_error=$(xprop -root 2>&1); do
+  display_attempt=$((display_attempt + 1))
+  if [ "$display_attempt" -ge 100 ]; then
+    echo "Xvfb display did not become reachable: display=${DISPLAY:-unset}" >&2
+    printf '%s\n' "$display_error" >&2
+    exit 1
+  fi
+  sleep 0.05
+done
+
 openbox >&2 &
 openbox_pid=$!
 trap 'kill "$openbox_pid" 2>/dev/null || true; wait "$openbox_pid" 2>/dev/null || true' EXIT
