@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  awaitConnectorAuthorizationWindow,
   closeConnectorAuthorizationWindow,
   isConnectorAuthorizationUrl,
   openConnectorAuthorizationWindow,
@@ -69,9 +70,10 @@ describe('connector authorization window', () => {
   test('keeps the window open after the backend callback loads', async () => {
     vi.useFakeTimers()
     try {
-      void openConnectorAuthorizationWindow({
+      await openConnectorAuthorizationWindow({
         url: 'https://provider.example/authorize',
         parent,
+        requestId: 'attempt-1',
       })
       await vi.advanceTimersByTimeAsync(0)
 
@@ -89,43 +91,40 @@ describe('connector authorization window', () => {
     }
   })
 
-  test('closes when the poll loop reports a terminal state', async () => {
-    vi.useFakeTimers()
-    try {
-      const opened = openConnectorAuthorizationWindow({
-        url: 'https://provider.example/authorize',
-        parent,
-      })
-      await vi.advanceTimersByTimeAsync(0)
+  test('closing is scoped to one attempt', async () => {
+    await openConnectorAuthorizationWindow({
+      url: 'https://provider.example/authorize',
+      parent,
+      requestId: 'attempt-1',
+    })
 
-      closeConnectorAuthorizationWindow()
-      expect(mocks.window.close).toHaveBeenCalledTimes(1)
+    closeConnectorAuthorizationWindow('someone-else')
+    expect(mocks.window.close).not.toHaveBeenCalled()
 
-      mocks.listeners.get('closed')?.()
-      await opened
-      expect(mocks.clearStorageData).toHaveBeenCalled()
-    } finally {
-      vi.useRealTimers()
-    }
+    closeConnectorAuthorizationWindow('attempt-1')
+    expect(mocks.window.close).toHaveBeenCalledTimes(1)
+
+    // Idempotent: a second call for the same attempt is a no-op.
+    closeConnectorAuthorizationWindow('attempt-1')
+    expect(mocks.window.close).toHaveBeenCalledTimes(1)
   })
 
-  test('stays open while the provider page is still loading', async () => {
-    vi.useFakeTimers()
-    try {
-      const opened = openConnectorAuthorizationWindow({
-        url: 'https://provider.example/authorize',
-        parent,
-      })
-      await vi.advanceTimersByTimeAsync(0)
+  test('awaiting an attempt resolves when its window closes', async () => {
+    await openConnectorAuthorizationWindow({
+      url: 'https://provider.example/authorize',
+      parent,
+      requestId: 'attempt-1',
+    })
+    let released = false
+    const waiting = awaitConnectorAuthorizationWindow('attempt-1').then(() => {
+      released = true
+    })
+    await Promise.resolve()
+    expect(released).toBe(false)
 
-      mocks.webContentsListeners.get('did-navigate')?.({}, 'https://provider.example/consent')
-      await vi.advanceTimersByTimeAsync(1_000)
-      expect(mocks.window.close).not.toHaveBeenCalled()
-
-      mocks.listeners.get('closed')?.()
-      await opened
-    } finally {
-      vi.useRealTimers()
-    }
+    mocks.listeners.get('closed')?.()
+    await waiting
+    expect(released).toBe(true)
+    expect(mocks.clearStorageData).toHaveBeenCalled()
   })
 })

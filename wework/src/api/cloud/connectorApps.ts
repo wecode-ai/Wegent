@@ -161,9 +161,10 @@ export async function authorizeWegentConnector(
       pluginKey: slug,
     }),
   })
+  let authorizationHandle: CloudAuthorizationHandle | void
   try {
     const session = await createConnectorOAuthSession(apiBaseUrl, token, slug)
-    const authorizationHandle = await openAuthorizationUrl(session.authorize_url)
+    authorizationHandle = await openAuthorizationUrl(session.authorize_url)
     let windowClosed = false
     void authorizationHandle?.closed?.then(() => {
       windowClosed = true
@@ -181,20 +182,16 @@ export async function authorizeWegentConnector(
       }
       if (result.status === 'declined') {
         attempt.cancel()
-        await Promise.resolve(authorizationHandle?.close?.()).catch(() => undefined)
         throw new Error('GitHub 授权已取消')
       }
       if (result.status === 'failed') {
         attempt.fail('confirm')
-        await Promise.resolve(authorizationHandle?.close?.()).catch(() => undefined)
         throw new Error(result.error || 'GitHub 授权失败')
       }
       if (!result.connection) {
         attempt.fail('confirm')
-        await Promise.resolve(authorizationHandle?.close?.()).catch(() => undefined)
         throw new Error('GitHub 授权状态缺失')
       }
-      await Promise.resolve(authorizationHandle?.close?.()).catch(() => undefined)
       if (result.connection.status === 'connected') attempt.succeed()
       else attempt.fail('confirm')
       notifyConnectorAuthorizationChanged()
@@ -205,5 +202,9 @@ export async function authorizeWegentConnector(
   } catch (error) {
     attempt.fail('request')
     throw error
+  } finally {
+    // Successful, declined, failed, timed out, or the poll itself threw: the
+    // consent window belongs to this attempt and must not outlive it.
+    await Promise.resolve(authorizationHandle?.close?.()).catch(() => undefined)
   }
 }

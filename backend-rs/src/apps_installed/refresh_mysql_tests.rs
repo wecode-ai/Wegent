@@ -251,3 +251,193 @@ async fn discovery_does_not_revive_a_rejected_grant() {
     disconnect(admin, mysql, &name).await;
     result.unwrap();
 }
+
+/// The concurrent-refresh race: two attempts read the same grant, the first
+/// commits a rotation, and the second is then rejected by the provider. The
+/// rejection must not clear the winner's refresh token.
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL 8; explicitly run by the backend Rust CI job"]
+async fn a_stale_rejection_keeps_a_newer_grant() {
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
+        .expect("set WEGENT_TEST_MYSQL_ADDRESS to the disposable MySQL fixture");
+    assert!(address.starts_with("127.0.0.1:"), "use a loopback fixture");
+    let (admin, mysql, name) = connect(&address).await;
+    let result = tokio::spawn({
+        let mysql = mysql.clone();
+        async move {
+            seed_expired_grant(&mysql, "2020-01-01T00:00:00").await;
+            let stale = db::find_connector_connection(&mysql, SLUG, USER_ID)
+                .await
+                .unwrap()
+                .expect("seeded row");
+
+            // Request A committed its rotation while request B was waiting.
+            rotate_grant(&mysql, "2035-01-01T00:00:00").await;
+
+            // Request B's refresh was rejected and tries to clear the grant.
+            let updated = refresh::reject_if_grant(&mysql, stale.kinds_id, "old-refresh")
+                .await
+                .unwrap();
+            assert_eq!(updated, 0, "the stale attempt must not touch the row");
+
+            let spec = read_spec(&mysql).await;
+            assert_eq!(spec["status"], json!("connected"));
+            assert_eq!(spec["accessTokenEncrypted"], json!("new-access"));
+            assert_eq!(spec["refreshTokenEncrypted"], json!("new-refresh"));
+            assert_eq!(spec["expiresAt"], json!("2035-01-01T00:00:00"));
+        }
+    })
+    .await;
+    disconnect(admin, mysql, &name).await;
+    result.unwrap();
+}
+
+/// The same race on the success path: a slower attempt must not replace the
+/// grant another attempt already committed.
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL 8; explicitly run by the backend Rust CI job"]
+async fn a_stale_renewal_keeps_a_newer_grant() {
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
+        .expect("set WEGENT_TEST_MYSQL_ADDRESS to the disposable MySQL fixture");
+    assert!(address.starts_with("127.0.0.1:"), "use a loopback fixture");
+    let (admin, mysql, name) = connect(&address).await;
+    let result = tokio::spawn({
+        let mysql = mysql.clone();
+        async move {
+            seed_expired_grant(&mysql, "2020-01-01T00:00:00").await;
+            let stale = db::find_connector_connection(&mysql, SLUG, USER_ID)
+                .await
+                .unwrap()
+                .expect("seeded row");
+            rotate_grant(&mysql, "2035-01-01T00:00:00").await;
+
+            let stale_document = json!({
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "ConnectorConnection",
+                "metadata": {"name": SLUG, "namespace": "system"},
+                "spec": {
+                    "connectorAppSlug": SLUG,
+                    "status": "connected",
+                    "expiresAt": "2035-01-01T00:00:00",
+                    "accessTokenEncrypted": "attempt-access",
+                    "refreshTokenEncrypted": "attempt-refresh",
+                }
+            });
+            let updated = refresh::write_json_if_grant(
+                &mysql,
+                stale.kinds_id,
+                &stale_document,
+                "old-refresh",
+            )
+            .await
+            .unwrap();
+            assert_eq!(updated, 0, "the stale attempt must not overwrite the row");
+
+            let spec = read_spec(&mysql).await;
+            assert_eq!(spec["accessTokenEncrypted"], json!("new-access"));
+            assert_eq!(spec["refreshTokenEncrypted"], json!("new-refresh"));
+        }
+    })
+    .await;
+    disconnect(admin, mysql, &name).await;
+    result.unwrap();
+}
+
+/// The rejection still applies when the credential it replaced is unchanged.
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL 8; explicitly run by the backend Rust CI job"]
+async fn a_rejection_clears_the_grant_it_replaced() {
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
+        .expect("set WEGENT_TEST_MYSQL_ADDRESS to the disposable MySQL fixture");
+    assert!(address.starts_with("127.0.0.1:"), "use a loopback fixture");
+    let (admin, mysql, name) = connect(&address).await;
+    let result = tokio::spawn({
+        let mysql = mysql.clone();
+        async move {
+            seed_expired_grant(&mysql, "2020-01-01T00:00:00").await;
+            let stale = db::find_connector_connection(&mysql, SLUG, USER_ID)
+                .await
+                .unwrap()
+                .expect("seeded row");
+
+            let updated = refresh::reject_if_grant(&mysql, stale.kinds_id, "old-refresh")
+                .await
+                .unwrap();
+            assert_eq!(updated, 1);
+
+            let spec = read_spec(&mysql).await;
+            assert_eq!(spec["status"], json!("expired"));
+            assert_eq!(spec["refreshTokenEncrypted"], json!(null));
+            assert_eq!(spec["accessTokenEncrypted"], json!("old-access"));
+        }
+    })
+    .await;
+    disconnect(admin, mysql, &name).await;
+    result.unwrap();
+}
+
+/// A disconnect during a refresh wins: the stale attempt cannot restore the
+/// grant it was renewing.
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL 8; explicitly run by the backend Rust CI job"]
+async fn a_disconnect_during_refresh_is_not_revived() {
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
+        .expect("set WEGENT_TEST_MYSQL_ADDRESS to the disposable MySQL fixture");
+    assert!(address.starts_with("127.0.0.1:"), "use a loopback fixture");
+    let (admin, mysql, name) = connect(&address).await;
+    let result = tokio::spawn({
+        let mysql = mysql.clone();
+        async move {
+            seed_expired_grant(&mysql, "2020-01-01T00:00:00").await;
+            let stale = db::find_connector_connection(&mysql, SLUG, USER_ID)
+                .await
+                .unwrap()
+                .expect("seeded row");
+
+            // The user disconnected while the refresh request was in flight.
+            mysql
+                .execute(
+                    "UPDATE kinds SET json = JSON_SET(json, \
+                     '$.spec.status', 'disconnected', \
+                     '$.spec.refreshTokenEncrypted', CAST('null' AS JSON), \
+                     '$.spec.accessTokenEncrypted', '') \
+                     WHERE user_id = ? AND kind = 'ConnectorConnection'",
+                    (USER_ID,),
+                )
+                .await
+                .unwrap();
+
+            let renewed = json!({
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "ConnectorConnection",
+                "metadata": {"name": SLUG, "namespace": "system"},
+                "spec": {
+                    "connectorAppSlug": SLUG,
+                    "status": "connected",
+                    "accessTokenEncrypted": "attempt-access",
+                    "refreshTokenEncrypted": "attempt-refresh",
+                }
+            });
+            assert_eq!(
+                refresh::write_json_if_grant(&mysql, stale.kinds_id, &renewed, "old-refresh")
+                    .await
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                refresh::reject_if_grant(&mysql, stale.kinds_id, "old-refresh")
+                    .await
+                    .unwrap(),
+                0
+            );
+
+            let spec = read_spec(&mysql).await;
+            assert_eq!(spec["status"], json!("disconnected"));
+            assert_eq!(spec["refreshTokenEncrypted"], json!(null));
+            assert_eq!(spec["accessTokenEncrypted"], json!(""));
+        }
+    })
+    .await;
+    disconnect(admin, mysql, &name).await;
+    result.unwrap();
+}

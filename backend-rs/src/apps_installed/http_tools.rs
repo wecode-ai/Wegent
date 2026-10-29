@@ -150,16 +150,29 @@ pub(crate) async fn call(
             "Connector HTTP response exceeds the size limit".to_string(),
         ));
     }
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| HttpToolError::Upstream(error.to_string()))?;
-    if bytes.len() > MAX_RESPONSE_BYTES {
-        return Err(HttpToolError::Upstream(
-            "Connector HTTP response exceeds the size limit".to_string(),
-        ));
-    }
+    let bytes = read_bounded_body(response).await?;
     Ok(shape_result(status.as_u16(), &bytes))
+}
+
+/// `_bounded_response_body`: stop as soon as the budget is exceeded, so a
+/// chunked or unterminated response cannot be buffered past the limit.
+async fn read_bounded_body(mut response: brz_http::Response) -> Result<Vec<u8>, HttpToolError> {
+    let mut collected: Vec<u8> = Vec::new();
+    loop {
+        let chunk = response
+            .chunk()
+            .await
+            .map_err(|error| HttpToolError::Upstream(error.to_string()))?;
+        let Some(chunk) = chunk else {
+            return Ok(collected);
+        };
+        if collected.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            return Err(HttpToolError::Upstream(
+                "Connector HTTP response exceeds the size limit".to_string(),
+            ));
+        }
+        collected.extend_from_slice(&chunk);
+    }
 }
 
 /// `_http_response`: JSON payloads stay structured, everything else becomes
@@ -205,7 +218,7 @@ fn request_parts(
             let placeholder = format!("{{{name}}}");
             let location = tool.argument_locations.get(name);
             if location.is_some_and(|location| location == "path") || path.contains(&placeholder) {
-                let scalar = scalar_text(value).ok_or_else(|| {
+                let scalar = path_text(value).ok_or_else(|| {
                     HttpToolError::InvalidArguments(format!(
                         "HTTP path argument '{name}' must be scalar"
                     ))
@@ -214,10 +227,9 @@ fn request_parts(
             } else if location.is_some_and(|location| location == "query")
                 || (location.is_none() && matches!(method.as_str(), "GET" | "DELETE"))
             {
-                query.push((
-                    name.clone(),
-                    scalar_text(value).unwrap_or_else(|| value.to_string()),
-                ));
+                for encoded in query_values(value) {
+                    query.push((name.clone(), encoded));
+                }
             } else {
                 body.insert(name.clone(), value.clone());
             }
@@ -236,12 +248,58 @@ fn request_parts(
 }
 
 /// `str(value)` for a path segment; containers are not addressable.
-fn scalar_text(value: &Value) -> Option<String> {
+fn path_text(value: &Value) -> Option<String> {
     match value {
         Value::String(text) => Some(text.clone()),
         Value::Number(number) => Some(number.to_string()),
-        Value::Bool(boolean) => Some(boolean.to_string()),
-        Value::Null | Value::Array(_) | Value::Object(_) => None,
+        Value::Bool(boolean) => Some(if *boolean { "True" } else { "False" }.to_string()),
+        Value::Null => Some("None".to_string()),
+        Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
+/// httpx query rendering: arrays repeat the parameter, scalars follow Python's
+/// `str()` forms (`true`/`false`, empty string for `null`).
+fn query_values(value: &Value) -> Vec<String> {
+    match value {
+        Value::Array(items) => items.iter().map(query_scalar).collect(),
+        other => vec![query_scalar(other)],
+    }
+}
+
+fn query_scalar(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Number(number) => number.to_string(),
+        Value::Bool(boolean) => (if *boolean { "true" } else { "false" }).to_string(),
+        Value::Null => String::new(),
+        Value::Array(_) | Value::Object(_) => python_repr(value),
+    }
+}
+
+/// `str(value)` for a value httpx would serialize with Python's `repr`.
+fn python_repr(value: &Value) -> String {
+    match value {
+        Value::Null => "None".to_string(),
+        Value::Bool(boolean) => (if *boolean { "True" } else { "False" }).to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::String(text) => format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'")),
+        Value::Array(items) => format!(
+            "[{}]",
+            items.iter().map(python_repr).collect::<Vec<_>>().join(", ")
+        ),
+        Value::Object(entries) => format!(
+            "{{{}}}",
+            entries
+                .iter()
+                .map(|(key, item)| format!(
+                    "{}: {}",
+                    python_repr(&Value::String(key.clone())),
+                    python_repr(item)
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     }
 }
 
@@ -510,5 +568,130 @@ mod tests {
             call.structured_content,
             Some(json!({"status_code": 200, "data": {"ok": true}}))
         );
+    }
+
+    /// Arrays repeat the query parameter, and scalars follow httpx rendering.
+    #[test]
+    fn query_arguments_follow_httpx() {
+        let (_url, query, _body) = request_parts(
+            "https://api.example.test",
+            &HttpTool {
+                method: "GET".to_string(),
+                path: "/search".to_string(),
+                ..tool()
+            },
+            &json!({"tag": ["a", "b"], "flag": true, "off": false, "missing": null, "limit": 3}),
+        )
+        .unwrap();
+
+        assert_eq!(
+            query,
+            vec![
+                ("tag".to_string(), "a".to_string()),
+                ("tag".to_string(), "b".to_string()),
+                ("flag".to_string(), "true".to_string()),
+                ("off".to_string(), "false".to_string()),
+                ("missing".to_string(), String::new()),
+                ("limit".to_string(), "3".to_string()),
+            ]
+        );
+    }
+
+    /// An explicit `query` location expands arrays on non-GET methods too.
+    #[test]
+    fn explicit_query_locations_expand_arrays() {
+        let mut tool = tool();
+        tool.method = "POST".to_string();
+        tool.path = "/search".to_string();
+        tool.argument_locations
+            .insert("tag".to_string(), "query".to_string());
+        let (_url, query, body) = request_parts(
+            "https://api.example.test",
+            &tool,
+            &json!({"id": "x", "tag": ["a", "b"]}),
+        )
+        .unwrap();
+
+        assert_eq!(
+            query,
+            vec![
+                ("tag".to_string(), "a".to_string()),
+                ("tag".to_string(), "b".to_string())
+            ]
+        );
+        assert_eq!(body.get("id"), Some(&json!("x")));
+    }
+
+    /// Path segments use `str(value)` for null and booleans like the source.
+    #[test]
+    fn path_segments_render_python_scalars() {
+        assert_eq!(path_text(&json!(null)).as_deref(), Some("None"));
+        assert_eq!(path_text(&json!(true)).as_deref(), Some("True"));
+        assert_eq!(path_text(&json!([1])), None);
+    }
+
+    /// A response without `Content-Length` is cut off once the budget is
+    /// exceeded, without waiting for the server to finish.
+    #[tokio::test]
+    async fn oversized_streaming_responses_stop_at_the_budget() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buffer = [0_u8; 2048];
+            let _ = stream.read(&mut buffer).await;
+            let head = "HTTP/1.1 200 OK\r\ncontent-type: application/octet-stream\r\nconnection: close\r\n\r\n";
+            let _ = stream.write_all(head.as_bytes()).await;
+            // 1,010,000 bytes with no declared length, then hold the socket open.
+            let payload = vec![b'x'; 1_010_000];
+            let _ = stream.write_all(&payload).await;
+            let _ = stream.flush().await;
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        });
+
+        let app = super::super::service::row_to_app(&crate::apps_installed::db::KindRow {
+            kinds_id: 1,
+            kinds_user_id: 0,
+            kinds_kind: "ConnectorApp".to_string(),
+            kinds_name: "erp".to_string(),
+            kinds_namespace: "system".to_string(),
+            kinds_json: brz_mysql::Json(
+                json!({
+                    "kind": "ConnectorApp",
+                    "spec": {
+                        "name": "erp",
+                        "mcpUrl": format!("http://{address}"),
+                        "enabled": true,
+                        "authType": "none",
+                        "transport": "http",
+                        "visibility": "all",
+                        "description": "d",
+                        "allowedRoles": [],
+                        "toolAllowlist": [],
+                    }
+                })
+                .into(),
+            ),
+            kinds_is_active: true,
+            kinds_created_at: chrono::NaiveDateTime::default(),
+            kinds_updated_at: chrono::NaiveDateTime::default(),
+        });
+        let mut definition = tool();
+        definition.method = "GET".to_string();
+        definition.path = "/big".to_string();
+
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            call(&app, &definition, &json!({"id": "1"}), &[]),
+        )
+        .await
+        .expect("the size limit must trigger before the stream ends")
+        .unwrap_err();
+
+        assert!(error.to_string().contains("size limit"), "{error}");
     }
 }

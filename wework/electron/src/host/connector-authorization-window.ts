@@ -21,9 +21,6 @@ import { BrowserWindow, session } from 'electron'
 /** Throwaway partition: nothing survives the consent flow. */
 export const CONNECTOR_AUTHORIZATION_PARTITION = 'connector-authorization'
 
-/** The window the renderer may close once the session reaches a terminal state. */
-let active: BrowserWindow | null = null
-
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
 
 /**
@@ -41,18 +38,40 @@ export function isConnectorAuthorizationUrl(value: string): boolean {
   return url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname)
 }
 
+interface TrackedWindow {
+  window: BrowserWindow
+  closed: Promise<void>
+}
+
 /**
- * Close the consent window. The renderer calls this when the polled session
- * reaches `success`, `declined`, or `failed`; a user dismissal closes it the
- * same way, which the poll loop reports as a cancellation.
+ * Windows currently open, keyed by the renderer's request id. A poll loop owns
+ * exactly one id, so closing an attempt can never close another one.
  */
-export function closeConnectorAuthorizationWindow(): void {
-  if (active && !active.isDestroyed()) active.close()
+const tracked = new Map<string, TrackedWindow>()
+
+/**
+ * Close the consent window for one attempt. Closing a window that already
+ * closed (or never opened) is a no-op, so every exit path can call it.
+ */
+export function closeConnectorAuthorizationWindow(requestId: string): void {
+  const entry = tracked.get(requestId)
+  if (!entry) return
+  tracked.delete(requestId)
+  if (!entry.window.isDestroyed()) entry.window.close()
+}
+
+/** Resolve once the attempt's window closes; a finished attempt resolves at once. */
+export async function awaitConnectorAuthorizationWindow(requestId: string): Promise<void> {
+  const entry = tracked.get(requestId)
+  if (!entry) return
+  await entry.closed
 }
 
 export interface ConnectorAuthorizationWindowOptions {
   url: string
   parent: BrowserWindow
+  /** The renderer's id for this authorization attempt. */
+  requestId: string
 }
 
 /**
@@ -82,21 +101,24 @@ export async function openConnectorAuthorizationWindow(
   // The consent page navigates itself; popups would escape the isolated flow.
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 
-  active = window
-  const closed = new Promise<void>(resolve =>
-    window.once('closed', () => {
-      if (active === window) active = null
-      resolve()
-    })
-  )
+  let resolveClosed!: () => void
+  const closed = new Promise<void>(resolve => {
+    resolveClosed = resolve
+  })
+  window.once('closed', () => {
+    if (tracked.get(options.requestId)?.window === window) {
+      tracked.delete(options.requestId)
+    }
+    void isolated.clearStorageData().catch(() => undefined)
+    resolveClosed()
+  })
+  tracked.set(options.requestId, { window, closed })
 
   try {
     await window.loadURL(options.url)
   } catch (error) {
-    if (!window.isDestroyed()) window.close()
+    closeConnectorAuthorizationWindow(options.requestId)
     await closed
     throw error
   }
-  await closed
-  await isolated.clearStorageData().catch(() => undefined)
 }

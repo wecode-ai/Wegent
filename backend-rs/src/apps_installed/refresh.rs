@@ -185,6 +185,14 @@ where
         .ok_or(RefreshError::Unavailable)?;
     let previous = ConnectorConnection::from_row(&row);
     let refresh_token = previous.refresh_token().ok_or(RefreshError::Unavailable)?;
+    // The stored ciphertext identifies the credential this attempt replaces.
+    // Every write below is conditional on it, so a slower request cannot
+    // overwrite a grant that another request (or a disconnect) already
+    // committed.
+    let expected = previous
+        .refresh_token_encrypted
+        .as_deref()
+        .ok_or(RefreshError::Unavailable)?;
     let request = token_request(app, config)?;
     let form = request.form(&refresh_token);
     // A rejected request and a rejected payload both mean the stored grant is
@@ -192,8 +200,7 @@ where
     let payload = match request_tokens(request.endpoint(config), &form).await {
         Ok(payload) => payload,
         Err(RefreshError::Rejected) => {
-            reject(mysql, &row).await?;
-            return Err(RefreshError::Rejected);
+            return reject_grant(mysql, &row, expected, app, user_id).await;
         }
         Err(error) => return Err(error),
     };
@@ -201,15 +208,39 @@ where
     match parse_grant(&payload) {
         Ok(grant) => {
             let document = connection_payload(&app.slug, &previous, &grant, &refresh_token)?;
-            write_json(mysql, row.kinds_id, &document).await?;
+            if write_json_if_grant(mysql, row.kinds_id, &document, expected).await? == 0 {
+                // Another attempt already rotated or revoked this grant; its
+                // result is authoritative and ours is dropped.
+                return reload(mysql, &app.slug, user_id).await;
+            }
             reload(mysql, &app.slug, user_id).await
         }
-        Err(RefreshError::Rejected) => {
-            reject(mysql, &row).await?;
-            Err(RefreshError::Rejected)
-        }
+        Err(RefreshError::Rejected) => reject_grant(mysql, &row, expected, app, user_id).await,
         Err(error) => Err(error),
     }
+}
+
+/// Clear the stored grant, but only while it is still the one this attempt
+/// used. A concurrent rotation wins and is reported instead.
+async fn reject_grant<M>(
+    mysql: &M,
+    row: &KindRow,
+    expected: &str,
+    app: &ConnectorApp,
+    user_id: i64,
+) -> Result<ConnectorConnection, RefreshError>
+where
+    M: Mysql,
+{
+    if reject_if_grant(mysql, row.kinds_id, expected).await? == 0 {
+        let current = reload(mysql, app.slug.as_str(), user_id).await?;
+        return if super::connection::is_usable(Some(&current)) {
+            Ok(current)
+        } else {
+            Err(RefreshError::Rejected)
+        };
+    }
+    Err(RefreshError::Rejected)
 }
 
 /// `_stored_dynamic_client`: decrypt and decode the stored client.
@@ -372,40 +403,52 @@ fn connection_payload(
     }))
 }
 
-/// `clear_refresh_token` followed by `set_status("expired")`.
-async fn reject<M>(mysql: &M, row: &KindRow) -> Result<(), RefreshError>
+/// `clear_refresh_token` followed by `set_status("expired")`, applied only
+/// while `expected` is still the stored credential.
+pub(crate) async fn reject_if_grant<M>(
+    mysql: &M,
+    id: i64,
+    expected: &str,
+) -> Result<u64, RefreshError>
 where
     M: Mysql,
 {
-    let mut document = row.kinds_json.0.to_value();
-    mark_rejected(&mut document)?;
-    write_json(mysql, row.kinds_id, &document).await
+    let outcome = mysql
+        .execute(
+            "UPDATE kinds SET json = JSON_SET(json, \
+             '$.spec.refreshTokenEncrypted', CAST('null' AS JSON), \
+             '$.spec.status', 'expired'), \
+             updated_at = NOW() \
+             WHERE id = ? \
+             AND JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.refreshTokenEncrypted')) = ?",
+            (id, expected),
+        )
+        .await
+        .map_err(RefreshError::Database)?;
+    Ok(outcome.rows_affected)
 }
 
-/// Clear the stored grant so the app asks for authorization again.
-fn mark_rejected(document: &mut Value) -> Result<(), RefreshError> {
-    let spec = document
-        .get_mut("spec")
-        .and_then(Value::as_object_mut)
-        .ok_or(RefreshError::Unavailable)?;
-    spec.insert("refreshTokenEncrypted".to_string(), Value::Null);
-    spec.insert("status".to_string(), json!("expired"));
-    Ok(())
-}
-
-async fn write_json<M>(mysql: &M, id: i64, document: &Value) -> Result<(), RefreshError>
+/// Write a renewed grant only while `expected` is still the stored credential.
+pub(crate) async fn write_json_if_grant<M>(
+    mysql: &M,
+    id: i64,
+    document: &Value,
+    expected: &str,
+) -> Result<u64, RefreshError>
 where
     M: Mysql,
 {
     let payload = crate::json_compat::python_json_value(document);
-    mysql
+    let outcome = mysql
         .execute(
-            "UPDATE kinds SET json = ?, updated_at = NOW() WHERE kinds.id = ?",
-            (payload.as_str(), id),
+            "UPDATE kinds SET json = CAST(? AS JSON), updated_at = NOW() \
+             WHERE id = ? \
+             AND JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.refreshTokenEncrypted')) = ?",
+            (payload.as_str(), id, expected),
         )
         .await
-        .map(|_| ())
-        .map_err(RefreshError::Database)
+        .map_err(RefreshError::Database)?;
+    Ok(outcome.rows_affected)
 }
 
 /// The discovery outcome to persist on a stored connection.
@@ -575,24 +618,53 @@ mod tests {
         assert!(matches!(error, RefreshError::Provider(_)));
     }
 
-    /// A rejected grant must stop looking usable.
-    #[test]
-    fn marking_a_rejection_clears_the_refresh_token() {
-        let mut document = json!({
-            "spec": {
-                "status": "connected",
-                "refreshTokenEncrypted": "ciphertext",
-                "accessTokenEncrypted": "ciphertext",
-            }
-        });
+    /// A rejection clears exactly the grant it replaced, and only while that
+    /// grant is still stored.
+    #[tokio::test]
+    async fn rejection_is_conditional_on_the_replaced_grant() {
+        let mysql = crate::sql_test_support::KindQueryCapture::writing();
 
-        mark_rejected(&mut document).unwrap();
+        let updated = reject_if_grant(&mysql, 42, "refresh-ciphertext")
+            .await
+            .unwrap();
+        assert_eq!(updated, 0, "the capture reports no affected rows");
 
-        assert_eq!(document["spec"]["refreshTokenEncrypted"], json!(null));
-        assert_eq!(document["spec"]["status"], json!("expired"));
-        assert_eq!(
-            document["spec"]["accessTokenEncrypted"],
-            json!("ciphertext")
+        let writes = mysql.writes();
+        assert_eq!(writes.len(), 1);
+        let sql = &writes[0].sql;
+        assert!(sql.contains("JSON_SET"), "{sql}");
+        assert!(
+            sql.contains("'$.spec.refreshTokenEncrypted', CAST('null' AS JSON)"),
+            "{sql}"
+        );
+        assert!(sql.contains("'$.spec.status', 'expired'"), "{sql}");
+        assert!(
+            sql.contains("JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.refreshTokenEncrypted')) = ?"),
+            "{sql}"
+        );
+        // The old access token is left for the runtime to reject, exactly like
+        // `clear_refresh_token` does.
+        assert!(!sql.contains("accessTokenEncrypted"), "{sql}");
+    }
+
+    /// A renewed grant is written only while the credential it replaces is
+    /// still the stored one.
+    #[tokio::test]
+    async fn renewal_is_conditional_on_the_replaced_grant() {
+        let mysql = crate::sql_test_support::KindQueryCapture::writing();
+        let document = json!({"spec": {"status": "connected"}});
+
+        write_json_if_grant(&mysql, 42, &document, "refresh-ciphertext")
+            .await
+            .unwrap();
+
+        let writes = mysql.writes();
+        assert_eq!(writes.len(), 1);
+        let sql = &writes[0].sql;
+        assert!(sql.contains("CAST(? AS JSON)"), "{sql}");
+        assert!(
+            sql.contains("JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.refreshTokenEncrypted')) = ?"),
+            "{sql}"
         );
     }
 

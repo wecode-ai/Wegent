@@ -43,26 +43,36 @@ describe('openCloudAuthorizationWindow', () => {
 
   test('keeps desktop consent inside the app window', async () => {
     isElectronRuntimeMock.mockReturnValue(true)
+    vi.stubGlobal('crypto', { ...globalThis.crypto, randomUUID: () => 'req-1' })
     let release: () => void = () => {}
     invokeDesktopHostMock.mockImplementation((async (capability: string) => {
-      if (capability === 'auth.closeConnectorAuthorization') return undefined
-      return new Promise<void>(resolve => {
-        release = resolve
-      })
+      if (capability === 'auth.awaitConnectorAuthorization') {
+        return new Promise<void>(resolve => {
+          release = resolve
+        })
+      }
+      return undefined
     }) as never)
 
     const handle = await openCloudAuthorizationWindow('https://example.com/auth')
 
     expect(invokeDesktopHostMock).toHaveBeenCalledWith('auth.openConnectorAuthorization', {
       url: 'https://example.com/auth',
+      requestId: 'req-1',
     })
     expect(openExternalUrlMock).not.toHaveBeenCalled()
-    // The caller keeps polling while the consent window is open.
+    expect(invokeDesktopHostMock).toHaveBeenCalledWith('auth.awaitConnectorAuthorization', {
+      requestId: 'req-1',
+    })
     expect(handle?.closed).toBeInstanceOf(Promise)
-    // The poll loop closes the window once the backend reports a terminal
-    // state, so a user dismissal is distinguishable from a completed flow.
+
+    // Closing is scoped to this attempt so a failed attempt cannot close
+    // another one's consent window.
     await handle?.close?.()
-    expect(invokeDesktopHostMock).toHaveBeenCalledWith('auth.closeConnectorAuthorization')
+    expect(invokeDesktopHostMock).toHaveBeenCalledWith('auth.closeConnectorAuthorization', {
+      requestId: 'req-1',
+    })
+
     release()
     await expect(handle?.closed).resolves.toBeUndefined()
   })

@@ -152,4 +152,83 @@ describe('connector OAuth client', () => {
     expect(polls).toBe(4)
     expect(close).toHaveBeenCalledTimes(1)
   })
+
+  test('closes the consent window when the poll request fails', async () => {
+    vi.useFakeTimers()
+    const close = vi.fn().mockResolvedValue(undefined)
+    const openAuthorization = vi.fn().mockResolvedValue({
+      closed: new Promise<void>(() => undefined),
+      close,
+    })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/poll')) throw new TypeError('network down')
+      return new Response(
+        JSON.stringify({
+          session_id: 'failing-session',
+          poll_token: 'poll-token',
+          authorize_url: 'https://provider.example/authorize',
+          expires_at: Math.floor(Date.now() / 1000) + 60,
+          poll_interval_seconds: 1,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const authorization = authorizeWegentConnector(
+      'https://backend.example.test/api',
+      'cloud-token',
+      'slow-connector',
+      openAuthorization
+    )
+    const outcome = authorization.catch((error: Error) => error)
+    await vi.advanceTimersByTimeAsync(1000)
+    const error = await outcome
+
+    expect(error).toBeInstanceOf(Error)
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+
+  test('closes the consent window when the session expires', async () => {
+    vi.useFakeTimers()
+    const close = vi.fn().mockResolvedValue(undefined)
+    const openAuthorization = vi.fn().mockResolvedValue({
+      closed: new Promise<void>(() => undefined),
+      close,
+    })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      const body = url.includes('/poll')
+        ? { status: 'pending' }
+        : {
+            session_id: 'expiring-session',
+            poll_token: 'poll-token',
+            authorize_url: 'https://provider.example/authorize',
+            expires_at: Math.floor(Date.now() / 1000) + 2,
+            poll_interval_seconds: 1,
+          }
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const authorization = authorizeWegentConnector(
+      'https://backend.example.test/api',
+      'cloud-token',
+      'slow-connector',
+      openAuthorization
+    )
+    const outcome = authorization.catch((error: Error) => error)
+    for (let tick = 0; tick < 4; tick += 1) {
+      await vi.advanceTimersByTimeAsync(1000)
+    }
+    const error = await outcome
+
+    expect(error).toBeInstanceOf(Error)
+    expect(String((error as Error).message)).toContain('超时')
+    expect(close).toHaveBeenCalledTimes(1)
+  })
 })
