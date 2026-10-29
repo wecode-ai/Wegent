@@ -1834,11 +1834,13 @@ describe('TaskActivityView', () => {
       messageId: `read-message-${sequence}`,
       content: `Activity ${sequence}`,
     }))
+    type Subscription = Awaited<ReturnType<ProjectChatClient['subscribe']>>
+    let resolveSnapshot!: (subscription: Subscription) => void
+    const pendingSnapshot = new Promise<Subscription>(resolve => {
+      resolveSnapshot = resolve
+    })
     const client = {
-      subscribe: vi.fn(async () => ({
-        snapshot: { messages, latestSequence: 3, currentUserId: '1' },
-        unsubscribe: vi.fn(),
-      })),
+      subscribe: vi.fn(async () => pendingSnapshot),
       send: vi.fn(),
       startAgentResponse: vi.fn(),
       failAgentResponse: vi.fn(),
@@ -1864,7 +1866,22 @@ describe('TaskActivityView', () => {
         linear
       />
     )
-    await screen.findByText('Activity 2')
+    // Initial scroll frames can exist before the subscription is loaded.
+    // Settle the snapshot and React effects before advancing the read frame.
+    await act(async () => {
+      const pending = [...frames.values()]
+      frames.clear()
+      for (const callback of pending) callback(performance.now())
+    })
+    expect(markLoopItemRead).not.toHaveBeenCalled()
+    await act(async () => {
+      resolveSnapshot({
+        snapshot: { messages, latestSequence: 3, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })
+      await pendingSnapshot
+    })
+    expect(screen.getByText('Activity 2')).toBeInTheDocument()
     expect(markLoopItemRead).not.toHaveBeenCalled()
     expect(frames.size).toBeGreaterThan(0)
     await act(async () => {
