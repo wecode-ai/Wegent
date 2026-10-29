@@ -38,6 +38,8 @@ Linux 桌面 E2E 构建和缓存预热使用 `e2e-tests.yml` 生产的 Rust Back
 
 后续命令都传入启动命令返回的 session 路径。优先使用稳定的 `data-testid` 选择器。
 
+创建 Issue 后，API 列表中已存在该记录不代表详情界面已完成渲染。共享的 `createAndAssignCloudIssue` 流程使用 `clickWhenEnabled` 等待详情负责人控件出现并启用后再点击，沿用默认步骤时限；不能用 API 落库状态代替控件就绪，也不能用延时或重跑掩盖竞争。
+
 ```bash
 pnpm --filter wework ai:verify snapshot --session /path/to/session.json
 pnpm --filter wework ai:verify fill --session /path/to/session.json \

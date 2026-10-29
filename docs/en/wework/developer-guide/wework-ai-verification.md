@@ -38,6 +38,8 @@ Linux desktop E2E builds and cache warmup consume the Rust Backend OCI image pro
 
 Pass the session path returned by `start` to every later command. Prefer stable `data-testid` selectors.
 
+After Issue creation, finding the record in the API list does not prove that its detail UI has rendered. The shared `createAndAssignCloudIssue` flow uses `clickWhenEnabled` to wait for the detail assignee control to appear and become enabled before clicking, within the default step timeout. API persistence cannot substitute for control readiness; delays and reruns must not hide the race.
+
 ```bash
 pnpm --filter wework ai:verify snapshot --session /path/to/session.json
 pnpm --filter wework ai:verify fill --session /path/to/session.json \
