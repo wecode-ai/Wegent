@@ -1287,55 +1287,31 @@ function modelProviderSelector(providerId) {
   return providerId ? `[data-model-provider-id="${providerId}"]` : ''
 }
 
+function modelOptionSelector(targetOptionIds, providerId) {
+  return targetOptionIds
+    .map(
+      targetOptionId =>
+        `[data-testid="model-selector-menu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`
+    )
+    .join(', ')
+}
+
 async function visibleModelOptionId(control, targetOptionIds, providerId) {
   for (const targetOptionId of targetOptionIds) {
-    const targetSelectors = [
-      `[data-testid="model-selector-menu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
-      `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
-    ]
-    for (const targetSelector of targetSelectors) {
-      await control.command('scrollIntoView', targetSelector).catch(() => undefined)
-      const visibleCount = await control
-        .command('getElementCount', targetSelector, { visible: true })
-        .then(value => Number(value))
-        .catch(() => 0)
-      if (visibleCount > 0) {
-        return targetOptionId
-      }
-    }
+    const targetSelector = modelOptionSelector([targetOptionId], providerId)
+    const visibleCount = Number(
+      await control.command('getElementCount', targetSelector, { visible: true })
+    )
+    if (visibleCount > 0) return targetOptionId
   }
   return null
 }
 
 async function visibleModelOptionSelector(control, targetOptionId, providerId) {
-  const selectors = [
-    `[data-testid="model-selector-menu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
-    `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`,
-  ]
-  for (const selector of selectors) {
-    const visibleCount = await control
-      .command('getElementCount', selector, { visible: true })
-      .then(value => Number(value))
-      .catch(() => 0)
-    if (visibleCount > 0) return selector
-  }
-  return null
-}
-
-async function revealGroupedModelOption(control, targetOptionIds, providerId) {
-  const menu = JSON.parse(await control.command('snapshot', 'body'))
-  if (await visibleModelOptionId(control, targetOptionIds, providerId)) return true
-  const familyTestIds = menu.testIds.filter(testId => testId.startsWith('model-family-'))
-
-  for (const familyTestId of familyTestIds) {
-    await control.command('hover', `[data-testid="${familyTestId}"]`, {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
-    if (await visibleModelOptionId(control, targetOptionIds, providerId)) return true
-  }
-
-  return false
+  const selector = modelOptionSelector([targetOptionId], providerId)
+  return Number(await control.command('getElementCount', selector, { visible: true })) > 0
+    ? selector
+    : null
 }
 
 function modelOptionIdCandidates(modelIds) {
@@ -1351,66 +1327,46 @@ function expectedModelProviderId(modelIds) {
     : undefined
 }
 
-function hasModelOption(menu, targetOptionIds) {
-  return targetOptionIds.some(targetOptionId => menu.testIds.includes(targetOptionId))
-}
-
-async function hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId) {
-  if (!hasModelOption(menu, targetOptionIds)) return false
-  return Boolean(await visibleModelOptionId(control, targetOptionIds, expectedProviderId))
-}
-
 async function ensureModelOptionVisible(
   control,
   modelIds,
   modelSelectorButton = '[data-testid="model-selector-button"]',
   expectedProviderId = expectedModelProviderId(modelIds)
 ) {
+  const deadline = Date.now() + WORKBENCH_READY_TIMEOUT_MS
   const targetOptionIds = modelOptionIdCandidates(modelIds)
-  let reloadedLocalModels = false
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    let menu = JSON.parse(await control.command('snapshot', 'body'))
-    if (await hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId))
-      return menu
-    if (menu.testIds.includes('model-advanced-toggle')) {
-      await control
-        .command('clickWhenEnabled', '[data-testid="model-advanced-toggle"]', {
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-          visible: true,
-        })
-        .catch(() => undefined)
-    } else {
-      await control
-        .command('hover', modelSelectorButton, {
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-          visible: true,
-        })
-        .catch(() => undefined)
-      menu = JSON.parse(await control.command('snapshot', 'body'))
-      if (!menu.testIds.includes('model-selector-menu')) {
-        await control.command('clickWhenEnabled', modelSelectorButton, {
-          stableMs: 100,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-          visible: true,
-        })
-      }
-    }
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
-    menu = JSON.parse(await control.command('snapshot', 'body'))
-    if (await hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId))
-      return menu
-    if (await revealGroupedModelOption(control, targetOptionIds, expectedProviderId)) {
-      return JSON.parse(await control.command('snapshot', 'body'))
-    }
-    if (expectedProviderId && !reloadedLocalModels) {
-      await control.command('dispatchLocalModelSettingsChanged', '')
-      reloadedLocalModels = true
-    }
+  const menuSelector = '[data-testid="model-selector-menu"]'
+  const targetSelector = modelOptionSelector(targetOptionIds, expectedProviderId)
+  if (Number(await control.command('getElementCount', menuSelector, { visible: true })) === 0) {
+    await control.command('clickWhenEnabled', modelSelectorButton, {
+      stableMs: 100,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      visible: true,
+    })
   }
-
-  throw new Error(
-    `Model options ${targetOptionIds.join(', ')} did not become visible${expectedProviderId ? ` for provider ${expectedProviderId}` : ''}`
-  )
+  // The recovery entry stays mounted before the catalog and auth checks finish.
+  // Wait for the exact catalog entry even while the advanced track is hidden.
+  await control.command('waitFor', targetSelector, {
+    timeoutMs: Math.max(1, deadline - Date.now()),
+  })
+  const panel = await control.command('getAttribute', menuSelector, { value: 'data-panel' })
+  assert.ok(panel === 'simple' || panel === 'advanced', `Unknown model picker panel: ${panel}`)
+  if (panel === 'simple') {
+    await control.command(
+      'clickWhenEnabled',
+      `${menuSelector} [data-testid="model-advanced-toggle"]`,
+      {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        visible: true,
+      }
+    )
+  }
+  await control.command('scrollIntoView', targetSelector)
+  await control.command('waitFor', targetSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  return JSON.parse(await control.command('snapshot', 'body'))
 }
 
 async function confirmLocalProjectName(control, name) {
@@ -1509,19 +1465,7 @@ async function selectE2EModel(
 
   await ensureModelOptionVisible(control, modelIds, modelSelectorButton, expectedProviderId)
   const targetOptionIds = modelOptionIdCandidates(modelIds)
-  let targetOptionId = await visibleModelOptionId(control, targetOptionIds, expectedProviderId)
-  if (!targetOptionId) {
-    const menu = JSON.parse(await control.command('snapshot', 'body'))
-    if (!menu.testIds.includes('model-selector-menu')) {
-      await control.command('clickWhenEnabled', modelSelectorButton, {
-        stableMs: 100,
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        visible: true,
-      })
-    }
-    await revealGroupedModelOption(control, targetOptionIds, expectedProviderId)
-    targetOptionId = await visibleModelOptionId(control, targetOptionIds, expectedProviderId)
-  }
+  const targetOptionId = await visibleModelOptionId(control, targetOptionIds, expectedProviderId)
   assert.ok(targetOptionId, `No visible model option matched ${modelOptionIdCandidates(modelIds)}`)
   const targetSelector = await visibleModelOptionSelector(
     control,
@@ -2019,9 +1963,7 @@ export {
   triggerModelReloadUntilCloudFailure,
   sendPromptUntilScenarioRequest,
   visibleModelOptionId,
-  revealGroupedModelOption,
   modelOptionIdCandidates,
-  hasModelOption,
   ensureModelOptionVisible,
   confirmLocalProjectName,
   createSingleRootLocalProject,

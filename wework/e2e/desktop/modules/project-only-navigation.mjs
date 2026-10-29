@@ -229,14 +229,26 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHom
         await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
         const readerRequest = (pathname, options) => request(readerToken, pathname, options)
         if (project.id === projects[0].id) {
-          await verifyReadOnlyBoardDrag(control, {
-            scoped,
-            request: readerRequest,
-            project,
-            issues: readOnlyBoardIssues,
-            reader: currentUser,
-            owner: creator,
-          })
+          const previousWindowSize = JSON.parse(
+            await control.command('setMainWindowSize', 'body', {
+              value: JSON.stringify({ width: 1024, height: 720 }),
+            })
+          )
+          try {
+            await verifyReadOnlyBoardDrag(control, {
+              scoped,
+              request: readerRequest,
+              project,
+              issues: readOnlyBoardIssues,
+              reader: currentUser,
+              owner: creator,
+            })
+            console.log('[desktop-e2e] PASS read-only board drag at 1024x720')
+          } finally {
+            await control.command('setMainWindowSize', 'body', {
+              value: JSON.stringify(previousWindowSize),
+            })
+          }
           await selectProjectBoardGrouping(control, scoped, 'status')
           await verifyPersonalAssigneeFilter(control, {
             scoped,

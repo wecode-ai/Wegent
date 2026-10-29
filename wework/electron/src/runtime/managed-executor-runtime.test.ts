@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
   ManagedExecutorRuntime,
+  executorRequestTimeoutMs,
   managedExecutorLogPath,
   prepareManagedExecutorEnvironment,
   requestExecutor,
@@ -13,6 +14,19 @@ import {
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('managed executor runtime', () => {
+  test('allows Python provisioning before auth operations without extending ordinary requests', () => {
+    for (const method of [
+      'executor.plugin_auth.migrate',
+      'executor.plugin_auth.run',
+      'runtime.connections.cli',
+      'runtime.local_connector_auth.start',
+      'runtime.local_connector_auth.health',
+    ]) {
+      expect(executorRequestTimeoutMs(method)).toBe(18 * 60_000 + 5_000)
+    }
+    expect(executorRequestTimeoutMs('executor.health')).toBe(75_000)
+  })
+
   test('reuses the existing executor home by default', () => {
     const environment = prepareManagedExecutorEnvironment({
       dataDirectory: '/unused-electron-data',

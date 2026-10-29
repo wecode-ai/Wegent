@@ -5,6 +5,7 @@ import { ApiError } from '@/api/http'
 import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
 import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
+import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
 import { createHybridWorkbenchServices } from './hybridServices'
 import { mergeDeviceLists, getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 
@@ -576,6 +577,65 @@ describe('qualified local sidebar routing', () => {
     provenance: 'local-ipc' as const,
   }
   const request = { deviceId: identity.deviceId, projects: [] }
+
+  it.each([identity.runtimeInstanceId, 'unrelated-runtime'])(
+    'publishes only proven local registration aliases after background discovery of %s',
+    async runtimeInstanceId => {
+      mocks.localListDevices.mockResolvedValue([
+        {
+          id: 0,
+          device_id: identity.deviceId,
+          runtime_instance_id: identity.runtimeInstanceId,
+          device_type: 'local',
+          status: 'online',
+          name: 'Local',
+        },
+      ])
+      mocks.cloudListDevices.mockResolvedValue([
+        {
+          id: 73,
+          device_id: 'registered-app',
+          socket_device_id: 'app-record-73',
+          runtime_instance_id: runtimeInstanceId,
+          device_type: 'app',
+          status: 'online',
+          name: 'App registration',
+        },
+      ])
+      const services = createServices()
+      const bootstrap = await services.deviceApi.listDevices()
+      const localReads = mocks.localListDevices.mock.calls.length
+      const native = { deviceId: identity.deviceId, taskId: 'task-1' }
+      const alias = { ...native, deviceId: 'app-record-73' }
+      const store = new RuntimeTaskLifecycleStore(`background-registration-${runtimeInstanceId}`)
+      const task = {
+        taskId: native.taskId,
+        title: 'Issue task',
+        workspacePath: '',
+        runtime: 'codex',
+      }
+      store.syncRuntimeTask(alias, { ...task, running: true, updatedAt: 1_000 })
+      store.syncRuntimeTask(native, {
+        ...task,
+        running: false,
+        status: 'done',
+        updatedAt: 2_000,
+        completedAt: 2_000,
+      })
+
+      const discovered = await services.cloudBackgroundApi!.listDevices!()
+      const visible = mergeDeviceLists(bootstrap, discovered)
+      store.syncDevices(visible)
+
+      expect(visible.map(device => device.device_id)).toEqual([identity.deviceId])
+      expect(visible.some(device => device.device_type === 'app')).toBe(false)
+      expect(store.getTask(native)?.execution.running).toBe(false)
+      expect(store.getTask(alias)?.execution.running).toBe(
+        runtimeInstanceId !== identity.runtimeInstanceId
+      )
+      expect(mocks.localListDevices).toHaveBeenCalledTimes(localReads)
+    }
+  )
 
   it('reads a local task through IPC when its binding uses the cloud app registration alias', async () => {
     mocks.localListDevices.mockResolvedValue([

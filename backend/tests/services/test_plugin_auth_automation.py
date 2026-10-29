@@ -8,6 +8,7 @@ from pydantic import SecretStr, ValidationError
 from app.models.kind import Kind
 from app.schemas.plugin_account_auth import (
     PluginNativeAutomation,
+    PluginNativeAutomationTarget,
     PluginNativeEnrollment,
 )
 from app.services.plugin_account_connections import PluginAccountAuthError
@@ -230,8 +231,100 @@ def test_disabled_uninstalled_and_foreign_plugins_never_receive_intents(
         {"installed_plugin_ids": [True]},
         {"installed_plugin_ids": [1, 1]},
         {"installed_plugin_ids": [0]},
+        {"installed_plugin_ids": [1], "prepare_only": "true"},
+        {
+            "installed_plugin_ids": [1],
+            "targets": [{"installed_plugin_id": 1, "connector_slug": "../invalid"}],
+        },
+        {
+            "installed_plugin_ids": [1],
+            "targets": [
+                {"installed_plugin_id": 1, "connector_slug": "mail", "user_id": 2}
+            ],
+        },
     ],
 )
 def test_native_automation_rejects_identity_override_and_invalid_ids(payload):
     with pytest.raises(ValidationError):
         PluginNativeAutomation.model_validate(payload)
+
+
+def test_preparation_creates_no_intents_and_exact_target_does_not_enroll_siblings(
+    automation, test_db, test_user, installed, local
+):
+    value = deepcopy(installed.json)
+    value["spec"]["packageRef"] = {"checksum": "sha256:" + "a" * 64}
+    native = deepcopy(value["spec"]["components"]["connectors"][0])
+    native["slug"] = "native"
+    native["accountAuth"]["adapter"] = "scripts/account-auth.mjs"
+    value["spec"]["components"]["connectors"].append(native)
+    installed.json = value
+    test_db.flush()
+
+    prepared = automation.reconcile(
+        test_db,
+        user_id=test_user.id,
+        device_id="local",
+        installed_ids=[installed.id],
+        prepare_only=True,
+    )
+
+    assert {package["connector_slug"] for package in prepared["packages"]} == {
+        "mail",
+        "native",
+    }
+    assert all(
+        package["checksum"] == "sha256:" + "a" * 64 for package in prepared["packages"]
+    )
+    assert set(prepared) == {"packages"}
+    assert all(
+        set(package)
+        == {"installed_plugin_id", "connector_slug", "checksum", "auth_definition"}
+        for package in prepared["packages"]
+    )
+    assert test_db.query(Kind).filter(Kind.kind == "ConnectorMigration").count() == 0
+    target = PluginNativeAutomationTarget(
+        installed_plugin_id=installed.id, connector_slug="native"
+    )
+    created = automation.reconcile(
+        test_db,
+        user_id=test_user.id,
+        device_id="local",
+        installed_ids=[installed.id],
+        targets=[target],
+    )
+    assert [intent["connector_slug"] for intent in created["migrations"]] == ["native"]
+    assert test_db.query(Kind).filter(Kind.kind == "ConnectorMigration").count() == 1
+
+    installed.json = {"spec": {**installed.json["spec"], "enabled": False}}
+    test_db.flush()
+    assert automation.reconcile(
+        test_db,
+        user_id=test_user.id,
+        device_id="local",
+        installed_ids=[installed.id],
+        targets=[target],
+    ) == {"migrations": []}
+
+
+def test_preparation_preserves_policy_and_owner_isolation(
+    automation, test_db, test_user, test_admin_user, installed, local
+):
+    installed.user_id = test_admin_user.id
+    test_db.flush()
+    assert automation.reconcile(
+        test_db,
+        user_id=test_user.id,
+        device_id="local",
+        installed_ids=[installed.id],
+        prepare_only=True,
+    ) == {"packages": []}
+    installed.user_id = test_user.id
+    automation.configure(test_db, test_user.id, False)
+    assert automation.reconcile(
+        test_db,
+        user_id=test_user.id,
+        device_id="local",
+        installed_ids=[installed.id],
+        prepare_only=True,
+    ) == {"packages": []}

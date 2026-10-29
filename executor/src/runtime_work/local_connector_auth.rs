@@ -27,6 +27,7 @@ mod diagnostics;
 pub(crate) use connection_tools::{run_connection_tool, run_plugin_tool};
 mod github_cli;
 mod logout;
+mod python;
 mod tools;
 
 #[derive(Debug, Clone)]
@@ -778,8 +779,19 @@ async fn run_plugin_command(
     timeout_seconds: u64,
 ) -> Result<Value, AppIpcError> {
     let mut invocation = diagnostics::Invocation::new(plugin_root);
-    let result =
-        run_plugin_command_inner(plugin_root, args, tool, timeout_seconds, &invocation).await;
+    let result = async {
+        let requires_python = python::prepare_command(plugin_root, args, tool).await?;
+        run_plugin_command_inner(
+            plugin_root,
+            args,
+            tool,
+            timeout_seconds,
+            requires_python,
+            &invocation,
+        )
+        .await
+    }
+    .await;
     invocation.finish(result.as_ref().err().map(|error| error.code.as_str()));
     result
 }
@@ -789,6 +801,7 @@ async fn run_plugin_command_inner(
     args: &[String],
     tool: Option<&Path>,
     timeout_seconds: u64,
+    requires_python: bool,
     invocation: &diagnostics::Invocation,
 ) -> Result<Value, AppIpcError> {
     if args.is_empty() {
@@ -807,6 +820,9 @@ async fn run_plugin_command_inner(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    if requires_python {
+        crate::python_runtime::isolate_python_environment(&mut command);
+    }
     if let Some(tool) = tool {
         command.env("WEGENT_LOCAL_AUTH_TOOL", tool);
     }

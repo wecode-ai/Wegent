@@ -73,7 +73,7 @@ import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
 import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
 import {
-  getRuntimeTaskLifecycleKey,
+  useRuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycleStoreSnapshot,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import type { RuntimePaneQueuedMessage } from '@/types/workbench'
@@ -252,6 +252,7 @@ export function TaskActivityView({
   )
   const mentionCandidates = useIssueMentionCandidates(members, agents, activityTranslate)
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
+  const lifecycleStore = useRuntimeTaskLifecycleStore()
   const { services, state, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
     useWorkbenchPaneContext()
   // Local project spaces keep their board, comments and runs in the local
@@ -703,7 +704,7 @@ export function TaskActivityView({
   function cardSessionActive(card: TaskReplyCard) {
     if (onStartHumanTaskFromReply && humanDispatchForCard(card)) return false
     return sharedCardSessionActive(card, address => {
-      const runtime = lifecycleSnapshot.tasks.get(getRuntimeTaskLifecycleKey(address))
+      const runtime = lifecycleStore.selectTask(lifecycleSnapshot, address)
       return runtime?.execution.known ? runtime.derived.isBusy : undefined
     })
   }

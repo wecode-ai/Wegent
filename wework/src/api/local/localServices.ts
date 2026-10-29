@@ -174,7 +174,10 @@ import {
 } from '@/desktop/localWorkspaceFiles'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
-import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import {
+  logRuntimeTaskCreateStage,
+  measureRuntimeTaskCreateStage,
+} from '@/lib/runtime-create-diagnostics'
 import {
   createModelLoadingTrace,
   logModelLoading,
@@ -3225,12 +3228,18 @@ export function createRuntimeWorkApiFromIpc(
         deviceId: data.deviceId ?? null,
         runtime: data.runtime,
       })
-      const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
-      const resolvedData = await resolveLocalRuntimeTaskWorkspace(
-        data,
-        localDeviceId,
-        requestWithLocalDevice,
-        adaptListResponse
+      const localDeviceId = await measureRuntimeTaskCreateStage('local-device-resolution', () =>
+        resolveDeviceId(data as unknown as Record<string, unknown>)
+      )
+      const resolvedData = await measureRuntimeTaskCreateStage(
+        'local-workspace-resolution',
+        () =>
+          resolveLocalRuntimeTaskWorkspace(
+            data,
+            localDeviceId,
+            requestWithLocalDevice,
+            adaptListResponse
+          )
       )
       logRuntimeTaskCreateStage('local-device-resolved', {
         taskId: resolvedData.taskId ?? null,

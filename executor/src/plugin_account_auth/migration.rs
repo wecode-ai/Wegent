@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PreparedPackage {
     pub installed_plugin_id: u64,
@@ -20,7 +20,7 @@ pub struct PreparedPackage {
     pub auth_definition: Value,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum EnrollmentOperation {
     Export,
@@ -38,6 +38,24 @@ pub async fn migrate<T: LocalBackendTransport>(
     executor_home: &Path,
     migration_id: &str,
 ) -> Result<ConnectionMetadata, AuthError> {
+    migrate_inner(transport, executor_home, migration_id, None).await
+}
+
+pub(super) async fn migrate_prepared<T: LocalBackendTransport>(
+    transport: T,
+    executor_home: &Path,
+    migration_id: &str,
+    expected: &PreparedPackage,
+) -> Result<ConnectionMetadata, AuthError> {
+    migrate_inner(transport, executor_home, migration_id, Some(expected)).await
+}
+
+async fn migrate_inner<T: LocalBackendTransport>(
+    transport: T,
+    executor_home: &Path,
+    migration_id: &str,
+    expected: Option<&PreparedPackage>,
+) -> Result<ConnectionMetadata, AuthError> {
     if migration_id.len() != 64
         || !migration_id
             .bytes()
@@ -48,9 +66,30 @@ pub async fn migrate<T: LocalBackendTransport>(
     let gateway = NativeAuthGateway::new(transport);
     let prepared = gateway.prepare(migration_id).await?;
     let package = prepared.package;
+    if expected.is_some_and(|expected| expected != &package) {
+        return Err(AuthError("plugin_auth_definition_mismatch"));
+    }
     let root = resolve_managed_package(executor_home, &package)?;
     let adapter = NativeAdapter::load(&root, &package.connector_slug, &package.auth_definition)?;
     let interpreter = interpreter_for(&package.auth_definition)?;
+    if expected.is_none() {
+        super::process::ensure_adapter_python(&adapter).await?;
+    }
+    if expected.is_none()
+        && super::process::adapter_uses_python(&adapter)
+        && crate::python_runtime::managed_python_bridge_configured()
+    {
+        // Provisioning must not consume an expired intent or a changed definition.
+        let current = gateway.prepare(migration_id).await?;
+        if current.package.installed_plugin_id != package.installed_plugin_id
+            || current.package.connector_slug != package.connector_slug
+            || current.package.checksum != package.checksum
+            || current.package.auth_definition != package.auth_definition
+            || current.operation != prepared.operation
+        {
+            return Err(AuthError("plugin_auth_definition_mismatch"));
+        }
+    }
     if matches!(prepared.operation, EnrollmentOperation::Transfer) {
         return finish_transfer(&gateway, &adapter, &interpreter, migration_id, &package).await;
     }
@@ -78,6 +117,28 @@ pub async fn migrate<T: LocalBackendTransport>(
         return finish_transfer(&gateway, &adapter, &interpreter, migration_id, &package).await;
     }
     gateway.enroll(migration_id, exported).await
+}
+
+pub(super) async fn prepare_package_python(
+    home: &Path,
+    package: &PreparedPackage,
+) -> Result<(), AuthError> {
+    if package_uses_python(home, package)? {
+        crate::python_runtime::ensure_managed_python()
+            .await
+            .map_err(|_| AuthError("python_runtime_unavailable"))?;
+    }
+    Ok(())
+}
+
+pub(super) fn package_uses_python(
+    home: &Path,
+    package: &PreparedPackage,
+) -> Result<bool, AuthError> {
+    let root = resolve_managed_package(home, package)?;
+    let adapter = NativeAdapter::load(&root, &package.connector_slug, &package.auth_definition)?;
+    interpreter_for(&package.auth_definition)?;
+    Ok(super::process::adapter_uses_python(&adapter))
 }
 
 async fn finish_transfer<T: LocalBackendTransport>(
@@ -117,14 +178,94 @@ pub fn resolve_managed_package(
     package: &PreparedPackage,
 ) -> Result<PathBuf, AuthError> {
     let manifest_path = manifest_path_for_home(executor_home);
-    let shared_plugins = if is_current_executor_home(executor_home) {
+    let shared_plugins = shared_plugins_for_home(executor_home)?;
+    resolve_managed_package_at(&manifest_path, &shared_plugins, package)
+}
+
+fn shared_plugins_for_home(executor_home: &Path) -> Result<PathBuf, AuthError> {
+    Ok(if is_current_executor_home(executor_home) {
         crate::services::workbench::workbench_root()
             .map_err(|_| AuthError("plugin_auth_invalid_package"))?
             .join("shared/plugins")
     } else {
         executor_home.join("workbench/shared/plugins")
-    };
-    resolve_managed_package_at(&manifest_path, &shared_plugins, package)
+    })
+}
+
+/// Prepare before asking the backend to create an intent or claim a short lease.
+pub(super) async fn ensure_registered_python(
+    home: &Path,
+    installed_ids: &[u64],
+    connector_slug: Option<&str>,
+) -> Result<(), AuthError> {
+    if !crate::python_runtime::managed_python_bridge_configured() {
+        return Ok(());
+    }
+    let manifest_path = manifest_path_for_home(home);
+    let shared_plugins = shared_plugins_for_home(home)?;
+    if registered_python_required(
+        &manifest_path,
+        &shared_plugins,
+        installed_ids,
+        connector_slug,
+    )? {
+        crate::python_runtime::ensure_managed_python()
+            .await
+            .map_err(|_| AuthError("python_runtime_unavailable"))?;
+    }
+    Ok(())
+}
+
+fn registered_python_required(
+    manifest_path: &Path,
+    shared_plugins: &Path,
+    installed_ids: &[u64],
+    connector_slug: Option<&str>,
+) -> Result<bool, AuthError> {
+    let manifest = read_package_json(manifest_path, "plugin_auth_package_sync_required")?;
+    let capabilities = manifest_path
+        .parent()
+        .ok_or(AuthError("plugin_auth_invalid_package"))?;
+    let entries = manifest["plugins"]
+        .as_object()
+        .ok_or(AuthError("plugin_auth_invalid_package"))?;
+    for entry in entries.values().filter(|entry| {
+        entry["managed"] == true
+            && entry["enabled"] == true
+            && entry["installed_plugin_id"]
+                .as_u64()
+                .is_some_and(|id| installed_ids.is_empty() || installed_ids.contains(&id))
+    }) {
+        let root =
+            crate::local::plugin_catalog::managed_plugin_root(capabilities, shared_plugins, entry)
+                .map_err(|_| AuthError("plugin_auth_package_sync_required"))?;
+        let plugin = read_package_json(
+            &root.join(".codex-plugin/plugin.json"),
+            "plugin_auth_package_sync_required",
+        )?;
+        if plugin["connectors"].as_array().is_some_and(|connectors| {
+            connectors.iter().any(|connector| {
+                connector_slug.map_or(true, |slug| connector["slug"] == slug)
+                    && connector["accountAuth"]["adapter"]
+                        .as_str()
+                        .and_then(|adapter| Path::new(adapter).extension())
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("py"))
+            })
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn read_package_json(path: &Path, missing_code: &'static str) -> Result<Value, AuthError> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| AuthError(missing_code))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 8 * 1024 * 1024
+    {
+        return Err(AuthError("plugin_auth_invalid_package"));
+    }
+    serde_json::from_slice(&fs::read(path).map_err(|_| AuthError("plugin_auth_invalid_package"))?)
+        .map_err(|_| AuthError("plugin_auth_invalid_package"))
 }
 
 // Explicit homes are also used by isolated executor fixtures and enrollment callers.
@@ -151,16 +292,7 @@ fn resolve_managed_package_at(
     let capabilities = manifest_path
         .parent()
         .ok_or(AuthError("plugin_auth_invalid_package"))?;
-    let metadata = fs::symlink_metadata(manifest_path)
-        .map_err(|_| AuthError("plugin_auth_package_sync_required"))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 8 * 1024 * 1024
-    {
-        return Err(AuthError("plugin_auth_invalid_package"));
-    }
-    let manifest: Value = serde_json::from_slice(
-        &fs::read(manifest_path).map_err(|_| AuthError("plugin_auth_invalid_package"))?,
-    )
-    .map_err(|_| AuthError("plugin_auth_invalid_package"))?;
+    let manifest = read_package_json(manifest_path, "plugin_auth_package_sync_required")?;
     let entries = manifest["plugins"]
         .as_object()
         .ok_or(AuthError("plugin_auth_invalid_package"))?;
@@ -311,6 +443,45 @@ mod tests {
         assert_eq!(
             manifest_path_for_home(temp.path()),
             temp.path().join("capabilities/manifest-v2.json")
+        );
+    }
+
+    #[test]
+    fn python_preparation_is_selected_by_installed_package_and_connector() {
+        let temp = tempfile::tempdir().unwrap();
+        let (manifest, shared, root, _) = fixture(temp.path());
+        fs::create_dir(root.join(".codex-plugin")).unwrap();
+        fs::write(
+            root.join(".codex-plugin/plugin.json"),
+            json!({"connectors":[
+                {"slug":"mail", "accountAuth":{"adapter":"scripts/auth.py"}},
+                {"slug":"native", "accountAuth":{"adapter":"scripts/auth.mjs"}}
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+
+        assert!(registered_python_required(&manifest, &shared, &[42], Some("mail")).unwrap());
+        assert!(registered_python_required(&manifest, &shared, &[42], None).unwrap());
+        assert!(!registered_python_required(&manifest, &shared, &[42], Some("native")).unwrap());
+        assert!(!registered_python_required(&manifest, &shared, &[99], None).unwrap());
+        let mut data: Value = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+        data["plugins"]["mail"]["enabled"] = json!(false);
+        fs::write(&manifest, data.to_string()).unwrap();
+        assert!(!registered_python_required(&manifest, &shared, &[], None).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn python_preparation_rejects_an_untrusted_manifest_symlink() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let (manifest, shared, _, _) = fixture(temp.path());
+        let alias = temp.path().join("manifest-alias.json");
+        symlink(&manifest, &alias).unwrap();
+        assert_eq!(
+            registered_python_required(&alias, &shared, &[42], None),
+            Err(AuthError("plugin_auth_invalid_package"))
         );
     }
 

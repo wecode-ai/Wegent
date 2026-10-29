@@ -3,9 +3,13 @@ import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 import { createInterface } from 'node:readline'
 import type { HostPipeServer } from '../host/host-pipe.js'
+import { probeHttpReadiness } from './http-readiness-probe.js'
 import { RuntimeSupervisor } from './runtime-supervisor.js'
 
-type HttpRequest = (url: string, init?: RequestInit) => Promise<Response>
+type HttpRequest = (
+  url: string,
+  init?: Pick<RequestInit, 'signal'>
+) => Promise<Pick<Response, 'ok' | 'status'>>
 
 const LOCAL_READINESS_RETRY_INTERVAL_MS = 25
 
@@ -66,7 +70,7 @@ export class DshRuntime {
             }
             const request = browserAuthentication
               ? await authenticateBrowser(child, this.listeningUrl, signal)
-              : fetch
+              : probeHttpReadiness
             await waitForHttpEndpoints(
               runtimeProbeUrls(options, this.listeningUrl),
               signal,
@@ -161,7 +165,7 @@ function waitForListeningUrl(
 async function waitForHttpEndpoints(
   urls: string[],
   signal: AbortSignal,
-  request: HttpRequest = fetch
+  request: HttpRequest = probeHttpReadiness
 ): Promise<void> {
   for (const url of urls) {
     await waitForHttp(url, signal, request)

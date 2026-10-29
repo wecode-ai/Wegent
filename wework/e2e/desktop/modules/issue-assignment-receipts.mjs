@@ -1,10 +1,37 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
+import { WORKBENCH_READY_TIMEOUT_MS } from './shared.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
 import { verifyAssignmentActivityReceipts } from './assignment-activity-receipts.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const RECEIPTS = `${CONTENT} [data-testid="issue-assignment-receipts"]`
+
+export async function reopenReceiptAfterReload(control, open) {
+  await reloadMainWindow(control, 'Receipt verification must reconnect after reload')
+  // The controller reconnects before the owner finishes loading its project list.
+  await waitForValue(
+    async () => ({
+      roots: Number(
+        await control.command(
+          'getElementCount',
+          `${CONTENT} [data-testid="collaboration-platform-root"]`
+        )
+      ),
+      loading: Number(
+        await control.command(
+          'getElementCount',
+          `${CONTENT} [data-testid="collaboration-loading-skeleton"]`
+        )
+      ),
+    }),
+    state => state.roots > 0 && state.loading === 0,
+    'The receipt owner must finish startup before notification navigation',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await open()
+}
 
 export async function verifyIssueAssignmentReceipts(
   control,
@@ -107,8 +134,7 @@ export async function verifyIssueAssignmentReceipts(
   await control.command('waitFor', 'html[data-theme="light"]')
   await open()
   await close()
-  await reloadMainWindow(control, 'Receipt verification must reconnect after reload')
-  await open()
+  await reopenReceiptAfterReload(control, open)
   await control.command('waitFor', RECEIPTS, { text: '分身已接收' })
   assert.deepEqual((await load())[0], both, 'Reload must preserve both first-reception timestamps')
   await capture('assignment-receipts-04-persisted.png')

@@ -297,8 +297,10 @@ impl wegent_executor::local::backend::LocalBackendTransport for OAuthTransport {
             let package = json!({"installed_plugin_id":42,"connector_slug":"mail","checksum":format!("sha256:{}", "a".repeat(64)),"auth_definition":oauth_definition()});
             match event {
                 "plugin.auth.oauth.revocations" => {
-                    assert_eq!(payload, json!({}));
-                    Ok(json!({"success":true,"connection_ids":["c".repeat(64)]}))
+                    assert_eq!(payload, json!({"after_id":0}));
+                    Ok(json!({"success":true,"revocations":[{
+                        "connection_id":"c".repeat(64),"package":package
+                    }],"next_cursor":null}))
                 }
                 "plugin.auth.oauth.revoke_begin" => {
                     assert_eq!(payload, json!({"connection_id":"c".repeat(64)}));
@@ -669,8 +671,11 @@ impl wegent_executor::local::backend::LocalBackendTransport for MigrationTranspo
         Box::pin(async move {
             match event {
                 "plugin.auth.automatic" => {
-                    assert_eq!(payload, json!({"installed_plugin_ids":[42]}));
-                    Ok(json!({"success":true,"migrations":[]}))
+                    assert_eq!(
+                        payload,
+                        json!({"installed_plugin_ids":[42],"prepare_only":true})
+                    );
+                    Ok(json!({"success":true,"packages":[]}))
                 }
                 "plugin.auth.execute" => {
                     assert_eq!(

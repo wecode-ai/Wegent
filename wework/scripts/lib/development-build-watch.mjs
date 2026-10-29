@@ -1,4 +1,6 @@
-import { existsSync, watch } from 'node:fs'
+import { watch } from 'chokidar'
+import { once } from 'node:events'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { developmentBuildInputs } from './development-build-inputs.mjs'
 
@@ -10,9 +12,9 @@ export async function watchDevelopmentBuild({
   build,
   onError,
   debounceMs = 350,
-  watchDirectory = watch,
 }) {
   const watchers = []
+  const readiness = []
   let closed = false
   let pending = false
   let timer
@@ -49,14 +51,23 @@ export async function watchDevelopmentBuild({
   }
   const observe = (directory, recursive, accept) => {
     if (!existsSync(directory)) return
-    const watcher = watchDirectory(directory, { recursive }, (_event, filename) => {
-      if (!filename) return schedule()
-      // Native recursive watchers can report the watched directory itself by
-      // basename. Rescan that root rather than inventing a nested input path.
-      const name = String(filename)
-      const resolved =
-        recursive && name === path.basename(directory) ? directory : path.resolve(directory, name)
+    // Chokidar rearms replaced inodes after atomic editor saves on Linux.
+    const watcher = watch(directory, {
+      ignoreInitial: true,
+      disableGlobbing: true,
+      // Stabilize complete inputs before the cross-file build debounce.
+      awaitWriteFinish: {
+        stabilityThreshold: debounceMs,
+        pollInterval: Math.max(1, Math.min(debounceMs, 100)),
+      },
+      ...(recursive ? {} : { depth: 0 }),
+      ignored: filename => excluded(path.resolve(filename), directory),
+    })
+    watcher.on('all', (_event, filename) => {
+      const resolved = path.resolve(filename)
       if (excluded(resolved, directory) || !accept(resolved)) return
+      // The initial build reads edits observed before the startup snapshot.
+      if (!inputChanged) return
       try {
         if (inputChanged(resolved, directory)) schedule()
       } catch (error) {
@@ -65,22 +76,26 @@ export async function watchDevelopmentBuild({
     })
     watcher.on('error', onError)
     watchers.push(watcher)
+    readiness.push(once(watcher, 'ready'))
   }
-  for (const directory of directories) observe(directory, true, () => true)
-  const parents = new Map()
-  for (const file of files) {
-    const parent = path.dirname(file)
-    const names = parents.get(parent) ?? new Set()
-    names.add(file)
-    parents.set(parent, names)
-  }
-  for (const [parent, names] of parents) observe(parent, false, filename => names.has(filename))
   try {
+    for (const directory of directories) observe(directory, true, () => true)
+    const parents = new Map()
+    for (const file of files) {
+      const parent = path.dirname(file)
+      const names = parents.get(parent) ?? new Set()
+      names.add(file)
+      parents.set(parent, names)
+    }
+    for (const [parent, names] of parents) observe(parent, false, filename => names.has(filename))
+    await Promise.all(readiness)
     inputChanged = developmentBuildInputs({ directories, files, excluded })
     running = build()
     await running
   } catch (error) {
-    for (const watcher of watchers) watcher.close()
+    closed = true
+    clearTimeout(timer)
+    await Promise.all(watchers.map(watcher => watcher.close()))
     throw error
   } finally {
     running = undefined
@@ -90,7 +105,7 @@ export async function watchDevelopmentBuild({
     async close() {
       closed = true
       clearTimeout(timer)
-      for (const watcher of watchers) watcher.close()
+      await Promise.all(watchers.map(watcher => watcher.close()))
       await running
     },
   }

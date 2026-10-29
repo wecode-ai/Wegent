@@ -47,6 +47,7 @@ const localExecutorMocks = vi.hoisted(() => ({
   request: vi.fn(),
 }))
 const desktopHostMock = vi.hoisted(() => vi.fn())
+const ensurePythonMock = vi.hoisted(() => vi.fn())
 
 function mockKnownExecutorDevice(deviceId: string, deviceRouteId: string | null = null): void {
   const routeId = deviceRouteId ?? deviceId
@@ -1644,6 +1645,13 @@ describe('PluginsWorkspace', () => {
     delete window.__WEWORK_RUNTIME_CONFIG__
     telemetryMocks.track.mockClear()
     desktopHostMock.mockReset()
+    ensurePythonMock.mockReset().mockResolvedValue({ state: 'installed' })
+    window.weworkElectronExecutionEnvironments = {
+      list: vi.fn().mockResolvedValue([]),
+      ensurePython: ensurePythonMock,
+      chooseNodeExecutable: vi.fn().mockResolvedValue(null),
+      useBuiltinNode: vi.fn().mockResolvedValue(undefined),
+    }
     localExecutorMocks.ensureStarted.mockReset()
     localExecutorMocks.ensureAvailable.mockReset()
     mockKnownExecutorDevice('current-device')
@@ -3366,12 +3374,44 @@ describe('PluginsWorkspace', () => {
       '/api/plugins/marketplace/101/install?device_id=current-device',
       expect.objectContaining({ method: 'POST' })
     )
+    expect(ensurePythonMock).not.toHaveBeenCalled()
     expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_installed', {
       source: 'cloud',
       plugin_distribution: 'official',
       plugin_id: 'default/documents',
     })
   })
+
+  test.each(['pending', 'failed'] as const)(
+    'installs a marketplace package while Python preparation is %s',
+    async pythonState => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      if (pythonState === 'pending') {
+        ensurePythonMock.mockImplementation(() => new Promise(() => {}))
+      } else {
+        ensurePythonMock.mockRejectedValue(new Error('Python download failed'))
+      }
+      mockSystemSkillsFetch()
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+      await screen.findByTestId('plugin-marketplace-install-101')
+      await installPluginFromMarketCard('plugin-marketplace-install-101')
+
+      await waitFor(() =>
+        expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('Documents 已安装')
+      )
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/plugins/marketplace/101/install?device_id=current-device',
+        expect.objectContaining({ method: 'POST' })
+      )
+      expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+        'data-notice-kind',
+        'success'
+      )
+      expect(ensurePythonMock).not.toHaveBeenCalled()
+    }
+  )
 
   test.each([false, true])(
     'defers background device synchronization until a foreground install settles (auto-update=%s)',
@@ -6678,9 +6718,12 @@ describe('PluginsWorkspace', () => {
       ],
     })
 
-    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+    // Flush the deferred local catalog's transition before exercising the detail UI.
+    await act(async () => {
+      render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+    })
 
-    expect(await screen.findByText('Code Review')).toBeInTheDocument()
+    expect(screen.getByText('Code Review')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugins-distribution-tab-official'))
     expect(screen.queryByText('Code Review')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugins-distribution-tab-personal'))

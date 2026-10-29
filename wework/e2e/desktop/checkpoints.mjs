@@ -82,6 +82,7 @@ export const DESKTOP_CHECKPOINTS = [
   'core-dsh-plugin-management',
   'voice-input',
   'plugin-development',
+  'python-runtime',
   'plugin-auto-update',
   'plugin-account-auth',
   'plugin-account-auth-password',

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
+import { nodeInlineCommand } from '../modules/node-command.mjs'
 import {
   shellCommandResponse,
   shellCommandPollResponse,
@@ -28,6 +29,21 @@ const ENV_OK = 'PREDICTION_PARENT_SHELL_IDENTITY_OK'
 const GHOST = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input-prediction"]`
 const PENDING = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input-prediction-pending"]`
 const ERROR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="reply-prediction-error"]`
+
+export function replyPredictionShellIdentityCommand() {
+  return nodeInlineCommand(`
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const executor = process.env.WEGENT_EXECUTOR_BINARY
+const workspace = process.env.WEGENT_TASK_WORKSPACE
+assert.ok(executor, 'The Task Executor binary is missing')
+assert.ok(fs.statSync(executor).isFile(), 'The Task Executor binary is not a file')
+fs.accessSync(executor, fs.constants.X_OK)
+assert.ok(workspace, 'The Task workspace is missing')
+assert.equal(fs.realpathSync(process.cwd()), fs.realpathSync(workspace), 'The shell left its Task workspace')
+process.stdout.write(${JSON.stringify(ENV_OK + '\n')})
+`)
+}
 
 export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs }) {
   let normalRequests = 0
@@ -116,7 +132,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs })
             ...shellCommandResponse(
               body,
               ENV_CALL,
-              `node -e 'const fs = require("node:fs"); const assert = require("node:assert/strict"); assert.ok(fs.statSync(process.env.WEGENT_EXECUTOR_BINARY).isFile()); fs.accessSync(process.env.WEGENT_EXECUTOR_BINARY, fs.constants.X_OK); assert.equal(fs.realpathSync(process.env.WEGENT_TASK_WORKSPACE), fs.realpathSync(process.cwd())); console.log("${ENV_OK}")'`,
+              replyPredictionShellIdentityCommand(),
               workspacePath
             ),
             responseCompleted(id),

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { afterEach, expect, test, vi } from 'vitest'
 
-import { assertIssueColumns } from '../e2e/desktop/modules/collaboration-board-tag-drag.mjs'
+import {
+  assertIssueColumns,
+  verifyMultiTagBoardDrag,
+} from '../e2e/desktop/modules/collaboration-board-tag-drag.mjs'
+import { assertLaneOrder } from '../e2e/desktop/modules/collaboration-board-field-drag.mjs'
 
 afterEach(() => vi.useRealTimers())
 
@@ -76,4 +80,51 @@ test('checks the whole column set again when cards finish loading during a poll'
   await vi.runAllTimersAsync()
 
   await rejected
+})
+
+test.each([
+  ['persisted order', ['moving', 'anchor'], false],
+  ['incorrect order', ['anchor', 'moving'], true],
+])('reveals reloaded offscreen lane cards and checks %s', async (_label, order, rejects) => {
+  const scrolled = new Set()
+  const control = {
+    async command(action, selector, options) {
+      if (action === 'getTestIdOrder') {
+        return JSON.stringify(order.map(id => `cloud-todo-card-${id}`))
+      }
+      if (action === 'scrollIntoView') {
+        scrolled.add(selector)
+        return ''
+      }
+      assert.equal(action, 'waitFor')
+      if (options?.visible === true) {
+        assert.ok(scrolled.has(selector), 'A reloaded offscreen card must be revealed first')
+      }
+      return ''
+    },
+  }
+  const result = assertLaneOrder(control, scoped, 'priority-low', ['moving', 'anchor'])
+
+  if (rejects) await assert.rejects(result, assert.AssertionError)
+  else await result
+  assert.equal(scrolled.size, 2, 'The order assertion must still check every required card')
+})
+
+test('restores the owner window when creating its narrow board fixture fails', async () => {
+  const previous = { width: 1440, height: 900 }
+  const command = vi.fn(async () => JSON.stringify(previous))
+  const failure = new Error('The fixture project could not be created')
+  const request = vi.fn().mockRejectedValue(failure)
+
+  await assert.rejects(
+    verifyMultiTagBoardDrag(
+      { command },
+      { scoped, request, project: { workspace_id: 7 }, uiTimeoutMs: 1000 }
+    ),
+    error => error === failure
+  )
+  assert.deepEqual(command.mock.calls, [
+    ['setMainWindowSize', 'body', { value: JSON.stringify({ width: 1024, height: 720 }) }],
+    ['setMainWindowSize', 'body', { value: JSON.stringify(previous) }],
+  ])
 })

@@ -333,7 +333,7 @@ function Project({
       localProjects={[]}
       locale="zh-CN"
       location={location}
-      setLocation={setLocation}
+      onNavigate={setLocation}
       services={
         {
           teamApi: { listTeams: vi.fn(async () => []) },

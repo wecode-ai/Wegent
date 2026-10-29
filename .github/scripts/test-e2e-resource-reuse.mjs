@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -10,11 +12,159 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { preparePackagedHarnessRuntimeRoots } from "../../wework/e2e/desktop/modules/packaged-harness-runtime.mjs";
 
 const runner = resolve(".github/scripts/run-attachment-replica-e2e.sh");
 const knowledgeRunner = resolve(
   ".github/scripts/run-knowledge-provider-e2e.sh",
 );
+
+async function withPackagedRuntimeFixture(verify) {
+  const root = mkdtempSync(join(tmpdir(), "e2e-packaged-runtime-"));
+  try {
+    const source = join(root, "source");
+    const sharedRoot = join(root, "shared-runtime");
+    const resources = join(root, "application", "resources");
+    const packagedResources = join(resources, "harness-runtime");
+    const resultDirectory = join(root, "results");
+    const runtime = {
+      assetName: "core.tar.gz",
+      dshVersion: "0.2.0-rc.2",
+      role: "core",
+      sourceFingerprint: "a".repeat(64),
+    };
+    const entry = join("node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
+    for (const destination of [
+      source,
+      join(sharedRoot, runtime.sourceFingerprint),
+    ]) {
+      mkdirSync(
+        join(destination, "node_modules", "@deepseek-ai", "dsh", "lib"),
+        {
+          recursive: true,
+        },
+      );
+      writeFileSync(join(destination, "runtime.json"), JSON.stringify(runtime));
+      writeFileSync(
+        join(destination, entry),
+        "export const runtime = 'real fixture';\n",
+      );
+    }
+    mkdirSync(packagedResources, { recursive: true });
+    writeFileSync(
+      join(packagedResources, "runtimes.json"),
+      JSON.stringify({ runtimes: [runtime] }),
+    );
+    const archive = spawnSync(
+      "tar",
+      ["-czf", join(packagedResources, runtime.assetName), "-C", source, "."],
+      { encoding: "utf8" },
+    );
+    assert.equal(archive.status, 0, archive.stderr);
+    let extractions = 0;
+    const options = {
+      appBinary: join(root, "application", "WeWork"),
+      extractArchive: async (path, destination) => {
+        extractions += 1;
+        const extraction = spawnSync("tar", ["-xzf", path, "-C", destination], {
+          encoding: "utf8",
+        });
+        assert.equal(extraction.status, 0, extraction.stderr);
+      },
+      platform: "linux",
+      resultDirectory,
+    };
+    await verify({
+      root,
+      runtime,
+      sharedRoot,
+      resources,
+      options,
+      entry,
+      extractions: () => extractions,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("packaged runtime preparation reuses the verified shared root without extraction", async () => {
+  await withPackagedRuntimeFixture(async (fixture) => {
+    const result = await preparePackagedHarnessRuntimeRoots({
+      ...fixture.options,
+      configuredRuntimeRoot: fixture.sharedRoot,
+    });
+    assert.deepEqual(result, {
+      corePluginsRoot: join(fixture.resources, "wework-core-plugins"),
+      harnessRuntimeRoot: fixture.sharedRoot,
+    });
+    assert.equal(fixture.extractions(), 0);
+    assert.equal(
+      existsSync(join(fixture.options.resultDirectory, "harness-runtime")),
+      false,
+    );
+  });
+});
+
+test("a missing configured runtime fails instead of falling back to available archives", async () => {
+  await withPackagedRuntimeFixture(async (fixture) => {
+    await assert.rejects(
+      preparePackagedHarnessRuntimeRoots({
+        ...fixture.options,
+        configuredRuntimeRoot: join(fixture.root, "missing-shared-runtime"),
+      }),
+      { code: "ENOENT" },
+    );
+    assert.equal(fixture.extractions(), 0);
+    assert.equal(
+      existsSync(join(fixture.options.resultDirectory, "harness-runtime")),
+      false,
+    );
+  });
+});
+
+test("a shared runtime with another bundle identity is rejected", async () => {
+  await withPackagedRuntimeFixture(async (fixture) => {
+    writeFileSync(
+      join(
+        fixture.sharedRoot,
+        fixture.runtime.sourceFingerprint,
+        "runtime.json",
+      ),
+      JSON.stringify({ ...fixture.runtime, sourceFingerprint: "b".repeat(64) }),
+    );
+    await assert.rejects(
+      preparePackagedHarnessRuntimeRoots({
+        ...fixture.options,
+        configuredRuntimeRoot: fixture.sharedRoot,
+      }),
+      /Bundled DSH runtime identity mismatch/,
+    );
+    assert.equal(fixture.extractions(), 0);
+  });
+});
+
+test("without a shared root packaged runtimes are really extracted and validated", async () => {
+  await withPackagedRuntimeFixture(async (fixture) => {
+    const result = await preparePackagedHarnessRuntimeRoots(fixture.options);
+    assert.equal(fixture.extractions(), 1);
+    assert.equal(
+      result.harnessRuntimeRoot,
+      join(fixture.options.resultDirectory, "harness-runtime"),
+    );
+    assert.equal(
+      readFileSync(
+        join(
+          result.harnessRuntimeRoot,
+          fixture.runtime.sourceFingerprint,
+          fixture.entry,
+        ),
+        "utf8",
+      ),
+      "export const runtime = 'real fixture';\n",
+    );
+  });
+});
 
 test("platform image reuse checks the registry before starting a builder", () => {
   const result = spawnSync(

@@ -392,6 +392,109 @@ async function reloadWorkbench(control) {
   )
 }
 
+export async function verifyNativeTranscriptPageCursors(control, address) {
+  const pageRequest = { address, limit: 50 }
+  // Native history hydration and delivery keep their restoration budget on every
+  // page. Ordinary UI controls retain their separate interaction budget.
+  const nativePage = await requestExecutor(
+    control,
+    'runtime.tasks.transcript',
+    { ...pageRequest, refresh: true },
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  assert.equal(nativePage.hasMoreBefore, true, 'The fixture must exceed the native item budget')
+  assert.ok(nativePage.beforeCursor?.startsWith('wework-codex-timeline:'))
+  assert.ok(
+    nativePage.turns.every(turn => turn.items.every(item => item.id !== PAGED_ASSISTANT_ITEM)),
+    'The anchor search must require loading an older native item'
+  )
+  const cachedPage = await requestExecutor(
+    control,
+    'runtime.tasks.transcript',
+    pageRequest,
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  assert.equal(cachedPage.hasMoreBefore, true, 'The live cache hid older native items')
+  assert.equal(
+    cachedPage.beforeCursor,
+    nativePage.beforeCursor,
+    'The live cache lost the native cursor'
+  )
+  const olderPage = await requestExecutor(
+    control,
+    'runtime.tasks.transcript',
+    { ...pageRequest, beforeCursor: cachedPage.beforeCursor },
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  assert.ok(olderPage.messages.length > 0, 'The older native page was not loaded')
+  assert.notEqual(
+    olderPage.beforeCursor,
+    cachedPage.beforeCursor,
+    'Pagination returned the live cache again'
+  )
+}
+
+export async function verifyNativeItemPagination(control, { taskId, taskRowId, uiTimeoutMs }) {
+  await reloadWorkbench(control)
+  await control.command('waitFor', `[data-testid="${taskRowId}"]`, { timeoutMs: uiTimeoutMs })
+  await control.command('click', `[data-testid="${taskRowId}"]`)
+  // A collapsed processing summary leaves the boundary near the viewport.
+  // Automatic pagination must restore the complete turn without a button.
+  await waitForTranscriptState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
+      snapshot.pane?.currentRuntimeTask?.taskId === taskId &&
+      snapshot.pane.transcript.loading === false &&
+      snapshot.pane.transcript.loadingMoreBefore === false &&
+      snapshot.pane.transcript.hasMoreBefore === false,
+    'Automatic native item pagination did not finish',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  const nativeSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
+  assert.ok(
+    nativeSnapshot.runtimeAssistantDisplayItemCount >= PAGED_ITEM_COUNT,
+    'The UI did not restore the middle of the running native turn'
+  )
+}
+
+export async function verifyRunningConversationRestoration(
+  control,
+  { taskRowId, projectKey, address, uiTimeoutMs, captureScreenshot, releaseSecondResponse }
+) {
+  await control.command('click', `[data-testid="${taskRowId}"]`)
+  await reloadWorkbench(control)
+  await control.command('waitFor', `[data-testid="${taskRowId}"]`, { timeoutMs: uiTimeoutMs })
+  await assertMovedProject(control, projectKey, address, uiTimeoutMs)
+  await waitForRestoredTranscript(control, address.taskId, WORKBENCH_READY_TIMEOUT_MS)
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: SECOND_PROMPT,
+    timeoutMs: uiTimeoutMs,
+  })
+  await captureScreenshot(
+    control,
+    'running-conversation-history-01-reloaded-while-running.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  const transcriptText = await control.command(
+    'getText',
+    [
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    ].join(', ')
+  )
+  assert.ok(
+    transcriptText.includes(FIRST_COMPLETION),
+    'Reloading a running conversation lost the previous assistant response'
+  )
+  releaseSecondResponse()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: SECOND_COMPLETION,
+    timeoutMs: uiTimeoutMs,
+  })
+  await assertMovedProject(control, projectKey, address, uiTimeoutMs)
+}
+
 async function verifyMoveToProject(control, { taskId, executorHome, timeoutMs }) {
   const targetPath = join(executorHome, 'task-move-target')
   await mkdir(targetPath, { recursive: true })
@@ -730,6 +833,11 @@ export function createDesktopScenario({
         await waitForTaskAddress(control, switchTaskId, uiTimeoutMs),
         uiTimeoutMs
       )
+      // Select the measured conversation so restart does not load another task first.
+      await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
       await restartDesktopApp(async () => {
         const indexPath = join(executorHome, 'runtime-work', 'index.json')
         const index = JSON.parse(await readFile(indexPath, 'utf8'))
@@ -884,76 +992,14 @@ export function createDesktopScenario({
       assert.equal(anchorSearch.totalMatches, 1)
       assert.equal(anchorSearch.matches[0].itemId, PAGED_ASSISTANT_ITEM)
       const anchorMessageId = `runtime-view:${anchorSearch.matches[0].turnId}:assistant`
-      const pageRequest = { address: pagedAddress, limit: 50 }
-      // Every native page includes hydration and transfer of the 1,250-item fixture,
-      // including reads without refresh while the turn is running. UI controls
-      // keep their separate interaction budget and responsiveness assertions.
-      const nativePage = await requestExecutor(
-        control,
-        'runtime.tasks.transcript',
-        {
-          ...pageRequest,
-          refresh: true,
-        },
-        WORKBENCH_READY_TIMEOUT_MS
-      )
-      assert.equal(nativePage.hasMoreBefore, true, 'The fixture must exceed the native item budget')
-      assert.ok(nativePage.beforeCursor?.startsWith('wework-codex-timeline:'))
-      assert.ok(
-        nativePage.turns.every(turn => turn.items.every(item => item.id !== PAGED_ASSISTANT_ITEM)),
-        'The anchor search must require loading an older native item'
-      )
-      const cachedPage = await requestExecutor(
-        control,
-        'runtime.tasks.transcript',
-        pageRequest,
-        WORKBENCH_READY_TIMEOUT_MS
-      )
-      assert.equal(cachedPage.hasMoreBefore, true, 'The live cache hid older native items')
-      assert.equal(
-        cachedPage.beforeCursor,
-        nativePage.beforeCursor,
-        'The live cache lost the native cursor'
-      )
-      const olderPage = await requestExecutor(
-        control,
-        'runtime.tasks.transcript',
-        {
-          ...pageRequest,
-          beforeCursor: cachedPage.beforeCursor,
-        },
-        WORKBENCH_READY_TIMEOUT_MS
-      )
-      assert.ok(olderPage.messages.length > 0, 'The older native page was not loaded')
-      assert.notEqual(
-        olderPage.beforeCursor,
-        cachedPage.beforeCursor,
-        'Pagination returned the live cache again'
-      )
+      await verifyNativeTranscriptPageCursors(control, pagedAddress)
 
-      await reloadWorkbench(control)
-      await control.command('waitFor', `[data-testid="${pagedRowId}"]`, {
-        timeoutMs: uiTimeoutMs,
+      await verifyNativeItemPagination(control, {
+        taskId: pagedTaskId,
+        taskRowId: pagedRowId,
+        uiTimeoutMs,
       })
-      await control.command('click', `[data-testid="${pagedRowId}"]`)
-      // A collapsed processing summary leaves the boundary near the viewport.
-      // Automatic pagination must restore the complete turn without a button.
-      await waitForTranscriptState(
-        control,
-        snapshot =>
-          snapshot.pane?.currentRuntimeTask?.taskId === pagedTaskId &&
-          snapshot.pane.transcript.loading === false &&
-          snapshot.pane.transcript.loadingMoreBefore === false &&
-          snapshot.pane.transcript.hasMoreBefore === false,
-        'Automatic native item pagination did not finish',
-        WORKBENCH_READY_TIMEOUT_MS
-      )
       const loadOlder = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="load-older-runtime-transcript-button"]`
-      const nativeSnapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
-      assert.ok(
-        nativeSnapshot.runtimeAssistantDisplayItemCount >= PAGED_ITEM_COUNT,
-        'The UI did not restore the middle of the running native turn'
-      )
       // Restore a partially loaded live view before testing isolated search pages.
       await control.command('click', taskRow)
       await reloadWorkbench(control)
@@ -1090,41 +1136,14 @@ export function createDesktopScenario({
         text: PAGED_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', taskRow)
-
-      await reloadWorkbench(control)
-      await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
-        timeoutMs: uiTimeoutMs,
+      await verifyRunningConversationRestoration(control, {
+        taskRowId: taskRowTestId,
+        projectKey: moved.projectKey,
+        address: moved.address,
+        uiTimeoutMs,
+        captureScreenshot,
+        releaseSecondResponse: releaseSecondResponseResolve,
       })
-      await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
-      await control.command('waitFor', '[data-testid="message-user"]', {
-        text: SECOND_PROMPT,
-        timeoutMs: uiTimeoutMs,
-      })
-      await captureScreenshot(
-        control,
-        'running-conversation-history-01-reloaded-while-running.png',
-        ACTIVE_WORKBENCH_SELECTOR
-      )
-
-      const transcriptText = await control.command(
-        'getText',
-        [
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-        ].join(', ')
-      )
-      assert.ok(
-        transcriptText.includes(FIRST_COMPLETION),
-        'Reloading a running conversation lost the previous assistant response'
-      )
-
-      releaseSecondResponseResolve()
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: SECOND_COMPLETION,
-        timeoutMs: uiTimeoutMs,
-      })
-      await assertMovedProject(control, moved.projectKey, moved.address, uiTimeoutMs)
       active = false
     },
 

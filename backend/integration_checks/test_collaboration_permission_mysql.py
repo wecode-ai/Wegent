@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
@@ -28,6 +29,7 @@ from app.schemas.delivery import LoopItemCreate
 from app.services.cloud_projects.responses import list_project_responses
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.collaboration_permissions import collaboration_permission_service
+from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_items.provider_router import loop_item_provider_router
 from app.services.project_chat.service import project_chat_service
 from app.services.workspaces.responses import list_workspace_responses
@@ -108,6 +110,201 @@ def test_concurrent_issue_creation_refreshes_preloaded_project_sequence(
             assert (
                 db.query(LoopItem).filter_by(cloud_project_id=project_id).count() == 2
             )
+    finally:
+        engine.dispose()
+
+
+def _assignment_projects(engine: Engine) -> list[tuple[str, str]]:
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add_all(
+            [
+                User(id=user_id, user_name=f"member-{user_id}", password_hash="unused")
+                for user_id in (1, 2)
+            ]
+        )
+        db.add(
+            Kind(
+                id=11,
+                kind="CollaborationWorkspace",
+                name="assignment-space",
+                namespace="default",
+                user_id=1,
+                is_active=True,
+                json=workspace_kind_payload(
+                    name="assignment-space",
+                    description="",
+                    namespace="default",
+                    public_id=str(uuid.uuid4()),
+                    is_default=False,
+                ),
+            )
+        )
+        db.commit()
+        projects = []
+        for index in range(2):
+            project = cloud_project_service.create(
+                db,
+                1,
+                CloudProjectCreate(name=f"Assignments {index}", workspace_id="11"),
+            )
+            projects.append((project.id, project.project_key))
+        return projects
+
+
+def _indexed_assignment_ids(db: Session, issue_id: str) -> set[str]:
+    return {
+        row.loop_item_id
+        for row in db.query(LoopItemActiveAssignment).filter_by(parent_id=issue_id)
+        if row.loop_item_id
+    }
+
+
+def test_independent_issue_creations_do_not_lock_empty_assignment_ranges(
+    mysql_url: str,
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    ready = Barrier(2, timeout=10)
+
+    def synchronize(
+        _db: sa.Connection,
+        _cursor: Any,
+        statement: str,
+        _params: Any,
+        context: Any,
+        _many: bool,
+    ) -> None:
+        if not statement.startswith("INSERT INTO loop_items"):
+            return
+        values = context.compiled_parameters[0] if context.compiled_parameters else {}
+        if values.get("resource_type") == "comment":
+            # Both creators have reached their first assignment INSERT. An empty
+            # history FOR UPDATE before this point holds overlapping gap locks.
+            ready.wait()
+
+    def create_issue(project_id: str) -> str:
+        with Session(engine, autoflush=False) as db:
+            project = cloud_project_service.get(db, project_id, 1)
+            user = db.get(User, 1)
+            created = loop_item_provider_router.create(
+                db, project, user, LoopItemCreate(title="Independent Issue")
+            )
+            return created.internal_item.id
+
+    try:
+        projects = _assignment_projects(engine)
+        sa.event.listen(engine, "before_cursor_execute", synchronize)
+        try:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [
+                    pool.submit(create_issue, project_id) for project_id, _ in projects
+                ]
+                issue_ids = [future.result(timeout=30) for future in futures]
+        finally:
+            sa.event.remove(engine, "before_cursor_execute", synchronize)
+        assert set(issue_ids) == {f"{project_key}-1" for _, project_key in projects}
+        with Session(engine) as db:
+            for issue_id in issue_ids:
+                issue = db.get(LoopItem, issue_id)
+                active = issue_assignment_service.active_for_issue(db, issue_id)
+                assert issue.assignee_user_id == 1
+                assert len(active) == 1
+                assert active[0].member_type == "human" and active[0].member_id == "1"
+                assert active[0].metadata["trigger"] == "default"
+                assert active[0].metadata["receipt_tracking"] is True
+                assert _indexed_assignment_ids(db, issue_id) == {active[0].id}
+                assert (
+                    db.query(LoopItemActiveAssignment)
+                    .filter_by(parent_id=issue_id)
+                    .count()
+                    == 2
+                )
+                assert (
+                    db.query(LoopItemComment).filter_by(loop_item_id=issue_id).count() == 1
+                )
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("operation", ["deduplicate", "replace", "remove"])
+def test_existing_assignment_writes_use_current_history_after_old_snapshot(
+    mysql_url: str, operation: str
+) -> None:
+    engine = sa.create_engine(mysql_url, isolation_level="REPEATABLE READ")
+    try:
+        project_id, _ = _assignment_projects(engine)[0]
+        with Session(engine) as db:
+            project = cloud_project_service.get(db, project_id, 1)
+            issue = loop_item_provider_router.create(
+                db, project, db.get(User, 1), LoopItemCreate(title="Existing Issue")
+            ).internal_item
+            issue_id = issue.id
+        with Session(engine) as stale:
+            original = issue_assignment_service.active_for_issue(stale, issue_id)
+            assert len(original) == 1 and original[0].member_id == "1"
+            with Session(engine) as writer:
+                latest, _ = issue_assignment_service.record(
+                    writer,
+                    project_id=project_id,
+                    issue_id=issue_id,
+                    member_type="human",
+                    member_id="2",
+                    assigned_by_user_id=1,
+                    workflow_step=None,
+                    notify=False,
+                    trigger="manual",
+                )
+                review, _ = issue_assignment_service.record(
+                    writer,
+                    project_id=project_id,
+                    issue_id=issue_id,
+                    member_type="human",
+                    member_id="2",
+                    assigned_by_user_id=1,
+                    workflow_step="review",
+                    notify=False,
+                    trigger="manual",
+                )
+                latest_id, review_id = latest.id, review.id
+                writer.commit()
+            # Authentication/permission queries can establish this older snapshot
+            # before the writer obtains the Issue mutex. It must stay old here.
+            assert [
+                event.id
+                for event in issue_assignment_service.active_for_issue(stale, issue_id)
+            ] == [original[0].id]
+            if operation == "remove":
+                removed = issue_assignment_service.remove(
+                    stale,
+                    project_id=int(project_id),
+                    issue_id=issue_id,
+                    assignment_id=latest_id,
+                    user_id=1,
+                )
+                assert removed.id == latest_id
+                expected = {review_id}
+            else:
+                replacement, created = issue_assignment_service.record(
+                    stale,
+                    project_id=project_id,
+                    issue_id=issue_id,
+                    member_type="human",
+                    member_id="2" if operation == "deduplicate" else "1",
+                    assigned_by_user_id=1,
+                    workflow_step=None,
+                    notify=False,
+                    trigger="manual",
+                    replace_root_assignments=operation == "replace",
+                )
+                assert created is (operation == "replace")
+                if not created:
+                    assert replacement.id == latest_id
+                expected = {replacement.id, review_id}
+            stale.commit()
+        with Session(engine) as db:
+            active = issue_assignment_service.active_for_issue(db, issue_id)
+            assert {event.id for event in active} == expected
+            assert _indexed_assignment_ids(db, issue_id) == expected
     finally:
         engine.dispose()
 

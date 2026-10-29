@@ -605,3 +605,158 @@ impl RuntimeWorkRpcHandler {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rpc_dispatch_future_does_not_embed_request_futures() {
+        let handler = RuntimeWorkRpcHandler::new("windows", "unused");
+        let future = handler.dispatch("runtime.stand_in.assignment", json!({}));
+        let bytes = std::mem::size_of_val(&future);
+        assert!(
+            bytes <= 8192,
+            "RPC dispatcher future occupies {bytes} bytes"
+        );
+        for method in [
+            "runtime.stand_in.assignment",
+            "runtime.stand_in.run",
+            "runtime.tasks.create",
+            "runtime.tasks.send",
+            "runtime.local_connector_auth.health",
+            "runtime.local_connector_auth.logout",
+        ] {
+            let request = handler.dispatch_method(method, json!({}));
+            assert_eq!(
+                std::mem::size_of_val(&request),
+                std::mem::size_of::<Pin<Box<dyn Future<Output = ()>>>>(),
+                "{method} must keep its request future behind a heap boundary"
+            );
+        }
+        eprintln!("RPC dispatcher future: {bytes} bytes");
+        let server = crate::local::app_ipc::AppIpcServer::new();
+        eprintln!(
+            "App IPC dispatcher future: {} bytes",
+            std::mem::size_of_val(&server.dispatch("runtime.stand_in.assignment", json!({})))
+        );
+    }
+
+    #[test]
+    fn rpc_dispatch_preserves_errors_on_windows_sized_worker_stack() {
+        const CHILD: &str = "WEGENT_TEST_RPC_STACK_CHILD";
+        if std::env::var(CHILD).as_deref() != Ok("1") {
+            let root = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "runtime_work::handler::dispatch::tests::rpc_dispatch_preserves_errors_on_windows_sized_worker_stack",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("WEGENT_TEST_RPC_STACK_ROOT", root.path())
+                .current_dir(root.path())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "RPC worker child exited {}:\n{}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let root = std::env::var("WEGENT_TEST_RPC_STACK_ROOT").unwrap();
+        std::env::set_var("WEGENT_EXECUTOR_HOME", root);
+        std::thread::Builder::new()
+            .name("rpc-windows-worker-stack".into())
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let handler = RuntimeWorkRpcHandler::new("windows", "unused");
+                handler
+                    .startup_recovery_deferred
+                    .store(true, Ordering::Release);
+                runtime.block_on(async {
+                    let result = handler
+                        .handle_runtime_rpc(json!({
+                            "method": "runtime.tasks.create",
+                            "payload": {"schemaVersion": 3}
+                        }))
+                        .await;
+                    assert_eq!(result.unwrap_err().code, "unsupported_schema_version");
+                    let result = handler
+                        .handle_runtime_rpc(json!({"method": "unsupported.test.method"}))
+                        .await;
+                    assert_eq!(result.unwrap_err().code, "unsupported_method");
+                    let result = handler
+                        .handle_runtime_rpc(json!({"method": "runtime.stand_in.assignment"}))
+                        .await;
+                    assert_eq!(result.unwrap(), json!({"success": true}));
+                    exercise_assigned_issue().await;
+                });
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    async fn exercise_assigned_issue() {
+        use axum::{routing::get, Json, Router};
+
+        let bindings = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let saved = bindings.clone();
+        let existing = bindings.clone();
+        let router = Router::new()
+            .route("/api/users/me", get(|| async { Json(json!({"id": 7})) }))
+            .route("/api/v1/loop-items/issue", get(|| async {
+                Json(json!({"id":"issue","title":"Assigned Issue","cloud_project_id":"project","assignee_user_id":7,"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}}))
+            }))
+            .route("/api/v1/loop-items/issue/assignments", get(|| async {
+                Json(json!({"items":[{"id":"assignment","status":"active","created_at":"2099-01-01T00:00:00Z"}]}))
+            }))
+            .route("/api/v1/loop-items/issue/tasks", get(move || {
+                let rows = existing.lock().unwrap().clone();
+                async move { Json(json!(rows)) }
+            }).post(move |Json(binding): Json<Value>| {
+                saved.lock().unwrap().push(binding);
+                async { Json(json!({"id":1})) }
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+        let root = PathBuf::from(std::env::var("WEGENT_TEST_RPC_STACK_ROOT").unwrap());
+        let mut handler =
+            RuntimeWorkRpcHandler::new("windows", root.join("missing-codex").to_string_lossy());
+        handler.store = RuntimeWorkStore::new(root.join("runtime-index.json"));
+        handler.worktrees = WorktreeManager::new(root.join("worktrees.json"));
+        handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
+        handler.codex_app_server = handler
+            .codex_app_server
+            .for_home(root.join("codex"))
+            .unwrap();
+        handler
+            .startup_recovery_deferred
+            .store(true, Ordering::Release);
+        handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: url,
+            auth_token: "unit-test-token".into(),
+            ..Default::default()
+        })));
+        LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap()
+            .save_stand_in_settings("project", 7, json!({"projectStore":"cloud","enabled":true,"prompt":"Review","executionDeviceId":"windows","version":0}))
+            .unwrap();
+        let ipc =
+            crate::local::app_ipc::AppIpcServer::new().with_runtime_work_handler(handler.clone());
+        let line = json!({"type":"request","id":"assignment-stack-test","method":"runtime.stand_in.assignment","params":{"projectId":"project","itemId":"issue","assignmentId":"assignment","recipientUserId":7}}).to_string();
+        let result = ipc.handle_line(&line).await.unwrap();
+        assert_eq!(result["ok"], true, "{result}");
+        assert_eq!(bindings.lock().unwrap().len(), 1);
+        assert!(handler.local_task_link("stand-in-human-default").is_some());
+        server.abort();
+    }
+}

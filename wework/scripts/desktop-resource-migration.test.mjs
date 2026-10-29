@@ -316,18 +316,17 @@ describe('desktop resource migration', () => {
   })
 
   test('desktop E2E reuses packaged Harness runtime assets', async () => {
-    const source = await readFile(
-      join(weworkRoot, 'e2e/desktop/modules/desktop-build-flows.mjs'),
-      'utf8'
-    )
+    const [flow, source] = await Promise.all([
+      readFile(join(weworkRoot, 'e2e/desktop/modules/desktop-build-flows.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'e2e/desktop/modules/packaged-harness-runtime.mjs'), 'utf8'),
+    ])
 
-    expect(source).toContain('const packagedResourcesRoot = join(')
-    expect(source).toContain(
-      "const packagedResources = join(packagedResourcesRoot, 'harness-runtime')"
-    )
-    expect(source).toContain("corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins')")
+    expect(flow).toContain('return preparePackagedHarnessRuntimeRoots({')
+    expect(source).toContain('const resourcesRoot = join(')
+    expect(source).toContain("const packagedResources = join(resourcesRoot, 'harness-runtime')")
+    expect(source).toContain("corePluginsRoot: join(resourcesRoot, 'wework-core-plugins')")
     expect(source).toContain('harnessRuntimeRoot: runtimeRoot')
-    expect(source).not.toContain("['prepare:harness-runtime', '--materialize']")
+    expect(`${flow}\n${source}`).not.toContain("['prepare:harness-runtime', '--materialize']")
   })
 
   test('packages split Wework app static resources for local Electron verification', async () => {

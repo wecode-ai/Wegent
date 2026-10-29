@@ -17,6 +17,7 @@ export async function verifyHarnessDevelopment(
   {
     uiTimeoutMs,
     resultDir,
+    harnessRuntimeRoot,
     captureScreenshot,
     electronUserDataDirectory,
     legacyRuntimeCache,
@@ -99,7 +100,7 @@ export async function verifyHarnessDevelopment(
     'A newly created Smart app must launch the current Workbench runtime'
   )
   assert.deepEqual(
-    await verifyDownloadedDshRuntimeCache(join(resultDir, 'harness-runtime'), '0.1.0-rc.8'),
+    await verifyDownloadedDshRuntimeCache(harnessRuntimeRoot, '0.1.0-rc.8'),
     legacyRuntimeCache,
     'Launching another app must preserve the verified legacy archive cache'
   )

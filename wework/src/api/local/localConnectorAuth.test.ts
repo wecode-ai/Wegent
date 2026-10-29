@@ -6,6 +6,7 @@ import {
   isLocalConnector,
   isLocalQrConnector,
   localConnectorAuthHealth,
+  localConnectorAuthStart,
   localConnectorAuthLogout,
   LocalConnectorAuthLogoutError,
   localQrManageActionFromHealth,
@@ -85,6 +86,41 @@ describe('localConnectorAuthHealth cache', () => {
     await localConnectorAuthHealth(target, { bypassCache: true })
 
     expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(2)
+  })
+
+  test.each([
+    ['Python', ['scripts/auth.py', 'login']],
+    ['shell', ['scripts/local-auth.sh', 'login']],
+    ['PowerShell', ['scripts/local-auth.ps1', 'login']],
+    ['native', ['bin/local-auth', 'login']],
+  ])('delegates %s runtime readiness to the executor', async (_name, start) => {
+    const target = {
+      pluginKey: 'native-connector',
+      connectorSlug: 'native-connector',
+      localAuth: {
+        kind: 'browser_oauth' as const,
+        health: [start[0], 'health'],
+        start,
+        poll: [],
+      },
+    }
+
+    await localConnectorAuthStart(target)
+
+    expect(mocks.ensureLocalExecutorStarted).toHaveBeenCalledOnce()
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('runtime.local_connector_auth.start', {
+      pluginKey: target.pluginKey,
+      connectorSlug: target.connectorSlug,
+      pluginRoot: undefined,
+      sessionId: undefined,
+    })
+  })
+
+  test('propagates runtime preparation failure from the executor', async () => {
+    mocks.requestLocalExecutor.mockRejectedValueOnce(new Error('python_runtime_unavailable'))
+    await expect(
+      localConnectorAuthStart({ pluginKey: 'wiki', connectorSlug: 'wiki' })
+    ).rejects.toThrow('python_runtime_unavailable')
   })
 
   test('gh login is owned by the CLI, so every health check reads the actual executor state', async () => {

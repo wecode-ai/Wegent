@@ -601,13 +601,21 @@ export function requestEmbeddedBrowserOpen(
 
 export function listenEmbeddedBrowserOpenRequests(
   handler: (request: EmbeddedBrowserOpenRequest) => void
-): Promise<UnlistenFn> | null {
+): UnlistenFn | null {
   if (!canUseEmbeddedBrowser()) return null
-  embeddedBrowserOpenRequestHandlers.add(handler)
-  return listenElectronBrowserEvents<EmbeddedBrowserOpenRequest>('open-request', handler).then(
-    unlisten => () => {
-      embeddedBrowserOpenRequestHandlers.delete(handler)
-      unlisten()
-    }
+  let active = true
+  const dispatch = (request: EmbeddedBrowserOpenRequest) => {
+    if (active) handler(request)
+  }
+  embeddedBrowserOpenRequestHandlers.add(dispatch)
+  const electronUnlisten = listenElectronBrowserEvents<EmbeddedBrowserOpenRequest>(
+    'open-request',
+    dispatch
   )
+  return () => {
+    if (!active) return
+    active = false
+    embeddedBrowserOpenRequestHandlers.delete(dispatch)
+    void electronUnlisten.then(unlisten => unlisten())
+  }
 }

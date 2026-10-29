@@ -65,6 +65,7 @@ core_segments=(
   cloud-login-proxy
   core-dsh-plugin-management
   plugin-development
+  python-runtime
   project-ai-settings
   model-routing
   fork-provider-preservation
@@ -223,27 +224,26 @@ cloud_shards=(
   plugin-composer-long-list,plugin-collaboration-composer-isolation,plugin-runtime-route-refresh,plugin-background-sync-isolation,plugin-periodic-reconcile
   plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github
 )
-# Run 39930854745: eight ordinary Core shards predict 323-332 seconds.
-# Co-locate CLI and Electron preparation; keep the two latency benchmarks exclusive.
-# workspace-tabs uses its successful 116-second baseline from run 39920301020.
-# Windows run 40562224610 measured 4m17s window, 3m45s model, 2m34s queue, and 22m49s permission flows.
-# Rebalance within ten shared shards to avoid the prior shard-3 timeout and extra per-shard setup.
-# Run 40629553780 measured Core 4 at 25m12s and Core 8 at 32m46s after moving board sorting.
-# Run 40657579676: Windows Core 4 passed all scenarios but exhausted 40 minutes during cleanup.
-# Run 40667094596: Core 6 spent 31m43s before history; its two Harness flows cost 9m53s.
-# Put Harness flows in Core 4 (24m baseline) and history in Core 6; retain ten runners and 40 minutes.
+# Windows run 40626919003 exhausted Core 3's 40-minute step with computer-use unfinished.
+# Window lifecycle, model routing, and permissions consumed 12m27s in that shard.
+# Keep cold Python/development and heavy lifecycle preparation in their dedicated shards.
+# Run 40657579676 exhausted Core 4 during cleanup; run 40667094596 reached history after 31m43s.
+# Reuse main's Harness-to-Core-4, history-to-Core-6, and board-sorting-to-Core-8 balance.
+# Preserve the exclusive latency benchmark groups without extending the 40-minute step budget.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
   core-task-flow,release-package-startup,collaboration-remote-group-coordinate,streaming-message-order,streaming-conversation-switching,task-status-sync,goal-state-sync,rendering-extensions,temporary-chat,streaming-subagents,system-proxy,streaming-timers,running-plan-history,task-attachments,codex-account-login,notification-tab-navigation
-  project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle,window-lifecycle
+  project-assignment-notification,resilience,collaboration-runtime-reconciliation,project-member-overrides,project-automation,streaming-scroll,collaboration-issue-comment-attachments,collaboration-issue-attachment-preview,reply-predictions,streaming-tools,change-request-status,fork-provider-preservation,collaboration-group-onboarding,system-pac,model-settings,tray-lifecycle
   stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-action-confirmation,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,embedded-browser,collaboration-human-round-resume,automation-lifecycle,context-compaction,stand-in-notifications,latest-conversation-history,browser-annotation-design,stand-in-controls,stand-in-project-enable,computer-use
-  harness-app-lifecycle,harness-app-models,component-update,environment-panel-scroll,workspace-tabs,collaboration-board-move-recovery,collaboration-home-preload,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy,permission-modes
-  claude-runtime,device-artifact-declaration,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery,model-routing
+  harness-app-lifecycle,harness-app-models,component-update,environment-panel-scroll,workspace-tabs,collaboration-board-move-recovery,collaboration-home-preload,task-board-bulk-actions,core-dsh-plugin-management,voice-input,collaboration-local-group-coordinate,streaming-content,renderer-storage,browser-annotation-anchors,collaboration-issue-comment-mention,cloud-login-proxy
+  claude-runtime,device-artifact-declaration,cloud-space-mention,local-harness,transcript-sync,collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task,workbench-mode,browser-annotation-core,application-menu,native-window-startup,git-commit-generation,model-overload-recovery,renderer-crash-recovery
   task-board-association,remote-device-onboarding,runtime-task-queue,collaboration-issue-mcp-comments,project-ai-settings,running-sidebar-state,reply-prediction-auth,local-file-preview,office-file-preview,collaboration-issue-archive,codex-native-catalog,browser-toolbar-actions,executor-stream-recovery,external-content-import,collaboration-deliveries,collaboration-delivery-editing,running-conversation-history
   harness-app-development,collaboration-issue-task-discovery,collaboration-remote-agent-dispatch,collaboration-issue-assignment-activity,priority-filter,supervisor-lifecycle,stand-in-permissions,codex-notification-isolation,offline-local-project-space,collaboration-issue-badges,stand-in-workspace,drawing-attachment,codex-invalid-launch-cwd,send-key-preference,collaboration-app-queue-identity
-  conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,plugin-development,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome,window-background-policy,collaboration-board-sorting
+  conversation-state,workspace-attachments,goal-lifecycle,collaboration-issue-comment-notification,collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,background-terminals,collaboration-local-group-cancellation,archived-worktree-cleanup,cloud-context-resilience,dsh-owner-capture,collaboration-first-use,native-window-chrome,window-background-policy,collaboration-board-sorting
   split-workbench
   collaboration-shared-core,runtime-input-answer-persistence
+  python-runtime,plugin-development
+  window-lifecycle,model-routing,permission-modes
 )
 
 core_shards[1]+=',mcp-apps,project-space-tool-discovery'
@@ -492,6 +492,16 @@ classify_wework_path() {
   esac
 
   case "$path" in
+    wework/e2e/desktop/scenarios/python-runtime.scenario.mjs | \
+      wework/e2e/desktop/modules/managed-python.mjs | \
+      wework/electron/src/runtime/python-runtime* | \
+      wework/src/desktop/executionEnvironments* | \
+      wework/src/components/settings/ExecutionEnvironmentsSettingsPage*)
+      select_target "core:python-runtime"
+      select_target "core:plugin-development"
+      select_target "cloud:plugin-account-auth-password"
+      return
+      ;;
     wework/src/features/workbench/runtimeConversationCache* | \
       wework/src/components/layout/useWorkbenchPaneSession* | \
       wework/src/features/workbench/WorkbenchProvider* | \
@@ -542,6 +552,8 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/modules/plugin-auth-coordination.mjs | \
+      wework/e2e/desktop/modules/native-account-runtime-isolation.mjs | \
+      wework/e2e/desktop/fixtures/native-account-auth/* | \
       wework/e2e/desktop/modules/plugin-account-auth-fixture.mjs | \
       wework/src/components/plugins/PluginAccountConnections* | \
       wework/src/api/cloud/pluginAccountConnections* | \
@@ -1721,6 +1733,7 @@ classify_path() {
   case "$path" in
     sdk/plugin-auth/* | sdk/plugin-auth-go/* | sdk/dws-auth/* | executor/src/plugin_account_auth/* | \
       executor/tests/plugin_account_auth_contract.rs | \
+      executor/tests/plugin_account_runtime_isolation.rs | \
       backend/app/services/plugin_account* | backend/app/services/plugin_auth* | \
       backend/app/services/plugin_oauth* | backend/app/services/plugin_credential* | \
       backend/app/schemas/plugin_account_auth.py | backend/app/api/ws/plugin_auth_broker.py | \

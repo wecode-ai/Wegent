@@ -38,6 +38,11 @@ export function createDesktopScenario({
     return result.result
   }
   return {
+    codexConfigToml: `
+[marketplaces.${MARKET}]
+source_type = "local"
+source = ${JSON.stringify(root)}
+`,
     async handleHttp(req, _response, url) {
       if (req.method === 'POST' && ['/responses', '/v1/responses'].includes(url.pathname))
         modelRequests++
@@ -134,8 +139,22 @@ export function createDesktopScenario({
         initial.items.find(item => item.id === PROVIDER)?.availability.status,
         'dependency_missing'
       )
-      const marketplace = await codex(control, 'marketplace/add', { source: root })
-      assert.equal(marketplace.marketplaceName, MARKET)
+      const catalog = await codex(control, 'plugin/list', {
+        cwds: [],
+        marketplaceKinds: ['local'],
+      })
+      const marketplaces = catalog.marketplaces ?? []
+      const marketplace = marketplaces.find(item => item.name === MARKET)
+      assert.ok(
+        marketplace?.plugins?.some(plugin => plugin.id === PLUGIN),
+        `Configured dependency is absent from the real local Codex catalog: ${JSON.stringify({
+          marketplaces: marketplaces.map(item => ({
+            name: item.name,
+            pluginIds: item.plugins?.map(plugin => plugin.id),
+          })),
+          marketplaceLoadErrors: catalog.marketplaceLoadErrors ?? [],
+        })}`
+      )
       await rpc(control, 'runtime.connections.dependencies.install', {
         providerId: PROVIDER,
         aliases: ['source'],

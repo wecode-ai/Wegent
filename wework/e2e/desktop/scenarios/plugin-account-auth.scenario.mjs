@@ -8,6 +8,8 @@ import { promisify } from 'node:util'
 import { verifyDwsCloudAccount } from '../modules/dws-account-auth.mjs'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { managedRoot } from '../modules/managed-plugin-root.mjs'
+import { verifyNativeAccountRuntimeIsolation } from '../modules/native-account-runtime-isolation.mjs'
+import { inspectManagedPython, PYTHON_BOOTSTRAP_TIMEOUT_MS } from '../modules/managed-python.mjs'
 import {
   createConversationAuthModelFixture,
   sendOrdinaryChat,
@@ -62,6 +64,7 @@ export async function createDesktopScenario({
   checkpoint,
   captureScreenshot,
   executorHome,
+  electronUserDataDirectory,
   homePath,
   resultDir,
   workbenchReadyTimeoutMs,
@@ -96,6 +99,7 @@ export async function createDesktopScenario({
       secret,
       oauthSecret,
       transferSecret,
+      recordPythonRuntime: checkpoint === 'plugin-account-auth-password',
     })
 
   async function api(path, method = 'GET', body) {
@@ -153,8 +157,12 @@ export async function createDesktopScenario({
 
   return {
     requiresCloudEnvironment: true,
+    requiresPackagedHarnessRuntime: checkpoint === 'plugin-account-auth-password',
     codexConfigToml: githubConfig,
     appEnvironment: {
+      ...(checkpoint === 'plugin-account-auth-password'
+        ? { WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '0' }
+        : {}),
       GH_CONFIG_DIR: ghConfigDir,
       GH_TOKEN: '',
       GITHUB_TOKEN: '',
@@ -332,9 +340,22 @@ export async function createDesktopScenario({
             await waitForValue(
               () => marker(join(homePath, 'account-auth-export-attempted')),
               Boolean,
-              workbenchReadyTimeoutMs,
+              PYTHON_BOOTSTRAP_TIMEOUT_MS,
               'Missing local authentication was not probed'
             )
+            const pythonRuntime = JSON.parse(
+              await readFile(join(homePath, 'account-auth-python-runtime.json'), 'utf8')
+            )
+            const expectedPython = await inspectManagedPython(
+              electronUserDataDirectory,
+              fixtureRoot
+            )
+            assert.equal(
+              pythonRuntime.executable,
+              expectedPython.executable,
+              'The real account adapter bypassed the managed Python runtime'
+            )
+            assert.equal(pythonRuntime.version, '3.12.12')
             assert.equal(await connectionFor('mail'), undefined)
             await writeFile(
               sourceAuth,
@@ -443,6 +464,18 @@ export async function createDesktopScenario({
             await rm(sourceAuth)
             assert.equal((await localAuth('health')).status, 'ok')
             await invokeCloud('cloud-account-updated')
+            await verifyNativeAccountRuntimeIsolation({
+              api,
+              connectionFor,
+              electronUserDataDirectory,
+              homePath,
+              resultDir,
+              restartDesktopApp,
+              signalAutomaticRetry,
+              timeoutMs: workbenchReadyTimeoutMs,
+              waitForValue,
+              secret,
+            })
           },
         ],
         [
@@ -695,6 +728,9 @@ export async function createDesktopScenario({
       await check()
       console.log(`[desktop-e2e-account] end ${checkpoint}`)
       // Return to the visible plugin detail after a long background-only workflow.
+      await control.command('waitFor', '[data-testid="plugins-button"]', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       await control.command('click', '[data-testid="plugins-button"]')
       const pluginPage = JSON.parse(await control.command('snapshot', 'body'))
       if (pluginPage.testIds.includes('plugin-detail-back-button')) {

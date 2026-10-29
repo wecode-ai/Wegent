@@ -14,6 +14,10 @@ import {
 import { runWithCheckpointResources } from './checkpoint-scheduler.mjs'
 import { UPGRADE_CHECKPOINTS, UPGRADE_PACKAGE_CHECKPOINTS } from './upgrade-suite.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
+import {
+  checkpointScenarioEnv,
+  ISOLATED_XVFB_SERVER_ARGUMENTS,
+} from './checkpoint-environment.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
 import {
   compactInactiveDesktopE2EResults,
@@ -190,6 +194,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'collaboration-board-sorting': './scenarios/collaboration-board-sorting.scenario.mjs',
   'collaboration-board-move-recovery': './scenarios/collaboration-board-move-recovery.scenario.mjs',
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
+  'python-runtime': './scenarios/python-runtime.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
   'drawing-attachment': './scenarios/drawing-attachment.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
@@ -313,6 +318,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'collaboration-board-sorting',
   'collaboration-board-move-recovery',
   'plugin-development',
+  'python-runtime',
   'task-attachments',
   'drawing-attachment',
   'project-assignment-notification',
@@ -353,6 +359,10 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'workbench-mode',
   'task-board-bulk-actions',
 ])
+const CHECKPOINT_ENVIRONMENT = {
+  scenarioModules: CHECKPOINT_SCENARIO_MODULES,
+  scenarioOnlyCheckpoints: SCENARIO_ONLY_CHECKPOINTS,
+}
 const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-device-lifecycle',
   'plugin-auto-update',
@@ -402,7 +412,7 @@ function runTaskFlow(args, env, label) {
     const commandArgs = isolateDisplay
       ? [
           '-a',
-          '--server-args=-noreset -screen 0 1280x720x24',
+          `--server-args=${ISOLATED_XVFB_SERVER_ARGUMENTS}`,
           'sh',
           isolatedXvfbPath,
           process.execPath,
@@ -438,7 +448,8 @@ function runTaskFlow(args, env, label) {
       clearInterval(heartbeat)
       reject(error)
     })
-    child.once('exit', (code, signal) => {
+    // Classify the result after the diagnostic streams have drained.
+    child.once('close', (code, signal) => {
       clearInterval(heartbeat)
       rejectRecordedCheckpointFailure({
         code: code ?? 1,
@@ -468,46 +479,6 @@ async function readFailureSummary(result) {
       .filter(Boolean)
       .at(-1) ?? 'No failure details were emitted'
   )
-}
-
-function checkpointScenarioEnv(env, checkpoint) {
-  const nextEnv = { ...env }
-  if (UPGRADE_PACKAGE_CHECKPOINTS.includes(checkpoint)) {
-    nextEnv.WEWORK_E2E_APP_BIN = env.WEWORK_E2E_UPGRADE_SOURCE_APP_BIN || env.WEWORK_E2E_APP_BIN
-    nextEnv.WEWORK_E2E_EXECUTOR_BIN =
-      env.WEWORK_E2E_UPGRADE_SOURCE_EXECUTOR_BIN || env.WEWORK_E2E_EXECUTOR_BIN
-    nextEnv.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE = '1'
-  }
-  if (checkpoint === 'collaboration-shared-core') {
-    // Exercise timezone-less UTC API timestamps outside the UTC timezone.
-    nextEnv.TZ = 'Asia/Shanghai'
-  }
-  if (
-    checkpoint === 'application-menu' ||
-    checkpoint === 'native-window-chrome' ||
-    checkpoint === 'window-lifecycle' ||
-    checkpoint === 'window-background-policy' ||
-    checkpoint === 'browser-multi-tabs' ||
-    checkpoint === 'core-task-flow' ||
-    checkpoint === 'project-assignment-notification'
-  ) {
-    // These checks present native auxiliary windows and must observe them as
-    // visible. macOS background mode prohibits activation and hides the app.
-    // Assignment notification also verifies tag commits through native focus loss.
-    nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
-  }
-  const module = CHECKPOINT_SCENARIO_MODULES[checkpoint]
-  if (module) {
-    nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_MODULE = module
-  } else {
-    delete nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_MODULE
-  }
-  if (SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)) {
-    nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_ONLY = 'true'
-  } else {
-    delete nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_ONLY
-  }
-  return nextEnv
 }
 
 async function runDesktopBuild({
@@ -738,7 +709,10 @@ async function runRequestedArgs() {
   const sharedEnv = await sharedBuildEnvironment()
   const segmentIndex = requestedArgs.indexOf('--segment')
   const checkpoint = segmentIndex >= 0 ? requestedArgs[segmentIndex + 1] : undefined
-  const env = segmentIndex >= 0 ? checkpointScenarioEnv(sharedEnv, checkpoint) : sharedEnv
+  const env =
+    segmentIndex >= 0
+      ? checkpointScenarioEnv(sharedEnv, checkpoint, CHECKPOINT_ENVIRONMENT)
+      : sharedEnv
   const args = SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)
     ? requestedArgs.filter(argument => argument !== '--cloud-only')
     : requestedArgs
@@ -801,7 +775,7 @@ async function runParallelCheckpoints(checkpoints) {
         process.platform === 'darwin' ? CHECKPOINT_RESOURCES.get(checkpoint) : [],
       exclusiveFor: checkpoint => RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint),
       run: async checkpoint => {
-        const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
+        const env = checkpointScenarioEnv(sharedEnv, checkpoint, CHECKPOINT_ENVIRONMENT)
         delete env.WEWORK_E2E_CONTROL_SERVER_PORT
         delete env.WEWORK_E2E_MODEL_SERVER_PORT
         console.log(`\n[desktop-e2e] START ${checkpoint}`)
@@ -849,7 +823,7 @@ async function runCheckpoints(checkpoints) {
   const failures = []
 
   for (const checkpoint of checkpoints) {
-    const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
+    const env = checkpointScenarioEnv(sharedEnv, checkpoint, CHECKPOINT_ENVIRONMENT)
     console.log(`\n[desktop-e2e] START ${checkpoint}`)
     const args = CLOUD_ONLY_CHECKPOINTS.has(checkpoint)
       ? ['--cloud-only', '--segment', checkpoint]

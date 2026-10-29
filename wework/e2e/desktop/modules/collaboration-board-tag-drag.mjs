@@ -176,28 +176,32 @@ export async function verifyMultiTagBoardDrag(control, options) {
   const { scoped, request, project } = options
   const previousWindowSize = JSON.parse(
     await control.command('setMainWindowSize', 'body', {
-      value: JSON.stringify({ width: 1040, height: 760 }),
+      value: JSON.stringify({ width: 1024, height: 720 }),
     })
   )
-  const fixtureProject = await request(`/api/v1/workspaces/${project.workspace_id}/projects`, {
-    method: 'POST',
-    body: JSON.stringify({ name: `多标签拖放回归-${process.pid}` }),
-  })
   try {
-    await verifyBoardFieldDrag(control, { ...options, project: fixtureProject })
-    await verifyTagMoves(control, { ...options, project: fixtureProject })
-  } finally {
+    const fixtureProject = await request(`/api/v1/workspaces/${project.workspace_id}/projects`, {
+      method: 'POST',
+      body: JSON.stringify({ name: `多标签拖放回归-${process.pid}` }),
+    })
     try {
-      const latest = await request(`/api/v1/cloud-projects/${fixtureProject.id}`)
-      await request(`/api/v1/cloud-projects/${fixtureProject.id}?version=${latest.version}`, {
-        method: 'DELETE',
-      })
+      await verifyBoardFieldDrag(control, { ...options, project: fixtureProject })
+      await verifyTagMoves(control, { ...options, project: fixtureProject })
+      console.log('[desktop-e2e] PASS owner board field and tag drag at 1024x720')
     } finally {
-      await control.command('setMainWindowSize', 'body', {
-        value: JSON.stringify(previousWindowSize),
-      })
-      await reloadMainWindow(control, 'The tag drag fixture cleanup did not reload')
-      await openProjectBoard(control, scoped, project)
+      try {
+        const latest = await request(`/api/v1/cloud-projects/${fixtureProject.id}`)
+        await request(`/api/v1/cloud-projects/${fixtureProject.id}?version=${latest.version}`, {
+          method: 'DELETE',
+        })
+      } finally {
+        await reloadMainWindow(control, 'The tag drag fixture cleanup did not reload')
+        await openProjectBoard(control, scoped, project)
+      }
     }
+  } finally {
+    await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify(previousWindowSize),
+    })
   }
 }

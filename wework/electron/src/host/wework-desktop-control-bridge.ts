@@ -44,6 +44,7 @@ export interface WeworkDesktopControlBridgeOptions {
   registryDirectory: string
   window: () => DesktopWindow | null
   smartApps?: () => SmartAppControlService | null
+  ensurePython?: () => Promise<unknown>
 }
 
 export interface SmartAppControlService {
@@ -67,6 +68,7 @@ interface RuntimeRecord {
 export class WeworkDesktopControlBridge {
   private server: Server | null = null
   private runtimePath: string | null = null
+  private pythonEnvironment: NodeJS.ProcessEnv = {}
   private readonly scripts = new Map<string, string>()
 
   constructor(private readonly options: WeworkDesktopControlBridgeOptions) {}
@@ -74,8 +76,9 @@ export class WeworkDesktopControlBridge {
   async start(): Promise<void> {
     if (this.server) return
     const token = randomBytes(32).toString('base64url')
+    const pythonToken = this.options.ensurePython ? randomBytes(32).toString('base64url') : null
     const server = createServer((request, response) => {
-      void this.handleRequest(request, response, token)
+      void this.handleRequest(request, response, token, pythonToken)
     })
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
@@ -111,6 +114,16 @@ export class WeworkDesktopControlBridge {
     }
     this.server = server
     this.runtimePath = runtimePath
+    this.pythonEnvironment = pythonToken
+      ? {
+          WEWORK_PYTHON_RUNTIME_URL: `http://127.0.0.1:${address.port}/runtime/python/ensure`,
+          WEWORK_PYTHON_RUNTIME_TOKEN: pythonToken,
+        }
+      : {}
+  }
+
+  environment(): NodeJS.ProcessEnv {
+    return { ...this.pythonEnvironment }
   }
 
   async stop(): Promise<void> {
@@ -118,6 +131,9 @@ export class WeworkDesktopControlBridge {
     const runtimePath = this.runtimePath
     this.server = null
     this.runtimePath = null
+    this.pythonEnvironment = {}
+    // Pending runtime downloads must not keep application shutdown waiting on HTTP clients.
+    server?.closeAllConnections()
     await Promise.allSettled([
       runtimePath ? rm(runtimePath, { force: true }) : Promise.resolve(),
       server ? new Promise<void>(resolve => server.close(() => resolve())) : Promise.resolve(),
@@ -127,9 +143,23 @@ export class WeworkDesktopControlBridge {
   private async handleRequest(
     request: import('node:http').IncomingMessage,
     response: import('node:http').ServerResponse,
-    token: string
+    token: string,
+    pythonToken: string | null
   ): Promise<void> {
     response.setHeader('content-type', 'application/json; charset=utf-8')
+    if (request.method === 'POST' && request.url === '/runtime/python/ensure') {
+      if (!pythonToken || request.headers.authorization !== `Bearer ${pythonToken}`) {
+        writeResponse(response, 401, { ok: false, error: 'Unauthorized Python runtime request' })
+        return
+      }
+      request.resume()
+      try {
+        writeResponse(response, 200, { ok: true, data: await this.options.ensurePython!() })
+      } catch (error) {
+        writeResponse(response, 200, { ok: false, error: errorMessage(error) })
+      }
+      return
+    }
     if (request.headers.authorization !== `Bearer ${token}`) {
       writeResponse(response, 401, { ok: false, error: 'Unauthorized Wework desktop request' })
       return

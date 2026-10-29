@@ -1321,12 +1321,15 @@ async function main() {
     }
 
     const needsPackagedHarnessRuntime =
+      desktopScenario?.requiresPackagedHarnessRuntime === true ||
       SELECTED_DESKTOP_SEGMENT?.startsWith('harness-app-') ||
       (RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition'))
     const usesReleasePackageRuntimeAssets =
       desktopScenario?.usesReleasePackageRuntimeAssets === true
     const harnessRuntimes = needsPackagedHarnessRuntime
-      ? await prepareHarnessRuntimeRoots(appBinary)
+      ? await prepareHarnessRuntimeRoots(appBinary, {
+          isolated: desktopScenario?.requiresIsolatedHarnessRuntime === true,
+        })
       : null
     const configuredElectronCoreRuntimeRoot =
       process.env.WEWORK_E2E_HARNESS_RUNTIME_ROOT?.trim() || null
@@ -1365,6 +1368,7 @@ async function main() {
       VITE_WEWORK_E2E: 'true',
       WEWORK_E2E_BACKGROUND_WINDOW: process.env.WEWORK_E2E_BACKGROUND_WINDOW ?? '1',
       WEWORK_E2E_DISABLE_COMPONENT_UPDATES: '1',
+      WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1',
       ...(DESKTOP_SEGMENT === 'local-file-preview'
         ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '1500' }
         : {}),

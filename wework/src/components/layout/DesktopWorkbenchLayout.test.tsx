@@ -10,7 +10,7 @@ import {
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useEffect, useMemo, useState } from 'react'
-import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
@@ -289,7 +289,7 @@ const desktopHostMocks = vi.hoisted(() => {
       if (capability === 'window.getState') return { maximized: false }
       return {}
     }),
-    subscribe: vi.fn((handler: (event: Record<string, unknown>) => void) => {
+    subscribe: vi.fn((handler: (event: Record<string, unknown>) => void): (() => void) => {
       subscribers.add(handler)
       return () => subscribers.delete(handler)
     }),
@@ -509,8 +509,17 @@ function createRect({
   } as DOMRect
 }
 
+const originalBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
+const ownedGeometrySpies = new Set<{ mockRestore(): void }>()
+
+function mockBoundingClientRect(element: HTMLElement = HTMLElement.prototype) {
+  const spy = vi.spyOn(element, 'getBoundingClientRect')
+  ownedGeometrySpies.add(spy)
+  return spy
+}
+
 function mockDesktopWorkbenchMainWidth(width: number) {
-  return vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+  return mockBoundingClientRect().mockImplementation(function () {
     if (this.getAttribute('data-testid') === 'desktop-workbench-pane-stack-container') {
       return createRect({ left: 0, top: 0, width, height: 720 })
     }
@@ -874,6 +883,11 @@ describe('DesktopWorkbenchLayout', () => {
     vi.resetConfig()
   })
 
+  afterEach(() => {
+    for (const spy of ownedGeometrySpies) spy.mockRestore()
+    ownedGeometrySpies.clear()
+  })
+
   function createDeferred<T>() {
     let resolve!: (value: T) => void
     let reject!: (error: unknown) => void
@@ -952,6 +966,7 @@ describe('DesktopWorkbenchLayout', () => {
   }
 
   beforeEach(async () => {
+    expect(HTMLElement.prototype.getBoundingClientRect).toBe(originalBoundingClientRect)
     await preloadDefaultDshUiTestModules()
     await installGitUiTestContributions()
     experimentalFeatures.enabled = true
@@ -3213,7 +3228,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('treats a selected runtime task with an empty transcript as a conversation', () => {
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+    mockBoundingClientRect().mockImplementation(function () {
       if (this.getAttribute('data-testid') === 'composer-toolbar') {
         return createRect({ left: 0, top: 0, width: 600, height: 32 })
       }
@@ -8093,6 +8108,49 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('right-workspace-browser-tab-3')).not.toBeInTheDocument()
   })
 
+  test('routes an agent open request to the selected blank browser tab', async () => {
+    runtimeMocks.electron = true
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    fireEvent.keyDown(screen.getByTestId('chat-message-input'), { key: 't', metaKey: true })
+    expect(await screen.findByTestId('right-workspace-browser-tab-2')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    desktopHostMocks.invoke.mockClear()
+
+    act(() => {
+      desktopHostMocks.emit({
+        sequence: 1,
+        type: 'browser.event',
+        payload: {
+          sequence: 1,
+          type: 'open-request',
+          payload: {
+            id: 'agent-open-selected-blank-tab',
+            baseLabel: 'workspace-browser-blank-0',
+            source: 'agent',
+            disposition: 'current-tab',
+            targetLabel: 'workspace-browser-blank-0-2',
+            url: 'https://example.com/',
+          },
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+        'browser.open',
+        expect.objectContaining({
+          label: 'workspace-browser-blank-0-2',
+          url: 'about:blank',
+        })
+      )
+    })
+  })
+
   test('deactivates the right workspace browser while settings are open', async () => {
     renderWorkspacePanelLayout()
 
@@ -8149,7 +8207,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
     await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'example.com{Enter}')
 
-    vi.spyOn(getDesktopWorkbenchMainElement(), 'getBoundingClientRect').mockReturnValue(
+    mockBoundingClientRect(getDesktopWorkbenchMainElement()).mockReturnValue(
       createRect({ left: 0, top: 0, width: 1000, height: 720 })
     )
 
@@ -11815,7 +11873,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('uses the shared workbench width in the first task-switch layout', () => {
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+    mockBoundingClientRect().mockImplementation(function () {
       if (this.getAttribute('data-testid') === 'desktop-workbench-pane-stack-container') {
         return createRect({ left: 0, top: 0, width: 1024, height: 720 })
       }
@@ -12009,7 +12067,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('renders the environment commit menu as the compact commit or push panel', async () => {
+  async function renderEnvironmentCommitMenu() {
     mockDesktopWorkbenchMainWidth(1024)
     deviceExecuteCommandMock.mockResolvedValue({ success: true, stdout: [] })
     const onCommitAndPushEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
@@ -12050,25 +12108,9 @@ describe('DesktopWorkbenchLayout', () => {
         onCommitAndPushEnvironmentChanges={onCommitAndPushEnvironmentChanges}
         onPushEnvironmentChanges={onPushEnvironmentChanges}
         state={{
-          ...baseProps.state,
+          ...activeProjectState,
           currentRuntimeTask: activeProjectRuntimeTask,
           runtimeWork,
-          currentProject: {
-            id: 1,
-            name: 'github_wegent',
-            tasks: [],
-            config: {
-              mode: 'workspace',
-              execution: {
-                targetType: 'local',
-                deviceId: 'device-1',
-              },
-              workspace: {
-                source: 'local_path',
-                localPath: '/workspace/github_wegent',
-              },
-            },
-          },
         }}
       />
     )
@@ -12076,6 +12118,16 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => expect(deviceExecuteCommandMock).toHaveBeenCalledTimes(1))
     const popover = await screen.findByTestId('environment-info-popover')
     const commitMenuButton = await screen.findByTestId('environment-commit-button')
+    return {
+      popover,
+      commitMenuButton,
+      onCommitAndPushEnvironmentChanges,
+      onPushEnvironmentChanges,
+    }
+  }
+
+  test('renders the environment commit menu as the compact commit or push panel', async () => {
+    const { popover, commitMenuButton } = await renderEnvironmentCommitMenu()
     expect(commitMenuButton).toHaveTextContent('提交或推送')
 
     await userEvent.click(commitMenuButton)
@@ -12104,6 +12156,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(commitMenuButton).toHaveFocus()
 
     await userEvent.click(commitMenuButton)
+    expect(screen.getByTestId('environment-commit-message-input')).toHaveValue('keep this')
+  }, 10_000)
+
+  test('preserves the environment commit draft and outside control focus after dismissal', async () => {
+    const { commitMenuButton } = await renderEnvironmentCommitMenu()
+    await userEvent.click(commitMenuButton)
+    await userEvent.type(screen.getByTestId('environment-commit-message-input'), 'keep this')
     const commitMessageInput = screen.getByTestId('environment-commit-message-input')
     await userEvent.click(commitMessageInput)
     expect(commitMessageInput).toHaveFocus()
@@ -12113,17 +12172,37 @@ describe('DesktopWorkbenchLayout', () => {
     expect(outsideControl).toHaveFocus()
 
     await userEvent.click(commitMenuButton)
-    await userEvent.click(screen.getByTestId('environment-commit-and-push-button'))
-    await waitFor(() =>
-      expect(onCommitAndPushEnvironmentChanges).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 1 }),
-        'keep this',
-        activeProjectRuntimeTarget
+    expect(screen.getByTestId('environment-commit-message-input')).toHaveValue('keep this')
+  }, 10_000)
+
+  test('routes environment commit and push actions after the previous mutation finishes refreshing', async () => {
+    const { commitMenuButton, onCommitAndPushEnvironmentChanges, onPushEnvironmentChanges } =
+      await renderEnvironmentCommitMenu()
+    await userEvent.click(commitMenuButton)
+    await userEvent.type(screen.getByTestId('environment-commit-message-input'), 'keep this')
+    const refresh = createDeferred<{ success: boolean; stdout: string[] }>()
+    deviceExecuteCommandMock.mockImplementationOnce(() => refresh.promise)
+    try {
+      await userEvent.click(screen.getByTestId('environment-commit-and-push-button'))
+      await waitFor(() =>
+        expect(onCommitAndPushEnvironmentChanges).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 1 }),
+          'keep this',
+          activeProjectRuntimeTarget
+        )
       )
-    )
-    await waitFor(() => expect(deviceExecuteCommandMock).toHaveBeenCalledTimes(2))
+      await waitFor(() => expect(deviceExecuteCommandMock).toHaveBeenCalledTimes(2))
+      // Command admission does not mean the mutation and its environment refresh have settled.
+      expect(screen.getByTestId('environment-commit-progress-row')).toBeInTheDocument()
+      expect(screen.queryByTestId('environment-commit-button')).not.toBeInTheDocument()
+      expect(onPushEnvironmentChanges).not.toHaveBeenCalled()
+    } finally {
+      await act(async () => refresh.resolve({ success: true, stdout: [] }))
+    }
+    await waitFor(() => expect(screen.getByTestId('environment-commit-button')).toBeEnabled())
 
     await userEvent.click(screen.getByTestId('environment-commit-button'))
+    await waitFor(() => expect(screen.getByTestId('environment-push-button')).toBeEnabled())
     await userEvent.click(screen.getByTestId('environment-push-button'))
     await waitFor(() =>
       expect(onPushEnvironmentChanges).toHaveBeenCalledWith(
@@ -12132,6 +12211,7 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     await waitFor(() => expect(deviceExecuteCommandMock).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(screen.getByTestId('environment-commit-button')).toBeEnabled())
   }, 10_000)
 
   test('shows the environment commit progress row while generating a message', async () => {
@@ -14091,28 +14171,21 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('does not reuse a migrated default browser label after switching panes', async () => {
     runtimeMocks.electron = true
-    const browser = await import('@/lib/embedded-browser')
-    const listen = browser.listenEmbeddedBrowserOpenRequests
+    const subscribe = desktopHostMocks.subscribe.getMockImplementation()
+    if (!subscribe) throw new Error('Desktop host subscription mock is not configured')
     const releaseSubscriptions: (() => void)[] = []
-    // Keep native subscription setup pending across the pane switch.
-    const subscription = vi
-      .spyOn(browser, 'listenEmbeddedBrowserOpenRequests')
-      .mockImplementation(handler => {
-        const listener = listen(handler)
-        return (
-          listener?.then(
-            unlisten =>
-              new Promise<typeof unlisten>(resolve => {
-                releaseSubscriptions.push(() => resolve(unlisten))
-              })
-          ) ?? null
-        )
-      })
+    // Native teardown may finish after the synchronous listener cancellation.
+    desktopHostMocks.subscribe.mockImplementation(handler => {
+      const unlisten = subscribe(handler)
+      return () => releaseSubscriptions.push(unlisten)
+    })
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture(2)
     desktopHostMocks.invoke.mockClear()
-    const { rerender, unmount } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+    let unmount: (() => void) | undefined
 
     try {
+      const view = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+      unmount = view.unmount
       await waitFor(() => {
         expect(requestEmbeddedBrowserOpen('https://example.com/')).toBe(true)
       })
@@ -14126,7 +14199,26 @@ describe('DesktopWorkbenchLayout', () => {
         )
       })
 
-      rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+      view.rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+      // Deliver before the old native listener's asynchronous cleanup settles.
+      act(() => {
+        desktopHostMocks.emit({
+          sequence: 1,
+          type: 'browser.event',
+          payload: {
+            sequence: 1,
+            type: 'open-request',
+            payload: {
+              id: 'native-open-after-pane-switch',
+              baseLabel: 'workspace-browser',
+              source: 'user',
+              disposition: 'new-tab',
+              label: 'workspace-browser',
+              url: 'https://example.org/',
+            },
+          },
+        })
+      })
 
       await waitFor(() => {
         expect(requestEmbeddedBrowserOpen('https://example.org/')).toBe(true)
@@ -14148,9 +14240,12 @@ describe('DesktopWorkbenchLayout', () => {
         })
       )
     } finally {
-      unmount()
+      unmount?.()
+      await act(async () => {
+        await Promise.resolve()
+      })
       releaseSubscriptions.forEach(release => release())
-      subscription.mockRestore()
+      desktopHostMocks.subscribe.mockImplementation(subscribe)
       await new Promise(resolve => setTimeout(resolve, 1_100))
     }
   }, 10_000)

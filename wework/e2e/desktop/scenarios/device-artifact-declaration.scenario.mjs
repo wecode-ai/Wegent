@@ -2,6 +2,11 @@ import assert from 'node:assert/strict'
 
 import { CLOUD_DEVICE_ID, createSingleRootLocalProject } from '../modules/shared.mjs'
 import {
+  ARTIFACT_DECLARATION_CALL_ID,
+  artifactDeclarationCommand,
+  assertArtifactDeclarationOutput,
+} from '../modules/device-artifact-declaration-fixture.mjs'
+import {
   assistantMessage,
   codexRequestKind,
   createSse,
@@ -25,6 +30,7 @@ export function createDesktopScenario({ captureScreenshot, workbenchReadyTimeout
   let active = false
   let toolRequested = false
   let toolVerified = false
+  let declaredArtifact
   const request = async (path, method = 'GET', body) => {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
       method,
@@ -54,41 +60,32 @@ export function createDesktopScenario({ captureScreenshot, workbenchReadyTimeout
       const responseId = `artifact-${Date.now()}`
       let events
       if (codexRequestKind(body) === 'prewarm') events = [assistantMessage('Ready')]
-      else if (!requestContainsToolOutput(body)) {
+      else if (!requestContainsToolOutput(body, ARTIFACT_DECLARATION_CALL_ID)) {
         assert.equal(toolRequested, false, 'The artifact generation tool was requested twice')
         toolRequested = true
-        const seed = `const fs=require('fs'),p=require('path'),root=process.env.WEGENT_TASK_WORKSPACE;if(!root||!process.env.WEGENT_BACKEND_TASK_ID)throw Error('Missing associated Backend Task');fs.mkdirSync(root,{recursive:true});fs.writeFileSync(p.join(root,'report.md'),${JSON.stringify(CONTENT)});`
-        const declare = `${seed}require('child_process').execFileSync(process.env.WEGENT_EXECUTOR_BINARY,['artifact','declare','--path','report.md'],{cwd:root,stdio:'inherit'});process.stdout.write(['WEWORK_ARTIFACT_DECLARED','report.md'].join(' ')+'\\n');`
-        const encoded = Buffer.from(declare).toString('base64')
-        const command = `node -e "eval(Buffer.from('${encoded}','base64').toString('utf8'))"`
+        const command = artifactDeclarationCommand(CONTENT)
+        const shell = process.platform === 'win32' ? 'powershell.exe' : '/bin/bash'
         if (requestAdvertisesProgrammaticExec(body)) {
           const tool = selectProgrammaticExec(
             body,
-            `text(await tools.exec_command(${JSON.stringify({ cmd: command, workdir: cloud.runtimeWorkspaceRoot, yield_time_ms: 10000 })}))`
+            [
+              `const result = await tools.exec_command(${JSON.stringify({ cmd: command, shell, login: false, workdir: cloud.runtimeWorkspaceRoot, yield_time_ms: 10000 })})`,
+              'if (result.exit_code !== 0) throw new Error(JSON.stringify(result))',
+              'text(result.output)',
+            ].join('\n')
           )
-          const event = customToolCall('desktop-artifact-generate', tool.name, tool.input)
+          const event = customToolCall(ARTIFACT_DECLARATION_CALL_ID, tool.name, tool.input)
           event.item.namespace = 'functions'
           events = [event]
         } else {
           const tool = selectShellToolCommand(body, command, cloud.runtimeWorkspaceRoot, {
             yieldTimeMs: 10000,
           })
-          events = functionCall('desktop-artifact-generate', tool.name, tool.arguments)
+          if (tool.name === 'exec_command') Object.assign(tool.arguments, { shell, login: false })
+          events = functionCall(ARTIFACT_DECLARATION_CALL_ID, tool.name, tool.arguments)
         }
       } else {
-        const outputs = body.input.filter(item =>
-          ['function_call_output', 'custom_tool_call_output'].includes(item.type)
-        )
-        assert.match(
-          JSON.stringify(outputs),
-          /\[WEGENT_ARTIFACT\]/,
-          `Real artifact declaration did not succeed: ${JSON.stringify(outputs).slice(0, 4000)}`
-        )
-        assert.match(
-          JSON.stringify(body.input),
-          /WEWORK_ARTIFACT_DECLARED report\.md/,
-          'Real tool output did not confirm a successful artifact declaration'
-        )
+        declaredArtifact = assertArtifactDeclarationOutput(body, CONTENT)
         toolVerified = true
         events = [assistantMessage(COMPLETE)]
       }
@@ -139,6 +136,7 @@ export function createDesktopScenario({ captureScreenshot, workbenchReadyTimeout
         .filter(context => context.context_type === 'remote_workspace_artifact')
       assert.equal(contexts.length, 1)
       const artifact = contexts[0]
+      assert.equal(artifact.id, declaredArtifact.id)
       assert.equal(artifact.name, 'report.md')
       const url = `${cloud.backendUrl}/api/tasks/${task.taskId}/remote-workspace/artifacts/${artifact.id}/file`
       const download = await fetch(url, { headers: { Authorization: `Bearer ${cloud.authToken}` } })

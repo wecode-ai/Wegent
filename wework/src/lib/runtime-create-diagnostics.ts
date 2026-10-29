@@ -26,6 +26,32 @@ export function logRuntimeTaskCreateStage(
   console[level](LOG_PREFIX, serializeDiagnostic(entry))
 }
 
+export async function measureRuntimeTaskCreateStage<T>(
+  stage: 'local-device-resolution' | 'local-workspace-resolution',
+  operation: () => Promise<T>
+): Promise<T> {
+  if (import.meta.env.MODE !== 'e2e' && import.meta.env.VITE_WEWORK_E2E !== 'true') {
+    return operation()
+  }
+  const startedAt = Date.now()
+  let status: 'succeeded' | 'failed' = 'failed'
+  try {
+    const result = await operation()
+    status = 'succeeded'
+    return result
+  } finally {
+    try {
+      logRuntimeTaskCreateStage(stage, {
+        startedAt: new Date(startedAt).toISOString(),
+        elapsedMs: Date.now() - startedAt,
+        status,
+      })
+    } catch {
+      // Diagnostic failures must not replace the operation's result or exception.
+    }
+  }
+}
+
 export function summarizeRuntimeQueue(messages: readonly RuntimePaneQueuedMessage[]) {
   return {
     queueLength: messages.length,

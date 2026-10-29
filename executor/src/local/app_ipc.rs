@@ -78,11 +78,17 @@ const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
 const TRANSCRIPT_EXPORT_TIMEOUT_SECONDS: u64 = 10 * 60;
+// Python provisioning (uv + CPython) precedes the adapter's own action deadline.
+const PYTHON_AUTH_REQUEST_TIMEOUT_SECONDS: u64 = 18 * 60;
 
 fn app_ipc_request_timeout_seconds(method: Option<&str>) -> u64 {
     match method {
-        Some("executor.plugin_auth.migrate") => 280,
-        Some("executor.plugin_auth.run") => 200,
+        Some(
+            "executor.plugin_auth.migrate" | "executor.plugin_auth.run" | "runtime.connections.cli",
+        ) => PYTHON_AUTH_REQUEST_TIMEOUT_SECONDS,
+        Some(method) if method.starts_with("runtime.local_connector_auth.") => {
+            PYTHON_AUTH_REQUEST_TIMEOUT_SECONDS
+        }
         Some("runtime.tasks.transcript.export") => TRANSCRIPT_EXPORT_TIMEOUT_SECONDS,
         // Context compaction waits for the Codex app-server to finish the
         // compaction turn, so the request deadline must outlive that budget.
@@ -3745,6 +3751,25 @@ mod tests {
             app_ipc_request_timeout_seconds(Some("runtime.tasks.list")),
             75
         );
+    }
+
+    #[test]
+    fn python_auth_requests_allow_provisioning_before_execution() {
+        for method in [
+            "executor.plugin_auth.migrate",
+            "executor.plugin_auth.run",
+            "runtime.connections.cli",
+            "runtime.local_connector_auth.health",
+            "runtime.local_connector_auth.start",
+            "runtime.local_connector_auth.poll",
+            "runtime.local_connector_auth.logout",
+        ] {
+            assert!(
+                app_ipc_request_timeout_seconds(Some(method))
+                    > crate::python_runtime::PYTHON_RUNTIME_ENSURE_TIMEOUT_SECONDS + 280
+            );
+        }
+        assert_eq!(app_ipc_request_timeout_seconds(Some("executor.health")), 75);
     }
 
     #[test]
