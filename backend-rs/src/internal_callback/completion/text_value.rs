@@ -5,42 +5,50 @@
 //! Resolve terminal assistant text from finalized blocks and legacy stream state.
 use serde_json::Value;
 
-/// Prefer finalized text, including an explicit empty replacement. Preserve the
-/// aggregate only for legacy results that contain no readable text block.
+/// Prefer complete finalized text, preserving streamed whitespace and explicit
+/// empty replacements. Incomplete blocks retain the available stream aggregate.
 pub(super) fn terminal_text_value(blocks: Option<&Value>, accumulated: &str) -> String {
-    extract_text_value_from_blocks(blocks).unwrap_or_else(|| accumulated.to_string())
+    let parts = extract_text_value_from_blocks(blocks);
+    if parts.is_empty() {
+        return accumulated.to_string();
+    }
+    if !accumulated.trim().is_empty() {
+        if parts.iter().any(Option::is_none) {
+            return accumulated.to_string();
+        }
+        return parts.into_iter().flatten().collect();
+    }
+    // Block-only callbacks keep the collector's existing paragraph formatting.
+    parts
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-/// Join text in display order. `Some("")` is an authoritative empty completion;
-/// `None` means blocks cannot supply a text value.
-fn extract_text_value_from_blocks(blocks: Option<&Value>) -> Option<String> {
+/// Keep text blocks in display order, distinguishing unavailable content from
+/// an explicitly empty string. Tool and thinking blocks do not contribute text.
+fn extract_text_value_from_blocks(blocks: Option<&Value>) -> Vec<Option<&str>> {
     let Some(Value::Array(blocks)) = blocks else {
-        return None;
+        return Vec::new();
     };
-    let mut has_text = false;
-    let mut parts: Vec<&str> = Vec::new();
-    for block in blocks {
-        let Value::Object(block) = block else {
-            continue;
-        };
-        if !matches!(
-            block.get("type").and_then(Value::as_str),
-            Some("text" | "output_text")
-        ) {
-            continue;
-        }
-        let content = block
-            .get("content")
-            .and_then(Value::as_str)
-            .or_else(|| block.get("text").and_then(Value::as_str));
-        if let Some(text) = content {
-            has_text = true;
-            if !text.trim().is_empty() {
-                parts.push(text.trim());
-            }
-        }
-    }
-    has_text.then(|| parts.join("\n"))
+    blocks
+        .iter()
+        .filter(|block| {
+            matches!(
+                block.get("type").and_then(Value::as_str),
+                Some("text" | "output_text")
+            )
+        })
+        .map(|block| {
+            block
+                .get("content")
+                .and_then(Value::as_str)
+                .or_else(|| block.get("text").and_then(Value::as_str))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -73,7 +81,7 @@ mod tests {
     }
 
     #[test]
-    fn text_blocks_keep_order_and_distinct_ids_with_identical_text() {
+    fn block_only_results_keep_order_and_distinct_ids_with_identical_text() {
         let blocks = json!([
             {"id": "one", "type": "text", "content": " same "},
             {"id": "tool", "type": "tool", "content": "not assistant text"},
@@ -81,7 +89,7 @@ mod tests {
             {"id": "three", "type": "text", "content": "新结果🙂"}
         ]);
         assert_eq!(
-            terminal_text_value(Some(&blocks), "old"),
+            terminal_text_value(Some(&blocks), ""),
             "same\nsame\n新结果🙂"
         );
     }
@@ -100,5 +108,50 @@ mod tests {
             assert_eq!(terminal_text_value(Some(&blocks), " old\n"), " old\n");
         }
         assert_eq!(terminal_text_value(None, " old\n"), " old\n");
+    }
+
+    #[test]
+    fn streamed_text_keeps_whitespace_across_block_boundaries() {
+        let blocks = json!([
+            {"id": "one", "type": "text", "content": "Hello "},
+            {"id": "two", "type": "text", "content": "world\n"}
+        ]);
+        assert_eq!(
+            terminal_text_value(Some(&blocks), "Hello world\n"),
+            "Hello world\n"
+        );
+    }
+
+    #[test]
+    fn a_rewritten_stream_keeps_the_completed_blocks_whitespace() {
+        let blocks = json!([
+            {"id": "one", "type": "text", "content": "Hello "},
+            {"id": "two", "type": "text", "content": "world\n"}
+        ]);
+        assert_eq!(
+            terminal_text_value(Some(&blocks), "Old world\n"),
+            "Hello world\n"
+        );
+    }
+
+    #[test]
+    fn one_missing_text_block_preserves_the_complete_stream_aggregate() {
+        let blocks = json!([
+            {"id": "expired", "type": "text"},
+            {"id": "two", "type": "text", "content": "world"}
+        ]);
+        assert_eq!(
+            terminal_text_value(Some(&blocks), "Hello world"),
+            "Hello world"
+        );
+    }
+
+    #[test]
+    fn missing_blocks_without_an_aggregate_keep_the_available_text() {
+        let blocks = json!([
+            {"id": "expired", "type": "text"},
+            {"id": "two", "type": "text", "content": " world "}
+        ]);
+        assert_eq!(terminal_text_value(Some(&blocks), ""), "world");
     }
 }

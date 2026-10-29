@@ -143,6 +143,7 @@ pub(crate) async fn publish_callback_event<R: Redis>(
 
 /// `_load_blocks_from_client`: read block metadata and hydrate per-block
 /// content from the internal content keys, then strip the internal field.
+/// A missing key leaves content absent; an explicitly stored empty string stays empty.
 async fn load_blocks<R: Redis>(
     redis: &R,
     subtask_id: i64,
@@ -170,11 +171,14 @@ async fn load_blocks<R: Redis>(
         let keys: Vec<String> = content_refs.iter().map(|(_, key)| key.clone()).collect();
         let values = redis.mget::<_, brz_redis::RedisBytes>(keys).await.ok()?;
         for ((index, _), value) in content_refs.iter().zip(values.iter()) {
-            let content = match value {
-                Some(bytes) => std::str::from_utf8(bytes).ok()?.to_string(),
-                None => String::new(),
-            };
-            blocks[*index].insert("content".into(), Value::String(content));
+            let block = &mut blocks[*index];
+            if let Some(bytes) = value {
+                let content = std::str::from_utf8(bytes).ok()?.to_string();
+                block.insert("content".into(), Value::String(content));
+            } else {
+                block.shift_remove("content");
+                block.shift_remove("text");
+            }
         }
     }
     for block in &mut blocks {
