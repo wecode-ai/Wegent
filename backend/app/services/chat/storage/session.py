@@ -48,12 +48,13 @@ STREAMING_TTL = 3600
 # Internal field stored in Redis block metadata. It is stripped before returning
 # blocks to callers so API consumers still see the existing block shape.
 BLOCK_CONTENT_KEY_FIELD = "_content_key"
-# An append marks its block id pending in the blocks index before the RPUSH and
-# records the position right after it. A lookup that finds no position checks
-# this many blocks at the tail of the list, and a pending block not found there
-# makes it reindex the whole list.
-BLOCKS_INDEX_TAIL_SCAN = 8
-BLOCKS_INDEX_PENDING = "pending"
+# Internal fields of the blocks index: how many blocks at the head of the list
+# lookups have indexed, and the id of the last of them, which shows whether the
+# list was written again under the index. A lookup that misses the index reads
+# only the blocks past this watermark, so it finds a block appended without an
+# index entry, by any writer, and each block is scanned once.
+BLOCKS_INDEX_WATERMARK_FIELD = "_watermark"
+BLOCKS_INDEX_WATERMARK_ID_FIELD = "_watermark_id"
 UNRESOLVED_PREVIEW_TOOL_BLOCK_STATUSES = {"pending", "generating_arguments"}
 UNRESOLVED_PREVIEW_TOOL_BLOCK_MESSAGE = "Tool call was not executed before the turn completed. The turn may have hit the tool-call limit."
 UNRESOLVED_PREVIEW_TOOL_BLOCK_GENERIC_MESSAGE = (
@@ -815,7 +816,8 @@ class SessionManager:
     # Uses Redis atomic operations for high performance:
     # - accumulated_content: APPEND for O(1) content addition
     # - blocks: RPUSH for O(1) block addition
-    # - blocks_index: HASH of block id -> list index for O(1) block lookup
+    # - blocks_index: HASH of block id -> list index for O(1) block lookup, plus
+    #   a watermark of how many blocks at the head of the list are indexed
     # - current_text_block_id: separate key for O(1) read/write
 
     def _get_blocks_key(self, subtask_id: int) -> str:
@@ -905,11 +907,19 @@ class SessionManager:
 
     @staticmethod
     def _parse_block_index(raw_index: Any) -> Optional[int]:
-        """Parse a blocks index entry, returning None for a missing or pending one."""
+        """Parse a blocks index entry, returning None for a missing or bad one."""
         try:
             return int(raw_index)
         except (TypeError, ValueError):
             return None
+
+    @classmethod
+    def _serialized_block_id(cls, block_json: Any) -> str:
+        """Return the id of one serialized block, or "" if it has none."""
+        block = cls._parse_block(block_json)
+        if block is None or block.get("id") is None:
+            return ""
+        return str(block["id"])
 
     async def _hydrate_block(
         self, redis_client: Any, block: Dict[str, Any]
@@ -932,41 +942,70 @@ class SessionManager:
             pipe.expire(index_key, STREAMING_TTL)
             await pipe.execute()
 
-    async def _rebuild_blocks_index(
-        self, redis_client: Any, subtask_id: int, block_id: str
+    async def _index_blocks_from(
+        self,
+        redis_client: Any,
+        subtask_id: int,
+        block_id: str,
+        start: int = 0,
+        watermark_id: str = "",
+        replace: bool = False,
     ) -> tuple[Optional[int], Optional[Dict[str, Any]]]:
-        """Index the whole blocks list once and return the requested block."""
+        """Index the blocks from `start` to the end of the list.
+
+        Returns the requested block if it is among them, and moves the
+        watermark to the end of the list. `watermark_id` is the id of the
+        block just before `start`. A start of 0 indexes the whole list, and
+        `replace` also drops the entries already in the index.
+        """
+        blocks_key = self._get_blocks_key(subtask_id)
         index_key = self._get_blocks_index_key(subtask_id)
-        blocks_raw = await redis_client.lrange(self._get_blocks_key(subtask_id), 0, -1)
+        async with redis_client.pipeline(transaction=False) as pipe:
+            pipe.lrange(blocks_key, start, -1)
+            if start:
+                pipe.lindex(blocks_key, start - 1)
+            results = await pipe.execute()
+        blocks_raw = results[0]
+        if start and (
+            results[1] is None or self._serialized_block_id(results[1]) != watermark_id
+        ):
+            # The list was cleaned up, and maybe written again, under its index.
+            logger.info(
+                f"[SessionManager] Blocks index of subtask {subtask_id} no longer "
+                f"matches its list, reindexing"
+            )
+            return await self._index_blocks_from(
+                redis_client, subtask_id, block_id, replace=True
+            )
         if not blocks_raw:
-            # Drop entries left over from a list that expired before its index.
-            await redis_client.delete(index_key)
+            if not start:
+                # Drop entries left over from a list that expired before its index.
+                await redis_client.delete(index_key)
             return None, None
 
-        mapping: Dict[str, int] = {}
+        mapping: Dict[str, Any] = {}
         found: tuple[Optional[int], Optional[Dict[str, Any]]] = (None, None)
-        for index, block_json in enumerate(blocks_raw):
+        for offset, block_json in enumerate(blocks_raw):
             block = self._parse_block(block_json)
             if block is None or block.get("id") is None:
                 continue
             # A repeated id maps to its last block, as appends index it.
             candidate_id = str(block["id"])
-            mapping[candidate_id] = index
+            mapping[candidate_id] = start + offset
             if candidate_id == block_id:
-                found = (index, block)
+                found = (start + offset, block)
+        mapping[BLOCKS_INDEX_WATERMARK_FIELD] = start + len(blocks_raw)
+        mapping[BLOCKS_INDEX_WATERMARK_ID_FIELD] = self._serialized_block_id(
+            blocks_raw[-1]
+        )
 
         async with redis_client.pipeline(transaction=False) as pipe:
-            if mapping:
-                pipe.hset(index_key, mapping=mapping)
-            if block_id not in mapping:
-                # Also drops a pending entry whose append never reached the list.
-                pipe.hdel(index_key, block_id)
+            if replace:
+                # Also drop entries for blocks that are no longer in the list.
+                pipe.delete(index_key)
+            pipe.hset(index_key, mapping=mapping)
             pipe.expire(index_key, STREAMING_TTL)
             await pipe.execute()
-        logger.info(
-            f"[SessionManager] Rebuilt blocks index for subtask {subtask_id}: "
-            f"count={len(blocks_raw)}"
-        )
         return found
 
     async def _find_block(
@@ -975,39 +1014,42 @@ class SessionManager:
         """Return the list index and raw metadata of a block, or (None, None).
 
         Looks the block up through the blocks index. Reading the whole list
-        here made every upsert O(n) and a long run O(n²).
+        here made every upsert O(n) and a long run O(n²). A miss reads only
+        the blocks past the index watermark, so each block is scanned once,
+        whichever writer appended it.
         """
         blocks_key = self._get_blocks_key(subtask_id)
         index_key = self._get_blocks_index_key(subtask_id)
         field = str(block_id)
 
-        raw_index = await redis_client.hget(index_key, field)
+        raw_index, raw_watermark, raw_watermark_id = await redis_client.hmget(
+            index_key,
+            [field, BLOCKS_INDEX_WATERMARK_FIELD, BLOCKS_INDEX_WATERMARK_ID_FIELD],
+        )
         index = self._parse_block_index(raw_index)
         if index is not None:
             block = self._parse_block(await redis_client.lindex(blocks_key, index))
             if block is not None and str(block.get("id")) == field:
                 return index, block
-            # The entry is stale, e.g. the list was cleaned up underneath it.
-            return await self._rebuild_blocks_index(redis_client, subtask_id, field)
+            # The entry is stale: the list was cleaned up and written again
+            # under its index. Index the list anew.
+            logger.info(
+                f"[SessionManager] Stale blocks index entry for subtask "
+                f"{subtask_id}: id={field}, index={index}"
+            )
+            return await self._index_blocks_from(
+                redis_client, subtask_id, field, replace=True
+            )
 
-        if not await redis_client.exists(index_key):
-            # The list predates the index, or its first block is not indexed yet.
-            return await self._rebuild_blocks_index(redis_client, subtask_id, field)
-
-        length = await redis_client.llen(blocks_key)
-        if not length:
-            return None, None
-        start = max(0, length - BLOCKS_INDEX_TAIL_SCAN)
-        tail = await redis_client.lrange(blocks_key, start, length - 1)
-        for offset in range(len(tail) - 1, -1, -1):
-            block = self._parse_block(tail[offset])
-            if block is not None and str(block.get("id")) == field:
-                await self._index_block(redis_client, subtask_id, field, start + offset)
-                return start + offset, block
-        if raw_index is not None:
-            # Pending, but its position was never recorded and it left the tail.
-            return await self._rebuild_blocks_index(redis_client, subtask_id, field)
-        return None, None
+        # A block appended without an index entry sits past the watermark. A
+        # list without a watermark predates the index or was never scanned.
+        return await self._index_blocks_from(
+            redis_client,
+            subtask_id,
+            field,
+            self._parse_block_index(raw_watermark) or 0,
+            self._decode_redis_text(raw_watermark_id),
+        )
 
     async def get_block(
         self, subtask_id: int, block_id: str
@@ -1279,16 +1321,15 @@ class SessionManager:
                         f"id={block_id}, type={block.get('type')}"
                     )
                 else:
-                    # Append new block. It is marked pending first, so a failed
-                    # position write cannot hide it from later lookups.
+                    # Append new block. Its position is recorded in a second
+                    # round trip; if that fails, the block still sits past the
+                    # index watermark, where the next index miss finds it.
                     async with redis_client.pipeline(transaction=False) as pipe:
-                        pipe.hset(index_key, str(block_id), BLOCKS_INDEX_PENDING)
-                        pipe.expire(index_key, STREAMING_TTL)
                         pipe.rpush(blocks_key, json.dumps(block))
                         pipe.expire(blocks_key, STREAMING_TTL)
                         results = await pipe.execute()
                     await self._index_block(
-                        redis_client, subtask_id, str(block_id), results[2] - 1
+                        redis_client, subtask_id, str(block_id), results[0] - 1
                     )
                     logger.debug(
                         f"[SessionManager] Added block for subtask {subtask_id}: "
@@ -1356,10 +1397,7 @@ class SessionManager:
                     block = create_text_block(content="")
                     content_key = self._get_block_content_key(subtask_id, block["id"])
                     block[BLOCK_CONTENT_KEY_FIELD] = content_key
-                    index_key = self._get_blocks_index_key(subtask_id)
                     async with redis_client.pipeline(transaction=False) as pipe:
-                        pipe.hset(index_key, block["id"], BLOCKS_INDEX_PENDING)
-                        pipe.expire(index_key, STREAMING_TTL)
                         pipe.rpush(blocks_key, json.dumps(block))
                         pipe.set(text_block_key, block["id"], ex=STREAMING_TTL)
                         pipe.append(streaming_key, content)
@@ -1369,7 +1407,7 @@ class SessionManager:
                         pipe.expire(blocks_key, STREAMING_TTL)
                         results = await pipe.execute()
                     await self._index_block(
-                        redis_client, subtask_id, block["id"], results[2] - 1
+                        redis_client, subtask_id, block["id"], results[0] - 1
                     )
                     logger.debug(
                         f"[SessionManager] Created text block for subtask {subtask_id}: "
@@ -1421,10 +1459,7 @@ class SessionManager:
                         "timestamp": ts,
                         BLOCK_CONTENT_KEY_FIELD: content_key,
                     }
-                    index_key = self._get_blocks_index_key(subtask_id)
                     async with redis_client.pipeline(transaction=False) as pipe:
-                        pipe.hset(index_key, block_id, BLOCKS_INDEX_PENDING)
-                        pipe.expire(index_key, STREAMING_TTL)
                         pipe.rpush(blocks_key, json.dumps(block))
                         pipe.set(thinking_block_key, block["id"], ex=STREAMING_TTL)
                         pipe.append(content_key, content)
@@ -1432,7 +1467,7 @@ class SessionManager:
                         pipe.expire(blocks_key, STREAMING_TTL)
                         results = await pipe.execute()
                     await self._index_block(
-                        redis_client, subtask_id, block_id, results[2] - 1
+                        redis_client, subtask_id, block_id, results[0] - 1
                     )
                     logger.debug(
                         f"[SessionManager] Created thinking block for subtask {subtask_id}: "
