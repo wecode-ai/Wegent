@@ -252,8 +252,9 @@ core_shards=(
 
 core_shards[1]+=',mcp-apps,project-space-tool-discovery'
 core_shards[1]+=',human-interactions'
+# Keep new unmeasured checks off the heaviest measured shard so Windows can rebalance it.
 core_shards[2]+=',human-interactions-browser'
-core_shards[3]+=',human-interactions-hidden'
+core_shards[2]+=',human-interactions-hidden'
 core_shards[4]+=',human-interactions-issue'
 
 validate_core_shards() {
