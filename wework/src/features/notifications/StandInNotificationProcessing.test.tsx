@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { StandInNotificationProcessing } from './StandInNotificationProcessing'
@@ -6,6 +6,10 @@ import { assignment, runtimeItem } from './standInNotifications.fixtures'
 import { mergeStandInNotifications } from './standInNotifications'
 import { useStandInAssignmentNotifications } from './useStandInAssignmentNotifications'
 import type { TaskSource } from './NotificationTaskSourceContext'
+import {
+  RuntimeInteractionsContext,
+  type RuntimeInteractionsValue,
+} from './RuntimeInteractionsContext'
 import * as runtimeEnvironment from '@/lib/runtime-environment'
 
 const { send, transcript, run } = vi.hoisted(() => ({
@@ -163,7 +167,9 @@ describe('notification inline handling', () => {
       'notifications.stand_in_completed'
     )
     expect(await screen.findByText('Review completed')).toBeVisible()
-    expect(screen.getByTestId('notification-stand-in-reply-open-assignment')).toBeEnabled()
+    expect(
+      screen.queryByTestId('notification-stand-in-reply-open-assignment')
+    ).not.toBeInTheDocument()
   })
 
   it.each([undefined, 'Alice'])('preserves the assignment layout with assigner %s', actorName => {
@@ -230,24 +236,6 @@ describe('notification inline handling', () => {
     rendered.rerender(view())
     expect(transcript).toHaveBeenCalledOnce()
   })
-  it('sends follow-up to the existing execution without navigation or task creation', async () => {
-    render(view())
-    expect(screen.queryByTestId('notification-stand-in-reply-assignment')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('notification-stand-in-reply-open-assignment'))
-    expect(screen.getByTestId('notification-stand-in-reply-assignment')).toHaveFocus()
-    fireEvent.change(screen.getByTestId('notification-stand-in-reply-assignment'), {
-      target: { value: 'Also check ordering' },
-    })
-    fireEvent.click(screen.getByTestId('notification-stand-in-send-assignment'))
-    await waitFor(() => expect(onChanged).toHaveBeenCalledOnce())
-    expect(send).toHaveBeenCalledWith(
-      expect.objectContaining({ address: runtimeItem.address, message: 'Also check ordering' })
-    )
-    expect(run).not.toHaveBeenCalled()
-    expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
-      'notifications.stand_in_running'
-    )
-  })
   it('localizes the assignment rejection returned by manual delegation', async () => {
     run.mockRejectedValueOnce(
       Object.assign(new Error('This assignment has already been handled or is no longer active'), {
@@ -269,36 +257,6 @@ describe('notification inline handling', () => {
     )
   })
 
-  it('retains the draft and shows the localized error on rejected send', async () => {
-    send.mockResolvedValue({ accepted: false, error: 'Device offline' })
-    render(view())
-    fireEvent.click(screen.getByTestId('notification-stand-in-reply-open-assignment'))
-    const input = screen.getByTestId('notification-stand-in-reply-assignment')
-    fireEvent.change(input, { target: { value: 'Keep my draft' } })
-    fireEvent.click(screen.getByTestId('notification-stand-in-send-assignment'))
-    expect(await screen.findByRole('alert')).toHaveTextContent('执行设备离线，请连接设备后重试。')
-    expect(input).toHaveValue('Keep my draft')
-    expect(onChanged).not.toHaveBeenCalled()
-  })
-  it('prevents duplicate submissions while awaiting acceptance', async () => {
-    let accept!: (value: unknown) => void
-    send.mockImplementation(
-      () =>
-        new Promise(resolve => {
-          accept = resolve
-        })
-    )
-    render(view())
-    fireEvent.click(screen.getByTestId('notification-stand-in-reply-open-assignment'))
-    fireEvent.change(screen.getByTestId('notification-stand-in-reply-assignment'), {
-      target: { value: 'Once' },
-    })
-    const button = screen.getByTestId('notification-stand-in-send-assignment')
-    fireEvent.click(button)
-    fireEvent.click(button)
-    expect(send).toHaveBeenCalledTimes(1)
-    await act(async () => accept({ accepted: true, taskId: 'task' }))
-  })
   it('retries the failed assignment on its original execution device', async () => {
     render(view('failed'))
     fireEvent.click(screen.getByTestId('notification-stand-in-retry-assignment'))
@@ -336,72 +294,32 @@ describe('notification inline handling', () => {
     )
     expect(screen.queryByText(/Model reply is ready|模型回复已完成/)).not.toBeInTheDocument()
   })
-  it('answers the actual pending runtime question with its original request identity', async () => {
-    transcript.mockResolvedValue({
-      workspacePath: '/project',
-      runtime: 'codex',
-      running: true,
-      turns: [],
-      messages: [
-        {
-          id: 'message',
-          subtaskId: 'turn',
-          role: 'assistant',
-          content: '',
-          blocks: [
-            {
-              id: 'question',
-              type: 'tool',
-              status: 'pending',
-              toolName: 'request_user_input',
-              renderPayload: {
-                kind: 'request_user_input',
-                requestId: 7,
-                itemId: 'input-1',
-                questions: [
-                  {
-                    id: 'confirm',
-                    question: 'Continue submitting?',
-                    options: [
-                      { label: 'Continue', value: 'continue' },
-                      { label: 'Stop', value: 'stop' },
-                    ],
-                  },
-                ],
-              },
-            },
-          ],
-        },
-      ],
-    })
+
+  it('routes a waiting execution to the shared inbox without an independent reply form', () => {
+    const open = vi.fn()
+    const pending = { id: 'exact-question', task: runtimeItem }
     const waiting = mergeStandInNotifications(
       [assignment],
       [{ ...runtimeItem, task: { ...runtimeItem.task, interactionStatus: 'waitingForUserInput' } }]
     )[0]
     render(
-      <StandInNotificationProcessing
-        notification={waiting}
-        rowProps={rowProps}
-        services={services}
-        userId={1}
-        onChanged={onChanged}
-      />
+      <RuntimeInteractionsContext.Provider
+        value={{ pending: [pending], open } as unknown as RuntimeInteractionsValue}
+      >
+        <StandInNotificationProcessing
+          notification={waiting}
+          rowProps={rowProps}
+          services={services}
+          userId={1}
+          onChanged={onChanged}
+        />
+      </RuntimeInteractionsContext.Provider>
     )
-    const card = await screen.findByTestId('request-user-input-card')
-    expect(card).toHaveTextContent('Continue submitting?')
-    fireEvent.click(screen.getByTestId('request-user-input-option-confirm-0'))
-    fireEvent.submit(card)
-    await waitFor(() => expect(send).toHaveBeenCalledOnce())
-    expect(send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        address: runtimeItem.address,
-        requestUserInputResponse: {
-          requestId: 7,
-          itemId: 'input-1',
-          answers: { confirm: { answers: ['continue'] } },
-        },
-      })
-    )
+    fireEvent.click(screen.getByTestId('notification-open-pending-assignment'))
+    expect(open).toHaveBeenCalledExactlyOnceWith('exact-question')
+    expect(screen.queryByTestId('request-user-input-card')).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(send).not.toHaveBeenCalled()
   })
 })
 

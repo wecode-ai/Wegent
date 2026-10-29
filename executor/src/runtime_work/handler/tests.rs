@@ -5718,6 +5718,53 @@ async fn cached_task_list_uses_the_existing_runtime_work_store() {
 }
 
 #[tokio::test]
+async fn pending_task_list_discovers_filtered_work_without_changing_sidebar_visibility() {
+    let (handler, root) = isolated_runtime_work_handler("pending-task-list");
+    let project_index = CodexGlobalProjectIndex::from_test_payload(
+        json!({"electron-saved-workspace-roots": ["/tmp/visible-project"]})
+            .as_object()
+            .unwrap(),
+    );
+    for (id, pending) in [("hidden-pending", true), ("hidden-idle", false)] {
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: id.to_owned(),
+            runtime: "claude".to_owned(),
+            workspace_path: "/tmp/hidden-project".to_owned(),
+            title: id.to_owned(),
+            interaction_status: pending.then(|| "awaitingUserReply".to_owned()),
+            ..RuntimeTaskLink::default()
+        });
+    }
+    let visible = handler
+        .list_tasks_with_project_index(
+            &json!({"preferCached":true}),
+            &project_index,
+            Instant::now(),
+        )
+        .await
+        .unwrap();
+    assert!(!visible.to_string().contains("hidden-pending"));
+    let pending = handler
+        .list_tasks_with_project_index(
+            &json!({"preferCached":true, "pendingOnly":true}),
+            &project_index,
+            Instant::now(),
+        )
+        .await
+        .unwrap();
+    let tasks = pending["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|workspace| workspace["tasks"].as_array())
+        .flatten()
+        .collect::<Vec<_>>();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["taskId"], "hidden-pending");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn cached_task_list_keeps_tasks_linked_to_cloud_issues() {
     let (handler, root) = isolated_runtime_work_handler("cached-cloud-issue-task-list");
     handler.upsert_local_task(RuntimeTaskLink {

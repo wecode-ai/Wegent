@@ -3,7 +3,7 @@ import {
   AlarmClock,
   ArrowDown,
   ArrowUp,
-  Bell,
+  CircleHelp,
   ChevronDown,
   ChevronRight,
   Columns2,
@@ -40,7 +40,6 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent,
   PointerEventHandler,
-  RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { ActionMenu } from '@/components/common/ActionMenu'
@@ -64,7 +63,6 @@ import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { executeDshCommand } from '@/features/dsh-runtime/dshExtensions'
 import { useDshMenuCommands } from '@/features/dsh-runtime/useDshMenuCommands'
-import { OPEN_NOTIFICATION_SETTINGS_EVENT } from '@/features/notifications/notificationPreferences'
 import {
   getRuntimeTaskReminderItemKey,
   getRuntimeTaskReminderKey,
@@ -81,9 +79,6 @@ import {
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStoreSnapshot,
 } from '@/features/workbench/runtimeTaskLifecycle'
-import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
-import type { CloudConnectionStatus } from '@/features/cloud-connection/cloudConnectionStorage'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { DshSidebarNavigationSurface } from '@/features/dsh-runtime/DshSidebarNavigationSurface'
 import { prefetchDshSidebarNavigation } from '@/features/dsh-runtime/dshSidebarNavigation'
 import { rightWorkspaceDshSidebar } from './workspace-panels/rightWorkspaceDshSidebar'
@@ -275,8 +270,6 @@ interface DesktopSidebarProps {
     address: RuntimeTaskAddress,
     subscribed: boolean
   ) => Promise<void> | void
-  onToggleGlobalImNotification?: () => Promise<void> | void
-  onOpenGlobalImNotificationSettings?: () => Promise<void> | void
   onRefreshDevices?: () => Promise<void>
   onOpenStandaloneFolderProject?: (
     mode: StandaloneWorkspaceDialogMode,
@@ -1122,273 +1115,10 @@ function isRuntimeTaskNotificationSubscribed(
   )
 }
 
-function getImNotificationSessionLabel(
-  settings: RuntimeIMNotificationSettingsResponse | null | undefined
-): string | null {
-  const session = settings?.global.session
-  if (!session) return null
-  const displayName = session.displayName || session.senderId
-  return `${session.channelLabel} / ${displayName}`
-}
-
-function getGlobalImNotificationTitle(
-  t: ReturnType<typeof useTranslation>['t'],
-  settings: RuntimeIMNotificationSettingsResponse | null | undefined,
-  cloudStatus?: CloudConnectionStatus
-): string {
-  if (cloudStatus === 'disconnected') {
-    return t(
-      'workbench.global_im_notifications_requires_cloud_login',
-      '登录云端后可开启离开电脑提醒'
-    )
-  }
-  if (cloudStatus === 'expired' || cloudStatus === 'error') {
-    return t(
-      'workbench.global_im_notifications_requires_cloud_login',
-      '登录云端后可开启离开电脑提醒'
-    )
-  }
-  if (cloudStatus === 'restoring' || cloudStatus === 'connecting') {
-    return t('workbench.cloud_connection_connecting', '正在连接云端')
-  }
-
-  const target = getImNotificationSessionLabel(settings)
-  if (settings?.global.enabled) {
-    return target
-      ? `${t('workbench.away_im_reminder_on', '离开电脑提醒已开启')} · ${target}`
-      : t('workbench.away_im_reminder_on', '离开电脑提醒已开启')
-  }
-  if (!target) {
-    return t('workbench.away_im_reminder_needs_session', '需要选择 IM 会话')
-  }
-  return target
-    ? `${t('workbench.away_im_reminder_enable', '开启离开电脑提醒')} · ${target}`
-    : t('workbench.away_im_reminder_enable', '开启离开电脑提醒')
-}
-
 function formatSidebarTemplate(template: string, values: Record<string, string>) {
   return Object.entries(values).reduce(
     (result, [key, value]) => result.replaceAll(`{{${key}}}`, value),
     template
-  )
-}
-
-function GlobalImNotificationBell({
-  devices,
-  imNotificationSettings,
-  menuOpen,
-  menuContainerRef,
-  onMenuOpenChange,
-  onToggleGlobalImNotification,
-  onOpenGlobalImNotificationSettings,
-  onOpenSettings,
-  onAddCloudDevice,
-}: {
-  devices: DeviceInfo[]
-  imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
-  menuOpen: boolean
-  // Portal target covering the full-width account area. The bell trigger lives
-  // inside a narrow 32px icon group, so the menu must anchor to this wider
-  // relative container for `left-4 right-4` to resolve against the sidebar.
-  menuContainerRef: RefObject<HTMLDivElement | null>
-  onMenuOpenChange: (open: boolean) => void
-  onToggleGlobalImNotification?: () => Promise<void> | void
-  onOpenGlobalImNotificationSettings?: () => Promise<void> | void
-  onOpenSettings: () => void
-  onAddCloudDevice: () => void
-}) {
-  const { t } = useTranslation('common')
-  const cloud = useOptionalCloudConnection()
-  const [cloudDialogOpen, setCloudDialogOpen] = useState(false)
-  // Resolve the portal target from the ref into state. Reading the ref's
-  // `.current` during render is disallowed, so we mirror it into state here.
-  const [menuContainer, setMenuContainer] = useState<HTMLDivElement | null>(null)
-  useEffect(() => {
-    setMenuContainer(menuContainerRef.current)
-  }, [menuContainerRef])
-  const targetLabel = getImNotificationSessionLabel(imNotificationSettings)
-  const enabled = Boolean(imNotificationSettings?.global.enabled)
-  const connecting = cloud.status === 'restoring' || cloud.status === 'connecting'
-  const requiresCloudLogin = !cloud.isConnected
-  const needsSession = cloud.isConnected && !targetLabel
-  const notifying = enabled && cloud.isConnected && Boolean(targetLabel)
-  const cloudConnectionError = cloud.status === 'error' || cloud.status === 'expired'
-  const cloudConnectionErrorMessage = cloudConnectionError ? cloud.error : null
-  const NotificationIcon = notifying ? MessageCircle : MessageCircleOff
-  const onlineCloudDeviceCount = useMemo(
-    () =>
-      devices.filter(
-        device => (isCloudDevice(device) || isRemoteDevice(device)) && device.status === 'online'
-      ).length,
-    [devices]
-  )
-  const title = getGlobalImNotificationTitle(t, imNotificationSettings, cloud.status)
-  const primaryActionLabel = requiresCloudLogin
-    ? t('workbench.cloud_connection_login', '登录并连接')
-    : needsSession
-      ? t('workbench.away_im_reminder_choose_session', '选择 IM 会话')
-      : t('notifications.settings', '通知设置')
-
-  const openCloudLogin = () => {
-    onMenuOpenChange(false)
-    setCloudDialogOpen(true)
-  }
-
-  const openSessionSettings = () => {
-    onMenuOpenChange(false)
-    const openSettings = onOpenGlobalImNotificationSettings ?? onToggleGlobalImNotification
-    if (openSettings) {
-      void openSettings()
-      return
-    }
-    onOpenSettings()
-  }
-
-  const handlePrimaryAction = () => {
-    if (connecting) return
-    if (requiresCloudLogin) {
-      openCloudLogin()
-      return
-    }
-    if (needsSession) {
-      openSessionSettings()
-      return
-    }
-    onMenuOpenChange(false)
-    window.dispatchEvent(new Event(OPEN_NOTIFICATION_SETTINGS_EVENT))
-  }
-
-  return (
-    <>
-      <Tooltip label={title} testId="sidebar-global-im-notification-tooltip">
-        <button
-          type="button"
-          data-testid="sidebar-global-im-notification-button"
-          aria-pressed={notifying}
-          disabled={connecting}
-          onClick={() => onMenuOpenChange(!menuOpen)}
-          className={cn(
-            'relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-50',
-            notifying && 'text-primary hover:text-primary'
-          )}
-          aria-label={title}
-        >
-          <NotificationIcon
-            data-testid={
-              notifying
-                ? 'sidebar-global-im-notification-on-icon'
-                : 'sidebar-global-im-notification-muted-icon'
-            }
-            className={cn('h-4 w-4', notifying && 'fill-current')}
-          />
-          {needsSession && (
-            <span
-              data-testid="sidebar-global-im-notification-indicator"
-              className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-amber-400 ring-2 ring-background"
-            />
-          )}
-        </button>
-      </Tooltip>
-
-      {menuOpen &&
-        menuContainer &&
-        createPortal(
-          <div
-            data-testid="sidebar-global-im-notification-menu"
-            className="absolute bottom-[68px] left-4 right-4 z-30 rounded-xl border border-border bg-background p-3 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
-          >
-            <div className="flex items-start gap-3">
-              <div
-                className={cn(
-                  'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-text-secondary',
-                  notifying && 'bg-primary/10 text-primary',
-                  needsSession && 'bg-amber-400/15 text-amber-600'
-                )}
-              >
-                <NotificationIcon className={cn('h-4 w-4', notifying && 'fill-current')} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold leading-5">
-                  {notifying
-                    ? t('workbench.away_im_reminder_on', '离开电脑提醒已开启')
-                    : t('workbench.away_im_reminder_title', '离开电脑提醒')}
-                </div>
-                <p className="mt-1 text-xs leading-5 text-text-secondary">
-                  {t(
-                    'workbench.away_im_reminder_description',
-                    '锁屏或 Wework 未聚焦时，任务进展会推送到 IM，不会改变任务的 IM 会话归属。'
-                  )}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-3 rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-5">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-text-secondary">
-                  {t('workbench.away_im_reminder_target', '投递到')}
-                </span>
-                <span className="min-w-0 truncate font-medium text-text-primary">
-                  {targetLabel ?? t('workbench.away_im_reminder_no_target', '未选择 IM 会话')}
-                </span>
-              </div>
-              {requiresCloudLogin && (
-                <div className="mt-1 text-text-secondary">
-                  {t(
-                    'workbench.global_im_notifications_requires_cloud_login',
-                    '登录云端后可开启离开电脑提醒'
-                  )}
-                </div>
-              )}
-              {cloudConnectionErrorMessage && (
-                <div
-                  data-testid="sidebar-global-im-notification-error"
-                  className="mt-1 min-w-0 break-words text-red-500 [overflow-wrap:anywhere]"
-                >
-                  {cloudConnectionErrorMessage}
-                </div>
-              )}
-            </div>
-
-            <div className="mt-3 flex items-center justify-end gap-2">
-              {cloud.isConnected && onOpenGlobalImNotificationSettings && (
-                <button
-                  type="button"
-                  data-testid="sidebar-global-im-notification-settings-button"
-                  onClick={openSessionSettings}
-                  className="h-8 shrink-0 whitespace-nowrap rounded-md px-2.5 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
-                >
-                  {t('workbench.away_im_reminder_change_session', '更换会话')}
-                </button>
-              )}
-              <button
-                type="button"
-                data-testid="sidebar-global-im-notification-primary-button"
-                disabled={connecting}
-                onClick={handlePrimaryAction}
-                className={cn(
-                  'h-8 shrink-0 whitespace-nowrap rounded-md px-3 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-55',
-                  enabled
-                    ? 'bg-muted text-text-primary hover:bg-muted/80'
-                    : 'bg-text-primary text-background hover:bg-text-primary/90'
-                )}
-              >
-                {primaryActionLabel}
-              </button>
-            </div>
-          </div>,
-          menuContainer
-        )}
-
-      {cloudDialogOpen && (
-        <CloudConnectionDialog
-          open
-          onlineCloudDeviceCount={onlineCloudDeviceCount}
-          onClose={() => setCloudDialogOpen(false)}
-          onOpenSettings={onOpenSettings}
-          onAddDevice={onAddCloudDevice}
-        />
-      )}
-    </>
   )
 }
 
@@ -1973,7 +1703,7 @@ function RuntimeTaskRow({
                       aria-label={t('workbench.priority_filter_waiting')}
                       className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[rgb(var(--color-sidebar-attention))]"
                     >
-                      <Bell className="h-4 w-4" aria-hidden="true" />
+                      <CircleHelp className="h-4 w-4" aria-hidden="true" />
                     </span>
                   </Tooltip>
                 ) : taskLifecycle?.derived.shouldShowSidebarRunning && rateLimitWaiting ? (
@@ -3216,8 +2946,6 @@ export function DesktopSidebar({
   onArchiveProjectsConversations,
   onArchiveChatConversations,
   onToggleRuntimeTaskNotification,
-  onToggleGlobalImNotification,
-  onOpenGlobalImNotificationSettings,
   onRefreshDevices,
   onOpenStandaloneFolderProject,
   onOpenStandaloneWorkspace,
@@ -3299,7 +3027,6 @@ export function DesktopSidebar({
   )
   const storageScopeRef = useRef(storageScope)
   const [releaseNotesDialogOpen, setReleaseNotesDialogOpen] = useState(false)
-  const [imNotificationMenuOpen, setImNotificationMenuOpen] = useState(false)
   const settingsMenuRef = useRef<HTMLDivElement>(null)
   const [archiveSectionMode, setArchiveSectionMode] = useState<'projects' | 'chats' | null>(null)
   const [forceArchiveSectionMode, setForceArchiveSectionMode] = useState<
@@ -4143,22 +3870,6 @@ export function DesktopSidebar({
     setChatsExpanded(expanded => hasCollapsedReadTasks || !expanded)
   }
 
-  useEffect(() => {
-    if (!imNotificationMenuOpen) return
-
-    const handleOutsidePointer = (event: globalThis.MouseEvent | globalThis.PointerEvent) => {
-      if (!settingsMenuRef.current?.contains(event.target as Node)) {
-        setImNotificationMenuOpen(false)
-      }
-    }
-
-    document.addEventListener('pointerdown', handleOutsidePointer)
-    document.addEventListener('mousedown', handleOutsidePointer)
-    return () => {
-      document.removeEventListener('pointerdown', handleOutsidePointer)
-      document.removeEventListener('mousedown', handleOutsidePointer)
-    }
-  }, [imNotificationMenuOpen])
 
   useEffect(() => {
     if (selectedRuntimeProjectId === null || !selectedRuntimeProjectAutoExpandKey) return
@@ -5117,28 +4828,6 @@ export function DesktopSidebar({
             onOpenSettings={onOpenSettings}
             onLogout={onLogout}
             containerRef={settingsMenuRef}
-            trailingActions={
-              <GlobalImNotificationBell
-                devices={devices}
-                imNotificationSettings={imNotificationSettings}
-                menuOpen={imNotificationMenuOpen}
-                menuContainerRef={settingsMenuRef}
-                onMenuOpenChange={open => {
-                  setImNotificationMenuOpen(open)
-                }}
-                onToggleGlobalImNotification={onToggleGlobalImNotification}
-                onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
-                onOpenSettings={() => onOpenSettings()}
-                onAddCloudDevice={() => {
-                  if (onOpenStandaloneFolderProject) {
-                    onOpenStandaloneFolderProject('remote', 'add-device')
-                  } else {
-                    setStandaloneRemoteDialogIntent('add-device')
-                    setStandaloneWorkspaceDialogMode('remote')
-                  }
-                }}
-              />
-            }
           />
 
           {installedReleaseNotes && (

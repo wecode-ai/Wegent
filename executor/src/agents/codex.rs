@@ -3602,10 +3602,14 @@ fn codex_app_server_command(
     command
 }
 
+const WEWORK_HUMAN_INPUT_INSTRUCTIONS: &str = r#"Wework human participation:
+When a task needs a business judgment, missing requirement, or choice that only the user can provide, raise a structured question using request_user_input_async when available, otherwise request_user_input. Include the task-specific uncertainty, relevant evidence, clear choices and their consequences. Do not rely on a prose question in the conversation alone: the user may not have this conversation open. Continue independent authorized work while an asynchronous question is pending, and wait before work that depends on its answer. Do not create repeated questions for the same unresolved decision. A business answer never grants execution permission; keep native tool approvals and connector authentication on their original authorization paths."#;
+
 fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {
     [
         user_instructions.trim(),
         task_instructions.trim(),
+        WEWORK_HUMAN_INPUT_INSTRUCTIONS,
         WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
         WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS,
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
@@ -6310,7 +6314,7 @@ fn insert_codex_developer_instructions(
         )
     };
     if crate::runtime_work::stand_in_requires_confirmation(request) {
-        instructions.push_str("\n\nWework stand-in action confirmation:\nWework collects one-time execution approval through native tool approval controls in the work list and conversation input area. Prepare the exact action and invoke its tool so Wework can display that approval. Do not ask the user to type yes, confirm, or equivalent in chat before invoking the tool, and do not replace native approval with a prose question. A chat reply never grants execution permission. For a genuine business ambiguity, use request_user_input with explicit choices. Explain proposed replies in plain language without exposing internal policy field names. Keep all existing tool approval requirements in force.");
+        instructions.push_str("\n\nWework stand-in action confirmation:\nWework collects one-time execution approval through native tool approval controls in the original conversation. The shared pending inbox links to that authorization context. Prepare the exact action and invoke its tool so Wework can display that approval. Do not ask the user to type yes, confirm, or equivalent in chat before invoking the tool, and do not replace native approval with a prose question. A chat reply never grants execution permission. For a genuine business ambiguity, use request_user_input_async when available, otherwise request_user_input, with explicit choices. Explain proposed replies in plain language without exposing internal policy field names. Keep all existing tool approval requirements in force.");
     }
     params.insert(
         "developerInstructions".to_owned(),

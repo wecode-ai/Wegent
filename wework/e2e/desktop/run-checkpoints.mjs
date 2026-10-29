@@ -39,6 +39,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'mcp-apps': './scenarios/mcp-apps.scenario.mjs',
   'project-space-tool-discovery': './scenarios/project-space-tool-discovery.scenario.mjs',
   'notification-tab-navigation': './scenarios/notification-tab-navigation.scenario.mjs',
+  'human-interactions': './scenarios/human-interactions.scenario.mjs',
+  'human-interactions-browser': './scenarios/human-interactions.scenario.mjs',
+  'human-interactions-hidden': './scenarios/human-interactions.scenario.mjs',
   'voice-input': './scenarios/voice-input.scenario.mjs',
   'renderer-crash-recovery': './scenarios/renderer-crash-recovery.scenario.mjs',
   'archived-worktree-cleanup': './scenarios/archived-worktree-cleanup.scenario.mjs',
@@ -209,6 +212,9 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'mcp-apps',
   'project-space-tool-discovery',
   'notification-tab-navigation',
+  'human-interactions',
+  'human-interactions-browser',
+  'human-interactions-hidden',
   'voice-input',
   'archived-worktree-cleanup',
   'plugin-toggle-persistence',
@@ -486,7 +492,8 @@ function checkpointScenarioEnv(env, checkpoint) {
     checkpoint === 'window-lifecycle' ||
     checkpoint === 'browser-multi-tabs' ||
     checkpoint === 'core-task-flow' ||
-    checkpoint === 'project-assignment-notification'
+    checkpoint === 'project-assignment-notification' ||
+    checkpoint.startsWith('human-interactions')
   ) {
     // These checks present native auxiliary windows and must observe them as
     // visible. macOS background mode prohibits activation and hides the app.

@@ -5882,6 +5882,23 @@ fn source_content_safety_applies_to_each_tool_enabled_thread_entry() {
 }
 
 #[test]
+fn all_task_launches_surface_business_decisions_through_structured_input() {
+    let request = ExecutionRequest::default();
+    let launch = CodexLaunchConfig::default();
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("thread-1", &request, &launch),
+        thread_fork_params("thread-1", None, &request, &launch),
+    ] {
+        let instructions = params["developerInstructions"].as_str().unwrap();
+        assert!(instructions
+            .contains("request_user_input_async when available, otherwise request_user_input"));
+        assert!(instructions.contains("Continue independent authorized work"));
+        assert!(instructions.contains("A business answer never grants execution permission"));
+    }
+}
+
+#[test]
 fn stand_in_launch_requests_native_confirmation_without_a_chat_round_trip() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(

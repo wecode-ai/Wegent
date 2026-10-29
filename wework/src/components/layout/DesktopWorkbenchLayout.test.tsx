@@ -7459,7 +7459,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('settings-button')).toHaveClass('h-[60px]', 'min-w-0', 'flex-1')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full')
-    expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass('h-8', 'w-8')
+    expect(screen.queryByTestId('sidebar-global-im-notification-button')).not.toBeInTheDocument()
   })
 
   test('toggles an empty project without changing the center selection', async () => {
