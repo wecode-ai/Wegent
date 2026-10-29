@@ -1283,7 +1283,6 @@ function AppShell() {
         restoreSessionTabs={!isMainWindow}
       >
         <RuntimeInteractionsProvider
-          key={`${cloudConnection.apiBaseUrl ?? 'local'}:${user.id}`}
           accountKey={`${cloudConnection.apiBaseUrl ?? 'local'}:${user.id}`}
         >
           <ElectronWorkbenchTabBridge />

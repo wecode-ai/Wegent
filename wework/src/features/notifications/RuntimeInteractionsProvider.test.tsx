@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { NotificationTaskContext, type TaskSource } from './NotificationTaskSourceContext'
@@ -49,6 +49,13 @@ function Probe() {
   }, [value])
   return null
 }
+
+function UnrelatedForm() {
+  const [value, setValue] = useState('')
+  return (
+    <input aria-label="Connection address" value={value} onChange={e => setValue(e.target.value)} />
+  )
+}
 function view(
   payload = interactionQuestion,
   task = interactionTask,
@@ -74,9 +81,9 @@ function view(
     markRuntimeTaskRead: harness.read,
     refresh: harness.refresh,
   }
-  const tree = (taskSource: TaskSource) => (
+  const tree = (taskSource: TaskSource, accountKey = 'test:1') => (
     <NotificationTaskContext.Provider value={{ taskSource, registerTaskSource: () => {} }}>
-      <RuntimeInteractionsProvider accountKey="test:1">
+      <RuntimeInteractionsProvider accountKey={accountKey}>
         <Probe />
         <RuntimeInteractionNotice />
         <RuntimeInteractionsPage active={active} />
@@ -87,7 +94,8 @@ function view(
   return {
     ...rendered,
     taskSource,
-    rerenderSource: (source: TaskSource) => rendered.rerender(tree(source)),
+    rerenderSource: (source: TaskSource, accountKey?: string) =>
+      rendered.rerender(tree(source, accountKey)),
   }
 }
 
@@ -101,6 +109,63 @@ beforeEach(() => {
 })
 
 describe('unified human response', () => {
+  it('keeps an accepted old-account reply out of the new account state', async () => {
+    let accept!: (result: { accepted: boolean }) => void
+    harness.send.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          accept = resolve
+        })
+    )
+    const rendered = view()
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    let reply!: Promise<boolean>
+    act(() => {
+      reply = context!.respond(context!.pending[0], 'keep')
+    })
+    await waitFor(() => expect(harness.send).toHaveBeenCalledTimes(1))
+    rendered.rerenderSource({ ...rendered.taskSource, items: [] }, 'test:2')
+    await act(async () => {
+      accept({ accepted: true })
+      expect(await reply).toBe(true)
+    })
+    expect(context!.history).toEqual([])
+    expect(context!.drafts).toEqual({})
+    expect(context!.busy.size).toBe(0)
+    expect(context!.errors).toEqual({})
+    expect(context!.notice).toBeNull()
+  })
+
+  it('isolates account drafts without remounting unrelated application UI', async () => {
+    const tree = (accountKey: string) => (
+      <RuntimeInteractionsProvider accountKey={accountKey}>
+        <Probe />
+        <UnrelatedForm />
+      </RuntimeInteractionsProvider>
+    )
+    const rendered = render(tree('cloud-a:1'))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Connection address' }), {
+      target: { value: 'http://127.0.0.1:1' },
+    })
+    act(() => context!.setDraft('request-a', 'private answer'))
+    expect(context!.drafts).toEqual({ 'request-a': 'private answer' })
+
+    rendered.rerender(tree('cloud-b:1'))
+    expect(context!.drafts).toEqual({})
+    expect(screen.getByRole('textbox', { name: 'Connection address' })).toHaveValue(
+      'http://127.0.0.1:1'
+    )
+    expect(localStorage.getItem('wework.interactions:cloud-b:1:drafts')).not.toContain(
+      'private answer'
+    )
+
+    rendered.rerender(tree('cloud-a:1'))
+    expect(context!.drafts).toEqual({ 'request-a': 'private answer' })
+    expect(screen.getByRole('textbox', { name: 'Connection address' })).toHaveValue(
+      'http://127.0.0.1:1'
+    )
+  })
+
   it('delivers one shared stand-in reminder and keeps its request after dismissal', async () => {
     view(interactionQuestion, {
       ...interactionTask,

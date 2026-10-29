@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import {
   isAsyncRequestUserInputPayload,
   requestUserInputResponseText,
@@ -22,6 +30,7 @@ import {
   INTERACTIONS_TAB_ID,
   RuntimeInteractionsContext,
   type InteractionHistory,
+  type RuntimeInteractionsValue,
 } from './RuntimeInteractionsContext'
 import { createStandInRecordStore } from './standInNotificationStorage'
 import {
@@ -51,6 +60,32 @@ export function RuntimeInteractionsProvider({
 }: {
   accountKey: string
   children: ReactNode
+}) {
+  const [snapshot, setSnapshot] = useState<{
+    accountKey: string
+    value: RuntimeInteractionsValue
+  } | null>(null)
+  const publish = useCallback(
+    (value: RuntimeInteractionsValue) => setSnapshot({ accountKey, value }),
+    [accountKey]
+  )
+  return (
+    <RuntimeInteractionsContext.Provider
+      value={snapshot?.accountKey === accountKey ? snapshot.value : null}
+    >
+      {/* Reset only interaction state; connection dialogs and other application UI stay mounted. */}
+      <RuntimeInteractionsState key={accountKey} accountKey={accountKey} publish={publish} />
+      {children}
+    </RuntimeInteractionsContext.Provider>
+  )
+}
+
+function RuntimeInteractionsState({
+  accountKey,
+  publish,
+}: {
+  accountKey: string
+  publish: (value: RuntimeInteractionsValue) => void
 }) {
   const source = useNotificationTaskSource()
   const tabs = useWorkspaceTabs()
@@ -99,8 +134,12 @@ export function RuntimeInteractionsProvider({
   const [preferences, setPreferences] = useState(readActiveNotificationPreferences)
   const views = useRef(new Map<string, string>())
   const registerView = useCallback((owner: string, id: string | null) => {
-    if (id) views.current.set(owner, id)
-    else views.current.delete(owner)
+    if (id) {
+      views.current.set(owner, id)
+      setNoticeIds(current =>
+        current.includes(id) ? current.filter(value => value !== id) : current
+      )
+    } else views.current.delete(owner)
   }, [])
 
   useEffect(() => {
@@ -517,26 +556,40 @@ export function RuntimeInteractionsProvider({
     () => setNoticeIds(current => current.filter(id => id !== notice?.id)),
     [notice?.id]
   )
+  const value = useMemo(
+    () => ({
+      pending,
+      history,
+      errors,
+      drafts,
+      busy,
+      loading,
+      setDraft,
+      respond,
+      refresh,
+      open,
+      notice,
+      dismissNotice,
+      registerView,
+    }),
+    [
+      pending,
+      history,
+      errors,
+      drafts,
+      busy,
+      loading,
+      setDraft,
+      respond,
+      refresh,
+      open,
+      notice,
+      dismissNotice,
+      registerView,
+    ]
+  )
+  useLayoutEffect(() => publish(value), [publish, value])
   return (
-    <RuntimeInteractionsContext.Provider
-      value={{
-        pending,
-        history,
-        errors,
-        drafts,
-        busy,
-        loading,
-        setDraft,
-        respond,
-        refresh,
-        open,
-        notice,
-        dismissNotice,
-        registerView,
-      }}
-    >
-      {children}
-      <TransientNotice message={replyNotice} tone="success" onClear={() => setReplyNotice(null)} />
-    </RuntimeInteractionsContext.Provider>
+    <TransientNotice message={replyNotice} tone="success" onClear={() => setReplyNotice(null)} />
   )
 }

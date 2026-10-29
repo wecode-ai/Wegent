@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 
-export async function verifyStandInArchiveRecovery(control, projectId, uiTimeoutMs, timeoutMs) {
+export async function verifyStandInArchiveRecovery(
+  control,
+  projectId,
+  uiTimeoutMs,
+  timeoutMs,
+  userId
+) {
   const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const issue = await rpc('todos.create', {
     project_id: projectId,
-    todo: { title: 'Resume archived stand-in assignment', assignee_user_id: 9001 },
+    todo: { title: 'Resume archived stand-in assignment', assignee_user_id: userId },
   })
-  const params = { projectId, issueId: issue.id, userId: 9001, projectStore: 'local' }
+  const params = { projectId, issueId: issue.id, userId, projectStore: 'local' }
   const address = await rpc('runtime.stand_in.run', params)
   const waitForCompletion = async () => {
     const deadline = Date.now() + timeoutMs
