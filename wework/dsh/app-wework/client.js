@@ -64,6 +64,7 @@ window.__ModuleLoader__.load({
 
     async function requestPluginBackend(fetchImpl, body, assertActive) {
       for (let attempt = 0; ; attempt += 1) {
+        assertActive()
         try {
           return await sendPluginBackend(fetchImpl, body)
         } catch (error) {
@@ -101,7 +102,7 @@ window.__ModuleLoader__.load({
     }
 
     function backendMayStillStart(error) {
-      return error?.code === 'plugin_not_found' || error?.code === 'backend_unreachable'
+      return error?.code === 'plugin_not_found'
     }
 
     function requiredContextKey(value) {
