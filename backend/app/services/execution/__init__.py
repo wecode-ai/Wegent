@@ -118,7 +118,7 @@ class _ExecutorRuntimeClient:
             payload["bot_config"] = bot_config
 
         try:
-            async with httpx.AsyncClient(timeout=180.0, trust_env=False) as client:
+            async with httpx.AsyncClient(timeout=180.0) as client:
                 response = await client.post(
                     url,
                     json=payload,
@@ -150,7 +150,7 @@ class _ExecutorRuntimeClient:
         url = f"{base_url}/executor-manager/sandboxes/{sandbox_id}"
 
         try:
-            async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url)
                 if response.status_code == 404:
                     return None, None
@@ -169,7 +169,7 @@ class _ExecutorRuntimeClient:
         url = f"{base_url}/executor-manager/sandboxes/{sandbox_id}"
 
         try:
-            async with httpx.AsyncClient(timeout=180.0, trust_env=False) as client:
+            async with httpx.AsyncClient(timeout=180.0) as client:
                 response = await client.delete(url)
                 response.raise_for_status()
                 return True, None
@@ -191,7 +191,7 @@ class _ExecutorRuntimeClient:
         payload = {"inactive_hours": inactive_hours, "dry_run": dry_run}
 
         try:
-            async with httpx.AsyncClient(timeout=180.0, trust_env=False) as client:
+            async with httpx.AsyncClient(timeout=180.0) as client:
                 response = await client.post(
                     url,
                     json=payload,
@@ -235,7 +235,7 @@ class _ExecutorRuntimeClient:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=180.0, trust_env=False) as client:
+            async with httpx.AsyncClient(timeout=180.0) as client:
                 response = await client.post(
                     url,
                     json=payload,
@@ -265,7 +265,7 @@ class _ExecutorRuntimeClient:
         url = f"{base_url}/executor-manager/executors/prepare"
 
         try:
-            async with httpx.AsyncClient(timeout=180.0, trust_env=False) as client:
+            async with httpx.AsyncClient(timeout=180.0) as client:
                 response = await client.post(
                     url,
                     json=request.to_dict(),

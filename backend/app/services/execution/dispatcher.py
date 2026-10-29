@@ -21,7 +21,6 @@ import asyncio
 import logging
 from typing import Any, List, Optional
 
-import httpx
 from sqlalchemy.orm import Session
 
 from app.core.async_utils import run_in_main_loop
@@ -714,34 +713,29 @@ class ExecutionDispatcher:
         # Lazy import OpenAI SDK for memory optimization
         from openai import AsyncOpenAI
 
-        # executor-manager is an internal service: never route it through a
-        # system HTTP proxy (local dev machines often have one enabled, which
-        # turns the call into a proxy 502 before it reaches the manager).
-        async with httpx.AsyncClient(timeout=300.0, trust_env=False) as http_client:
-            # Create OpenAI client pointing to executor-manager
-            async with AsyncOpenAI(
-                base_url=base_url,
-                api_key="dummy",  # Not used by executor_manager but required by client
-                timeout=300.0,
-                max_retries=0,  # Queue submission is not idempotent; never replay it.
-                http_client=http_client,
-            ) as client:
+        # Create OpenAI client pointing to executor-manager
+        async with AsyncOpenAI(
+            base_url=base_url,
+            api_key="dummy",  # Not used by executor_manager but required by client
+            timeout=300.0,
+            max_retries=0,  # Queue submission is not idempotent; never replay it.
+        ) as client:
 
-                # Send request using OpenAI client with background mode
-                # background=true: Execute asynchronously, result via callback
-                # stream=false: No streaming, just return queued status
-                response = await client.responses.create(
-                    model=openai_request.get("model", ""),
-                    input=openai_request.get("input", ""),
-                    instructions=openai_request.get("instructions"),
-                    tools=tools if tools else None,
-                    stream=False,
-                    extra_body={
-                        "background": True,
-                        "metadata": openai_request.get("metadata", {}),
-                        "model_config": openai_request.get("model_config", {}),
-                    },
-                )
+            # Send request using OpenAI client with background mode
+            # background=true: Execute asynchronously, result via callback
+            # stream=false: No streaming, just return queued status
+            response = await client.responses.create(
+                model=openai_request.get("model", ""),
+                input=openai_request.get("input", ""),
+                instructions=openai_request.get("instructions"),
+                tools=tools if tools else None,
+                stream=False,
+                extra_body={
+                    "background": True,
+                    "metadata": openai_request.get("metadata", {}),
+                    "model_config": openai_request.get("model_config", {}),
+                },
+            )
 
         logger.info(
             f"[ExecutionDispatcher] HTTP+Callback dispatch (OpenAI background): "

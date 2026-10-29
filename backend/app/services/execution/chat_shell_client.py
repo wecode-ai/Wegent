@@ -46,9 +46,7 @@ def _build_client(base_url: str) -> AsyncOpenAI:
         # SDK retries include ambiguous read/write failures and HTTP errors.
         # Our connect-only policy below must be the only retry layer.
         max_retries=0,
-        http_client=httpx.AsyncClient(
-            timeout=_TIMEOUT, limits=_LIMITS, trust_env=False
-        ),
+        http_client=httpx.AsyncClient(timeout=_TIMEOUT, limits=_LIMITS),
     )
 
 
