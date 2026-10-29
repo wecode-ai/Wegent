@@ -18,6 +18,69 @@ import {
   triggerModelReloadUntilCloudFailure,
 } from '../e2e/desktop/modules/shared.mjs'
 import { sendOrderFollowUp } from '../e2e/desktop/modules/streaming-text-fixture.mjs'
+import { sendIssueCommentWithEnter } from '../e2e/desktop/modules/collaboration-issue-detail-ui.mjs'
+
+test.each([
+  '[data-testid="cloud-task-activity-issue-1"] [data-testid="task-comment-form"]',
+  '[data-testid="issue-reply-composer"] [data-testid="task-comment-form"]',
+])('waits for the exact Issue comment form to become sendable before Enter: %s', async form => {
+  let releaseReady
+  const ready = new Promise(resolve => {
+    releaseReady = resolve
+  })
+  const commands = []
+  let entered = 0
+  const control = {
+    async command(action, selector, options) {
+      commands.push({ action, selector, options })
+      if (action === 'waitFor') {
+        assert.equal(selector, `${form} [data-testid="send-message-button"]`)
+        assert.deepEqual(options, { enabled: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+        await ready
+      }
+      if (action === 'press') entered += 1
+      return ''
+    },
+  }
+
+  const submitted = sendIssueCommentWithEnter(
+    control,
+    form,
+    'Reply after the preceding comment finishes saving',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  await Promise.resolve()
+  assert.deepEqual(commands.map(command => command.action), ['fill', 'waitFor'])
+  assert.equal(entered, 0)
+
+  releaseReady()
+  await submitted
+
+  assert.equal(entered, 1)
+  assert.deepEqual(commands[2], {
+    action: 'press',
+    selector: `${form} [data-testid="cloud-task-activity-composer"]`,
+    options: { key: 'Enter' },
+  })
+})
+
+test('does not submit an Issue reply when its send readiness fails', async () => {
+  const failure = new Error('Reply sending is still unavailable')
+  const commands = []
+  const control = {
+    async command(action) {
+      commands.push(action)
+      if (action === 'waitFor') throw failure
+      return ''
+    },
+  }
+
+  await assert.rejects(
+    sendIssueCommentWithEnter(control, '[data-testid="issue-reply-composer"]', 'Reply', 10_000),
+    error => error === failure
+  )
+  assert.deepEqual(commands, ['fill', 'waitFor'])
+})
 
 test('retains a submission error without an unhandled model observer rejection', async () => {
   const sharedUrl = pathToFileURL(

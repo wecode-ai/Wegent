@@ -1,5 +1,15 @@
 import assert from 'node:assert/strict'
 
+export async function sendIssueCommentWithEnter(control, form, body, timeoutMs) {
+  const composer = `${form} [data-testid="cloud-task-activity-composer"]`
+  await control.command('fill', composer, { value: body })
+  await control.command('waitFor', `${form} [data-testid="send-message-button"]`, {
+    enabled: true,
+    timeoutMs,
+  })
+  await control.command('press', composer, { key: 'Enter' })
+}
+
 export async function verifyIssueDetailPropertyUi(control, scope, timeoutMs) {
   const summary = scope('[data-testid="cloud-todo-state-summary"]')
   await control.command('waitFor', summary, { visible: true, timeoutMs })

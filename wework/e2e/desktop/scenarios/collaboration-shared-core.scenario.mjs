@@ -16,6 +16,7 @@ import {
   assertFullscreenIssueComposerColumnAtWindowSize,
 } from '../modules/issue-composer-layout.mjs'
 import {
+  sendIssueCommentWithEnter,
   verifyIssueDetailPropertyUi,
   verifyNewDiscussionComposerUi,
   verifyReplyComposerUi,
@@ -710,7 +711,7 @@ export function createDesktopScenario({
         await capture(control, 'collaboration-shared-core-05-shared-issue-detail.png')
         const activitySelector = scoped(`[data-testid="cloud-task-activity-${issue.id}"]`)
         const activityListSelector = scoped('[data-testid="cloud-task-activity-list"]')
-        const activityComposerSelector = scoped('[data-testid="cloud-task-activity-composer"]')
+        const activityFormSelector = `${activitySelector} [data-testid="task-comment-form"]`
         await control.command('waitFor', activitySelector, { timeoutMs: uiTimeoutMs })
         await verifyIssueDetailPropertyUi(control, scoped, uiTimeoutMs)
         await verifyNewDiscussionComposerUi(control, scoped, uiTimeoutMs)
@@ -720,24 +721,20 @@ export function createDesktopScenario({
           'The shared Wework Issue detail did not load the selected real backend Issue'
         )
 
-        await control.command('fill', activityComposerSelector, {
-          value: COMMENT_BODY,
-        })
-        await control.command('press', activityComposerSelector, { key: 'Enter' })
+        await sendIssueCommentWithEnter(control, activityFormSelector, COMMENT_BODY, uiTimeoutMs)
         await control.command('waitFor', activityListSelector, {
           text: COMMENT_BODY,
           timeoutMs: uiTimeoutMs,
         })
         await control.command('click', scoped('[data-testid^="cloud-task-activity-reply-toggle-"]'))
-        const replyComposerSelector = scoped(
-          '[data-testid="issue-reply-composer"] [data-testid="cloud-task-activity-composer"]'
+        const replyFormSelector = scoped(
+          '[data-testid="issue-reply-composer"] [data-testid="task-comment-form"]'
         )
+        const replyComposerSelector =
+          `${replyFormSelector} [data-testid="cloud-task-activity-composer"]`
         await control.command('waitFor', replyComposerSelector, { timeoutMs: uiTimeoutMs })
         await verifyReplyComposerUi(control, scoped, uiTimeoutMs)
-        await control.command('fill', replyComposerSelector, {
-          value: '在动态卡片内回复',
-        })
-        await control.command('press', replyComposerSelector, { key: 'Enter' })
+        await sendIssueCommentWithEnter(control, replyFormSelector, '在动态卡片内回复', uiTimeoutMs)
         await control.command('waitFor', scoped('[data-testid^="cloud-task-activity-replies-"]'), {
           text: '在动态卡片内回复',
           timeoutMs: uiTimeoutMs,
