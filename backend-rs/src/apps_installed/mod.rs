@@ -24,4 +24,6 @@ pub(crate) mod mcp_sse;
 pub mod models;
 pub(crate) mod refresh;
 mod refresh_endpoint;
+#[cfg(test)]
+mod refresh_mysql_tests;
 pub mod service;

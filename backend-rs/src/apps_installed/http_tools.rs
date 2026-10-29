@@ -56,6 +56,8 @@ fn default_timeout() -> u64 {
 pub(crate) enum HttpToolError {
     /// The stored configuration does not decode.
     InvalidConfiguration,
+    /// The configured `input_schema` is not a usable JSON Schema.
+    InvalidSchema,
     /// The caller's arguments violate the tool's contract.
     InvalidArguments(String),
     /// The upstream call failed or exceeded the response budget.
@@ -68,6 +70,7 @@ impl std::fmt::Display for HttpToolError {
             Self::InvalidConfiguration => {
                 formatter.write_str("Connector HTTP tool configuration is invalid")
             }
+            Self::InvalidSchema => formatter.write_str("Connector HTTP tool schema is invalid"),
             Self::InvalidArguments(message) => write!(formatter, "{message}"),
             Self::Upstream(message) => write!(formatter, "{message}"),
         }
@@ -256,9 +259,9 @@ fn quote_path(value: &str) -> String {
     encoded
 }
 
-/// The subset of JSON-schema validation the tool contract relies on: required
-/// members and plain top-level types. Constraints the runtime's validator
-/// enforces beyond that stay with the Python runtime.
+/// `_validate_http_arguments`: validate the call against the configured
+/// `input_schema` with the same JSON Schema engine semantics as the Python
+/// runtime, so both entries accept and reject the same arguments.
 fn validate_arguments(tool: &HttpTool, arguments: &Value) -> Result<(), HttpToolError> {
     let Some(schema) = tool
         .input_schema
@@ -268,48 +271,13 @@ fn validate_arguments(tool: &HttpTool, arguments: &Value) -> Result<(), HttpTool
     else {
         return Ok(());
     };
-    let object = arguments.as_object().ok_or_else(|| {
-        HttpToolError::InvalidArguments("Invalid connector tool arguments".to_string())
-    })?;
-    if let Some(required) = schema.get("required").and_then(Value::as_array) {
-        for name in required.iter().filter_map(Value::as_str) {
-            if !object.contains_key(name) {
-                return Err(HttpToolError::InvalidArguments(format!(
-                    "Invalid connector tool arguments: '{name}' is a required property"
-                )));
-            }
-        }
-    }
-    if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
-        for (name, value) in object {
-            let Some(expected) = properties
-                .get(name)
-                .and_then(|property| property.get("type"))
-                .and_then(Value::as_str)
-            else {
-                continue;
-            };
-            if !matches_type(value, expected) {
-                return Err(HttpToolError::InvalidArguments(format!(
-                    "Invalid connector tool arguments: '{name}' is not of type '{expected}'"
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn matches_type(value: &Value, expected: &str) -> bool {
-    match expected {
-        "string" => value.is_string(),
-        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
-        "number" => value.is_number(),
-        "boolean" => value.is_boolean(),
-        "array" => value.is_array(),
-        "object" => value.is_object(),
-        "null" => value.is_null(),
-        _ => true,
-    }
+    let validator = jsonschema::validator_for(&schema).map_err(|_| HttpToolError::InvalidSchema)?;
+    let Some(error) = validator.iter_errors(arguments).next() else {
+        return Ok(());
+    };
+    Err(HttpToolError::InvalidArguments(format!(
+        "Invalid connector tool arguments: {error}"
+    )))
 }
 
 #[cfg(test)]
@@ -380,6 +348,59 @@ mod tests {
         assert!(matches!(
             validate_arguments(&tool(), &json!({"id": 1})).unwrap_err(),
             HttpToolError::InvalidArguments(_)
+        ));
+    }
+
+    /// The same schema engine as the Python runtime: patterns, enums, nested
+    /// constraints, and `additionalProperties` all reject the same arguments.
+    #[test]
+    fn argument_validation_matches_the_python_schema_engine() {
+        let mut tool = tool();
+        tool.input_schema = Some(OpaqueJson::from_serializable(json!({
+            "type": "object",
+            "required": ["id"],
+            "additionalProperties": false,
+            "properties": {
+                "id": {"type": "string", "pattern": "^[a-z]+$"},
+                "mode": {"enum": ["fast", "slow"]},
+                "nested": {
+                    "type": "object",
+                    "required": ["count"],
+                    "properties": {"count": {"type": "integer", "minimum": 1}},
+                },
+            },
+        })));
+
+        assert!(validate_arguments(&tool, &json!({"id": "abc", "mode": "fast"})).is_ok());
+        for rejected in [
+            json!({"id": "ABC"}),
+            json!({"id": "abc", "mode": "turbo"}),
+            json!({"id": "abc", "nested": {"count": 0}}),
+            json!({"id": "abc", "mystery": 1}),
+        ] {
+            let error = validate_arguments(&tool, &rejected).unwrap_err();
+            assert!(
+                matches!(error, HttpToolError::InvalidArguments(_)),
+                "{rejected} was accepted"
+            );
+            assert!(
+                error
+                    .to_string()
+                    .starts_with("Invalid connector tool arguments:"),
+                "{error}"
+            );
+        }
+    }
+
+    /// A schema the engine cannot compile is a configuration fault, not a
+    /// caller error.
+    #[test]
+    fn invalid_schemas_are_configuration_faults() {
+        let mut tool = tool();
+        tool.input_schema = Some(OpaqueJson::from_serializable(json!({"type": 5})));
+        assert!(matches!(
+            validate_arguments(&tool, &json!({})).unwrap_err(),
+            HttpToolError::InvalidSchema
         ));
     }
 
